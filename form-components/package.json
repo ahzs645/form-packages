@@ -1,0 +1,37 @@
+{
+  "name": "@mois/form-components",
+  "version": "1.0.0",
+  "description": "MOIS UI components library - includes all controls, components, hooks, and NHForms components for rendering MOIS web forms",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./controls": "./src/controls/index.ts",
+    "./components": "./src/components/index.ts",
+    "./hooks": "./src/hooks/index.ts",
+    "./scope": "./src/scope/index.ts",
+    "./nhforms": "./src/nhforms/index.ts",
+    "./nhforms/next": "./src/nhforms/index.next.ts",
+    "./nhforms/vite": "./src/nhforms/index.vite.ts",
+    "./nhforms/metadata": "./src/nhforms/component-metadata.ts",
+    "./nhforms/metadata/next": "./src/nhforms/component-metadata.next.ts",
+    "./nhforms/metadata/vite": "./src/nhforms/component-metadata.vite.ts"
+  },
+  "peerDependencies": {
+    "react": "^18.0.0",
+    "react-dom": "^18.0.0",
+    "@fluentui/react": "^8.0.0",
+    "@babel/standalone": "^7.0.0",
+    "immer": "^9.0.0 || ^10.0.0 || ^11.0.0",
+    "react-markdown": "^9.0.0 || ^10.0.0"
+  },
+  "dependencies": {
+    "@fluentui/react-icons": "^2.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "typescript": "^5.3.0"
+  }
+}

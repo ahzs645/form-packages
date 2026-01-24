@@ -1,0 +1,1539 @@
+{
+  "field": {
+    "data": {},
+    "status": {},
+    "history": []
+  },
+  "uiState": {
+    "sections": {}
+  },
+  "tempArea": {},
+  "example": {
+    "demographics": {
+      "patientId": 500163,
+      "name": {
+        "prefix": null,
+        "first": "MICRO",
+        "middle": "ALPHONSE",
+        "family": "MOUSE",
+        "suffix": null,
+        "text": "MICRO ALPHONSE MOUSE"
+      },
+      "nickName": {
+        "first": null,
+        "family": null,
+        "text": null
+      },
+      "emptyList": [],
+      "nullCodedValue": {
+        "code": null,
+        "display": null,
+        "system": "MOIS-YESNO"
+      },
+      "active": {
+        "code": "A",
+        "display": "Active Patient",
+        "system": "MOIS-PATIENTSTATUS"
+      },
+      "address": {
+        "city": "Prince George",
+        "country": "Canada",
+        "line1": "2251 Disney Road",
+        "line2": null,
+        "postalCode": "V3L 2K2",
+        "province": "BC",
+        "text": "2251 Disney Road\nPrince George, BC\nCanada V3L 2K2\n"
+      },
+      "administrativeGender": {
+        "code": "M",
+        "display": "MALE",
+        "system": "MOIS-ADMINISTRATIVEGENDER"
+      },
+      "activeChanged": "2015-03-11",
+      "birthDate": "1969-02-11",
+      "insuranceDependent": "00",
+      "chartNumber": 10012,
+      "healthNumberBy": "BC",
+      "healthNumber": "9151065434",
+      "insuranceBy": {
+        "code": "BC",
+        "display": "British Columbia",
+        "system": "MOIS-INSURANCEBY"
+      },
+      "insuranceNumber": "9151065434",
+      "insuranceBenefitSource": null,
+      "religion": null,
+      "chartLocation": null,
+      "countryOfOrigin": {
+        "code": null,
+        "display": null,
+        "system": null
+      },
+      "cursor": "500063",
+      "race1": {
+        "code": null,
+        "display": null,
+        "isSelfIdentified": null,
+        "system": null,
+        "type": "SELF"
+      },
+      "race2": {
+        "code": null,
+        "display": null,
+        "isSelfIdentified": null,
+        "system": null,
+        "type": null
+      },
+      "race3": {
+        "code": null,
+        "display": null,
+        "isSelfIdentified": null,
+        "system": null,
+        "type": null
+      },
+      "deceasedDate": null,
+      "educationLevel": {
+        "code": "COLLEGE - NO DEGREE",
+        "display": "College - no degree",
+        "system": "VALUESET:EDUCATION.LEVEL"
+      },
+      "firstNationStatus": {
+        "code": null,
+        "display": null,
+        "system": "MOIS-FIRSTNATIONSTATUS"
+      },
+      "genderComment": null,
+      "genotypicGender": {
+        "code": "M",
+        "display": "MALE",
+        "system": "MOIS-GENOTYPICGENDER"
+      },
+      "language": {
+        "code": null,
+        "display": null,
+        "system": null
+      },
+      "lastContactDate": "2017-07-07",
+      "maritalStatus": {
+        "code": "M",
+        "display": "Married",
+        "system": "MOIS-MARITALSTATUS"
+      },
+      "multipleBirth": {
+        "code": null,
+        "display": null,
+        "system": "MOIS-YESNO"
+      },
+      "note": null,
+      "preferences": [
+        {
+          "attachmentCount": null,
+          "classification": {
+            "code": "NOT INDICATED",
+            "display": "Not Indicated",
+            "system": "MOIS-PREFERENCECLASSIFICATION"
+          },
+          "className": "ChartPreference",
+          "codedSubject": {
+            "code": null,
+            "display": null,
+            "system": null
+          },
+          "encounterId": null,
+          "endDate": null,
+          "includeOnDemographics": {
+            "code": "Y",
+            "display": "Yes",
+            "system": "MOIS-YESNO"
+          },
+          "instruction": {
+            "code": "NOT INDICATED",
+            "display": "NOT INDICATED",
+            "system": "MOIS-PREFERENCEINSTRUCTION"
+          },
+          "instructionDetail": null,
+          "patientId": 500074,
+          "preference": "HYSTERECTOMY",
+          "preferenceType": {
+            "code": "PROCEDURE",
+            "display": "Procedure",
+            "system": "MOIS-PREFERENCETYPE"
+          },
+          "reason": {
+            "code": "SELF CHOICE",
+            "display": "Patient decision",
+            "system": "MOIS-PREFERENCEREASON"
+          },
+          "reasonDetail": null,
+          "reportBy": {
+            "code": null,
+            "display": null,
+            "system": "MOIS-PREFERENCEBY"
+          },
+          "reportMethod": {
+            "code": null,
+            "display": null,
+            "system": "MOIS-PREFERENCEFORM"
+          },
+          "sensitive": {
+            "code": "Y",
+            "display": "Yes",
+            "system": "MOIS-YESNO"
+          },
+          "startDate": "2013-05-27",
+          "subjectCodeType": {
+            "code": "CONCEPT",
+            "display": "Concept",
+            "system": "MOIS-PREFERENCECODETYPE"
+          },
+          "subjectConceptName": "HYSTERECTOMY",
+          "subjectDetail": null,
+          "stamp": {
+            "createMachine": "AIHS-TRAINER-0",
+            "createSource": "CONTROL",
+            "createTime": "2015-05-06T10:58:18",
+            "createUser": "Alyssa",
+            "createUserRole": null,
+            "createVersion": "02.16.23 140905",
+            "modifyTime": null,
+            "modifyUser": null,
+            "modifyUserRole": null
+          }
+        },
+        {
+          "attachmentCount": null,
+          "classification": {
+            "code": "DIRECTIVE",
+            "display": "Directive",
+            "system": "MOIS-PREFERENCECLASSIFICATION"
+          },
+          "className": "ChartPreference",
+          "codedSubject": {
+            "code": null,
+            "display": null,
+            "system": null
+          },
+          "encounterId": null,
+          "endDate": null,
+          "includeOnDemographics": {
+            "code": "Y",
+            "display": "Yes",
+            "system": "MOIS-YESNO"
+          },
+          "instruction": {
+            "code": "NOT DESIRED",
+            "display": "NOT DESIRED",
+            "system": "MOIS-PREFERENCEINSTRUCTION"
+          },
+          "instructionDetail": null,
+          "patientId": 500074,
+          "preference": "TETANUS VACCINE",
+          "preferenceType": {
+            "code": "MEDICATION",
+            "display": "Medication",
+            "system": "MOIS-PREFERENCETYPE"
+          },
+          "reason": {
+            "code": "SELF CHOICE",
+            "display": "Patient decision",
+            "system": "MOIS-PREFERENCEREASON"
+          },
+          "reasonDetail": "Patient has chosen not to have a tetanus immunization and does not want to be asked again.",
+          "reportBy": {
+            "code": null,
+            "display": null,
+            "system": "MOIS-PREFERENCEBY"
+          },
+          "reportMethod": {
+            "code": null,
+            "display": null,
+            "system": "MOIS-PREFERENCEFORM"
+          },
+          "sensitive": {
+            "code": "N",
+            "display": "No",
+            "system": "MOIS-YESNO"
+          },
+          "startDate": "2014-09-16",
+          "subjectCodeType": {
+            "code": "CONCEPT",
+            "display": "Concept",
+            "system": "MOIS-PREFERENCECODETYPE"
+          },
+          "subjectConceptName": "TETANUS VACCINE",
+          "subjectDetail": null,
+          "stamp": {
+            "createMachine": "AIHS-TRAINER-0",
+            "createSource": "CONTROL",
+            "createTime": "2015-05-06T10:58:18",
+            "createUser": "Alyssa",
+            "createUserRole": null,
+            "createVersion": "02.16.23 140905",
+            "modifyTime": null,
+            "modifyUser": null,
+            "modifyUserRole": null
+          }
+        },
+        {
+          "attachmentCount": null,
+          "classification": {
+            "code": "CONSENT",
+            "display": "Consent",
+            "system": "MOIS-PREFERENCECLASSIFICATION"
+          },
+          "className": "ChartPreference",
+          "codedSubject": {
+            "code": "01000",
+            "display": "AUTOMATED CALL SERVICE",
+            "system": null
+          },
+          "encounterId": null,
+          "endDate": null,
+          "includeOnDemographics": {
+            "code": "Y",
+            "display": "Yes",
+            "system": "MOIS-YESNO"
+          },
+          "instruction": {
+            "code": "ALLOW",
+            "display": "ALLOW",
+            "system": "MOIS-PREFERENCEINSTRUCTION"
+          },
+          "instructionDetail": null,
+          "patientId": 500074,
+          "preference": "AUTOMATED CALL SERVICE",
+          "preferenceType": {
+            "code": "OTHER",
+            "display": "Other",
+            "system": "MOIS-PREFERENCETYPE"
+          },
+          "reason": {
+            "code": null,
+            "display": null,
+            "system": "MOIS-PREFERENCEREASON"
+          },
+          "reasonDetail": null,
+          "reportBy": {
+            "code": null,
+            "display": null,
+            "system": "MOIS-PREFERENCEBY"
+          },
+          "reportMethod": {
+            "code": null,
+            "display": null,
+            "system": "MOIS-PREFERENCEFORM"
+          },
+          "sensitive": {
+            "code": "N",
+            "display": "No",
+            "system": "MOIS-YESNO"
+          },
+          "startDate": "2014-06-16",
+          "subjectCodeType": {
+            "code": "CODE",
+            "display": "Code",
+            "system": "MOIS-PREFERENCECODETYPE"
+          },
+          "subjectConceptName": null,
+          "subjectDetail": null,
+          "stamp": {
+            "createMachine": "AIHS-TRAINER-0",
+            "createSource": "CONTROL",
+            "createTime": "2015-05-06T10:58:18",
+            "createUser": "Alyssa",
+            "createUserRole": null,
+            "createVersion": "02.16.23 140905",
+            "modifyTime": null,
+            "modifyUser": null,
+            "modifyUserRole": null
+          }
+        },
+        {
+          "attachmentCount": 0,
+          "classification": {
+            "code": "DISCLOSURE",
+            "display": "Disclosure",
+            "system": "MOIS-PREFERENCECLASSIFICATION"
+          },
+          "className": "ChartPreference",
+          "codedSubject": {
+            "code": "02000",
+            "display": "PHARMANET ACCESS",
+            "system": null
+          },
+          "encounterId": null,
+          "endDate": null,
+          "includeOnDemographics": {
+            "code": "Y",
+            "display": "Yes",
+            "system": "MOIS-YESNO"
+          },
+          "instruction": {
+            "code": "ALLOW",
+            "display": "ALLOW",
+            "system": "MOIS-PREFERENCEINSTRUCTION"
+          },
+          "instructionDetail": null,
+          "patientId": 500074,
+          "preference": "PHARMANET ACCESS",
+          "preferenceType": {
+            "code": "OTHER",
+            "display": "Other",
+            "system": "MOIS-PREFERENCETYPE"
+          },
+          "reason": {
+            "code": "SELF CHOICE",
+            "display": "Patient decision",
+            "system": "MOIS-PREFERENCEREASON"
+          },
+          "reasonDetail": null,
+          "reportBy": {
+            "code": null,
+            "display": null,
+            "system": "MOIS-PREFERENCEBY"
+          },
+          "reportMethod": {
+            "code": null,
+            "display": null,
+            "system": "MOIS-PREFERENCEFORM"
+          },
+          "sensitive": {
+            "code": "N",
+            "display": "No",
+            "system": "MOIS-YESNO"
+          },
+          "startDate": "2014-09-09",
+          "subjectCodeType": {
+            "code": "CODE",
+            "display": "Code",
+            "system": "MOIS-PREFERENCECODETYPE"
+          },
+          "subjectConceptName": null,
+          "subjectDetail": null,
+          "stamp": {
+            "createMachine": "AIHS-TRAINER-0",
+            "createSource": "CONTROL",
+            "createTime": "2015-05-06T10:58:18",
+            "createUser": "Alyssa",
+            "createUserRole": null,
+            "createVersion": "02.16.23 140905",
+            "modifyTime": null,
+            "modifyUser": null,
+            "modifyUserRole": null
+          }
+        }
+      ],
+      "preferredPhone": {
+        "code": "1",
+        "display": "Home",
+        "system": "MOIS-PREFERREDPHONE"
+      },
+      "preferredGender": {
+        "code": "M",
+        "display": "MALE",
+        "system": "MOIS-PREFERREDGENDER"
+      },
+      "preferredPharmacy": {
+        "description": null,
+        "name": null,
+        "phone": null
+      },
+      "stamp": {
+        "createMachine": "AIHS-TRAINER-0",
+        "createSource": "CONTROL",
+        "createTime": "2015-03-11T14:58:54",
+        "createUser": "Alyssa",
+        "createUserRole": null,
+        "createVersion": "02.16.23 140905",
+        "modifyTime": "2017-03-30T12:27:27",
+        "modifyUser": "ADMINISTRATOR",
+        "modifyUserRole": null
+      },
+      "shortNote": null,
+      "telecom": {
+        "cellPhone": "",
+        "faxNumber": null,
+        "homeEmail": null,
+        "homeMessage": "N",
+        "homePhone": "250-960-9564",
+        "pagerNumber": null,
+        "text": "Home: (250) 960 9564 Leave msg: No\n",
+        "workEmail": null,
+        "workExt": null,
+        "workMessage": "N",
+        "workPhone": ""
+      }
+    },
+    "encounter": {
+      "appointmentDateTime": "2016-06-23T13:30:00",
+      "arrivedDateTime": null,
+      "attachmentCount": null,
+      "attendingProvider": null,
+      "billingStatus": {
+        "code": "I",
+        "display": "Incomplete",
+        "system": "MOIS-BILLINGSTATUS"
+      },
+      "cancelledDateTime": null,
+      "chartAssignedDateTime": "2016-06-23T13:20:02",
+      "chartNumber": 10012,
+      "className": "Encounter",
+      "classVersion": {
+        "major": 0,
+        "minor": 0,
+        "patch": 0
+      },
+      "correspondences": [
+        {
+          "className": "Correspondence",
+          "when": "2023-09-25T10:22:17",
+          "direction": null,
+          "person": "PROVIDER, VIRTUAL",
+          "contact": "PROVIDER, VIRTUAL",
+          "note": "Could not contact patient",
+          "correspondenceId": 10000005,
+          "stamp": {
+            "createUser": "PROVIDER, VIRTUAL",
+            "createUserRole": "MEDICAL DOCTOR",
+            "createTime": "2023-09-25T10:22:17.142379",
+            "createSource": "webforms",
+            "createMachine": "::1",
+            "createVersion": "3.0.0.0",
+            "modifyUser": null,
+            "modifyUserRole": null,
+            "modifyTime": null
+          }
+        },
+        {
+          "className": "Correspondence",
+          "when": "2023-09-25T10:22:20",
+          "direction": null,
+          "person": "PROVIDER, VIRTUAL",
+          "contact": "PROVIDER, VIRTUAL",
+          "note": "Could not contact patient",
+          "correspondenceId": 10000006,
+          "stamp": {
+            "createUser": "PROVIDER, VIRTUAL",
+            "createUserRole": "MEDICAL DOCTOR",
+            "createTime": "2023-09-25T10:22:20.697941",
+            "createSource": "webforms",
+            "createMachine": "::1",
+            "createVersion": "3.0.0.0",
+            "modifyUser": null,
+            "modifyUserRole": null,
+            "modifyTime": null
+          }
+        }
+      ],
+      "dischargeDateTime": null,
+      "documentStatus": {
+        "code": "I",
+        "display": "Incomplete",
+        "system": "MOIS-DOCUMENTSTATUS"
+      },
+      "encounterFormCount": null,
+      "encounterId": 500634,
+      "groupVisitId": null,
+      "healthIssues": [
+        {
+          "code": "V6511",
+          "display": "PED PRE-BRTH VST-PARENT",
+          "system": "ICD-9"
+        },
+        null,
+        null,
+        null,
+        null
+      ],
+      "inRoomDateTime": null,
+      "location": null,
+      "name": {
+        "first": "MICKEY",
+        "family": "MOUSE",
+        "text": "MICKEY MOUSE"
+      },
+      "officeNote": null,
+      "patientId": 500063,
+      "payor": {
+        "code": null,
+        "display": null,
+        "system": "MOIS-FUNDINGSOURCE"
+      },
+      "priority": {
+        "code": null,
+        "display": null,
+        "system": "VALUESET:ENCOUNTER.PRIORITY"
+      },
+      "providerId": 500011,
+      "resourceId": null,
+      "seenDateTime": null,
+      "roomNumber": null,
+      "services": [
+        {
+          "code": "36301",
+          "display": "NP - VISIT IN OFFICE (AGE 2 - 59)",
+          "system": "USER",
+          "count": null,
+          "phase": "ONETIME"
+        },
+        null,
+        null,
+        null
+      ],
+      "stamp": {
+        "createMachine": "AIHS-TRAINER-0",
+        "createSource": "CONTROL",
+        "createTime": "2016-06-23T13:20:02",
+        "createUser": "ADMINISTRATOR",
+        "createUserRole": null,
+        "createVersion": "02.19.17 160518",
+        "modifyTime": "2021-03-17T12:03:35",
+        "modifyUser": "ADMINISTRATOR",
+        "modifyUserRole": "ADMINISTRATION"
+      },
+      "status": {
+        "code": null,
+        "display": null,
+        "system": "MOIS-ENCOUNTERSTATUS"
+      },
+      "taskCount": null,
+      "timeSlots": 3,
+      "visitCode": {
+        "code": "SA",
+        "display": "Short Assessment",
+        "system": "MOIS-VISITCODE"
+      },
+      "visitMode": {
+        "code": "140182721000087101",
+        "display": "DIRECT ENCOUNTER WITH CLIENT ALONE",
+        "system": "MOIS-VISITMODE"
+      },
+      "visitReason1": {
+        "code": null,
+        "display": "Assessment",
+        "system": null
+      },
+      "visitReason2": {
+        "code": null,
+        "display": null,
+        "system": null
+      }
+    },
+    "observation": {
+      "observationId": 502222,
+      "className": "Observation",
+      "classVersion": {
+        "major": 0,
+        "minor": 0,
+        "patch": 0
+      },
+      "collectedBy": "LEEDHAM Carter",
+      "collectedComment": "",
+      "comment": null,
+      "copyTo": "",
+      "description": "WBC",
+      "encounterId": null,
+      "fillerReferenceNumber": "11-18-110-0276",
+      "loincCode": "26464-8",
+      "observationClass": "HEM/BC",
+      "observationCode": "288",
+      "orderDate": null,
+      "orderedBy": "HERSEY, JEFF",
+      "orderId": null,
+      "orderName": "CBC w/ Diff",
+      "observationPanelId": 10000296,
+      "panelSequenceNumber": 1,
+      "patientId": 500063,
+      "performedBy": null,
+      "placerReferenceNumber": null,
+      "report": "",
+      "reportedBy": null,
+      "reportedDate": "2018-04-20",
+      "status": "F",
+      "units": "x10(9)/L",
+      "value": "5.0",
+      "codedValue": {
+        "code": null,
+        "display": null,
+        "system": null
+      },
+      "valueType": "NUMERIC",
+      "abnormalFlag": {
+        "code": "",
+        "display": "",
+        "system": "MOIS-ABNORMALFLAG"
+      },
+      "performedDateTime": "2018-04-20T11:19:00",
+      "collectedDateTime": "2018-04-20T09:10:00",
+      "recordState": {
+        "code": "SIGNED",
+        "display": "Signed",
+        "system": "MOIS-RECORDSTATE"
+      },
+      "referenceRangeText": null,
+      "rangeNormalLow": "4.0",
+      "rangeNormalHigh": "10.0",
+      "rangeVeryLow": null,
+      "rangeVeryHigh": null,
+      "rangeAbsurdLow": null,
+      "rangeAbsurdHigh": null,
+      "stamp": {
+        "createMachine": "DESKTOP-DJGNRVS",
+        "createSource": "CONTROL",
+        "createTime": "2019-05-16T08:47:25",
+        "createUser": "INTERFACE",
+        "createUserRole": "ADMINISTRATION",
+        "createVersion": "02.24.34 190514",
+        "modifyTime": null,
+        "modifyUser": null,
+        "modifyUserRole": null
+      }
+    },
+    "observationPanel": {
+      "className": "ObservationPanel",
+      "collectedComment": "",
+      "copyTo": "CHANG, STEVEN WING KEONG",
+      "facility": "Pr George RH",
+      "fillerReferenceNumber": "11-18-110-0276",
+      "notes": null,
+      "collectedDateTime": "2018-04-20T09:10:00",
+      "collectedDate": "2018-04-20",
+      "collectedTime": "09:10:00",
+      "orderedBy": "HERSEY, JEFF",
+      "orderingSystem": "NHA",
+      "patientId": 500063,
+      "placerReferenceNumber": "492318753^HNAM_ORDERID",
+      "orderDateTime": null,
+      "orderDate": null,
+      "orderTime": null,
+      "reportedDateTime": "2018-04-20T11:19:00",
+      "reportedDate": "2018-04-20",
+      "reportedTime": "11:19:00",
+      "interfaceType": "NHA",
+      "specimenReceivedDateTime": "2018-04-20T10:31:00",
+      "specimenReceivedDate": "2018-04-20",
+      "specimenReceivedTime": "10:31:00",
+      "status": "F",
+      "classVersion": {
+        "major": 0,
+        "minor": 0,
+        "patch": 0
+      },
+      "observations": [
+        {
+          "observationId": 502222,
+          "className": "Observation",
+          "classVersion": {
+            "major": 0,
+            "minor": 0,
+            "patch": 0
+          },
+          "collectedBy": "LEEDHAM Carter",
+          "collectedComment": "",
+          "comment": null,
+          "copyTo": "",
+          "description": "WBC",
+          "encounterId": null,
+          "fillerReferenceNumber": "11-18-110-0276",
+          "loincCode": "26464-8",
+          "observationClass": "HEM/BC",
+          "observationCode": "288",
+          "orderDate": null,
+          "orderedBy": "HERSEY, JEFF",
+          "orderId": null,
+          "orderName": "CBC w/ Diff",
+          "observationPanelId": 10000296,
+          "panelSequenceNumber": 1,
+          "patientId": 500063,
+          "performedBy": null,
+          "placerReferenceNumber": null,
+          "report": "",
+          "reportedBy": null,
+          "reportedDate": "2018-04-20",
+          "status": "F",
+          "units": "x10(9)/L",
+          "value": "5.0",
+          "codedValue": {
+            "code": null,
+            "display": null,
+            "system": null
+          },
+          "valueType": "NUMERIC",
+          "abnormalFlag": {
+            "code": "",
+            "display": "",
+            "system": "MOIS-ABNORMALFLAG"
+          },
+          "performedDateTime": "2018-04-20T11:19:00",
+          "collectedDateTime": "2018-04-20T09:10:00",
+          "recordState": {
+            "code": "SIGNED",
+            "display": "Signed",
+            "system": "MOIS-RECORDSTATE"
+          },
+          "referenceRangeText": null,
+          "rangeNormalLow": "4.0",
+          "rangeNormalHigh": "10.0",
+          "rangeVeryLow": null,
+          "rangeVeryHigh": null,
+          "rangeAbsurdLow": null,
+          "rangeAbsurdHigh": null,
+          "stamp": {
+            "createMachine": "DESKTOP-DJGNRVS",
+            "createSource": "CONTROL",
+            "createTime": "2019-05-16T08:47:25",
+            "createUser": "INTERFACE",
+            "createUserRole": "ADMINISTRATION",
+            "createVersion": "02.24.34 190514",
+            "modifyTime": null,
+            "modifyUser": null,
+            "modifyUserRole": null
+          }
+        },
+        {
+          "observationId": 502223,
+          "className": "Observation",
+          "classVersion": {
+            "major": 0,
+            "minor": 0,
+            "patch": 0
+          },
+          "collectedBy": "LEEDHAM Carter",
+          "collectedComment": "",
+          "comment": null,
+          "copyTo": "",
+          "description": "RBC # BLD AUTO",
+          "encounterId": null,
+          "fillerReferenceNumber": "11-18-110-0276",
+          "loincCode": "789-8",
+          "observationClass": "HEM/BC",
+          "observationCode": "33680",
+          "orderDate": null,
+          "orderedBy": "HERSEY, JEFF",
+          "orderId": null,
+          "orderName": "CBC w/ Diff",
+          "observationPanelId": 10000296,
+          "panelSequenceNumber": 2,
+          "patientId": 500063,
+          "performedBy": null,
+          "placerReferenceNumber": null,
+          "report": "",
+          "reportedBy": null,
+          "reportedDate": "2018-04-20",
+          "status": "F",
+          "units": "x10(12)/L",
+          "value": "4.93",
+          "codedValue": {
+            "code": null,
+            "display": null,
+            "system": null
+          },
+          "valueType": "NUMERIC",
+          "abnormalFlag": {
+            "code": "",
+            "display": "",
+            "system": "MOIS-ABNORMALFLAG"
+          },
+          "performedDateTime": "2018-04-20T11:19:00",
+          "collectedDateTime": "2018-04-20T09:10:00",
+          "recordState": {
+            "code": "SIGNED",
+            "display": "Signed",
+            "system": "MOIS-RECORDSTATE"
+          },
+          "referenceRangeText": null,
+          "rangeNormalLow": "3.60",
+          "rangeNormalHigh": "5.00",
+          "rangeVeryLow": null,
+          "rangeVeryHigh": null,
+          "rangeAbsurdLow": null,
+          "rangeAbsurdHigh": null,
+          "stamp": {
+            "createMachine": "DESKTOP-DJGNRVS",
+            "createSource": "CONTROL",
+            "createTime": "2019-05-16T08:47:25",
+            "createUser": "INTERFACE",
+            "createUserRole": "ADMINISTRATION",
+            "createVersion": "02.24.34 190514",
+            "modifyTime": null,
+            "modifyUser": null,
+            "modifyUserRole": null
+          }
+        },
+        {
+          "observationId": 502224,
+          "className": "Observation",
+          "classVersion": {
+            "major": 0,
+            "minor": 0,
+            "patch": 0
+          },
+          "collectedBy": "LEEDHAM Carter",
+          "collectedComment": "",
+          "comment": null,
+          "copyTo": "",
+          "description": "HGB BLD-MCNC",
+          "encounterId": null,
+          "fillerReferenceNumber": "11-18-110-0276",
+          "loincCode": "718-7",
+          "observationClass": "HEM/BC",
+          "observationCode": "32915",
+          "orderDate": null,
+          "orderedBy": "HERSEY, JEFF",
+          "orderId": null,
+          "orderName": "CBC w/ Diff",
+          "observationPanelId": 10000296,
+          "panelSequenceNumber": 3,
+          "patientId": 500063,
+          "performedBy": null,
+          "placerReferenceNumber": null,
+          "report": "",
+          "reportedBy": null,
+          "reportedDate": "2018-04-20",
+          "status": "F",
+          "units": "g/L",
+          "value": "139",
+          "codedValue": {
+            "code": null,
+            "display": null,
+            "system": null
+          },
+          "valueType": "NUMERIC",
+          "abnormalFlag": {
+            "code": "",
+            "display": "",
+            "system": "MOIS-ABNORMALFLAG"
+          },
+          "performedDateTime": "2018-04-20T11:19:00",
+          "collectedDateTime": "2018-04-20T09:10:00",
+          "recordState": {
+            "code": "SIGNED",
+            "display": "Signed",
+            "system": "MOIS-RECORDSTATE"
+          },
+          "referenceRangeText": null,
+          "rangeNormalLow": "115",
+          "rangeNormalHigh": "150",
+          "rangeVeryLow": null,
+          "rangeVeryHigh": null,
+          "rangeAbsurdLow": null,
+          "rangeAbsurdHigh": null,
+          "stamp": {
+            "createMachine": "DESKTOP-DJGNRVS",
+            "createSource": "CONTROL",
+            "createTime": "2019-05-16T08:47:25",
+            "createUser": "INTERFACE",
+            "createUserRole": "ADMINISTRATION",
+            "createVersion": "02.24.34 190514",
+            "modifyTime": null,
+            "modifyUser": null,
+            "modifyUserRole": null
+          }
+        },
+        {
+          "observationId": 502225,
+          "className": "Observation",
+          "classVersion": {
+            "major": 0,
+            "minor": 0,
+            "patch": 0
+          },
+          "collectedBy": "LEEDHAM Carter",
+          "collectedComment": "",
+          "comment": null,
+          "copyTo": "",
+          "description": "HCT FR BLD AUTO",
+          "encounterId": null,
+          "fillerReferenceNumber": "11-18-110-0276",
+          "loincCode": "4544-3",
+          "observationClass": "HEM/BC",
+          "observationCode": "30081",
+          "orderDate": null,
+          "orderedBy": "HERSEY, JEFF",
+          "orderId": null,
+          "orderName": "CBC w/ Diff",
+          "observationPanelId": 10000296,
+          "panelSequenceNumber": 4,
+          "patientId": 500063,
+          "performedBy": null,
+          "placerReferenceNumber": null,
+          "report": "",
+          "reportedBy": null,
+          "reportedDate": "2018-04-20",
+          "status": "F",
+          "units": "L/L",
+          "value": "0.42",
+          "codedValue": {
+            "code": null,
+            "display": null,
+            "system": null
+          },
+          "valueType": "NUMERIC",
+          "abnormalFlag": {
+            "code": "",
+            "display": "",
+            "system": "MOIS-ABNORMALFLAG"
+          },
+          "performedDateTime": "2018-04-20T11:19:00",
+          "collectedDateTime": "2018-04-20T09:10:00",
+          "recordState": {
+            "code": "SIGNED",
+            "display": "Signed",
+            "system": "MOIS-RECORDSTATE"
+          },
+          "referenceRangeText": null,
+          "rangeNormalLow": "0.33",
+          "rangeNormalHigh": "0.44",
+          "rangeVeryLow": null,
+          "rangeVeryHigh": null,
+          "rangeAbsurdLow": null,
+          "rangeAbsurdHigh": null,
+          "stamp": {
+            "createMachine": "DESKTOP-DJGNRVS",
+            "createSource": "CONTROL",
+            "createTime": "2019-05-16T08:47:25",
+            "createUser": "INTERFACE",
+            "createUserRole": "ADMINISTRATION",
+            "createVersion": "02.24.34 190514",
+            "modifyTime": null,
+            "modifyUser": null,
+            "modifyUserRole": null
+          }
+        },
+        {
+          "observationId": 502226,
+          "className": "Observation",
+          "classVersion": {
+            "major": 0,
+            "minor": 0,
+            "patch": 0
+          },
+          "collectedBy": "LEEDHAM Carter",
+          "collectedComment": "",
+          "comment": null,
+          "copyTo": "",
+          "description": "MCV",
+          "encounterId": null,
+          "fillerReferenceNumber": "11-18-110-0276",
+          "loincCode": "787-2",
+          "observationClass": "HEM/BC",
+          "observationCode": "373",
+          "orderDate": null,
+          "orderedBy": "HERSEY, JEFF",
+          "orderId": null,
+          "orderName": "CBC w/ Diff",
+          "observationPanelId": 10000296,
+          "panelSequenceNumber": 5,
+          "patientId": 500063,
+          "performedBy": null,
+          "placerReferenceNumber": null,
+          "report": "",
+          "reportedBy": null,
+          "reportedDate": "2018-04-20",
+          "status": "F",
+          "units": "fL",
+          "value": "84.6",
+          "codedValue": {
+            "code": null,
+            "display": null,
+            "system": null
+          },
+          "valueType": "NUMERIC",
+          "abnormalFlag": {
+            "code": "",
+            "display": "",
+            "system": "MOIS-ABNORMALFLAG"
+          },
+          "performedDateTime": "2018-04-20T11:19:00",
+          "collectedDateTime": "2018-04-20T09:10:00",
+          "recordState": {
+            "code": "SIGNED",
+            "display": "Signed",
+            "system": "MOIS-RECORDSTATE"
+          },
+          "referenceRangeText": null,
+          "rangeNormalLow": "82.0",
+          "rangeNormalHigh": "100.0",
+          "rangeVeryLow": null,
+          "rangeVeryHigh": null,
+          "rangeAbsurdLow": null,
+          "rangeAbsurdHigh": null,
+          "stamp": {
+            "createMachine": "DESKTOP-DJGNRVS",
+            "createSource": "CONTROL",
+            "createTime": "2019-05-16T08:47:25",
+            "createUser": "INTERFACE",
+            "createUserRole": "ADMINISTRATION",
+            "createVersion": "02.24.34 190514",
+            "modifyTime": null,
+            "modifyUser": null,
+            "modifyUserRole": null
+          }
+        },
+        {
+          "observationId": 502227,
+          "className": "Observation",
+          "classVersion": {
+            "major": 0,
+            "minor": 0,
+            "patch": 0
+          },
+          "collectedBy": "LEEDHAM Carter",
+          "collectedComment": "",
+          "comment": null,
+          "copyTo": "",
+          "description": "MCH",
+          "encounterId": null,
+          "fillerReferenceNumber": "11-18-110-0276",
+          "loincCode": "785-6",
+          "observationClass": "HEM/BC",
+          "observationCode": "371",
+          "orderDate": null,
+          "orderedBy": "HERSEY, JEFF",
+          "orderId": null,
+          "orderName": "CBC w/ Diff",
+          "observationPanelId": 10000296,
+          "panelSequenceNumber": 6,
+          "patientId": 500063,
+          "performedBy": null,
+          "placerReferenceNumber": null,
+          "report": "",
+          "reportedBy": null,
+          "reportedDate": "2018-04-20",
+          "status": "F",
+          "units": "pg",
+          "value": "28.2",
+          "codedValue": {
+            "code": null,
+            "display": null,
+            "system": null
+          },
+          "valueType": "NUMERIC",
+          "abnormalFlag": {
+            "code": "",
+            "display": "",
+            "system": "MOIS-ABNORMALFLAG"
+          },
+          "performedDateTime": "2018-04-20T11:19:00",
+          "collectedDateTime": "2018-04-20T09:10:00",
+          "recordState": {
+            "code": "SIGNED",
+            "display": "Signed",
+            "system": "MOIS-RECORDSTATE"
+          },
+          "referenceRangeText": null,
+          "rangeNormalLow": "27.0",
+          "rangeNormalHigh": "34.0",
+          "rangeVeryLow": null,
+          "rangeVeryHigh": null,
+          "rangeAbsurdLow": null,
+          "rangeAbsurdHigh": null,
+          "stamp": {
+            "createMachine": "DESKTOP-DJGNRVS",
+            "createSource": "CONTROL",
+            "createTime": "2019-05-16T08:47:25",
+            "createUser": "INTERFACE",
+            "createUserRole": "ADMINISTRATION",
+            "createVersion": "02.24.34 190514",
+            "modifyTime": null,
+            "modifyUser": null,
+            "modifyUserRole": null
+          }
+        },
+        {
+          "observationId": 502228,
+          "className": "Observation",
+          "classVersion": {
+            "major": 0,
+            "minor": 0,
+            "patch": 0
+          },
+          "collectedBy": "LEEDHAM Carter",
+          "collectedComment": "",
+          "comment": null,
+          "copyTo": "",
+          "description": "MCHC",
+          "encounterId": null,
+          "fillerReferenceNumber": "11-18-110-0276",
+          "loincCode": "786-4",
+          "observationClass": "HEM/BC",
+          "observationCode": "372",
+          "orderDate": null,
+          "orderedBy": "HERSEY, JEFF",
+          "orderId": null,
+          "orderName": "CBC w/ Diff",
+          "observationPanelId": 10000296,
+          "panelSequenceNumber": 7,
+          "patientId": 500063,
+          "performedBy": null,
+          "placerReferenceNumber": null,
+          "report": "",
+          "reportedBy": null,
+          "reportedDate": "2018-04-20",
+          "status": "F",
+          "units": "g/L",
+          "value": "333",
+          "codedValue": {
+            "code": null,
+            "display": null,
+            "system": null
+          },
+          "valueType": "NUMERIC",
+          "abnormalFlag": {
+            "code": "",
+            "display": "",
+            "system": "MOIS-ABNORMALFLAG"
+          },
+          "performedDateTime": "2018-04-20T11:19:00",
+          "collectedDateTime": "2018-04-20T09:10:00",
+          "recordState": {
+            "code": "SIGNED",
+            "display": "Signed",
+            "system": "MOIS-RECORDSTATE"
+          },
+          "referenceRangeText": null,
+          "rangeNormalLow": "320",
+          "rangeNormalHigh": "360",
+          "rangeVeryLow": null,
+          "rangeVeryHigh": null,
+          "rangeAbsurdLow": null,
+          "rangeAbsurdHigh": null,
+          "stamp": {
+            "createMachine": "DESKTOP-DJGNRVS",
+            "createSource": "CONTROL",
+            "createTime": "2019-05-16T08:47:25",
+            "createUser": "INTERFACE",
+            "createUserRole": "ADMINISTRATION",
+            "createVersion": "02.24.34 190514",
+            "modifyTime": null,
+            "modifyUser": null,
+            "modifyUserRole": null
+          }
+        },
+        {
+          "observationId": 502229,
+          "className": "Observation",
+          "classVersion": {
+            "major": 0,
+            "minor": 0,
+            "patch": 0
+          },
+          "collectedBy": "LEEDHAM Carter",
+          "collectedComment": "",
+          "comment": null,
+          "copyTo": "",
+          "description": "RDW",
+          "encounterId": null,
+          "fillerReferenceNumber": "11-18-110-0276",
+          "loincCode": "788-0",
+          "observationClass": "HEM/BC",
+          "observationCode": "413",
+          "orderDate": null,
+          "orderedBy": "HERSEY, JEFF",
+          "orderId": null,
+          "orderName": "CBC w/ Diff",
+          "observationPanelId": 10000296,
+          "panelSequenceNumber": 8,
+          "patientId": 500063,
+          "performedBy": null,
+          "placerReferenceNumber": null,
+          "report": "",
+          "reportedBy": null,
+          "reportedDate": "2018-04-20",
+          "status": "F",
+          "units": "%",
+          "value": "14.9",
+          "codedValue": {
+            "code": null,
+            "display": null,
+            "system": null
+          },
+          "valueType": "NUMERIC",
+          "abnormalFlag": {
+            "code": "",
+            "display": "",
+            "system": "MOIS-ABNORMALFLAG"
+          },
+          "performedDateTime": "2018-04-20T11:19:00",
+          "collectedDateTime": "2018-04-20T09:10:00",
+          "recordState": {
+            "code": "SIGNED",
+            "display": "Signed",
+            "system": "MOIS-RECORDSTATE"
+          },
+          "referenceRangeText": null,
+          "rangeNormalLow": "11.6",
+          "rangeNormalHigh": "15.0",
+          "rangeVeryLow": null,
+          "rangeVeryHigh": null,
+          "rangeAbsurdLow": null,
+          "rangeAbsurdHigh": null,
+          "stamp": {
+            "createMachine": "DESKTOP-DJGNRVS",
+            "createSource": "CONTROL",
+            "createTime": "2019-05-16T08:47:25",
+            "createUser": "INTERFACE",
+            "createUserRole": "ADMINISTRATION",
+            "createVersion": "02.24.34 190514",
+            "modifyTime": null,
+            "modifyUser": null,
+            "modifyUserRole": null
+          }
+        },
+        {
+          "observationId": 502230,
+          "className": "Observation",
+          "classVersion": {
+            "major": 0,
+            "minor": 0,
+            "patch": 0
+          },
+          "collectedBy": "LEEDHAM Carter",
+          "collectedComment": "",
+          "comment": null,
+          "copyTo": "",
+          "description": "PLATELET SCAN",
+          "encounterId": null,
+          "fillerReferenceNumber": "11-18-110-0276",
+          "loincCode": "26515-7",
+          "observationClass": "HEM/BC",
+          "observationCode": "285",
+          "orderDate": null,
+          "orderedBy": "HERSEY, JEFF",
+          "orderId": null,
+          "orderName": "CBC w/ Diff",
+          "observationPanelId": 10000296,
+          "panelSequenceNumber": 9,
+          "patientId": 500063,
+          "performedBy": null,
+          "placerReferenceNumber": null,
+          "report": "",
+          "reportedBy": null,
+          "reportedDate": "2018-04-20",
+          "status": "F",
+          "units": "x10(9)/L",
+          "value": "256",
+          "codedValue": {
+            "code": null,
+            "display": null,
+            "system": null
+          },
+          "valueType": "TEXT",
+          "abnormalFlag": {
+            "code": "",
+            "display": "",
+            "system": "MOIS-ABNORMALFLAG"
+          },
+          "performedDateTime": "2018-04-20T11:19:00",
+          "collectedDateTime": "2018-04-20T09:10:00",
+          "recordState": {
+            "code": "SIGNED",
+            "display": "Signed",
+            "system": "MOIS-RECORDSTATE"
+          },
+          "referenceRangeText": null,
+          "rangeNormalLow": "160",
+          "rangeNormalHigh": "380",
+          "rangeVeryLow": null,
+          "rangeVeryHigh": null,
+          "rangeAbsurdLow": null,
+          "rangeAbsurdHigh": null,
+          "stamp": {
+            "createMachine": "DESKTOP-DJGNRVS",
+            "createSource": "CONTROL",
+            "createTime": "2019-05-16T08:47:25",
+            "createUser": "INTERFACE",
+            "createUserRole": "ADMINISTRATION",
+            "createVersion": "02.24.34 190514",
+            "modifyTime": null,
+            "modifyUser": null,
+            "modifyUserRole": null
+          }
+        }
+      ],
+      "observationPanelId": 10000296,
+      "panelName": {
+        "code": "57021-8",
+        "display": "CBC w/ Diff",
+        "system": "pCLOCD"
+      },
+      "stamp": {
+        "createMachine": "DESKTOP-DJGNRVS",
+        "createSource": "CONTROL",
+        "createTime": "2019-05-16T08:47:25",
+        "createUser": "INTERFACE",
+        "createUserRole": "ADMINISTRATION",
+        "createVersion": "02.24.34 190514",
+        "modifyTime": null,
+        "modifyUser": null,
+        "modifyUserRole": null
+      }
+    },
+    "associatedParties": {
+      "address": {
+        "city": null,
+        "country": null,
+        "line1": null,
+        "line2": null,
+        "postalCode": null,
+        "province": null,
+        "text": ""
+      },
+      "attachmentCount": null,
+      "associatedPartyId": 500015,
+      "className": "AssociatedParty",
+      "classVersion": {
+        "major": 0,
+        "minor": 0,
+        "patch": 0
+      },
+      "includeOnDemographics": {
+        "code": "Y",
+        "display": "Yes",
+        "system": "MOIS-YESNO"
+      },
+      "isMemberOfCareTeam": {
+        "code": "Y",
+        "display": "Yes",
+        "system": "MOIS-YESNO"
+      },
+      "name": "Amy Anxiety",
+      "note": null,
+      "patientId": 500063,
+      "preferredPhone": {
+        "code": "1",
+        "display": "Home",
+        "system": "MOIS-PREFERREDPHONE"
+      },
+      "relationship": "Daughter",
+      "relationshipCode": {
+        "code": "DAUGHTER",
+        "display": "daughter",
+        "system": "VALUESET:RELATIONSHIP.FAMILY"
+      },
+      "relationshipType": {
+        "code": "EMERG",
+        "display": "Emergency Contact",
+        "system": "MOIS-RELATIONSHIPTYPE"
+      },
+      "stamp": {
+        "createMachine": "KS-PC",
+        "createSource": "CONTROL",
+        "createTime": "2016-08-31T11:18:33",
+        "createUser": "SAMWAYS, KRYSTLE",
+        "createUserRole": null,
+        "createVersion": "02.21.01 160825",
+        "modifyTime": "2017-04-03T14:52:41",
+        "modifyUser": "ADMINISTRATOR",
+        "modifyUserRole": null
+      },
+      "telecom": {
+        "cellPhone": null,
+        "faxNumber": null,
+        "homeEmail": null,
+        "homeMessage": "N",
+        "homePhone": "2505642644",
+        "pagerNumber": null,
+        "text": "Home: (250) 564 2644 Leave msg: No\nWork: (250) 564 2655 Ext: 12 Leave msg: No\n",
+        "workEmail": null,
+        "workExt": "12",
+        "workMessage": "N",
+        "workPhone": "2505642655"
+      }
+    },
+    "task": {
+      "acknowledgedBy": null,
+      "acknowledgedDate": null,
+      "assignedUserId": 100031,
+      "assignedUser": {
+        "defaultAuthorId": null,
+        "identity": {
+          "fullName": "NEPHROLOGY, LAWRENCE",
+          "signature": "NEPHROLOGY, LAWRENCE"
+        },
+        "loginName": "nephrology",
+        "providerId": 500003,
+        "userProfileId": 100031,
+        "userRoleId": 100
+      },
+      "chartNumber": 10012,
+      "className": "DocumentTask",
+      "completedBy": null,
+      "completedDate": null,
+      "createdDate": "2021-03-16",
+      "description": "testing task",
+      "documentId": 500376,
+      "dueDate": "2021-03-16",
+      "note": "this is a testing task",
+      "patientId": 500063,
+      "patientName": "MICKEY MOUSE",
+      "requestorId": 500033,
+      "taskId": 500047
+    },
+    "observationPanels": [
+      {
+        "observationPanelId": 10000358,
+        "panelName": { "code": "EDUCATION.STATUS", "display": "Education Status", "system": "MOIS" },
+        "observations": [
+          { "observationId": 1, "observationCode": "84686", "description": "CURRENT EDUCATIONAL ENGAGEMENT", "value": "COLLEGE - TRADE CERTIFICATE", "collectedDateTime": "2021-03-11T18:17:00" },
+          { "observationId": 2, "observationCode": "84685", "description": "HIGHEST LEVEL OF EDUCATION", "value": "COLLEGE - NO DEGREE", "collectedDateTime": "2021-03-11T18:17:00" }
+        ]
+      },
+      {
+        "observationPanelId": 10000359,
+        "panelName": { "code": "SOCIOECONOMIC.STATUS", "display": "Socioeconomic Status", "system": "MOIS" },
+        "observations": [
+          { "observationId": 3, "observationCode": "84705", "description": "HAVE YOU STRUGGLED MAKING ENDS MEET AT EOM?", "value": "NO", "collectedDateTime": "2021-03-11T18:20:00" },
+          { "observationId": 4, "observationCode": "84706", "description": "SUSPECT SIGNIFICANT SOCIOECONOMIC CHALLENGES", "value": "YES", "collectedDateTime": "2021-03-11T18:20:00" }
+        ]
+      },
+      {
+        "observationPanelId": 10000360,
+        "panelName": { "code": "EMPLOYMENT.STATUS", "display": "Employment Status", "system": "MOIS" },
+        "observations": [
+          { "observationId": 5, "observationCode": "84681", "description": "EMPLOYMENT STATUS", "value": "RETIRED", "collectedDateTime": "2021-03-11T18:25:00" },
+          { "observationId": 6, "observationCode": "84682", "description": "TOTAL EMPLOYMENT HRS/WK", "value": "0-10 HRS/WK", "collectedDateTime": "2021-03-11T18:25:00" }
+        ]
+      },
+      {
+        "observationPanelId": 10000361,
+        "panelName": { "code": "HOUSING.STATUS", "display": "Housing Status", "system": "MOIS" },
+        "observations": [
+          { "observationId": 7, "observationCode": "45973", "description": "CURRENT LIVING ARRANGEMENT", "value": "Family", "collectedDateTime": "2021-03-11T18:30:00" },
+          { "observationId": 8, "observationCode": "84683", "description": "HOUSING TENURE", "value": "Own Home", "collectedDateTime": "2021-03-11T18:30:00" },
+          { "observationId": 9, "observationCode": "84684", "description": "PRECARIOUS LIVING CONDITIONS", "value": "NO", "collectedDateTime": "2021-03-11T18:30:00" }
+        ]
+      }
+    ],
+    "householdOccupants": [
+      {
+        "householdOccupantId": 10000000,
+        "className": "HouseholdOccupant",
+        "startDate": "2000-01-01",
+        "stopDate": null,
+        "occupantRelationship": {
+          "code": "PARENT",
+          "display": "Parent",
+          "system": "VALUESET:OCCUPANT.RELATIONSHIP"
+        },
+        "note": "Caregiver to mother",
+        "quantity": 1,
+        "patientId": 500063
+      },
+      {
+        "householdOccupantId": 10000001,
+        "className": "HouseholdOccupant",
+        "startDate": "1923-10-10",
+        "stopDate": null,
+        "occupantRelationship": {
+          "code": "CHILD",
+          "display": "Child",
+          "system": "VALUESET:OCCUPANT.RELATIONSHIP"
+        },
+        "note": "Children from previous marriage",
+        "quantity": 3,
+        "patientId": 500063
+      }
+    ]
+  }
+}

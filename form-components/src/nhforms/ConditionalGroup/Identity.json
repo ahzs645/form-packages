@@ -1,0 +1,25 @@
+{
+  "name": "ConditionalGroup",
+  "title": "Conditional Group with Logic Gate System",
+  "description": "A logic gate system for conditional field visibility based on controller fields, supporting up to 5 levels of nesting with parent chain visibility checking",
+  "version": {
+    "major": 1,
+    "minor": 0,
+    "patch": 0
+  },
+  "type": "component",
+  "owner": "MOIS Styleguide",
+  "author": "MOIS Styleguide",
+  "publisher": "MOIS Styleguide",
+  "globalIdentifier": "",
+  "requiredFormViewerVersion": {
+    "major": 0,
+    "minor": 1,
+    "patch": 0
+  },
+  "requiredMoisVersion": {
+    "major": 2,
+    "minor": 26,
+    "patch": 12
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "name": "Connections",
+  "title": "Selected connected resources",
+  "description": "ListSelection component for the patient connections (family doctor, etc)",
+  "version": {
+    "major": 1,
+    "minor": 0,
+    "patch": 0
+  },
+  "type": "component",
+  "owner": "Bright Health",
+  "author": "Bright Health",
+  "publisher": "Bright Health",
+  "globalIdentifier": "",
+  "requiredFormViewerVersion": {
+    "major": 0,
+    "minor": 1,
+    "patch": 0
+  },
+  "requiredMoisVersion": {
+    "major": 2,
+    "minor": 26,
+    "patch": 12
+  }
+}

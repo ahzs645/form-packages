@@ -1,0 +1,25 @@
+{
+  "name": "ScoringModule",
+  "title": "Scoring Module with Interpretation",
+  "description": "A scoring questionnaire component with configurable questions, weighted totals, and interpretation ranges",
+  "version": {
+    "major": 1,
+    "minor": 0,
+    "patch": 0
+  },
+  "type": "component",
+  "owner": "MOIS Styleguide",
+  "author": "MOIS Styleguide",
+  "publisher": "MOIS Styleguide",
+  "globalIdentifier": "",
+  "requiredFormViewerVersion": {
+    "major": 0,
+    "minor": 1,
+    "patch": 0
+  },
+  "requiredMoisVersion": {
+    "major": 2,
+    "minor": 26,
+    "patch": 12
+  }
+}

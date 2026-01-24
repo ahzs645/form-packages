@@ -1,0 +1,25 @@
+{
+    "name": "hfc_pt_asmt_patientsummary",
+    "title": "HFC Patient Summary",
+    "description": "Section of the HFC Patient assessment webform",
+    "version": {
+      "major": 1,
+      "minor": 0,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "Northern Health",
+    "author": "David Medlyn [Northern Health]",
+    "publisher": "Northern Health",
+    "globalIdentifier": "",
+    "requiredFormViewerVersion": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "requiredMoisVersion": {
+      "major": 2,
+      "minor": 28,
+      "patch": 10
+    }
+  }

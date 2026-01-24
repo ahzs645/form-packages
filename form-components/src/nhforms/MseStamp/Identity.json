@@ -1,0 +1,25 @@
+{
+  "name": "MseStamp",
+  "title": "MSE - STAMP: Speech, Thoughts, Affect, Mood, and Perception",
+  "description": "Section of the ABC STAMP LICK ER assessment",
+  "version": {
+    "major": 1,
+    "minor": 0,
+    "patch": 0
+  },
+  "type": "component",
+  "owner": "Northern Health",
+  "author": "Northern Health",
+  "publisher": "Northern Health",
+  "globalIdentifier": "",
+  "requiredFormViewerVersion": {
+    "major": 0,
+    "minor": 1,
+    "patch": 0
+  },
+  "requiredMoisVersion": {
+    "major": 2,
+    "minor": 26,
+    "patch": 12
+  }
+}

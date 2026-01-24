@@ -1,0 +1,7 @@
+{
+  "name": "SaveOnClose",
+  "title": "Save On Close",
+  "description": "Automatically saves form data as draft when the browser window/tab is closed",
+  "category": "Utility",
+  "version": "1.0.0"
+}

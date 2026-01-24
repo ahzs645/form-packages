@@ -1,0 +1,534 @@
+{
+  "formParams": {
+    "patientId": 500063
+  },
+  "patientId": 500063,
+  "queryString": null,
+  "optionLists": "...",
+  "userProfile": {
+    "userProfileId": 500033,
+    "loginName": "admin",
+    "identity": {
+      "fullName": "ADMINISTRATOR"
+    },
+    "providerId": 500000,
+    "desktopProvider": {
+      "name": "FAM, BOB",
+      "providerId": 123,
+      "userProfileId": 500021
+    },
+    "defaultAuthorId": 500029,
+    "role": {
+      "roleName": "ADMINISTRATION",
+      "description": "ADMINISTRATION"
+    }
+  },
+  "webform": {
+    "webformId": 1,
+    "documentId": 1,
+    "document": {
+      "author": null,
+      "authorRole": null,
+      "authorType": null,
+      "className": "Document",
+      "comment": null,
+      "documentDate": "2020-01-27T00:00:00",
+      "encounterId": 500915,
+      "note": "PEG ASSESSMENT",
+      "attachedTo": null,
+      "pathname": "10000022",
+      "patientId": 500063,
+      "recordState": "UNSIGNED",
+      "secondaryPathname": null,
+      "sentTo": null,
+      "templateSource": {
+        "code": "tdt_webform_definition",
+        "display": "Web form",
+        "system": "MOIS-TEMPLATESOURCE"
+      },
+      "templateName": "PEG ASSESSMENT",
+      "templateId": 10000048,
+      "sourceVenue": null,
+      "documentType": {
+        "code": "WEBFORM",
+        "display": "Web form",
+        "system": "MOIS-DOCUMENTTYPE"
+      },
+      "tasks": [
+        {
+          "acknowledgedBy": null,
+          "acknowledgedDate": null,
+          "assignedUserId": 100031,
+          "assignedUser": {
+            "defaultAuthorId": null,
+            "identity": {
+              "fullName": "NEPHROLOGY, LAWRENCE",
+              "signature": "NEPHROLOGY, LAWRENCE"
+            },
+            "loginName": "nephrology",
+            "providerId": 500003,
+            "userProfileId": 100031,
+            "userRoleId": 100
+          },
+          "chartNumber": 10012,
+          "className": "DocumentTask",
+          "completedBy": null,
+          "completedDate": null,
+          "createdDate": "2021-03-16",
+          "description": "testing task",
+          "documentId": 500376,
+          "dueDate": "2021-03-16",
+          "note": "this is a testing task",
+          "patientId": 500063,
+          "patientName": "MICKEY MOUSE",
+          "requestorId": 500033,
+          "taskId": 500047
+        }
+      ]
+    },
+    "encounter": {
+      "patientId": 500063,
+      "appointmentDateTime": "2021-03-22T00:00:00",
+      "arrivedDateTime": "2021-03-22T11:12:00",
+      "attachmentCount": 1,
+      "attendingProvider": {
+        "code": "500024",
+        "display": "NEPHROLOGY, LAWRENCE",
+        "system": "MOIS.USER",
+        "moisProviderId": 500024
+      },
+      "billingStatus": {
+        "code": "I",
+        "display": "Incomplete",
+        "system": "MOIS-BILLINGSTATUS"
+      },
+      "cancelledDateTime": null,
+      "chartAssignedDateTime": "2021-03-22T11:12:07",
+      "chartNumber": 10012,
+      "className": "Encounter",
+      "classVersion": {
+        "major": 0,
+        "minor": 0,
+        "patch": 0
+      },
+      "dischargeDateTime": "2021-03-22T11:12:00",
+      "documentStatus": {
+        "code": "C",
+        "display": "Complete",
+        "system": "MOIS-DOCUMENTSTATUS"
+      },
+      "encounterFormCount": 1,
+      "encounterId": 500915,
+      "groupVisitId": null,
+      "healthIssues": [
+        {
+          "code": "E9400",
+          "display": "ADV EFF ANALEPTICS",
+          "system": "ICD-9"
+        },
+        {
+          "code": "98981",
+          "display": "TOXIC EFFECT OF ASBESTOS",
+          "system": "ICD-9"
+        },
+        null,
+        null,
+        null
+      ],
+      "inRoomDateTime": null,
+      "location": "FAMILY PRACTICE",
+      "name": {
+        "first": "MICKEY",
+        "family": "MOUSE",
+        "text": "MICKEY MOUSE"
+      },
+      "notes": [
+        {
+          "authorUserProfileId": 500064,
+          "className": "EncounterNote",
+          "creatorUserProfileId": 500033,
+          "encounterId": 500915,
+          "extraInfo": null,
+          "extraInfoTemplate": null,
+          "note": "First progress note.\r\n\r\nMickey refused to remove his white gloves claiming \"Those are my hands, not gloves\".\r\n",
+          "noteCreationDate": "2021-03-22",
+          "classVersion": {
+            "major": 0,
+            "minor": 0,
+            "patch": 0
+          },
+          "encounterNoteId": 500620,
+          "isComplete": {
+            "code": "Y",
+            "display": "Yes",
+            "system": "MOIS-YESNO"
+          },
+          "stamp": {
+            "createMachine": "LLPF0V3DR8",
+            "createSource": "CONTROL",
+            "createTime": "2021-03-22T11:12:10",
+            "createUser": "ADMINISTRATOR",
+            "createUserRole": "ADMINISTRATION",
+            "createVersion": "02.27.09 210319",
+            "modifyTime": null,
+            "modifyUser": null,
+            "modifyUserRole": null
+          }
+        },
+        {
+          "authorUserProfileId": 500017,
+          "className": "EncounterNote",
+          "creatorUserProfileId": 500033,
+          "encounterId": 500915,
+          "extraInfo": null,
+          "extraInfoTemplate": null,
+          "note": "MIckey is my best friend. I'm dog-loyal to Mickey.\r\n",
+          "noteCreationDate": "2021-03-22",
+          "classVersion": {
+            "major": 0,
+            "minor": 0,
+            "patch": 0
+          },
+          "encounterNoteId": 500621,
+          "isComplete": {
+            "code": "Y",
+            "display": "Yes",
+            "system": "MOIS-YESNO"
+          },
+          "stamp": {
+            "createMachine": "LLPF0V3DR8",
+            "createSource": "CONTROL",
+            "createTime": "2021-03-22T11:14:38",
+            "createUser": "ADMINISTRATOR",
+            "createUserRole": "ADMINISTRATION",
+            "createVersion": "02.27.09 210319",
+            "modifyTime": null,
+            "modifyUser": null,
+            "modifyUserRole": null
+          }
+        }
+      ],
+      "officeNote": null,
+      "payor": {
+        "code": null,
+        "display": null,
+        "system": "MOIS-FUNDINGSOURCE"
+      },
+      "priority": {
+        "code": "MEDIUM",
+        "display": "MEDIUM",
+        "system": "VALUESET:ENCOUNTER.PRIORITY"
+      },
+      "providerId": 500016,
+      "resourceId": null,
+      "seenDateTime": null,
+      "roomNumber": null,
+      "services": [
+        {
+          "code": "08570",
+          "display": "ABDOMEN X-RAY",
+          "system": "BCMSPFEE",
+          "count": 1,
+          "phase": "ONETIME"
+        },
+        null,
+        null,
+        null
+      ],
+      "stamp": {
+        "createMachine": "LLPF0V3DR8",
+        "createSource": "CONTROL",
+        "createTime": "2021-03-22T11:12:05",
+        "createUser": "ADMINISTRATOR",
+        "createUserRole": "ADMINISTRATION",
+        "createVersion": "02.27.09 210319",
+        "modifyTime": "2021-03-22T11:16:25",
+        "modifyUser": "ADMINISTRATOR",
+        "modifyUserRole": "ADMINISTRATION"
+      },
+      "status": {
+        "code": "A",
+        "display": "Arrived",
+        "system": "MOIS-ENCOUNTERSTATUS"
+      },
+      "taskCount": null,
+      "timeSlots": 3,
+      "visitCode": {
+        "code": "R",
+        "display": "Routine",
+        "system": "MOIS-VISITCODE"
+      },
+      "visitMode": {
+        "code": "140182721000087101",
+        "display": "DIRECT ENCOUNTER WITH CLIENT ALONE",
+        "system": "MOIS-VISITMODE"
+      },
+      "visitReason1": {
+        "code": null,
+        "display": "Visit reason",
+        "system": null
+      },
+      "visitReason2": {
+        "code": "399963005",
+        "display": "ABRASION",
+        "system": "SNOMED"
+      },
+      "correspondences": [
+        {
+          "correspondenceId": 1,
+          "className": "Correspondence",
+          "when": "2023-09-25T10:22:00",
+          "direction": "Outgoing",
+          "person": "MOUSE, MICKEY",
+          "contact": "PROVIDER, VIRTUAL",
+          "note": "Could not contact patient",
+          "stamp": {
+            "createdDate": "2023.09.25 - 10:22",
+            "createdBy": "ADMINISTRATOR",
+            "modifiedDate": "",
+            "modifiedBy": ""
+          }
+        }
+      ]
+    },
+    "patientId": 500063,
+    "providerId": 500016,
+    "provider": {
+      "name": "HALLIWELL, A."
+    },
+    "recordState": "UNSIGNED"
+  },
+  "queryResult": {
+    "patient": [
+      {
+        "patientId": 500063,
+        "chartNumber": 10012,
+        "name": { "text": "John Smith", "first": "John", "family": "Smith" },
+        "birthDate": "1980-01-15",
+        "administrativeGender": { "code": "M", "display": "Male", "system": "MOIS-GENDER" },
+        "conditions": [
+          {
+            "conditionId": 500101,
+            "condition": { "code": "HTN", "display": "Hypertension", "system": "MOIS-CONDITION" },
+            "startDate": "2020-01-15",
+            "resolveDate": null,
+            "certainty": { "code": "C", "display": "Confirmed" },
+            "severity": { "code": "M", "display": "Moderate" }
+          },
+          {
+            "conditionId": 500102,
+            "condition": { "code": "DM2", "display": "Type 2 Diabetes", "system": "MOIS-CONDITION" },
+            "startDate": "2019-06-01",
+            "resolveDate": null,
+            "certainty": { "code": "C", "display": "Confirmed" },
+            "severity": { "code": "L", "display": "Mild" }
+          }
+        ],
+        "observations": [
+          {
+            "observationId": 600001,
+            "observationCode": "2455",
+            "description": "Ejection Fraction",
+            "value": "55",
+            "units": "%",
+            "collectedDateTime": "2024-01-10T09:00:00"
+          },
+          {
+            "observationId": 600002,
+            "observationCode": "2455",
+            "description": "Ejection Fraction",
+            "value": "50",
+            "units": "%",
+            "collectedDateTime": "2023-06-15T10:30:00"
+          }
+        ],
+        "allergies": [
+          {
+            "code": "PNCLLN",
+            "intoleranceType": "Allergy",
+            "startDate": "2015-03-20",
+            "endDate": null,
+            "substance": "Penicillin",
+            "reactions": "Rash, Hives"
+          }
+        ],
+        "connections": [
+          {
+            "connectionId": 500036,
+            "connectionType": { "code": "PRIMARY", "display": "Primary Provider", "system": "MOIS-CONNECTIONTYPE" },
+            "name": "PRACTITIONER, GENERAL",
+            "startDate": "2020-01-01",
+            "stopDate": null,
+            "provider": { "code": null, "name": "PRACTITIONER, GENERAL", "source": "ProviderExternal", "sourceId": 10003148 },
+            "providerType": { "code": "100", "display": "PROVIDER (EXT)" },
+            "includeOnDemographics": { "code": "Y", "display": "Yes", "system": "MOIS-YESNO" },
+            "isCareTeamMember": { "code": "N", "display": "No", "system": "MOIS-YESNO" }
+          }
+        ],
+        "longTermMedications": []
+      }
+    ]
+  },
+  "ready": true,
+  "auth": {},
+  "sourceFormData": null,
+  "lifecycleState": {
+    "initializing": false,
+    "isLoading": false,
+    "formReady": true,
+    "isQuerying": false,
+    "isMutating": false,
+    "queryReady": true,
+    "isPrinting": false,
+    "printOptions": {},
+    "isSubmitting": false,
+    "isLockedForUpdate": false
+  },
+  "formObject": "...",
+  "patient": {
+    "patientId": 500063,
+    "chartNumber": "10012",
+    "fullName": "MOUSE, MICRO",
+    "name": { "text": "MOUSE, MICKEY BOB", "first": "MICKEY", "middle": "BOB", "family": "MOUSE" },
+    "dob": "1928-11-18",
+    "birthDate": "1928-11-18",
+    "gender": "male",
+    "administrativeGender": { "code": "M", "display": "Male", "system": "MOIS-GENDER" },
+    "educationLevel": { "code": "Post-Secondary", "display": "Post-Secondary Education", "system": "MOIS-EDUCATION" },
+    "telecom": { "homePhone": "250-555-1234", "workPhone": "250-555-5678", "cellPhone": "250-555-9012", "email": "mickey@disney.com" },
+    "address": { "text": "2251 Disney Road\nPrince George, BC\nCanada V3L 2K2", "line1": "2251 Disney Road", "city": "Prince George", "province": "BC", "postalCode": "V3L 2K2", "country": "Canada" },
+    "firstNationStatus": { "code": "SI", "display": "Status Indian", "system": "AIHS-FNSTATUS" },
+    "race1": { "code": "91", "display": "First Nations", "system": "CDC-RACE", "type": "SELF", "isSelfIdentified": true },
+    "race2": { "code": null, "display": null, "system": null, "type": null, "isSelfIdentified": null },
+    "race3": { "code": null, "display": null, "system": null, "type": null, "isSelfIdentified": null },
+    "connectedResources": [
+      { "connectionId": 1, "connectionType": { "code": "FNRESERVE", "display": "First Nations Reserve", "system": "MOIS-CONNECTIONTYPE" }, "name": "Nisga'a Nation", "startDate": "2020-01-01", "stopDate": null }
+    ],
+    "encounters": [
+      {
+        "encounterId": 500634,
+        "appointmentDateTime": "2024-01-15T09:00:00",
+        "name": { "first": "MICKEY", "family": "MOUSE", "text": "MICKEY MOUSE" },
+        "status": { "code": "A", "display": "Arrived", "system": "MOIS-ENCOUNTERSTATUS" },
+        "billingStatus": { "code": "I", "display": "Incomplete", "system": "MOIS-BILLINGSTATUS" },
+        "documentStatus": { "code": "I", "display": "Incomplete", "system": "MOIS-DOCUMENTSTATUS" }
+      },
+      {
+        "encounterId": 500635,
+        "appointmentDateTime": "2024-01-10T14:30:00",
+        "name": { "first": "MICKEY", "family": "MOUSE", "text": "MICKEY MOUSE" },
+        "status": { "code": "D", "display": "Discharged", "system": "MOIS-ENCOUNTERSTATUS" },
+        "billingStatus": { "code": "B", "display": "Billed", "system": "MOIS-BILLINGSTATUS" },
+        "documentStatus": { "code": "C", "display": "Complete", "system": "MOIS-DOCUMENTSTATUS" }
+      },
+      {
+        "encounterId": 500636,
+        "appointmentDateTime": "2024-01-05T11:00:00",
+        "name": { "first": "MICKEY", "family": "MOUSE", "text": "MICKEY MOUSE" },
+        "status": { "code": "S", "display": "Seen", "system": "MOIS-ENCOUNTERSTATUS" },
+        "billingStatus": { "code": "B", "display": "Billed", "system": "MOIS-BILLINGSTATUS" },
+        "documentStatus": { "code": "C", "display": "Complete", "system": "MOIS-DOCUMENTSTATUS" }
+      }
+    ],
+    "observations": [
+      {
+        "observationId": 600001,
+        "observationCode": "2455",
+        "description": "Ejection Fraction",
+        "value": "55",
+        "units": "%",
+        "collectedDateTime": "2024-01-10T09:00:00"
+      },
+      {
+        "observationId": 600002,
+        "observationCode": "2455",
+        "description": "Ejection Fraction",
+        "value": "50",
+        "units": "%",
+        "collectedDateTime": "2023-06-15T10:30:00"
+      },
+      {
+        "observationId": 502222,
+        "reportedDate": "2018-04-20",
+        "observationCode": "288",
+        "description": "WBC",
+        "value": "5.0",
+        "collectedDateTime": "2018-04-20T09:10:00"
+      },
+      {
+        "observationId": 502223,
+        "reportedDate": "2018-04-20",
+        "observationCode": "33680",
+        "description": "RBC # BLD AUTO",
+        "value": "4.93",
+        "collectedDateTime": "2018-04-20T09:10:00"
+      },
+      {
+        "observationId": 502224,
+        "reportedDate": "2018-04-20",
+        "observationCode": "32915",
+        "description": "HGB BLD-MCNC",
+        "value": "139",
+        "collectedDateTime": "2018-04-20T09:10:00"
+      },
+      {
+        "observationId": 502225,
+        "reportedDate": "2018-04-20",
+        "observationCode": "30081",
+        "description": "HCT FR BLD AUTO",
+        "value": "0.42",
+        "collectedDateTime": "2018-04-20T09:10:00"
+      },
+      {
+        "observationId": 502226,
+        "reportedDate": "2018-04-20",
+        "observationCode": "373",
+        "description": "MCV",
+        "value": "84.6",
+        "collectedDateTime": "2018-04-20T09:10:00"
+      }
+    ],
+    "conditions": [
+      {
+        "conditionId": 500101,
+        "condition": { "code": "HTN", "display": "Hypertension", "system": "MOIS-CONDITION" },
+        "startDate": "2020-01-15",
+        "resolveDate": null,
+        "certainty": { "code": "C", "display": "Confirmed" },
+        "severity": { "code": "M", "display": "Moderate" }
+      },
+      {
+        "conditionId": 500102,
+        "condition": { "code": "DM2", "display": "Type 2 Diabetes", "system": "MOIS-CONDITION" },
+        "startDate": "2019-06-01",
+        "resolveDate": null,
+        "certainty": { "code": "C", "display": "Confirmed" },
+        "severity": { "code": "L", "display": "Mild" }
+      }
+    ],
+    "connections": [
+      {
+        "connectionId": 500036,
+        "connectionType": { "code": "PRIMARY", "display": "Primary Provider", "system": "MOIS-CONNECTIONTYPE" },
+        "name": "PRACTITIONER, GENERAL",
+        "startDate": "2020-01-01",
+        "stopDate": null,
+        "provider": { "code": null, "name": "PRACTITIONER, GENERAL", "source": "ProviderExternal", "sourceId": 10003148 },
+        "providerType": { "code": "100", "display": "PROVIDER (EXT)" },
+        "includeOnDemographics": { "code": "Y", "display": "Yes", "system": "MOIS-YESNO" },
+        "isCareTeamMember": { "code": "N", "display": "No", "system": "MOIS-YESNO" }
+      }
+    ],
+    "allergies": [
+      {
+        "code": "PNCLLN",
+        "intoleranceType": "Allergy",
+        "startDate": "2015-03-20",
+        "endDate": null,
+        "substance": "Penicillin",
+        "reactions": "Rash, Hives"
+      }
+    ],
+    "longTermMedications": []
+  }
+}
