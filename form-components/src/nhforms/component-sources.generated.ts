@@ -8607,7 +8607,7 @@ const useChangeWatch = ( watchedValue: any, delayCount:number=3 ):WatchResult =>
 /**
  * Component Identity.json contents keyed by component name.
  */
-export const componentIdentities: Record<string, object> = {
+export const componentIdentities: Record<string, any> = {
   'AliasIdList': {
     "name": "AliasIdList",
     "title": "List of alias identifiers",
