@@ -682,18 +682,8 @@ const CompactBooleanField = ({
   const isHorizontal = labelPosition === 'left' || labelPosition === 'right'
 
   const handleCheckboxChange = useCallback((_ev, checked) => {
-    if (!fd?.setFormData) return
-    fd.setFormData({
-      ...fd,
-      field: {
-        ...fd.field,
-        data: {
-          ...fd.field?.data,
-          [fieldId]: checked ? true : false,
-        },
-      },
-    })
-  }, [fd, fieldId])
+    handleChange(checked ? 'yes' : 'no')
+  }, [handleChange])
 
   const fieldContent = displayStyle === 'checkbox' ? (
     <Checkbox
