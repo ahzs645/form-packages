@@ -258,7 +258,13 @@ const ConditionalGroup = ({
 
   // Get current controller value
   const controllerValue = fd?.field?.data?.[controllerFieldId]
-  const isVisible = checkControllerMatch(controllerValue, showWhen)
+  // For checkbox-style controllers, the initial null/undefined state is semantically
+  // "unchecked" (i.e. false/"no"). Treat it as such so showWhen="no" gates open by default.
+  // Button-style controllers keep null as "no selection made" (gate stays closed).
+  const effectiveValue = displayStyle === 'checkbox' && (controllerValue === null || controllerValue === undefined)
+    ? false
+    : controllerValue
+  const isVisible = checkControllerMatch(effectiveValue, showWhen)
 
   // Handle controller change
   const handleControllerChange = useCallback((newValue) => {
@@ -386,7 +392,7 @@ const ConditionalGroup = ({
             </Stack>
           </div>
         ) : (
-          showHiddenIndicator && controllerValue !== undefined && controllerValue !== null && (
+          showHiddenIndicator && effectiveValue !== undefined && effectiveValue !== null && (
             <div style={hiddenIndicatorStyle}>
               Content hidden (select "{showWhen === 'yes'
                 ? (booleanLabels?.on || 'Yes')
