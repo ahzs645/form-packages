@@ -1605,6 +1605,7 @@ const checkChoiceMatch = (fieldValue, optionValues, invert = false) => {
  * @param {ShowWhenValue} [props.showWhen] - Show when value (if mode is 'controller' for boolean)
  * @param {string[]} [props.optionValues] - Option values to match (for choice fields)
  * @param {boolean} [props.invertMatch=false] - Invert the match (show when NOT matching)
+ * @param {boolean} [props.showWhenNull=false] - Show content when controller value is null/undefined (for hide rules)
  * @param {Object} [props.containerStyle] - Style overrides for wrapper
  * @param {Object} [props.containerProps] - Props to pass to wrapper
  * @param {React.ReactNode} props.children - Field content
@@ -1616,6 +1617,7 @@ const ConditionalField = ({
   showWhen = 'yes',
   optionValues,
   invertMatch = false,
+  showWhenNull = false,
   containerStyle,
   containerProps = {},
   children,
@@ -1633,13 +1635,22 @@ const ConditionalField = ({
   } else if (mode === 'controller' && controllerFieldId) {
     const controllerValue = fd?.field?.data?.[controllerFieldId]
 
+    // DEBUG: Log ConditionalField controller evaluation
+    console.log('[ConditionalField] mode=controller', { controllerFieldId, showWhen, controllerValue, optionValues, invertMatch, showWhenNull, fieldId, formDataKeys: Object.keys(fd?.field?.data || {}) })
+
     // If optionValues is provided, use choice matching instead of boolean matching
     if (optionValues && optionValues.length > 0) {
       isVisible = checkChoiceMatch(controllerValue, optionValues, invertMatch)
     } else {
       // Boolean matching (yes/no)
-      isVisible = checkControllerMatch(controllerValue, showWhen)
+      // When controller is null/unset, field is hidden (both show and hide rules)
+      isVisible = showWhenNull
+        ? (normalizeValue(controllerValue) === null ? true : checkControllerMatch(controllerValue, showWhen))
+        : checkControllerMatch(controllerValue, showWhen)
     }
+
+    // DEBUG: Log visibility result
+    console.log('[ConditionalField] isVisible:', isVisible)
   } else {
     // Inherit - check if all parent groups are visible
     isVisible = parentContext.parentChain.every(parentId => {
