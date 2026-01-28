@@ -15,6 +15,7 @@ const {
   Stack,
   Label,
   Text,
+  Checkbox,
 } = Fluent
 
 // ================================================
@@ -225,6 +226,7 @@ const YesNoButtons = ({
  * @param {string} [props.note] - Annotation/note text
  * @param {boolean} [props.allowDeselect=true] - Allow clicking selected option to deselect
  * @param {string} [props.sourceFieldId] - Original PDF field ID (for PDF sync highlighting when this is a controller)
+ * @param {'buttons' | 'checkbox'} [props.displayStyle='buttons'] - Display style: 'buttons' (Yes/No buttons) or 'checkbox' (single checkbox)
  */
 const CompactBooleanField = ({
   fieldId,
@@ -239,6 +241,7 @@ const CompactBooleanField = ({
   note,
   allowDeselect = true,
   sourceFieldId,
+  displayStyle = 'buttons',
   ...props
 }) => {
   const [fd] = useActiveData()
@@ -316,7 +319,28 @@ const CompactBooleanField = ({
 
   const isHorizontal = labelPosition === 'left' || labelPosition === 'right'
 
-  const fieldContent = (
+  const handleCheckboxChange = useCallback((_ev, checked) => {
+    if (!fd?.setFormData) return
+    fd.setFormData({
+      ...fd,
+      field: {
+        ...fd.field,
+        data: {
+          ...fd.field?.data,
+          [fieldId]: checked ? true : false,
+        },
+      },
+    })
+  }, [fd, fieldId])
+
+  const fieldContent = displayStyle === 'checkbox' ? (
+    <Checkbox
+      label={label ? `${label}${required ? ' *' : ''}` : undefined}
+      checked={normalized === 'yes'}
+      onChange={handleCheckboxChange}
+      disabled={disabled}
+    />
+  ) : (
     <>
       {label && labelPosition !== 'right' && (
         <Label styles={labelStyle}>

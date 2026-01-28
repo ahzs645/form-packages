@@ -202,6 +202,7 @@ const LogicGateProvider = ({ children }) => {
  * @param {boolean} [props.indentChildren=false] - Add left border indent for hierarchy
  * @param {boolean} [props.showHiddenIndicator=true] - Show indicator when content is hidden
  * @param {string} [props.sourceFieldId] - Original PDF field ID for PDF sync highlighting
+ * @param {'buttons' | 'checkbox'} [props.displayStyle] - Display style for the controller field
  * @param {React.ReactNode} props.children - Child content (shown when condition is met)
  */
 const ConditionalGroup = ({
@@ -225,6 +226,7 @@ const ConditionalGroup = ({
   indentChildren = false,
   showHiddenIndicator = true,
   sourceFieldId,
+  displayStyle,
   children,
   ...props
 }) => {
@@ -370,6 +372,7 @@ const ConditionalGroup = ({
               note={note}
               labelPosition="left"
               sourceFieldId={sourceFieldId}
+              displayStyle={displayStyle}
               {...controllerProps}
             />
           </div>
