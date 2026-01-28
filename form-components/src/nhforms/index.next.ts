@@ -53,6 +53,8 @@ import { Observation } from '../archetypes/Observation';
 import { ObservationPanel } from '../archetypes/ObservationPanel';
 import { Query } from '../archetypes/Query';
 import { SaveStatus } from '../components/SaveStatus';
+import { OptionChoice } from '../controls/OptionChoice';
+import { Numeric } from '../controls/Numeric';
 
 // Import pre-generated component sources (Next.js doesn't support Vite's import.meta.glob)
 // Regenerate with: node scripts/generate-nhforms-sources.js
@@ -237,6 +239,8 @@ const buildNHFormsScope = (additionalComponents: Record<string, any> = {}) => {
     SubForm,
     Heading,
     SaveStatus,
+    OptionChoice,
+    Numeric,
 
     // Shared utility functions (from CommonSchemaDefn)
     selectAll,
@@ -443,6 +447,13 @@ if (typeof window !== 'undefined') {
 }
 
 /**
+ * Map from component folder name to the exports it provides.
+ * e.g., { "HonosQuestion": { Scale5: ..., Scale5Legend: ..., ... } }
+ * This allows the component gallery to look up exports by folder name.
+ */
+export const nhformsComponentGroups: Record<string, Record<string, any>> = {};
+
+/**
  * Load all NHForms components with two-pass loading for cross-references
  * Pass 1: Load all components (some may have missing dependencies)
  * Pass 2: Re-load components with registry available for cross-references
@@ -459,9 +470,11 @@ function loadAllComponents(): Record<string, any> {
   }
 
   // Pass 1: Load all components without cross-references
+  // Record each component's own exports (before cross-references pollute the scope)
   for (const { name, code } of componentSources) {
     const components = loadComponentCode(code, name, {});
     Object.assign(nhformsRegistry, components);
+    nhformsComponentGroups[name] = { ...components };
   }
 
   // Pass 2: Re-load all components with registry available
