@@ -293,12 +293,18 @@ const CompactBooleanField = ({
 
   const containerStyle = { ...baseContainerStyle, ...getWidthStyle(size) }
 
+  const themeLabelMinWidth = theme?.mois?.defaultCommonControlStyle?.minLabelWidth ?? 240
+  const themeLabelMaxWidth = theme?.mois?.defaultCommonControlStyle?.maxLabelWidth ?? themeLabelMinWidth
+  const isLeftLabel = labelPosition === 'left'
   const labelStyle = {
     root: {
-      fontWeight: 500,
-      marginRight: labelPosition === 'left' ? '12px' : 0,
+      fontWeight: 600,
+      marginRight: isLeftLabel ? '10px' : 0,
       marginBottom: labelPosition === 'top' ? '4px' : 0,
-      minWidth: labelPosition === 'left' ? '120px' : 'auto',
+      minWidth: isLeftLabel ? themeLabelMinWidth : 'auto',
+      maxWidth: isLeftLabel ? themeLabelMaxWidth : undefined,
+      padding: isLeftLabel ? '5px 0px' : undefined,
+      flex: isLeftLabel ? '0 0 auto' : undefined,
     },
   }
 
@@ -310,36 +316,44 @@ const CompactBooleanField = ({
 
   const isHorizontal = labelPosition === 'left' || labelPosition === 'right'
 
+  const fieldContent = (
+    <>
+      {label && labelPosition !== 'right' && (
+        <Label styles={labelStyle}>
+          {label}
+          {required && <span style={{ color: '#d32f2f', marginLeft: '4px' }}>*</span>}
+        </Label>
+      )}
+      <YesNoButtons
+        yesLabel={yesLabel}
+        noLabel={noLabel}
+        value={normalized}
+        onChange={handleChange}
+        size={buttonSize}
+        disabled={disabled}
+        isDarkMode={isDarkMode}
+        allowDeselect={allowDeselect}
+      />
+      {label && labelPosition === 'right' && (
+        <Label styles={{ ...labelStyle, root: { ...labelStyle.root, marginLeft: '12px', marginRight: 0 } }}>
+          {label}
+          {required && <span style={{ color: '#d32f2f', marginLeft: '4px' }}>*</span>}
+        </Label>
+      )}
+    </>
+  )
+
   return (
     <div id={fieldId} style={containerStyle} data-field-id={fieldId} data-source-field-id={sourceFieldId || undefined}>
-      <Stack
-        horizontal={isHorizontal}
-        verticalAlign={isHorizontal ? 'center' : 'start'}
-        tokens={{ childrenGap: isHorizontal ? 0 : 4 }}
-      >
-        {label && labelPosition !== 'right' && (
-          <Label styles={labelStyle}>
-            {label}
-            {required && <span style={{ color: '#d32f2f', marginLeft: '4px' }}>*</span>}
-          </Label>
-        )}
-        <YesNoButtons
-          yesLabel={yesLabel}
-          noLabel={noLabel}
-          value={normalized}
-          onChange={handleChange}
-          size={buttonSize}
-          disabled={disabled}
-          isDarkMode={isDarkMode}
-          allowDeselect={allowDeselect}
-        />
-        {label && labelPosition === 'right' && (
-          <Label styles={{ ...labelStyle, root: { ...labelStyle.root, marginLeft: '12px', marginRight: 0 } }}>
-            {label}
-            {required && <span style={{ color: '#d32f2f', marginLeft: '4px' }}>*</span>}
-          </Label>
-        )}
-      </Stack>
+      {isHorizontal ? (
+        <div style={{ display: 'flex', flexFlow: 'row wrap', alignItems: 'flex-start' }}>
+          {fieldContent}
+        </div>
+      ) : (
+        <Stack tokens={{ childrenGap: 4 }}>
+          {fieldContent}
+        </Stack>
+      )}
       {note && (
         <div style={noteStyle}>{note}</div>
       )}
@@ -717,12 +731,18 @@ const CompactChoiceField = ({
   // Styles
   const containerStyle = getFieldContainerStyles(isDarkMode, showCard)
 
+  const themeLabelMinWidth = theme?.mois?.defaultCommonControlStyle?.minLabelWidth ?? 240
+  const themeLabelMaxWidth = theme?.mois?.defaultCommonControlStyle?.maxLabelWidth ?? themeLabelMinWidth
+  const isLeftLabel = labelPosition === 'left'
   const labelStyle = {
     root: {
-      fontWeight: 500,
-      marginRight: labelPosition === 'left' ? '12px' : 0,
+      fontWeight: 600,
+      marginRight: isLeftLabel ? '10px' : 0,
       marginBottom: labelPosition === 'top' ? '4px' : 0,
-      minWidth: labelPosition === 'left' ? '120px' : 'auto',
+      minWidth: isLeftLabel ? themeLabelMinWidth : 'auto',
+      maxWidth: isLeftLabel ? themeLabelMaxWidth : undefined,
+      padding: isLeftLabel ? '5px 0px' : undefined,
+      flex: isLeftLabel ? '0 0 auto' : undefined,
     },
   }
 
@@ -734,37 +754,45 @@ const CompactChoiceField = ({
 
   const isHorizontal = labelPosition === 'left' || labelPosition === 'right'
 
+  const choiceContent = (
+    <>
+      {label && labelPosition !== 'right' && (
+        <Label styles={labelStyle}>
+          {label}
+          {required && <span style={{ color: '#d32f2f', marginLeft: '4px' }}>*</span>}
+        </Label>
+      )}
+      <OptionButtons
+        options={optionList}
+        value={currentValue}
+        onChange={handleChange}
+        selectionType={selectionType}
+        size={size}
+        disabled={disabled}
+        isDarkMode={isDarkMode}
+        allowDeselect={allowDeselect}
+        wrap={wrap}
+      />
+      {label && labelPosition === 'right' && (
+        <Label styles={{ ...labelStyle, root: { ...labelStyle.root, marginLeft: '12px', marginRight: 0 } }}>
+          {label}
+          {required && <span style={{ color: '#d32f2f', marginLeft: '4px' }}>*</span>}
+        </Label>
+      )}
+    </>
+  )
+
   return (
     <div id={fieldId} style={containerStyle} data-field-id={fieldId}>
-      <Stack
-        horizontal={isHorizontal}
-        verticalAlign={isHorizontal ? 'center' : 'start'}
-        tokens={{ childrenGap: isHorizontal ? 0 : 4 }}
-      >
-        {label && labelPosition !== 'right' && (
-          <Label styles={labelStyle}>
-            {label}
-            {required && <span style={{ color: '#d32f2f', marginLeft: '4px' }}>*</span>}
-          </Label>
-        )}
-        <OptionButtons
-          options={optionList}
-          value={currentValue}
-          onChange={handleChange}
-          selectionType={selectionType}
-          size={size}
-          disabled={disabled}
-          isDarkMode={isDarkMode}
-          allowDeselect={allowDeselect}
-          wrap={wrap}
-        />
-        {label && labelPosition === 'right' && (
-          <Label styles={{ ...labelStyle, root: { ...labelStyle.root, marginLeft: '12px', marginRight: 0 } }}>
-            {label}
-            {required && <span style={{ color: '#d32f2f', marginLeft: '4px' }}>*</span>}
-          </Label>
-        )}
-      </Stack>
+      {isHorizontal ? (
+        <div style={{ display: 'flex', flexFlow: 'row wrap', alignItems: 'flex-start' }}>
+          {choiceContent}
+        </div>
+      ) : (
+        <Stack tokens={{ childrenGap: 4 }}>
+          {choiceContent}
+        </Stack>
+      )}
       {note && (
         <div style={noteStyle}>{note}</div>
       )}
