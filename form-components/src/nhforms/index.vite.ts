@@ -7,13 +7,6 @@
  * For Next.js/webpack, use index.next.ts instead.
  */
 
-// Declare Vite's import.meta.glob for TypeScript (only used when bundled with Vite)
-declare global {
-  interface ImportMeta {
-    glob: (pattern: string, options?: { eager?: boolean; query?: string; import?: string }) => Record<string, any>;
-  }
-}
-
 import React from 'react';
 import { produce } from 'immer';
 import * as FluentUI from '@fluentui/react';

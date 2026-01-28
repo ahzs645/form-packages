@@ -7,13 +7,6 @@
  * For Next.js/webpack, use component-metadata.next.ts instead.
  */
 
-// Declare Vite's import.meta.glob for TypeScript (only used when bundled with Vite)
-declare global {
-  interface ImportMeta {
-    glob: (pattern: string, options?: { eager?: boolean; query?: string; import?: string }) => Record<string, any>;
-  }
-}
-
 // Import all Identity.json files using Vite's glob import
 const identityModules = import.meta.glob('./**/Identity.json', {
   eager: true,
