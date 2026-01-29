@@ -224,7 +224,7 @@ const ConditionalGroup = ({
   childrenGap = 8,
   contentPadding,
   indentChildren = false,
-  showHiddenIndicator = true,
+  showHiddenIndicator = false,
   sourceFieldId,
   displayStyle,
   children,
