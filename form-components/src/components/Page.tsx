@@ -80,7 +80,7 @@ export const PageSelector: React.FC<PageSelectorProps> = ({
     isCurrentItem: page.id === activePage,
   }));
 
-  const renderBreadcrumbItem = (item?: IBreadcrumbItem): JSX.Element | null => {
+  const renderBreadcrumbItem = (item?: IBreadcrumbItem) => {
     if (!item) return null;
     return (
       <Link
@@ -125,7 +125,7 @@ const DemoPageContent: React.FC = () => {
     { key: '1', text: 'second', onClick: () => setActivePage(1), isCurrentItem: activePage === 1 },
   ];
 
-  const renderBreadcrumbItem = (item?: IBreadcrumbItem): JSX.Element | null => {
+  const renderBreadcrumbItem = (item?: IBreadcrumbItem) => {
     if (!item) return null;
     return (
       <Link

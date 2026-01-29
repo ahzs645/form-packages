@@ -422,7 +422,7 @@ export const ListSelection: React.FC<ListSelectionProps> = ({
   };
 
   // Render rows with alternating colors using theme
-  const onRenderRow = useCallback((props?: IDetailsRowProps, defaultRender?: (props?: IDetailsRowProps) => JSX.Element | null) => {
+  const onRenderRow = useCallback((props?: IDetailsRowProps, defaultRender?: (props?: IDetailsRowProps) => React.ReactElement | null) => {
     if (!props) return null;
     const rowIndex = props.itemIndex;
     const isEvenRow = rowIndex % 2 === 0;

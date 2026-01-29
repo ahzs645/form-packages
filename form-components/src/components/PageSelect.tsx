@@ -112,7 +112,7 @@ export const PageSelect: React.FC<PageSelectProps> = ({
     isCurrentItem: index === selectedPage,
   }));
 
-  const renderBreadcrumbItem = (item?: IBreadcrumbItem): JSX.Element | null => {
+  const renderBreadcrumbItem = (item?: IBreadcrumbItem) => {
     if (!item) return null;
     return (
       <Link
