@@ -91,22 +91,13 @@ const applyFormDataUpdate = (prevState: FormDataState, updater: any): FormDataSt
   let newState: FormDataState;
 
   if (typeof updater === 'function') {
-    // Check if updater is a curried producer (created by calling produce(fn) with just a function)
-    // A curried producer returns a new state when called with a base state
-    // A recipe function mutates a draft and returns undefined
     try {
-      const result = updater(prevState);
-      if (result !== undefined && typeof result === 'object') {
-        // It's a curried producer - use the result directly
-        newState = result;
-      } else {
-        // It's a recipe function - wrap with produce
-        newState = produce(prevState, updater);
-      }
-    } catch (e) {
-      console.error('[setFormData] error calling updater:', e);
-      // If calling directly fails, try with produce
+      // Always use immer to avoid mutating (possibly frozen) state directly.
+      // This also supports curried producers returned by produce(fn).
       newState = produce(prevState, updater);
+    } catch (e) {
+      console.error('[setFormData] error applying updater:', e);
+      return prevState;
     }
   } else if (updater && typeof updater === 'object') {
     // Plain object - shallow merge

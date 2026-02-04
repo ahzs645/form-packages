@@ -342,14 +342,30 @@ export const OptionChoice: React.FC<OptionChoiceProps> = ({
         );
       case 'checkmark':
       default:
+        const checkboxStyles = (styleProps: any) => {
+          const isChecked = Boolean(styleProps?.checked || styleProps?.indeterminate);
+          const defaultStyles = isChecked ? {} : { checkbox: { background: 'white' } };
+          if (!controlStyles) return defaultStyles;
+          const resolved = typeof controlStyles === 'function' ? controlStyles(styleProps) : controlStyles;
+          return {
+            ...defaultStyles,
+            ...resolved,
+            checkbox: {
+              ...(defaultStyles as any).checkbox,
+              ...(resolved as any)?.checkbox,
+            },
+          };
+        };
         return (
           <Checkbox
+            {...controlProps}
             key={`checkbox-${effectiveFieldId}-${checked}`}
             checked={checked === true}
             indeterminate={checked === null}
             onChange={handleCheckboxChange}
             disabled={disabled}
             label={getCheckboxLabel()}
+            styles={checkboxStyles}
           />
         );
     }
