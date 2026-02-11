@@ -39,7 +39,7 @@ const { Stack, Label, DefaultButton, Text } = Fluent
  * - penMinWidth: number - Min stroke width (default: 0.5)
  * - penMaxWidth: number - Max stroke width (default: 2.5)
  * - backgroundColor: string - Canvas background color (default: "rgb(255,255,255)")
- * - height: number - Canvas height in pixels (default: 200)
+ * - height: number - Canvas height in pixels (default: 120)
  * - required: boolean - Whether the field is required
  * - readOnly: boolean - Whether the field is read-only
  */
@@ -50,7 +50,7 @@ const SignaturePad = ({
   penMinWidth = 0.5,
   penMaxWidth = 2.5,
   backgroundColor = "rgb(255,255,255)",
-  height = 200,
+  height = 120,
   required = false,
   readOnly = false,
 }) => {
