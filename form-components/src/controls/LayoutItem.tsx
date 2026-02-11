@@ -107,6 +107,8 @@ export const LayoutItem: React.FC<LayoutItemProps> = ({
 
   // Compute the layout ID
   const computedLayoutId = layoutId ?? fieldId ?? id;
+  // Stable field marker used by renderer->PDF sync click detection.
+  const syncFieldId = fieldId ?? id ?? computedLayoutId;
   const key = `${computedLayoutId}${index ?? ''}`;
 
   // Get layout from section context
@@ -275,7 +277,7 @@ export const LayoutItem: React.FC<LayoutItemProps> = ({
   // Heading label mode
   if (isHeadingLabel) {
     return (
-      <div key={key} style={{ padding: '12px 0', ...containerStyles }}>
+      <div key={key} style={{ padding: '12px 0', ...containerStyles }} data-field-id={syncFieldId}>
         <Label required={required} disabled={disabled} {...labelProps}>
           {label}
         </Label>
@@ -286,7 +288,7 @@ export const LayoutItem: React.FC<LayoutItemProps> = ({
   // For left label, use a flex row layout with wrapping
   if (showLeftLabel) {
     return (
-      <div style={containerStyles}>
+      <div style={containerStyles} data-field-id={syncFieldId}>
         <div style={{ display: 'flex', flexFlow: 'row wrap', alignItems: 'flex-start' }}>
           {/* Left label */}
           <Label
@@ -345,7 +347,7 @@ export const LayoutItem: React.FC<LayoutItemProps> = ({
 
   // Default rendering (top label or no label)
   return (
-    <div style={containerStyles}>
+    <div style={containerStyles} data-field-id={syncFieldId}>
       {/* Top label */}
       {showTopLabel && (
         <Label required={required} disabled={disabled} {...labelProps}>

@@ -35,6 +35,7 @@ EditableTable = ({
   allowDeleteNonEmpty = false,
   showBackground = false,
   sourceFieldIds = {},  // Map of column ID to original PDF field ID for PDF sync
+  sourceFieldIdsByRow = {},  // Map row index -> column ID -> original PDF field ID
   ...props
 }) => {
   const [fd] = useActiveData()
@@ -135,6 +136,12 @@ EditableTable = ({
   }
 
   const remaining = maxRows - visibleRows
+
+  const getSourceFieldId = (rowIndex, columnId) => {
+    return sourceFieldIdsByRow?.[rowIndex]?.[columnId]
+      || sourceFieldIds[columnId]
+      || undefined
+  }
 
   // Always create display rows based on visibleRows count
   // This ensures the table renders even before data is initialized
@@ -333,7 +340,7 @@ EditableTable = ({
                     </td>
                   )}
                   {columns.map((col) => (
-                    <td key={col.id} style={bodyCellStyle} data-source-field-id={sourceFieldIds[col.id] || undefined}>
+                    <td key={col.id} style={bodyCellStyle} data-source-field-id={getSourceFieldId(idx, col.id)}>
                       {renderCellInput(row, idx, col)}
                     </td>
                   ))}
