@@ -310,6 +310,8 @@ function loadComponentCode(code: string, componentName: string, additionalCompon
     'ConditionalGroup', 'ConditionalField', 'LogicGateProvider', 'useLogicGate', 'useIsVisible', 'useConditionalVisibility',
     'ConditionalGroupSchema', 'createBranchingRule', 'generateConditionalGroupJSX', 'ControllerLabelPresets',
     'MAX_SUBGROUP_DEPTH',
+    // SignaturePad exports
+    'SignaturePad',
     // Utility functions from CommonSchemaDefn
     'makeValueSetOptions', 'makeTextObsUpdates', 'makeCodedObsUpdates', 'makeObsUpdatesFromVs',
     'ynuaOptions',

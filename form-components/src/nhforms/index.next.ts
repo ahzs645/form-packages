@@ -318,6 +318,8 @@ function loadComponentCode(code: string, componentName: string, additionalCompon
     'ConditionalGroup', 'ConditionalField', 'LogicGateProvider', 'useConditionalVisibility',
     // SaveOnClose exports
     'SaveOnClose', 'useSaveOnClose',
+    // SignaturePad exports
+    'SignaturePad',
     // Utility functions from CommonSchemaDefn
     'makeValueSetOptions', 'makeTextObsUpdates', 'makeCodedObsUpdates', 'makeObsUpdatesFromVs',
     'ynuaOptions',
