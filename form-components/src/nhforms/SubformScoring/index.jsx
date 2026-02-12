@@ -774,6 +774,7 @@ const SubformScoring = ({
           modalButtonText={field.modalButtonText}
           modalTitle={field.modalTitle}
           modalMinWidth={field.modalMinWidth}
+          mapZoomPercent={field.mapZoomPercent}
           mapWidthPercent={field.mapWidthPercent}
           mapMaxWidth={field.mapMaxWidth}
           mapMinHeight={field.mapMinHeight}

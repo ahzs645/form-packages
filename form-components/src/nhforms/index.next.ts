@@ -542,6 +542,7 @@ export const {
   HFC_PT_ASMT_SnapShot,
   // Utility components
   NewTextArea,
+  MoisPatientReviewLink,
   useChangeWatch,
   // ScaleField
   ScaleField,

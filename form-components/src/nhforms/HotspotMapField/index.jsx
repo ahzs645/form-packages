@@ -28,6 +28,7 @@ const { Label, Text, Stack, PrimaryButton, Dialog, DialogType, DialogFooter } = 
 
 const DEFAULT_MARKER_SIZE = 3
 const DEFAULT_MARKER_RADIUS = 1.5
+const DEFAULT_MAP_ZOOM_PERCENT = 100
 const DEFAULT_MAP_WIDTH_PERCENT = 100
 const DEFAULT_MAP_MAX_WIDTH = 560
 const DEFAULT_MAP_MIN_HEIGHT = 220
@@ -252,6 +253,10 @@ const createHotspotMapConfig = (config = {}) => ({
     Number.isFinite(Number(config.modalMinWidth)) && Number(config.modalMinWidth) > 0
       ? Math.max(360, Number(config.modalMinWidth))
       : 760,
+  mapZoomPercent:
+    Number.isFinite(Number(config.mapZoomPercent)) && Number(config.mapZoomPercent) > 0
+      ? Math.max(25, Math.min(300, Number(config.mapZoomPercent)))
+      : DEFAULT_MAP_ZOOM_PERCENT,
   mapWidthPercent:
     Number.isFinite(Number(config.mapWidthPercent)) && Number(config.mapWidthPercent) > 0
       ? Math.max(20, Math.min(100, Number(config.mapWidthPercent)))
@@ -383,6 +388,7 @@ const HotspotMapField = ({
   modalButtonText = "Open Map",
   modalTitle = "",
   modalMinWidth = 760,
+  mapZoomPercent = DEFAULT_MAP_ZOOM_PERCENT,
   mapWidthPercent = DEFAULT_MAP_WIDTH_PERCENT,
   mapMaxWidth = DEFAULT_MAP_MAX_WIDTH,
   mapMinHeight = DEFAULT_MAP_MIN_HEIGHT,
@@ -489,6 +495,8 @@ const HotspotMapField = ({
   const responsiveSvg = useMemo(() => ensureResponsiveSvg(imageSvg), [imageSvg])
   const selectedLabels = Array.isArray(mapValue?.selectedLabels) ? mapValue.selectedLabels : []
   const selectedCount = Number.isFinite(mapValue?.selectedCount) ? mapValue.selectedCount : selectedIds.size
+  const resolvedMapZoomPercent = Math.max(25, Math.min(300, Number(mapZoomPercent) || DEFAULT_MAP_ZOOM_PERCENT))
+  const zoomFactor = resolvedMapZoomPercent / 100
   const resolvedMapWidthPercent = Math.max(20, Math.min(100, Number(mapWidthPercent) || DEFAULT_MAP_WIDTH_PERCENT))
   const resolvedMapMaxWidth = Math.max(220, Number(mapMaxWidth) || DEFAULT_MAP_MAX_WIDTH)
   const resolvedMapMinHeight = Math.max(120, Number(mapMinHeight) || DEFAULT_MAP_MIN_HEIGHT)
@@ -504,8 +512,8 @@ const HotspotMapField = ({
   const mapFrameStyle = {
     position: "relative",
     width: `${resolvedMapWidthPercent}%`,
-    maxWidth: `${resolvedMapMaxWidth}px`,
-    minHeight: `${resolvedMapMinHeight}px`,
+    maxWidth: `${resolvedMapMaxWidth * zoomFactor}px`,
+    minHeight: `${resolvedMapMinHeight * zoomFactor}px`,
     margin: "0 auto",
     borderRadius: "6px",
     overflow: "hidden",
@@ -564,9 +572,13 @@ const HotspotMapField = ({
                 role="button"
                 tabIndex={readOnly ? -1 : 0}
                 aria-pressed={isSelected}
+                onMouseDown={(event) => event.preventDefault()}
                 onClick={() => handleToggleHotspot(hotspot.id)}
                 onKeyDown={(event) => handleHotspotKeyDown(event, hotspot.id)}
-                style={{ cursor: readOnly ? "default" : "pointer" }}
+                style={{
+                  cursor: readOnly ? "default" : "pointer",
+                  outline: "none",
+                }}
               >
                 <title>{hotspot.label || hotspot.id}</title>
                 {hotspot.shape === "circle" ? (

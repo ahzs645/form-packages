@@ -1,0 +1,26 @@
+{
+  "name": "MoisPatientReviewLink",
+  "title": "MOIS Patient Review Link",
+  "description": "Displays a hyperlink and a confirmation checkbox to indicate the material was reviewed and provided to the patient",
+  "version": {
+    "major": 1,
+    "minor": 0,
+    "patch": 0
+  },
+  "type": "component",
+  "owner": "Northern Health",
+  "author": "Northern Health",
+  "publisher": "Northern Health",
+  "globalIdentifier": "",
+  "requiredFormViewerVersion": {
+    "major": 0,
+    "minor": 1,
+    "patch": 0
+  },
+  "requiredMoisVersion": {
+    "major": 2,
+    "minor": 26,
+    "patch": 12
+  },
+  "components": []
+}
