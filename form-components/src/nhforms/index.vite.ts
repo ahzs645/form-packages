@@ -303,6 +303,8 @@ function loadComponentCode(code: string, componentName: string, additionalCompon
     'EditableTable', 'EditableTableSchema', 'createTableColumns',
     // ScoringModule exports
     'ScoringModule', 'ScoringModuleSchema', 'createScoringQuestion', 'createScoringTotal', 'createScoringConfig', 'ScoringScales',
+    // SubformScoring exports
+    'SubformScoring',
     // CompactBooleanField exports
     'CompactBooleanField', 'CompactBooleanGroup', 'CompactBooleanChecklist', 'YesNoButtons',
     'CompactBooleanFieldSchema', 'CompactBooleanChecklistSchema', 'BooleanLabelPresets',
@@ -536,6 +538,8 @@ export const {
   createScoringTotal,
   createScoringConfig,
   ScoringScales,
+  // SubformScoring
+  SubformScoring,
   // CompactBooleanField
   CompactBooleanField,
   CompactBooleanGroup,

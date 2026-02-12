@@ -1,0 +1,25 @@
+{
+  "name": "SubformScoring",
+  "title": "Subform Scoring with Modal and Summary",
+  "description": "A modal-based scoring subform that opens a ScoringModule in a dialog and displays configurable summary items (scores, interpretations, answers) inline after completion",
+  "version": {
+    "major": 1,
+    "minor": 0,
+    "patch": 0
+  },
+  "type": "component",
+  "owner": "MOIS Styleguide",
+  "author": "MOIS Styleguide",
+  "publisher": "MOIS Styleguide",
+  "globalIdentifier": "",
+  "requiredFormViewerVersion": {
+    "major": 0,
+    "minor": 1,
+    "patch": 0
+  },
+  "requiredMoisVersion": {
+    "major": 2,
+    "minor": 26,
+    "patch": 12
+  }
+}
