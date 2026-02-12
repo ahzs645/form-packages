@@ -6382,7 +6382,7 @@ const UpdateContext = (fd, id, values) => {
  * HotspotMapField
  *
  * Generic image/SVG map with selectable hotspot overlays.
- * - Supports imageUrl or inline imageSvg
+ * - Supports imageUrl (including base64 data URLs) or inline imageSvg
  * - Stores selection state in fd.field.data[fieldId]
  * - Optional writeback fields for count and selected labels/ids
  * - Optional per-hotspot fieldId writebacks (boolean)
@@ -6391,12 +6391,13 @@ const UpdateContext = (fd, id, values) => {
  * {
  *   id: string,
  *   label?: string,
- *   shape?: "rect" | "circle",
+ *   shape?: "rect" | "circle" | "polygon",
  *   x: number, // percent
  *   y: number, // percent
  *   width?: number, // percent (rect)
  *   height?: number, // percent (rect)
  *   radius?: number, // percent (circle)
+ *   points?: [{ x: number, y: number }], // percent (polygon)
  *   fieldId?: string,
  *   group?: string
  * }
@@ -6422,9 +6423,93 @@ const normalizeString = (value, fallback = "") => {
   return trimmed.length > 0 ? trimmed : fallback
 }
 
+const parseSvgNumber = (value) => {
+  const raw = normalizeString(value, "")
+  if (!raw) return null
+  const match = raw.match(/-?\\d+(\\.\\d+)?/)
+  if (!match) return null
+  const parsed = Number(match[0])
+  return Number.isFinite(parsed) ? parsed : null
+}
+
 const normalizeShape = (value) => {
   const normalized = normalizeString(value, "rect").toLowerCase()
-  return normalized === "circle" ? "circle" : "rect"
+  if (normalized === "polygon") return "polygon"
+  if (normalized === "circle") return "circle"
+  return "rect"
+}
+
+const centroidFromPoints = (points) => {
+  if (!Array.isArray(points) || points.length === 0) {
+    return { x: 0, y: 0 }
+  }
+  const total = points.reduce(
+    (acc, point) => ({
+      x: acc.x + point.x,
+      y: acc.y + point.y,
+    }),
+    { x: 0, y: 0 }
+  )
+  return {
+    x: total.x / points.length,
+    y: total.y / points.length,
+  }
+}
+
+const buildFallbackPolygon = (x, y, markerSize) => {
+  const half = Math.max(0.5, markerSize / 2)
+  return [
+    { x: clampPercent(x - half), y: clampPercent(y - half) },
+    { x: clampPercent(x + half), y: clampPercent(y - half) },
+    { x: clampPercent(x + half), y: clampPercent(y + half) },
+    { x: clampPercent(x - half), y: clampPercent(y + half) },
+  ]
+}
+
+const normalizeHotspotPoints = (value) => {
+  if (typeof value === "string") {
+    if (!value.trim()) return []
+    return value
+      .trim()
+      .split(/\\s+/)
+      .map((entry) => {
+        const parts = entry.split(",")
+        if (parts.length < 2) return null
+        const x = clampPercent(parts[0])
+        const y = clampPercent(parts[1])
+        return { x, y }
+      })
+      .filter(Boolean)
+  }
+
+  if (!Array.isArray(value)) return []
+  return value
+    .map((point) => {
+      if (!point || typeof point !== "object") return null
+      return {
+        x: clampPercent(point.x),
+        y: clampPercent(point.y),
+      }
+    })
+    .filter(Boolean)
+}
+
+const pointsToSvgString = (points) =>
+  (Array.isArray(points) ? points : [])
+    .map((point) => \`\${point.x},\${point.y}\`)
+    .join(" ")
+
+const getHotspotLabelAnchor = (hotspot) => {
+  if (hotspot.shape === "circle") {
+    return { x: hotspot.x, y: hotspot.y }
+  }
+  if (hotspot.shape === "polygon" && Array.isArray(hotspot.points) && hotspot.points.length > 0) {
+    return centroidFromPoints(hotspot.points)
+  }
+  return {
+    x: hotspot.x + (hotspot.width || 0) / 2,
+    y: hotspot.y + (hotspot.height || 0) / 2,
+  }
 }
 
 const normalizeHotspots = (hotspots, markerSize = DEFAULT_MARKER_SIZE) => {
@@ -6453,6 +6538,9 @@ const normalizeHotspots = (hotspots, markerSize = DEFAULT_MARKER_SIZE) => {
         shape,
         x,
         y,
+        width: markerSize,
+        height: markerSize,
+        radius: Math.max(DEFAULT_MARKER_RADIUS, markerSize / 2),
         fieldId: normalizeString(hotspot.fieldId, ""),
         group: normalizeString(hotspot.group, ""),
       }
@@ -6462,6 +6550,13 @@ const normalizeHotspots = (hotspots, markerSize = DEFAULT_MARKER_SIZE) => {
           hotspot.radius != null ? hotspot.radius : markerSize / 2 || DEFAULT_MARKER_RADIUS
         )
         normalizedHotspot.radius = radius > 0 ? radius : DEFAULT_MARKER_RADIUS
+      } else if (shape === "polygon") {
+        const parsedPoints = normalizeHotspotPoints(hotspot.points)
+        const points = parsedPoints.length >= 3 ? parsedPoints : buildFallbackPolygon(x, y, markerSize)
+        normalizedHotspot.points = points
+        const centroid = centroidFromPoints(points)
+        normalizedHotspot.x = centroid.x
+        normalizedHotspot.y = centroid.y
       } else {
         const width = clampPercent(hotspot.width != null ? hotspot.width : markerSize)
         const height = clampPercent(hotspot.height != null ? hotspot.height : markerSize)
@@ -6549,8 +6644,8 @@ const importSvgHotspots = (svgMarkup) => {
     const vbWidth = Number.isFinite(viewBoxParts[2]) ? viewBoxParts[2] : null
     const vbHeight = Number.isFinite(viewBoxParts[3]) ? viewBoxParts[3] : null
 
-    const widthAttr = Number(svg.getAttribute("width"))
-    const heightAttr = Number(svg.getAttribute("height"))
+    const widthAttr = parseSvgNumber(svg.getAttribute("width"))
+    const heightAttr = parseSvgNumber(svg.getAttribute("height"))
     const sourceWidth = Number.isFinite(widthAttr) && widthAttr > 0 ? widthAttr : vbWidth || 100
     const sourceHeight = Number.isFinite(heightAttr) && heightAttr > 0 ? heightAttr : vbHeight || 100
 
@@ -6558,7 +6653,7 @@ const importSvgHotspots = (svgMarkup) => {
     const toYPercent = (value) => clampPercent((Number(value) / sourceHeight) * 100)
 
     const elements = Array.from(
-      svg.querySelectorAll("rect[data-hotspot-id], rect[id], circle[data-hotspot-id], circle[id], ellipse[data-hotspot-id], ellipse[id]")
+      svg.querySelectorAll("rect[data-hotspot-id], rect[id], circle[data-hotspot-id], circle[id], ellipse[data-hotspot-id], ellipse[id], polygon[data-hotspot-id], polygon[id], polyline[data-hotspot-id], polyline[id]")
     )
 
     return elements
@@ -6568,8 +6663,34 @@ const importSvgHotspots = (svgMarkup) => {
           normalizeString(element.getAttribute("id"), \`hotspot_\${index + 1}\`)
         )
         const rawLabel = normalizeString(element.getAttribute("data-hotspot-label"), rawId)
+        const tagName = element.tagName.toLowerCase()
 
-        if (element.tagName.toLowerCase() === "rect") {
+        if (tagName === "polygon" || tagName === "polyline") {
+          const pointsAttr = normalizeString(element.getAttribute("points"), "")
+          const points = pointsAttr
+            .split(/\\s+/)
+            .map((entry) => {
+              const pair = entry.split(",")
+              if (pair.length < 2) return null
+              return {
+                x: toXPercent(pair[0]),
+                y: toYPercent(pair[1]),
+              }
+            })
+            .filter(Boolean)
+          if (points.length < 3) return null
+          const centroid = centroidFromPoints(points)
+          return {
+            id: rawId,
+            label: rawLabel,
+            shape: "polygon",
+            x: centroid.x,
+            y: centroid.y,
+            points,
+          }
+        }
+
+        if (tagName === "rect") {
           const x = toXPercent(element.getAttribute("x") || 0)
           const y = toYPercent(element.getAttribute("y") || 0)
           const width = toXPercent(element.getAttribute("width") || 0)
@@ -6587,7 +6708,7 @@ const importSvgHotspots = (svgMarkup) => {
 
         const cx = toXPercent(element.getAttribute("cx") || 0)
         const cy = toYPercent(element.getAttribute("cy") || 0)
-        const r = element.tagName.toLowerCase() === "ellipse"
+        const r = tagName === "ellipse"
           ? (toXPercent(element.getAttribute("rx") || 0) + toYPercent(element.getAttribute("ry") || 0)) / 2
           : toXPercent(element.getAttribute("r") || 0)
 
@@ -6707,6 +6828,14 @@ const HotspotMapField = ({
     commitSelection(next)
   }, [allowMultiSelect, commitSelection, readOnly, selectedIds])
 
+  const handleHotspotKeyDown = useCallback((event, hotspotId) => {
+    if (readOnly) return
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault()
+      handleToggleHotspot(hotspotId)
+    }
+  }, [handleToggleHotspot, readOnly])
+
   const responsiveSvg = useMemo(() => ensureResponsiveSvg(imageSvg), [imageSvg])
   const selectedLabels = Array.isArray(mapValue?.selectedLabels) ? mapValue.selectedLabels : []
   const selectedCount = Number.isFinite(mapValue?.selectedCount) ? mapValue.selectedCount : selectedIds.size
@@ -6730,18 +6859,6 @@ const HotspotMapField = ({
   const overlayStyle = {
     position: "absolute",
     inset: 0,
-  }
-
-  const markerBaseStyle = {
-    position: "absolute",
-    cursor: readOnly ? "default" : "pointer",
-    border: "2px solid #1f2937",
-    backgroundColor: "#ffffff",
-    boxShadow: "0 1px 2px rgba(0, 0, 0, 0.2)",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 0,
   }
 
   return (
@@ -6780,51 +6897,77 @@ const HotspotMapField = ({
         )}
 
         <div style={overlayStyle}>
-          {normalizedHotspots.map((hotspot) => {
-            const isSelected = selectedIds.has(hotspot.id)
-            const base = {
-              ...markerBaseStyle,
-              borderColor: isSelected ? "#1d4ed8" : "#374151",
-              backgroundColor: isSelected ? "#2563eb" : "#ffffff",
-              color: isSelected ? "#ffffff" : "#111827",
-            }
+          <svg
+            viewBox="0 0 100 100"
+            preserveAspectRatio="none"
+            style={{ width: "100%", height: "100%", display: "block" }}
+          >
+            {normalizedHotspots.map((hotspot) => {
+              const isSelected = selectedIds.has(hotspot.id)
+              const stroke = isSelected ? "#1d4ed8" : "#374151"
+              const fill = isSelected ? "rgba(37, 99, 235, 0.4)" : "rgba(255, 255, 255, 0.2)"
+              const labelAnchor = getHotspotLabelAnchor(hotspot)
 
-            const style =
-              hotspot.shape === "circle"
-                ? {
-                    ...base,
-                    left: \`\${hotspot.x - hotspot.radius}%\`,
-                    top: \`\${hotspot.y - hotspot.radius}%\`,
-                    width: \`\${hotspot.radius * 2}%\`,
-                    height: \`\${hotspot.radius * 2}%\`,
-                    borderRadius: "9999px",
-                  }
-                : {
-                    ...base,
-                    left: \`\${hotspot.x}%\`,
-                    top: \`\${hotspot.y}%\`,
-                    width: \`\${hotspot.width}%\`,
-                    height: \`\${hotspot.height}%\`,
-                    borderRadius: "3px",
-                  }
-
-            return (
-              <button
-                key={hotspot.id}
-                type="button"
-                style={style}
-                aria-pressed={isSelected}
-                title={hotspot.label || hotspot.id}
-                onClick={() => handleToggleHotspot(hotspot.id)}
-              >
-                {showHotspotLabels ? (
-                  <span style={{ fontSize: "10px", fontWeight: 600, padding: "0 2px", lineHeight: 1.1 }}>
-                    {hotspot.label || hotspot.id}
-                  </span>
-                ) : null}
-              </button>
-            )
-          })}
+              return (
+                <g
+                  key={hotspot.id}
+                  role="button"
+                  tabIndex={readOnly ? -1 : 0}
+                  aria-pressed={isSelected}
+                  onClick={() => handleToggleHotspot(hotspot.id)}
+                  onKeyDown={(event) => handleHotspotKeyDown(event, hotspot.id)}
+                  style={{ cursor: readOnly ? "default" : "pointer" }}
+                >
+                  <title>{hotspot.label || hotspot.id}</title>
+                  {hotspot.shape === "circle" ? (
+                    <circle
+                      cx={hotspot.x}
+                      cy={hotspot.y}
+                      r={Math.max(0.5, hotspot.radius)}
+                      fill={fill}
+                      stroke={stroke}
+                      strokeWidth={0.5}
+                    />
+                  ) : hotspot.shape === "polygon" ? (
+                    <polygon
+                      points={pointsToSvgString(hotspot.points)}
+                      fill={fill}
+                      stroke={stroke}
+                      strokeWidth={0.5}
+                    />
+                  ) : (
+                    <rect
+                      x={hotspot.x}
+                      y={hotspot.y}
+                      width={Math.max(0.5, hotspot.width)}
+                      height={Math.max(0.5, hotspot.height)}
+                      rx={0.5}
+                      fill={fill}
+                      stroke={stroke}
+                      strokeWidth={0.5}
+                    />
+                  )}
+                  {showHotspotLabels ? (
+                    <text
+                      x={labelAnchor.x}
+                      y={labelAnchor.y}
+                      textAnchor="middle"
+                      dominantBaseline="middle"
+                      style={{
+                        fontSize: "2.2px",
+                        fontWeight: 700,
+                        fill: isSelected ? "#0f172a" : "#1f2937",
+                        pointerEvents: "none",
+                        userSelect: "none",
+                      }}
+                    >
+                      {hotspot.label || hotspot.id}
+                    </text>
+                  ) : null}
+                </g>
+              )
+            })}
+          </svg>
         </div>
       </div>
 
@@ -6847,7 +6990,6 @@ const HotspotMapField = ({
 HotspotMapField.createConfig = createHotspotMapConfig
 HotspotMapField.importSvgHotspots = importSvgHotspots
 HotspotMapField.normalizeHotspots = normalizeHotspots
-
 `,
   './LongTermMedications/index.jsx': `/**
  * Display a list of long term medication orders for this patient.
@@ -8051,6 +8193,577 @@ employer
 classification { code display system }
 hoursPerWeek
 \`
+`,
+  './PdfRegenerator/index.jsx': `/**
+ * PdfRegenerator
+ *
+ * Runtime-only client-side button that regenerates an AcroForm PDF from
+ * current form data. This component is self-contained JSX and does not rely
+ * on host-side MOIS-native helper components.
+ */
+
+const { useMemo, useState, useCallback } = React
+const { Stack, Text, DefaultButton } = Fluent
+
+const PDF_LIB_URL = "https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"
+let _pdfLibPromise = null
+
+const _isNonEmptyString = (value) => typeof value === "string" && value.trim().length > 0
+
+const _decodePdfHex = (value) => {
+  if (!_isNonEmptyString(value)) return ""
+  const withoutSlash = value.startsWith("/") ? value.slice(1) : value
+  return withoutSlash.replace(/#([0-9A-Fa-f]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+}
+
+const _normalizeToken = (value) => _decodePdfHex(String(value || "")).trim().toLowerCase()
+
+const _resolveValueByPath = (root, path) => {
+  if (!root || !_isNonEmptyString(path)) return undefined
+  const segments = path.split(".").map((segment) => segment.trim()).filter(Boolean)
+  let current = root
+  for (const segment of segments) {
+    if (!current || typeof current !== "object") return undefined
+    current = current[segment]
+  }
+  return current
+}
+
+const _toText = (value) => {
+  if (value === null || value === undefined) return null
+  if (typeof value === "string") {
+    const trimmed = value.trim()
+    return trimmed ? trimmed : null
+  }
+  if (typeof value === "number" || typeof value === "boolean") return String(value)
+  if (Array.isArray(value)) {
+    const parts = value.map(_toText).filter(Boolean)
+    return parts.length ? parts.join(", ") : null
+  }
+  if (typeof value === "object") {
+    if (typeof value.dataUrl === "string") return null
+
+    const maybeDate = _toText(value.date)
+    const maybeTime = _toText(value.time)
+    if (maybeDate || maybeTime) {
+      return [maybeDate, maybeTime].filter(Boolean).join(" ")
+    }
+
+    const selectedCount = value.selectedCount
+    if (typeof selectedCount === "number" && Number.isFinite(selectedCount)) {
+      return String(selectedCount)
+    }
+
+    const candidateKeys = ["display", "text", "label", "value", "code", "key", "id", "name"]
+    for (const key of candidateKeys) {
+      const candidate = _toText(value[key])
+      if (candidate) return candidate
+    }
+  }
+  return null
+}
+
+const _toBooleanLike = (value) => {
+  if (typeof value === "boolean") return value
+  if (typeof value === "number" && Number.isFinite(value)) return value !== 0
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase()
+    if (!normalized) return undefined
+    if (["true", "t", "yes", "y", "on", "1", "checked"].includes(normalized)) return true
+    if (["false", "f", "no", "n", "off", "0", "unchecked"].includes(normalized)) return false
+    return undefined
+  }
+  if (Array.isArray(value)) return value.length > 0
+  if (value && typeof value === "object") {
+    if (typeof value.isEmpty === "boolean") return !value.isEmpty
+    if (typeof value.checked === "boolean") return value.checked
+    if (typeof value.selectedCount === "number" && Number.isFinite(value.selectedCount)) {
+      return value.selectedCount > 0
+    }
+    return _toBooleanLike(value.value ?? value.code ?? value.key ?? value.text ?? value.display)
+  }
+  return undefined
+}
+
+const _collectCandidates = (value, out) => {
+  const text = _toText(value)
+  if (text) out.add(text)
+
+  if (Array.isArray(value)) {
+    value.forEach((item) => _collectCandidates(item, out))
+    return
+  }
+  if (!value || typeof value !== "object") return
+
+  const candidateKeys = ["code", "key", "value", "text", "display", "label", "id", "name"]
+  candidateKeys.forEach((key) => {
+    const maybe = _toText(value[key])
+    if (maybe) out.add(maybe)
+  })
+
+  if (Array.isArray(value.selectedIds)) {
+    value.selectedIds.forEach((item) => _collectCandidates(item, out))
+  }
+  if (Array.isArray(value.selectedLabels)) {
+    value.selectedLabels.forEach((item) => _collectCandidates(item, out))
+  }
+}
+
+const _toCandidateList = (value) => {
+  const set = new Set()
+  _collectCandidates(value, set)
+  return Array.from(set)
+}
+
+const _matchSingleOption = (rawValue, options) => {
+  if (!Array.isArray(options) || options.length === 0) return null
+
+  const normalizedOptionMap = new Map()
+  options.forEach((option) => {
+    normalizedOptionMap.set(_normalizeToken(option), option)
+  })
+
+  const candidates = _toCandidateList(rawValue)
+
+  for (const candidate of candidates) {
+    const direct = normalizedOptionMap.get(_normalizeToken(candidate))
+    if (direct) return direct
+  }
+
+  for (const candidate of candidates) {
+    const normalizedCandidate = _normalizeToken(candidate)
+    const fuzzy = options.find((option) => {
+      const normalizedOption = _normalizeToken(option)
+      return normalizedOption.includes(normalizedCandidate) || normalizedCandidate.includes(normalizedOption)
+    })
+    if (fuzzy) return fuzzy
+  }
+
+  return null
+}
+
+const _matchMultipleOptions = (rawValue, options) => {
+  if (!Array.isArray(rawValue)) {
+    const single = _matchSingleOption(rawValue, options)
+    return single ? [single] : []
+  }
+
+  const selected = new Set()
+  rawValue.forEach((item) => {
+    const match = _matchSingleOption(item, options)
+    if (match) selected.add(match)
+  })
+  return Array.from(selected)
+}
+
+const _normalizeFieldMap = (fieldMap, formData) => {
+  const mapped = new Map()
+  if (!fieldMap || typeof fieldMap !== "object") return mapped
+
+  const formKeys = new Set(Object.keys(formData || {}))
+
+  Object.entries(fieldMap).forEach(([leftRaw, rightRaw]) => {
+    const left = String(leftRaw || "").trim()
+    const right = String(rightRaw || "").trim()
+    if (!left || !right) return
+
+    const leftIsFormId = formKeys.has(left)
+    const rightIsFormId = formKeys.has(right)
+
+    if (leftIsFormId && !rightIsFormId) {
+      mapped.set(right, left)
+      return
+    }
+    if (rightIsFormId && !leftIsFormId) {
+      mapped.set(left, right)
+      return
+    }
+
+    // Default assumption for ambiguous mappings: formId -> pdfFieldName
+    mapped.set(right, left)
+  })
+
+  return mapped
+}
+
+const _base64ToBytes = (value) => {
+  const trimmed = String(value || "").trim()
+  const payload = trimmed.includes("base64,") ? trimmed.slice(trimmed.indexOf("base64,") + 7) : trimmed
+  const clean = payload.replace(/\\s+/g, "")
+  if (!clean) {
+    throw new Error("Source PDF payload is empty")
+  }
+
+  if (typeof atob === "function") {
+    const binary = atob(clean)
+    const bytes = new Uint8Array(binary.length)
+    for (let i = 0; i < binary.length; i += 1) {
+      bytes[i] = binary.charCodeAt(i)
+    }
+    return bytes
+  }
+
+  throw new Error("Base64 decode is unavailable in this runtime")
+}
+
+const _downloadBytes = (bytes, fileName) => {
+  const blob = new Blob([bytes], { type: "application/pdf" })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement("a")
+  link.href = url
+  link.download = fileName
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
+const _loadPdfLib = () => {
+  if (typeof window === "undefined" || typeof document === "undefined") {
+    return Promise.reject(new Error("PDF regeneration is only available in browser runtime."))
+  }
+
+  if (window.PDFLib) {
+    return Promise.resolve(window.PDFLib)
+  }
+
+  if (_pdfLibPromise) {
+    return _pdfLibPromise
+  }
+
+  _pdfLibPromise = new Promise((resolve, reject) => {
+    const existing = document.querySelector(\`script[data-pdf-lib=\\"\${PDF_LIB_URL}\\"]\`)
+    if (existing) {
+      existing.addEventListener("load", () => {
+        if (window.PDFLib) resolve(window.PDFLib)
+        else reject(new Error("pdf-lib script loaded but global object was not found."))
+      })
+      existing.addEventListener("error", () => reject(new Error("Failed to load pdf-lib script.")))
+      return
+    }
+
+    const script = document.createElement("script")
+    script.src = PDF_LIB_URL
+    script.async = true
+    script.dataset.pdfLib = PDF_LIB_URL
+    script.onload = () => {
+      if (window.PDFLib) resolve(window.PDFLib)
+      else reject(new Error("pdf-lib script loaded but global object was not found."))
+    }
+    script.onerror = () => reject(new Error("Failed to load pdf-lib script."))
+    document.head.appendChild(script)
+  })
+
+  return _pdfLibPromise
+}
+
+const _getCheckboxOnStates = (field) => {
+  const states = new Set()
+  const acro = field?.acroField
+  const widgets = acro?.getWidgets?.() || []
+  widgets.forEach((widget) => {
+    const onValue = widget?.getOnValue?.()
+    const state = onValue?.toString ? _decodePdfHex(onValue.toString()) : null
+    if (!state || _normalizeToken(state) === "off") return
+    states.add(state)
+  })
+  return Array.from(states)
+}
+
+const _setCheckboxByState = (field, requestedState, PDFLib) => {
+  const acro = field?.acroField
+  const widgets = acro?.getWidgets?.() || []
+  if (!acro || widgets.length === 0) return false
+
+  const normalizedRequested = _normalizeToken(requestedState)
+  let targetStateName = null
+
+  for (const widget of widgets) {
+    const onValue = widget?.getOnValue?.()
+    const onText = onValue?.toString ? _decodePdfHex(onValue.toString()) : null
+    if (!onText) continue
+    if (_normalizeToken(onText) !== normalizedRequested) continue
+    targetStateName = onValue instanceof PDFLib.PDFName ? onValue : PDFLib.PDFName.of(onText)
+    break
+  }
+
+  if (!targetStateName) {
+    targetStateName = PDFLib.PDFName.of(requestedState)
+  }
+
+  try {
+    acro.setValue?.(targetStateName)
+  } catch (error) {
+    return false
+  }
+
+  const offState = PDFLib.PDFName.of("Off")
+  widgets.forEach((widget) => {
+    if (!widget?.setAppearanceState) return
+    const onValue = widget?.getOnValue?.()
+    const onText = onValue?.toString ? _decodePdfHex(onValue.toString()) : null
+    const isOn = onText && _normalizeToken(onText) === normalizedRequested
+    widget.setAppearanceState(isOn && onValue ? onValue : offState)
+  })
+
+  return true
+}
+
+const _fillField = (field, rawValue, sourceFieldId, warnings, PDFLib) => {
+  try {
+    if (field instanceof PDFLib.PDFTextField) {
+      const text = _toText(rawValue)
+      if (!text) return false
+      field.setText(text)
+      return true
+    }
+
+    if (field instanceof PDFLib.PDFRadioGroup) {
+      const options = field.getOptions() || []
+      const match = _matchSingleOption(rawValue, options)
+      if (!match) {
+        warnings.push(\`Field \\"\${field.getName()}\\" (\${sourceFieldId}): no matching radio option.\`)
+        return false
+      }
+      field.select(match)
+      return true
+    }
+
+    if (field instanceof PDFLib.PDFDropdown) {
+      const options = field.getOptions() || []
+      const match = _matchSingleOption(rawValue, options)
+      if (!match) {
+        warnings.push(\`Field \\"\${field.getName()}\\" (\${sourceFieldId}): no matching dropdown option.\`)
+        return false
+      }
+      field.select(match)
+      return true
+    }
+
+    if (field instanceof PDFLib.PDFOptionList) {
+      const options = field.getOptions() || []
+      const matches = _matchMultipleOptions(rawValue, options)
+      if (!matches.length) {
+        warnings.push(\`Field \\"\${field.getName()}\\" (\${sourceFieldId}): no matching list option.\`)
+        return false
+      }
+      field.select(matches)
+      return true
+    }
+
+    if (field instanceof PDFLib.PDFCheckBox) {
+      const states = _getCheckboxOnStates(field)
+      if (states.length > 0) {
+        const match = _matchSingleOption(rawValue, states)
+        if (match && _setCheckboxByState(field, match, PDFLib)) {
+          return true
+        }
+      }
+
+      const boolValue = _toBooleanLike(rawValue)
+      if (boolValue === undefined) {
+        warnings.push(\`Field \\"\${field.getName()}\\" (\${sourceFieldId}): value is not boolean-like.\`)
+        return false
+      }
+      if (boolValue) field.check()
+      else field.uncheck()
+      return true
+    }
+
+    return false
+  } catch (error) {
+    warnings.push(\`Field \\"\${field.getName()}\\" (\${sourceFieldId}): \${error?.message || "failed"}\`)
+    return false
+  }
+}
+
+const _statusColor = (kind) => {
+  if (kind === "success") return "#107c10"
+  if (kind === "error") return "#a4262c"
+  return "#605e5c"
+}
+
+const PdfRegenerator = ({
+  label,
+  buttonText = "Download Filled PDF",
+  fileName = "filled-form.pdf",
+  iconName = "Print",
+  sourcePdfBase64,
+  sourcePdfPath = "sessionPdf.base64",
+  sourcePdfFieldId,
+  fieldMap,
+  includeOnlyFieldIds,
+  flatten = false,
+  disabled = false,
+  showStatus = false,
+  showDiagnostics = false,
+  onComplete,
+}) => {
+  const [fd] = useActiveData()
+  const sd = useSourceData()
+  const [isBusy, setIsBusy] = useState(false)
+  const [status, setStatus] = useState(null)
+
+  const resolvedPdfSource = useMemo(() => {
+    if (_isNonEmptyString(sourcePdfBase64)) {
+      return sourcePdfBase64.trim()
+    }
+
+    const sourceId = _isNonEmptyString(sourcePdfFieldId) ? sourcePdfFieldId.trim() : ""
+    if (sourceId) {
+      const fromData = fd?.field?.data?.[sourceId]
+      if (_isNonEmptyString(fromData)) return fromData.trim()
+    }
+
+    const fromPath = _isNonEmptyString(sourcePdfPath)
+      ? _resolveValueByPath(sd, sourcePdfPath.trim())
+      : null
+    if (_isNonEmptyString(fromPath)) {
+      return fromPath.trim()
+    }
+
+    return null
+  }, [sourcePdfBase64, sourcePdfFieldId, sourcePdfPath, fd, sd])
+
+  const handleGeneratePdf = useCallback(async () => {
+    if (!_isNonEmptyString(resolvedPdfSource)) {
+      setStatus({ kind: "error", message: "No source PDF found." })
+      return
+    }
+
+    setIsBusy(true)
+    setStatus({ kind: "info", message: "Generating PDF..." })
+
+    try {
+      const PDFLib = await _loadPdfLib()
+      const bytes = _base64ToBytes(resolvedPdfSource)
+      const formData = fd?.field?.data || {}
+      const map = _normalizeFieldMap(fieldMap, formData)
+      const includeSet = Array.isArray(includeOnlyFieldIds)
+        ? new Set(includeOnlyFieldIds.map((id) => String(id || "").trim()).filter(Boolean))
+        : null
+
+      const doc = await PDFLib.PDFDocument.load(bytes, {
+        throwOnInvalidObject: false,
+        ignoreEncryption: true,
+      })
+
+      const form = doc.getForm()
+      const warnings = []
+      let filledFieldCount = 0
+      let skippedFieldCount = 0
+
+      form.getFields().forEach((field) => {
+        const pdfFieldName = field.getName()
+        const sourceFieldId = map.get(pdfFieldName) || pdfFieldName
+
+        if (includeSet && !includeSet.has(sourceFieldId) && !includeSet.has(pdfFieldName)) {
+          skippedFieldCount += 1
+          return
+        }
+
+        const rawValue = formData[sourceFieldId]
+        if (rawValue === undefined || rawValue === null || rawValue === "") {
+          skippedFieldCount += 1
+          return
+        }
+
+        const didFill = _fillField(field, rawValue, sourceFieldId, warnings, PDFLib)
+        if (didFill) filledFieldCount += 1
+        else skippedFieldCount += 1
+      })
+
+      if (flatten) {
+        form.flatten()
+      }
+
+      const outputBytes = await doc.save()
+      const nextFileName = _isNonEmptyString(fileName) ? fileName.trim() : "filled-form.pdf"
+      _downloadBytes(outputBytes, nextFileName)
+
+      const warningCount = warnings.length
+      setStatus({
+        kind: "success",
+        message: \`PDF generated. Filled \${filledFieldCount} field\${filledFieldCount === 1 ? "" : "s"}\${warningCount ? \` with \${warningCount} warning\${warningCount === 1 ? "" : "s"}\` : ""}.\`,
+        warnings,
+      })
+
+      if (typeof onComplete === "function") {
+        onComplete({
+          pdfBytes: outputBytes,
+          filledFieldCount,
+          skippedFieldCount,
+          warnings,
+        })
+      }
+    } catch (error) {
+      setStatus({
+        kind: "error",
+        message: \`Failed to generate PDF: \${error?.message || "unknown error"}\`,
+      })
+    } finally {
+      setIsBusy(false)
+    }
+  }, [resolvedPdfSource, fd, fieldMap, includeOnlyFieldIds, flatten, fileName, onComplete])
+
+  const diagnosticsText = useMemo(() => {
+    if (!showDiagnostics) return null
+    if (!_isNonEmptyString(resolvedPdfSource)) return "Waiting for source PDF data."
+    return "Source PDF detected."
+  }, [showDiagnostics, resolvedPdfSource])
+
+  const renderButton = (
+    <DefaultButton
+      text={isBusy ? "Generating..." : buttonText}
+      iconProps={iconName ? { iconName } : undefined}
+      onClick={handleGeneratePdf}
+      disabled={disabled || isBusy || !_isNonEmptyString(resolvedPdfSource)}
+    />
+  )
+
+  if (!label && !showStatus && !showDiagnostics) {
+    return renderButton
+  }
+
+  return (
+    <Stack tokens={{ childrenGap: 6 }}>
+      {label ? (
+        <Text variant="smallPlus" styles={{ root: { fontWeight: 600 } }}>
+          {label}
+        </Text>
+      ) : null}
+
+      {renderButton}
+
+      {diagnosticsText ? (
+        <Text variant="small" styles={{ root: { color: "#605e5c" } }}>
+          {diagnosticsText}
+        </Text>
+      ) : null}
+
+      {showStatus && status ? (
+        <Text variant="small" styles={{ root: { color: _statusColor(status.kind) } }}>
+          {status.message}
+        </Text>
+      ) : null}
+
+      {showStatus && Array.isArray(status?.warnings) && status.warnings.length > 0 ? (
+        <Stack tokens={{ childrenGap: 2 }}>
+          {status.warnings.slice(0, 3).map((warning, index) => (
+            <Text key={\`\${index}-\${warning}\`} variant="small" styles={{ root: { color: "#8a8886" } }}>
+              {warning}
+            </Text>
+          ))}
+          {status.warnings.length > 3 ? (
+            <Text variant="small" styles={{ root: { color: "#8a8886" } }}>
+              +{status.warnings.length - 3} more warning{status.warnings.length - 3 === 1 ? "" : "s"}
+            </Text>
+          ) : null}
+        </Stack>
+      ) : null}
+    </Stack>
+  )
+}
 `,
   './PlannedActions/index.jsx': `
 /**
@@ -9886,7 +10599,7 @@ const SubformScoring = ({
     const vars = {}
     for (const field of dataEntryFields) {
       if (_isHeadingField(field)) continue
-      vars[field.id] = _toNumericValue(dataEntryValues[field.id]) ?? 0
+      vars[field.id] = _toNumericValue(dataEntryValues[field.id])
     }
     const result = {}
     for (const calculation of dataEntryCalculations) {
@@ -11009,6 +11722,30 @@ export const componentIdentities: Record<string, any> = {
       "patch": 12
     }
   },
+  'PdfRegenerator': {
+    "name": "PdfRegenerator",
+    "title": "PDF Regenerator",
+    "description": "Client-side runtime JSX button that regenerates a filled AcroForm PDF from current form data.",
+    "version": {
+      "major": 1,
+      "minor": 0,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "MOIS Styleguide",
+    "author": "MOIS Styleguide",
+    "publisher": "MOIS Styleguide",
+    "requiredFormViewerVersion": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "requiredMoisVersion": {
+      "major": 2,
+      "minor": 26,
+      "patch": 18
+    }
+  },
   'PlannedActions': {
     "name": "PlannedActions",
     "title": "Selected planned actions",
@@ -11241,7 +11978,8 @@ export const componentIdentities: Record<string, any> = {
       "patch": 12
     },
     "components": [
-      "HotspotMapField"
+      "HotspotMapField",
+      "ScoringModule"
     ]
   },
   'UseChangeWatch': {

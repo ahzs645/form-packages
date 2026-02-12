@@ -1,0 +1,24 @@
+{
+  "name": "PdfRegenerator",
+  "title": "PDF Regenerator",
+  "description": "Client-side runtime JSX button that regenerates a filled AcroForm PDF from current form data.",
+  "version": {
+    "major": 1,
+    "minor": 0,
+    "patch": 0
+  },
+  "type": "component",
+  "owner": "MOIS Styleguide",
+  "author": "MOIS Styleguide",
+  "publisher": "MOIS Styleguide",
+  "requiredFormViewerVersion": {
+    "major": 0,
+    "minor": 1,
+    "patch": 0
+  },
+  "requiredMoisVersion": {
+    "major": 2,
+    "minor": 26,
+    "patch": 18
+  }
+}

@@ -465,7 +465,7 @@ const SubformScoring = ({
     const vars = {}
     for (const field of dataEntryFields) {
       if (_isHeadingField(field)) continue
-      vars[field.id] = _toNumericValue(dataEntryValues[field.id]) ?? 0
+      vars[field.id] = _toNumericValue(dataEntryValues[field.id])
     }
     const result = {}
     for (const calculation of dataEntryCalculations) {

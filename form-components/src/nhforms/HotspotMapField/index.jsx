@@ -2,7 +2,7 @@
  * HotspotMapField
  *
  * Generic image/SVG map with selectable hotspot overlays.
- * - Supports imageUrl or inline imageSvg
+ * - Supports imageUrl (including base64 data URLs) or inline imageSvg
  * - Stores selection state in fd.field.data[fieldId]
  * - Optional writeback fields for count and selected labels/ids
  * - Optional per-hotspot fieldId writebacks (boolean)
@@ -11,12 +11,13 @@
  * {
  *   id: string,
  *   label?: string,
- *   shape?: "rect" | "circle",
+ *   shape?: "rect" | "circle" | "polygon",
  *   x: number, // percent
  *   y: number, // percent
  *   width?: number, // percent (rect)
  *   height?: number, // percent (rect)
  *   radius?: number, // percent (circle)
+ *   points?: [{ x: number, y: number }], // percent (polygon)
  *   fieldId?: string,
  *   group?: string
  * }
@@ -42,9 +43,93 @@ const normalizeString = (value, fallback = "") => {
   return trimmed.length > 0 ? trimmed : fallback
 }
 
+const parseSvgNumber = (value) => {
+  const raw = normalizeString(value, "")
+  if (!raw) return null
+  const match = raw.match(/-?\d+(\.\d+)?/)
+  if (!match) return null
+  const parsed = Number(match[0])
+  return Number.isFinite(parsed) ? parsed : null
+}
+
 const normalizeShape = (value) => {
   const normalized = normalizeString(value, "rect").toLowerCase()
-  return normalized === "circle" ? "circle" : "rect"
+  if (normalized === "polygon") return "polygon"
+  if (normalized === "circle") return "circle"
+  return "rect"
+}
+
+const centroidFromPoints = (points) => {
+  if (!Array.isArray(points) || points.length === 0) {
+    return { x: 0, y: 0 }
+  }
+  const total = points.reduce(
+    (acc, point) => ({
+      x: acc.x + point.x,
+      y: acc.y + point.y,
+    }),
+    { x: 0, y: 0 }
+  )
+  return {
+    x: total.x / points.length,
+    y: total.y / points.length,
+  }
+}
+
+const buildFallbackPolygon = (x, y, markerSize) => {
+  const half = Math.max(0.5, markerSize / 2)
+  return [
+    { x: clampPercent(x - half), y: clampPercent(y - half) },
+    { x: clampPercent(x + half), y: clampPercent(y - half) },
+    { x: clampPercent(x + half), y: clampPercent(y + half) },
+    { x: clampPercent(x - half), y: clampPercent(y + half) },
+  ]
+}
+
+const normalizeHotspotPoints = (value) => {
+  if (typeof value === "string") {
+    if (!value.trim()) return []
+    return value
+      .trim()
+      .split(/\s+/)
+      .map((entry) => {
+        const parts = entry.split(",")
+        if (parts.length < 2) return null
+        const x = clampPercent(parts[0])
+        const y = clampPercent(parts[1])
+        return { x, y }
+      })
+      .filter(Boolean)
+  }
+
+  if (!Array.isArray(value)) return []
+  return value
+    .map((point) => {
+      if (!point || typeof point !== "object") return null
+      return {
+        x: clampPercent(point.x),
+        y: clampPercent(point.y),
+      }
+    })
+    .filter(Boolean)
+}
+
+const pointsToSvgString = (points) =>
+  (Array.isArray(points) ? points : [])
+    .map((point) => `${point.x},${point.y}`)
+    .join(" ")
+
+const getHotspotLabelAnchor = (hotspot) => {
+  if (hotspot.shape === "circle") {
+    return { x: hotspot.x, y: hotspot.y }
+  }
+  if (hotspot.shape === "polygon" && Array.isArray(hotspot.points) && hotspot.points.length > 0) {
+    return centroidFromPoints(hotspot.points)
+  }
+  return {
+    x: hotspot.x + (hotspot.width || 0) / 2,
+    y: hotspot.y + (hotspot.height || 0) / 2,
+  }
 }
 
 const normalizeHotspots = (hotspots, markerSize = DEFAULT_MARKER_SIZE) => {
@@ -73,6 +158,9 @@ const normalizeHotspots = (hotspots, markerSize = DEFAULT_MARKER_SIZE) => {
         shape,
         x,
         y,
+        width: markerSize,
+        height: markerSize,
+        radius: Math.max(DEFAULT_MARKER_RADIUS, markerSize / 2),
         fieldId: normalizeString(hotspot.fieldId, ""),
         group: normalizeString(hotspot.group, ""),
       }
@@ -82,6 +170,13 @@ const normalizeHotspots = (hotspots, markerSize = DEFAULT_MARKER_SIZE) => {
           hotspot.radius != null ? hotspot.radius : markerSize / 2 || DEFAULT_MARKER_RADIUS
         )
         normalizedHotspot.radius = radius > 0 ? radius : DEFAULT_MARKER_RADIUS
+      } else if (shape === "polygon") {
+        const parsedPoints = normalizeHotspotPoints(hotspot.points)
+        const points = parsedPoints.length >= 3 ? parsedPoints : buildFallbackPolygon(x, y, markerSize)
+        normalizedHotspot.points = points
+        const centroid = centroidFromPoints(points)
+        normalizedHotspot.x = centroid.x
+        normalizedHotspot.y = centroid.y
       } else {
         const width = clampPercent(hotspot.width != null ? hotspot.width : markerSize)
         const height = clampPercent(hotspot.height != null ? hotspot.height : markerSize)
@@ -169,8 +264,8 @@ const importSvgHotspots = (svgMarkup) => {
     const vbWidth = Number.isFinite(viewBoxParts[2]) ? viewBoxParts[2] : null
     const vbHeight = Number.isFinite(viewBoxParts[3]) ? viewBoxParts[3] : null
 
-    const widthAttr = Number(svg.getAttribute("width"))
-    const heightAttr = Number(svg.getAttribute("height"))
+    const widthAttr = parseSvgNumber(svg.getAttribute("width"))
+    const heightAttr = parseSvgNumber(svg.getAttribute("height"))
     const sourceWidth = Number.isFinite(widthAttr) && widthAttr > 0 ? widthAttr : vbWidth || 100
     const sourceHeight = Number.isFinite(heightAttr) && heightAttr > 0 ? heightAttr : vbHeight || 100
 
@@ -178,7 +273,7 @@ const importSvgHotspots = (svgMarkup) => {
     const toYPercent = (value) => clampPercent((Number(value) / sourceHeight) * 100)
 
     const elements = Array.from(
-      svg.querySelectorAll("rect[data-hotspot-id], rect[id], circle[data-hotspot-id], circle[id], ellipse[data-hotspot-id], ellipse[id]")
+      svg.querySelectorAll("rect[data-hotspot-id], rect[id], circle[data-hotspot-id], circle[id], ellipse[data-hotspot-id], ellipse[id], polygon[data-hotspot-id], polygon[id], polyline[data-hotspot-id], polyline[id]")
     )
 
     return elements
@@ -188,8 +283,34 @@ const importSvgHotspots = (svgMarkup) => {
           normalizeString(element.getAttribute("id"), `hotspot_${index + 1}`)
         )
         const rawLabel = normalizeString(element.getAttribute("data-hotspot-label"), rawId)
+        const tagName = element.tagName.toLowerCase()
 
-        if (element.tagName.toLowerCase() === "rect") {
+        if (tagName === "polygon" || tagName === "polyline") {
+          const pointsAttr = normalizeString(element.getAttribute("points"), "")
+          const points = pointsAttr
+            .split(/\s+/)
+            .map((entry) => {
+              const pair = entry.split(",")
+              if (pair.length < 2) return null
+              return {
+                x: toXPercent(pair[0]),
+                y: toYPercent(pair[1]),
+              }
+            })
+            .filter(Boolean)
+          if (points.length < 3) return null
+          const centroid = centroidFromPoints(points)
+          return {
+            id: rawId,
+            label: rawLabel,
+            shape: "polygon",
+            x: centroid.x,
+            y: centroid.y,
+            points,
+          }
+        }
+
+        if (tagName === "rect") {
           const x = toXPercent(element.getAttribute("x") || 0)
           const y = toYPercent(element.getAttribute("y") || 0)
           const width = toXPercent(element.getAttribute("width") || 0)
@@ -207,7 +328,7 @@ const importSvgHotspots = (svgMarkup) => {
 
         const cx = toXPercent(element.getAttribute("cx") || 0)
         const cy = toYPercent(element.getAttribute("cy") || 0)
-        const r = element.tagName.toLowerCase() === "ellipse"
+        const r = tagName === "ellipse"
           ? (toXPercent(element.getAttribute("rx") || 0) + toYPercent(element.getAttribute("ry") || 0)) / 2
           : toXPercent(element.getAttribute("r") || 0)
 
@@ -327,6 +448,14 @@ const HotspotMapField = ({
     commitSelection(next)
   }, [allowMultiSelect, commitSelection, readOnly, selectedIds])
 
+  const handleHotspotKeyDown = useCallback((event, hotspotId) => {
+    if (readOnly) return
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault()
+      handleToggleHotspot(hotspotId)
+    }
+  }, [handleToggleHotspot, readOnly])
+
   const responsiveSvg = useMemo(() => ensureResponsiveSvg(imageSvg), [imageSvg])
   const selectedLabels = Array.isArray(mapValue?.selectedLabels) ? mapValue.selectedLabels : []
   const selectedCount = Number.isFinite(mapValue?.selectedCount) ? mapValue.selectedCount : selectedIds.size
@@ -350,18 +479,6 @@ const HotspotMapField = ({
   const overlayStyle = {
     position: "absolute",
     inset: 0,
-  }
-
-  const markerBaseStyle = {
-    position: "absolute",
-    cursor: readOnly ? "default" : "pointer",
-    border: "2px solid #1f2937",
-    backgroundColor: "#ffffff",
-    boxShadow: "0 1px 2px rgba(0, 0, 0, 0.2)",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 0,
   }
 
   return (
@@ -400,51 +517,77 @@ const HotspotMapField = ({
         )}
 
         <div style={overlayStyle}>
-          {normalizedHotspots.map((hotspot) => {
-            const isSelected = selectedIds.has(hotspot.id)
-            const base = {
-              ...markerBaseStyle,
-              borderColor: isSelected ? "#1d4ed8" : "#374151",
-              backgroundColor: isSelected ? "#2563eb" : "#ffffff",
-              color: isSelected ? "#ffffff" : "#111827",
-            }
+          <svg
+            viewBox="0 0 100 100"
+            preserveAspectRatio="none"
+            style={{ width: "100%", height: "100%", display: "block" }}
+          >
+            {normalizedHotspots.map((hotspot) => {
+              const isSelected = selectedIds.has(hotspot.id)
+              const stroke = isSelected ? "#1d4ed8" : "#374151"
+              const fill = isSelected ? "rgba(37, 99, 235, 0.4)" : "rgba(255, 255, 255, 0.2)"
+              const labelAnchor = getHotspotLabelAnchor(hotspot)
 
-            const style =
-              hotspot.shape === "circle"
-                ? {
-                    ...base,
-                    left: `${hotspot.x - hotspot.radius}%`,
-                    top: `${hotspot.y - hotspot.radius}%`,
-                    width: `${hotspot.radius * 2}%`,
-                    height: `${hotspot.radius * 2}%`,
-                    borderRadius: "9999px",
-                  }
-                : {
-                    ...base,
-                    left: `${hotspot.x}%`,
-                    top: `${hotspot.y}%`,
-                    width: `${hotspot.width}%`,
-                    height: `${hotspot.height}%`,
-                    borderRadius: "3px",
-                  }
-
-            return (
-              <button
-                key={hotspot.id}
-                type="button"
-                style={style}
-                aria-pressed={isSelected}
-                title={hotspot.label || hotspot.id}
-                onClick={() => handleToggleHotspot(hotspot.id)}
-              >
-                {showHotspotLabels ? (
-                  <span style={{ fontSize: "10px", fontWeight: 600, padding: "0 2px", lineHeight: 1.1 }}>
-                    {hotspot.label || hotspot.id}
-                  </span>
-                ) : null}
-              </button>
-            )
-          })}
+              return (
+                <g
+                  key={hotspot.id}
+                  role="button"
+                  tabIndex={readOnly ? -1 : 0}
+                  aria-pressed={isSelected}
+                  onClick={() => handleToggleHotspot(hotspot.id)}
+                  onKeyDown={(event) => handleHotspotKeyDown(event, hotspot.id)}
+                  style={{ cursor: readOnly ? "default" : "pointer" }}
+                >
+                  <title>{hotspot.label || hotspot.id}</title>
+                  {hotspot.shape === "circle" ? (
+                    <circle
+                      cx={hotspot.x}
+                      cy={hotspot.y}
+                      r={Math.max(0.5, hotspot.radius)}
+                      fill={fill}
+                      stroke={stroke}
+                      strokeWidth={0.5}
+                    />
+                  ) : hotspot.shape === "polygon" ? (
+                    <polygon
+                      points={pointsToSvgString(hotspot.points)}
+                      fill={fill}
+                      stroke={stroke}
+                      strokeWidth={0.5}
+                    />
+                  ) : (
+                    <rect
+                      x={hotspot.x}
+                      y={hotspot.y}
+                      width={Math.max(0.5, hotspot.width)}
+                      height={Math.max(0.5, hotspot.height)}
+                      rx={0.5}
+                      fill={fill}
+                      stroke={stroke}
+                      strokeWidth={0.5}
+                    />
+                  )}
+                  {showHotspotLabels ? (
+                    <text
+                      x={labelAnchor.x}
+                      y={labelAnchor.y}
+                      textAnchor="middle"
+                      dominantBaseline="middle"
+                      style={{
+                        fontSize: "2.2px",
+                        fontWeight: 700,
+                        fill: isSelected ? "#0f172a" : "#1f2937",
+                        pointerEvents: "none",
+                        userSelect: "none",
+                      }}
+                    >
+                      {hotspot.label || hotspot.id}
+                    </text>
+                  ) : null}
+                </g>
+              )
+            })}
+          </svg>
         </div>
       </div>
 
@@ -467,4 +610,3 @@ const HotspotMapField = ({
 HotspotMapField.createConfig = createHotspotMapConfig
 HotspotMapField.importSvgHotspots = importSvgHotspots
 HotspotMapField.normalizeHotspots = normalizeHotspots
-

@@ -23,6 +23,7 @@
     "patch": 12
   },
   "components": [
-    "HotspotMapField"
+    "HotspotMapField",
+    "ScoringModule"
   ]
 }

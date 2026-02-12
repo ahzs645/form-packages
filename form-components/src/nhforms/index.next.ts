@@ -311,6 +311,8 @@ function loadComponentCode(code: string, componentName: string, additionalCompon
     'ScoringModule', 'ScoringModuleSchema', 'createScoringQuestion', 'createScoringTotal', 'createScoringConfig',
     // SubformScoring exports
     'SubformScoring',
+    // PDF regeneration exports
+    'PdfRegenerator',
     // CompactBooleanField exports
     'CompactBooleanField', 'CompactBooleanGroup', 'CompactBooleanChecklist', 'YesNoButtons',
     'BooleanLabelPresets', 'ControllerLabelPresets',
@@ -555,6 +557,8 @@ export const {
   createScoringConfig,
   // SubformScoring
   SubformScoring,
+  // PDF regeneration
+  PdfRegenerator,
   // CompactBooleanField
   CompactBooleanField,
   CompactBooleanGroup,
