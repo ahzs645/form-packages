@@ -263,6 +263,29 @@ const _resolveFieldWidthBasis = (field) => {
   }
 }
 
+const _formatNumericValue = (value, precision = 1) => {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return null
+  const numeric = Number(value)
+  const boundedPrecision = Number.isFinite(precision) ? Math.max(0, Math.min(6, Math.trunc(precision))) : null
+  if (boundedPrecision === null) return `${numeric}`
+  return numeric.toFixed(boundedPrecision).replace(/\.0+$/, "").replace(/(\.\d*?)0+$/, "$1")
+}
+
+const _formatCalculatorDisplayValue = (value, precision = 1, fallback = "Incomplete") => {
+  const formatted = _formatNumericValue(value, precision)
+  return formatted === null ? fallback : formatted
+}
+
+const _computeMorphineEquivalent = (doseValue, equivalentDoseMg, baseEquivalentDoseMg) => {
+  const dose = _toNumericValue(doseValue)
+  const equivalentDose = Number(equivalentDoseMg)
+  const baseDose = Number(baseEquivalentDoseMg)
+  if (!Number.isFinite(dose)) return null
+  if (!Number.isFinite(equivalentDose) || equivalentDose <= 0) return null
+  if (!Number.isFinite(baseDose) || baseDose <= 0) return null
+  return (dose * baseDose) / equivalentDose
+}
+
 // ================================================
 // Summary sub-components
 // ================================================
@@ -525,6 +548,100 @@ const SubformScoring = ({
     return Array.isArray(dataEntryConfig?.fields) ? dataEntryConfig.fields : []
   }, [dataEntryConfig])
 
+  const dataEntryFieldById = useMemo(() => {
+    const map = new Map()
+    for (const field of dataEntryFields) {
+      if (!field?.id) continue
+      map.set(field.id, field)
+    }
+    return map
+  }, [dataEntryFields])
+
+  const dataEntryCalculatorConfig = useMemo(() => {
+    const rawConfig = dataEntryConfig?.calculatorConfig || dataEntryConfig?.calculator_config
+    if (!rawConfig || typeof rawConfig !== "object") return null
+
+    const rawType = String(rawConfig.type || rawConfig.calculatorType || rawConfig.calculator_type || "").trim().toLowerCase()
+    const normalizedType =
+      rawType === "morphine-equivalence" ||
+      rawType === "morphine_equivalence" ||
+      rawType === "meq"
+        ? "morphine-equivalence"
+        : null
+    if (!normalizedType) return null
+
+    const rawRows = Array.isArray(rawConfig.rows) ? rawConfig.rows : []
+    const rows = rawRows
+      .map((row, index) => {
+        if (!row || typeof row !== "object") return null
+        const rowId = String(row.id || `row_${index + 1}`).trim()
+        const label = String(row.label || rowId || `Row ${index + 1}`).trim()
+        const inputFieldId = String(
+          row.inputFieldId ||
+          row.input_field_id ||
+          row.fieldId ||
+          row.field_id ||
+          row.doseFieldId ||
+          row.dose_field_id ||
+          ""
+        ).trim()
+        if (!inputFieldId) return null
+
+        const equivalentDoseMg = Number(
+          row.equivalentDoseMg ??
+          row.equivalent_dose_mg ??
+          row.equivalentDose ??
+          row.equivalent_dose
+        )
+        if (!Number.isFinite(equivalentDoseMg) || equivalentDoseMg <= 0) return null
+
+        const meqCalculationId = String(row.meqCalculationId || row.meq_calculation_id || "").trim() || null
+        const precisionRaw = Number(row.precision)
+        const precision = Number.isFinite(precisionRaw)
+          ? Math.max(0, Math.min(6, Math.trunc(precisionRaw)))
+          : 1
+        return {
+          id: rowId,
+          label,
+          inputFieldId,
+          equivalentDoseMg,
+          meqCalculationId,
+          precision
+        }
+      })
+      .filter(Boolean)
+
+    if (rows.length === 0) return null
+
+    const baseEquivalentDoseRaw = Number(rawConfig.baseEquivalentDoseMg ?? rawConfig.base_equivalent_dose_mg)
+    const baseEquivalentDoseMg = Number.isFinite(baseEquivalentDoseRaw) && baseEquivalentDoseRaw > 0
+      ? baseEquivalentDoseRaw
+      : 30
+    const totalCalculationId = String(rawConfig.totalCalculationId || rawConfig.total_calculation_id || "").trim() || null
+    const totalLabel = String(rawConfig.totalLabel || rawConfig.total_label || "TOTAL MEQ").trim() || "TOTAL MEQ"
+    const doseColumnLabel = String(rawConfig.doseColumnLabel || rawConfig.dose_column_label || "Total Daily Dose").trim() || "Total Daily Dose"
+    const equivalentColumnLabel = String(rawConfig.equivalentColumnLabel || rawConfig.equivalent_column_label || "Equivalent Dose (mg)").trim() || "Equivalent Dose (mg)"
+    const resultColumnLabel = String(rawConfig.resultColumnLabel || rawConfig.result_column_label || "Morphine Equivalent (MEQ)").trim() || "Morphine Equivalent (MEQ)"
+
+    return {
+      type: normalizedType,
+      rows,
+      baseEquivalentDoseMg,
+      totalCalculationId,
+      totalLabel,
+      doseColumnLabel,
+      equivalentColumnLabel,
+      resultColumnLabel
+    }
+  }, [dataEntryConfig])
+
+  const isMorphineCalculatorMode = useMemo(() => {
+    return isDataEntryMode &&
+      dataEntryCalculatorConfig?.type === "morphine-equivalence" &&
+      Array.isArray(dataEntryCalculatorConfig?.rows) &&
+      dataEntryCalculatorConfig.rows.length > 0
+  }, [isDataEntryMode, dataEntryCalculatorConfig])
+
   const dataEntryValues = useMemo(() => {
     if (!isDataEntryMode) return {}
     const result = {}
@@ -532,8 +649,16 @@ const SubformScoring = ({
       if (_isHeadingField(field)) continue
       result[field.id] = fd?.field?.data?.[field.id]
     }
+    if (isMorphineCalculatorMode) {
+      for (const row of dataEntryCalculatorConfig?.rows || []) {
+        if (!row?.inputFieldId) continue
+        if (!(row.inputFieldId in result)) {
+          result[row.inputFieldId] = fd?.field?.data?.[row.inputFieldId]
+        }
+      }
+    }
     return result
-  }, [isDataEntryMode, dataEntryFields, fd])
+  }, [isDataEntryMode, isMorphineCalculatorMode, dataEntryCalculatorConfig, dataEntryFields, fd])
 
   const dataEntryCalculations = useMemo(() => {
     return Array.isArray(dataEntryConfig?.calculations) ? dataEntryConfig.calculations : []
@@ -542,9 +667,18 @@ const SubformScoring = ({
   const calculatedExpressions = useMemo(() => {
     if (!isDataEntryMode) return {}
     const vars = {}
+    const variableFieldIds = new Set()
     for (const field of dataEntryFields) {
       if (_isHeadingField(field)) continue
-      vars[field.id] = _toNumericValue(dataEntryValues[field.id])
+      variableFieldIds.add(field.id)
+    }
+    if (isMorphineCalculatorMode) {
+      for (const row of dataEntryCalculatorConfig?.rows || []) {
+        if (row?.inputFieldId) variableFieldIds.add(row.inputFieldId)
+      }
+    }
+    for (const fieldId of variableFieldIds) {
+      vars[fieldId] = _toNumericValue(dataEntryValues[fieldId])
     }
     const result = {}
     for (const calculation of dataEntryCalculations) {
@@ -557,11 +691,21 @@ const SubformScoring = ({
       result[calculation.id] = precision === null ? value : Number(value.toFixed(precision))
     }
     return result
-  }, [isDataEntryMode, dataEntryFields, dataEntryValues, dataEntryCalculations])
+  }, [isDataEntryMode, isMorphineCalculatorMode, dataEntryCalculatorConfig, dataEntryFields, dataEntryValues, dataEntryCalculations])
 
   const progress = useMemo(() => {
     if (isDataEntryMode) {
-      const answerableFields = dataEntryFields.filter((field) => !_isHeadingField(field))
+      const calculatorFields = isMorphineCalculatorMode
+        ? (dataEntryCalculatorConfig?.rows || []).map((row) => (
+            dataEntryFieldById.get(row.inputFieldId) || {
+              id: row.inputFieldId,
+              required: false,
+            }
+          ))
+        : []
+      const answerableFields = calculatorFields.length > 0
+        ? calculatorFields
+        : dataEntryFields.filter((field) => !_isHeadingField(field))
       const requiredFields = answerableFields.filter((field) => field.required)
       const fieldsForProgress = requiredFields.length > 0 ? requiredFields : answerableFields
       const total = fieldsForProgress.length
@@ -584,22 +728,36 @@ const SubformScoring = ({
       total,
       percentage: total > 0 ? Math.round((answered / total) * 100) : 0
     }
-  }, [isDataEntryMode, dataEntryFields, dataEntryValues, config.questions, answers])
+  }, [isDataEntryMode, isMorphineCalculatorMode, dataEntryCalculatorConfig, dataEntryFieldById, dataEntryFields, dataEntryValues, config.questions, answers])
 
   const hasAnyAnswers = useMemo(() => {
     if (isDataEntryMode) {
+      if (isMorphineCalculatorMode) {
+        return (dataEntryCalculatorConfig?.rows || []).some((row) =>
+          _isMeaningfulValue(dataEntryValues[row.inputFieldId])
+        )
+      }
       return dataEntryFields
         .filter((field) => !_isHeadingField(field))
         .some((field) => _isMeaningfulValue(dataEntryValues[field.id]))
     }
     return progress.answered > 0
-  }, [isDataEntryMode, dataEntryFields, dataEntryValues, progress])
+  }, [isDataEntryMode, isMorphineCalculatorMode, dataEntryCalculatorConfig, dataEntryFields, dataEntryValues, progress])
 
   const showItems = useMemo(() => {
     if (Array.isArray(summaryConfig.showItems) && summaryConfig.showItems.length > 0) {
       return summaryConfig.showItems
     }
     if (isDataEntryMode) {
+      if (isMorphineCalculatorMode && dataEntryCalculatorConfig?.totalCalculationId) {
+        return [
+          {
+            type: "calculation",
+            calculationId: dataEntryCalculatorConfig.totalCalculationId,
+          },
+          { type: "progress" },
+        ]
+      }
       const defaults = dataEntryCalculations.map((calculation) => ({
         type: "calculation",
         calculationId: calculation.id
@@ -608,7 +766,7 @@ const SubformScoring = ({
       return defaults
     }
     return []
-  }, [summaryConfig.showItems, isDataEntryMode, dataEntryCalculations])
+  }, [summaryConfig.showItems, isDataEntryMode, isMorphineCalculatorMode, dataEntryCalculatorConfig, dataEntryCalculations])
 
   const summaryLayout = summaryConfig.layout || "stacked"
 
@@ -621,8 +779,8 @@ const SubformScoring = ({
   }, [config.questions])
 
   const getDataEntryFieldConfig = useCallback((fieldId) => {
-    return dataEntryFields.find((field) => field.id === fieldId)
-  }, [dataEntryFields])
+    return dataEntryFieldById.get(fieldId)
+  }, [dataEntryFieldById])
 
   const getCalculationConfig = useCallback((calculationId) => {
     return dataEntryCalculations.find((calculation) => calculation.id === calculationId)
@@ -794,6 +952,146 @@ const SubformScoring = ({
         value={dataEntryValues[field.id] ?? ""}
         onChange={(_, value) => setDataEntryValue(field.id, value ?? "")}
       />
+    )
+  }
+
+  const renderMorphineCalculator = () => {
+    if (!isMorphineCalculatorMode || !dataEntryCalculatorConfig) return null
+
+    const rows = Array.isArray(dataEntryCalculatorConfig.rows) ? dataEntryCalculatorConfig.rows : []
+    if (rows.length === 0) return null
+
+    const rowValues = rows.map((row) => {
+      const fromCalculation = row.meqCalculationId
+        ? calculatedExpressions[row.meqCalculationId]
+        : null
+      const computedFallback = _computeMorphineEquivalent(
+        dataEntryValues[row.inputFieldId],
+        row.equivalentDoseMg,
+        dataEntryCalculatorConfig.baseEquivalentDoseMg
+      )
+      return fromCalculation ?? computedFallback
+    })
+
+    const totalFromCalculation = dataEntryCalculatorConfig.totalCalculationId
+      ? calculatedExpressions[dataEntryCalculatorConfig.totalCalculationId]
+      : null
+    const totalFallback = rowValues.reduce((sum, value) => {
+      if (!Number.isFinite(Number(value))) return sum
+      return sum + Number(value)
+    }, 0)
+    const hasAnyRowValue = rowValues.some((value) => Number.isFinite(Number(value)))
+    const totalValue = totalFromCalculation ?? (hasAnyRowValue ? totalFallback : null)
+
+    return (
+      <div style={{
+        border: `1px solid ${isDarkMode ? "#404040" : "#d8d8d8"}`,
+        borderRadius: "6px",
+        overflow: "hidden"
+      }}>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1.5fr minmax(140px, 1fr) minmax(120px, 1fr) minmax(160px, 1fr)",
+            gap: "8px",
+            padding: "10px 12px",
+            fontSize: "12px",
+            fontWeight: 700,
+            textTransform: "uppercase",
+            letterSpacing: "0.03em",
+            borderBottom: `1px solid ${isDarkMode ? "#404040" : "#d8d8d8"}`,
+            backgroundColor: isDarkMode ? "#202020" : "#f8f8f8"
+          }}
+        >
+          <span />
+          <span>{dataEntryCalculatorConfig.doseColumnLabel}</span>
+          <span>{dataEntryCalculatorConfig.equivalentColumnLabel}</span>
+          <span>{dataEntryCalculatorConfig.resultColumnLabel}</span>
+        </div>
+
+        {rows.map((row, index) => {
+          const field = dataEntryFieldById.get(row.inputFieldId)
+          const inputType = field?.type === "text" ? "text" : "number"
+          const rawValue = dataEntryValues[row.inputFieldId]
+          const displayValue = rawValue === null || rawValue === undefined ? "" : String(rawValue)
+          const meqValue = rowValues[index]
+          const meqDisplay = _formatCalculatorDisplayValue(meqValue, row.precision, "-")
+
+          return (
+            <div
+              key={`calculator-row-${row.id || row.inputFieldId}`}
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1.5fr minmax(140px, 1fr) minmax(120px, 1fr) minmax(160px, 1fr)",
+                gap: "8px",
+                alignItems: "center",
+                padding: "10px 12px",
+                borderBottom: index < rows.length - 1
+                  ? `1px solid ${isDarkMode ? "#333" : "#ececec"}`
+                  : "none"
+              }}
+            >
+              <Text styles={{ root: { fontSize: "16px", fontWeight: 500 } }}>
+                {row.label}:
+              </Text>
+              <input
+                type={inputType}
+                inputMode="decimal"
+                step="any"
+                value={displayValue}
+                placeholder={inputType === "number" ? "0" : ""}
+                onChange={(event) => {
+                  const nextRaw = event?.target?.value ?? ""
+                  if (!nextRaw) {
+                    setDataEntryValue(row.inputFieldId, null)
+                    return
+                  }
+                  if (inputType === "number") {
+                    const parsed = Number(nextRaw)
+                    setDataEntryValue(row.inputFieldId, Number.isFinite(parsed) ? parsed : nextRaw)
+                    return
+                  }
+                  setDataEntryValue(row.inputFieldId, nextRaw)
+                }}
+                style={{
+                  width: "100%",
+                  maxWidth: "140px",
+                  height: "34px",
+                  borderRadius: "2px",
+                  border: `1px solid ${isDarkMode ? "#5a5a5a" : "#b8b8b8"}`,
+                  backgroundColor: isDarkMode ? "#1a1a1a" : "#fff",
+                  color: isDarkMode ? "#fff" : "#111",
+                  padding: "4px 8px",
+                  fontSize: "15px"
+                }}
+              />
+              <Text styles={{ root: { fontSize: "20px", fontWeight: 500 } }}>
+                {_formatCalculatorDisplayValue(row.equivalentDoseMg, 2, "-")}
+              </Text>
+              <Text styles={{ root: { fontSize: "22px", fontWeight: 700 } }}>
+                {meqDisplay}
+              </Text>
+            </div>
+          )
+        })}
+
+        <div style={{
+          borderTop: `1px solid ${isDarkMode ? "#404040" : "#d8d8d8"}`,
+          backgroundColor: isDarkMode ? "#252525" : "#f4f4f4",
+          padding: "12px",
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "baseline",
+          gap: "14px"
+        }}>
+          <Text styles={{ root: { fontSize: "36px", fontWeight: 800, letterSpacing: "0.02em" } }}>
+            {dataEntryCalculatorConfig.totalLabel}:
+          </Text>
+          <Text styles={{ root: { fontSize: "40px", fontWeight: 800, lineHeight: 1 } }}>
+            {_formatCalculatorDisplayValue(totalValue, 1)}
+          </Text>
+        </div>
+      </div>
     )
   }
 
@@ -974,7 +1272,9 @@ const SubformScoring = ({
       >
         {isDataEntryMode ? (
           <div style={{ maxHeight: "65vh", overflowY: "auto", paddingRight: "4px" }}>
-            {dataEntryFields.length > 0 ? (
+            {isMorphineCalculatorMode ? (
+              renderMorphineCalculator()
+            ) : dataEntryFields.length > 0 ? (
               <div style={{ display: "flex", flexWrap: "wrap", columnGap: "12px", rowGap: "10px" }}>
                 {dataEntryFields.map((field) => {
                   const isHeading = _isHeadingField(field)
@@ -998,7 +1298,7 @@ const SubformScoring = ({
                 No data-entry fields configured.
               </Text>
             )}
-            {showCalculationsInModal && dataEntryCalculations.length > 0 && (
+            {showCalculationsInModal && dataEntryCalculations.length > 0 && !isMorphineCalculatorMode && (
               <div style={{
                 marginTop: "16px",
                 paddingTop: "12px",
