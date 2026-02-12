@@ -1,7 +1,7 @@
 {
   "name": "SubformScoring",
   "title": "Subform Scoring with Modal and Summary",
-  "description": "A modal-based scoring subform that opens a ScoringModule in a dialog and displays configurable summary items (scores, interpretations, answers) inline after completion",
+  "description": "A modal subform component supporting scoring questionnaires and structured data-entry workflows, with configurable inline summary items after completion",
   "version": {
     "major": 1,
     "minor": 0,
