@@ -770,6 +770,10 @@ const SubformScoring = ({
           allowMultiSelect={field.allowMultiSelect !== false}
           showSummary={field.showSummary !== false}
           showHotspotLabels={field.showHotspotLabels === true}
+          openInModal={field.openInModal === true}
+          modalButtonText={field.modalButtonText}
+          modalTitle={field.modalTitle}
+          modalMinWidth={field.modalMinWidth}
           mapWidthPercent={field.mapWidthPercent}
           mapMaxWidth={field.mapMaxWidth}
           mapMinHeight={field.mapMinHeight}
