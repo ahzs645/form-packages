@@ -213,6 +213,7 @@ type ScaleQuestionProps = {
   label?: JSX.Element
   dropdownOptions?: any
   tooltip?: { rating: number, description: string }[]
+  showInlineLabels?: boolean
   disableCount?: boolean
   question?: string
 }
@@ -226,7 +227,7 @@ const createScaleQuestion = ({
   fallbackLegendLookup: Record<string, string>,
   fallbackDescription: string
 }) => {
-  return ({id,label,dropdownOptions,tooltip,disableCount,question}: ScaleQuestionProps) => {
+  return ({id,label,dropdownOptions,tooltip,showInlineLabels=true,disableCount,question}: ScaleQuestionProps) => {
     const [honosData,modHonosData]: [FormData,Setter] = useActiveData(fd=>fd.field.data)
     const [fd] = useActiveData()
     const theme = useTheme()
@@ -243,6 +244,12 @@ const createScaleQuestion = ({
     },[id,rawfditem,defaultHonosItem,modHonosData])
 
     const tooltipLookup = buildTooltipLookup(tooltip, fallbackLegendLookup)
+    const renderedChoiceOptions = showInlineLabels
+      ? choiceOptions
+      : choiceOptions.map((option) => ({
+          ...option,
+          text: "",
+        }))
 
     let questionStyle = {
       backgroundColor: "#FBFBFB",
@@ -308,7 +315,7 @@ const createScaleQuestion = ({
                 name={id}
                 key={id}
                 tabIndex={0}
-                options={choiceOptions}
+                options={renderedChoiceOptions}
                 styles={choiceGroupStyle}
                 selectedKey={fditem.selectedKey}
                 onKeyUp={e =>
@@ -319,7 +326,7 @@ const createScaleQuestion = ({
                     fd,
                     dropdownOptions,
                     disableCount,
-                    choiceOptions,
+                    renderedChoiceOptions,
                     tooltipLookup,
                     fallbackDescription
                   )

@@ -19,6 +19,7 @@ const {
  * - label: string - The field label/question text
  * - options: Array<{ value: number, label: string, description?: string }> - Scale options
  * - showLegend: boolean - Whether to show the legend row above
+ * - showInlineLabels: boolean - Whether to show inline option labels beside radio controls
  * - required: boolean - Whether the field is required
  * - readOnly: boolean - Whether the field is read-only
  */
@@ -106,6 +107,7 @@ const ScaleField = ({
   label,
   options,
   showLegend = false,
+  showInlineLabels = true,
   required = false,
   readOnly = false,
 }) => {
@@ -124,7 +126,7 @@ const ScaleField = ({
   // Convert options to ChoiceGroup format
   const choiceOptions = scaleOptions.map(opt => ({
     key: String(opt.value),
-    text: String(opt.value),
+    text: showInlineLabels ? String(opt.value) : "",
     styles: CHOICE_FIELD_STYLE,
   }))
 
