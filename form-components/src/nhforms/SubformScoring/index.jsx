@@ -81,6 +81,9 @@ const _isMeaningfulValue = (value) => {
   if (typeof value === "string") return value.trim().length > 0
   if (Array.isArray(value)) return value.length > 0
   if (typeof value === "object") {
+    if (Number.isFinite(value.selectedCount)) {
+      return Number(value.selectedCount) > 0
+    }
     if (value.display) return String(value.display).trim().length > 0
     if (value.text) return String(value.text).trim().length > 0
     if (value.code) return String(value.code).trim().length > 0
@@ -96,6 +99,15 @@ const _toDisplayValue = (value) => {
     return value.map(_toDisplayValue).filter(Boolean).join(", ")
   }
   if (typeof value === "object") {
+    if (Array.isArray(value.selectedLabels) && value.selectedLabels.length > 0) {
+      return value.selectedLabels.join(", ")
+    }
+    if (Array.isArray(value.selectedIds) && value.selectedIds.length > 0) {
+      return value.selectedIds.join(", ")
+    }
+    if (Number.isFinite(value.selectedCount)) {
+      return `${value.selectedCount}`
+    }
     return value.display || value.text || value.code || value.key || ""
   }
   return String(value)
@@ -105,13 +117,25 @@ const _toNumericValue = (value) => {
   if (value === null || value === undefined) return null
   if (typeof value === "number" && Number.isFinite(value)) return value
   if (typeof value === "string") {
-    const parsed = Number(value.trim())
+    const trimmed = value.trim()
+    if (!trimmed) return null
+    const direct = Number(trimmed)
+    if (Number.isFinite(direct)) return direct
+    const normalized = trimmed
+      .replace(/[−–—]/g, "-")
+      .replace(/(\d)[,\s](?=\d{3}\b)/g, "$1")
+      .replace(/,(?=\d{1,2}\b)/g, ".")
+    const extracted = normalized.match(/[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?/)
+    if (!extracted) return null
+    const parsed = Number(extracted[0])
     return Number.isFinite(parsed) ? parsed : null
   }
   if (typeof value === "object") {
+    if (Number.isFinite(value.selectedCount)) {
+      return Number(value.selectedCount)
+    }
     const candidate = value.value ?? value.display ?? value.text ?? value.code ?? value.key
-    const parsed = Number(candidate)
-    return Number.isFinite(parsed) ? parsed : null
+    return _toNumericValue(candidate)
   }
   return null
 }
@@ -127,7 +151,8 @@ const _evaluateExpression = (expression, varsByName) => {
   let prepared = trimmed
   for (const token of uniqueTokens) {
     const numeric = varsByName[token]
-    const replacement = Number.isFinite(numeric) ? String(numeric) : "0"
+    if (!Number.isFinite(numeric)) return null
+    const replacement = String(numeric)
     prepared = prepared.replace(new RegExp(`\\b${token}\\b`, "g"), replacement)
   }
 
@@ -136,6 +161,43 @@ const _evaluateExpression = (expression, varsByName) => {
     return typeof result === "number" && Number.isFinite(result) ? result : null
   } catch (error) {
     return null
+  }
+}
+
+const _isHeadingField = (field) => field?.type === "heading"
+
+const _resolveFieldWidthBasis = (field) => {
+  if (_isHeadingField(field)) return "100%"
+  const normalized = typeof field?.width === "string" ? field.width.trim().toLowerCase() : ""
+  switch (normalized) {
+    case "1/4":
+    case "25%":
+      return "25%"
+    case "1/3":
+    case "33%":
+    case "33.3%":
+    case "33.33%":
+      return "33.3333%"
+    case "1/2":
+    case "50%":
+    case "half":
+      return "50%"
+    case "2/3":
+    case "66%":
+    case "66.6%":
+    case "66.67%":
+      return "66.6667%"
+    case "3/4":
+    case "75%":
+      return "75%"
+    case "1/1":
+    case "100%":
+    case "full":
+      return "100%"
+    case "auto":
+      return field?.type === "textarea" ? "100%" : "50%"
+    default:
+      return "100%"
   }
 }
 
@@ -388,6 +450,7 @@ const SubformScoring = ({
     if (!isDataEntryMode) return {}
     const result = {}
     for (const field of dataEntryFields) {
+      if (_isHeadingField(field)) continue
       result[field.id] = fd?.field?.data?.[field.id]
     }
     return result
@@ -401,6 +464,7 @@ const SubformScoring = ({
     if (!isDataEntryMode) return {}
     const vars = {}
     for (const field of dataEntryFields) {
+      if (_isHeadingField(field)) continue
       vars[field.id] = _toNumericValue(dataEntryValues[field.id]) ?? 0
     }
     const result = {}
@@ -418,8 +482,9 @@ const SubformScoring = ({
 
   const progress = useMemo(() => {
     if (isDataEntryMode) {
-      const requiredFields = dataEntryFields.filter((field) => field.required)
-      const fieldsForProgress = requiredFields.length > 0 ? requiredFields : dataEntryFields
+      const answerableFields = dataEntryFields.filter((field) => !_isHeadingField(field))
+      const requiredFields = answerableFields.filter((field) => field.required)
+      const fieldsForProgress = requiredFields.length > 0 ? requiredFields : answerableFields
       const total = fieldsForProgress.length
       const answered = fieldsForProgress.filter((field) => _isMeaningfulValue(dataEntryValues[field.id])).length
       return {
@@ -443,7 +508,9 @@ const SubformScoring = ({
 
   const hasAnyAnswers = useMemo(() => {
     if (isDataEntryMode) {
-      return dataEntryFields.some((field) => _isMeaningfulValue(dataEntryValues[field.id]))
+      return dataEntryFields
+        .filter((field) => !_isHeadingField(field))
+        .some((field) => _isMeaningfulValue(dataEntryValues[field.id]))
     }
     return progress.answered > 0
   }, [isDataEntryMode, dataEntryFields, dataEntryValues, progress])
@@ -482,6 +549,29 @@ const SubformScoring = ({
   }, [dataEntryCalculations])
 
   const renderDataEntryField = (field) => {
+    if (_isHeadingField(field)) {
+      return (
+        <Text
+          key={`field-${field.id}`}
+          styles={{
+            root: {
+              marginTop: "12px",
+              marginBottom: "2px",
+              fontSize: "13px",
+              fontWeight: 700,
+              textTransform: "uppercase",
+              letterSpacing: "0.03em",
+              color: isDarkMode ? "#d9d9d9" : "#333",
+              borderBottom: `1px solid ${isDarkMode ? "#404040" : "#e5e5e5"}`,
+              paddingBottom: "4px"
+            }
+          }}
+        >
+          {field.label}
+        </Text>
+      )
+    }
+
     const required = field.required === true
     const commonProps = {
       fieldId: field.id,
@@ -574,6 +664,26 @@ const SubformScoring = ({
           multiline
           rows={field.rows || 4}
           placeholder={field.placeholder}
+        />
+      )
+    }
+
+    if (field.type === "hotspotMap") {
+      return (
+        <HotspotMapField
+          key={`field-${field.id}`}
+          {...commonProps}
+          imageUrl={field.imageUrl}
+          imageSvg={field.imageSvg}
+          imageAlt={field.imageAlt}
+          hotspots={Array.isArray(field.hotspots) ? field.hotspots : []}
+          allowMultiSelect={field.allowMultiSelect !== false}
+          showSummary={field.showSummary !== false}
+          showHotspotLabels={field.showHotspotLabels === true}
+          markerSize={field.markerSize}
+          totalCountFieldId={field.totalCountFieldId}
+          selectedIdsFieldId={field.selectedIdsFieldId}
+          selectedLabelsFieldId={field.selectedLabelsFieldId}
         />
       )
     }
@@ -713,6 +823,9 @@ const SubformScoring = ({
 
   const dialogTitle = modalConfig.title || title || "Assessment"
   const dialogMinWidth = modalConfig.minWidth || 700
+  const showCalculationsInModal =
+    Boolean(modalConfig.showCalculationsInModal) ||
+    Boolean(modalConfig.show_calculations_in_modal)
 
   const dialogContentProps = {
     type: DialogType.largeHeader,
@@ -762,22 +875,60 @@ const SubformScoring = ({
         {isDataEntryMode ? (
           <div style={{ maxHeight: "65vh", overflowY: "auto", paddingRight: "4px" }}>
             {dataEntryFields.length > 0 ? (
-              <Stack tokens={{ childrenGap: 10 }}>
-                {dataEntryFields.map((field) => (
-                  <div key={field.id}>
+              <div style={{ display: "flex", flexWrap: "wrap", columnGap: "12px", rowGap: "10px" }}>
+                {dataEntryFields.map((field) => {
+                  const isHeading = _isHeadingField(field)
+                  const basis = _resolveFieldWidthBasis(field)
+                  const containerStyle = isHeading
+                    ? { flex: "1 0 100%", maxWidth: "100%" }
+                    : { flex: `1 1 ${basis}`, maxWidth: basis, minWidth: "220px" }
+                  return (
+                  <div key={field.id} style={containerStyle}>
                     {renderDataEntryField(field)}
-                    {field.helpText && (
+                    {field.helpText && !isHeading && (
                       <Text styles={{ root: { fontSize: "12px", color: isDarkMode ? "#a0a0a0" : "#666", marginTop: "2px" } }}>
                         {field.helpText}
                       </Text>
                     )}
                   </div>
-                ))}
-              </Stack>
+                )})}
+              </div>
             ) : (
               <Text styles={{ root: { fontSize: "13px", color: isDarkMode ? "#a0a0a0" : "#666" } }}>
                 No data-entry fields configured.
               </Text>
+            )}
+            {showCalculationsInModal && dataEntryCalculations.length > 0 && (
+              <div style={{
+                marginTop: "16px",
+                paddingTop: "12px",
+                borderTop: `1px solid ${isDarkMode ? "#404040" : "#d8d8d8"}`,
+                display: "flex",
+                flexDirection: "column",
+                gap: "8px"
+              }}>
+                {dataEntryCalculations.map((calculation) => {
+                  const value = calculatedExpressions[calculation.id]
+                  return (
+                    <div
+                      key={`modal-calc-${calculation.id}`}
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "baseline",
+                        gap: "12px"
+                      }}
+                    >
+                      <Text styles={{ root: { fontSize: "13px", fontWeight: 700, letterSpacing: "0.02em" } }}>
+                        {calculation.label.toUpperCase()}:
+                      </Text>
+                      <Text styles={{ root: { fontSize: "26px", fontWeight: 700, lineHeight: 1 } }}>
+                        {value ?? "Incomplete"}
+                      </Text>
+                    </div>
+                  )
+                })}
+              </div>
             )}
           </div>
         ) : (

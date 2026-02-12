@@ -1,7 +1,7 @@
 {
-  "name": "SubformScoring",
-  "title": "Subform Scoring with Modal and Summary",
-  "description": "A modal subform component supporting scoring questionnaires and structured data-entry workflows, with configurable inline summary items after completion",
+  "name": "HotspotMapField",
+  "title": "Hotspot Map Field",
+  "description": "Generic interactive image/SVG hotspot map with selectable regions and selection counters",
   "version": {
     "major": 1,
     "minor": 0,
@@ -21,8 +21,5 @@
     "major": 2,
     "minor": 26,
     "patch": 12
-  },
-  "components": [
-    "HotspotMapField"
-  ]
+  }
 }
