@@ -271,9 +271,9 @@ export const SimpleCodeChecklist: React.FC<SimpleCodeChecklistProps> = ({
         width: '100%',
       }}
     >
-      {options.map(option => (
+      {options.map((option, idx) => (
         <Checkbox
-          key={option.key}
+          key={`${option.key}-${idx}`}
           label={option.text}
           checked={effectiveSelectedKeys.includes(option.key)}
           onChange={(ev, checked) => handleCheckboxChange(option.key, checked)}
