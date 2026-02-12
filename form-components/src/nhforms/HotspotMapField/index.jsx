@@ -28,6 +28,9 @@ const { Label, Text, Stack } = Fluent
 
 const DEFAULT_MARKER_SIZE = 3
 const DEFAULT_MARKER_RADIUS = 1.5
+const DEFAULT_MAP_WIDTH_PERCENT = 100
+const DEFAULT_MAP_MAX_WIDTH = 560
+const DEFAULT_MAP_MIN_HEIGHT = 220
 
 const clampPercent = (value) => {
   const numeric = Number(value)
@@ -242,6 +245,18 @@ const createHotspotMapConfig = (config = {}) => ({
   allowMultiSelect: config.allowMultiSelect !== false,
   showSummary: config.showSummary !== false,
   showHotspotLabels: config.showHotspotLabels === true,
+  mapWidthPercent:
+    Number.isFinite(Number(config.mapWidthPercent)) && Number(config.mapWidthPercent) > 0
+      ? Math.max(20, Math.min(100, Number(config.mapWidthPercent)))
+      : DEFAULT_MAP_WIDTH_PERCENT,
+  mapMaxWidth:
+    Number.isFinite(Number(config.mapMaxWidth)) && Number(config.mapMaxWidth) > 0
+      ? Math.max(220, Number(config.mapMaxWidth))
+      : DEFAULT_MAP_MAX_WIDTH,
+  mapMinHeight:
+    Number.isFinite(Number(config.mapMinHeight)) && Number(config.mapMinHeight) > 0
+      ? Math.max(120, Number(config.mapMinHeight))
+      : DEFAULT_MAP_MIN_HEIGHT,
   markerSize:
     Number.isFinite(Number(config.markerSize)) && Number(config.markerSize) > 0
       ? Number(config.markerSize)
@@ -357,6 +372,9 @@ const HotspotMapField = ({
   allowMultiSelect = true,
   showSummary = true,
   showHotspotLabels = false,
+  mapWidthPercent = DEFAULT_MAP_WIDTH_PERCENT,
+  mapMaxWidth = DEFAULT_MAP_MAX_WIDTH,
+  mapMinHeight = DEFAULT_MAP_MIN_HEIGHT,
   markerSize = DEFAULT_MARKER_SIZE,
   totalCountFieldId,
   selectedIdsFieldId,
@@ -459,6 +477,9 @@ const HotspotMapField = ({
   const responsiveSvg = useMemo(() => ensureResponsiveSvg(imageSvg), [imageSvg])
   const selectedLabels = Array.isArray(mapValue?.selectedLabels) ? mapValue.selectedLabels : []
   const selectedCount = Number.isFinite(mapValue?.selectedCount) ? mapValue.selectedCount : selectedIds.size
+  const resolvedMapWidthPercent = Math.max(20, Math.min(100, Number(mapWidthPercent) || DEFAULT_MAP_WIDTH_PERCENT))
+  const resolvedMapMaxWidth = Math.max(220, Number(mapMaxWidth) || DEFAULT_MAP_MAX_WIDTH)
+  const resolvedMapMinHeight = Math.max(120, Number(mapMinHeight) || DEFAULT_MAP_MIN_HEIGHT)
 
   const panelStyle = {
     border: `1px solid ${isDarkMode ? "#404040" : "#d0d7de"}`,
@@ -469,7 +490,10 @@ const HotspotMapField = ({
 
   const mapFrameStyle = {
     position: "relative",
-    width: "100%",
+    width: `${resolvedMapWidthPercent}%`,
+    maxWidth: `${resolvedMapMaxWidth}px`,
+    minHeight: `${resolvedMapMinHeight}px`,
+    margin: "0 auto",
     borderRadius: "6px",
     overflow: "hidden",
     border: `1px solid ${isDarkMode ? "#333333" : "#e0e0e0"}`,
@@ -504,7 +528,7 @@ const HotspotMapField = ({
         ) : (
           <div
             style={{
-              minHeight: "220px",
+              minHeight: `${resolvedMapMinHeight}px`,
               display: "flex",
               alignItems: "center",
               justifyContent: "center",

@@ -112,6 +112,53 @@ const buildScoreMap = (questions) => {
   return map
 }
 
+const normalizeScoreToken = (value) => String(value ?? "").trim().toLowerCase()
+
+const collectScoreCandidates = (value, out = new Set(), depth = 0) => {
+  if (depth > 4 || value === null || value === undefined) return out
+
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    const token = String(value).trim()
+    if (token) out.add(token)
+    return out
+  }
+
+  if (Array.isArray(value)) {
+    value.forEach((entry) => collectScoreCandidates(entry, out, depth + 1))
+    return out
+  }
+
+  if (typeof value !== "object") return out
+
+  const candidateKeys = [
+    "code",
+    "key",
+    "value",
+    "id",
+    "text",
+    "display",
+    "label",
+    "state",
+    "fieldId",
+  ]
+  candidateKeys.forEach((key) => {
+    collectScoreCandidates(value[key], out, depth + 1)
+  })
+
+  if (Array.isArray(value.selectedItems)) {
+    value.selectedItems.forEach((entry) => collectScoreCandidates(entry, out, depth + 1))
+  }
+  collectScoreCandidates(value.selectedItem, out, depth + 1)
+  if (Array.isArray(value.selectedIds)) {
+    value.selectedIds.forEach((entry) => collectScoreCandidates(entry, out, depth + 1))
+  }
+  if (Array.isArray(value.selectedLabels)) {
+    value.selectedLabels.forEach((entry) => collectScoreCandidates(entry, out, depth + 1))
+  }
+
+  return out
+}
+
 /**
  * Get score for a selected value
  * @param {Object} value - The Coding value from SimpleCodeChecklist
@@ -119,11 +166,27 @@ const buildScoreMap = (questions) => {
  * @returns {number|null}
  */
 const getScoreFromValue = (value, optionScoreMap) => {
-  if (!value || !optionScoreMap) return null
-  const code = value.code || value.key
-  if (code && optionScoreMap.has(code)) {
-    return optionScoreMap.get(code)
+  if (!optionScoreMap) return null
+
+  const candidates = Array.from(collectScoreCandidates(value))
+  if (candidates.length === 0) return null
+
+  for (const candidate of candidates) {
+    if (optionScoreMap.has(candidate)) {
+      return optionScoreMap.get(candidate)
+    }
   }
+
+  const normalizedOptionMap = new Map()
+  optionScoreMap.forEach((score, key) => {
+    normalizedOptionMap.set(normalizeScoreToken(key), score)
+  })
+
+  for (const candidate of candidates) {
+    const direct = normalizedOptionMap.get(normalizeScoreToken(candidate))
+    if (direct !== undefined) return direct
+  }
+
   return null
 }
 
@@ -366,13 +429,15 @@ const ScoringModule = ({
 
   // Calculate progress
   const progress = useMemo(() => {
-    const total = config.questions?.length || 0
-    const answered = Object.keys(answers).filter(qId => {
-      const val = answers[qId]
-      return val && (val.code || val.key)
+    const questions = config.questions || []
+    const total = questions.length
+    const answered = questions.filter((question) => {
+      const value = answers[question.id]
+      const optionScoreMap = scoreMap.get(question.id)
+      return getScoreFromValue(value, optionScoreMap) !== null
     }).length
     return { answered, total, percentage: total > 0 ? Math.round((answered / total) * 100) : 0 }
-  }, [answers, config.questions])
+  }, [answers, config.questions, scoreMap])
 
   // Container styles
   const containerStyle = {

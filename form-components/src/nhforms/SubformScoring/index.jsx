@@ -31,12 +31,74 @@ const _buildScoreMap = (questions) => {
   return map
 }
 
-const _getScoreFromValue = (value, optionScoreMap) => {
-  if (!value || !optionScoreMap) return null
-  const code = value.code || value.key
-  if (code && optionScoreMap.has(code)) {
-    return optionScoreMap.get(code)
+const _normalizeScoreToken = (value) => String(value ?? "").trim().toLowerCase()
+
+const _collectScoreCandidates = (value, out = new Set(), depth = 0) => {
+  if (depth > 4 || value === null || value === undefined) return out
+
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    const token = String(value).trim()
+    if (token) out.add(token)
+    return out
   }
+
+  if (Array.isArray(value)) {
+    value.forEach((entry) => _collectScoreCandidates(entry, out, depth + 1))
+    return out
+  }
+
+  if (typeof value !== "object") return out
+
+  const candidateKeys = [
+    "code",
+    "key",
+    "value",
+    "id",
+    "text",
+    "display",
+    "label",
+    "state",
+    "fieldId",
+  ]
+  candidateKeys.forEach((key) => {
+    _collectScoreCandidates(value[key], out, depth + 1)
+  })
+
+  if (Array.isArray(value.selectedItems)) {
+    value.selectedItems.forEach((entry) => _collectScoreCandidates(entry, out, depth + 1))
+  }
+  _collectScoreCandidates(value.selectedItem, out, depth + 1)
+  if (Array.isArray(value.selectedIds)) {
+    value.selectedIds.forEach((entry) => _collectScoreCandidates(entry, out, depth + 1))
+  }
+  if (Array.isArray(value.selectedLabels)) {
+    value.selectedLabels.forEach((entry) => _collectScoreCandidates(entry, out, depth + 1))
+  }
+
+  return out
+}
+
+const _getScoreFromValue = (value, optionScoreMap) => {
+  if (!optionScoreMap) return null
+
+  const candidates = Array.from(_collectScoreCandidates(value))
+  if (candidates.length === 0) return null
+
+  for (const candidate of candidates) {
+    if (optionScoreMap.has(candidate)) {
+      return optionScoreMap.get(candidate)
+    }
+  }
+
+  const normalizedOptionMap = new Map()
+  optionScoreMap.forEach((score, key) => {
+    normalizedOptionMap.set(_normalizeScoreToken(key), score)
+  })
+  for (const candidate of candidates) {
+    const direct = normalizedOptionMap.get(_normalizeScoreToken(candidate))
+    if (direct !== undefined) return direct
+  }
+
   return null
 }
 
@@ -402,6 +464,23 @@ const SubformScoring = ({
     return Array.isArray(dataEntryConfig?.fields) && dataEntryConfig.fields.length > 0
   }, [mode, dataEntryConfig])
 
+  const setDataEntryValue = useCallback((fieldId, nextValue) => {
+    if (!fieldId || !fd?.setFormData) return
+    fd.setFormData((draft) => {
+      if (!draft.field) {
+        draft.field = { data: {}, status: {}, history: [] }
+      }
+      if (!draft.field.data) {
+        draft.field.data = {}
+      }
+      if (nextValue === undefined) {
+        draft.field.data[fieldId] = null
+      } else {
+        draft.field.data[fieldId] = nextValue
+      }
+    })
+  }, [fd])
+
   // Scoring-mode answer and score calculations
   const scoreMap = useMemo(() => {
     if (isDataEntryMode) return new Map()
@@ -495,9 +574,10 @@ const SubformScoring = ({
     }
 
     const total = config.questions?.length || 0
-    const answered = Object.keys(answers).filter((questionId) => {
-      const value = answers[questionId]
-      return value && (value.code || value.key)
+    const answered = (config.questions || []).filter((question) => {
+      const value = answers[question.id]
+      const optionScoreMap = scoreMap.get(question.id)
+      return _getScoreFromValue(value, optionScoreMap) !== null
     }).length
     return {
       answered,
@@ -592,6 +672,8 @@ const SubformScoring = ({
           storeAsNumber
           buttonControls={hasSpinProps}
           spinButtonProps={hasSpinProps ? spinButtonProps : undefined}
+          value={dataEntryValues[field.id] ?? ""}
+          onChange={(value) => setDataEntryValue(field.id, value)}
         />
       )
     }
@@ -602,6 +684,8 @@ const SubformScoring = ({
           key={`field-${field.id}`}
           {...commonProps}
           placeholder={field.placeholder}
+          value={dataEntryValues[field.id]}
+          onChange={(value) => setDataEntryValue(field.id, value)}
         />
       )
     }
@@ -612,6 +696,8 @@ const SubformScoring = ({
           key={`field-${field.id}`}
           {...commonProps}
           placeholder={field.placeholder}
+          value={dataEntryValues[field.id]}
+          onChange={(value) => setDataEntryValue(field.id, value)}
         />
       )
     }
@@ -636,6 +722,8 @@ const SubformScoring = ({
           {...commonProps}
           optionList={optionList}
           selectionType="single"
+          value={dataEntryValues[field.id]}
+          onChange={(value) => setDataEntryValue(field.id, value)}
         />
       )
     }
@@ -664,6 +752,8 @@ const SubformScoring = ({
           multiline
           rows={field.rows || 4}
           placeholder={field.placeholder}
+          value={dataEntryValues[field.id] ?? ""}
+          onChange={(_, value) => setDataEntryValue(field.id, value ?? "")}
         />
       )
     }
@@ -680,6 +770,9 @@ const SubformScoring = ({
           allowMultiSelect={field.allowMultiSelect !== false}
           showSummary={field.showSummary !== false}
           showHotspotLabels={field.showHotspotLabels === true}
+          mapWidthPercent={field.mapWidthPercent}
+          mapMaxWidth={field.mapMaxWidth}
+          mapMinHeight={field.mapMinHeight}
           markerSize={field.markerSize}
           totalCountFieldId={field.totalCountFieldId}
           selectedIdsFieldId={field.selectedIdsFieldId}
@@ -693,6 +786,8 @@ const SubformScoring = ({
         key={`field-${field.id}`}
         {...commonProps}
         placeholder={field.placeholder}
+        value={dataEntryValues[field.id] ?? ""}
+        onChange={(_, value) => setDataEntryValue(field.id, value ?? "")}
       />
     )
   }
