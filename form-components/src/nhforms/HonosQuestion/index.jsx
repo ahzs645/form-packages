@@ -90,6 +90,41 @@ const SCALE_5_OPTIONS = [
   { key: "9", value: 0, text: "9", styles: CHOICE_FIELD_STYLE },
 ]
 
+const SCALE_10_LEGENDS = [
+  "No problem",
+  "Very low",
+  "Low",
+  "Mild",
+  "Mild to moderate",
+  "Moderate",
+  "Moderate to high",
+  "High",
+  "Very high",
+  "Severe",
+  "Extreme",
+]
+
+const SCALE_10_OPTIONS = Array.from({ length: 11 }, (_, value) => ({
+  key: String(value),
+  value,
+  text: String(value),
+  styles: CHOICE_FIELD_STYLE,
+}))
+
+const SCALE_5_LEGEND_LOOKUP = {
+  "0": SCALE_5_LEGENDS[0],
+  "1": SCALE_5_LEGENDS[1],
+  "2": SCALE_5_LEGENDS[2],
+  "3": SCALE_5_LEGENDS[3],
+  "4": SCALE_5_LEGENDS[4],
+  "9": SCALE_5_LEGENDS[5],
+}
+
+const SCALE_10_LEGEND_LOOKUP = SCALE_10_OPTIONS.reduce((lookup, option) => {
+  lookup[String(option.key)] = SCALE_10_LEGENDS[Number(option.key)] || option.text
+  return lookup
+}, {})
+
 // End of Constant Definition
 // ================================================
 
@@ -125,6 +160,14 @@ const Scale5SubmitButton = props => {
 }
 
 const Scale5Legend = () => {
+  return <ScaleLegend legends={SCALE_5_LEGENDS} />
+}
+
+const Scale10Legend = () => {
+  return <ScaleLegend legends={SCALE_10_OPTIONS.map(option => option.text)} />
+}
+
+const ScaleLegend = ({ legends }) => {
   const legendRowStyle: IComponentStyles<IStackSlots> = {
     root: {
       justifyContent: "space-between",
@@ -138,7 +181,6 @@ const Scale5Legend = () => {
     textAlign: "center",
   }
 
-  let i = 0
   return (
     <Stack horizontal wrap style={QUESTION_STACK_STYLE}>
       <StackItem disableShrink>
@@ -153,9 +195,9 @@ const Scale5Legend = () => {
       </StackItem>
       <StackItem grow>
         <Stack horizontal styles={legendRowStyle} tokens={{ padding: 5 }}>
-          {SCALE_5_LEGENDS.map(legend => {
+          {legends.map((legend, index) => {
             return (
-              <Text key={i++} style={legendStyle}>
+              <Text key={index} style={legendStyle}>
                 <b>{legend}</b>
               </Text>
             )
@@ -166,7 +208,7 @@ const Scale5Legend = () => {
   )
 }
 
-type Scale5Props = {
+type ScaleQuestionProps = {
   id?: string
   label?: JSX.Element
   dropdownOptions?: any
@@ -175,120 +217,145 @@ type Scale5Props = {
   question?: string
 }
 
-const Scale5 = ({id,label,dropdownOptions,tooltip,disableCount,question}: Scale5Props) => {
-  const [honosData,modHonosData]: [FormData,Setter] = useActiveData(fd=>fd.field.data)
-  const [fd] = useActiveData()
-  const theme = useTheme()
+const createScaleQuestion = ({
+  choiceOptions,
+  fallbackLegendLookup,
+  fallbackDescription,
+}: {
+  choiceOptions: any[],
+  fallbackLegendLookup: Record<string, string>,
+  fallbackDescription: string
+}) => {
+  return ({id,label,dropdownOptions,tooltip,disableCount,question}: ScaleQuestionProps) => {
+    const [honosData,modHonosData]: [FormData,Setter] = useActiveData(fd=>fd.field.data)
+    const [fd] = useActiveData()
+    const theme = useTheme()
 
-  let defaultHonosItem: HonosItem = { selectedKey: null, value: null, question, response: null }
-  if (dropdownOptions) defaultHonosItem = { ...defaultHonosItem, selectedDropdownKey: null}
-  const rawfditem = honosData[id]
-  const fditem = rawfditem || defaultHonosItem
-  useEffect(() => {
-    if (rawfditem==null) {
-      // null or undefined
-      modHonosData({[id]:defaultHonosItem})
+    let defaultHonosItem: HonosItem = { selectedKey: null, value: null, question, response: null }
+    if (dropdownOptions) defaultHonosItem = { ...defaultHonosItem, selectedDropdownKey: null}
+    const rawfditem = honosData[id]
+    const fditem = rawfditem || defaultHonosItem
+
+    useEffect(() => {
+      if (rawfditem==null) {
+        modHonosData({[id]:defaultHonosItem})
+      }
+    },[id,rawfditem,defaultHonosItem,modHonosData])
+
+    const tooltipLookup = buildTooltipLookup(tooltip, fallbackLegendLookup)
+
+    let questionStyle = {
+      backgroundColor: "#FBFBFB",
+      padding: "5px 0px 5px 10px",
+      marginBottom: "1px",
     }
-  },[id,rawfditem,defaultHonosItem,modHonosData])
 
-  // Disable color style
-  let questionStyle = {
-    backgroundColor: "#FBFBFB",
-    padding: "5px 0px 5px 10px",
-    marginBottom: "1px",
-  }
+    if (fditem.selectedKey && (!dropdownOptions || fditem.selectedDropdownKey)) {
+      questionStyle.backgroundColor = theme.semanticColors.bodyBackground
+    }
 
-  if (fditem.selectedKey && (!dropdownOptions || fditem.selectedDropdownKey)) {
-    // Once user has selected the control, the color will be updated
-    questionStyle.backgroundColor = theme.semanticColors.bodyBackground
-  }
-
-  const dropdownStyles = {
-    dropdown: {
-      width: 200,
-      padding: "5px 0px 0px 0px",
-    },
-    title: {
-      background: (!dropdownOptions || fditem.selectedDropdownKey)
-        ? theme.semanticColors.bodyBackground
-        : theme.aihs.requiredBackground
-    },
-  }
-  
-  return (
-    <div style={questionStyle}>
-      <TooltipHost
-        id={"tooltip_" + id}
-        tooltipProps={
-          tooltip && {
-            onRenderContent: () => {
-              return <Scale5ToolTip tooltip={tooltip} />
-            },
+    const dropdownStyles = {
+      dropdown: {
+        width: 200,
+        padding: "5px 0px 0px 0px",
+      },
+      title: {
+        background: (!dropdownOptions || fditem.selectedDropdownKey)
+          ? theme.semanticColors.bodyBackground
+          : theme.aihs.requiredBackground
+      },
+    }
+    
+    return (
+      <div style={questionStyle}>
+        <TooltipHost
+          id={"tooltip_" + id}
+          tooltipProps={
+            tooltip && {
+              onRenderContent: () => {
+                return <Scale5ToolTip tooltip={tooltip} />
+              },
+            }
           }
-        }
-      >
-        <Stack horizontal wrap style={QUESTION_STACK_STYLE}>
-          <StackItem disableShrink>
-            <Label styles={QUESTION_NO_STACK_ITEM_STYLE}>
-              {id + ". "}
-            </Label>
-          </StackItem>
-          <StackItem disableShrink>
-            <Stack>
-              <Label styles={QUESTION_defaultLabelStyle}>{label}</Label>
-              {dropdownOptions && (
-                <Stack horizontal>
-                  <Dropdown
-                    placeholder='Please Select'
-                    options={dropdownOptions}
-                    styles={dropdownStyles}
-                    selectedKey={fditem.selectedDropdownKey}
-                    onChange={(e, option, index) =>
-                      handleDropdownChanged(option, id, honosData, modHonosData)
-                    }
-                  />
-                </Stack>
-              )}
-            </Stack>
-          </StackItem>
-          <StackItem grow>
-            <ChoiceGroup
-              id={"choiceGroup-" + id}
-              name={id}
-              key={id}
-              tabIndex={0}
-              options={SCALE_5_OPTIONS}
-              styles={choiceGroupStyle}
-              selectedKey={fditem.selectedKey}
-              onKeyUp={e =>
-                handleKeyUp(
-                  id,
-                  e,
-                  fditem,
-                  fd,
-                  dropdownOptions,
-                  disableCount,
-                  tooltip
-                )
-              }
-              onChange={(e, option) =>
-                handleChoiceChanged(
-                  id,
-                  option,
-                  fditem,
-                  fd,
-                  dropdownOptions,
-                  disableCount,
-                  tooltip
-                )
-              }
-            />
-          </StackItem>
-        </Stack>
-      </TooltipHost>
-    </div>
-  )
+        >
+          <Stack horizontal wrap style={QUESTION_STACK_STYLE}>
+            <StackItem disableShrink>
+              <Label styles={QUESTION_NO_STACK_ITEM_STYLE}>
+                {id + ". "}
+              </Label>
+            </StackItem>
+            <StackItem disableShrink>
+              <Stack>
+                <Label styles={QUESTION_defaultLabelStyle}>{label}</Label>
+                {dropdownOptions && (
+                  <Stack horizontal>
+                    <Dropdown
+                      placeholder='Please Select'
+                      options={dropdownOptions}
+                      styles={dropdownStyles}
+                      selectedKey={fditem.selectedDropdownKey}
+                      onChange={(e, option, index) =>
+                        handleDropdownChanged(option, id, honosData, modHonosData)
+                      }
+                    />
+                  </Stack>
+                )}
+              </Stack>
+            </StackItem>
+            <StackItem grow>
+              <ChoiceGroup
+                id={"choiceGroup-" + id}
+                name={id}
+                key={id}
+                tabIndex={0}
+                options={choiceOptions}
+                styles={choiceGroupStyle}
+                selectedKey={fditem.selectedKey}
+                onKeyUp={e =>
+                  handleKeyUp(
+                    id,
+                    e,
+                    fditem,
+                    fd,
+                    dropdownOptions,
+                    disableCount,
+                    choiceOptions,
+                    tooltipLookup,
+                    fallbackDescription
+                  )
+                }
+                onChange={(e, option) =>
+                  handleChoiceChanged(
+                    id,
+                    option,
+                    fditem,
+                    fd,
+                    dropdownOptions,
+                    disableCount,
+                    tooltipLookup,
+                    fallbackDescription
+                  )
+                }
+              />
+            </StackItem>
+          </Stack>
+        </TooltipHost>
+      </div>
+    )
+  }
 }
+
+const Scale5 = createScaleQuestion({
+  choiceOptions: SCALE_5_OPTIONS,
+  fallbackLegendLookup: SCALE_5_LEGEND_LOOKUP,
+  fallbackDescription: "Unknown or not asked",
+})
+
+const Scale10 = createScaleQuestion({
+  choiceOptions: SCALE_10_OPTIONS,
+  fallbackLegendLookup: SCALE_10_LEGEND_LOOKUP,
+  fallbackDescription: "No rating",
+})
 
 const Scale5ToolTip = props => {
   if (props.tooltip) {
@@ -374,6 +441,26 @@ const fillAllUnfilledQuestions = (fd: ActiveDataType) => {
 
 }
 
+const buildTooltipLookup = (tooltip, fallbackLookup: Record<string, string> = {}) => {
+  const lookup: Record<string, string> = { ...fallbackLookup }
+
+  if (!Array.isArray(tooltip)) return lookup
+
+  for (const item of tooltip) {
+    const keySource = item?.rating ?? item?.value
+    if (keySource == null) continue
+    const key = String(keySource)
+    const description =
+      typeof item?.description === "string" && item.description.trim()
+        ? item.description
+        : undefined
+    if (!description) continue
+    lookup[key] = description
+  }
+
+  return lookup
+}
+
 const handleKeyUp = (
   id: string,
   e: React.KeyboardEvent,
@@ -381,9 +468,11 @@ const handleKeyUp = (
   fd: ActiveDataType,
   hasDropdown: boolean,
   disableCount: boolean,
-  tooltip: any[]
+  choiceOptions: any[],
+  tooltipLookup: Record<string, string>,
+  fallbackDescription: string
 ) => {
-  const selectedOptions = SCALE_5_OPTIONS.filter(option => {
+  const selectedOptions = choiceOptions.filter(option => {
     return option.key === e.key
   })
 
@@ -403,7 +492,8 @@ const handleKeyUp = (
       fd,
       hasDropdown,
       disableCount,
-      tooltip
+      tooltipLookup,
+      fallbackDescription
     )
   }
 }
@@ -426,7 +516,8 @@ const handleChoiceChanged = (
   fd: ActiveDataType,
   hasDropdown: boolean,
   disableCount: boolean,
-  tooltip: any[]
+  tooltipLookup: Record<string, string>,
+  fallbackDescription: string
 ) => {
   const item = fd.field.data[id]
 
@@ -445,11 +536,11 @@ const handleChoiceChanged = (
     ...item,
     selectedKey: option.key,
     value,
-    response: SCALE_5_LEGENDS[parseInt(option.key)] ?? "Unknown or not asked",
-    detailResponse: tooltip?.[parseInt(option.key)]?.description ?? SCALE_5_LEGENDS[parseInt(option.key)] ?? "Unknown or not asked",
+    response: tooltipLookup[String(option.key)] ?? fallbackDescription,
+    detailResponse: tooltipLookup[String(option.key)] ?? fallbackDescription,
   }
 
-  console.log("Choice changed: ",id,option,question,tooltip,updatedValue)
+  console.log("Choice changed: ",id,option,question,tooltipLookup,updatedValue)
   UpdateContext(fd, id, updatedValue)
 }
 

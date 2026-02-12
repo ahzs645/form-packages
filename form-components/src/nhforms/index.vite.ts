@@ -277,7 +277,7 @@ function loadComponentCode(code: string, componentName: string, additionalCompon
   // Components to extract from the executed code
   const extractNames = [
     // HonosQuestion exports
-    'Scale5', 'Scale5Legend', 'Scale5QuestionList', 'Scale5SubmitButton',
+    'Scale5', 'Scale10', 'Scale5Legend', 'Scale10Legend', 'Scale5QuestionList', 'Scale5SubmitButton',
     'Scale5ToolTip', 'HonosFinalScore',
     // MSE exports
     'MseSpeech', 'MseThought', 'MseAffect', 'MsePerception', 'MseStamp',
@@ -488,7 +488,9 @@ export const nhformsComponents = loadAllComponents();
 export const {
   // HonosQuestion components
   Scale5,
+  Scale10,
   Scale5Legend,
+  Scale10Legend,
   Scale5QuestionList,
   Scale5SubmitButton,
   Scale5ToolTip,
