@@ -927,7 +927,9 @@ const SubformScoring = ({
           hotspots={Array.isArray(field.hotspots) ? field.hotspots : []}
           allowMultiSelect={field.allowMultiSelect !== false}
           showSummary={field.showSummary !== false}
+          showSelectedLabels={field.showSelectedLabels === true}
           showHotspotLabels={field.showHotspotLabels === true}
+          totalCountLabel={field.totalCountLabel}
           openInModal={field.openInModal === true}
           modalButtonText={field.modalButtonText}
           modalTitle={field.modalTitle}

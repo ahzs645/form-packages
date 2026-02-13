@@ -20,6 +20,7 @@ const MoisPatientReviewLink = ({
   href = '',
   linkText = 'Open patient handout',
   linkAriaLabel,
+  confirmEnabled = true,
   label = 'I confirm this was reviewed and given to the patient',
   required = false,
   disabled = false,
@@ -71,14 +72,16 @@ const MoisPatientReviewLink = ({
     <div id={fieldId} data-field-id={fieldId}>
       <Stack tokens={stackTokens}>
         {linkBeforeCheckbox ? linkElement : null}
-        <Checkbox
-          {...checkboxProps}
-          label={label}
-          required={required}
-          checked={checked}
-          disabled={disabled}
-          onChange={handleCheckedChange}
-        />
+        {confirmEnabled ? (
+          <Checkbox
+            {...checkboxProps}
+            label={label}
+            required={required}
+            checked={checked}
+            disabled={disabled}
+            onChange={handleCheckedChange}
+          />
+        ) : null}
         {linkBeforeCheckbox ? null : linkElement}
         {note ? <Text variant="small">{note}</Text> : null}
       </Stack>

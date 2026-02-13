@@ -6,6 +6,7 @@
  * - Stores selection state in fd.field.data[fieldId]
  * - Optional writeback fields for count and selected labels/ids
  * - Optional per-hotspot fieldId writebacks (boolean)
+ * - Optional multi-counter summary using hotspot.group values
  *
  * Hotspot config shape:
  * {
@@ -245,7 +246,9 @@ const createHotspotMapConfig = (config = {}) => ({
   imageAlt: normalizeString(config.imageAlt, "Map"),
   allowMultiSelect: config.allowMultiSelect !== false,
   showSummary: config.showSummary !== false,
+  showSelectedLabels: config.showSelectedLabels === true,
   showHotspotLabels: config.showHotspotLabels === true,
+  totalCountLabel: normalizeString(config.totalCountLabel, "Selected"),
   openInModal: config.openInModal === true,
   modalButtonText: normalizeString(config.modalButtonText, "Open Map"),
   modalTitle: normalizeString(config.modalTitle, ""),
@@ -383,7 +386,9 @@ const HotspotMapField = ({
   hotspots = [],
   allowMultiSelect = true,
   showSummary = true,
+  showSelectedLabels = false,
   showHotspotLabels = false,
+  totalCountLabel = "Selected",
   openInModal = false,
   modalButtonText = "Open Map",
   modalTitle = "",
@@ -495,6 +500,20 @@ const HotspotMapField = ({
   const responsiveSvg = useMemo(() => ensureResponsiveSvg(imageSvg), [imageSvg])
   const selectedLabels = Array.isArray(mapValue?.selectedLabels) ? mapValue.selectedLabels : []
   const selectedCount = Number.isFinite(mapValue?.selectedCount) ? mapValue.selectedCount : selectedIds.size
+  const countsByGroup = useMemo(() => {
+    if (mapValue?.countsByGroup && typeof mapValue.countsByGroup === "object") {
+      return mapValue.countsByGroup
+    }
+    return buildCountsByGroup(selectedIds, hotspotsById)
+  }, [hotspotsById, mapValue?.countsByGroup, selectedIds])
+  const summaryGroups = useMemo(() => {
+    const names = new Set()
+    normalizedHotspots.forEach((hotspot) => {
+      const group = normalizeString(hotspot.group, "")
+      if (group) names.add(group)
+    })
+    return Array.from(names).sort((a, b) => a.localeCompare(b))
+  }, [normalizedHotspots])
   const resolvedMapZoomPercent = Math.max(25, Math.min(300, Number(mapZoomPercent) || DEFAULT_MAP_ZOOM_PERCENT))
   const zoomFactor = resolvedMapZoomPercent / 100
   const resolvedMapWidthPercent = Math.max(20, Math.min(100, Number(mapWidthPercent) || DEFAULT_MAP_WIDTH_PERCENT))
@@ -639,9 +658,18 @@ const HotspotMapField = ({
     return (
       <Stack tokens={{ childrenGap: 4 }}>
         <Text variant="small">
-          Selected: <strong>{selectedCount}</strong>
+          {totalCountLabel || "Selected"}: <strong>{selectedCount}</strong>
         </Text>
-        {selectedLabels.length > 0 && (
+        {summaryGroups.map((groupName) => (
+          <Text
+            key={groupName}
+            variant="small"
+            styles={{ root: { fontSize: "11px", color: isDarkMode ? "#d1d5db" : "#4b5563" } }}
+          >
+            {groupName}: <strong>{Number(countsByGroup[groupName] || 0)}</strong>
+          </Text>
+        ))}
+        {showSelectedLabels && selectedLabels.length > 0 && (
           <Text variant="small" styles={{ root: { fontSize: "11px", color: isDarkMode ? "#d1d5db" : "#4b5563" } }}>
             {selectedLabels.join(", ")}
           </Text>
