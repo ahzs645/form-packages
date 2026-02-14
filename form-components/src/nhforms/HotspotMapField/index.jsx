@@ -34,7 +34,7 @@
  */
 
 const { useMemo, useCallback, useEffect, useRef, useState } = React
-const { Label, Text, Stack, PrimaryButton, DefaultButton, Dialog, DialogType, DialogFooter } = Fluent
+const { Label, Text, Stack, PrimaryButton, Dialog, DialogType, DialogFooter } = Fluent
 
 const DEFAULT_MARKER_SIZE = 3
 const DEFAULT_MARKER_RADIUS = 1.5
@@ -68,17 +68,18 @@ const normalizeAnnotationSymbol = (value, fallback = DEFAULT_ANNOTATION_SYMBOL) 
 
 const normalizeMapInteractionMode = (value, fallback = DEFAULT_INTERACTION_MODE) => {
   if (typeof value !== "string") return fallback
-  const normalized = value
+  const compact = value
     .trim()
     .toLowerCase()
-    .replace(/\s+/g, "_")
-  if (normalized === "symbol") return "symbol"
-  if (normalized === "draw") return "draw"
+    .replace(/[^a-z]/g, "")
+  if (compact === "select" || compact === "selectmode") return "select"
+  if (compact === "symbol" || compact === "symbolmode") return "symbol"
+  if (compact === "draw" || compact === "drawmode") return "draw"
   if (
-    normalized === "symbol_draw" ||
-    normalized === "symbol+draw" ||
-    normalized === "symbol-draw" ||
-    normalized === "symbolanddraw"
+    compact === "symboldraw" ||
+    compact === "drawsymbol" ||
+    compact === "symbolanddraw" ||
+    compact === "drawandsymbol"
   ) {
     return "symbol_draw"
   }
@@ -660,9 +661,6 @@ const HotspotMapField = ({
   const [annotationSymbol, setAnnotationSymbol] = useState(
     normalizeAnnotationSymbol(annotationDefaultSymbol, DEFAULT_ANNOTATION_SYMBOL)
   )
-  const [annotationColor, setAnnotationColor] = useState(
-    normalizeColor(annotationDefaultColor, DEFAULT_ANNOTATION_COLOR)
-  )
   const [draftStrokePoints, setDraftStrokePoints] = useState([])
   const drawingPointerIdRef = useRef(null)
   const drawingPointsRef = useRef([])
@@ -849,13 +847,12 @@ const HotspotMapField = ({
         x: point.x,
         y: point.y,
         symbol: normalizeAnnotationSymbol(annotationSymbol, resolvedAnnotationDefaultSymbol),
-        color: normalizeColor(annotationColor, resolvedAnnotationDefaultColor),
+        color: resolvedAnnotationDefaultColor,
         size: resolvedAnnotationSizePercent,
       },
     ]
     commitMapState(new Set(selectedIds), nextAnnotations)
   }, [
-    annotationColor,
     annotationSymbol,
     annotations,
     commitMapState,
@@ -935,13 +932,12 @@ const HotspotMapField = ({
         id: `annotation_${Date.now()}_${annotations.length + 1}`,
         type: "stroke",
         points,
-        color: normalizeColor(annotationColor, resolvedAnnotationDefaultColor),
+        color: resolvedAnnotationDefaultColor,
         size: resolvedAnnotationSizePercent,
       },
     ]
     commitMapState(new Set(selectedIds), nextAnnotations)
   }, [
-    annotationColor,
     annotations,
     commitMapState,
     isDrawModeActive,
@@ -951,15 +947,6 @@ const HotspotMapField = ({
     selectedIds,
     supportsAnnotations,
   ])
-
-  const handleClearAnnotations = useCallback(() => {
-    if (readOnly || !supportsAnnotations || annotations.length === 0) return
-    isDrawingRef.current = false
-    drawingPointerIdRef.current = null
-    drawingPointsRef.current = []
-    setDraftStrokePoints([])
-    commitMapState(new Set(selectedIds), [])
-  }, [annotations.length, commitMapState, readOnly, selectedIds, supportsAnnotations])
 
   const responsiveSvg = useMemo(() => ensureResponsiveSvg(imageSvg), [imageSvg])
   const selectedLabels = Array.isArray(mapValue?.selectedLabels) ? mapValue.selectedLabels : []
@@ -1193,7 +1180,7 @@ const HotspotMapField = ({
             <polyline
               points={annotationPointsToSvgString(draftStrokePoints)}
               fill="none"
-              stroke={normalizeColor(annotationColor, resolvedAnnotationDefaultColor)}
+              stroke={resolvedAnnotationDefaultColor}
               strokeWidth={Math.max(0.35, resolvedAnnotationSizePercent / 4.5)}
               strokeLinecap="round"
               strokeLinejoin="round"
@@ -1205,117 +1192,6 @@ const HotspotMapField = ({
       </div>
     </div>
   )
-
-  const renderAnnotationControls = () => {
-    if (!supportsAnnotations) return null
-    return (
-      <Stack tokens={{ childrenGap: 6 }}>
-        <Stack horizontal wrap verticalAlign="end" tokens={{ childrenGap: 8 }}>
-          <Text variant="small" styles={{ root: { fontSize: "11px", fontWeight: 600 } }}>
-            Annotation Mode
-          </Text>
-          <Text variant="small" styles={{ root: { fontSize: "11px", color: isDarkMode ? "#d1d5db" : "#334155" } }}>
-            {supportsSymbolAnnotations && supportsDrawAnnotations
-              ? "Symbols + Draw"
-              : supportsDrawAnnotations
-                ? "Draw"
-                : "Symbols"}
-          </Text>
-          <DefaultButton
-            text={`Clear Marks (${annotations.length})`}
-            onClick={handleClearAnnotations}
-            disabled={readOnly || annotations.length === 0}
-          />
-        </Stack>
-
-        <Stack horizontal wrap verticalAlign="end" tokens={{ childrenGap: 10 }}>
-          {supportsSymbolAnnotations && supportsDrawAnnotations ? (
-            <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "11px" }}>
-              <span>Tool</span>
-              <select
-                value={annotationTool}
-                onChange={(event) => setAnnotationTool(event.target.value === "draw" ? "draw" : "symbol")}
-                disabled={readOnly}
-                style={{
-                  minWidth: "110px",
-                  borderRadius: "4px",
-                  border: `1px solid ${isDarkMode ? "#4b5563" : "#cbd5e1"}`,
-                  padding: "4px 6px",
-                  background: isDarkMode ? "#111827" : "#ffffff",
-                  color: isDarkMode ? "#f3f4f6" : "#111827",
-                }}
-              >
-                <option value="symbol">Symbol</option>
-                <option value="draw">Draw</option>
-              </select>
-            </label>
-          ) : null}
-          {supportsSymbolAnnotations && isSymbolModeActive ? (
-          <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "11px" }}>
-            <span>Symbol</span>
-            <select
-              value={annotationSymbol}
-              onChange={(event) =>
-                setAnnotationSymbol(normalizeAnnotationSymbol(event.target.value, resolvedAnnotationDefaultSymbol))
-              }
-              disabled={readOnly}
-              style={{
-                minWidth: "92px",
-                borderRadius: "4px",
-                border: `1px solid ${isDarkMode ? "#4b5563" : "#cbd5e1"}`,
-                padding: "4px 6px",
-                background: isDarkMode ? "#111827" : "#ffffff",
-                color: isDarkMode ? "#f3f4f6" : "#111827",
-              }}
-            >
-              <option value="x">X</option>
-              <option value="circle">Circle</option>
-            </select>
-          </label>
-          ) : null}
-          <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "11px" }}>
-            <span>Color</span>
-            <input
-              type="color"
-              value={annotationColor}
-              onChange={(event) => setAnnotationColor(normalizeColor(event.target.value, resolvedAnnotationDefaultColor))}
-              disabled={readOnly}
-              style={{
-                width: "42px",
-                height: "30px",
-                border: `1px solid ${isDarkMode ? "#4b5563" : "#cbd5e1"}`,
-                borderRadius: "4px",
-                padding: 0,
-                background: "transparent",
-              }}
-            />
-          </label>
-          <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "11px" }}>
-            <span>Size (%)</span>
-            <input
-              type="number"
-              min={0.5}
-              max={20}
-              step={0.1}
-              value={resolvedAnnotationSizePercent}
-              readOnly
-              style={{
-                width: "72px",
-                borderRadius: "4px",
-                border: `1px solid ${isDarkMode ? "#4b5563" : "#cbd5e1"}`,
-                padding: "4px 6px",
-                background: isDarkMode ? "#111827" : "#ffffff",
-                color: isDarkMode ? "#f3f4f6" : "#111827",
-              }}
-            />
-          </label>
-          <Text variant="small" styles={{ root: { fontSize: "11px", color: isDarkMode ? "#9ca3af" : "#6b7280" } }}>
-            {isDrawModeActive ? "Drag on the map to draw." : "Click on the map to place symbols."}
-          </Text>
-        </Stack>
-      </Stack>
-    )
-  }
 
   const renderSummary = () => {
     if (!showSummary) return null
@@ -1348,6 +1224,62 @@ const HotspotMapField = ({
             {selectedLabels.join(", ")}
           </Text>
         )}
+      </Stack>
+    )
+  }
+
+  const renderAnnotationModeControls = () => {
+    if (!supportsAnnotations) return null
+    const showToolToggle = supportsSymbolAnnotations && supportsDrawAnnotations
+    const showSymbolPicker = supportsSymbolAnnotations
+    if (!showToolToggle && !showSymbolPicker) return null
+
+    return (
+      <Stack horizontal wrap verticalAlign="end" tokens={{ childrenGap: 10 }}>
+        {showToolToggle ? (
+          <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "11px" }}>
+            <span>Tool</span>
+            <select
+              value={annotationTool}
+              onChange={(event) => setAnnotationTool(event.target.value === "draw" ? "draw" : "symbol")}
+              disabled={readOnly}
+              style={{
+                minWidth: "110px",
+                borderRadius: "4px",
+                border: `1px solid ${isDarkMode ? "#4b5563" : "#cbd5e1"}`,
+                padding: "4px 6px",
+                background: isDarkMode ? "#111827" : "#ffffff",
+                color: isDarkMode ? "#f3f4f6" : "#111827",
+              }}
+            >
+              <option value="symbol">Symbol</option>
+              <option value="draw">Draw</option>
+            </select>
+          </label>
+        ) : null}
+        {showSymbolPicker ? (
+          <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "11px" }}>
+            <span>Symbol</span>
+            <select
+              value={annotationSymbol}
+              onChange={(event) =>
+                setAnnotationSymbol(normalizeAnnotationSymbol(event.target.value, resolvedAnnotationDefaultSymbol))
+              }
+              disabled={readOnly}
+              style={{
+                minWidth: "92px",
+                borderRadius: "4px",
+                border: `1px solid ${isDarkMode ? "#4b5563" : "#cbd5e1"}`,
+                padding: "4px 6px",
+                background: isDarkMode ? "#111827" : "#ffffff",
+                color: isDarkMode ? "#f3f4f6" : "#111827",
+              }}
+            >
+              <option value="x">X</option>
+              <option value="circle">Circle</option>
+            </select>
+          </label>
+        ) : null}
       </Stack>
     )
   }
@@ -1385,7 +1317,7 @@ const HotspotMapField = ({
             }}
           >
             <Stack tokens={{ childrenGap: 10 }}>
-              {renderAnnotationControls()}
+              {renderAnnotationModeControls()}
               {renderMapFrame()}
               {renderSummary()}
             </Stack>
@@ -1396,7 +1328,7 @@ const HotspotMapField = ({
         </>
       ) : (
         <>
-          {renderAnnotationControls()}
+          {renderAnnotationModeControls()}
           {renderMapFrame()}
           {renderSummary()}
         </>
