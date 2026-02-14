@@ -6,6 +6,7 @@
  * - Stores selection state in fd.field.data[fieldId]
  * - Optional writeback fields for count and selected labels/ids
  * - Optional per-hotspot fieldId writebacks (boolean)
+ * - Optional positioned numeric inputs over the map (numberFields)
  * - Optional multi-counter summary using counterGroups
  * - Backward compatible fallback summary using hotspot.group values
  *
@@ -31,6 +32,20 @@
  *   showCounter?: boolean,
  *   hotspotIds?: string[]
  * }
+ *
+ * Number field config shape:
+ * {
+ *   id: string,
+ *   fieldId?: string,
+ *   label?: string,
+ *   x: number, // percent
+ *   y: number, // percent
+ *   width?: number, // percent
+ *   placeholder?: string,
+ *   min?: number,
+ *   max?: number,
+ *   step?: number
+ * }
  */
 
 const { useMemo, useCallback, useEffect, useRef, useState } = React
@@ -42,8 +57,15 @@ const DEFAULT_MAP_ZOOM_PERCENT = 100
 const DEFAULT_MAP_WIDTH_PERCENT = 100
 const DEFAULT_MAP_MAX_WIDTH = 560
 const DEFAULT_MAP_MIN_HEIGHT = 220
+const DEFAULT_NUMBER_FIELD_WIDTH_PERCENT = 12
 const DEFAULT_ANNOTATION_COLOR = "#ef4444"
 const DEFAULT_ANNOTATION_SYMBOL = "x"
+const DEFAULT_ANNOTATION_SYMBOLS = ["x", "circle", "triangle"]
+const ANNOTATION_SYMBOL_LABELS = {
+  x: "X",
+  circle: "Circle",
+  triangle: "▲",
+}
 const DEFAULT_ANNOTATION_SIZE_PERCENT = 2.2
 const DEFAULT_INTERACTION_MODE = "select"
 
@@ -61,9 +83,63 @@ const normalizeString = (value, fallback = "") => {
   return trimmed.length > 0 ? trimmed : fallback
 }
 
+const parseAnnotationSymbol = (value) => {
+  if (typeof value !== "string") return null
+  const normalized = value.trim().toLowerCase()
+  if (!normalized) return null
+  if (normalized === "triangle" || normalized === "▲") return "triangle"
+  if (normalized === "circle") return "circle"
+  if (normalized === "x") return "x"
+  return null
+}
+
 const normalizeAnnotationSymbol = (value, fallback = DEFAULT_ANNOTATION_SYMBOL) => {
-  const normalized = normalizeString(value, fallback).toLowerCase()
-  return normalized === "circle" ? "circle" : "x"
+  return parseAnnotationSymbol(value) || parseAnnotationSymbol(fallback) || DEFAULT_ANNOTATION_SYMBOL
+}
+
+const normalizeAnnotationSymbols = (
+  value,
+  fallback = DEFAULT_ANNOTATION_SYMBOLS,
+  defaultSymbol = DEFAULT_ANNOTATION_SYMBOL
+) => {
+  const parseList = (input) => {
+    const symbols = []
+    const seen = new Set()
+    const append = (entry) => {
+      const parsed = parseAnnotationSymbol(entry)
+      if (!parsed || seen.has(parsed)) return
+      seen.add(parsed)
+      symbols.push(parsed)
+    }
+
+    if (Array.isArray(input)) {
+      input.forEach((entry) => append(entry))
+    } else if (typeof input === "string") {
+      input
+        .split(/[,\s|]+/)
+        .forEach((entry) => append(entry))
+    }
+
+    return symbols
+  }
+
+  const parsed = parseList(value)
+  const fallbackList = parseList(fallback)
+  const resolved = parsed.length > 0
+    ? parsed
+    : fallbackList.length > 0
+      ? fallbackList
+      : [DEFAULT_ANNOTATION_SYMBOL]
+  const ensuredDefault = normalizeAnnotationSymbol(defaultSymbol, resolved[0] || DEFAULT_ANNOTATION_SYMBOL)
+  return resolved.includes(ensuredDefault) ? resolved : [ensuredDefault, ...resolved]
+}
+
+const resolveAnnotationSymbol = (value, fallback, allowedSymbols = DEFAULT_ANNOTATION_SYMBOLS) => {
+  const symbol = normalizeAnnotationSymbol(value, fallback)
+  if (Array.isArray(allowedSymbols) && allowedSymbols.includes(symbol)) {
+    return symbol
+  }
+  return normalizeAnnotationSymbol(allowedSymbols[0], fallback)
 }
 
 const normalizeMapInteractionMode = (value, fallback = DEFAULT_INTERACTION_MODE) => {
@@ -210,9 +286,15 @@ const normalizeAnnotations = (
   annotations,
   defaultSymbol = DEFAULT_ANNOTATION_SYMBOL,
   defaultColor = DEFAULT_ANNOTATION_COLOR,
-  defaultSize = DEFAULT_ANNOTATION_SIZE_PERCENT
+  defaultSize = DEFAULT_ANNOTATION_SIZE_PERCENT,
+  allowedSymbols = DEFAULT_ANNOTATION_SYMBOLS
 ) => {
   if (!Array.isArray(annotations)) return []
+  const resolvedAllowedSymbols = normalizeAnnotationSymbols(
+    allowedSymbols,
+    DEFAULT_ANNOTATION_SYMBOLS,
+    defaultSymbol
+  )
   return annotations
     .map((annotation, index) => {
       if (!annotation || typeof annotation !== "object") return null
@@ -239,7 +321,7 @@ const normalizeAnnotations = (
       }
       const x = clampPercent(annotation.x)
       const y = clampPercent(annotation.y)
-      const symbol = normalizeAnnotationSymbol(annotation.symbol, defaultSymbol)
+      const symbol = resolveAnnotationSymbol(annotation.symbol, defaultSymbol, resolvedAllowedSymbols)
       return {
         id,
         type: "symbol",
@@ -248,6 +330,47 @@ const normalizeAnnotations = (
         symbol,
         color,
         size,
+      }
+    })
+    .filter(Boolean)
+}
+
+const normalizeNumberFields = (value) => {
+  if (!Array.isArray(value)) return []
+  const usedIds = new Set()
+
+  return value
+    .map((item, index) => {
+      if (!item || typeof item !== "object") return null
+      const baseId = normalizeCounterGroupId(item.id, `number_field_${index + 1}`)
+      let id = baseId
+      let suffix = 2
+      while (usedIds.has(id)) {
+        id = `${baseId}_${suffix}`
+        suffix += 1
+      }
+      usedIds.add(id)
+
+      const fieldId = normalizeString(item.fieldId != null ? item.fieldId : item.field_id, id)
+      const widthRaw = Number(item.width)
+      const width = Number.isFinite(widthRaw)
+        ? Math.max(6, Math.min(40, widthRaw))
+        : DEFAULT_NUMBER_FIELD_WIDTH_PERCENT
+      const min = Number.isFinite(Number(item.min)) ? Number(item.min) : undefined
+      const max = Number.isFinite(Number(item.max)) ? Number(item.max) : undefined
+      const step = Number.isFinite(Number(item.step)) && Number(item.step) > 0 ? Number(item.step) : undefined
+
+      return {
+        id,
+        fieldId,
+        label: normalizeString(item.label, ""),
+        x: clampPercent(item.x),
+        y: clampPercent(item.y),
+        width,
+        placeholder: normalizeString(item.placeholder, ""),
+        min,
+        max,
+        step,
       }
     })
     .filter(Boolean)
@@ -464,6 +587,16 @@ const createHotspotMapConfig = (config = {}) => {
       : DEFAULT_MARKER_SIZE
   const interactionMode = resolveMapInteractionMode(config.interactionMode, config.enableAnnotations)
   const hotspots = normalizeHotspots(config.hotspots, markerSize)
+  const numberFields = normalizeNumberFields(config.numberFields)
+  const annotationDefaultSymbol = normalizeAnnotationSymbol(
+    config.annotationDefaultSymbol,
+    DEFAULT_ANNOTATION_SYMBOL
+  )
+  const annotationSymbols = normalizeAnnotationSymbols(
+    config.annotationSymbols,
+    DEFAULT_ANNOTATION_SYMBOLS,
+    annotationDefaultSymbol
+  )
   const hasExplicitCounterGroups = Array.isArray(config.counterGroups)
   const counterGroups = normalizeCounterGroups(config.counterGroups, hotspots, !hasExplicitCounterGroups)
 
@@ -503,12 +636,18 @@ const createHotspotMapConfig = (config = {}) => {
     markerSize,
     interactionMode,
     enableAnnotations: interactionMode !== "select",
-    annotationDefaultSymbol: normalizeAnnotationSymbol(config.annotationDefaultSymbol, DEFAULT_ANNOTATION_SYMBOL),
+    annotationDefaultSymbol: resolveAnnotationSymbol(
+      annotationDefaultSymbol,
+      DEFAULT_ANNOTATION_SYMBOL,
+      annotationSymbols
+    ),
+    annotationSymbols,
     annotationDefaultColor: normalizeColor(config.annotationDefaultColor, DEFAULT_ANNOTATION_COLOR),
     annotationSizePercent:
       Number.isFinite(Number(config.annotationSizePercent)) && Number(config.annotationSizePercent) > 0
         ? Math.max(0.5, Math.min(20, Number(config.annotationSizePercent)))
         : DEFAULT_ANNOTATION_SIZE_PERCENT,
+    numberFields,
     hotspots,
     counterGroups,
   }
@@ -638,8 +777,10 @@ const HotspotMapField = ({
   interactionMode,
   enableAnnotations = false,
   annotationDefaultSymbol = DEFAULT_ANNOTATION_SYMBOL,
+  annotationSymbols = DEFAULT_ANNOTATION_SYMBOLS,
   annotationDefaultColor = DEFAULT_ANNOTATION_COLOR,
   annotationSizePercent = DEFAULT_ANNOTATION_SIZE_PERCENT,
+  numberFields = [],
   totalCountFieldId,
   selectedIdsFieldId,
   selectedLabelsFieldId,
@@ -655,11 +796,16 @@ const HotspotMapField = ({
   const supportsDrawAnnotations =
     resolvedInteractionMode === "draw" || resolvedInteractionMode === "symbol_draw"
   const supportsAnnotations = supportsSymbolAnnotations || supportsDrawAnnotations
+  const resolvedAnnotationDefaultSymbol = normalizeAnnotationSymbol(annotationDefaultSymbol, DEFAULT_ANNOTATION_SYMBOL)
+  const resolvedAnnotationSymbols = useMemo(
+    () => normalizeAnnotationSymbols(annotationSymbols, DEFAULT_ANNOTATION_SYMBOLS, resolvedAnnotationDefaultSymbol),
+    [annotationSymbols, resolvedAnnotationDefaultSymbol]
+  )
   const [annotationTool, setAnnotationTool] = useState(
     supportsDrawAnnotations && !supportsSymbolAnnotations ? "draw" : "symbol"
   )
   const [annotationSymbol, setAnnotationSymbol] = useState(
-    normalizeAnnotationSymbol(annotationDefaultSymbol, DEFAULT_ANNOTATION_SYMBOL)
+    resolveAnnotationSymbol(resolvedAnnotationDefaultSymbol, resolvedAnnotationDefaultSymbol, resolvedAnnotationSymbols)
   )
   const [draftStrokePoints, setDraftStrokePoints] = useState([])
   const drawingPointerIdRef = useRef(null)
@@ -681,6 +827,10 @@ const HotspotMapField = ({
     () => normalizeCounterGroups(counterGroups, normalizedHotspots, !Array.isArray(counterGroups)),
     [counterGroups, normalizedHotspots]
   )
+  const normalizedNumberFields = useMemo(
+    () => normalizeNumberFields(numberFields),
+    [numberFields]
+  )
 
   const mapValue = fd?.field?.data?.[fieldId]
   const selectedIds = useMemo(() => {
@@ -691,7 +841,6 @@ const HotspotMapField = ({
         .filter((value) => value.length > 0)
     )
   }, [mapValue])
-  const resolvedAnnotationDefaultSymbol = normalizeAnnotationSymbol(annotationDefaultSymbol, DEFAULT_ANNOTATION_SYMBOL)
   const resolvedAnnotationDefaultColor = normalizeColor(annotationDefaultColor, DEFAULT_ANNOTATION_COLOR)
   const resolvedAnnotationSizePercent =
     Number.isFinite(Number(annotationSizePercent)) && Number(annotationSizePercent) > 0
@@ -703,13 +852,15 @@ const HotspotMapField = ({
         mapValue?.annotations,
         resolvedAnnotationDefaultSymbol,
         resolvedAnnotationDefaultColor,
-        resolvedAnnotationSizePercent
+        resolvedAnnotationSizePercent,
+        resolvedAnnotationSymbols
       ),
     [
       mapValue?.annotations,
       resolvedAnnotationDefaultColor,
       resolvedAnnotationDefaultSymbol,
       resolvedAnnotationSizePercent,
+      resolvedAnnotationSymbols,
     ]
   )
   const isSymbolModeActive = supportsSymbolAnnotations && (supportsDrawAnnotations ? annotationTool === "symbol" : true)
@@ -724,6 +875,17 @@ const HotspotMapField = ({
       setAnnotationTool("symbol")
     }
   }, [annotationTool, supportsDrawAnnotations, supportsSymbolAnnotations])
+
+  useEffect(() => {
+    const nextSymbol = resolveAnnotationSymbol(
+      annotationSymbol,
+      resolvedAnnotationDefaultSymbol,
+      resolvedAnnotationSymbols
+    )
+    if (nextSymbol !== annotationSymbol) {
+      setAnnotationSymbol(nextSymbol)
+    }
+  }, [annotationSymbol, resolvedAnnotationDefaultSymbol, resolvedAnnotationSymbols])
 
   useEffect(() => {
     if (!isDrawModeActive) {
@@ -743,7 +905,8 @@ const HotspotMapField = ({
       nextAnnotations,
       resolvedAnnotationDefaultSymbol,
       resolvedAnnotationDefaultColor,
-      resolvedAnnotationSizePercent
+      resolvedAnnotationSizePercent,
+      resolvedAnnotationSymbols
     )
     const value = buildMapValue(
       nextSelectedIds,
@@ -788,6 +951,7 @@ const HotspotMapField = ({
     hotspotsById,
     resolvedAnnotationDefaultColor,
     resolvedAnnotationDefaultSymbol,
+    resolvedAnnotationSymbols,
     resolvedAnnotationSizePercent,
     selectedIdsFieldId,
     selectedLabelsFieldId,
@@ -846,7 +1010,11 @@ const HotspotMapField = ({
         type: "symbol",
         x: point.x,
         y: point.y,
-        symbol: normalizeAnnotationSymbol(annotationSymbol, resolvedAnnotationDefaultSymbol),
+        symbol: resolveAnnotationSymbol(
+          annotationSymbol,
+          resolvedAnnotationDefaultSymbol,
+          resolvedAnnotationSymbols
+        ),
         color: resolvedAnnotationDefaultColor,
         size: resolvedAnnotationSizePercent,
       },
@@ -861,6 +1029,7 @@ const HotspotMapField = ({
     readOnly,
     resolvedAnnotationDefaultColor,
     resolvedAnnotationDefaultSymbol,
+    resolvedAnnotationSymbols,
     resolvedAnnotationSizePercent,
     selectedIds,
     supportsAnnotations,
@@ -947,6 +1116,46 @@ const HotspotMapField = ({
     selectedIds,
     supportsAnnotations,
   ])
+
+  const getNumberFieldValue = useCallback((numberField) => {
+    const value = fd?.field?.data?.[numberField.fieldId]
+    if (value == null) return ""
+    if (typeof value === "number") {
+      return Number.isFinite(value) ? String(value) : ""
+    }
+    if (typeof value === "string") return value
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? String(parsed) : ""
+  }, [fd])
+
+  const handleNumberFieldChange = useCallback((numberField, rawValue) => {
+    if (readOnly || !fd?.setFormData || !numberField?.fieldId) return
+    const normalizedRaw = typeof rawValue === "string" ? rawValue : String(rawValue ?? "")
+    const trimmed = normalizedRaw.trim()
+    let nextValue = null
+    if (trimmed) {
+      const parsed = Number(trimmed)
+      if (Number.isFinite(parsed)) {
+        let normalizedNumeric = parsed
+        if (typeof numberField.min === "number") {
+          normalizedNumeric = Math.max(numberField.min, normalizedNumeric)
+        }
+        if (typeof numberField.max === "number") {
+          normalizedNumeric = Math.min(numberField.max, normalizedNumeric)
+        }
+        nextValue = normalizedNumeric
+      } else {
+        nextValue = normalizedRaw
+      }
+    }
+    fd.setFormData(
+      produce((draft) => {
+        if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
+        if (!draft.field.data) draft.field.data = {}
+        draft.field.data[numberField.fieldId] = nextValue
+      })
+    )
+  }, [fd, readOnly])
 
   const responsiveSvg = useMemo(() => ensureResponsiveSvg(imageSvg), [imageSvg])
   const selectedLabels = Array.isArray(mapValue?.selectedLabels) ? mapValue.selectedLabels : []
@@ -1153,6 +1362,19 @@ const HotspotMapField = ({
                 />
               )
             }
+            if (annotation.symbol === "triangle") {
+              return (
+                <polygon
+                  key={annotation.id}
+                  points={`${annotation.x},${annotation.y - half} ${annotation.x - half},${annotation.y + half} ${annotation.x + half},${annotation.y + half}`}
+                  fill="none"
+                  stroke={stroke}
+                  strokeWidth={strokeWidth}
+                  strokeLinejoin="round"
+                  pointerEvents="none"
+                />
+              )
+            }
             return (
               <g key={annotation.id} pointerEvents="none">
                 <line
@@ -1190,6 +1412,64 @@ const HotspotMapField = ({
           ) : null}
         </svg>
       </div>
+      {normalizedNumberFields.length > 0 ? (
+        <div style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+          {normalizedNumberFields.map((numberField) => (
+            <div
+              key={numberField.id}
+              style={{
+                position: "absolute",
+                left: `${numberField.x}%`,
+                top: `${numberField.y}%`,
+                transform: "translate(-50%, -50%)",
+                width: `${numberField.width}%`,
+                minWidth: "56px",
+                maxWidth: "220px",
+                pointerEvents: "auto",
+                display: "flex",
+                flexDirection: "column",
+                gap: 2,
+              }}
+              onPointerDown={(event) => event.stopPropagation()}
+              onPointerUp={(event) => event.stopPropagation()}
+              onClick={(event) => event.stopPropagation()}
+            >
+              {numberField.label ? (
+                <span
+                  style={{
+                    fontSize: "10px",
+                    lineHeight: 1.1,
+                    color: isDarkMode ? "#d1d5db" : "#334155",
+                    textShadow: isDarkMode ? "none" : "0 0 2px rgba(255,255,255,0.7)",
+                  }}
+                >
+                  {numberField.label}
+                </span>
+              ) : null}
+              <input
+                type="number"
+                inputMode="decimal"
+                value={getNumberFieldValue(numberField)}
+                onChange={(event) => handleNumberFieldChange(numberField, event.target.value)}
+                min={numberField.min}
+                max={numberField.max}
+                step={numberField.step}
+                placeholder={numberField.placeholder || undefined}
+                disabled={readOnly}
+                style={{
+                  width: "100%",
+                  borderRadius: "4px",
+                  border: `1px solid ${isDarkMode ? "#4b5563" : "#cbd5e1"}`,
+                  padding: "3px 6px",
+                  fontSize: "12px",
+                  background: isDarkMode ? "#111827" : "#ffffff",
+                  color: isDarkMode ? "#f3f4f6" : "#111827",
+                }}
+              />
+            </div>
+          ))}
+        </div>
+      ) : null}
     </div>
   )
 
@@ -1231,7 +1511,7 @@ const HotspotMapField = ({
   const renderAnnotationModeControls = () => {
     if (!supportsAnnotations) return null
     const showToolToggle = supportsSymbolAnnotations && supportsDrawAnnotations
-    const showSymbolPicker = supportsSymbolAnnotations
+    const showSymbolPicker = supportsSymbolAnnotations && resolvedAnnotationSymbols.length > 1
     if (!showToolToggle && !showSymbolPicker) return null
 
     return (
@@ -1263,7 +1543,13 @@ const HotspotMapField = ({
             <select
               value={annotationSymbol}
               onChange={(event) =>
-                setAnnotationSymbol(normalizeAnnotationSymbol(event.target.value, resolvedAnnotationDefaultSymbol))
+                setAnnotationSymbol(
+                  resolveAnnotationSymbol(
+                    event.target.value,
+                    resolvedAnnotationDefaultSymbol,
+                    resolvedAnnotationSymbols
+                  )
+                )
               }
               disabled={readOnly}
               style={{
@@ -1275,8 +1561,11 @@ const HotspotMapField = ({
                 color: isDarkMode ? "#f3f4f6" : "#111827",
               }}
             >
-              <option value="x">X</option>
-              <option value="circle">Circle</option>
+              {resolvedAnnotationSymbols.map((symbol) => (
+                <option key={symbol} value={symbol}>
+                  {ANNOTATION_SYMBOL_LABELS[symbol] || symbol}
+                </option>
+              ))}
             </select>
           </label>
         ) : null}

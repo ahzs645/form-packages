@@ -1020,8 +1020,10 @@ const SubformScoring = ({
           interactionMode={field.interactionMode}
           enableAnnotations={field.enableAnnotations === true}
           annotationDefaultSymbol={field.annotationDefaultSymbol}
+          annotationSymbols={field.annotationSymbols}
           annotationDefaultColor={field.annotationDefaultColor}
           annotationSizePercent={field.annotationSizePercent}
+          numberFields={Array.isArray(field.numberFields) ? field.numberFields : []}
           totalCountLabel={field.totalCountLabel}
           counterGroups={Array.isArray(field.counterGroups) ? field.counterGroups : undefined}
           openInModal={field.openInModal === true}
