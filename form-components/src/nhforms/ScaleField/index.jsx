@@ -28,15 +28,27 @@ const {
 const LABEL_STYLE = {
   root: {
     margin: "0px 0px 0px 0px",
-    minWidth: 200,
-    flexShrink: 0,
+    width: "100%",
+    fontSize: 14,
+    lineHeight: "18px",
+    fontWeight: 600,
+  },
+}
+
+const LABEL_COLUMN_STYLE = {
+  root: {
+    minWidth: 140,
+    width: "clamp(170px, 34%, 360px)",
+    maxWidth: 360,
+    paddingRight: 8,
+    boxSizing: "border-box",
   },
 }
 
 const CHOICE_FIELD_STYLE = {
   root: {
-    padding: "0px 10px 5px 15px",
-    minWidth: 60,
+    padding: "0px 6px 3px 6px",
+    minWidth: 46,
     textAlign: "center",
   },
 }
@@ -44,13 +56,18 @@ const CHOICE_FIELD_STYLE = {
 const choiceGroupStyles = {
   flexContainer: {
     display: "flex",
+    flexWrap: "nowrap",
     justifyContent: "space-between",
     width: "100%",
+    gap: "4px",
   },
 }
 
+const _getInlineMinWidth = (optionCount) => Math.max(360, optionCount * 64 + 170)
+
 // Legend component for showing option labels above the scale
 const ScaleFieldLegend = ({ options }) => {
+  const inlineMinWidth = _getInlineMinWidth(options.length)
   const legendRowStyle = {
     root: {
       justifyContent: "space-between",
@@ -59,27 +76,30 @@ const ScaleFieldLegend = ({ options }) => {
   }
 
   const legendStyle = {
-    padding: "5px 10px 0px 10px",
-    minWidth: 60,
+    padding: "2px 6px 0px 6px",
+    minWidth: 46,
     textAlign: "center",
-    fontSize: "11px",
+    fontSize: "10px",
+    lineHeight: "14px",
   }
 
   return (
-    <Stack horizontal wrap style={{ margin: "0px 0px 8px 0px" }}>
-      <StackItem disableShrink>
-        <Label styles={LABEL_STYLE}>&nbsp;</Label>
-      </StackItem>
-      <StackItem grow>
-        <Stack horizontal styles={legendRowStyle} tokens={{ padding: 5 }}>
-          {options.map((opt, i) => (
-            <Text key={i} style={legendStyle}>
-              <b>{opt.label}</b>
-            </Text>
-          ))}
-        </Stack>
-      </StackItem>
-    </Stack>
+    <div style={{ margin: "0px 0px 8px 0px", overflowX: "auto" }}>
+      <Stack horizontal style={{ minWidth: inlineMinWidth }}>
+        <StackItem disableShrink styles={LABEL_COLUMN_STYLE}>
+          <Label styles={LABEL_STYLE}>&nbsp;</Label>
+        </StackItem>
+        <StackItem grow>
+          <Stack horizontal styles={legendRowStyle} tokens={{ padding: 5 }}>
+            {options.map((opt, i) => (
+              <Text key={i} style={legendStyle}>
+                <b>{opt.description || opt.label}</b>
+              </Text>
+            ))}
+          </Stack>
+        </StackItem>
+      </Stack>
+    </div>
   )
 }
 
@@ -167,13 +187,14 @@ const ScaleField = ({
     backgroundColor: currentData.selectedKey
       ? theme.semanticColors.bodyBackground
       : "#FBFBFB",
-    padding: "8px 0px 8px 10px",
+    padding: "6px 0px 6px 8px",
     marginBottom: "1px",
     borderRadius: "4px",
   }
 
   // Check if any option has a description for tooltip
   const hasDescriptions = scaleOptions.some(opt => opt.description)
+  const inlineMinWidth = _getInlineMinWidth(scaleOptions.length)
 
   return (
     <div>
@@ -190,28 +211,30 @@ const ScaleField = ({
               : undefined
           }
         >
-          <Stack horizontal wrap verticalAlign="center">
-            <StackItem disableShrink>
-              <Label
-                styles={LABEL_STYLE}
-                required={required}
-              >
-                {label}
-              </Label>
-            </StackItem>
-            <StackItem grow>
-              <OptionChoice
-                inline
-                displayStyle="radio"
-                id={`scale-${fieldId}`}
-                options={choiceOptions}
-                selectedKey={currentData.selectedKey}
-                onChange={handleChange}
-                disabled={readOnly}
-                controlStyles={choiceGroupStyles}
-              />
-            </StackItem>
-          </Stack>
+          <div style={{ overflowX: "auto" }}>
+            <Stack horizontal verticalAlign="center" style={{ minWidth: inlineMinWidth }}>
+              <StackItem disableShrink styles={LABEL_COLUMN_STYLE}>
+                <Label
+                  styles={LABEL_STYLE}
+                  required={required}
+                >
+                  {label}
+                </Label>
+              </StackItem>
+              <StackItem grow>
+                <OptionChoice
+                  inline
+                  displayStyle="radio"
+                  id={`scale-${fieldId}`}
+                  options={choiceOptions}
+                  selectedKey={currentData.selectedKey}
+                  onChange={handleChange}
+                  disabled={readOnly}
+                  controlStyles={choiceGroupStyles}
+                />
+              </StackItem>
+            </Stack>
+          </div>
         </TooltipHost>
       </div>
     </div>

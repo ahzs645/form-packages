@@ -143,6 +143,11 @@ const _isMeaningfulValue = (value) => {
   if (typeof value === "string") return value.trim().length > 0
   if (Array.isArray(value)) return value.length > 0
   if (typeof value === "object") {
+    if ("selectedKey" in value) {
+      const selected = value.selectedKey
+      if (selected === null || selected === undefined) return false
+      return String(selected).trim().length > 0
+    }
     if (Number.isFinite(value.selectedCount)) {
       return Number(value.selectedCount) > 0
     }
@@ -161,6 +166,18 @@ const _toDisplayValue = (value) => {
     return value.map(_toDisplayValue).filter(Boolean).join(", ")
   }
   if (typeof value === "object") {
+    if ("selectedKey" in value) {
+      const response =
+        typeof value.detailResponse === "string" && value.detailResponse.trim()
+          ? value.detailResponse.trim()
+          : typeof value.response === "string" && value.response.trim()
+            ? value.response.trim()
+            : null
+      if (response) return response
+      if (value.selectedKey !== null && value.selectedKey !== undefined) {
+        return String(value.selectedKey)
+      }
+    }
     if (Array.isArray(value.selectedLabels) && value.selectedLabels.length > 0) {
       return value.selectedLabels.join(", ")
     }
@@ -196,7 +213,7 @@ const _toNumericValue = (value) => {
     if (Number.isFinite(value.selectedCount)) {
       return Number(value.selectedCount)
     }
-    const candidate = value.value ?? value.display ?? value.text ?? value.code ?? value.key
+    const candidate = value.value ?? value.selectedKey ?? value.display ?? value.text ?? value.code ?? value.key
     return _toNumericValue(candidate)
   }
   return null
@@ -261,6 +278,57 @@ const _resolveFieldWidthBasis = (field) => {
     default:
       return "100%"
   }
+}
+
+const _buildScaleOptions = (field) => {
+  const min = Number.isFinite(field?.min) ? Number(field.min) : 0
+  const max = Number.isFinite(field?.max) ? Number(field.max) : 4
+  const step = Number.isFinite(field?.step) && Number(field.step) > 0 ? Number(field.step) : 1
+  const providedOptions = Array.isArray(field?.scaleOptions) ? field.scaleOptions : []
+  const normalizedOptions = providedOptions
+    .map((option) => {
+      const numericValue = Number(option?.value)
+      if (!Number.isFinite(numericValue)) return null
+      const label = typeof option?.label === "string" && option.label.trim()
+        ? option.label.trim()
+        : String(numericValue)
+      const description = typeof option?.description === "string" && option.description.trim()
+        ? option.description.trim()
+        : undefined
+      return {
+        value: numericValue,
+        label,
+        description,
+      }
+    })
+    .filter(Boolean)
+
+  if (normalizedOptions.length > 0) return normalizedOptions
+
+  const fallbackOptions = []
+  for (let cursor = Math.min(min, max); cursor <= Math.max(min, max) + step / 1000; cursor += step) {
+    const value = Number(cursor.toFixed(6))
+    const option = { value, label: String(value) }
+    if (value === Math.min(min, max) && field?.minLabel) {
+      option.description = field.minLabel
+    } else if (value === Math.max(min, max) && field?.maxLabel) {
+      option.description = field.maxLabel
+    }
+    fallbackOptions.push(option)
+    if (fallbackOptions.length > 1000) break
+  }
+  return fallbackOptions
+}
+
+const _buildScaleLegendSignature = (field) => {
+  if (!field || field.type !== "scale") return ""
+  const options = _buildScaleOptions(field)
+  return JSON.stringify(
+    options.map((option) => ({
+      value: Number(option.value),
+      legend: String(option.description || option.label || option.value),
+    }))
+  )
 }
 
 const _formatNumericValue = (value, precision = 1) => {
@@ -786,7 +854,7 @@ const SubformScoring = ({
     return dataEntryCalculations.find((calculation) => calculation.id === calculationId)
   }, [dataEntryCalculations])
 
-  const renderDataEntryField = (field) => {
+  const renderDataEntryField = (field, renderOptions = {}) => {
     if (_isHeadingField(field)) {
       return (
         <Text
@@ -832,6 +900,25 @@ const SubformScoring = ({
           spinButtonProps={hasSpinProps ? spinButtonProps : undefined}
           value={dataEntryValues[field.id] ?? ""}
           onChange={(value) => setDataEntryValue(field.id, value)}
+        />
+      )
+    }
+
+    if (field.type === "scale") {
+      const scaleOptions = _buildScaleOptions(field)
+      const showLegend = typeof renderOptions.showLegend === "boolean"
+        ? renderOptions.showLegend
+        : field.showLegend === true
+
+      return (
+        <ScaleField
+          key={`field-${field.id}`}
+          fieldId={field.id}
+          label={field.label}
+          required={required}
+          options={scaleOptions}
+          showLegend={showLegend}
+          showInlineLabels={field.showInlineLabels !== false}
         />
       )
     }
@@ -927,9 +1014,16 @@ const SubformScoring = ({
           hotspots={Array.isArray(field.hotspots) ? field.hotspots : []}
           allowMultiSelect={field.allowMultiSelect !== false}
           showSummary={field.showSummary !== false}
+          showDefaultCounter={field.showDefaultCounter !== false}
           showSelectedLabels={field.showSelectedLabels === true}
           showHotspotLabels={field.showHotspotLabels === true}
+          interactionMode={field.interactionMode}
+          enableAnnotations={field.enableAnnotations === true}
+          annotationDefaultSymbol={field.annotationDefaultSymbol}
+          annotationDefaultColor={field.annotationDefaultColor}
+          annotationSizePercent={field.annotationSizePercent}
           totalCountLabel={field.totalCountLabel}
+          counterGroups={Array.isArray(field.counterGroups) ? field.counterGroups : undefined}
           openInModal={field.openInModal === true}
           modalButtonText={field.modalButtonText}
           modalTitle={field.modalTitle}
@@ -1278,15 +1372,29 @@ const SubformScoring = ({
               renderMorphineCalculator()
             ) : dataEntryFields.length > 0 ? (
               <div style={{ display: "flex", flexWrap: "wrap", columnGap: "12px", rowGap: "10px" }}>
-                {dataEntryFields.map((field) => {
+                {dataEntryFields.map((field, index) => {
                   const isHeading = _isHeadingField(field)
                   const basis = _resolveFieldWidthBasis(field)
+                  let showLegendForScale = undefined
+                  if (field.type === "scale" && field.showLegend === true) {
+                    const currentSignature = _buildScaleLegendSignature(field)
+                    let previousScaleSignature = null
+                    for (let prevIndex = index - 1; prevIndex >= 0; prevIndex -= 1) {
+                      const previousField = dataEntryFields[prevIndex]
+                      if (_isHeadingField(previousField)) break
+                      if (previousField?.type === "scale" && previousField.showLegend === true) {
+                        previousScaleSignature = _buildScaleLegendSignature(previousField)
+                      }
+                      break
+                    }
+                    showLegendForScale = previousScaleSignature !== currentSignature
+                  }
                   const containerStyle = isHeading
                     ? { flex: "1 0 100%", maxWidth: "100%" }
                     : { flex: `1 1 ${basis}`, maxWidth: basis, minWidth: "220px" }
                   return (
                   <div key={field.id} style={containerStyle}>
-                    {renderDataEntryField(field)}
+                    {renderDataEntryField(field, { showLegend: showLegendForScale })}
                     {field.helpText && !isHeading && (
                       <Text styles={{ root: { fontSize: "12px", color: isDarkMode ? "#a0a0a0" : "#666", marginTop: "2px" } }}>
                         {field.helpText}

@@ -6,7 +6,8 @@
  * - Stores selection state in fd.field.data[fieldId]
  * - Optional writeback fields for count and selected labels/ids
  * - Optional per-hotspot fieldId writebacks (boolean)
- * - Optional multi-counter summary using hotspot.group values
+ * - Optional multi-counter summary using counterGroups
+ * - Backward compatible fallback summary using hotspot.group values
  *
  * Hotspot config shape:
  * {
@@ -22,10 +23,18 @@
  *   fieldId?: string,
  *   group?: string
  * }
+ *
+ * Counter group config shape:
+ * {
+ *   id: string,
+ *   label?: string,
+ *   showCounter?: boolean,
+ *   hotspotIds?: string[]
+ * }
  */
 
-const { useMemo, useCallback, useState } = React
-const { Label, Text, Stack, PrimaryButton, Dialog, DialogType, DialogFooter } = Fluent
+const { useMemo, useCallback, useEffect, useRef, useState } = React
+const { Label, Text, Stack, PrimaryButton, DefaultButton, Dialog, DialogType, DialogFooter } = Fluent
 
 const DEFAULT_MARKER_SIZE = 3
 const DEFAULT_MARKER_RADIUS = 1.5
@@ -33,6 +42,10 @@ const DEFAULT_MAP_ZOOM_PERCENT = 100
 const DEFAULT_MAP_WIDTH_PERCENT = 100
 const DEFAULT_MAP_MAX_WIDTH = 560
 const DEFAULT_MAP_MIN_HEIGHT = 220
+const DEFAULT_ANNOTATION_COLOR = "#ef4444"
+const DEFAULT_ANNOTATION_SYMBOL = "x"
+const DEFAULT_ANNOTATION_SIZE_PERCENT = 2.2
+const DEFAULT_INTERACTION_MODE = "select"
 
 const clampPercent = (value) => {
   const numeric = Number(value)
@@ -46,6 +59,74 @@ const normalizeString = (value, fallback = "") => {
   if (typeof value !== "string") return fallback
   const trimmed = value.trim()
   return trimmed.length > 0 ? trimmed : fallback
+}
+
+const normalizeAnnotationSymbol = (value, fallback = DEFAULT_ANNOTATION_SYMBOL) => {
+  const normalized = normalizeString(value, fallback).toLowerCase()
+  return normalized === "circle" ? "circle" : "x"
+}
+
+const normalizeMapInteractionMode = (value, fallback = DEFAULT_INTERACTION_MODE) => {
+  if (typeof value !== "string") return fallback
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "_")
+  if (normalized === "symbol") return "symbol"
+  if (normalized === "draw") return "draw"
+  if (
+    normalized === "symbol_draw" ||
+    normalized === "symbol+draw" ||
+    normalized === "symbol-draw" ||
+    normalized === "symbolanddraw"
+  ) {
+    return "symbol_draw"
+  }
+  return "select"
+}
+
+const resolveMapInteractionMode = (mode, enableAnnotations) => {
+  if (typeof mode === "string" && mode.trim()) {
+    return normalizeMapInteractionMode(mode, DEFAULT_INTERACTION_MODE)
+  }
+  return enableAnnotations === true ? "symbol_draw" : "select"
+}
+
+const normalizeAnnotationType = (value, fallback = "symbol") => {
+  const normalized = normalizeString(value, fallback).toLowerCase()
+  return normalized === "stroke" ? "stroke" : "symbol"
+}
+
+const normalizeColor = (value, fallback = DEFAULT_ANNOTATION_COLOR) => {
+  const normalized = normalizeString(value, fallback)
+  return normalized || fallback
+}
+
+const normalizeAnnotationPoints = (value) => {
+  if (!Array.isArray(value)) return []
+  return value
+    .map((point) => {
+      if (!point || typeof point !== "object") return null
+      return {
+        x: clampPercent(point.x),
+        y: clampPercent(point.y),
+      }
+    })
+    .filter(Boolean)
+}
+
+const annotationPointsToSvgString = (points) =>
+  (Array.isArray(points) ? points : [])
+    .map((point) => `${point.x},${point.y}`)
+    .join(" ")
+
+const normalizeCounterGroupId = (value, fallback) => {
+  if (typeof value !== "string") return fallback
+  const normalized = value
+    .trim()
+    .replace(/[^a-zA-Z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+  return normalized || fallback
 }
 
 const parseSvgNumber = (value) => {
@@ -124,6 +205,53 @@ const pointsToSvgString = (points) =>
     .map((point) => `${point.x},${point.y}`)
     .join(" ")
 
+const normalizeAnnotations = (
+  annotations,
+  defaultSymbol = DEFAULT_ANNOTATION_SYMBOL,
+  defaultColor = DEFAULT_ANNOTATION_COLOR,
+  defaultSize = DEFAULT_ANNOTATION_SIZE_PERCENT
+) => {
+  if (!Array.isArray(annotations)) return []
+  return annotations
+    .map((annotation, index) => {
+      if (!annotation || typeof annotation !== "object") return null
+      const id = normalizeString(annotation.id, `annotation_${index + 1}`)
+      const type = normalizeAnnotationType(
+        annotation.type,
+        Array.isArray(annotation.points) ? "stroke" : "symbol"
+      )
+      const color = normalizeColor(annotation.color, defaultColor)
+      const size =
+        Number.isFinite(Number(annotation.size)) && Number(annotation.size) > 0
+          ? Math.max(0.5, Math.min(20, Number(annotation.size)))
+          : defaultSize
+      if (type === "stroke") {
+        const points = normalizeAnnotationPoints(annotation.points)
+        if (points.length < 2) return null
+        return {
+          id,
+          type: "stroke",
+          color,
+          size,
+          points,
+        }
+      }
+      const x = clampPercent(annotation.x)
+      const y = clampPercent(annotation.y)
+      const symbol = normalizeAnnotationSymbol(annotation.symbol, defaultSymbol)
+      return {
+        id,
+        type: "symbol",
+        x,
+        y,
+        symbol,
+        color,
+        size,
+      }
+    })
+    .filter(Boolean)
+}
+
 const getHotspotLabelAnchor = (hotspot) => {
   if (hotspot.shape === "circle") {
     return { x: hotspot.x, y: hotspot.y }
@@ -194,6 +322,68 @@ const normalizeHotspots = (hotspots, markerSize = DEFAULT_MARKER_SIZE) => {
     .filter(Boolean)
 }
 
+const normalizeCounterGroups = (counterGroups, hotspots, fallbackToLegacyGroups = true) => {
+  const hotspotIdSet = new Set((Array.isArray(hotspots) ? hotspots : []).map((hotspot) => hotspot.id))
+  const sanitizeHotspotIds = (hotspotIds) => {
+    if (!Array.isArray(hotspotIds)) return []
+    const unique = new Set()
+    hotspotIds.forEach((entry) => {
+      const normalizedId = normalizeCounterGroupId(entry, "")
+      if (!normalizedId || !hotspotIdSet.has(normalizedId)) return
+      unique.add(normalizedId)
+    })
+    return Array.from(unique)
+  }
+
+  if (Array.isArray(counterGroups)) {
+    const usedIds = new Set()
+    return counterGroups
+      .map((group, index) => {
+        if (!group || typeof group !== "object") return null
+        const baseId = normalizeCounterGroupId(group.id, `group_${index + 1}`)
+        let id = baseId
+        let suffix = 2
+        while (usedIds.has(id)) {
+          id = `${baseId}_${suffix}`
+          suffix += 1
+        }
+        usedIds.add(id)
+        return {
+          id,
+          label: normalizeString(group.label, id),
+          showCounter: group.showCounter !== false,
+          hotspotIds: sanitizeHotspotIds(group.hotspotIds),
+        }
+      })
+      .filter(Boolean)
+  }
+
+  if (!fallbackToLegacyGroups) return []
+
+  const groupsById = new Map()
+  ;(Array.isArray(hotspots) ? hotspots : []).forEach((hotspot) => {
+    const groupLabel = normalizeString(hotspot.group, "")
+    if (!groupLabel) return
+    const groupId = normalizeCounterGroupId(groupLabel, `group_${groupsById.size + 1}`)
+    if (!groupsById.has(groupId)) {
+      groupsById.set(groupId, {
+        id: groupId,
+        label: groupLabel,
+        showCounter: true,
+        hotspotIds: new Set(),
+      })
+    }
+    groupsById.get(groupId).hotspotIds.add(hotspot.id)
+  })
+
+  return Array.from(groupsById.values()).map((group) => ({
+    id: group.id,
+    label: group.label,
+    showCounter: group.showCounter,
+    hotspotIds: Array.from(group.hotspotIds),
+  }))
+}
+
 const ensureResponsiveSvg = (markup) => {
   const input = typeof markup === "string" ? markup.trim() : ""
   if (!input) return ""
@@ -208,7 +398,25 @@ const ensureResponsiveSvg = (markup) => {
   )
 }
 
-const buildCountsByGroup = (selectedIds, hotspotsById) => {
+const buildCountsByGroup = (selectedIds, hotspotsById, counterGroups = []) => {
+  if (Array.isArray(counterGroups) && counterGroups.length > 0) {
+    const counts = {}
+    counterGroups.forEach((group) => {
+      const groupId = normalizeString(group.id, "")
+      if (!groupId) return
+      const assignedHotspotIds = Array.isArray(group.hotspotIds) ? group.hotspotIds : []
+      let count = 0
+      assignedHotspotIds.forEach((hotspotId) => {
+        if (!hotspotsById.has(hotspotId)) return
+        if (selectedIds.has(hotspotId)) {
+          count += 1
+        }
+      })
+      counts[groupId] = count
+    })
+    return counts
+  }
+
   const counts = {}
   selectedIds.forEach((id) => {
     const hotspot = hotspotsById.get(id)
@@ -219,7 +427,13 @@ const buildCountsByGroup = (selectedIds, hotspotsById) => {
   return counts
 }
 
-const buildMapValue = (selectedIds, hotspots, hotspotsById) => {
+const buildMapValue = (
+  selectedIds,
+  hotspots,
+  hotspotsById,
+  counterGroups = [],
+  annotations = []
+) => {
   const byHotspot = {}
   const selectedLabels = []
   hotspots.forEach((hotspot) => {
@@ -235,49 +449,69 @@ const buildMapValue = (selectedIds, hotspots, hotspotsById) => {
     selectedLabels,
     selectedCount: selectedLabels.length,
     byHotspot,
-    countsByGroup: buildCountsByGroup(selectedIds, hotspotsById),
+    countsByGroup: buildCountsByGroup(selectedIds, hotspotsById, counterGroups),
+    annotations,
+    annotationCount: Array.isArray(annotations) ? annotations.length : 0,
     updatedAt: new Date().toISOString(),
   }
 }
 
-const createHotspotMapConfig = (config = {}) => ({
-  imageUrl: normalizeString(config.imageUrl, ""),
-  imageSvg: normalizeString(config.imageSvg, ""),
-  imageAlt: normalizeString(config.imageAlt, "Map"),
-  allowMultiSelect: config.allowMultiSelect !== false,
-  showSummary: config.showSummary !== false,
-  showSelectedLabels: config.showSelectedLabels === true,
-  showHotspotLabels: config.showHotspotLabels === true,
-  totalCountLabel: normalizeString(config.totalCountLabel, "Selected"),
-  openInModal: config.openInModal === true,
-  modalButtonText: normalizeString(config.modalButtonText, "Open Map"),
-  modalTitle: normalizeString(config.modalTitle, ""),
-  modalMinWidth:
-    Number.isFinite(Number(config.modalMinWidth)) && Number(config.modalMinWidth) > 0
-      ? Math.max(360, Number(config.modalMinWidth))
-      : 760,
-  mapZoomPercent:
-    Number.isFinite(Number(config.mapZoomPercent)) && Number(config.mapZoomPercent) > 0
-      ? Math.max(25, Math.min(300, Number(config.mapZoomPercent)))
-      : DEFAULT_MAP_ZOOM_PERCENT,
-  mapWidthPercent:
-    Number.isFinite(Number(config.mapWidthPercent)) && Number(config.mapWidthPercent) > 0
-      ? Math.max(20, Math.min(100, Number(config.mapWidthPercent)))
-      : DEFAULT_MAP_WIDTH_PERCENT,
-  mapMaxWidth:
-    Number.isFinite(Number(config.mapMaxWidth)) && Number(config.mapMaxWidth) > 0
-      ? Math.max(220, Number(config.mapMaxWidth))
-      : DEFAULT_MAP_MAX_WIDTH,
-  mapMinHeight:
-    Number.isFinite(Number(config.mapMinHeight)) && Number(config.mapMinHeight) > 0
-      ? Math.max(120, Number(config.mapMinHeight))
-      : DEFAULT_MAP_MIN_HEIGHT,
-  markerSize:
+const createHotspotMapConfig = (config = {}) => {
+  const markerSize =
     Number.isFinite(Number(config.markerSize)) && Number(config.markerSize) > 0
       ? Number(config.markerSize)
-      : DEFAULT_MARKER_SIZE,
-  hotspots: normalizeHotspots(config.hotspots, config.markerSize ?? DEFAULT_MARKER_SIZE),
-})
+      : DEFAULT_MARKER_SIZE
+  const interactionMode = resolveMapInteractionMode(config.interactionMode, config.enableAnnotations)
+  const hotspots = normalizeHotspots(config.hotspots, markerSize)
+  const hasExplicitCounterGroups = Array.isArray(config.counterGroups)
+  const counterGroups = normalizeCounterGroups(config.counterGroups, hotspots, !hasExplicitCounterGroups)
+
+  return {
+    imageUrl: normalizeString(config.imageUrl, ""),
+    imageSvg: normalizeString(config.imageSvg, ""),
+    imageAlt: normalizeString(config.imageAlt, "Map"),
+    allowMultiSelect: config.allowMultiSelect !== false,
+    showSummary: config.showSummary !== false,
+    showDefaultCounter: config.showDefaultCounter !== false,
+    showSelectedLabels: config.showSelectedLabels === true,
+    showHotspotLabels: config.showHotspotLabels === true,
+    totalCountLabel: normalizeString(config.totalCountLabel, "Selected"),
+    openInModal: config.openInModal === true,
+    modalButtonText: normalizeString(config.modalButtonText, "Open Map"),
+    modalTitle: normalizeString(config.modalTitle, ""),
+    modalMinWidth:
+      Number.isFinite(Number(config.modalMinWidth)) && Number(config.modalMinWidth) > 0
+        ? Math.max(360, Number(config.modalMinWidth))
+        : 760,
+    mapZoomPercent:
+      Number.isFinite(Number(config.mapZoomPercent)) && Number(config.mapZoomPercent) > 0
+        ? Math.max(25, Math.min(300, Number(config.mapZoomPercent)))
+        : DEFAULT_MAP_ZOOM_PERCENT,
+    mapWidthPercent:
+      Number.isFinite(Number(config.mapWidthPercent)) && Number(config.mapWidthPercent) > 0
+        ? Math.max(20, Math.min(100, Number(config.mapWidthPercent)))
+        : DEFAULT_MAP_WIDTH_PERCENT,
+    mapMaxWidth:
+      Number.isFinite(Number(config.mapMaxWidth)) && Number(config.mapMaxWidth) > 0
+        ? Math.max(220, Number(config.mapMaxWidth))
+        : DEFAULT_MAP_MAX_WIDTH,
+    mapMinHeight:
+      Number.isFinite(Number(config.mapMinHeight)) && Number(config.mapMinHeight) > 0
+        ? Math.max(120, Number(config.mapMinHeight))
+        : DEFAULT_MAP_MIN_HEIGHT,
+    markerSize,
+    interactionMode,
+    enableAnnotations: interactionMode !== "select",
+    annotationDefaultSymbol: normalizeAnnotationSymbol(config.annotationDefaultSymbol, DEFAULT_ANNOTATION_SYMBOL),
+    annotationDefaultColor: normalizeColor(config.annotationDefaultColor, DEFAULT_ANNOTATION_COLOR),
+    annotationSizePercent:
+      Number.isFinite(Number(config.annotationSizePercent)) && Number(config.annotationSizePercent) > 0
+        ? Math.max(0.5, Math.min(20, Number(config.annotationSizePercent)))
+        : DEFAULT_ANNOTATION_SIZE_PERCENT,
+    hotspots,
+    counterGroups,
+  }
+}
 
 const importSvgHotspots = (svgMarkup) => {
   if (!svgMarkup || typeof svgMarkup !== "string") return []
@@ -386,9 +620,11 @@ const HotspotMapField = ({
   hotspots = [],
   allowMultiSelect = true,
   showSummary = true,
+  showDefaultCounter = true,
   showSelectedLabels = false,
   showHotspotLabels = false,
   totalCountLabel = "Selected",
+  counterGroups,
   openInModal = false,
   modalButtonText = "Open Map",
   modalTitle = "",
@@ -398,6 +634,11 @@ const HotspotMapField = ({
   mapMaxWidth = DEFAULT_MAP_MAX_WIDTH,
   mapMinHeight = DEFAULT_MAP_MIN_HEIGHT,
   markerSize = DEFAULT_MARKER_SIZE,
+  interactionMode,
+  enableAnnotations = false,
+  annotationDefaultSymbol = DEFAULT_ANNOTATION_SYMBOL,
+  annotationDefaultColor = DEFAULT_ANNOTATION_COLOR,
+  annotationSizePercent = DEFAULT_ANNOTATION_SIZE_PERCENT,
   totalCountFieldId,
   selectedIdsFieldId,
   selectedLabelsFieldId,
@@ -406,6 +647,26 @@ const HotspotMapField = ({
 }) => {
   const [fd] = useActiveData()
   const [isModalOpen, setIsModalOpen] = useState(false)
+  const resolvedInteractionMode = resolveMapInteractionMode(interactionMode, enableAnnotations)
+  const supportsSelection = resolvedInteractionMode === "select"
+  const supportsSymbolAnnotations =
+    resolvedInteractionMode === "symbol" || resolvedInteractionMode === "symbol_draw"
+  const supportsDrawAnnotations =
+    resolvedInteractionMode === "draw" || resolvedInteractionMode === "symbol_draw"
+  const supportsAnnotations = supportsSymbolAnnotations || supportsDrawAnnotations
+  const [annotationTool, setAnnotationTool] = useState(
+    supportsDrawAnnotations && !supportsSymbolAnnotations ? "draw" : "symbol"
+  )
+  const [annotationSymbol, setAnnotationSymbol] = useState(
+    normalizeAnnotationSymbol(annotationDefaultSymbol, DEFAULT_ANNOTATION_SYMBOL)
+  )
+  const [annotationColor, setAnnotationColor] = useState(
+    normalizeColor(annotationDefaultColor, DEFAULT_ANNOTATION_COLOR)
+  )
+  const [draftStrokePoints, setDraftStrokePoints] = useState([])
+  const drawingPointerIdRef = useRef(null)
+  const drawingPointsRef = useRef([])
+  const isDrawingRef = useRef(false)
   const theme = useTheme()
   const isDarkMode = theme?.isInverted || false
 
@@ -418,6 +679,10 @@ const HotspotMapField = ({
     normalizedHotspots.forEach((hotspot) => map.set(hotspot.id, hotspot))
     return map
   }, [normalizedHotspots])
+  const normalizedCounterGroups = useMemo(
+    () => normalizeCounterGroups(counterGroups, normalizedHotspots, !Array.isArray(counterGroups)),
+    [counterGroups, normalizedHotspots]
+  )
 
   const mapValue = fd?.field?.data?.[fieldId]
   const selectedIds = useMemo(() => {
@@ -428,12 +693,70 @@ const HotspotMapField = ({
         .filter((value) => value.length > 0)
     )
   }, [mapValue])
+  const resolvedAnnotationDefaultSymbol = normalizeAnnotationSymbol(annotationDefaultSymbol, DEFAULT_ANNOTATION_SYMBOL)
+  const resolvedAnnotationDefaultColor = normalizeColor(annotationDefaultColor, DEFAULT_ANNOTATION_COLOR)
+  const resolvedAnnotationSizePercent =
+    Number.isFinite(Number(annotationSizePercent)) && Number(annotationSizePercent) > 0
+      ? Math.max(0.5, Math.min(20, Number(annotationSizePercent)))
+      : DEFAULT_ANNOTATION_SIZE_PERCENT
+  const annotations = useMemo(
+    () =>
+      normalizeAnnotations(
+        mapValue?.annotations,
+        resolvedAnnotationDefaultSymbol,
+        resolvedAnnotationDefaultColor,
+        resolvedAnnotationSizePercent
+      ),
+    [
+      mapValue?.annotations,
+      resolvedAnnotationDefaultColor,
+      resolvedAnnotationDefaultSymbol,
+      resolvedAnnotationSizePercent,
+    ]
+  )
+  const isSymbolModeActive = supportsSymbolAnnotations && (supportsDrawAnnotations ? annotationTool === "symbol" : true)
+  const isDrawModeActive = supportsDrawAnnotations && (supportsSymbolAnnotations ? annotationTool === "draw" : true)
 
-  const commitSelection = useCallback((nextSelectedIds) => {
+  useEffect(() => {
+    if (supportsDrawAnnotations && !supportsSymbolAnnotations && annotationTool !== "draw") {
+      setAnnotationTool("draw")
+      return
+    }
+    if (supportsSymbolAnnotations && !supportsDrawAnnotations && annotationTool !== "symbol") {
+      setAnnotationTool("symbol")
+    }
+  }, [annotationTool, supportsDrawAnnotations, supportsSymbolAnnotations])
+
+  useEffect(() => {
+    if (!isDrawModeActive) {
+      isDrawingRef.current = false
+      drawingPointerIdRef.current = null
+      drawingPointsRef.current = []
+      if (draftStrokePoints.length > 0) {
+        setDraftStrokePoints([])
+      }
+    }
+  }, [draftStrokePoints.length, isDrawModeActive])
+
+  const commitMapState = useCallback((nextSelectedIds, nextAnnotations) => {
     if (!fieldId || !fd?.setFormData) return
 
-    const value = buildMapValue(nextSelectedIds, normalizedHotspots, hotspotsById)
+    const normalizedAnnotations = normalizeAnnotations(
+      nextAnnotations,
+      resolvedAnnotationDefaultSymbol,
+      resolvedAnnotationDefaultColor,
+      resolvedAnnotationSizePercent
+    )
+    const value = buildMapValue(
+      nextSelectedIds,
+      normalizedHotspots,
+      hotspotsById,
+      normalizedCounterGroups,
+      normalizedAnnotations
+    )
     const hasSelections = value.selectedCount > 0
+    const hasAnnotations = normalizedAnnotations.length > 0
+    const hasMapData = hasSelections || hasAnnotations
     const selectedIdsCsv = value.selectedIds.join(",")
     const selectedLabelsCsv = value.selectedLabels.join(", ")
 
@@ -441,7 +764,7 @@ const HotspotMapField = ({
       produce((draft) => {
         if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
         if (!draft.field.data) draft.field.data = {}
-        draft.field.data[fieldId] = hasSelections ? value : null
+        draft.field.data[fieldId] = hasMapData ? value : null
 
         if (totalCountFieldId) {
           draft.field.data[totalCountFieldId] = value.selectedCount
@@ -463,11 +786,19 @@ const HotspotMapField = ({
     fd,
     fieldId,
     normalizedHotspots,
+    normalizedCounterGroups,
     hotspotsById,
+    resolvedAnnotationDefaultColor,
+    resolvedAnnotationDefaultSymbol,
+    resolvedAnnotationSizePercent,
     selectedIdsFieldId,
     selectedLabelsFieldId,
     totalCountFieldId,
   ])
+
+  const commitSelection = useCallback((nextSelectedIds) => {
+    commitMapState(nextSelectedIds, annotations)
+  }, [annotations, commitMapState])
 
   const handleToggleHotspot = useCallback((hotspotId) => {
     if (readOnly) return
@@ -491,11 +822,144 @@ const HotspotMapField = ({
 
   const handleHotspotKeyDown = useCallback((event, hotspotId) => {
     if (readOnly) return
+    if (!supportsSelection) return
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault()
       handleToggleHotspot(hotspotId)
     }
-  }, [handleToggleHotspot, readOnly])
+  }, [handleToggleHotspot, readOnly, supportsSelection])
+
+  const getPointFromEvent = useCallback((event) => {
+    const bounds = event.currentTarget.getBoundingClientRect()
+    if (!bounds.width || !bounds.height) return null
+    const x = clampPercent(((event.clientX - bounds.left) / bounds.width) * 100)
+    const y = clampPercent(((event.clientY - bounds.top) / bounds.height) * 100)
+    return { x, y }
+  }, [])
+
+  const handleAddAnnotation = useCallback((event) => {
+    if (readOnly || !supportsAnnotations || !isSymbolModeActive) return
+    const point = getPointFromEvent(event)
+    if (!point) return
+    const nextAnnotations = [
+      ...annotations,
+      {
+        id: `annotation_${Date.now()}_${annotations.length + 1}`,
+        type: "symbol",
+        x: point.x,
+        y: point.y,
+        symbol: normalizeAnnotationSymbol(annotationSymbol, resolvedAnnotationDefaultSymbol),
+        color: normalizeColor(annotationColor, resolvedAnnotationDefaultColor),
+        size: resolvedAnnotationSizePercent,
+      },
+    ]
+    commitMapState(new Set(selectedIds), nextAnnotations)
+  }, [
+    annotationColor,
+    annotationSymbol,
+    annotations,
+    commitMapState,
+    getPointFromEvent,
+    isSymbolModeActive,
+    readOnly,
+    resolvedAnnotationDefaultColor,
+    resolvedAnnotationDefaultSymbol,
+    resolvedAnnotationSizePercent,
+    selectedIds,
+    supportsAnnotations,
+  ])
+
+  const handleDrawPointerDown = useCallback((event) => {
+    if (readOnly || !isDrawModeActive || !supportsAnnotations) return
+    if (typeof event.button === "number" && event.button !== 0) return
+    const point = getPointFromEvent(event)
+    if (!point) return
+    event.preventDefault()
+    event.stopPropagation()
+    if (typeof event.currentTarget.setPointerCapture === "function") {
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId)
+      } catch (error) {
+        // no-op
+      }
+    }
+    drawingPointerIdRef.current = event.pointerId
+    drawingPointsRef.current = [point]
+    isDrawingRef.current = true
+    setDraftStrokePoints([point])
+  }, [getPointFromEvent, isDrawModeActive, readOnly, supportsAnnotations])
+
+  const handleDrawPointerMove = useCallback((event) => {
+    if (!isDrawingRef.current || !isDrawModeActive) return
+    if (drawingPointerIdRef.current !== null && event.pointerId !== drawingPointerIdRef.current) return
+    const point = getPointFromEvent(event)
+    if (!point) return
+    const previous = drawingPointsRef.current[drawingPointsRef.current.length - 1]
+    if (previous) {
+      const deltaX = Math.abs(previous.x - point.x)
+      const deltaY = Math.abs(previous.y - point.y)
+      if (deltaX < 0.08 && deltaY < 0.08) return
+    }
+    const nextPoints = [...drawingPointsRef.current, point]
+    drawingPointsRef.current = nextPoints
+    setDraftStrokePoints(nextPoints)
+    event.preventDefault()
+    event.stopPropagation()
+  }, [getPointFromEvent, isDrawModeActive])
+
+  const handleDrawPointerUp = useCallback((event) => {
+    if (!isDrawingRef.current) return
+    if (drawingPointerIdRef.current !== null && event.pointerId !== drawingPointerIdRef.current) return
+    if (typeof event.currentTarget.releasePointerCapture === "function") {
+      try {
+        event.currentTarget.releasePointerCapture(event.pointerId)
+      } catch (error) {
+        // no-op
+      }
+    }
+    event.preventDefault()
+    event.stopPropagation()
+
+    isDrawingRef.current = false
+    drawingPointerIdRef.current = null
+    const points = drawingPointsRef.current
+    drawingPointsRef.current = []
+    setDraftStrokePoints([])
+
+    if (!supportsAnnotations || !isDrawModeActive || readOnly) return
+    if (!Array.isArray(points) || points.length < 2) return
+
+    const nextAnnotations = [
+      ...annotations,
+      {
+        id: `annotation_${Date.now()}_${annotations.length + 1}`,
+        type: "stroke",
+        points,
+        color: normalizeColor(annotationColor, resolvedAnnotationDefaultColor),
+        size: resolvedAnnotationSizePercent,
+      },
+    ]
+    commitMapState(new Set(selectedIds), nextAnnotations)
+  }, [
+    annotationColor,
+    annotations,
+    commitMapState,
+    isDrawModeActive,
+    readOnly,
+    resolvedAnnotationDefaultColor,
+    resolvedAnnotationSizePercent,
+    selectedIds,
+    supportsAnnotations,
+  ])
+
+  const handleClearAnnotations = useCallback(() => {
+    if (readOnly || !supportsAnnotations || annotations.length === 0) return
+    isDrawingRef.current = false
+    drawingPointerIdRef.current = null
+    drawingPointsRef.current = []
+    setDraftStrokePoints([])
+    commitMapState(new Set(selectedIds), [])
+  }, [annotations.length, commitMapState, readOnly, selectedIds, supportsAnnotations])
 
   const responsiveSvg = useMemo(() => ensureResponsiveSvg(imageSvg), [imageSvg])
   const selectedLabels = Array.isArray(mapValue?.selectedLabels) ? mapValue.selectedLabels : []
@@ -504,16 +968,26 @@ const HotspotMapField = ({
     if (mapValue?.countsByGroup && typeof mapValue.countsByGroup === "object") {
       return mapValue.countsByGroup
     }
-    return buildCountsByGroup(selectedIds, hotspotsById)
-  }, [hotspotsById, mapValue?.countsByGroup, selectedIds])
+    return buildCountsByGroup(selectedIds, hotspotsById, normalizedCounterGroups)
+  }, [hotspotsById, mapValue?.countsByGroup, normalizedCounterGroups, selectedIds])
   const summaryGroups = useMemo(() => {
+    if (normalizedCounterGroups.length > 0) {
+      return normalizedCounterGroups
+        .filter((group) => group.showCounter !== false)
+        .map((group) => ({
+          id: group.id,
+          label: normalizeString(group.label, group.id),
+        }))
+    }
     const names = new Set()
     normalizedHotspots.forEach((hotspot) => {
       const group = normalizeString(hotspot.group, "")
       if (group) names.add(group)
     })
-    return Array.from(names).sort((a, b) => a.localeCompare(b))
-  }, [normalizedHotspots])
+    return Array.from(names)
+      .sort((a, b) => a.localeCompare(b))
+      .map((groupName) => ({ id: groupName, label: groupName }))
+  }, [normalizedCounterGroups, normalizedHotspots])
   const resolvedMapZoomPercent = Math.max(25, Math.min(300, Number(mapZoomPercent) || DEFAULT_MAP_ZOOM_PERCENT))
   const zoomFactor = resolvedMapZoomPercent / 100
   const resolvedMapWidthPercent = Math.max(20, Math.min(100, Number(mapWidthPercent) || DEFAULT_MAP_WIDTH_PERCENT))
@@ -538,6 +1012,7 @@ const HotspotMapField = ({
     overflow: "hidden",
     border: `1px solid ${isDarkMode ? "#333333" : "#e0e0e0"}`,
     backgroundColor: isDarkMode ? "#171717" : "#fafafa",
+    cursor: supportsAnnotations && !readOnly ? "crosshair" : "default",
   }
 
   const overlayStyle = {
@@ -546,7 +1021,14 @@ const HotspotMapField = ({
   }
 
   const renderMapFrame = () => (
-    <div style={mapFrameStyle}>
+    <div
+      style={mapFrameStyle}
+      onClick={handleAddAnnotation}
+      onPointerDown={handleDrawPointerDown}
+      onPointerMove={handleDrawPointerMove}
+      onPointerUp={handleDrawPointerUp}
+      onPointerCancel={handleDrawPointerUp}
+    >
       {responsiveSvg ? (
         <div
           style={{ width: "100%", lineHeight: 0, pointerEvents: "none" }}
@@ -589,13 +1071,16 @@ const HotspotMapField = ({
               <g
                 key={hotspot.id}
                 role="button"
-                tabIndex={readOnly ? -1 : 0}
+                tabIndex={readOnly || !supportsSelection ? -1 : 0}
                 aria-pressed={isSelected}
                 onMouseDown={(event) => event.preventDefault()}
-                onClick={() => handleToggleHotspot(hotspot.id)}
+                onClick={() => {
+                  if (!supportsSelection) return
+                  handleToggleHotspot(hotspot.id)
+                }}
                 onKeyDown={(event) => handleHotspotKeyDown(event, hotspot.id)}
                 style={{
-                  cursor: readOnly ? "default" : "pointer",
+                  cursor: readOnly ? "default" : supportsSelection ? "pointer" : "crosshair",
                   outline: "none",
                 }}
               >
@@ -648,27 +1133,216 @@ const HotspotMapField = ({
               </g>
             )
           })}
+          {supportsAnnotations ? annotations.map((annotation) => {
+            const size = Math.max(0.5, Number(annotation.size) || resolvedAnnotationSizePercent)
+            const strokeWidth = Math.max(0.35, size / 4.5)
+            const stroke = normalizeColor(annotation.color, resolvedAnnotationDefaultColor)
+            if (annotation.type === "stroke") {
+              return (
+                <polyline
+                  key={annotation.id}
+                  points={annotationPointsToSvgString(annotation.points)}
+                  fill="none"
+                  stroke={stroke}
+                  strokeWidth={strokeWidth}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  pointerEvents="none"
+                />
+              )
+            }
+            const half = size / 2
+            if (annotation.symbol === "circle") {
+              return (
+                <circle
+                  key={annotation.id}
+                  cx={annotation.x}
+                  cy={annotation.y}
+                  r={half}
+                  fill="none"
+                  stroke={stroke}
+                  strokeWidth={strokeWidth}
+                  pointerEvents="none"
+                />
+              )
+            }
+            return (
+              <g key={annotation.id} pointerEvents="none">
+                <line
+                  x1={annotation.x - half}
+                  y1={annotation.y - half}
+                  x2={annotation.x + half}
+                  y2={annotation.y + half}
+                  stroke={stroke}
+                  strokeWidth={strokeWidth}
+                  strokeLinecap="round"
+                />
+                <line
+                  x1={annotation.x + half}
+                  y1={annotation.y - half}
+                  x2={annotation.x - half}
+                  y2={annotation.y + half}
+                  stroke={stroke}
+                  strokeWidth={strokeWidth}
+                  strokeLinecap="round"
+                />
+              </g>
+            )
+          }) : null}
+          {isDrawModeActive && draftStrokePoints.length > 1 ? (
+            <polyline
+              points={annotationPointsToSvgString(draftStrokePoints)}
+              fill="none"
+              stroke={normalizeColor(annotationColor, resolvedAnnotationDefaultColor)}
+              strokeWidth={Math.max(0.35, resolvedAnnotationSizePercent / 4.5)}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              opacity={0.8}
+              pointerEvents="none"
+            />
+          ) : null}
         </svg>
       </div>
     </div>
   )
 
+  const renderAnnotationControls = () => {
+    if (!supportsAnnotations) return null
+    return (
+      <Stack tokens={{ childrenGap: 6 }}>
+        <Stack horizontal wrap verticalAlign="end" tokens={{ childrenGap: 8 }}>
+          <Text variant="small" styles={{ root: { fontSize: "11px", fontWeight: 600 } }}>
+            Annotation Mode
+          </Text>
+          <Text variant="small" styles={{ root: { fontSize: "11px", color: isDarkMode ? "#d1d5db" : "#334155" } }}>
+            {supportsSymbolAnnotations && supportsDrawAnnotations
+              ? "Symbols + Draw"
+              : supportsDrawAnnotations
+                ? "Draw"
+                : "Symbols"}
+          </Text>
+          <DefaultButton
+            text={`Clear Marks (${annotations.length})`}
+            onClick={handleClearAnnotations}
+            disabled={readOnly || annotations.length === 0}
+          />
+        </Stack>
+
+        <Stack horizontal wrap verticalAlign="end" tokens={{ childrenGap: 10 }}>
+          {supportsSymbolAnnotations && supportsDrawAnnotations ? (
+            <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "11px" }}>
+              <span>Tool</span>
+              <select
+                value={annotationTool}
+                onChange={(event) => setAnnotationTool(event.target.value === "draw" ? "draw" : "symbol")}
+                disabled={readOnly}
+                style={{
+                  minWidth: "110px",
+                  borderRadius: "4px",
+                  border: `1px solid ${isDarkMode ? "#4b5563" : "#cbd5e1"}`,
+                  padding: "4px 6px",
+                  background: isDarkMode ? "#111827" : "#ffffff",
+                  color: isDarkMode ? "#f3f4f6" : "#111827",
+                }}
+              >
+                <option value="symbol">Symbol</option>
+                <option value="draw">Draw</option>
+              </select>
+            </label>
+          ) : null}
+          {supportsSymbolAnnotations && isSymbolModeActive ? (
+          <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "11px" }}>
+            <span>Symbol</span>
+            <select
+              value={annotationSymbol}
+              onChange={(event) =>
+                setAnnotationSymbol(normalizeAnnotationSymbol(event.target.value, resolvedAnnotationDefaultSymbol))
+              }
+              disabled={readOnly}
+              style={{
+                minWidth: "92px",
+                borderRadius: "4px",
+                border: `1px solid ${isDarkMode ? "#4b5563" : "#cbd5e1"}`,
+                padding: "4px 6px",
+                background: isDarkMode ? "#111827" : "#ffffff",
+                color: isDarkMode ? "#f3f4f6" : "#111827",
+              }}
+            >
+              <option value="x">X</option>
+              <option value="circle">Circle</option>
+            </select>
+          </label>
+          ) : null}
+          <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "11px" }}>
+            <span>Color</span>
+            <input
+              type="color"
+              value={annotationColor}
+              onChange={(event) => setAnnotationColor(normalizeColor(event.target.value, resolvedAnnotationDefaultColor))}
+              disabled={readOnly}
+              style={{
+                width: "42px",
+                height: "30px",
+                border: `1px solid ${isDarkMode ? "#4b5563" : "#cbd5e1"}`,
+                borderRadius: "4px",
+                padding: 0,
+                background: "transparent",
+              }}
+            />
+          </label>
+          <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: "11px" }}>
+            <span>Size (%)</span>
+            <input
+              type="number"
+              min={0.5}
+              max={20}
+              step={0.1}
+              value={resolvedAnnotationSizePercent}
+              readOnly
+              style={{
+                width: "72px",
+                borderRadius: "4px",
+                border: `1px solid ${isDarkMode ? "#4b5563" : "#cbd5e1"}`,
+                padding: "4px 6px",
+                background: isDarkMode ? "#111827" : "#ffffff",
+                color: isDarkMode ? "#f3f4f6" : "#111827",
+              }}
+            />
+          </label>
+          <Text variant="small" styles={{ root: { fontSize: "11px", color: isDarkMode ? "#9ca3af" : "#6b7280" } }}>
+            {isDrawModeActive ? "Drag on the map to draw." : "Click on the map to place symbols."}
+          </Text>
+        </Stack>
+      </Stack>
+    )
+  }
+
   const renderSummary = () => {
     if (!showSummary) return null
     return (
       <Stack tokens={{ childrenGap: 4 }}>
-        <Text variant="small">
-          {totalCountLabel || "Selected"}: <strong>{selectedCount}</strong>
-        </Text>
-        {summaryGroups.map((groupName) => (
+        {showDefaultCounter ? (
+          <Text variant="small">
+            {totalCountLabel || "Selected"}: <strong>{selectedCount}</strong>
+          </Text>
+        ) : null}
+        {summaryGroups.map((group) => (
           <Text
-            key={groupName}
+            key={group.id}
             variant="small"
             styles={{ root: { fontSize: "11px", color: isDarkMode ? "#d1d5db" : "#4b5563" } }}
           >
-            {groupName}: <strong>{Number(countsByGroup[groupName] || 0)}</strong>
+            {group.label}: <strong>{Number(countsByGroup[group.id] || 0)}</strong>
           </Text>
         ))}
+        {supportsAnnotations ? (
+          <Text
+            variant="small"
+            styles={{ root: { fontSize: "11px", color: isDarkMode ? "#d1d5db" : "#4b5563" } }}
+          >
+            Annotations: <strong>{annotations.length}</strong>
+          </Text>
+        ) : null}
         {showSelectedLabels && selectedLabels.length > 0 && (
           <Text variant="small" styles={{ root: { fontSize: "11px", color: isDarkMode ? "#d1d5db" : "#4b5563" } }}>
             {selectedLabels.join(", ")}
@@ -711,6 +1385,7 @@ const HotspotMapField = ({
             }}
           >
             <Stack tokens={{ childrenGap: 10 }}>
+              {renderAnnotationControls()}
               {renderMapFrame()}
               {renderSummary()}
             </Stack>
@@ -721,6 +1396,7 @@ const HotspotMapField = ({
         </>
       ) : (
         <>
+          {renderAnnotationControls()}
           {renderMapFrame()}
           {renderSummary()}
         </>

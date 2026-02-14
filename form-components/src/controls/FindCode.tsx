@@ -63,6 +63,8 @@ export interface FindCodeProps {
   note?: string;
   /** onChange callback for updating value */
   onChange?: (value: CodingExtended) => void;
+  /** If true, show candidate list when field receives focus (dropdown-like behavior) */
+  openOnFocus?: boolean;
   /** A function for rendering the items in the list of candidates */
   onRenderCandidate?: (item: any, index: number) => React.ReactNode;
   /** String to display for selected candidate */
@@ -266,6 +268,7 @@ export const FindCode: React.FC<FindCodeProps> = ({
   moisModule,
   note,
   onChange,
+  openOnFocus = false,
   onRenderCandidate = defaultRenderCandidate,
   onRenderSelected = defaultRenderSelected,
   optionList = [],
@@ -323,10 +326,10 @@ export const FindCode: React.FC<FindCodeProps> = ({
   // Handle focus
   const handleFocus = useCallback(() => {
     setIsFocused(true);
-    if (searchText.length > 0 || optionList.length > 0) {
+    if (searchText.length > 0 || optionList.length > 0 || (openOnFocus && items.length > 0)) {
       setIsCalloutVisible(true);
     }
-  }, [searchText, optionList]);
+  }, [searchText, optionList, openOnFocus, items.length]);
 
   // Handle blur
   const handleBlur = useCallback(() => {
@@ -397,7 +400,12 @@ export const FindCode: React.FC<FindCodeProps> = ({
       </div>
 
       {/* Search prompt shown when focused and no results yet */}
-      {isFocused && searchPrompt && searchText.length === 0 && !selectedValue && textFieldRef.current && (
+      {isFocused &&
+        searchPrompt &&
+        searchText.length === 0 &&
+        !selectedValue &&
+        textFieldRef.current &&
+        !(isCalloutVisible && candidates.length > 0) && (
         <Callout
           target={textFieldRef.current}
           isBeakVisible={false}
