@@ -26,7 +26,7 @@ const SignaturePadLib = (function() {
 })();
 // ─── End embedded signature_pad ─────────────────────────────────────────────
 
-const { useEffect, useCallback } = React
+const { useEffect, useCallback, useRef } = React
 const { Stack, Label, DefaultButton, Text } = Fluent
 
 /**
