@@ -293,7 +293,7 @@ function loadComponentCode(code: string, componentName: string, additionalCompon
     // Filter functions from ServiceEpisodes and ServiceRequests
     'activeServiceEpisodes', 'activeServiceRequests', 'orderDateDesc',
     // Other components
-    'AliasIdList', 'Ethnicity', 'RelationshipStatus', 'FirstNationsStatus',
+    'AliasIdList', 'Ethnicity', 'RelationshipStatus', 'FirstNationsStatus', 'FindCodeSelect', 'PastMeasurementField',
     // HFC components
     'HFC_PT_ASMT_PatientAssessment', 'HFC_PT_ASMT_PatientSummary', 'HFC_PT_ASMT_SnapShot',
     // Utility components
@@ -536,6 +536,7 @@ export const {
   Ethnicity,
   RelationshipStatus,
   FirstNationsStatus,
+  FindCodeSelect,
   // HFC components
   HFC_PT_ASMT_PatientAssessment,
   HFC_PT_ASMT_PatientSummary,
@@ -543,6 +544,7 @@ export const {
   // Utility components
   NewTextArea,
   MoisPatientReviewLink,
+  PastMeasurementField,
   useChangeWatch,
   // ScaleField
   ScaleField,
