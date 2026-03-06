@@ -3,9 +3,10 @@
  * Date picker control with MOIS styling
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { DatePicker, Label, Stack, Toggle, IDatePickerProps } from '@fluentui/react';
 import { LayoutItem } from '../controls/LayoutItem';
+import { useActiveDataForForms } from '../hooks/form-state';
 
 export interface DateSelectProps {
   /** Props for the attached action bar (eg: onEdit, onDelete, etc) */
@@ -16,6 +17,11 @@ export interface DateSelectProps {
   buttonControls?: boolean;
   /** Override props to underlying Fluent component */
   datePickerProps?: Partial<IDatePickerProps>;
+  /** Optional mapping for composite date fields (day/month/year PDF fields) */
+  componentFields?: Array<{
+    fieldId: string;
+    role: "day" | "month" | "year" | string;
+  }>;
   /** Initial date value in formats: YYYY-MM-DD, YYYY/MM/DD, or YYYY.MM.DD */
   defaultValue?: string;
   /** Indicate whether the field is disabled or not */
@@ -32,6 +38,8 @@ export interface DateSelectProps {
   isComplete?: boolean;
   /** Label for this field */
   label?: string;
+  /** Additional field ids that should mirror this field's value. */
+  linkedFieldIds?: string[];
   /** Label position relative to field contents */
   labelPosition?: 'top' | 'left' | 'none';
   /** Identifier for selective layout */
@@ -85,9 +93,39 @@ const parseDate = (dateStr: string): Date | undefined => {
   return undefined;
 };
 
+const buildDateFromComponents = (
+  componentFields: DateSelectProps["componentFields"],
+  fieldData: Record<string, any> | undefined
+): string => {
+  if (!Array.isArray(componentFields) || componentFields.length === 0 || !fieldData) {
+    return "";
+  }
+
+  const byRole = new Map<string, string>();
+  componentFields.forEach((component) => {
+    const rawValue = fieldData[component.fieldId];
+    if (rawValue === undefined || rawValue === null) return;
+    const value = String(rawValue).trim();
+    if (!value) return;
+    byRole.set(component.role, value);
+  });
+
+  const year = byRole.get("year");
+  const month = byRole.get("month");
+  const day = byRole.get("day");
+
+  if (!year || !month || !day) return "";
+
+  const normalizedYear = year.padStart(4, "0");
+  const normalizedMonth = month.padStart(2, "0");
+  const normalizedDay = day.padStart(2, "0");
+  return `${normalizedYear}.${normalizedMonth}.${normalizedDay}`;
+};
+
 export const DateSelect: React.FC<DateSelectProps> = ({
   actions,
   borderless,
+  componentFields,
   datePickerProps,
   defaultValue,
   disabled,
@@ -98,6 +136,7 @@ export const DateSelect: React.FC<DateSelectProps> = ({
   inline,
   isComplete,
   label,
+  linkedFieldIds,
   labelPosition,
   layoutId,
   moisModule,
@@ -113,16 +152,60 @@ export const DateSelect: React.FC<DateSelectProps> = ({
   sourceId,
   value,
 }) => {
+  const [activeData, setActiveData] = useActiveDataForForms();
+  const effectiveFieldId = fieldId || id;
+  const activeValue = effectiveFieldId ? activeData?.field?.data?.[effectiveFieldId] : undefined;
+  const compositeValue = buildDateFromComponents(componentFields, activeData?.field?.data);
+  const resolvedValue =
+    value ||
+    (typeof activeValue === 'string' ? activeValue : '') ||
+    compositeValue ||
+    defaultValue ||
+    '';
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(
-    parseDate(value || defaultValue || '')
+    parseDate(resolvedValue)
   );
+
+  useEffect(() => {
+    setSelectedDate(parseDate(resolvedValue));
+  }, [resolvedValue]);
 
   if (hidden) return null;
 
   const handleDateChange = (date: Date | null | undefined) => {
     setSelectedDate(date || undefined);
-    if (onChange && date) {
-      onChange(formatDate(date));
+    const formatted = date ? formatDate(date) : '';
+
+    if (effectiveFieldId) {
+      setActiveData((draft: any) => {
+        if (!draft.field) draft.field = { data: {}, status: {}, history: [] };
+        if (!draft.field.data) draft.field.data = {};
+        draft.field.data[effectiveFieldId] = formatted || null;
+        (linkedFieldIds ?? []).forEach((linkedFieldId) => {
+          if (!linkedFieldId || linkedFieldId === effectiveFieldId) return;
+          draft.field.data[linkedFieldId] = formatted || null;
+        });
+
+        if (Array.isArray(componentFields) && componentFields.length > 0) {
+          const parsed = formatted
+            ? (() => {
+                const normalized = formatted.replace(/[\/\.]/g, "-");
+                const [year, month, day] = normalized.split("-");
+                return { year, month, day };
+              })()
+            : null;
+
+          componentFields.forEach((component: { fieldId: string; role: string }) => {
+            if (!component?.fieldId) return;
+            const nextValue = parsed ? parsed[component.role as "year" | "month" | "day"] ?? null : null;
+            draft.field.data[component.fieldId] = nextValue;
+          });
+        }
+      });
+    }
+
+    if (onChange) {
+      onChange(formatted);
     }
   };
 

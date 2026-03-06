@@ -198,13 +198,13 @@ const createFormComponent = (
       return new Proxy(component, {
         get(_target, prop) {
           if (prop === 'displayName') return `Placeholder_${name}`;
+          if (prop === Symbol.toPrimitive) return () => '';
+          if (typeof prop === 'symbol') return (_target as any)[prop];
           if (prop === '$$typeof' || prop === 'prototype' || prop === 'name' ||
               prop === 'length' || prop === 'caller' || prop === 'arguments' ||
               prop === 'bind' || prop === 'call' || prop === 'apply') {
             return (_target as any)[prop];
           }
-          if (typeof prop === 'symbol') return (_target as any)[prop];
-          if (prop === Symbol.toPrimitive) return () => '';
           if (prop === 'toString' || prop === 'valueOf') return () => '';
           if (prop === 'map' || prop === 'filter' || prop === 'forEach' || prop === 'reduce' ||
               prop === 'find' || prop === 'some' || prop === 'every' || prop === 'flatMap' ||

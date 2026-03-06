@@ -3,10 +3,11 @@
  * Time input control for hours and minutes - EXPERIMENTAL
  */
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { MaskedTextField, Label, ITextFieldProps } from '@fluentui/react';
 import { LayoutItem } from './LayoutItem';
 import { useTheme } from '../context/MoisContext';
+import { useActiveDataForForms } from '../hooks/form-state';
 
 export interface TimeSelectProps {
   /** Props for the attached action bar (eg: onEdit, onDelete, etc) */
@@ -29,6 +30,8 @@ export interface TimeSelectProps {
   isComplete?: boolean;
   /** Label for this field */
   label?: string;
+  /** Additional field ids that should mirror this field's value. */
+  linkedFieldIds?: string[];
   /** Label position relative to field contents */
   labelPosition?: 'top' | 'left' | 'none';
   /** Identifier for selective layout */
@@ -83,6 +86,7 @@ export const TimeSelect: React.FC<TimeSelectProps> = ({
   inline,
   isComplete,
   label,
+  linkedFieldIds,
   labelPosition,
   layoutId,
   moisModule,
@@ -100,9 +104,21 @@ export const TimeSelect: React.FC<TimeSelectProps> = ({
   validateOnKeyStroke,
   value: controlledValue,
 }) => {
-  const [internalValue, setInternalValue] = useState(defaultValue);
+  const [activeData, setActiveData] = useActiveDataForForms();
+  const effectiveFieldId = fieldId || id;
+  const activeValue = effectiveFieldId ? activeData?.field?.data?.[effectiveFieldId] : undefined;
+  const resolvedValue = controlledValue !== undefined
+    ? controlledValue
+    : (typeof activeValue === 'string' ? activeValue : defaultValue);
+  const [internalValue, setInternalValue] = useState(resolvedValue);
   const [error, setError] = useState<string | undefined>();
   const theme = useTheme();
+
+  useEffect(() => {
+    if (controlledValue === undefined) {
+      setInternalValue(resolvedValue);
+    }
+  }, [controlledValue, resolvedValue]);
 
   const value = controlledValue !== undefined ? controlledValue : internalValue;
 
@@ -140,8 +156,20 @@ export const TimeSelect: React.FC<TimeSelectProps> = ({
       setError(validateTime(val));
     }
 
+    if (effectiveFieldId) {
+      setActiveData((draft: any) => {
+        if (!draft.field) draft.field = { data: {}, status: {}, history: [] };
+        if (!draft.field.data) draft.field.data = {};
+        draft.field.data[effectiveFieldId] = val || null;
+        (linkedFieldIds ?? []).forEach((linkedFieldId) => {
+          if (!linkedFieldId || linkedFieldId === effectiveFieldId) return;
+          draft.field.data[linkedFieldId] = val || null;
+        });
+      });
+    }
+
     onChange?.(event, val);
-  }, [controlledValue, onChange, validateOnKeyStroke, validateTime]);
+  }, [controlledValue, effectiveFieldId, linkedFieldIds, onChange, setActiveData, validateOnKeyStroke, validateTime]);
 
   const handleBlur = useCallback(() => {
     if (!validateOnKeyStroke) {

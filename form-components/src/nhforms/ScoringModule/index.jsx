@@ -322,6 +322,37 @@ const resolveChecklistOptions = (question, sharedOptions) => {
   return { checkedOption, uncheckedOption }
 }
 
+const _safeSerialize = (value) => {
+  if (value === undefined) return "__undefined__"
+  try {
+    return JSON.stringify(value)
+  } catch (error) {
+    return String(value)
+  }
+}
+
+const _cloneMirrorValue = (value) => {
+  if (value === null || value === undefined) return null
+  if (typeof value !== "object") return value
+  try {
+    return JSON.parse(JSON.stringify(value))
+  } catch (error) {
+    return value
+  }
+}
+
+const _getQuestionMirrorFieldIds = (question) => {
+  const ids = new Set()
+  if (question?.fieldId) ids.add(question.fieldId)
+  if (Array.isArray(question?.childFieldIds)) {
+    question.childFieldIds.forEach((fieldId) => {
+      if (fieldId) ids.add(fieldId)
+    })
+  }
+  ids.delete(question?.id)
+  return Array.from(ids)
+}
+
 // ================================================
 // Sub-components
 // ================================================
@@ -907,7 +938,7 @@ const ScoringModule = ({
   showProgress = true,
   ...props
 }) => {
-  const [fd] = useActiveData()
+  const [fd, setFd] = useActiveData()
   const theme = useTheme()
   const isDarkMode = theme?.isInverted || false
   const sharedOptions = useMemo(() => resolveMatrixOptions(config), [config])
@@ -968,6 +999,53 @@ const ScoringModule = ({
 
     return results
   }, [answers, config.layout, config.questions, config.totals, scoreMap, sharedOptions])
+
+  useEffect(() => {
+    if (!setFd) return
+
+    const currentData = fd?.field?.data || {}
+    const questionMirrorEntries = []
+
+    for (const question of config.questions || []) {
+      const answerValue = currentData[question.id] ?? null
+      const mirrorIds = _getQuestionMirrorFieldIds(question)
+      mirrorIds.forEach((fieldId) => {
+        questionMirrorEntries.push([fieldId, answerValue])
+      })
+    }
+
+    const totalMirrorEntries = []
+    for (const total of config.totals || []) {
+      const scoreValue = calculatedTotals[total.id]?.isComplete ? calculatedTotals[total.id]?.score : null
+      const targetIds = [
+        total.targetFieldId,
+        ...(Array.isArray(total.targetFieldIds) ? total.targetFieldIds : []),
+      ].filter(Boolean)
+      targetIds.forEach((fieldId) => {
+        totalMirrorEntries.push([fieldId, scoreValue])
+      })
+    }
+
+    const allEntries = [...questionMirrorEntries, ...totalMirrorEntries]
+    const hasChanges = allEntries.some(([fieldId, nextValue]) => (
+      _safeSerialize(currentData[fieldId]) !== _safeSerialize(nextValue)
+    ))
+
+    if (!hasChanges) return
+
+    setFd((draft) => {
+      if (!draft.field) {
+        draft.field = { data: {}, status: {}, history: [] }
+      }
+      if (!draft.field.data) {
+        draft.field.data = {}
+      }
+
+      allEntries.forEach(([fieldId, nextValue]) => {
+        draft.field.data[fieldId] = _cloneMirrorValue(nextValue)
+      })
+    })
+  }, [fd, setFd, config.questions, config.totals, calculatedTotals])
 
   // Calculate progress
   const progress = useMemo(() => {

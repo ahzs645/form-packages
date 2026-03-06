@@ -1,7 +1,7 @@
 {
   "name": "SaveOnClose",
   "title": "Save On Close",
-  "description": "Automatically saves form data as draft when the browser window/tab is closed",
+  "description": "Automatically saves draft data on close, with change-aware tracking so unchanged forms are skipped by default",
   "category": "Utility",
   "version": "1.0.0"
 }

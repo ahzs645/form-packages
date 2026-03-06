@@ -7,6 +7,7 @@ import React, { useState } from 'react';
 import { TextField, Stack, Toggle, ITextFieldProps } from '@fluentui/react';
 import { LayoutItem } from './LayoutItem';
 import { useTheme, useSection } from '../context/MoisContext';
+import { useActiveDataForForms } from '../hooks/form-state';
 
 export interface TextAreaProps {
   /** Props for the attached action bar (eg: onEdit, onDelete, etc) */
@@ -33,6 +34,8 @@ export interface TextAreaProps {
   isComplete?: boolean;
   /** Label for this field. */
   label?: string;
+  /** Additional field ids that should mirror this field's value. */
+  linkedFieldIds?: string[];
   /** Label position relative to field contents. */
   labelPosition?: 'top' | 'left' | 'none';
   /** Override label properties */
@@ -96,6 +99,7 @@ export const TextArea: React.FC<TextAreaProps> = ({
   inline,
   isComplete,
   label,
+  linkedFieldIds,
   labelPosition,
   labelProps,
   layoutId,
@@ -118,14 +122,30 @@ export const TextArea: React.FC<TextAreaProps> = ({
   validateOnKeyStroke,
   value,
 }) => {
+  const [activeData, setActiveData] = useActiveDataForForms();
   const [internalValue, setInternalValue] = useState(value ?? defaultValue ?? '');
   const [errorMessage, setErrorMessage] = useState<string | undefined>();
+  const effectiveFieldId = fieldId || id;
+  const activeValue = effectiveFieldId ? activeData?.field?.data?.[effectiveFieldId] : undefined;
+  const persistedValue = typeof activeValue === 'string' ? activeValue : undefined;
 
-  const displayValue = value !== undefined ? value : internalValue;
+  const displayValue = value !== undefined ? value : (persistedValue ?? internalValue);
 
   const handleChange = (ev: React.FormEvent<HTMLInputElement | HTMLTextAreaElement>, newValue?: string) => {
     const val = newValue ?? '';
     setInternalValue(val);
+
+    if (effectiveFieldId) {
+      setActiveData((draft: any) => {
+        if (!draft.field) draft.field = { data: {}, status: {}, history: [] };
+        if (!draft.field.data) draft.field.data = {};
+        draft.field.data[effectiveFieldId] = val;
+        (linkedFieldIds ?? []).forEach((linkedFieldId) => {
+          if (!linkedFieldId || linkedFieldId === effectiveFieldId) return;
+          draft.field.data[linkedFieldId] = val;
+        });
+      });
+    }
 
     if (onChange) {
       onChange(ev, val);

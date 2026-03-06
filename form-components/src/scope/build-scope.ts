@@ -285,14 +285,38 @@ import { GuidelineLink } from '../controls/GuidelineLink';
  * Automatically saves form data as draft when the browser window/tab is closed.
  * This is defined here directly to ensure it's always available in scope.
  */
-const SaveOnClose: React.FC<{ getSaveData?: () => any; disabled?: boolean }> = ({
+const SaveOnClose: React.FC<{
+  getSaveData?: () => any;
+  disabled?: boolean;
+  watchedValue?: any;
+  onlyWhenChanged?: boolean;
+  delayCount?: number;
+  onDirtyChange?: (isDirty: boolean) => void;
+}> = ({
   getSaveData,
   disabled = false,
+  watchedValue,
+  onlyWhenChanged = true,
+  delayCount = 3,
+  onDirtyChange,
 }) => {
+  const baselineRef = React.useRef(watchedValue);
+  const renderCountRef = React.useRef(delayCount);
+  const dirtyRef = React.useRef(false);
+
+  React.useEffect(() => {
+    baselineRef.current = watchedValue;
+    renderCountRef.current = delayCount;
+    dirtyRef.current = false;
+    onDirtyChange?.(false);
+  }, [watchedValue, delayCount, onDirtyChange]);
+
   React.useEffect(() => {
     if (disabled) return;
 
     const handleBeforeUnload = () => {
+      const shouldSave = !onlyWhenChanged || dirtyRef.current;
+      if (!shouldSave) return;
       // In preview mode, just log the save action
       console.log('[SaveOnClose] Would save draft on close');
     };
@@ -301,7 +325,26 @@ const SaveOnClose: React.FC<{ getSaveData?: () => any; disabled?: boolean }> = (
     return () => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
     };
-  }, [getSaveData, disabled]);
+  }, [getSaveData, disabled, onlyWhenChanged]);
+
+  React.useEffect(() => {
+    if (disabled) {
+      dirtyRef.current = false;
+      onDirtyChange?.(false);
+      return;
+    }
+
+    if (renderCountRef.current > 0) {
+      renderCountRef.current -= 1;
+      return;
+    }
+
+    const isDirty = watchedValue !== baselineRef.current;
+    if (dirtyRef.current !== isDirty) {
+      dirtyRef.current = isDirty;
+      onDirtyChange?.(isDirty);
+    }
+  }, [watchedValue, disabled, onDirtyChange]);
 
   return null;
 };
@@ -310,11 +353,37 @@ const SaveOnClose: React.FC<{ getSaveData?: () => any; disabled?: boolean }> = (
  * useSaveOnClose Hook
  * Hook version of SaveOnClose for more control.
  */
-const useSaveOnClose = (getSaveData?: () => any, disabled = false) => {
+const useSaveOnClose = (
+  getSaveData?: () => any,
+  options: boolean | {
+    disabled?: boolean;
+    watchedValue?: any;
+    onlyWhenChanged?: boolean;
+    delayCount?: number;
+    onDirtyChange?: (isDirty: boolean) => void;
+  } = false
+) => {
+  const normalized =
+    typeof options === 'boolean'
+      ? { disabled: options }
+      : (options || {});
+  const baselineRef = React.useRef(normalized.watchedValue);
+  const renderCountRef = React.useRef(normalized.delayCount ?? 3);
+  const dirtyRef = React.useRef(false);
+
   React.useEffect(() => {
-    if (disabled) return;
+    baselineRef.current = normalized.watchedValue;
+    renderCountRef.current = normalized.delayCount ?? 3;
+    dirtyRef.current = false;
+    normalized.onDirtyChange?.(false);
+  }, [normalized.watchedValue, normalized.delayCount, normalized.onDirtyChange]);
+
+  React.useEffect(() => {
+    if (normalized.disabled) return;
 
     const handleBeforeUnload = () => {
+      const shouldSave = !(normalized.onlyWhenChanged ?? true) || dirtyRef.current;
+      if (!shouldSave) return;
       console.log('[useSaveOnClose] Would save draft on close');
     };
 
@@ -322,7 +391,38 @@ const useSaveOnClose = (getSaveData?: () => any, disabled = false) => {
     return () => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
     };
-  }, [getSaveData, disabled]);
+  }, [getSaveData, normalized.disabled, normalized.onlyWhenChanged]);
+
+  React.useEffect(() => {
+    if (normalized.disabled) {
+      dirtyRef.current = false;
+      normalized.onDirtyChange?.(false);
+      return;
+    }
+
+    if (renderCountRef.current > 0) {
+      renderCountRef.current -= 1;
+      return;
+    }
+
+    const isDirty = normalized.watchedValue !== baselineRef.current;
+    if (dirtyRef.current !== isDirty) {
+      dirtyRef.current = isDirty;
+      normalized.onDirtyChange?.(isDirty);
+    }
+  }, [normalized.watchedValue, normalized.disabled, normalized.onDirtyChange]);
+
+  return {
+    hasChanged: dirtyRef.current,
+    markSaved: () => {
+      baselineRef.current = normalized.watchedValue;
+      renderCountRef.current = normalized.delayCount ?? 3;
+      if (dirtyRef.current) {
+        dirtyRef.current = false;
+        normalized.onDirtyChange?.(false);
+      }
+    },
+  };
 };
 
 /**

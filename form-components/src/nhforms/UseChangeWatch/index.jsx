@@ -1,31 +1,79 @@
-type WatchState = { savedValue: any, renderCount: number }
-type WatchResult = [
-  hasChanged:boolean,
-  setHasChanged:((hasChanged?: boolean, delayCount?:number)=>void)
-]
-const useChangeWatch = ( watchedValue: any, delayCount:number=3 ):WatchResult => {
+const _normalizeWatchOptions = (value) => {
+  if (typeof value === "number") {
+    return { delayCount: value }
+  }
+  if (value && typeof value === "object") {
+    return value
+  }
+  return {}
+}
 
-  const [ watcher, setWatcher ] = useState({ savedValue: watchedValue, renderCount: delayCount } as WatchState)
+const _defaultCompare = (nextValue, savedValue) => nextValue === savedValue
 
-  const setChanged = useCallback((isChanged:any=false,resetCount:number=delayCount) => {
-    if (isChanged) {
-      setWatcher(old => ({ ...old, savedValue: null }))
-    } else {
-      setWatcher({ savedValue: watchedValue, renderCount: resetCount })
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[])
+const useChangeWatch = (watchedValue, options = 3) => {
+  const normalizedOptions = _normalizeWatchOptions(options)
+  const delayCount = normalizedOptions.delayCount ?? 3
+  const disabled = normalizedOptions.disabled ?? false
+  const compare = normalizedOptions.compare || _defaultCompare
+  const onDirtyChange = normalizedOptions.onDirtyChange
+  const baselineRef = useRef(watchedValue)
+  const renderCountRef = useRef(delayCount)
+  const forcedDirtyRef = useRef(false)
+  const dirtyRef = useRef(false)
+  const [, forceRender] = useState(0)
 
   useEffect(() => {
-    if (watcher.renderCount>0) {
-      setWatcher(old => ({ ...old, renderCount: watcher.renderCount-1 }))
+    baselineRef.current = watchedValue
+    renderCountRef.current = delayCount
+    forcedDirtyRef.current = false
+    dirtyRef.current = false
+    onDirtyChange?.(false)
+  }, [delayCount])
+
+  useEffect(() => {
+    if (disabled) {
+      forcedDirtyRef.current = false
+      if (dirtyRef.current) {
+        dirtyRef.current = false
+        onDirtyChange?.(false)
+        forceRender((value) => value + 1)
+      }
+      return
     }
 
-  },
-  [ watchedValue ])
+    if (renderCountRef.current > 0) {
+      renderCountRef.current -= 1
+      return
+    }
 
-  return [
-    watchedValue!==watcher.savedValue && watcher.renderCount<=0,
-    setChanged,
-  ]
+    const isDirty = forcedDirtyRef.current || !compare(watchedValue, baselineRef.current)
+    if (dirtyRef.current !== isDirty) {
+      dirtyRef.current = isDirty
+      onDirtyChange?.(isDirty)
+      forceRender((value) => value + 1)
+    }
+  }, [watchedValue, disabled, compare, onDirtyChange])
+
+  const setChanged = useCallback((isChanged = false, resetCount = delayCount) => {
+    if (isChanged) {
+      forcedDirtyRef.current = true
+      if (!dirtyRef.current) {
+        dirtyRef.current = true
+        onDirtyChange?.(true)
+        forceRender((value) => value + 1)
+      }
+      return
+    }
+
+    baselineRef.current = watchedValue
+    renderCountRef.current = resetCount
+    forcedDirtyRef.current = false
+    if (dirtyRef.current) {
+      dirtyRef.current = false
+      onDirtyChange?.(false)
+      forceRender((value) => value + 1)
+    }
+  }, [delayCount, watchedValue, onDirtyChange])
+
+  return [dirtyRef.current, setChanged]
 }

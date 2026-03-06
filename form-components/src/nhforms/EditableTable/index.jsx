@@ -9,7 +9,7 @@
  * - Configurable column types
  */
 
-const { useState, useEffect } = React
+const { useState, useEffect, useMemo, useCallback } = React
 const {
   Stack,
   Label,
@@ -28,9 +28,45 @@ if (typeof EditableTable === "undefined") {
 const _makeEmptyRow = (columns = [], rowIndex = 0) => {
   const row = { _rowId: `row_${rowIndex}_${Date.now()}` }
   columns.forEach((col) => {
-    row[col.id] = col.type === "checkbox" ? false : ""
+    const path = col.dataPath || col.id
+    _setValueAtPath(row, path, col.type === "checkbox" ? false : "")
   })
   return row
+}
+
+const _toPathSegments = (path) =>
+  String(path || "")
+    .split(".")
+    .map((segment) => segment.trim())
+    .filter(Boolean)
+
+const _getValueAtPath = (root, path) => {
+  const segments = _toPathSegments(path)
+  if (segments.length === 0) return undefined
+
+  let current = root
+  for (const segment of segments) {
+    if (!current || typeof current !== "object") return undefined
+    current = current[segment]
+  }
+  return current
+}
+
+const _setValueAtPath = (root, path, value) => {
+  const segments = _toPathSegments(path)
+  if (segments.length === 0) return root
+
+  let current = root
+  for (let index = 0; index < segments.length - 1; index += 1) {
+    const key = segments[index]
+    const nextValue = current[key]
+    if (!nextValue || typeof nextValue !== "object" || Array.isArray(nextValue)) {
+      current[key] = {}
+    }
+    current = current[key]
+  }
+  current[segments[segments.length - 1]] = value
+  return root
 }
 
 const _normalizeRows = (value) => {
@@ -40,9 +76,14 @@ const _normalizeRows = (value) => {
 }
 
 const _cloneRow = (row = {}, columns = []) => {
-  const copy = { _rowId: row?._rowId ?? null }
+  const copy = JSON.parse(JSON.stringify(row || {}))
+  copy._rowId = row?._rowId ?? copy._rowId ?? null
   columns.forEach((col) => {
-    copy[col.id] = row?.[col.id] ?? (col.type === "checkbox" ? false : "")
+    const path = col.dataPath || col.id
+    const currentValue = _getValueAtPath(copy, path)
+    if (typeof currentValue === "undefined") {
+      _setValueAtPath(copy, path, col.type === "checkbox" ? false : "")
+    }
   })
   return copy
 }
@@ -59,7 +100,7 @@ const _isMeaningfulValue = (value) => {
 
 const _isRowEmpty = (row, columns = []) => {
   if (!row) return true
-  return columns.every((col) => !_isMeaningfulValue(row[col.id]))
+  return columns.every((col) => !_isMeaningfulValue(_getValueAtPath(row, col.dataPath || col.id)))
 }
 
 const _stringifyValue = (value) => {
@@ -75,7 +116,7 @@ const _stringifyValue = (value) => {
 }
 
 const _formatCellValue = (row, column) => {
-  const value = row?.[column.id]
+  const value = _getValueAtPath(row, column.dataPath || column.id)
   if (column.type === "checkbox") {
     if (!_isMeaningfulValue(value)) return ""
     if (value) return column.booleanLabels?.on || "Yes"
@@ -84,9 +125,111 @@ const _formatCellValue = (row, column) => {
   return _stringifyValue(value)
 }
 
-const _normalizeUniqueToken = (row, columnId) => {
-  const raw = row?.[columnId]
+const _normalizeMirroredCellValue = (value, column) => {
+  if (column?.type === "checkbox") {
+    return Boolean(value)
+  }
+
+  if (value === undefined || value === null) {
+    return null
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim()
+    return trimmed.length > 0 ? trimmed : null
+  }
+
+  return value
+}
+
+const _normalizeUniqueToken = (row, columnId, columns = []) => {
+  const column = columns.find((item) => item.id === columnId) || { id: columnId, dataPath: columnId }
+  const raw = _getValueAtPath(row, column.dataPath || column.id)
   return _stringifyValue(raw).toLowerCase()
+}
+
+const _normalizeChoiceOptions = (options = []) => {
+  if (!Array.isArray(options)) return []
+
+  return options
+    .map((option) => {
+      if (typeof option === "string") return option.trim()
+      if (option && typeof option === "object") {
+        const candidate = option.text || option.display || option.label || option.code || option.key || option.value
+        return typeof candidate === "string" ? candidate.trim() : ""
+      }
+      return ""
+    })
+    .filter(Boolean)
+}
+
+const _normalizeValidationMessage = (result) => {
+  if (!result) return null
+  if (typeof result === "string") {
+    const trimmed = result.trim()
+    return trimmed.length > 0 ? trimmed : null
+  }
+  if (typeof result === "object") {
+    const candidate = result.message || result.error || result.reason
+    return typeof candidate === "string" && candidate.trim() ? candidate.trim() : null
+  }
+  return null
+}
+
+const _buildSubformFieldFromColumn = (column) => {
+  const fieldId = column.dataPath || column.id
+  const label = column.title || column.label || column.id
+
+  switch (column.type) {
+    case "number":
+      return {
+        id: fieldId,
+        label,
+        type: "number",
+        min: column.min,
+        max: column.max,
+        step: column.step,
+        required: column.required === true,
+      }
+    case "date":
+      return {
+        id: fieldId,
+        label,
+        type: "date",
+        placeholder: column.placeholder,
+        required: column.required === true,
+      }
+    case "dropdown":
+      return {
+        id: fieldId,
+        label,
+        type: "choice",
+        choiceStyle: "dropdown",
+        options: _normalizeChoiceOptions(column.options),
+        required: column.required === true,
+      }
+    case "checkbox":
+      return {
+        id: fieldId,
+        label,
+        type: "booleanYesNo",
+        options: [
+          column.booleanLabels?.on || "Yes",
+          column.booleanLabels?.off || "No",
+        ],
+        required: column.required === true,
+      }
+    case "text":
+    default:
+      return {
+        id: fieldId,
+        label,
+        type: "textarea",
+        rows: column.rows || 3,
+        placeholder: column.placeholder,
+        required: column.required === true,
+      }
+  }
 }
 
 EditableTable = ({
@@ -122,6 +265,35 @@ EditableTable = ({
   const [errorMessage, setErrorMessage] = useState("")
   const isModalMode = mode === "modal"
   const isLocked = disabled || readOnly
+  const modalEditorConfig = props.modalEditorConfig || null
+  const onBeforeSaveRow = props.onBeforeSaveRow
+  const validateRow = props.validateRow
+  const onRowsChange = props.onRowsChange
+  const onRowSaved = props.onRowSaved
+  const onRowDeleted = props.onRowDeleted
+  const modalEditorType = String(modalEditorConfig?.type || modalEditorConfig?.editor || "").trim().toLowerCase()
+  const usesSubformEditor =
+    isModalMode &&
+    Boolean(modalEditorConfig) &&
+    typeof SubformScoring !== "undefined" &&
+    (modalEditorType === "" || modalEditorType === "subform" || modalEditorType === "subform-scoring")
+  const tableColumns = isModalMode
+    ? columns.filter((column) => column.showInTable !== false)
+    : columns
+  const modalColumns = columns.filter((column) => column.showInModal !== false)
+  const defaultSubformDataEntryConfig = useMemo(() => ({
+    fields: modalColumns.map(_buildSubformFieldFromColumn),
+    calculations: [],
+  }), [modalColumns])
+  const subformModalConfig = useMemo(() => ({
+    ...(modalEditorConfig?.modalConfig || {}),
+    title:
+      modalEditorConfig?.modalConfig?.title
+      || modalEditorConfig?.title
+      || modalTitle
+      || label
+      || "Row Details",
+  }), [modalEditorConfig, modalTitle, label])
 
   const getRows = () => {
     try {
@@ -136,13 +308,40 @@ EditableTable = ({
   const setRows = (nextRows) => {
     if (!fd?.setFormData) return
 
+    const mirroredFieldIds = new Set()
+    Object.values(sourceFieldIds || {}).forEach((fieldId) => {
+      if (fieldId) mirroredFieldIds.add(fieldId)
+    })
+    Object.values(sourceFieldIdsByRow || {}).forEach((rowMapping) => {
+      Object.values(rowMapping || {}).forEach((fieldId) => {
+        if (fieldId) mirroredFieldIds.add(fieldId)
+      })
+    })
+
+    const nextFieldData = {
+      ...fd.field?.data,
+      [id]: nextRows,
+    }
+
+    mirroredFieldIds.forEach((fieldId) => {
+      nextFieldData[fieldId] = null
+    })
+
+    ;(Array.isArray(nextRows) ? nextRows : []).forEach((row, rowIndex) => {
+      columns.forEach((column) => {
+        const sourceFieldId = getSourceFieldId(rowIndex, column.id)
+        if (!sourceFieldId) return
+        const rawValue = _getValueAtPath(row, column.dataPath || column.id)
+        nextFieldData[sourceFieldId] = _normalizeMirroredCellValue(rawValue, column)
+      })
+    })
+
     fd.setFormData({
       ...fd,
       field: {
         ...fd.field,
         data: {
-          ...fd.field?.data,
-          [id]: nextRows,
+          ...nextFieldData,
         },
       },
     })
@@ -174,6 +373,32 @@ EditableTable = ({
       || undefined
   }
 
+  const buildRowContext = useCallback((row, extra = {}) => ({
+    tableId: id,
+    row,
+    columns,
+    currentRows,
+    editingRowIndex,
+    isModalMode,
+    getValueAtPath: _getValueAtPath,
+    setValueAtPath: _setValueAtPath,
+    cloneRow: (candidate) => _cloneRow(candidate, columns),
+    ...extra,
+  }), [id, columns, currentRows, editingRowIndex, isModalMode])
+
+  const commitRows = useCallback((nextRows, meta = {}) => {
+    setRows(nextRows)
+    if (typeof onRowsChange === "function") {
+      onRowsChange({
+        tableId: id,
+        rows: nextRows,
+        columns,
+        mode,
+        ...meta,
+      })
+    }
+  }, [setRows, onRowsChange, id, columns, mode])
+
   const openCreateDialog = () => {
     if (isLocked || !allowAddRows || currentRows.length >= maxRows) return
     setEditingRowIndex(null)
@@ -204,48 +429,93 @@ EditableTable = ({
     if (!nextRows[rowIndex]) {
       nextRows[rowIndex] = _makeEmptyRow(columns, rowIndex)
     }
-    nextRows[rowIndex] = {
-      ...nextRows[rowIndex],
-      [columnId]: value,
-    }
-    setRows(nextRows)
+    const nextRow = _cloneRow(nextRows[rowIndex], columns)
+    const column = columns.find((item) => item.id === columnId) || { id: columnId, dataPath: columnId }
+    _setValueAtPath(nextRow, column.dataPath || column.id, value)
+    nextRows[rowIndex] = nextRow
+    commitRows(nextRows, {
+      reason: "update",
+      rowIndex,
+      row: nextRow,
+      previousRows: currentRows,
+    })
   }
 
   const updateDraftCell = (columnId, value) => {
-    setDraftRow({
-      ...(draftRow || _makeEmptyRow(columns, currentRows.length)),
-      [columnId]: value,
-    })
+    const nextDraft = _cloneRow(draftRow || _makeEmptyRow(columns, currentRows.length), columns)
+    const column = columns.find((item) => item.id === columnId) || { id: columnId, dataPath: columnId }
+    _setValueAtPath(nextDraft, column.dataPath || column.id, value)
+    setDraftRow(nextDraft)
   }
+
+  const updateDraftValueAtPath = useCallback((fieldPath, value) => {
+    const nextDraft = _cloneRow(draftRow || _makeEmptyRow(columns, currentRows.length), columns)
+    _setValueAtPath(nextDraft, fieldPath, value)
+    setDraftRow(nextDraft)
+  }, [draftRow, columns, currentRows.length])
 
   const removeInlineRow = () => {
     if (isLocked || !allowDeleteRows || currentRows.length <= 1) return
     const lastRow = currentRows[currentRows.length - 1]
     if (!allowDeleteNonEmpty && !_isRowEmpty(lastRow, columns)) return
     const nextRows = currentRows.slice(0, -1)
-    setRows(nextRows)
+    commitRows(nextRows, {
+      reason: "delete",
+      rowIndex: currentRows.length - 1,
+      row: lastRow,
+      previousRows: currentRows,
+    })
+    onRowDeleted?.(lastRow, buildRowContext(lastRow, {
+      rowIndex: currentRows.length - 1,
+      reason: "delete",
+      previousRows: currentRows,
+      nextRows,
+    }))
     setVisibleRows(Math.max(1, nextRows.length))
   }
 
   const removeRowAt = (rowIndex) => {
     if (isLocked || !allowDeleteRows) return
+    const deletedRow = currentRows[rowIndex]
     const nextRows = currentRows.filter((_, index) => index !== rowIndex)
-    setRows(nextRows)
+    commitRows(nextRows, {
+      reason: "delete",
+      rowIndex,
+      row: deletedRow,
+      previousRows: currentRows,
+    })
+    if (deletedRow) {
+      onRowDeleted?.(deletedRow, buildRowContext(deletedRow, {
+        rowIndex,
+        reason: "delete",
+        previousRows: currentRows,
+        nextRows,
+      }))
+    }
     if (!isModalMode) {
       setVisibleRows(Math.max(1, nextRows.length))
     }
   }
 
-  const validateDraftRow = () => {
-    if (!draftRow) return null
+  const validateResolvedRow = (candidateRow) => {
+    if (!candidateRow) return null
+
+    if (typeof validateRow === "function") {
+      const customResult = validateRow(candidateRow, buildRowContext(candidateRow, {
+        reason: editingRowIndex === null ? "create" : "edit",
+      }))
+      const customMessage = _normalizeValidationMessage(customResult)
+      if (customMessage) return customMessage
+    }
+
     if (!Array.isArray(uniqueBy) || uniqueBy.length === 0) return null
 
     for (const columnId of uniqueBy) {
-      const candidate = _normalizeUniqueToken(draftRow, columnId)
+      const candidate = _normalizeUniqueToken(candidateRow, columnId, columns)
       if (!candidate) continue
       const duplicateIndex = currentRows.findIndex((row, index) => {
         if (editingRowIndex !== null && index === editingRowIndex) return false
-        return _normalizeUniqueToken(row, columnId) === candidate
+        return _normalizeUniqueToken(row, columnId, columns) === candidate
       })
       if (duplicateIndex > -1) {
         const column = columns.find((item) => item.id === columnId)
@@ -259,16 +529,36 @@ EditableTable = ({
   const saveDraftRow = () => {
     if (!draftRow) return
 
-    const validationError = validateDraftRow()
+    let resolvedRow = _cloneRow(draftRow, columns)
+    if (typeof onBeforeSaveRow === "function") {
+      try {
+        const transformedRow = onBeforeSaveRow(resolvedRow, buildRowContext(resolvedRow, {
+          reason: editingRowIndex === null ? "create" : "edit",
+        }))
+        if (typeof transformedRow !== "undefined") {
+          resolvedRow = transformedRow
+        }
+      } catch (error) {
+        setErrorMessage(error?.message || "Unable to prepare row for save.")
+        return
+      }
+    }
+
+    if (!resolvedRow || typeof resolvedRow !== "object") {
+      setErrorMessage("Row save failed because the row data was invalid.")
+      return
+    }
+
+    const validationError = validateResolvedRow(resolvedRow)
     if (validationError) {
       setErrorMessage(validationError)
       return
     }
 
     const normalizedRow = {
-      ...draftRow,
+      ...resolvedRow,
       _rowId:
-        draftRow._rowId
+        resolvedRow._rowId
         || currentRows[editingRowIndex ?? -1]?._rowId
         || `row_${editingRowIndex ?? currentRows.length}_${Date.now()}`,
     }
@@ -280,7 +570,18 @@ EditableTable = ({
       nextRows[editingRowIndex] = normalizedRow
     }
 
-    setRows(nextRows)
+    commitRows(nextRows, {
+      reason: editingRowIndex === null ? "create" : "edit",
+      rowIndex: editingRowIndex ?? nextRows.length - 1,
+      row: normalizedRow,
+      previousRows: currentRows,
+    })
+    onRowSaved?.(normalizedRow, buildRowContext(normalizedRow, {
+      rowIndex: editingRowIndex ?? nextRows.length - 1,
+      reason: editingRowIndex === null ? "create" : "edit",
+      previousRows: currentRows,
+      nextRows,
+    }))
     if (!isModalMode) {
       setVisibleRows(nextRows.length)
     }
@@ -290,7 +591,12 @@ EditableTable = ({
   const addInlineRow = () => {
     if (isLocked || !allowAddRows || currentRows.length >= maxRows) return
     const nextRows = [...currentRows, _makeEmptyRow(columns, currentRows.length)]
-    setRows(nextRows)
+    commitRows(nextRows, {
+      reason: "create",
+      rowIndex: nextRows.length - 1,
+      row: nextRows[nextRows.length - 1],
+      previousRows: currentRows,
+    })
     setVisibleRows(nextRows.length)
   }
 
@@ -317,7 +623,7 @@ EditableTable = ({
   const shouldShowActions = !isLocked && (allowEditRows || allowDeleteRows)
 
   const renderEditorInput = (row, rowIndex, column, onValueChange, inline) => {
-    const value = row?.[column.id]
+    const value = _getValueAtPath(row, column.dataPath || column.id)
 
     switch (column.type) {
       case "number":
@@ -447,7 +753,7 @@ EditableTable = ({
               {showRowNumbers && (
                 <th style={rowNumberHeaderStyle}>#</th>
               )}
-              {columns.map((col) => (
+              {tableColumns.map((col) => (
                 <th
                   key={col.id}
                   style={{
@@ -468,7 +774,7 @@ EditableTable = ({
             {displayRows.length === 0 && isModalMode ? (
               <tr>
                 <td
-                  colSpan={columns.length + (showRowNumbers ? 1 : 0) + (shouldShowActions ? 1 : 0)}
+                  colSpan={tableColumns.length + (showRowNumbers ? 1 : 0) + (shouldShowActions ? 1 : 0)}
                   style={{ ...bodyCellStyle, textAlign: "center", color: isDarkMode ? "#bdbdbd" : "#666666" }}
                 >
                   {emptyStateText}
@@ -511,7 +817,7 @@ EditableTable = ({
                         )}
                       </td>
                     )}
-                    {columns.map((col) => (
+                    {tableColumns.map((col) => (
                       <td key={col.id} style={bodyCellStyle} data-source-field-id={getSourceFieldId(rowIndex, col.id)}>
                         {isModalMode
                           ? <div>{_formatCellValue(row, col)}</div>
@@ -570,7 +876,34 @@ EditableTable = ({
         </Stack>
       )}
 
-      {isModalMode && isDialogOpen && draftRow && (
+      {isModalMode && isDialogOpen && draftRow && usesSubformEditor && (
+        <SubformScoring
+          id={`${id}__rowEditor`}
+          mode="data-entry"
+          title={subformModalConfig.title}
+          hideTriggerButton
+          showSummary={false}
+          isOpen={isDialogOpen}
+          onOpenChange={(nextIsOpen) => {
+            if (!nextIsOpen) {
+              closeDialog()
+            }
+          }}
+          completeButtonText={modalEditorConfig?.completeButtonText || "Save"}
+          cancelButtonText={modalEditorConfig?.cancelButtonText || "Cancel"}
+          onComplete={() => {
+            saveDraftRow()
+            return false
+          }}
+          dataEntryValueRoot={draftRow}
+          onDataEntryValueChange={updateDraftValueAtPath}
+          dataEntryConfig={modalEditorConfig?.dataEntryConfig || defaultSubformDataEntryConfig}
+          summaryConfig={modalEditorConfig?.summaryConfig || { showItems: [] }}
+          modalConfig={subformModalConfig}
+        />
+      )}
+
+      {isModalMode && isDialogOpen && draftRow && !usesSubformEditor && (
         <Dialog
           hidden={!isDialogOpen}
           dialogContentProps={{
@@ -583,7 +916,7 @@ EditableTable = ({
           onDismiss={closeDialog}
         >
           <Stack tokens={{ childrenGap: 12 }}>
-            {columns.map((column) => (
+            {modalColumns.map((column) => (
               <div key={column.id}>
                 <Label>{column.title || column.id}</Label>
                 {renderEditorInput(
@@ -627,6 +960,9 @@ const createTableColumns = (columnDefs) => {
     id: def.id,
     title: def.title || def.id,
     type: def.type || "text",
+    dataPath: def.dataPath,
+    showInTable: def.showInTable,
+    showInModal: def.showInModal,
     width: def.width,
     placeholder: def.placeholder,
     options: def.options,

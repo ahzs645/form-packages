@@ -1,7 +1,7 @@
 {
   "name": "EditableTable",
   "title": "Editable Table with Inline or Modal Row Editing",
-  "description": "A repeating-row table component with inline editing or read-only summary mode, add/edit/delete actions, uniqueness checks, and configurable column types",
+  "description": "A repeating-row table component with inline editing or read-only summary mode, add/edit/delete actions, nested row paths, optional SubformScoring modal editors, and custom row save/validation hooks",
   "version": {
     "major": 1,
     "minor": 0,

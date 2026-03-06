@@ -4,11 +4,12 @@
  * Composes DateSelect and TimeSelect components.
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { IDatePickerProps } from '@fluentui/react';
 import { DateSelect } from './DateSelect';
 import { TimeSelect } from '../controls/TimeSelect';
 import { LayoutItem } from '../controls/LayoutItem';
+import { useActiveDataForForms } from '../hooks/form-state';
 
 export interface DateTimeSelectProps {
   /** Props for the attached action bar (eg: onEdit, onDelete, etc) */
@@ -35,6 +36,8 @@ export interface DateTimeSelectProps {
   isComplete?: boolean;
   /** Label for this field */
   label?: string;
+  /** Additional field ids that should mirror this field's value. */
+  linkedFieldIds?: string[];
   /** Label position relative to field contents */
   labelPosition?: 'top' | 'left' | 'none';
   /** Identifier for selective layout */
@@ -74,6 +77,7 @@ export const DateTimeSelect: React.FC<DateTimeSelectProps> = ({
   index,
   isComplete,
   label,
+  linkedFieldIds,
   labelPosition,
   layoutId,
   moisModule,
@@ -87,18 +91,62 @@ export const DateTimeSelect: React.FC<DateTimeSelectProps> = ({
   size = 'medium',
   vertical,
 }) => {
-  const [dateValue, setDateValue] = useState<string | undefined>(defaultValue);
-  const [timeValue, setTimeValue] = useState<string>(defaultTime);
+  const [activeData, setActiveData] = useActiveDataForForms();
+  const effectiveFieldId = fieldId || id;
+  const activeValue = effectiveFieldId ? activeData?.field?.data?.[effectiveFieldId] : undefined;
+  const persistedDate = activeValue && typeof activeValue === 'object' && typeof activeValue.date === 'string'
+    ? activeValue.date
+    : undefined;
+  const persistedTime = activeValue && typeof activeValue === 'object' && typeof activeValue.time === 'string'
+    ? activeValue.time
+    : undefined;
+  const [dateValue, setDateValue] = useState<string | undefined>(persistedDate ?? defaultValue);
+  const [timeValue, setTimeValue] = useState<string>(persistedTime ?? defaultTime);
+
+  useEffect(() => {
+    setDateValue(persistedDate ?? defaultValue);
+  }, [defaultValue, persistedDate]);
+
+  useEffect(() => {
+    setTimeValue(persistedTime ?? defaultTime);
+  }, [defaultTime, persistedTime]);
 
   if (hidden) return null;
 
+  const updateActiveData = (nextDate?: string, nextTime?: string) => {
+    if (!effectiveFieldId) return;
+    setActiveData((draft: any) => {
+      if (!draft.field) draft.field = { data: {}, status: {}, history: [] };
+      if (!draft.field.data) draft.field.data = {};
+      if (!nextDate && !nextTime) {
+        draft.field.data[effectiveFieldId] = null;
+        (linkedFieldIds ?? []).forEach((linkedFieldId) => {
+          if (!linkedFieldId || linkedFieldId === effectiveFieldId) return;
+          draft.field.data[linkedFieldId] = null;
+        });
+        return;
+      }
+      const nextValue = {
+        date: nextDate,
+        time: nextTime,
+      };
+      draft.field.data[effectiveFieldId] = nextValue;
+      (linkedFieldIds ?? []).forEach((linkedFieldId) => {
+        if (!linkedFieldId || linkedFieldId === effectiveFieldId) return;
+        draft.field.data[linkedFieldId] = { ...nextValue };
+      });
+    });
+  };
+
   const handleDateChange = (value: string) => {
     setDateValue(value);
+    updateActiveData(value, timeValue);
     onChange?.({ date: value, time: timeValue });
   };
 
   const handleTimeChange = (_: any, value: string) => {
     setTimeValue(value);
+    updateActiveData(dateValue, value);
     onChange?.({ date: dateValue, time: value });
   };
 
@@ -117,6 +165,7 @@ export const DateTimeSelect: React.FC<DateTimeSelectProps> = ({
           inline
           placeholder={placeholder}
           defaultValue={defaultValue}
+          value={dateValue}
           disabled={disabled}
           readOnly={readOnly}
           borderless={borderless}
@@ -129,6 +178,7 @@ export const DateTimeSelect: React.FC<DateTimeSelectProps> = ({
         <TimeSelect
           inline
           defaultValue={defaultTime}
+          value={timeValue}
           disabled={disabled}
           readOnly={readOnly}
           borderless={borderless}

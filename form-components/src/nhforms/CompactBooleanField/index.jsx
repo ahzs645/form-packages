@@ -226,6 +226,7 @@ const YesNoButtons = ({
  * @param {string} [props.note] - Annotation/note text
  * @param {boolean} [props.allowDeselect=true] - Allow clicking selected option to deselect
  * @param {string} [props.sourceFieldId] - Original PDF field ID (for PDF sync highlighting when this is a controller)
+ * @param {string[]} [props.linkedFieldIds] - Additional field IDs that should mirror the same boolean value
  * @param {'buttons' | 'checkbox'} [props.displayStyle='buttons'] - Display style: 'buttons' (Yes/No buttons) or 'checkbox' (single checkbox)
  */
 const CompactBooleanField = ({
@@ -241,6 +242,7 @@ const CompactBooleanField = ({
   note,
   allowDeselect = true,
   sourceFieldId,
+  linkedFieldIds = [],
   displayStyle = 'buttons',
   ...props
 }) => {
@@ -273,10 +275,16 @@ const CompactBooleanField = ({
         data: {
           ...fd.field?.data,
           [fieldId]: storedValue,
+          ...(sourceFieldId && sourceFieldId !== fieldId ? { [sourceFieldId]: storedValue } : {}),
+          ...Object.fromEntries(
+            (linkedFieldIds || [])
+              .filter((linkedFieldId) => linkedFieldId && linkedFieldId !== fieldId && linkedFieldId !== sourceFieldId)
+              .map((linkedFieldId) => [linkedFieldId, storedValue])
+          ),
         },
       },
     })
-  }, [fd, fieldId])
+  }, [fd, fieldId, sourceFieldId, linkedFieldIds])
 
   // Styles
   const baseContainerStyle = getFieldContainerStyles(isDarkMode, showCard)

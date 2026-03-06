@@ -1,67 +1,154 @@
 /**
- * SaveOnClose Component
- * Automatically saves form data as draft when the browser window/tab is closed.
- * Only saves if the form is still in draft state (not signed/submitted).
+ * SaveOnClose
+ *
+ * Change-aware draft save on browser close/unload.
+ * By default it only saves when the watched form data changed after initial load.
  */
 
-const { useEffect } = React
+const { useEffect, useRef, useState } = React
+
+const _normalizeSaveOnCloseOptions = (value) => {
+  if (typeof value === "boolean") {
+    return { disabled: value }
+  }
+  if (value && typeof value === "object") {
+    return value
+  }
+  return {}
+}
+
+const _useChangeAwareDirtyState = ({
+  watchedValue,
+  disabled = false,
+  delayCount = 3,
+  onDirtyChange,
+}) => {
+  const baselineRef = useRef(watchedValue)
+  const renderCountRef = useRef(delayCount)
+  const dirtyRef = useRef(false)
+  const [, forceRender] = useState(0)
+
+  useEffect(() => {
+    baselineRef.current = watchedValue
+    renderCountRef.current = delayCount
+    dirtyRef.current = false
+    onDirtyChange?.(false)
+  }, [delayCount])
+
+  useEffect(() => {
+    if (disabled) {
+      dirtyRef.current = false
+      onDirtyChange?.(false)
+      return
+    }
+
+    if (renderCountRef.current > 0) {
+      renderCountRef.current -= 1
+      return
+    }
+
+    const isDirty = watchedValue !== baselineRef.current
+    if (dirtyRef.current !== isDirty) {
+      dirtyRef.current = isDirty
+      onDirtyChange?.(isDirty)
+      forceRender((value) => value + 1)
+    }
+  }, [watchedValue, disabled, onDirtyChange])
+
+  const markSaved = (nextValue = watchedValue, nextDelayCount = delayCount) => {
+    baselineRef.current = nextValue
+    renderCountRef.current = nextDelayCount
+    if (dirtyRef.current) {
+      dirtyRef.current = false
+      onDirtyChange?.(false)
+      forceRender((value) => value + 1)
+    }
+  }
+
+  return [dirtyRef.current, markSaved]
+}
 
 /**
- * SaveOnClose - Renders nothing but sets up auto-save on window close
+ * SaveOnClose - Renders nothing but sets up change-aware auto-save on close.
  *
- * @param {Object} props
- * @param {Function} props.getSaveData - Function that returns the save data object
- * @param {boolean} props.disabled - If true, disables the save on close behavior
+ * Props:
+ * - getSaveData?: () => any
+ * - disabled?: boolean
+ * - watchedValue?: any
+ * - onlyWhenChanged?: boolean
+ * - delayCount?: number
+ * - onDirtyChange?: (isDirty: boolean) => void
  */
-const SaveOnClose = ({ getSaveData, disabled = false }) => {
+const SaveOnClose = ({
+  getSaveData,
+  disabled = false,
+  watchedValue,
+  onlyWhenChanged = true,
+  delayCount = 3,
+  onDirtyChange,
+}) => {
   const sd = useSourceData()
   const [fd] = useActiveData()
+  const trackedValue = typeof watchedValue === "undefined" ? fd?.field?.data : watchedValue
+  const [hasChanged] = _useChangeAwareDirtyState({
+    watchedValue: trackedValue,
+    disabled,
+    delayCount,
+    onDirtyChange,
+  })
 
   useEffect(() => {
     if (disabled) return
 
     window.onbeforeunload = () => {
-      // Only save if form is still a draft (not signed/submitted)
-      const isDraft = sd?.webform?.isDraft
-      if (isDraft === 'N') {
-        // Form is already signed, don't auto-save
-        return
-      }
+      if (sd?.webform?.isDraft === "N") return
+      if (onlyWhenChanged && !hasChanged) return
 
-      // Get save data from prop function or use default
       const saveData = getSaveData
         ? getSaveData()
         : { formData: fd?.field?.data, webformUpdate: null }
 
-      // Trigger draft save
       saveDraft(sd, fd, saveData)
     }
 
     return () => {
       window.onbeforeunload = null
     }
-  }, [sd, fd, getSaveData, disabled])
+  }, [sd, fd, getSaveData, disabled, onlyWhenChanged, hasChanged])
 
-  // This component renders nothing - it only sets up the side effect
   return null
 }
 
 /**
- * useSaveOnClose - Hook version for more control
+ * useSaveOnClose - Hook version for more control.
  *
- * @param {Function} getSaveData - Function that returns the save data object
- * @param {boolean} disabled - If true, disables the save on close behavior
+ * Legacy signature supported:
+ * useSaveOnClose(getSaveData, disabledBoolean)
+ *
+ * Preferred signature:
+ * useSaveOnClose(getSaveData, { disabled, watchedValue, onlyWhenChanged, delayCount, onDirtyChange })
  */
-const useSaveOnClose = (getSaveData, disabled = false) => {
+const useSaveOnClose = (getSaveData, options = {}) => {
+  const normalizedOptions = _normalizeSaveOnCloseOptions(options)
   const sd = useSourceData()
   const [fd] = useActiveData()
+  const trackedValue =
+    typeof normalizedOptions.watchedValue === "undefined"
+      ? fd?.field?.data
+      : normalizedOptions.watchedValue
+  const [hasChanged, markSaved] = _useChangeAwareDirtyState({
+    watchedValue: trackedValue,
+    disabled: normalizedOptions.disabled ?? false,
+    delayCount: normalizedOptions.delayCount ?? 3,
+    onDirtyChange: normalizedOptions.onDirtyChange,
+  })
 
   useEffect(() => {
-    if (disabled) return
+    if (normalizedOptions.disabled) return
 
     window.onbeforeunload = () => {
-      const isDraft = sd?.webform?.isDraft
-      if (isDraft === 'N') return
+      if (sd?.webform?.isDraft === "N") return
+      if ((normalizedOptions.onlyWhenChanged ?? true) && !hasChanged) return
 
       const saveData = getSaveData
         ? getSaveData()
@@ -73,7 +160,10 @@ const useSaveOnClose = (getSaveData, disabled = false) => {
     return () => {
       window.onbeforeunload = null
     }
-  }, [sd, fd, getSaveData, disabled])
-}
+  }, [sd, fd, getSaveData, normalizedOptions.disabled, normalizedOptions.onlyWhenChanged, hasChanged])
 
-// Note: No export statements - nhforms loading extracts components by name
+  return {
+    hasChanged,
+    markSaved,
+  }
+}

@@ -8,6 +8,7 @@
 const { useState, useMemo, useCallback } = React
 const {
   Stack,
+  Label,
   Text,
   PrimaryButton,
   DefaultButton,
@@ -189,6 +190,24 @@ const _isMeaningfulValue = (value) => {
     return Object.keys(value).length > 0
   }
   return true
+}
+
+const _toPathSegments = (path) =>
+  String(path || "")
+    .split(".")
+    .map((segment) => segment.trim())
+    .filter(Boolean)
+
+const _getValueAtPath = (root, path) => {
+  const segments = _toPathSegments(path)
+  if (segments.length === 0) return undefined
+
+  let current = root
+  for (const segment of segments) {
+    if (!current || typeof current !== "object") return undefined
+    current = current[segment]
+  }
+  return current
 }
 
 const _toDisplayValue = (value) => {
@@ -529,6 +548,30 @@ const CalculationSummaryItem = ({ calculation, value, isDarkMode }) => {
   )
 }
 
+const DataInterpretationSummaryItem = ({ calculation, value, isDarkMode }) => {
+  const interpretation = _getInterpretation(value, calculation?.ranges)
+
+  if (value === null || value === undefined || !interpretation) return null
+
+  const style = {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "6px",
+    padding: "4px 10px",
+    borderRadius: "4px",
+    backgroundColor: isDarkMode ? "#2a5a8c" : "#0078d4",
+    color: "#ffffff",
+    fontSize: "13px",
+    fontWeight: 500,
+  }
+
+  return (
+    <span style={style}>
+      {interpretation.bounds} &middot; {interpretation.label}
+    </span>
+  )
+}
+
 const ProgressSummaryItem = ({ answered, total, percentage, isDarkMode }) => {
   const barBg = isDarkMode ? "#333333" : "#e0e0e0"
   const barFill = percentage === 100
@@ -573,12 +616,32 @@ const SubformScoring = ({
   summaryConfig = {},
   modalConfig = {},
   showProgress = true,
+  isOpen: controlledIsOpen,
+  onOpenChange,
+  hideTriggerButton = false,
+  showSummary = true,
+  completeButtonText = "Done",
+  cancelButtonText = "Cancel",
+  onComplete,
+  dataEntryValueRoot,
+  onDataEntryValueChange,
   ...props
 }) => {
-  const [isOpen, setIsOpen] = useState(false)
+  const [internalIsOpen, setInternalIsOpen] = useState(false)
   const [fd] = useActiveData()
   const theme = useTheme()
   const isDarkMode = theme?.isInverted || false
+  const isDialogOpen = typeof controlledIsOpen === "boolean" ? controlledIsOpen : internalIsOpen
+  const hasExternalDataEntryStore =
+    dataEntryValueRoot !== null &&
+    typeof dataEntryValueRoot === "object"
+
+  const setDialogOpen = useCallback((nextValue) => {
+    if (typeof controlledIsOpen !== "boolean") {
+      setInternalIsOpen(nextValue)
+    }
+    onOpenChange?.(nextValue)
+  }, [controlledIsOpen, onOpenChange])
 
   const isDataEntryMode = useMemo(() => {
     if (mode === "data-entry") return true
@@ -587,7 +650,12 @@ const SubformScoring = ({
   }, [mode, dataEntryConfig])
 
   const setDataEntryValue = useCallback((fieldId, nextValue) => {
-    if (!fieldId || !fd?.setFormData) return
+    if (!fieldId) return
+    if (typeof onDataEntryValueChange === "function") {
+      onDataEntryValueChange(fieldId, nextValue)
+      return
+    }
+    if (!fd?.setFormData) return
     fd.setFormData((draft) => {
       if (!draft.field) {
         draft.field = { data: {}, status: {}, history: [] }
@@ -601,7 +669,7 @@ const SubformScoring = ({
         draft.field.data[fieldId] = nextValue
       }
     })
-  }, [fd])
+  }, [fd, onDataEntryValueChange])
 
   // Scoring-mode answer and score calculations
   const scoreMap = useMemo(() => {
@@ -755,18 +823,22 @@ const SubformScoring = ({
     const result = {}
     for (const field of dataEntryFields) {
       if (_isHeadingField(field)) continue
-      result[field.id] = fd?.field?.data?.[field.id]
+      result[field.id] = hasExternalDataEntryStore
+        ? _getValueAtPath(dataEntryValueRoot, field.id)
+        : fd?.field?.data?.[field.id]
     }
     if (isMorphineCalculatorMode) {
       for (const row of dataEntryCalculatorConfig?.rows || []) {
         if (!row?.inputFieldId) continue
         if (!(row.inputFieldId in result)) {
-          result[row.inputFieldId] = fd?.field?.data?.[row.inputFieldId]
+          result[row.inputFieldId] = hasExternalDataEntryStore
+            ? _getValueAtPath(dataEntryValueRoot, row.inputFieldId)
+            : fd?.field?.data?.[row.inputFieldId]
         }
       }
     }
     return result
-  }, [isDataEntryMode, isMorphineCalculatorMode, dataEntryCalculatorConfig, dataEntryFields, fd])
+  }, [isDataEntryMode, isMorphineCalculatorMode, dataEntryCalculatorConfig, dataEntryFields, fd, hasExternalDataEntryStore, dataEntryValueRoot])
 
   const dataEntryCalculations = useMemo(() => {
     return Array.isArray(dataEntryConfig?.calculations) ? dataEntryConfig.calculations : []
@@ -991,6 +1063,20 @@ const SubformScoring = ({
       const optionList = (field.options || []).map((option) => ({ key: option, text: option }))
       const useRadio = field.choiceStyle === "radio"
       if (useRadio) {
+        if (hasExternalDataEntryStore) {
+          return (
+            <div key={`field-${field.id}`}>
+              <Label required={required}>{field.label}</Label>
+              <OptionChoice
+                displayStyle="radio"
+                options={optionList}
+                selectedKey={dataEntryValues[field.id] ?? undefined}
+                onChange={(_, option) => setDataEntryValue(field.id, option?.key ?? null)}
+                multiline
+              />
+            </div>
+          )
+        }
         return (
           <SimpleCodeChecklist
             key={`field-${field.id}`}
@@ -1018,6 +1104,20 @@ const SubformScoring = ({
         ? field.options
         : ["Yes", "No"]
       const optionList = yesNoOptions.map((option) => ({ key: option, text: option }))
+      if (hasExternalDataEntryStore) {
+        return (
+          <div key={`field-${field.id}`}>
+            <Label required={required}>{field.label}</Label>
+            <OptionChoice
+              displayStyle="radio"
+              options={optionList}
+              selectedKey={dataEntryValues[field.id] ?? undefined}
+              onChange={(_, option) => setDataEntryValue(field.id, option?.key ?? null)}
+              multiline
+            />
+          </div>
+        )
+      }
       return (
         <SimpleCodeChecklist
           key={`field-${field.id}`}
@@ -1262,6 +1362,18 @@ const SubformScoring = ({
             />
           )
         }
+        case "interpretation": {
+          const calculation = getCalculationConfig(item.calculationId)
+          if (!calculation) return null
+          return (
+            <DataInterpretationSummaryItem
+              key={`interp-${index}`}
+              calculation={calculation}
+              value={calculatedExpressions[calculation.id]}
+              isDarkMode={isDarkMode}
+            />
+          )
+        }
         case "progress":
           return (
             <ProgressSummaryItem
@@ -1378,24 +1490,26 @@ const SubformScoring = ({
   return (
     <div style={containerStyle}>
       <div style={buttonRowStyle}>
-        <PrimaryButton
-          text={buttonText}
-          onClick={() => setIsOpen(true)}
-          iconProps={{ iconName: hasAnyAnswers ? "EditNote" : "ClipboardList" }}
-        />
-        {title && (
+        {!hideTriggerButton && (
+          <PrimaryButton
+            text={buttonText}
+            onClick={() => setDialogOpen(true)}
+            iconProps={{ iconName: hasAnyAnswers ? "EditNote" : "ClipboardList" }}
+          />
+        )}
+        {!hideTriggerButton && title && (
           <Text styles={{ root: { fontWeight: 600, fontSize: "14px" } }}>
             {title}
           </Text>
         )}
-        {hasAnyAnswers && (
+        {!hideTriggerButton && hasAnyAnswers && (
           <Text styles={{ root: { fontSize: "12px", color: isDarkMode ? "#a0a0a0" : "#888" } }}>
             {progress.answered}/{progress.total} answered
           </Text>
         )}
       </div>
 
-      {hasAnyAnswers && showItems.length > 0 && (
+      {showSummary && hasAnyAnswers && showItems.length > 0 && (
         <div style={summaryContainerStyle}>
           <div style={summaryItemsStyle}>
             {showItems.map((item, idx) => renderSummaryItem(item, idx))}
@@ -1404,8 +1518,8 @@ const SubformScoring = ({
       )}
 
       <Dialog
-        hidden={!isOpen}
-        onDismiss={() => setIsOpen(false)}
+        hidden={!isDialogOpen}
+        onDismiss={() => setDialogOpen(false)}
         dialogContentProps={dialogContentProps}
         modalProps={modalProps}
         minWidth={dialogMinWidth}
@@ -1495,8 +1609,23 @@ const SubformScoring = ({
         )}
         <div style={{ height: "16px" }} />
         <Stack horizontal horizontalAlign="end" tokens={{ childrenGap: 8 }}>
-          <PrimaryButton text="Done" onClick={() => setIsOpen(false)} />
-          <DefaultButton text="Cancel" onClick={() => setIsOpen(false)} />
+          <PrimaryButton
+            text={completeButtonText}
+            onClick={() => {
+              const shouldClose = onComplete?.({
+                mode: isDataEntryMode ? "data-entry" : "scoring",
+                dataEntryValues,
+                calculatedExpressions,
+                progress,
+                answers,
+                calculatedTotals,
+              })
+              if (shouldClose !== false) {
+                setDialogOpen(false)
+              }
+            }}
+          />
+          <DefaultButton text={cancelButtonText} onClick={() => setDialogOpen(false)} />
         </Stack>
       </Dialog>
     </div>

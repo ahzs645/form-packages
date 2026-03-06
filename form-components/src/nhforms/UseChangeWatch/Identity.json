@@ -1,7 +1,7 @@
 {
   "name": "UseChangeWatch",
   "title": "Check for user changes",
-  "description": "",
+  "description": "Tracks whether a watched value changed from its saved baseline, with reset and forced-dirty controls for draft workflows",
   "version": {
     "major": 0,
     "minor": 1,

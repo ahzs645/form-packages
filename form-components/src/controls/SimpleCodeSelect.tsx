@@ -7,6 +7,7 @@ import React, { useState } from 'react';
 import { Dropdown, IDropdownOption, TextField, Toggle, Stack } from '@fluentui/react';
 import { LayoutItem } from './LayoutItem';
 import { useTheme, useCodeList, useSection } from '../context/MoisContext';
+import { useActiveDataForForms } from '../hooks/form-state';
 
 export interface Coding {
   code: string | null;
@@ -54,6 +55,8 @@ export interface SimpleCodeSelectProps {
   isComplete?: boolean;
   /** Label for this field */
   label?: string;
+  /** Additional field ids that should mirror this field's value. */
+  linkedFieldIds?: string[];
   /** Label position relative to field contents */
   labelPosition?: 'top' | 'left' | 'none';
   /** Identifier for selective layout */
@@ -128,6 +131,7 @@ export const SimpleCodeSelect: React.FC<SimpleCodeSelectProps> = ({
   inline,
   isComplete,
   label,
+  linkedFieldIds,
   labelPosition,
   layoutId,
   listDisplay,
@@ -148,6 +152,8 @@ export const SimpleCodeSelect: React.FC<SimpleCodeSelectProps> = ({
   onChange,
   style,
 }) => {
+  const [activeData, setActiveData] = useActiveDataForForms();
+  const effectiveFieldId = fieldId || id;
   // Derive codeSystem from id if not explicitly provided
   // e.g., id="maritalStatus" → codeSystem="MOIS-MARITALSTATUS"
   const derivedCodeSystem = codeSystem || (id ? `MOIS-${id.replace(/([a-z])([A-Z])/g, '$1$2').toUpperCase()}` : '');
@@ -184,14 +190,18 @@ export const SimpleCodeSelect: React.FC<SimpleCodeSelectProps> = ({
   };
 
   const parsedOptions = parseOptions();
+  const activeValue = effectiveFieldId ? activeData?.field?.data?.[effectiveFieldId] : undefined;
 
-  // Get initial selected keys
-  const getInitialKeys = (): string[] => {
-    const val = value || defaultValue;
+  const getKeysFromValue = (val: Coding | Coding[] | string | undefined): string[] => {
     if (!val) return [];
     if (typeof val === 'string') return [val];
     if (Array.isArray(val)) return val.map(v => v.code || '').filter(Boolean);
     return val.code ? [val.code] : [];
+  };
+
+  // Get initial selected keys
+  const getInitialKeys = (): string[] => {
+    return getKeysFromValue((activeValue as Coding | Coding[] | string | undefined) ?? value ?? defaultValue);
   };
 
   const [selectedKeys, setSelectedKeys] = useState<string[]>(getInitialKeys());
@@ -215,6 +225,54 @@ export const SimpleCodeSelect: React.FC<SimpleCodeSelectProps> = ({
 
   const options = buildOptions();
 
+  const effectiveSelectedKeys = activeValue !== undefined
+    ? getKeysFromValue(activeValue as Coding | Coding[] | string | undefined)
+    : selectedKeys;
+
+  const updateActiveData = (newKeys: string[], otherDisplayValue?: string) => {
+    if (!effectiveFieldId) return;
+    setActiveData((draft: any) => {
+      if (!draft.field) draft.field = { data: {}, status: {}, history: [] };
+      if (!draft.field.data) draft.field.data = {};
+
+      if (newKeys.length === 0) {
+        draft.field.data[effectiveFieldId] = null;
+        (linkedFieldIds ?? []).forEach((linkedFieldId) => {
+          if (!linkedFieldId || linkedFieldId === effectiveFieldId) return;
+          draft.field.data[linkedFieldId] = null;
+        });
+        return;
+      }
+
+      const codings = newKeys.map(key => {
+        if (key === '__other__') {
+          return {
+            code: null,
+            display: (otherDisplayValue ?? otherValue) || 'Other',
+            system: derivedCodeSystem || undefined,
+          };
+        }
+        const opt = parsedOptions.find(o => o.code === key);
+        return {
+          code: key,
+          display: opt?.display || key,
+          system: derivedCodeSystem || undefined,
+        };
+      });
+
+      const storedValue = isMultiple ? codings : codings[0];
+      draft.field.data[effectiveFieldId] = storedValue;
+      (linkedFieldIds ?? []).forEach((linkedFieldId) => {
+        if (!linkedFieldId || linkedFieldId === effectiveFieldId) return;
+        draft.field.data[linkedFieldId] = Array.isArray(storedValue)
+          ? storedValue.map((coding) => ({ ...coding }))
+          : storedValue
+            ? { ...storedValue }
+            : null;
+      });
+    });
+  };
+
   // Handle selection change
   const handleChange = (_: any, option?: IDropdownOption) => {
     if (!option) return;
@@ -223,17 +281,18 @@ export const SimpleCodeSelect: React.FC<SimpleCodeSelectProps> = ({
     let selected = true;
 
     if (isMultiple) {
-      if (selectedKeys.includes(option.key as string)) {
-        newKeys = selectedKeys.filter(k => k !== option.key);
+      if (effectiveSelectedKeys.includes(option.key as string)) {
+        newKeys = effectiveSelectedKeys.filter(k => k !== option.key);
         selected = false;
       } else {
-        newKeys = [...selectedKeys, option.key as string];
+        newKeys = [...effectiveSelectedKeys, option.key as string];
       }
     } else {
       newKeys = option.key === '' ? [] : [option.key as string];
     }
 
     setSelectedKeys(newKeys);
+    updateActiveData(newKeys);
 
     if (onChange) {
       const codings = newKeys.map(key => {
@@ -259,10 +318,10 @@ export const SimpleCodeSelect: React.FC<SimpleCodeSelectProps> = ({
   // Check if children should be shown
   const shouldShowChildren = () => {
     if (!conditionalCodes.length) return false;
-    return selectedKeys.some(key => conditionalCodes.includes(key));
+    return effectiveSelectedKeys.some(key => conditionalCodes.includes(key));
   };
 
-  const isEmpty = selectedKeys.length === 0;
+  const isEmpty = effectiveSelectedKeys.length === 0;
   const theme = useTheme();
 
   // Determine effective label position based on section layout
@@ -299,8 +358,8 @@ export const SimpleCodeSelect: React.FC<SimpleCodeSelectProps> = ({
   if (inline) {
     if (readOnly) {
       const displayValue = isMultiple
-        ? selectedKeys.map(k => parsedOptions.find(o => o.code === k)?.display || k).join(', ')
-        : parsedOptions.find(o => o.code === selectedKeys[0])?.display || '';
+        ? effectiveSelectedKeys.map(k => parsedOptions.find(o => o.code === k)?.display || k).join(', ')
+        : parsedOptions.find(o => o.code === effectiveSelectedKeys[0])?.display || '';
       return (
         <TextField
           id={fieldId}
@@ -317,8 +376,8 @@ export const SimpleCodeSelect: React.FC<SimpleCodeSelectProps> = ({
     return (
       <Dropdown
         id={fieldId}
-        selectedKey={isMultiple ? undefined : (selectedKeys[0] || null)}
-        selectedKeys={isMultiple ? selectedKeys : undefined}
+        selectedKey={isMultiple ? undefined : (effectiveSelectedKeys[0] || null)}
+        selectedKeys={isMultiple ? effectiveSelectedKeys : undefined}
         multiSelect={isMultiple}
         onChange={handleChange}
         options={isMultiple ? options : [{ key: '', text: placeholder }, ...options]}
@@ -336,8 +395,8 @@ export const SimpleCodeSelect: React.FC<SimpleCodeSelectProps> = ({
   // ReadOnly mode - show TextField
   if (readOnly) {
     const displayValue = isMultiple
-      ? selectedKeys.map(k => parsedOptions.find(o => o.code === k)?.display || k).join(', ')
-      : parsedOptions.find(o => o.code === selectedKeys[0])?.display || '';
+      ? effectiveSelectedKeys.map(k => parsedOptions.find(o => o.code === k)?.display || k).join(', ')
+      : parsedOptions.find(o => o.code === effectiveSelectedKeys[0])?.display || '';
 
     return (
       <LayoutItem
@@ -406,8 +465,8 @@ export const SimpleCodeSelect: React.FC<SimpleCodeSelectProps> = ({
         <Dropdown
           id={fieldId}
           label={fluentLabel}
-          selectedKey={isMultiple ? undefined : (selectedKeys[0] || null)}
-          selectedKeys={isMultiple ? selectedKeys : undefined}
+          selectedKey={isMultiple ? undefined : (effectiveSelectedKeys[0] || null)}
+          selectedKeys={isMultiple ? effectiveSelectedKeys : undefined}
           multiSelect={isMultiple}
           onChange={handleChange}
           options={isMultiple ? options : [{ key: '', text: placeholder }, ...options]}
@@ -419,10 +478,16 @@ export const SimpleCodeSelect: React.FC<SimpleCodeSelectProps> = ({
           }}
           {...dropdownProps}
         />
-        {showOtherOption && selectedKeys.includes('__other__') && (
+        {showOtherOption && effectiveSelectedKeys.includes('__other__') && (
           <TextField
             value={otherValue}
-            onChange={(_, val) => setOtherValue(val || '')}
+            onChange={(_, val) => {
+              const nextValue = val || '';
+              setOtherValue(nextValue);
+              if (effectiveSelectedKeys.includes('__other__')) {
+                updateActiveData(effectiveSelectedKeys, nextValue);
+              }
+            }}
             placeholder="Other"
             styles={{
               root: { marginTop: '4px' },

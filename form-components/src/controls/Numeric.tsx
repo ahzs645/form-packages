@@ -7,6 +7,7 @@ import React, { useState, useCallback, useMemo } from 'react';
 import { TextField, SpinButton, ISpinButtonProps } from '@fluentui/react';
 import { LayoutItem } from './LayoutItem';
 import { useTheme, useSourceData, useSection } from '../context/MoisContext';
+import { useActiveDataForForms } from '../hooks/form-state';
 
 export interface NumericProps {
   /** Props for the attached action bar (eg: onEdit, onDelete, etc) */
@@ -29,6 +30,8 @@ export interface NumericProps {
   isComplete?: boolean;
   /** Label for this field */
   label?: string;
+  /** Additional field ids that should mirror this field's value. */
+  linkedFieldIds?: string[];
   /** Label position relative to field contents */
   labelPosition?: 'top' | 'left' | 'none';
   /** Identifier for selective layout */
@@ -90,6 +93,7 @@ export const Numeric: React.FC<NumericProps> = ({
   inline,
   isComplete,
   label,
+  linkedFieldIds,
   labelPosition,
   layoutId,
   moisModule,
@@ -112,9 +116,11 @@ export const Numeric: React.FC<NumericProps> = ({
   const theme = useTheme();
   const sourceData = useSourceData();
   const sectionContext = useSection();
+  const [activeData, setActiveData] = useActiveDataForForms();
 
   // Get effective sourceId (from explicit prop, id prop, or fieldId)
   const effectiveSourceId = sourceId || id || fieldId;
+  const activeValue = effectiveSourceId ? activeData?.field?.data?.[effectiveSourceId] : undefined;
 
   // Get initial value from source data if sourceId is provided
   const sourceValue = useMemo(() => {
@@ -134,15 +140,44 @@ export const Numeric: React.FC<NumericProps> = ({
   // Determine initial value: value prop > sourceValue > defaultValue > ''
   const initialValue = useMemo(() => {
     if (value !== undefined) return String(value);
+    if (activeValue !== undefined && activeValue !== null) return String(activeValue);
     if (sourceValue !== undefined) return String(sourceValue);
     if (defaultValue !== undefined) return String(defaultValue);
     return '';
-  }, [value, sourceValue, defaultValue]);
+  }, [value, activeValue, sourceValue, defaultValue]);
 
   const [localValue, setLocalValue] = useState<string>(initialValue);
   const [errorMessage, setErrorMessage] = useState<string>('');
 
-  const displayValue = value !== undefined ? String(value) : (sourceValue !== undefined && localValue === '' ? String(sourceValue) : localValue);
+  const displayValue = value !== undefined
+    ? String(value)
+    : activeValue !== undefined && activeValue !== null
+      ? String(activeValue)
+      : (sourceValue !== undefined && localValue === '' ? String(sourceValue) : localValue);
+
+  const updateActiveValue = useCallback((rawValue: string) => {
+    if (!effectiveSourceId) return;
+    setActiveData((draft: any) => {
+      if (!draft.field) draft.field = { data: {}, status: {}, history: [] };
+      if (!draft.field.data) draft.field.data = {};
+      if (!rawValue) {
+        draft.field.data[effectiveSourceId] = null;
+        (linkedFieldIds ?? []).forEach((linkedFieldId) => {
+          if (!linkedFieldId || linkedFieldId === effectiveSourceId) return;
+          draft.field.data[linkedFieldId] = null;
+        });
+        return;
+      }
+      const nextValue = storeAsNumber
+        ? (typeNumber === 'decimal' ? parseFloat(rawValue) : parseInt(rawValue, 10))
+        : rawValue;
+      draft.field.data[effectiveSourceId] = nextValue;
+      (linkedFieldIds ?? []).forEach((linkedFieldId) => {
+        if (!linkedFieldId || linkedFieldId === effectiveSourceId) return;
+        draft.field.data[linkedFieldId] = nextValue;
+      });
+    });
+  }, [effectiveSourceId, linkedFieldIds, setActiveData, storeAsNumber, typeNumber]);
 
   // Get size styles from theme
   const getSizeStyles = (): React.CSSProperties => {
@@ -186,6 +221,10 @@ export const Numeric: React.FC<NumericProps> = ({
     const error = validate(val);
     setErrorMessage(error);
 
+    if (!error) {
+      updateActiveValue(val);
+    }
+
     if (!error && onChange) {
       if (storeAsNumber && val) {
         onChange(typeNumber === 'decimal' ? parseFloat(val) : parseInt(val, 10));
@@ -198,6 +237,7 @@ export const Numeric: React.FC<NumericProps> = ({
   const handleSpinChange = useCallback((_: any, newValue?: string) => {
     const val = newValue || '';
     setLocalValue(val);
+    updateActiveValue(val);
 
     if (onChange) {
       if (storeAsNumber && val) {
@@ -206,7 +246,7 @@ export const Numeric: React.FC<NumericProps> = ({
         onChange(val || undefined);
       }
     }
-  }, [onChange, storeAsNumber, typeNumber]);
+  }, [onChange, storeAsNumber, typeNumber, updateActiveValue]);
 
   const isEmpty = !displayValue || displayValue.trim() === '';
 
