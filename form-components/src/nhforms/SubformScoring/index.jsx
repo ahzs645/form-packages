@@ -1031,6 +1031,7 @@ const SubformScoring = ({
           options={scaleOptions}
           showLegend={showLegend}
           showInlineLabels={field.showInlineLabels !== false}
+          showTooltip={field.showTooltip === true}
         />
       )
     }

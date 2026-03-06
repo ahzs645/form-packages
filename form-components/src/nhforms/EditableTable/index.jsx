@@ -176,6 +176,172 @@ const _normalizeValidationMessage = (result) => {
   return null
 }
 
+const _validateRowWithConfig = (row, validationConfig, columns = []) => {
+  if (!row || !validationConfig || typeof validationConfig !== "object") return null
+
+  const requireAnyGroups = Array.isArray(validationConfig.requireAnyGroups)
+    ? validationConfig.requireAnyGroups
+    : []
+
+  for (const group of requireAnyGroups) {
+    const paths = Array.isArray(group?.paths) ? group.paths.filter(Boolean) : []
+    if (paths.length === 0) continue
+
+    const hasValue = paths.some((path) => _isMeaningfulValue(_getValueAtPath(row, path)))
+    if (hasValue) continue
+
+    const message =
+      typeof group?.message === "string" && group.message.trim()
+        ? group.message.trim()
+        : typeof group?.label === "string" && group.label.trim()
+          ? `Enter at least one value for ${group.label.trim()}.`
+          : "Enter at least one value before saving this row."
+    return message
+  }
+
+  const requiredPaths = Array.isArray(validationConfig.requiredPaths)
+    ? validationConfig.requiredPaths
+    : []
+
+  for (const requiredEntry of requiredPaths) {
+    if (typeof requiredEntry === "string") {
+      if (_isMeaningfulValue(_getValueAtPath(row, requiredEntry))) continue
+      const column = columns.find((item) => (item.dataPath || item.id) === requiredEntry)
+      return `${column?.title || column?.label || requiredEntry} is required.`
+    }
+
+    if (requiredEntry && typeof requiredEntry === "object") {
+      const path = requiredEntry.path
+      if (!path) continue
+      if (_isMeaningfulValue(_getValueAtPath(row, path))) continue
+      if (typeof requiredEntry.message === "string" && requiredEntry.message.trim()) {
+        return requiredEntry.message.trim()
+      }
+      const column = columns.find((item) => (item.dataPath || item.id) === path)
+      return `${column?.title || column?.label || path} is required.`
+    }
+  }
+
+  return null
+}
+
+const _toFiniteNumber = (value) => {
+  if (typeof value === "number" && Number.isFinite(value)) return value
+  if (typeof value === "string") {
+    const trimmed = value.trim()
+    if (!trimmed) return null
+    const parsed = Number(trimmed)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+  return null
+}
+
+const _normalizeZeroLikeValue = (value, zeroIsEmpty = true) => {
+  if (!zeroIsEmpty || typeof value !== "string") return value
+  const trimmed = value.trim()
+  if (trimmed === "" || trimmed === "0" || trimmed === "0." || trimmed === ".") return ""
+  return value
+}
+
+const _formatProcessedNumber = (value, precision = 0, trimTrailingZero = false) => {
+  if (!Number.isFinite(value)) return ""
+  const safePrecision = Math.max(0, Math.min(6, Number(precision) || 0))
+  let text = value.toFixed(safePrecision)
+  if (trimTrailingZero && text.includes(".")) {
+    text = text.replace(/\.0+$/, "").replace(/(\.\d*[1-9])0+$/, "$1")
+  }
+  return text
+}
+
+const _sortRowsByPath = (rows = [], path, direction = "asc") => {
+  if (!path) return rows
+  const sign = direction === "desc" ? -1 : 1
+  return [...rows].sort((left, right) => {
+    const leftValue = _stringifyValue(_getValueAtPath(left, path))
+    const rightValue = _stringifyValue(_getValueAtPath(right, path))
+    const leftDate = leftValue ? Date.parse(leftValue) : Number.NaN
+    const rightDate = rightValue ? Date.parse(rightValue) : Number.NaN
+
+    if (Number.isFinite(leftDate) && Number.isFinite(rightDate)) {
+      return (leftDate - rightDate) * sign
+    }
+
+    return leftValue.localeCompare(rightValue) * sign
+  })
+}
+
+const _applyRowProcessingConfig = (row, processingConfig, columns = []) => {
+  if (!row || !processingConfig || typeof processingConfig !== "object") return row
+
+  const normalizedConfig = Array.isArray(processingConfig.pairs)
+    ? processingConfig
+    : processingConfig.type === "paired-unit-conversion"
+      ? processingConfig
+      : null
+
+  if (!normalizedConfig) return row
+
+  const nextRow = _cloneRow(row, columns)
+  const factor = Number(normalizedConfig.factor)
+  const safeFactor = Number.isFinite(factor) && factor > 0 ? factor : 18
+  const cadPrecision = Number.isFinite(Number(normalizedConfig.cadPrecision))
+    ? Number(normalizedConfig.cadPrecision)
+    : 1
+  const usPrecision = Number.isFinite(Number(normalizedConfig.usPrecision))
+    ? Number(normalizedConfig.usPrecision)
+    : 0
+  const trimTrailingZero = normalizedConfig.trimTrailingZero !== false
+  const zeroIsEmpty = normalizedConfig.zeroIsEmpty !== false
+  const prefer = normalizedConfig.prefer === "us" ? "us" : "cad"
+  const pairs = Array.isArray(normalizedConfig.pairs) ? normalizedConfig.pairs : []
+
+  pairs.forEach((pair) => {
+    const cadPath = pair?.cadPath
+    const usPath = pair?.usPath
+    if (!cadPath || !usPath) return
+
+    const pairFactor = Number(pair.factor)
+    const resolvedFactor = Number.isFinite(pairFactor) && pairFactor > 0 ? pairFactor : safeFactor
+    const pairCadPrecision = Number.isFinite(Number(pair.cadPrecision))
+      ? Number(pair.cadPrecision)
+      : cadPrecision
+    const pairUsPrecision = Number.isFinite(Number(pair.usPrecision))
+      ? Number(pair.usPrecision)
+      : usPrecision
+    const pairPrefer = pair.prefer === "us" || pair.prefer === "cad" ? pair.prefer : prefer
+
+    const rawCad = _normalizeZeroLikeValue(_getValueAtPath(nextRow, cadPath), zeroIsEmpty)
+    const rawUs = _normalizeZeroLikeValue(_getValueAtPath(nextRow, usPath), zeroIsEmpty)
+    let cadNumber = _toFiniteNumber(rawCad)
+    let usNumber = _toFiniteNumber(rawUs)
+
+    if (cadNumber !== null && usNumber === null) {
+      usNumber = cadNumber * resolvedFactor
+    } else if (cadNumber === null && usNumber !== null) {
+      cadNumber = usNumber / resolvedFactor
+    } else if (cadNumber !== null && usNumber !== null) {
+      if (pairPrefer === "us") {
+        cadNumber = usNumber / resolvedFactor
+      } else {
+        usNumber = cadNumber * resolvedFactor
+      }
+    }
+
+    _setValueAtPath(
+      nextRow,
+      cadPath,
+      cadNumber === null ? "" : _formatProcessedNumber(cadNumber, pairCadPrecision, trimTrailingZero)
+    )
+    _setValueAtPath(
+      nextRow,
+      usPath,
+      usNumber === null ? "" : _formatProcessedNumber(usNumber, pairUsPrecision, false)
+    )
+  })
+
+  return nextRow
+}
+
 const _buildSubformFieldFromColumn = (column) => {
   const fieldId = column.dataPath || column.id
   const label = column.title || column.label || column.id
@@ -266,6 +432,8 @@ EditableTable = ({
   const isModalMode = mode === "modal"
   const isLocked = disabled || readOnly
   const modalEditorConfig = props.modalEditorConfig || null
+  const processingConfig = props.processingConfig || modalEditorConfig?.processingConfig || null
+  const validationConfig = props.validationConfig || modalEditorConfig?.validationConfig || null
   const onBeforeSaveRow = props.onBeforeSaveRow
   const validateRow = props.validateRow
   const onRowsChange = props.onRowsChange
@@ -508,6 +676,9 @@ EditableTable = ({
       if (customMessage) return customMessage
     }
 
+    const configMessage = _validateRowWithConfig(candidateRow, validationConfig, columns)
+    if (configMessage) return configMessage
+
     if (!Array.isArray(uniqueBy) || uniqueBy.length === 0) return null
 
     for (const columnId of uniqueBy) {
@@ -530,6 +701,9 @@ EditableTable = ({
     if (!draftRow) return
 
     let resolvedRow = _cloneRow(draftRow, columns)
+    if (processingConfig) {
+      resolvedRow = _applyRowProcessingConfig(resolvedRow, processingConfig, columns)
+    }
     if (typeof onBeforeSaveRow === "function") {
       try {
         const transformedRow = onBeforeSaveRow(resolvedRow, buildRowContext(resolvedRow, {
@@ -570,20 +744,25 @@ EditableTable = ({
       nextRows[editingRowIndex] = normalizedRow
     }
 
-    commitRows(nextRows, {
+    const sortedRows = processingConfig?.sortByPath
+      ? _sortRowsByPath(nextRows, processingConfig.sortByPath, processingConfig.sortDirection)
+      : nextRows
+    const savedRowIndex = sortedRows.findIndex((row) => row?._rowId === normalizedRow._rowId)
+
+    commitRows(sortedRows, {
       reason: editingRowIndex === null ? "create" : "edit",
-      rowIndex: editingRowIndex ?? nextRows.length - 1,
+      rowIndex: savedRowIndex,
       row: normalizedRow,
       previousRows: currentRows,
     })
     onRowSaved?.(normalizedRow, buildRowContext(normalizedRow, {
-      rowIndex: editingRowIndex ?? nextRows.length - 1,
+      rowIndex: savedRowIndex,
       reason: editingRowIndex === null ? "create" : "edit",
       previousRows: currentRows,
-      nextRows,
+      nextRows: sortedRows,
     }))
     if (!isModalMode) {
-      setVisibleRows(nextRows.length)
+      setVisibleRows(sortedRows.length)
     }
     closeDialog()
   }

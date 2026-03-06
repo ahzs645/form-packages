@@ -20,6 +20,7 @@ const {
  * - options: Array<{ value: number, label: string, description?: string }> - Scale options
  * - showLegend: boolean - Whether to show the legend row above
  * - showInlineLabels: boolean - Whether to show inline option labels beside radio controls
+ * - showTooltip: boolean - Whether to show the row tooltip when descriptions exist
  * - required: boolean - Whether the field is required
  * - readOnly: boolean - Whether the field is read-only
  */
@@ -128,6 +129,7 @@ const ScaleField = ({
   options,
   showLegend = false,
   showInlineLabels = true,
+  showTooltip = false,
   required = false,
   readOnly = false,
 }) => {
@@ -192,50 +194,51 @@ const ScaleField = ({
     borderRadius: "4px",
   }
 
-  // Check if any option has a description for tooltip
   const hasDescriptions = scaleOptions.some(opt => opt.description)
+  const shouldShowTooltip = showTooltip && hasDescriptions
   const inlineMinWidth = _getInlineMinWidth(scaleOptions.length)
+  const fieldContent = (
+    <div style={{ overflowX: "auto" }}>
+      <Stack horizontal verticalAlign="center" style={{ minWidth: inlineMinWidth }}>
+        <StackItem disableShrink styles={LABEL_COLUMN_STYLE}>
+          <Label
+            styles={LABEL_STYLE}
+            required={required}
+          >
+            {label}
+          </Label>
+        </StackItem>
+        <StackItem grow>
+          <OptionChoice
+            inline
+            displayStyle="radio"
+            id={`scale-${fieldId}`}
+            options={choiceOptions}
+            selectedKey={currentData.selectedKey}
+            onChange={handleChange}
+            disabled={readOnly}
+            controlStyles={choiceGroupStyles}
+          />
+        </StackItem>
+      </Stack>
+    </div>
+  )
 
   return (
     <div>
       {showLegend && <ScaleFieldLegend options={scaleOptions} />}
 
       <div style={containerStyle}>
-        <TooltipHost
-          id={`tooltip_${fieldId}`}
-          tooltipProps={
-            hasDescriptions
-              ? {
-                  onRenderContent: () => <ScaleFieldTooltip options={scaleOptions} />,
-                }
-              : undefined
-          }
-        >
-          <div style={{ overflowX: "auto" }}>
-            <Stack horizontal verticalAlign="center" style={{ minWidth: inlineMinWidth }}>
-              <StackItem disableShrink styles={LABEL_COLUMN_STYLE}>
-                <Label
-                  styles={LABEL_STYLE}
-                  required={required}
-                >
-                  {label}
-                </Label>
-              </StackItem>
-              <StackItem grow>
-                <OptionChoice
-                  inline
-                  displayStyle="radio"
-                  id={`scale-${fieldId}`}
-                  options={choiceOptions}
-                  selectedKey={currentData.selectedKey}
-                  onChange={handleChange}
-                  disabled={readOnly}
-                  controlStyles={choiceGroupStyles}
-                />
-              </StackItem>
-            </Stack>
-          </div>
-        </TooltipHost>
+        {shouldShowTooltip ? (
+          <TooltipHost
+            id={`tooltip_${fieldId}`}
+            tooltipProps={{
+              onRenderContent: () => <ScaleFieldTooltip options={scaleOptions} />,
+            }}
+          >
+            {fieldContent}
+          </TooltipHost>
+        ) : fieldContent}
       </div>
     </div>
   )
