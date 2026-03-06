@@ -1,4 +1,5 @@
 const { useState, useEffect, useMemo } = React
+const { ComboBox } = Fluent
 
 const sizeMap = {
   tiny: { minWidth: 50, maxWidth: 80, flex: '1 1 0px' },
@@ -85,13 +86,27 @@ const defaultMapCandidateSavedValue = (item, codeSystem, codeId, onRenderSelecte
   }
 }
 
+const resolveItems = (optionList, fallbackItems = []) => {
+  if (Array.isArray(optionList)) {
+    if (optionList.length > 0) {
+      return optionList.map(normalizeOption)
+    }
+    return fallbackItems.map(normalizeOption)
+  }
+
+  if (optionList && typeof optionList === 'object') {
+    return Object.entries(optionList).map(([code, display]) =>
+      normalizeOption({ code, display })
+    )
+  }
+
+  return fallbackItems.map(normalizeOption)
+}
+
 /**
- * FindCodeSelect
- * Hybrid between FindCode and SimpleCodeSelect:
- * - Search/filter while typing
- * - Dropdown-style selection UI
+ * Shared implementation used by the inline-option and code-list-backed variants.
  */
-const FindCodeSelect = ({
+const FindCodeSelectBase = ({
   actions,
   borderless = false,
   children,
@@ -129,6 +144,7 @@ const FindCodeSelect = ({
   size = 'medium',
   value,
   style,
+  fallbackItems = [],
 }) => {
   const [selectedValue, setSelectedValue] = useState(value ?? defaultValue ?? null)
   const [searchText, setSearchText] = useState('')
@@ -140,24 +156,9 @@ const FindCodeSelect = ({
     }
   }, [value])
 
-  const codeListFromContext = useCodeList(codeSystem || '')
-
   const items = useMemo(() => {
-    if (Array.isArray(optionList)) {
-      if (optionList.length > 0) {
-        return optionList.map(normalizeOption)
-      }
-      return codeListFromContext.map(normalizeOption)
-    }
-
-    if (optionList && typeof optionList === 'object') {
-      return Object.entries(optionList).map(([code, display]) =>
-        normalizeOption({ code, display })
-      )
-    }
-
-    return codeListFromContext.map(normalizeOption)
-  }, [optionList, codeListFromContext])
+    return resolveItems(optionList, fallbackItems)
+  }, [optionList, fallbackItems])
 
   const selectedCode = selectedValue?.[codeId] ?? selectedValue?.code ?? null
   const selectedKey = selectedCode == null ? undefined : String(selectedCode)
@@ -393,4 +394,33 @@ const FindCodeSelect = ({
       {showChildren && children}
     </LayoutItem>
   )
+}
+
+const FindCodeSelectWithCodeList = (props) => {
+  const codeListFromContext = useCodeList(props.codeSystem || '')
+  return <FindCodeSelectBase {...props} fallbackItems={codeListFromContext} />
+}
+
+/**
+ * FindCodeSelect
+ * Hybrid between FindCode and SimpleCodeSelect:
+ * - Search/filter while typing
+ * - Dropdown-style selection UI
+ *
+ * Important runtime behavior:
+ * If explicit `optionList` values are provided, do not call `useCodeList`.
+ * The exported MOIS runtime can provide inline options without a fully wired
+ * code-list host context, and calling `useCodeList` in that path can fail.
+ */
+const FindCodeSelect = (props) => {
+  const optionList = props?.optionList
+  const hasExplicitOptionList = Array.isArray(optionList)
+    ? optionList.length > 0
+    : Boolean(optionList && typeof optionList === 'object')
+
+  if (hasExplicitOptionList) {
+    return <FindCodeSelectBase {...props} fallbackItems={[]} />
+  }
+
+  return <FindCodeSelectWithCodeList {...props} />
 }

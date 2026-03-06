@@ -32,11 +32,11 @@ export const useOnLoad = (callback?: (sourceData: any, formData: any) => void) =
  */
 export const useOnRefresh = (callback?: (sourceData: any, formData: any) => void) => {
   const sourceData = useSourceData();
-  const [formData] = useActiveDataForForms();
+  const [formData, setFormData] = useActiveDataForForms();
 
   React.useEffect(() => {
     if (typeof callback === 'function') {
-      callback(sourceData, formData);
+      callback(sourceData, { ...formData, setFormData });
     }
   }, []);
 };
