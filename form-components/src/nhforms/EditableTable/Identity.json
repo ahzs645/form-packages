@@ -1,7 +1,7 @@
 {
   "name": "EditableTable",
-  "title": "Editable Table with Add/Delete Rows",
-  "description": "A table component with progressive disclosure, add/delete row functionality, empty row detection, and configurable column types",
+  "title": "Editable Table with Inline or Modal Row Editing",
+  "description": "A repeating-row table component with inline editing or read-only summary mode, add/edit/delete actions, uniqueness checks, and configurable column types",
   "version": {
     "major": 1,
     "minor": 0,

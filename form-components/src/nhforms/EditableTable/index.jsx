@@ -1,13 +1,12 @@
-
 /**
- * EditableTable - A table component with add/delete row functionality
+ * EditableTable - Repeating row table with inline and modal editing modes.
  *
  * Features:
- * - Progressive disclosure: Start with limited visible rows, add more as needed
- * - Empty row detection: Only allow deletion of empty rows
- * - Configurable columns with different field types
- * - Dark mode support via theme
- * - Maximum row limit support
+ * - Inline edit mode with progressive row disclosure
+ * - Modal/display mode for summary-table workflows
+ * - Row add/edit/delete actions
+ * - Empty row detection and row-level uniqueness checks
+ * - Configurable column types
  */
 
 const { useState, useEffect } = React
@@ -16,12 +15,78 @@ const {
   Label,
   IconButton,
   DefaultButton,
+  PrimaryButton,
+  Dialog,
+  DialogType,
   Text,
 } = Fluent
 
-// Handle case where EditableTable might already be defined
 if (typeof EditableTable === "undefined") {
   window.EditableTable = null
+}
+
+const _makeEmptyRow = (columns = [], rowIndex = 0) => {
+  const row = { _rowId: `row_${rowIndex}_${Date.now()}` }
+  columns.forEach((col) => {
+    row[col.id] = col.type === "checkbox" ? false : ""
+  })
+  return row
+}
+
+const _normalizeRows = (value) => {
+  if (Array.isArray(value)) return value
+  if (Array.isArray(value?.rows)) return value.rows
+  return null
+}
+
+const _cloneRow = (row = {}, columns = []) => {
+  const copy = { _rowId: row?._rowId ?? null }
+  columns.forEach((col) => {
+    copy[col.id] = row?.[col.id] ?? (col.type === "checkbox" ? false : "")
+  })
+  return copy
+}
+
+const _isMeaningfulValue = (value) => {
+  if (value === undefined || value === null) return false
+  if (typeof value === "string") return value.trim().length > 0
+  if (typeof value === "boolean") return value
+  if (typeof value === "number") return !Number.isNaN(value)
+  if (Array.isArray(value)) return value.length > 0
+  if (typeof value === "object") return Object.keys(value).length > 0
+  return true
+}
+
+const _isRowEmpty = (row, columns = []) => {
+  if (!row) return true
+  return columns.every((col) => !_isMeaningfulValue(row[col.id]))
+}
+
+const _stringifyValue = (value) => {
+  if (value === undefined || value === null) return ""
+  if (typeof value === "string") return value.trim()
+  if (typeof value === "number" || typeof value === "boolean") return String(value)
+  if (Array.isArray(value)) return value.map(_stringifyValue).filter(Boolean).join(", ")
+  if (typeof value === "object") {
+    const candidate = value.display ?? value.text ?? value.value ?? value.code ?? value.key ?? ""
+    return _stringifyValue(candidate)
+  }
+  return String(value)
+}
+
+const _formatCellValue = (row, column) => {
+  const value = row?.[column.id]
+  if (column.type === "checkbox") {
+    if (!_isMeaningfulValue(value)) return ""
+    if (value) return column.booleanLabels?.on || "Yes"
+    return column.booleanLabels?.off || "No"
+  }
+  return _stringifyValue(value)
+}
+
+const _normalizeUniqueToken = (row, columnId) => {
+  const raw = row?.[columnId]
+  return _stringifyValue(raw).toLowerCase()
 }
 
 EditableTable = ({
@@ -30,98 +95,46 @@ EditableTable = ({
   maxRows = 10,
   initialRows = 1,
   label = "",
+  mode = "inline",
+  modalTitle,
   addButtonText = "+ Add Row",
+  emptyStateText = "No rows added yet",
   showRowNumbers = true,
+  allowAddRows = true,
+  allowEditRows = true,
+  allowDeleteRows = true,
   allowDeleteNonEmpty = false,
+  uniqueBy = [],
   showBackground = false,
-  sourceFieldIds = {},  // Map of column ID to original PDF field ID for PDF sync
-  sourceFieldIdsByRow = {},  // Map row index -> column ID -> original PDF field ID
+  readOnly = false,
+  disabled = false,
+  sourceFieldIds = {},
+  sourceFieldIdsByRow = {},
   ...props
 }) => {
   const [fd] = useActiveData()
   const theme = useTheme()
   const isDarkMode = theme?.isInverted || false
+  const [visibleRows, setVisibleRows] = useState(Math.max(initialRows, 1))
+  const [isDialogOpen, setIsDialogOpen] = useState(false)
+  const [editingRowIndex, setEditingRowIndex] = useState(null)
+  const [draftRow, setDraftRow] = useState(null)
+  const [errorMessage, setErrorMessage] = useState("")
+  const isModalMode = mode === "modal"
+  const isLocked = disabled || readOnly
 
-  // State for visible rows count
-  const [visibleRows, setVisibleRows] = useState(initialRows)
-
-  // Get rows data from form data
   const getRows = () => {
     try {
       const data = fd?.field?.data?.[id]
-      if (Array.isArray(data) && data.length > 0) {
-        return data
-      }
-    } catch (e) {
-      console.log("Error getting rows:", e)
-    }
-    return null
-  }
-
-  const rows = getRows()
-
-  // Initialize rows if they don't exist
-  useEffect(() => {
-    if (!rows && fd?.setFormData) {
-      const initialData = []
-      for (let i = 0; i < maxRows; i++) {
-        const row = { _rowId: `row_${i}` }
-        columns.forEach(col => {
-          row[col.id] = col.type === "checkbox" ? false : ""
-        })
-        initialData.push(row)
-      }
-
-      fd.setFormData({
-        ...fd,
-        field: {
-          ...fd.field,
-          data: {
-            ...fd.field?.data,
-            [id]: initialData,
-          },
-        },
-      })
-    }
-  }, [id, rows, fd, maxRows, columns])
-
-  // Check if a row is empty
-  const isRowEmpty = (row) => {
-    if (!row) return true
-    return columns.every((col) => {
-      const value = row[col.id]
-      return value === undefined || value === null || value === "" || value === false
-    })
-  }
-
-  // Remove the last visible row
-  const removeRow = () => {
-    if (visibleRows > 1) {
-      setVisibleRows(visibleRows - 1)
+      return _normalizeRows(data)
+    } catch (error) {
+      console.log("Error getting rows:", error)
+      return null
     }
   }
 
-  // Add a new visible row
-  const addRow = () => {
-    if (visibleRows < maxRows) {
-      setVisibleRows(visibleRows + 1)
-    }
-  }
-
-  // Update a cell value
-  const updateCell = (rowIndex, columnId, value) => {
+  const setRows = (nextRows) => {
     if (!fd?.setFormData) return
-
-    const currentRows = fd?.field?.data?.[id] || []
-    const updatedRows = [...currentRows]
-
-    if (!updatedRows[rowIndex]) {
-      updatedRows[rowIndex] = { _rowId: `row_${rowIndex}` }
-    }
-    updatedRows[rowIndex] = {
-      ...updatedRows[rowIndex],
-      [columnId]: value,
-    }
 
     fd.setFormData({
       ...fd,
@@ -129,13 +142,31 @@ EditableTable = ({
         ...fd.field,
         data: {
           ...fd.field?.data,
-          [id]: updatedRows,
+          [id]: nextRows,
         },
       },
     })
   }
 
-  const remaining = maxRows - visibleRows
+  const rows = getRows()
+
+  useEffect(() => {
+    if (rows) return
+
+    const seededRows = isModalMode
+      ? []
+      : Array.from({ length: Math.max(initialRows, 1) }, (_, index) => _makeEmptyRow(columns, index))
+    setRows(seededRows)
+  }, [rows, isModalMode, initialRows, id, columns])
+
+  useEffect(() => {
+    const rowCount = Array.isArray(rows) ? rows.length : 0
+    if (rowCount > visibleRows) {
+      setVisibleRows(rowCount)
+    }
+  }, [rows, visibleRows])
+
+  const currentRows = Array.isArray(rows) ? rows : []
 
   const getSourceFieldId = (rowIndex, columnId) => {
     return sourceFieldIdsByRow?.[rowIndex]?.[columnId]
@@ -143,23 +174,211 @@ EditableTable = ({
       || undefined
   }
 
-  // Always create display rows based on visibleRows count
-  // This ensures the table renders even before data is initialized
-  const displayRows = []
-  for (let i = 0; i < visibleRows; i++) {
-    if (rows && rows[i]) {
-      displayRows.push(rows[i])
-    } else {
-      // Create empty row placeholder
-      const emptyRow = { _rowId: `row_${i}` }
-      columns.forEach(col => {
-        emptyRow[col.id] = col.type === "checkbox" ? false : ""
-      })
-      displayRows.push(emptyRow)
+  const openCreateDialog = () => {
+    if (isLocked || !allowAddRows || currentRows.length >= maxRows) return
+    setEditingRowIndex(null)
+    setDraftRow(_makeEmptyRow(columns, currentRows.length))
+    setErrorMessage("")
+    setIsDialogOpen(true)
+  }
+
+  const openEditDialog = (rowIndex) => {
+    if (isLocked || !allowEditRows) return
+    const row = currentRows[rowIndex]
+    if (!row) return
+    setEditingRowIndex(rowIndex)
+    setDraftRow(_cloneRow(row, columns))
+    setErrorMessage("")
+    setIsDialogOpen(true)
+  }
+
+  const closeDialog = () => {
+    setIsDialogOpen(false)
+    setEditingRowIndex(null)
+    setDraftRow(null)
+    setErrorMessage("")
+  }
+
+  const updateCell = (rowIndex, columnId, value) => {
+    const nextRows = [...currentRows]
+    if (!nextRows[rowIndex]) {
+      nextRows[rowIndex] = _makeEmptyRow(columns, rowIndex)
+    }
+    nextRows[rowIndex] = {
+      ...nextRows[rowIndex],
+      [columnId]: value,
+    }
+    setRows(nextRows)
+  }
+
+  const updateDraftCell = (columnId, value) => {
+    setDraftRow({
+      ...(draftRow || _makeEmptyRow(columns, currentRows.length)),
+      [columnId]: value,
+    })
+  }
+
+  const removeInlineRow = () => {
+    if (isLocked || !allowDeleteRows || currentRows.length <= 1) return
+    const lastRow = currentRows[currentRows.length - 1]
+    if (!allowDeleteNonEmpty && !_isRowEmpty(lastRow, columns)) return
+    const nextRows = currentRows.slice(0, -1)
+    setRows(nextRows)
+    setVisibleRows(Math.max(1, nextRows.length))
+  }
+
+  const removeRowAt = (rowIndex) => {
+    if (isLocked || !allowDeleteRows) return
+    const nextRows = currentRows.filter((_, index) => index !== rowIndex)
+    setRows(nextRows)
+    if (!isModalMode) {
+      setVisibleRows(Math.max(1, nextRows.length))
     }
   }
 
-  // Styles
+  const validateDraftRow = () => {
+    if (!draftRow) return null
+    if (!Array.isArray(uniqueBy) || uniqueBy.length === 0) return null
+
+    for (const columnId of uniqueBy) {
+      const candidate = _normalizeUniqueToken(draftRow, columnId)
+      if (!candidate) continue
+      const duplicateIndex = currentRows.findIndex((row, index) => {
+        if (editingRowIndex !== null && index === editingRowIndex) return false
+        return _normalizeUniqueToken(row, columnId) === candidate
+      })
+      if (duplicateIndex > -1) {
+        const column = columns.find((item) => item.id === columnId)
+        return `${column?.title || column?.label || columnId} must be unique.`
+      }
+    }
+
+    return null
+  }
+
+  const saveDraftRow = () => {
+    if (!draftRow) return
+
+    const validationError = validateDraftRow()
+    if (validationError) {
+      setErrorMessage(validationError)
+      return
+    }
+
+    const normalizedRow = {
+      ...draftRow,
+      _rowId:
+        draftRow._rowId
+        || currentRows[editingRowIndex ?? -1]?._rowId
+        || `row_${editingRowIndex ?? currentRows.length}_${Date.now()}`,
+    }
+
+    const nextRows = [...currentRows]
+    if (editingRowIndex === null) {
+      nextRows.push(normalizedRow)
+    } else {
+      nextRows[editingRowIndex] = normalizedRow
+    }
+
+    setRows(nextRows)
+    if (!isModalMode) {
+      setVisibleRows(nextRows.length)
+    }
+    closeDialog()
+  }
+
+  const addInlineRow = () => {
+    if (isLocked || !allowAddRows || currentRows.length >= maxRows) return
+    const nextRows = [...currentRows, _makeEmptyRow(columns, currentRows.length)]
+    setRows(nextRows)
+    setVisibleRows(nextRows.length)
+  }
+
+  const displayRows = (() => {
+    if (isModalMode) {
+      return currentRows
+        .map((row, rowIndex) => ({ row, rowIndex }))
+        .filter(({ row }) => !_isRowEmpty(row, columns))
+    }
+
+    const paddedRows = []
+    const rowCount = Math.max(visibleRows, Math.max(initialRows, 1))
+    for (let index = 0; index < rowCount; index += 1) {
+      paddedRows.push({
+        row: currentRows[index] || _makeEmptyRow(columns, index),
+        rowIndex: index,
+      })
+    }
+    return paddedRows
+  })()
+
+  const currentRowCount = isModalMode ? displayRows.length : currentRows.length
+  const remaining = Math.max(0, maxRows - currentRowCount)
+  const shouldShowActions = !isLocked && (allowEditRows || allowDeleteRows)
+
+  const renderEditorInput = (row, rowIndex, column, onValueChange, inline) => {
+    const value = row?.[column.id]
+
+    switch (column.type) {
+      case "number":
+        return (
+          <Numeric
+            inline={inline}
+            buttonControls
+            value={value?.toString() || ""}
+            onChange={(newValue) => onValueChange(rowIndex, column.id, newValue === "" ? "" : Number(newValue))}
+            spinButtonProps={{
+              min: column.min ?? 0,
+              max: column.max ?? 999999,
+              step: column.step ?? 1,
+            }}
+          />
+        )
+
+      case "date":
+        return (
+          <DateSelect
+            inline={inline}
+            value={value || ""}
+            onChange={(newValue) => onValueChange(rowIndex, column.id, newValue || "")}
+            placeholder={column.placeholder || "Select date"}
+          />
+        )
+
+      case "dropdown":
+        return (
+          <SimpleCodeSelect
+            inline={inline}
+            optionList={column.options || []}
+            value={value ? { code: value, display: value } : undefined}
+            onChange={(coding) => onValueChange(rowIndex, column.id, coding?.code || "")}
+            placeholder={column.placeholder || "Select..."}
+          />
+        )
+
+      case "checkbox":
+        return (
+          <OptionChoice
+            inline={inline}
+            displayStyle="checkmark"
+            value={value}
+            onChange={(event, checked) => onValueChange(rowIndex, column.id, !!checked)}
+          />
+        )
+
+      case "text":
+      default:
+        return (
+          <TextArea
+            inline={inline}
+            value={value || ""}
+            onChange={(event, newValue) => onValueChange(rowIndex, column.id, newValue || "")}
+            placeholder={column.placeholder || ""}
+          />
+        )
+    }
+  }
+
   const containerStyle = showBackground ? {
     padding: "16px",
     border: `1px solid ${isDarkMode ? "#404040" : "#e0e0e0"}`,
@@ -211,70 +430,6 @@ EditableTable = ({
     verticalAlign: "middle",
   }
 
-  // Render cell input based on column type
-  const renderCellInput = (row, rowIndex, column) => {
-    const value = row?.[column.id]
-
-    switch (column.type) {
-      case "number":
-        return (
-          <Numeric
-            inline
-            buttonControls
-            value={value?.toString() || "0"}
-            onChange={(newValue) => updateCell(rowIndex, column.id, newValue ? parseFloat(newValue) : 0)}
-            spinButtonProps={{
-              min: column.min ?? 0,
-              max: column.max ?? 999999,
-              step: column.step ?? 1,
-            }}
-          />
-        )
-
-      case "date":
-        return (
-          <DateSelect
-            inline
-            value={value || ""}
-            onChange={(newValue) => updateCell(rowIndex, column.id, newValue || "")}
-            placeholder={column.placeholder || "Select date"}
-          />
-        )
-
-      case "dropdown":
-        return (
-          <SimpleCodeSelect
-            inline
-            optionList={column.options || []}
-            value={value ? { code: value, display: value } : undefined}
-            onChange={(coding) => updateCell(rowIndex, column.id, coding?.code || "")}
-            placeholder={column.placeholder || "Select..."}
-          />
-        )
-
-      case "checkbox":
-        return (
-          <OptionChoice
-            inline
-            displayStyle="checkmark"
-            value={value}
-            onChange={(e, checked) => updateCell(rowIndex, column.id, !!checked)}
-          />
-        )
-
-      case "text":
-      default:
-        return (
-          <TextArea
-            inline
-            value={value || ""}
-            onChange={(e, newValue) => updateCell(rowIndex, column.id, newValue || "")}
-            placeholder={column.placeholder || ""}
-          />
-        )
-    }
-  }
-
   return (
     <div style={containerStyle}>
       {label && (
@@ -304,58 +459,100 @@ EditableTable = ({
                   {col.title || col.id}
                 </th>
               ))}
+              {(isModalMode && shouldShowActions) && (
+                <th className="hideonprint" style={{ ...headerCellStyle, width: "96px" }} />
+              )}
             </tr>
           </thead>
           <tbody>
-            {displayRows.map((row, idx) => {
-              const isEmpty = isRowEmpty(row)
-              const canDelete = visibleRows > 1 && (allowDeleteNonEmpty || isEmpty)
-              const isLastRow = idx === visibleRows - 1
+            {displayRows.length === 0 && isModalMode ? (
+              <tr>
+                <td
+                  colSpan={columns.length + (showRowNumbers ? 1 : 0) + (shouldShowActions ? 1 : 0)}
+                  style={{ ...bodyCellStyle, textAlign: "center", color: isDarkMode ? "#bdbdbd" : "#666666" }}
+                >
+                  {emptyStateText}
+                </td>
+              </tr>
+            ) : (
+              displayRows.map(({ row, rowIndex }, displayIndex) => {
+                const isEmpty = _isRowEmpty(row, columns)
+                const canDeleteInline = currentRows.length > 1 && allowDeleteRows && (allowDeleteNonEmpty || isEmpty)
+                const isLastInlineRow = rowIndex === currentRows.length - 1
 
-              return (
-                <tr key={row?._rowId || `row_${idx}`}>
-                  {showRowNumbers && (
-                    <td style={rowNumberCellStyle}>
-                      <Stack horizontal verticalAlign="center" horizontalAlign="center" tokens={{ childrenGap: 4 }}>
-                        <Text>{idx + 1}</Text>
-                        {isLastRow && canDelete && (
-                          <IconButton
-                            iconProps={{ iconName: "Delete" }}
-                            title="Remove row"
-                            onClick={removeRow}
-                            styles={{
-                              root: {
-                                width: 24,
-                                height: 24,
-                                color: isDarkMode ? "#ff6b6b" : "#d32f2f",
-                              },
-                              icon: {
-                                fontSize: 14,
-                                color: isDarkMode ? "#ff6b6b" : "#d32f2f",
-                              },
-                            }}
-                          />
+                return (
+                  <tr key={row?._rowId || `row_${rowIndex}`}>
+                    {showRowNumbers && (
+                      <td style={rowNumberCellStyle}>
+                        {isModalMode ? (
+                          <Text>{displayIndex + 1}</Text>
+                        ) : (
+                          <Stack horizontal verticalAlign="center" horizontalAlign="center" tokens={{ childrenGap: 4 }}>
+                            <Text>{displayIndex + 1}</Text>
+                            {isLastInlineRow && canDeleteInline && !isLocked && (
+                              <IconButton
+                                iconProps={{ iconName: "Delete" }}
+                                title="Remove row"
+                                onClick={removeInlineRow}
+                                styles={{
+                                  root: {
+                                    width: 24,
+                                    height: 24,
+                                    color: isDarkMode ? "#ff6b6b" : "#d32f2f",
+                                  },
+                                  icon: {
+                                    fontSize: 14,
+                                    color: isDarkMode ? "#ff6b6b" : "#d32f2f",
+                                  },
+                                }}
+                              />
+                            )}
+                          </Stack>
                         )}
-                      </Stack>
-                    </td>
-                  )}
-                  {columns.map((col) => (
-                    <td key={col.id} style={bodyCellStyle} data-source-field-id={getSourceFieldId(idx, col.id)}>
-                      {renderCellInput(row, idx, col)}
-                    </td>
-                  ))}
-                </tr>
-              )
-            })}
+                      </td>
+                    )}
+                    {columns.map((col) => (
+                      <td key={col.id} style={bodyCellStyle} data-source-field-id={getSourceFieldId(rowIndex, col.id)}>
+                        {isModalMode
+                          ? <div>{_formatCellValue(row, col)}</div>
+                          : renderEditorInput(row, rowIndex, col, updateCell, true)}
+                      </td>
+                    ))}
+                    {(isModalMode && shouldShowActions) && (
+                      <td className="hideonprint" style={bodyCellStyle}>
+                        <div style={{ display: "flex", gap: "4px", justifyContent: "flex-end" }}>
+                          {allowDeleteRows && (
+                            <IconButton
+                              iconProps={{ iconName: "Delete" }}
+                              title="Delete"
+                              ariaLabel="Delete"
+                              onClick={() => removeRowAt(rowIndex)}
+                            />
+                          )}
+                          {allowEditRows && (
+                            <IconButton
+                              iconProps={{ iconName: "Edit" }}
+                              title="Edit"
+                              ariaLabel="Edit"
+                              onClick={() => openEditDialog(rowIndex)}
+                            />
+                          )}
+                        </div>
+                      </td>
+                    )}
+                  </tr>
+                )
+              })
+            )}
           </tbody>
         </table>
       </div>
 
-      {remaining > 0 && (
+      {allowAddRows && !isLocked && remaining > 0 && (
         <Stack horizontal verticalAlign="center" tokens={{ childrenGap: 12 }} style={{ marginTop: "12px" }}>
           <DefaultButton
             text={addButtonText}
-            onClick={addRow}
+            onClick={isModalMode ? openCreateDialog : addInlineRow}
             styles={{
               root: {
                 border: "none",
@@ -372,13 +569,48 @@ EditableTable = ({
           </Text>
         </Stack>
       )}
+
+      {isModalMode && isDialogOpen && draftRow && (
+        <Dialog
+          hidden={!isDialogOpen}
+          dialogContentProps={{
+            type: DialogType.largeHeader,
+            title: modalTitle || label || "Row Details",
+          }}
+          modalProps={{
+            isBlocking: true,
+          }}
+          onDismiss={closeDialog}
+        >
+          <Stack tokens={{ childrenGap: 12 }}>
+            {columns.map((column) => (
+              <div key={column.id}>
+                <Label>{column.title || column.id}</Label>
+                {renderEditorInput(
+                  draftRow,
+                  editingRowIndex ?? currentRows.length,
+                  column,
+                  (rowIndex, columnId, value) => updateDraftCell(columnId, value),
+                  false
+                )}
+              </div>
+            ))}
+            {errorMessage && (
+              <Text style={{ color: isDarkMode ? "#ffb3b3" : "#b42318" }}>
+                {errorMessage}
+              </Text>
+            )}
+            <Stack horizontal horizontalAlign="end" tokens={{ childrenGap: 8 }}>
+              <DefaultButton text="Cancel" onClick={closeDialog} />
+              <PrimaryButton text="Save" onClick={saveDraftRow} />
+            </Stack>
+          </Stack>
+        </Dialog>
+      )}
     </div>
   )
 }
 
-/**
- * Schema definition for EditableTable data
- */
 const EditableTableSchema = {
   type: "array",
   items: {
@@ -390,9 +622,6 @@ const EditableTableSchema = {
   },
 }
 
-/**
- * Helper to create column definitions
- */
 const createTableColumns = (columnDefs) => {
   return columnDefs.map((def) => ({
     id: def.id,
@@ -404,5 +633,6 @@ const createTableColumns = (columnDefs) => {
     min: def.min,
     max: def.max,
     step: def.step,
+    booleanLabels: def.booleanLabels,
   }))
 }
