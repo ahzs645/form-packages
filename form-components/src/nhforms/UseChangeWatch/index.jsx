@@ -1,3 +1,5 @@
+const { useRef, useState, useEffect, useCallback } = React
+
 const _normalizeWatchOptions = (value) => {
   if (typeof value === "number") {
     return { delayCount: value }

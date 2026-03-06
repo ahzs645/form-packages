@@ -1,0 +1,7 @@
+{
+  "name": "ObservationPanelEditor",
+  "title": "Observation Panel Editor",
+  "description": "Config-driven panel editor with totals and history display",
+  "category": "Clinical",
+  "version": "1.0.0"
+}

@@ -5,7 +5,7 @@ const {
   Text,
   StackItem,
   TooltipHost,
-  Separator,
+  ChoiceGroup,
 } = Fluent
 
 /**
@@ -209,15 +209,14 @@ const ScaleField = ({
           </Label>
         </StackItem>
         <StackItem grow>
-          <OptionChoice
-            inline
-            displayStyle="radio"
-            id={`scale-${fieldId}`}
+          <ChoiceGroup
+            key={`scale-${fieldId}-${currentData.selectedKey ?? "empty"}`}
             options={choiceOptions}
             selectedKey={currentData.selectedKey}
             onChange={handleChange}
             disabled={readOnly}
-            controlStyles={choiceGroupStyles}
+            required={required}
+            styles={choiceGroupStyles}
           />
         </StackItem>
       </Stack>

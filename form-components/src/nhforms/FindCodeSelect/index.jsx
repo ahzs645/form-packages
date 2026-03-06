@@ -1,3 +1,13 @@
+const { useState, useEffect, useMemo } = React
+
+const sizeMap = {
+  tiny: { minWidth: 50, maxWidth: 80, flex: '1 1 0px' },
+  small: { minWidth: 80, maxWidth: 160, flex: '2 2 0px' },
+  medium: { minWidth: 160, maxWidth: 320, flex: '3 3 0px' },
+  large: { minWidth: 320, maxWidth: 480, flex: '4 4 0px' },
+  max: { minWidth: 480, flex: '5 5 0px' },
+}
+
 const defaultGetCandidates = (selectableItems, searchText) => {
   const match = String(searchText || '').trim().toLowerCase()
   return selectableItems
@@ -271,12 +281,10 @@ const FindCodeSelect = ({
     conditionalCodes.includes(String(selectedValue?.[codeId] ?? selectedValue?.code ?? ''))
 
   const isEmpty = !selectedValue && !searchText
-  const theme = useTheme()
-  const sectionContext = useSection(section)
+  const sectionLayout = section?.layout
 
   const effectiveLabelPosition = labelPosition ?? (
-    sectionContext.layout === 'flex' ? 'top' :
-    sectionContext.layout === 'linear' ? 'left' : 'top'
+    sectionLayout === 'linear' ? 'left' : 'top'
   )
 
   const fluentLabel = effectiveLabelPosition === 'top' ? label : undefined
@@ -284,7 +292,7 @@ const FindCodeSelect = ({
 
   const getSizeStyles = () => {
     if (typeof size === 'object') return size
-    return theme.mois.sizes[size] ?? theme.mois.sizes.medium
+    return sizeMap[size] ?? sizeMap.medium
   }
 
   const sizeStyles = getSizeStyles()

@@ -12,6 +12,7 @@
     "./hooks": "./src/hooks/index.ts",
     "./scope": "./src/scope/index.ts",
     "./nhforms": "./src/nhforms/index.ts",
+    "./nhforms/component-sources.generated": "./src/nhforms/component-sources.generated.ts",
     "./nhforms/next": "./src/nhforms/index.next.ts",
     "./nhforms/vite": "./src/nhforms/index.vite.ts",
     "./nhforms/metadata": "./src/nhforms/component-metadata.ts",

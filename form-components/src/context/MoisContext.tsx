@@ -880,10 +880,21 @@ export function useActiveData<T = ActiveData>(selector?: (data: ActiveData) => T
   };
 
   const activeContext = context || emptyData as ActiveData;
+  const normalizedActiveContext = useMemo(() => ({
+    ...activeContext,
+    field: activeContext.field || { data: {}, status: {}, history: [] },
+    formData: activeContext.formData || {},
+    uiState: {
+      sections: {},
+      ...(activeContext.uiState || {}),
+      sections: activeContext.uiState?.sections || {},
+    },
+    tempArea: activeContext.tempArea || {},
+  }), [activeContext]);
   const setFormData = activeContext.setFormData;
 
   // Get the data (with optional selector)
-  const rawData = selector ? selector(activeContext) : activeContext;
+  const rawData = selector ? selector(normalizedActiveContext as ActiveData) : normalizedActiveContext;
 
   // Attach setFormData to the data object so forms can use fd.setFormData
   const dataWithSetter = useMemo(() => ({

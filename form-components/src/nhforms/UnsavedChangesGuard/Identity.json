@@ -1,0 +1,7 @@
+{
+  "name": "UnsavedChangesGuard",
+  "title": "Unsaved Changes Guard",
+  "description": "Dirty-state guard with unload prompt and configurable save/discard/cancel dialog actions",
+  "category": "Utility",
+  "version": "1.0.0"
+}

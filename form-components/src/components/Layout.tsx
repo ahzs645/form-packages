@@ -282,16 +282,17 @@ export const Section: React.FC<SectionProps> = ({
 
   // Update uiState with section completion status
   useEffect(() => {
-    setActiveData({
+    setActiveData((current: any) => ({
+      ...current,
       uiState: {
-        ...activeData.uiState,
+        ...(current?.uiState ?? {}),
         sections: {
-          ...activeData.uiState.sections,
+          ...(current?.uiState?.sections ?? {}),
           [effectiveSectionNum]: { isComplete: effectiveIsComplete },
         },
       },
-    } as any);
-  }, [effectiveIsComplete, effectiveSectionNum]);
+    }));
+  }, [effectiveIsComplete, effectiveSectionNum, setActiveData]);
 
   // Demo content when no children provided
   if (!children) {

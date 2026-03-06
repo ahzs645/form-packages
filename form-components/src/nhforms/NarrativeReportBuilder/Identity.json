@@ -1,0 +1,7 @@
+{
+  "name": "NarrativeReportBuilder",
+  "title": "Narrative Report Builder",
+  "description": "Template-driven narrative preview and output writer",
+  "category": "Clinical",
+  "version": "1.0.0"
+}

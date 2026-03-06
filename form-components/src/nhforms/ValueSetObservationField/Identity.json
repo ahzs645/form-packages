@@ -1,0 +1,7 @@
+{
+  "name": "ValueSetObservationField",
+  "title": "Value Set Observation Field",
+  "description": "Coded value field that also prepares observation updates for export/save",
+  "category": "Clinical",
+  "version": "1.0.0"
+}

@@ -1,0 +1,7 @@
+{
+  "name": "HistoricalObservationTable",
+  "title": "Historical Observation Table",
+  "description": "Date-grouped table of prior observations from MOIS history",
+  "category": "Clinical",
+  "version": "1.0.0"
+}

@@ -201,16 +201,25 @@ export const useActiveDataForForms = (selector?: (data: any) => any): [any, (upd
   }
 
   const { formData, setFormData } = context;
+  const normalizedFormData = useMemo(() => ({
+    ...formData,
+    field: formData.field || { data: {}, status: {} },
+    uiState: {
+      sections: {},
+      ...(formData.uiState || {}),
+      sections: formData.uiState?.sections || {},
+    },
+  }), [formData]);
 
   // Attach setFormData to formData so forms can use fd.setFormData
   const formDataWithSetter = useMemo(() => ({
-    ...formData,
+    ...normalizedFormData,
     setFormData,
-  }), [formData, setFormData]);
+  }), [normalizedFormData, setFormData]);
 
   if (selector) {
     return [
-      selector(formData),
+      selector(normalizedFormData),
       (updates: any) => {
         setFormData(produce((draft: any) => {
           const target = selector(draft);
