@@ -113,7 +113,7 @@ const FindCodeSelect = ({
   placement,
   readOnly = false,
   required = false,
-  searchPrompt = 'Type to begin searching',
+  searchPrompt = '',
   section,
   showOtherOption = false,
   size = 'medium',

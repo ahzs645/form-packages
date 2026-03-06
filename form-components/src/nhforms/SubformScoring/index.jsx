@@ -19,11 +19,17 @@ const {
 // Scoring helpers (same logic as ScoringModule)
 // ================================================
 
-const _buildScoreMap = (questions) => {
+const _resolveQuestionOptions = (question, sharedOptions) => {
+  const questionOptions = Array.isArray(question?.options) ? question.options : []
+  if (questionOptions.length > 0) return questionOptions
+  return Array.isArray(sharedOptions) ? sharedOptions : []
+}
+
+const _buildScoreMap = (questions, sharedOptions) => {
   const map = new Map()
   for (const question of questions || []) {
     const optionMap = new Map()
-    for (const opt of question.options || []) {
+    for (const opt of _resolveQuestionOptions(question, sharedOptions)) {
       optionMap.set(opt.key, opt.score ?? 0)
     }
     map.set(question.id, optionMap)
@@ -575,8 +581,8 @@ const SubformScoring = ({
   // Scoring-mode answer and score calculations
   const scoreMap = useMemo(() => {
     if (isDataEntryMode) return new Map()
-    return _buildScoreMap(config.questions)
-  }, [isDataEntryMode, config.questions])
+    return _buildScoreMap(config.questions, config.sharedOptions)
+  }, [isDataEntryMode, config.questions, config.sharedOptions])
 
   const answers = useMemo(() => {
     if (isDataEntryMode) return {}

@@ -2571,7 +2571,7 @@ const FindCodeSelect = ({
   placement,
   readOnly = false,
   required = false,
-  searchPrompt = 'Type to begin searching',
+  searchPrompt = '',
   section,
   showOtherOption = false,
   size = 'medium',
@@ -11577,6 +11577,7 @@ const {
   StackItem,
   Label,
   Text,
+  TooltipHost,
   Separator,
 } = Fluent
 
@@ -11589,13 +11590,14 @@ const {
  * @property {string} key - Option code/key
  * @property {string} text - Display text
  * @property {number} score - Score value when selected
+ * @property {string} [description] - Optional supporting text for legends/tooltips
  */
 
 /**
  * @typedef {Object} ScoringQuestionConfig
  * @property {string} id - Unique question ID (also used as fieldId)
  * @property {string} label - Question text
- * @property {ScoringOptionConfig[]} options - Answer options with scores
+ * @property {ScoringOptionConfig[]} [options] - Answer options with scores
  * @property {boolean} [multiline] - Use vertical layout for options
  * @property {string} [codeSystem] - Optional code system reference
  */
@@ -11626,6 +11628,9 @@ const {
 
 /**
  * @typedef {Object} ScoringConfig
+ * @property {"stacked"|"compact"|"matrix"} [layout] - Preferred question layout
+ * @property {{ min?: string, max?: string }} [continuumLabels] - Optional captions for the left/right ends of a compact scale
+ * @property {ScoringOptionConfig[]} [sharedOptions] - Shared scale for matrix-style questionnaires
  * @property {ScoringQuestionConfig[]} questions - Question configurations
  * @property {ScoreTotalConfig[]} totals - Total/score configurations
  */
@@ -11662,11 +11667,17 @@ const INTERPRETATION_BOX_STYLE = {
  * @param {ScoringQuestionConfig[]} questions
  * @returns {Map<string, Map<string, number>>} Map of questionId -> (optionKey -> score)
  */
-const buildScoreMap = (questions) => {
+const resolveQuestionOptions = (question, sharedOptions) => {
+  const questionOptions = Array.isArray(question?.options) ? question.options : []
+  if (questionOptions.length > 0) return questionOptions
+  return Array.isArray(sharedOptions) ? sharedOptions : []
+}
+
+const buildScoreMap = (questions, sharedOptions) => {
   const map = new Map()
   for (const question of questions || []) {
     const optionMap = new Map()
-    for (const opt of question.options || []) {
+    for (const opt of resolveQuestionOptions(question, sharedOptions)) {
       optionMap.set(opt.key, opt.score ?? 0)
     }
     map.set(question.id, optionMap)
@@ -11806,6 +11817,38 @@ const formatBounds = (range) => {
   return \`\${range.min}-\${range.max}\`
 }
 
+const serializeOptionSignature = (options) =>
+  JSON.stringify((options || []).map((option) => [option.key, option.score ?? 0, option.text || "", option.description || ""]))
+
+const resolveMatrixOptions = (config) => {
+  const explicitShared = Array.isArray(config?.sharedOptions) ? config.sharedOptions : []
+  if (explicitShared.length > 0) return explicitShared
+
+  const questions = Array.isArray(config?.questions) ? config.questions : []
+  const optionsBySignature = new Map()
+  const countsBySignature = new Map()
+
+  questions.forEach((question) => {
+    const questionOptions = Array.isArray(question?.options) ? question.options : []
+    if (questionOptions.length === 0) return
+    const signature = serializeOptionSignature(questionOptions)
+    optionsBySignature.set(signature, questionOptions)
+    countsBySignature.set(signature, (countsBySignature.get(signature) || 0) + 1)
+  })
+
+  let winnerSignature = null
+  let winnerCount = 0
+  countsBySignature.forEach((count, signature) => {
+    if (count > winnerCount) {
+      winnerSignature = signature
+      winnerCount = count
+    }
+  })
+
+  if (!winnerSignature || winnerCount < 2) return []
+  return optionsBySignature.get(winnerSignature) || []
+}
+
 // ================================================
 // Sub-components
 // ================================================
@@ -11815,6 +11858,7 @@ const formatBounds = (range) => {
  */
 const ScoringQuestion = ({
   question,
+  sharedOptions,
   isDarkMode,
 }) => {
   const containerStyle = {
@@ -11826,11 +11870,11 @@ const ScoringQuestion = ({
   // Convert options to SimpleCodeChecklist format
   // Include score in the text for transparency
   const optionList = useMemo(() => {
-    return (question.options || []).map(opt => ({
+    return resolveQuestionOptions(question, sharedOptions).map(opt => ({
       key: opt.key,
       text: opt.text,
     }))
-  }, [question.options])
+  }, [question, sharedOptions])
 
   return (
     <div style={containerStyle}>
@@ -11842,6 +11886,330 @@ const ScoringQuestion = ({
         multiline={question.multiline}
         codeSystem={question.codeSystem}
       />
+    </div>
+  )
+}
+
+const ScoringOptionTooltip = ({ option }) => {
+  if (!option) return null
+
+  return (
+    <div style={{ padding: "8px", maxWidth: "320px", whiteSpace: "pre-wrap", lineHeight: 1.35 }}>
+      <div style={{ fontWeight: 700, marginBottom: "4px" }}>{option.text}</div>
+      <div>{option.description || option.text}</div>
+    </div>
+  )
+}
+
+const CompactScoringQuestion = ({
+  question,
+  sharedOptions,
+  continuumLabels,
+  isDarkMode,
+}) => {
+  const [fieldData, setFieldData] = useActiveData(fd => fd.field.data)
+  const currentData = fieldData?.[question.id] || { selectedKey: null }
+  const options = useMemo(
+    () => resolveQuestionOptions(question, sharedOptions),
+    [question, sharedOptions]
+  )
+  useEffect(() => {
+    if (!fieldData?.[question.id]) {
+      setFieldData({
+        [question.id]: {
+          selectedKey: null,
+          value: null,
+          response: null,
+        }
+      })
+    }
+  }, [fieldData, question.id, setFieldData])
+
+  const handleSelect = (option) => {
+    setFieldData({
+      [question.id]: {
+        selectedKey: option.key,
+        value: option.key,
+        response: option.text,
+        detailResponse: option.text,
+      }
+    })
+  }
+
+  const wrapperStyle = {
+    ...QUESTION_CONTAINER_STYLE,
+    backgroundColor: currentData.selectedKey
+      ? (isDarkMode ? "#232f3d" : "#f8fbff")
+      : (isDarkMode ? "#2a2a2a" : "#f8f8f8"),
+    border: \`1px solid \${currentData.selectedKey
+      ? (isDarkMode ? "#355779" : "#b8d4f0")
+      : (isDarkMode ? "#404040" : "#e0e0e0")}\`,
+  }
+
+  const rowStyle = {
+    display: "flex",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: "12px",
+  }
+
+  const labelStyle = {
+    flex: "0 1 260px",
+    minWidth: "220px",
+  }
+
+  const scaleWrapStyle = {
+    flex: "1 1 420px",
+    minWidth: "0px",
+    overflowX: "auto",
+    paddingBottom: "2px",
+  }
+
+  const scaleGridStyle = {
+    display: "grid",
+    gridTemplateColumns: \`repeat(\${Math.max(options.length, 1)}, minmax(34px, 1fr))\`,
+    gap: "6px",
+    minWidth: \`\${Math.max(options.length * 42, 360)}px\`,
+    alignItems: "start",
+  }
+
+  const minContinuumLabel =
+    typeof continuumLabels?.min === "string" && continuumLabels.min.trim()
+      ? continuumLabels.min.trim()
+      : null
+  const maxContinuumLabel =
+    typeof continuumLabels?.max === "string" && continuumLabels.max.trim()
+      ? continuumLabels.max.trim()
+      : null
+
+  return (
+    <div style={wrapperStyle}>
+      <div style={rowStyle}>
+        <div style={labelStyle}>
+          <Text styles={{ root: { fontSize: "13px", fontWeight: 600, lineHeight: 1.35 } }}>
+            {question.label}
+          </Text>
+        </div>
+
+        <div style={scaleWrapStyle}>
+          <div style={scaleGridStyle}>
+            {options.map((option) => {
+              const selected = currentData.selectedKey === option.key
+              const hasDescription = typeof option.description === "string" && option.description.trim()
+              const optionControl = (
+                <label
+                  key={\`\${question.id}_\${option.key}\`}
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: "4px",
+                    cursor: "pointer",
+                    padding: "6px 2px",
+                    borderRadius: "6px",
+                    backgroundColor: selected
+                      ? (isDarkMode ? "#1f3f61" : "#eaf4ff")
+                      : "transparent",
+                    border: \`1px solid \${selected
+                      ? (isDarkMode ? "#4f87b8" : "#7ab3e6")
+                      : "transparent"}\`,
+                  }}
+                >
+                  <input
+                    type="radio"
+                    name={\`compact_\${question.id}\`}
+                    checked={selected}
+                    onChange={() => handleSelect(option)}
+                    style={{ width: "16px", height: "16px", cursor: "pointer", margin: 0 }}
+                  />
+                  <span
+                    style={{
+                      fontSize: "11px",
+                      lineHeight: 1,
+                      fontWeight: selected ? 700 : 500,
+                      color: isDarkMode ? "#f3f3f3" : "#333333",
+                    }}
+                  >
+                    {option.text}
+                  </span>
+                </label>
+              )
+
+              if (!hasDescription) {
+                return optionControl
+              }
+
+              return (
+                <TooltipHost
+                  key={\`\${question.id}_\${option.key}\`}
+                  tooltipProps={{
+                    onRenderContent: () => <ScoringOptionTooltip option={option} />,
+                  }}
+                >
+                  {optionControl}
+                </TooltipHost>
+              )
+            })}
+          </div>
+          {(minContinuumLabel || maxContinuumLabel) && (
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                gap: "12px",
+                minWidth: \`\${Math.max(options.length * 42, 360)}px\`,
+                marginTop: "6px",
+                fontSize: "11px",
+                lineHeight: 1.3,
+                color: isDarkMode ? "#aeb8c2" : "#64748b",
+              }}
+            >
+              <span>{minContinuumLabel ?? ""}</span>
+              <span style={{ textAlign: "right" }}>{maxContinuumLabel ?? ""}</span>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const MatrixScoringRow = ({
+  question,
+  options,
+  isDarkMode,
+}) => {
+  const [fieldData, setFieldData] = useActiveData(fd => fd.field.data)
+  const currentData = fieldData?.[question.id] || { selectedKey: null }
+
+  useEffect(() => {
+    if (!fieldData?.[question.id]) {
+      setFieldData({
+        [question.id]: {
+          selectedKey: null,
+          value: null,
+          response: null,
+        }
+      })
+    }
+  }, [fieldData, question.id, setFieldData])
+
+  const handleSelect = (option) => {
+    setFieldData({
+      [question.id]: {
+        selectedKey: option.key,
+        value: option.key,
+        response: option.text,
+        detailResponse: option.text,
+      }
+    })
+  }
+
+  const rowStyle = {
+    backgroundColor: currentData.selectedKey
+      ? (isDarkMode ? "#232f3d" : "#f8fbff")
+      : (isDarkMode ? "#2a2a2a" : "#ffffff"),
+  }
+
+  const labelCellStyle = {
+    padding: "12px",
+    borderTop: \`1px solid \${isDarkMode ? "#404040" : "#d8d8d8"}\`,
+    borderRight: \`1px solid \${isDarkMode ? "#404040" : "#d8d8d8"}\`,
+    verticalAlign: "middle",
+    minWidth: "280px",
+  }
+
+  const optionCellStyle = {
+    padding: "10px 8px",
+    borderTop: \`1px solid \${isDarkMode ? "#404040" : "#d8d8d8"}\`,
+    textAlign: "center",
+    verticalAlign: "middle",
+    width: \`\${100 / Math.max(options.length, 1)}%\`,
+  }
+
+  return (
+    <tr style={rowStyle}>
+      <td style={labelCellStyle}>
+        <Text styles={{ root: { fontSize: "13px", lineHeight: 1.35 } }}>
+          {question.label}
+        </Text>
+      </td>
+      {options.map((option) => (
+        <td key={\`\${question.id}_\${option.key}\`} style={optionCellStyle}>
+          <input
+            type="radio"
+            name={\`matrix_\${question.id}\`}
+            checked={currentData.selectedKey === option.key}
+            onChange={() => handleSelect(option)}
+            style={{ width: "16px", height: "16px", cursor: "pointer" }}
+          />
+        </td>
+      ))}
+    </tr>
+  )
+}
+
+const MatrixScoringTable = ({
+  questions,
+  options,
+  isDarkMode,
+}) => {
+  const wrapperStyle = {
+    overflowX: "auto",
+    borderRadius: "8px",
+    border: \`1px solid \${isDarkMode ? "#404040" : "#d8d8d8"}\`,
+  }
+
+  const tableStyle = {
+    width: "100%",
+    borderCollapse: "collapse",
+    tableLayout: "fixed",
+  }
+
+  const headerLabelStyle = {
+    padding: "10px 12px",
+    textAlign: "left",
+    backgroundColor: isDarkMode ? "#222222" : "#f3f4f6",
+    color: isDarkMode ? "#d4d4d4" : "#4b5563",
+    fontSize: "12px",
+    fontWeight: 600,
+    borderRight: \`1px solid \${isDarkMode ? "#404040" : "#d8d8d8"}\`,
+  }
+
+  const headerOptionStyle = {
+    padding: "10px 8px",
+    textAlign: "center",
+    backgroundColor: isDarkMode ? "#222222" : "#f3f4f6",
+    color: isDarkMode ? "#d4d4d4" : "#4b5563",
+    fontSize: "12px",
+    fontWeight: 600,
+  }
+
+  return (
+    <div style={wrapperStyle}>
+      <table style={tableStyle}>
+        <thead>
+          <tr>
+            <th style={headerLabelStyle}>Question</th>
+            {options.map((option) => (
+              <th key={\`header_\${option.key}\`} style={headerOptionStyle}>
+                {option.text}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {questions.map((question) => (
+            <MatrixScoringRow
+              key={question.id}
+              question={question}
+              options={options}
+              isDarkMode={isDarkMode}
+            />
+          ))}
+        </tbody>
+      </table>
     </div>
   )
 }
@@ -11942,9 +12310,11 @@ const ScoringModule = ({
   const [fd] = useActiveData()
   const theme = useTheme()
   const isDarkMode = theme?.isInverted || false
+  const sharedOptions = useMemo(() => resolveMatrixOptions(config), [config])
+  const continuumLabels = config.continuumLabels || null
 
   // Build score maps from config
-  const scoreMap = useMemo(() => buildScoreMap(config.questions), [config.questions])
+  const scoreMap = useMemo(() => buildScoreMap(config.questions, sharedOptions), [config.questions, sharedOptions])
 
   // Get all answers from form data (each question stores its value at fd.field.data[questionId])
   const getAnswers = () => {
@@ -12001,6 +12371,23 @@ const ScoringModule = ({
     return { answered, total, percentage: total > 0 ? Math.round((answered / total) * 100) : 0 }
   }, [answers, config.questions, scoreMap])
 
+  const matrixSignature = sharedOptions.length > 0 ? serializeOptionSignature(sharedOptions) : null
+  const normalizedLayout = config.layout || "stacked"
+  const shouldRenderMatrix = normalizedLayout === "matrix" && Boolean(matrixSignature)
+  const shouldRenderCompact = normalizedLayout === "compact"
+  const matrixQuestions = useMemo(() => {
+    if (!shouldRenderMatrix) return []
+    return (config.questions || []).filter((question) => {
+      const resolvedOptions = resolveQuestionOptions(question, sharedOptions)
+      return resolvedOptions.length > 0 && serializeOptionSignature(resolvedOptions) === matrixSignature
+    })
+  }, [config.questions, matrixSignature, sharedOptions, shouldRenderMatrix])
+  const matrixQuestionIds = useMemo(() => new Set(matrixQuestions.map((question) => question.id)), [matrixQuestions])
+  const stackedQuestions = useMemo(() => {
+    if (!shouldRenderMatrix) return config.questions || []
+    return (config.questions || []).filter((question) => !matrixQuestionIds.has(question.id))
+  }, [config.questions, matrixQuestionIds, shouldRenderMatrix])
+
   // Container styles
   const containerStyle = {
     padding: "16px",
@@ -12038,13 +12425,34 @@ const ScoringModule = ({
       )}
 
       {/* Questions */}
-      <Stack tokens={{ childrenGap: 8 }}>
-        {(config.questions || []).map((question) => (
-          <ScoringQuestion
-            key={question.id}
-            question={question}
+      {shouldRenderMatrix && matrixQuestions.length > 0 && (
+        <div style={{ marginBottom: stackedQuestions.length > 0 ? "16px" : 0 }}>
+          <MatrixScoringTable
+            questions={matrixQuestions}
+            options={sharedOptions}
             isDarkMode={isDarkMode}
           />
+        </div>
+      )}
+
+      <Stack tokens={{ childrenGap: 8 }}>
+        {stackedQuestions.map((question) => (
+          shouldRenderCompact ? (
+            <CompactScoringQuestion
+              key={question.id}
+              question={question}
+              sharedOptions={sharedOptions}
+              continuumLabels={continuumLabels}
+              isDarkMode={isDarkMode}
+            />
+          ) : (
+            <ScoringQuestion
+              key={question.id}
+              question={question}
+              sharedOptions={sharedOptions}
+              isDarkMode={isDarkMode}
+            />
+          )
         ))}
       </Stack>
 
@@ -12099,6 +12507,7 @@ const createScoringQuestion = (def) => ({
     key: opt.key || \`\${idx}\`,
     text: opt.text || opt.label || \`Option \${idx + 1}\`,
     score: opt.score ?? idx,
+    description: opt.description,
   })),
 })
 
@@ -12151,6 +12560,22 @@ const createScoringTotal = (def) => ({
  * })
  */
 const createScoringConfig = (def) => ({
+  layout:
+    def.layout === "matrix" || def.layout === "compact"
+      ? def.layout
+      : "stacked",
+  continuumLabels: def.continuumLabels
+    ? {
+        min: def.continuumLabels.min,
+        max: def.continuumLabels.max,
+      }
+    : undefined,
+  sharedOptions: (def.sharedOptions || []).map((opt, idx) => ({
+    key: opt.key || \`\${idx}\`,
+    text: opt.text || opt.label || \`Option \${idx + 1}\`,
+    score: opt.score ?? idx,
+    description: opt.description,
+  })),
   questions: (def.questions || []).map(createScoringQuestion),
   totals: (def.totals || []).map(createScoringTotal),
 })
@@ -12573,11 +12998,17 @@ const {
 // Scoring helpers (same logic as ScoringModule)
 // ================================================
 
-const _buildScoreMap = (questions) => {
+const _resolveQuestionOptions = (question, sharedOptions) => {
+  const questionOptions = Array.isArray(question?.options) ? question.options : []
+  if (questionOptions.length > 0) return questionOptions
+  return Array.isArray(sharedOptions) ? sharedOptions : []
+}
+
+const _buildScoreMap = (questions, sharedOptions) => {
   const map = new Map()
   for (const question of questions || []) {
     const optionMap = new Map()
-    for (const opt of question.options || []) {
+    for (const opt of _resolveQuestionOptions(question, sharedOptions)) {
       optionMap.set(opt.key, opt.score ?? 0)
     }
     map.set(question.id, optionMap)
@@ -13129,8 +13560,8 @@ const SubformScoring = ({
   // Scoring-mode answer and score calculations
   const scoreMap = useMemo(() => {
     if (isDataEntryMode) return new Map()
-    return _buildScoreMap(config.questions)
-  }, [isDataEntryMode, config.questions])
+    return _buildScoreMap(config.questions, config.sharedOptions)
+  }, [isDataEntryMode, config.questions, config.sharedOptions])
 
   const answers = useMemo(() => {
     if (isDataEntryMode) return {}
