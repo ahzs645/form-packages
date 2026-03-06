@@ -188,12 +188,36 @@ const createFormComponent = (
     // Debug logging (uncomment when troubleshooting variable resolution issues)
     // console.log('[Code Transformer] Captured local variables:', Array.from(localVarNames));
 
-    // Create a proxy that returns placeholders for undefined properties
+    // Create a placeholder that works as both a React component and a data object.
+    // This allows missing variables to be used in JSX (<Missing />) or as data (missing.x['04002']).
     const createPlaceholder = (name: string): any => {
-      const PlaceholderComponent: React.FC<{ children?: React.ReactNode }> = ({ children }) =>
-        React.createElement('div', { 'data-missing': name, style: { display: 'contents' } }, children);
-      PlaceholderComponent.displayName = `Placeholder_${name}`;
-      return PlaceholderComponent;
+      const component = (props?: any) =>
+        React.createElement('div', { 'data-missing': name, style: { display: 'contents' } }, props?.children);
+      component.displayName = `Placeholder_${name}`;
+
+      return new Proxy(component, {
+        get(_target, prop) {
+          if (prop === 'displayName') return `Placeholder_${name}`;
+          if (prop === '$$typeof' || prop === 'prototype' || prop === 'name' ||
+              prop === 'length' || prop === 'caller' || prop === 'arguments' ||
+              prop === 'bind' || prop === 'call' || prop === 'apply') {
+            return (_target as any)[prop];
+          }
+          if (typeof prop === 'symbol') return (_target as any)[prop];
+          if (prop === Symbol.toPrimitive) return () => '';
+          if (prop === 'toString' || prop === 'valueOf') return () => '';
+          if (prop === 'map' || prop === 'filter' || prop === 'forEach' || prop === 'reduce' ||
+              prop === 'find' || prop === 'some' || prop === 'every' || prop === 'flatMap' ||
+              prop === 'includes' || prop === 'indexOf' || prop === 'slice' || prop === 'concat') {
+            return [][prop as keyof any[]];
+          }
+          return createPlaceholder(`${name}.${String(prop)}`);
+        },
+        apply(_target, thisArg, args) {
+          // When called as a function (React component or hook), return a safe proxy
+          return component.apply(thisArg, args as [any]);
+        },
+      });
     };
 
     // Known optional form variables that don't need warnings

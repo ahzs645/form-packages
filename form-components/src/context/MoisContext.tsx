@@ -6,6 +6,7 @@
 import React, { createContext, useContext, useState, useCallback, useMemo, useEffect, ReactNode } from 'react';
 import { produce, Draft } from 'immer';
 import { mockCodeLists } from './mockCodeLists';
+import optionListsRaw from '../data/optionLists.json';
 import { getInitialData } from '../hooks/form-state';
 
 // Import the complete example data for DebugView
@@ -642,6 +643,7 @@ export const defaultSourceData: SourceData = {
         reactions: 'Rash, Hives',
       },
     ],
+    observationPanels: [],
     longTermMedications: [],
     encounters: [
       {
@@ -699,7 +701,7 @@ export const defaultSourceData: SourceData = {
   // Forms typically check: Object.keys(sd.sourceFormData).length > 0
   sourceFormData: {},
   auth: { jwToken: '', apiServer: '' },
-  optionLists: {},
+  optionLists: optionListsRaw as Record<string, any>,
   lifecycleState: { isLoading: false, isPrinting: false, isMutating: false },
   // queryResult mirrors the patient data structure for components that access sd.queryResult.patient[0]
   queryResult: {
@@ -916,19 +918,11 @@ const defaultCodeListFallback: CodeListItem[] = [
 ];
 
 export function useCodeList(system: string): CodeListItem[] {
-  const sourceData = useSourceData();
-
-  // Memoize the result to prevent infinite re-renders
+  // Use mockCodeLists which has proper CodeListItem[] format.
+  // sourceData.optionLists contains raw {code: display} format for direct sd.optionLists access.
   return useMemo(() => {
-    // Check optionLists first
-    if (sourceData.optionLists[system]) {
-      return sourceData.optionLists[system];
-    }
-
-    // Return mock data for common code systems (imported from mockCodeLists.ts)
-    // Use the predefined fallback array to maintain stable reference
     return mockCodeLists[system] || defaultCodeListFallback;
-  }, [sourceData.optionLists, system]);
+  }, [system]);
 }
 
 export function useOptionLists() {

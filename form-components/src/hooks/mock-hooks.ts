@@ -9,8 +9,8 @@ import React from 'react';
 // Import directly from MoisContext to avoid circular dependency through lib/index
 import { useSourceData } from '../context/MoisContext';
 import { useActiveDataForForms } from './form-state';
-// Import the proper useQuery and useMutation from the API module
-import { useQuery as useQueryImpl, useMutation as useMutationImpl } from './api';
+// Import the proper useMutation from the API module
+import { useMutation as useMutationImpl } from './api';
 
 /**
  * useOnLoad - Called when a form loads
@@ -54,9 +54,16 @@ export const useMutation = useMutationImpl;
 
 /**
  * useQuery - GraphQL query hook
- * Uses the proper mock implementation from the API module
+ * Returns sourceData.queryResult as query data so forms get mock data in preview mode.
+ * Returns [data, refetch] tuple to match the MOIS useQuery API.
  */
-export const useQuery = useQueryImpl;
+export const useQuery = (_query?: string, _variables?: any): [any, () => void] => {
+  const sourceData = useSourceData();
+  const refetch = React.useCallback(() => {
+    console.log('[Mock useQuery] refetch called');
+  }, []);
+  return [sourceData.queryResult || {}, refetch];
+};
 
 /**
  * useFormLock - Lock management for forms
