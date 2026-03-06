@@ -3754,6 +3754,200 @@ const firstNationsStatusSchema = {
   reserveName:        { type: ["string","null"] },
 }
 `,
+  './FormSessionRuntime/index.jsx': `const { createContext, useCallback, useContext, useEffect, useMemo, useState } = React
+
+const __getSessionContext = () => {
+  const root = typeof globalThis !== "undefined"
+    ? globalThis
+    : (typeof window !== "undefined" ? window : {})
+  if (!root.__MOIS_FORM_STATE_CONTEXT__) {
+    root.__MOIS_FORM_STATE_CONTEXT__ = createContext(null)
+  }
+  return root.__MOIS_FORM_STATE_CONTEXT__
+}
+
+const FormSessionContext = __getSessionContext()
+
+const __cloneSessionValue = (value, fallback) => {
+  const target = value === undefined ? fallback : value
+  return JSON.parse(JSON.stringify(target))
+}
+
+const cloneFormSessionState = (fd) => ({
+  field: {
+    data: __cloneSessionValue(fd?.field?.data, {}),
+    status: __cloneSessionValue(fd?.field?.status, {}),
+    history: __cloneSessionValue(Array.isArray(fd?.field?.history) ? fd.field.history : [], []),
+  },
+  uiState: {
+    ...__cloneSessionValue(fd?.uiState || {}, {}),
+    sections: __cloneSessionValue(fd?.uiState?.sections ?? {}, {}),
+  },
+  tempArea: __cloneSessionValue(fd?.tempArea || {}, {}),
+})
+
+const mergeFormSessionState = (draft, sessionState) => {
+  if (!draft.field) {
+    draft.field = { data: {}, status: {}, history: [] }
+  }
+  if (!draft.field.data) {
+    draft.field.data = {}
+  }
+  if (!draft.field.status) {
+    draft.field.status = {}
+  }
+  if (!Array.isArray(draft.field.history)) {
+    draft.field.history = []
+  }
+
+  Object.entries(sessionState?.field?.data || {}).forEach(([fieldId, value]) => {
+    draft.field.data[fieldId] = __cloneSessionValue(value, null)
+  })
+
+  Object.entries(sessionState?.field?.status || {}).forEach(([fieldId, value]) => {
+    draft.field.status[fieldId] = __cloneSessionValue(value, null)
+  })
+
+  if (sessionState?.tempArea && typeof sessionState.tempArea === "object") {
+    draft.tempArea = {
+      ...(draft.tempArea || {}),
+      ...__cloneSessionValue(sessionState.tempArea, {}),
+    }
+  }
+}
+
+const normalizeSessionState = (input) => ({
+  field: {
+    data: __cloneSessionValue(input?.field?.data || {}, {}),
+    status: __cloneSessionValue(input?.field?.status || {}, {}),
+    history: __cloneSessionValue(Array.isArray(input?.field?.history) ? input.field.history : [], []),
+  },
+  uiState: {
+    ...__cloneSessionValue(input?.uiState || {}, {}),
+    sections: __cloneSessionValue(input?.uiState?.sections ?? {}, {}),
+  },
+  tempArea: __cloneSessionValue(input?.tempArea || {}, {}),
+})
+
+const applySessionUpdate = (prevState, updater) => {
+  if (typeof updater === "function") {
+    try {
+      return JSON.parse(JSON.stringify(produce(prevState, updater)))
+    } catch (error) {
+      return prevState
+    }
+  }
+  if (updater && typeof updater === "object") {
+    return JSON.parse(JSON.stringify({ ...prevState, ...updater }))
+  }
+  return prevState
+}
+
+const FormSessionProvider = ({
+  children,
+  initialFormData,
+}) => {
+  const [formData, setFormDataState] = useState(() => normalizeSessionState(initialFormData))
+
+  useEffect(() => {
+    setFormDataState(normalizeSessionState(initialFormData))
+  }, [initialFormData])
+
+  const setFormData = useCallback((updater) => {
+    setFormDataState((prev) => applySessionUpdate(prev, updater))
+  }, [])
+
+  const contextValue = useMemo(() => ({
+    formData,
+    setFormData,
+  }), [formData, setFormData])
+
+  return (
+    <FormSessionContext.Provider value={contextValue}>
+      {children}
+    </FormSessionContext.Provider>
+  )
+}
+
+const useFormSessionData = (selector) => {
+  const sessionContext = useContext(FormSessionContext)
+  const [fallbackData, fallbackSetData] = useActiveData(selector)
+
+  const normalizedSessionData = useMemo(() => {
+    if (!sessionContext?.formData) return null
+
+    const formData = sessionContext.formData
+    const normalized = {
+      ...formData,
+      field: formData.field || { data: {}, status: {}, history: [] },
+      uiState: {
+        sections: {},
+        ...(formData.uiState || {}),
+        sections: formData.uiState?.sections || {},
+      },
+      tempArea: formData.tempArea || {},
+    }
+
+    return normalized
+  }, [sessionContext])
+
+  const sessionSetFormData = useCallback((updater) => {
+    if (!sessionContext?.setFormData) return
+    sessionContext.setFormData(updater)
+  }, [sessionContext])
+
+  const sessionDataWithSetter = useMemo(() => {
+    if (!normalizedSessionData) return null
+    return {
+      ...normalizedSessionData,
+      setFormData: sessionSetFormData,
+    }
+  }, [normalizedSessionData, sessionSetFormData])
+
+  const selectedSessionData = useMemo(() => {
+    if (!normalizedSessionData) return null
+    return selector ? selector(normalizedSessionData) : sessionDataWithSetter
+  }, [normalizedSessionData, selector, sessionDataWithSetter])
+
+  const selectedSessionDataWithSetter = useMemo(() => {
+    if (!selectedSessionData || !sessionSetFormData) return selectedSessionData
+    if (selectedSessionData && typeof selectedSessionData === "object" && !Array.isArray(selectedSessionData)) {
+      return {
+        ...selectedSessionData,
+        setFormData: sessionSetFormData,
+      }
+    }
+    return selectedSessionData
+  }, [selectedSessionData, sessionSetFormData])
+
+  const sessionScopedSetter = useCallback((updates) => {
+    if (!selector) {
+      sessionSetFormData(updates)
+      return
+    }
+    sessionSetFormData((draft) => {
+      const target = selector(draft)
+      if (!target || typeof target !== "object") return
+      if (typeof updates === "function") {
+        const result = updates(target)
+        if (result && typeof result === "object") {
+          Object.assign(target, result)
+        }
+        return
+      }
+      if (updates && typeof updates === "object") {
+        Object.assign(target, updates)
+      }
+    })
+  }, [selector, sessionSetFormData])
+
+  if (!sessionContext) {
+    return [fallbackData, fallbackSetData]
+  }
+
+  return [selectedSessionDataWithSetter, sessionScopedSetter]
+}
+`,
   './Goals/index.jsx': `
 // Handle 2.25.12 case where Allergies is a predefined component
 if (typeof Goals==="undefined") {
@@ -13173,38 +13367,75 @@ const _getQuestionMirrorFieldIds = (question) => {
 // ================================================
 
 /**
- * Single question using SimpleCodeChecklist
+ * Single question using local radio inputs
  */
 const ScoringQuestion = ({
   question,
   sharedOptions,
   isDarkMode,
 }) => {
+  const [fieldData, setFieldData] = useFormSessionData(fd => fd.field.data)
+  const currentData = fieldData?.[question.id] || { selectedKey: null }
   const containerStyle = {
     ...QUESTION_CONTAINER_STYLE,
     backgroundColor: isDarkMode ? "#2a2a2a" : "#f8f8f8",
     border: \`1px solid \${isDarkMode ? "#404040" : "#e0e0e0"}\`,
   }
 
-  // Convert options to SimpleCodeChecklist format
-  // Include score in the text for transparency
-  const optionList = useMemo(() => {
-    return resolveQuestionOptions(question, sharedOptions).map(opt => ({
-      key: opt.key,
-      text: opt.text,
-    }))
-  }, [question, sharedOptions])
+  const options = useMemo(() => resolveQuestionOptions(question, sharedOptions), [question, sharedOptions])
+
+  useEffect(() => {
+    if (!fieldData?.[question.id]) {
+      setFieldData({
+        [question.id]: {
+          selectedKey: null,
+          value: null,
+          response: null,
+        }
+      })
+    }
+  }, [fieldData, question.id, setFieldData])
+
+  const handleSelect = (option) => {
+    setFieldData({
+      [question.id]: {
+        selectedKey: option.key,
+        value: option.key,
+        response: option.text,
+        detailResponse: option.description || option.text,
+      }
+    })
+  }
 
   return (
     <div style={containerStyle}>
-      <SimpleCodeChecklist
-        fieldId={question.id}
-        label={question.label}
-        optionList={optionList}
-        selectionType="single"
-        multiline={question.multiline}
-        codeSystem={question.codeSystem}
-      />
+      <Text styles={{ root: { fontSize: "13px", fontWeight: 600, lineHeight: 1.35, marginBottom: "10px" } }}>
+        {question.label}
+      </Text>
+      <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+        {options.map((option) => (
+          <label
+            key={\`\${question.id}_\${option.key}\`}
+            style={{
+              display: "flex",
+              alignItems: "flex-start",
+              gap: "8px",
+              cursor: "pointer",
+              color: isDarkMode ? "#f3f3f3" : "#222222",
+              lineHeight: 1.35,
+            }}
+          >
+            <input
+              type="radio"
+              name={\`scoring_\${question.id}\`}
+              checked={currentData.selectedKey === option.key}
+              onChange={() => handleSelect(option)}
+              style={{ marginTop: "2px", width: "14px", height: "14px", cursor: "pointer" }}
+            />
+            <span>{option.text}</span>
+          </label>
+        ))}
+      </div>
     </div>
   )
 }
@@ -13226,7 +13457,7 @@ const CompactScoringQuestion = ({
   continuumLabels,
   isDarkMode,
 }) => {
-  const [fieldData, setFieldData] = useActiveData(fd => fd.field.data)
+  const [fieldData, setFieldData] = useFormSessionData(fd => fd.field.data)
   const currentData = fieldData?.[question.id] || { selectedKey: null }
   const options = useMemo(
     () => resolveQuestionOptions(question, sharedOptions),
@@ -13399,7 +13630,7 @@ const MatrixScoringRow = ({
   options,
   isDarkMode,
 }) => {
-  const [fieldData, setFieldData] = useActiveData(fd => fd.field.data)
+  const [fieldData, setFieldData] = useFormSessionData(fd => fd.field.data)
   const currentData = fieldData?.[question.id] || { selectedKey: null }
 
   useEffect(() => {
@@ -13474,7 +13705,7 @@ const GroupedChecklistQuestion = ({
   sharedOptions,
   isDarkMode,
 }) => {
-  const [fieldData, setFieldData] = useActiveData(fd => fd.field.data)
+  const [fieldData, setFieldData] = useFormSessionData(fd => fd.field.data)
   const currentData = fieldData?.[question.id] || null
   const { checkedOption, uncheckedOption } = useMemo(
     () => resolveChecklistOptions(question, sharedOptions),
@@ -13753,7 +13984,7 @@ const ScoringModule = ({
   showProgress = true,
   ...props
 }) => {
-  const [fd, setFd] = useActiveData()
+  const [fd, setFd] = useFormSessionData()
   const theme = useTheme()
   const isDarkMode = theme?.isInverted || false
   const sharedOptions = useMemo(() => resolveMatrixOptions(config), [config])
@@ -14815,53 +15046,6 @@ const _toNumericValue = (value) => {
   return null
 }
 
-const _cloneSubformSessionState = (fd) => {
-  const snapshot = {
-    field: {
-      data: fd?.field?.data || {},
-      status: fd?.field?.status || {},
-      history: Array.isArray(fd?.field?.history) ? fd.field.history : [],
-    },
-    uiState: {
-      ...(fd?.uiState || {}),
-      sections: fd?.uiState?.sections || {},
-    },
-    tempArea: fd?.tempArea || {},
-  }
-
-  return JSON.parse(JSON.stringify(snapshot))
-}
-
-const _mergeSubformSessionState = (draft, sessionState) => {
-  if (!draft.field) {
-    draft.field = { data: {}, status: {}, history: [] }
-  }
-  if (!draft.field.data) {
-    draft.field.data = {}
-  }
-  if (!draft.field.status) {
-    draft.field.status = {}
-  }
-  if (!Array.isArray(draft.field.history)) {
-    draft.field.history = []
-  }
-
-  Object.entries(sessionState?.field?.data || {}).forEach(([fieldId, value]) => {
-    draft.field.data[fieldId] = JSON.parse(JSON.stringify(value))
-  })
-
-  Object.entries(sessionState?.field?.status || {}).forEach(([fieldId, value]) => {
-    draft.field.status[fieldId] = JSON.parse(JSON.stringify(value))
-  })
-
-  if (sessionState?.tempArea && typeof sessionState.tempArea === "object") {
-    draft.tempArea = {
-      ...(draft.tempArea || {}),
-      ...JSON.parse(JSON.stringify(sessionState.tempArea)),
-    }
-  }
-}
-
 const _evaluateExpression = (expression, varsByName) => {
   if (typeof expression !== "string") return null
   const trimmed = expression.trim()
@@ -14995,6 +15179,31 @@ const _computeMorphineEquivalent = (doseValue, equivalentDoseMg, baseEquivalentD
   if (!Number.isFinite(equivalentDose) || equivalentDose <= 0) return null
   if (!Number.isFinite(baseDose) || baseDose <= 0) return null
   return (dose * baseDose) / equivalentDose
+}
+
+const _LOCAL_INPUT_STYLE = (isDarkMode) => ({
+  width: "100%",
+  minHeight: "34px",
+  borderRadius: "2px",
+  border: \`1px solid \${isDarkMode ? "#5a5a5a" : "#b8b8b8"}\`,
+  backgroundColor: isDarkMode ? "#1a1a1a" : "#fff",
+  color: isDarkMode ? "#fff" : "#111",
+  padding: "6px 8px",
+  fontSize: "14px",
+  boxSizing: "border-box",
+})
+
+const _LOCAL_TEXTAREA_STYLE = (isDarkMode) => ({
+  ..._LOCAL_INPUT_STYLE(isDarkMode),
+  minHeight: "96px",
+  resize: "vertical",
+  fontFamily: "inherit",
+})
+
+const _LOCAL_RADIO_GROUP_STYLE = {
+  display: "flex",
+  flexDirection: "column",
+  gap: "8px",
 }
 
 // ================================================
@@ -15222,7 +15431,7 @@ const SubformScoringInner = ({
   ...props
 }) => {
   const [internalIsOpen, setInternalIsOpen] = useState(false)
-  const [fd] = useActiveData()
+  const [fd] = useFormSessionData()
   const theme = useTheme()
   const isDarkMode = theme?.isInverted || false
   const isDialogOpen = typeof controlledIsOpen === "boolean" ? controlledIsOpen : internalIsOpen
@@ -15592,21 +15801,30 @@ const SubformScoringInner = ({
     }
 
     if (field.type === "number") {
-      const spinButtonProps = {}
-      if (Number.isFinite(field.min)) spinButtonProps.min = field.min
-      if (Number.isFinite(field.max)) spinButtonProps.max = field.max
-      if (Number.isFinite(field.step)) spinButtonProps.step = field.step
-      const hasSpinProps = Object.keys(spinButtonProps).length > 0
+      const inputValue = dataEntryValues[field.id]
       return (
-        <Numeric
-          key={\`field-\${field.id}\`}
-          {...commonProps}
-          storeAsNumber
-          buttonControls={hasSpinProps}
-          spinButtonProps={hasSpinProps ? spinButtonProps : undefined}
-          value={dataEntryValues[field.id] ?? ""}
-          onChange={(value) => setDataEntryValue(field.id, value)}
-        />
+        <div key={\`field-\${field.id}\`}>
+          <Label required={required}>{field.label}</Label>
+          <input
+            type="number"
+            inputMode="decimal"
+            min={Number.isFinite(field.min) ? field.min : undefined}
+            max={Number.isFinite(field.max) ? field.max : undefined}
+            step={Number.isFinite(field.step) ? field.step : "any"}
+            placeholder={field.placeholder}
+            value={inputValue === null || inputValue === undefined ? "" : String(inputValue)}
+            onChange={(event) => {
+              const nextRaw = event?.target?.value ?? ""
+              if (!nextRaw) {
+                setDataEntryValue(field.id, null)
+                return
+              }
+              const parsed = Number(nextRaw)
+              setDataEntryValue(field.id, Number.isFinite(parsed) ? parsed : nextRaw)
+            }}
+            style={_LOCAL_INPUT_STYLE(isDarkMode)}
+          />
+        </div>
       )
     }
 
@@ -15632,25 +15850,31 @@ const SubformScoringInner = ({
 
     if (field.type === "date") {
       return (
-        <DateSelect
-          key={\`field-\${field.id}\`}
-          {...commonProps}
-          placeholder={field.placeholder}
-          value={dataEntryValues[field.id]}
-          onChange={(value) => setDataEntryValue(field.id, value)}
-        />
+        <div key={\`field-\${field.id}\`}>
+          <Label required={required}>{field.label}</Label>
+          <input
+            type="date"
+            placeholder={field.placeholder}
+            value={dataEntryValues[field.id] ?? ""}
+            onChange={(event) => setDataEntryValue(field.id, event?.target?.value ?? "")}
+            style={_LOCAL_INPUT_STYLE(isDarkMode)}
+          />
+        </div>
       )
     }
 
     if (field.type === "datetime") {
       return (
-        <DateTimeSelect
-          key={\`field-\${field.id}\`}
-          {...commonProps}
-          placeholder={field.placeholder}
-          value={dataEntryValues[field.id]}
-          onChange={(value) => setDataEntryValue(field.id, value)}
-        />
+        <div key={\`field-\${field.id}\`}>
+          <Label required={required}>{field.label}</Label>
+          <input
+            type="datetime-local"
+            placeholder={field.placeholder}
+            value={dataEntryValues[field.id] ?? ""}
+            onChange={(event) => setDataEntryValue(field.id, event?.target?.value ?? "")}
+            style={_LOCAL_INPUT_STYLE(isDarkMode)}
+          />
+        </div>
       )
     }
 
@@ -15658,39 +15882,44 @@ const SubformScoringInner = ({
       const optionList = (field.options || []).map((option) => ({ key: option, text: option }))
       const useRadio = field.choiceStyle === "radio"
       if (useRadio) {
-        if (hasExternalDataEntryStore) {
-          return (
-            <div key={\`field-\${field.id}\`}>
-              <Label required={required}>{field.label}</Label>
-              <OptionChoice
-                displayStyle="radio"
-                options={optionList}
-                selectedKey={dataEntryValues[field.id] ?? undefined}
-                onChange={(_, option) => setDataEntryValue(field.id, option?.key ?? null)}
-                multiline
-              />
-            </div>
-          )
-        }
         return (
-          <SimpleCodeChecklist
-            key={\`field-\${field.id}\`}
-            {...commonProps}
-            optionList={optionList}
-            selectionType="single"
-            multiline
-          />
+          <div key={\`field-\${field.id}\`}>
+            <Label required={required}>{field.label}</Label>
+            <div style={_LOCAL_RADIO_GROUP_STYLE}>
+              {optionList.map((option) => (
+                <label
+                  key={\`\${field.id}_\${option.key}\`}
+                  style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}
+                >
+                  <input
+                    type="radio"
+                    name={\`subform_choice_\${field.id}\`}
+                    checked={dataEntryValues[field.id] === option.key}
+                    onChange={() => setDataEntryValue(field.id, option.key)}
+                  />
+                  <span>{option.text}</span>
+                </label>
+              ))}
+            </div>
+          </div>
         )
       }
       return (
-        <SimpleCodeSelect
-          key={\`field-\${field.id}\`}
-          {...commonProps}
-          optionList={optionList}
-          selectionType="single"
-          value={dataEntryValues[field.id]}
-          onChange={(value) => setDataEntryValue(field.id, value)}
-        />
+        <div key={\`field-\${field.id}\`}>
+          <Label required={required}>{field.label}</Label>
+          <select
+            value={dataEntryValues[field.id] ?? ""}
+            onChange={(event) => setDataEntryValue(field.id, event?.target?.value || null)}
+            style={_LOCAL_INPUT_STYLE(isDarkMode)}
+          >
+            <option value="">Select...</option>
+            {optionList.map((option) => (
+              <option key={\`\${field.id}_\${option.key}\`} value={option.key}>
+                {option.text}
+              </option>
+            ))}
+          </select>
+        </div>
       )
     }
 
@@ -15699,42 +15928,41 @@ const SubformScoringInner = ({
         ? field.options
         : ["Yes", "No"]
       const optionList = yesNoOptions.map((option) => ({ key: option, text: option }))
-      if (hasExternalDataEntryStore) {
-        return (
-          <div key={\`field-\${field.id}\`}>
-            <Label required={required}>{field.label}</Label>
-            <OptionChoice
-              displayStyle="radio"
-              options={optionList}
-              selectedKey={dataEntryValues[field.id] ?? undefined}
-              onChange={(_, option) => setDataEntryValue(field.id, option?.key ?? null)}
-              multiline
-            />
-          </div>
-        )
-      }
       return (
-        <SimpleCodeChecklist
-          key={\`field-\${field.id}\`}
-          {...commonProps}
-          optionList={optionList}
-          selectionType="single"
-          multiline
-        />
+        <div key={\`field-\${field.id}\`}>
+          <Label required={required}>{field.label}</Label>
+          <div style={_LOCAL_RADIO_GROUP_STYLE}>
+            {optionList.map((option) => (
+              <label
+                key={\`\${field.id}_\${option.key}\`}
+                style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}
+              >
+                <input
+                  type="radio"
+                  name={\`subform_boolean_\${field.id}\`}
+                  checked={dataEntryValues[field.id] === option.key}
+                  onChange={() => setDataEntryValue(field.id, option.key)}
+                />
+                <span>{option.text}</span>
+              </label>
+            ))}
+          </div>
+        </div>
       )
     }
 
     if (field.type === "textarea") {
       return (
-        <TextArea
-          key={\`field-\${field.id}\`}
-          {...commonProps}
-          multiline
-          rows={field.rows || 4}
-          placeholder={field.placeholder}
-          value={dataEntryValues[field.id] ?? ""}
-          onChange={(_, value) => setDataEntryValue(field.id, value ?? "")}
-        />
+        <div key={\`field-\${field.id}\`}>
+          <Label required={required}>{field.label}</Label>
+          <textarea
+            rows={field.rows || 4}
+            placeholder={field.placeholder}
+            value={dataEntryValues[field.id] ?? ""}
+            onChange={(event) => setDataEntryValue(field.id, event?.target?.value ?? "")}
+            style={_LOCAL_TEXTAREA_STYLE(isDarkMode)}
+          />
+        </div>
       )
     }
 
@@ -15780,13 +16008,16 @@ const SubformScoringInner = ({
     }
 
     return (
-      <TextArea
-        key={\`field-\${field.id}\`}
-        {...commonProps}
-        placeholder={field.placeholder}
-        value={dataEntryValues[field.id] ?? ""}
-        onChange={(_, value) => setDataEntryValue(field.id, value ?? "")}
-      />
+      <div key={\`field-\${field.id}\`}>
+        <Label required={required}>{field.label}</Label>
+        <input
+          type="text"
+          placeholder={field.placeholder}
+          value={dataEntryValues[field.id] ?? ""}
+          onChange={(event) => setDataEntryValue(field.id, event?.target?.value ?? "")}
+          style={_LOCAL_INPUT_STYLE(isDarkMode)}
+        />
+      </div>
     )
   }
 
@@ -16236,16 +16467,16 @@ const SubformScoring = (props) => {
   } = props
   const [parentFd] = useActiveData()
   const [internalIsOpen, setInternalIsOpen] = useState(false)
-  const [sessionSeed, setSessionSeed] = useState(() => _cloneSubformSessionState(parentFd))
+  const [sessionSeed, setSessionSeed] = useState(() => cloneFormSessionState(parentFd))
 
   const isDialogOpen = typeof controlledIsOpen === "boolean" ? controlledIsOpen : internalIsOpen
   const effectiveInitialData = useMemo(() => (
-    isDialogOpen ? sessionSeed : _cloneSubformSessionState(parentFd)
+    isDialogOpen ? sessionSeed : cloneFormSessionState(parentFd)
   ), [isDialogOpen, parentFd, sessionSeed])
 
   const handleOpenChange = useCallback((nextValue) => {
     if (nextValue) {
-      setSessionSeed(_cloneSubformSessionState(parentFd))
+      setSessionSeed(cloneFormSessionState(parentFd))
     }
     if (typeof controlledIsOpen !== "boolean") {
       setInternalIsOpen(nextValue)
@@ -16255,14 +16486,16 @@ const SubformScoring = (props) => {
 
   const handleCommitToParent = useCallback((sessionFd) => {
     if (!parentFd?.setFormData) return
-    const sessionState = _cloneSubformSessionState(sessionFd)
-    parentFd.setFormData((draft) => {
-      _mergeSubformSessionState(draft, sessionState)
+    const sessionState = cloneFormSessionState(sessionFd)
+    parentFd.setFormData((current) => {
+      const nextState = cloneFormSessionState(current)
+      mergeFormSessionState(nextState, sessionState)
+      return nextState
     })
   }, [parentFd])
 
   return (
-    <LocalFormStateProvider initialFormData={effectiveInitialData}>
+    <FormSessionProvider initialFormData={effectiveInitialData}>
       <SubformScoringInner
         {...props}
         id={id}
@@ -16270,7 +16503,7 @@ const SubformScoring = (props) => {
         onOpenChange={handleOpenChange}
         onCommitToParent={handleCommitToParent}
       />
-    </LocalFormStateProvider>
+    </FormSessionProvider>
   )
 }
 `,
@@ -16973,6 +17206,32 @@ export const componentIdentities: Record<string, any> = {
       "patch": 12
     }
   },
+  'FormSessionRuntime': {
+    "name": "FormSessionRuntime",
+    "title": "Form Session Runtime",
+    "description": "Reusable local form-session provider and state helpers for bundled NHForms components.",
+    "version": {
+      "major": 1,
+      "minor": 0,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "MOIS",
+    "author": "MOIS Exporter",
+    "publisher": "MOIS",
+    "globalIdentifier": "",
+    "requiredFormViewerVersion": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "requiredMoisVersion": {
+      "major": 2,
+      "minor": 28,
+      "patch": 10
+    },
+    "components": []
+  },
   'Goals': {
     "name": "Goals",
     "title": "Selected patient goals",
@@ -17525,7 +17784,10 @@ export const componentIdentities: Record<string, any> = {
       "major": 2,
       "minor": 26,
       "patch": 12
-    }
+    },
+    "components": [
+      "FormSessionRuntime"
+    ]
   },
   'ServiceEpisodes': {
     "name": "ServiceEpisodes",
@@ -17627,6 +17889,7 @@ export const componentIdentities: Record<string, any> = {
       "patch": 12
     },
     "components": [
+      "FormSessionRuntime",
       "HotspotMapField",
       "ScoringModule",
       "ScaleField"

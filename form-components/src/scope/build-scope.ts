@@ -247,7 +247,7 @@ import {
 
 // Import from code-scope modules
 import { FluentNamespace, FluentActionButton } from './fluent-namespace';
-import { useActiveDataForForms, LocalFormStateProvider } from '../hooks/form-state';
+import { useActiveDataForForms } from '../hooks/form-state';
 import {
   useOnLoad,
   useOnRefresh,
@@ -633,7 +633,6 @@ export const buildScope = (): Record<string, any> => ({
   // MOIS Hooks
   useSourceData,
   useActiveData: useActiveDataForForms, // Use custom implementation for forms
-  LocalFormStateProvider,
   useCodeList,
   useSection,
   useTheme,

@@ -358,38 +358,75 @@ const _getQuestionMirrorFieldIds = (question) => {
 // ================================================
 
 /**
- * Single question using SimpleCodeChecklist
+ * Single question using local radio inputs
  */
 const ScoringQuestion = ({
   question,
   sharedOptions,
   isDarkMode,
 }) => {
+  const [fieldData, setFieldData] = useFormSessionData(fd => fd.field.data)
+  const currentData = fieldData?.[question.id] || { selectedKey: null }
   const containerStyle = {
     ...QUESTION_CONTAINER_STYLE,
     backgroundColor: isDarkMode ? "#2a2a2a" : "#f8f8f8",
     border: `1px solid ${isDarkMode ? "#404040" : "#e0e0e0"}`,
   }
 
-  // Convert options to SimpleCodeChecklist format
-  // Include score in the text for transparency
-  const optionList = useMemo(() => {
-    return resolveQuestionOptions(question, sharedOptions).map(opt => ({
-      key: opt.key,
-      text: opt.text,
-    }))
-  }, [question, sharedOptions])
+  const options = useMemo(() => resolveQuestionOptions(question, sharedOptions), [question, sharedOptions])
+
+  useEffect(() => {
+    if (!fieldData?.[question.id]) {
+      setFieldData({
+        [question.id]: {
+          selectedKey: null,
+          value: null,
+          response: null,
+        }
+      })
+    }
+  }, [fieldData, question.id, setFieldData])
+
+  const handleSelect = (option) => {
+    setFieldData({
+      [question.id]: {
+        selectedKey: option.key,
+        value: option.key,
+        response: option.text,
+        detailResponse: option.description || option.text,
+      }
+    })
+  }
 
   return (
     <div style={containerStyle}>
-      <SimpleCodeChecklist
-        fieldId={question.id}
-        label={question.label}
-        optionList={optionList}
-        selectionType="single"
-        multiline={question.multiline}
-        codeSystem={question.codeSystem}
-      />
+      <Text styles={{ root: { fontSize: "13px", fontWeight: 600, lineHeight: 1.35, marginBottom: "10px" } }}>
+        {question.label}
+      </Text>
+      <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+        {options.map((option) => (
+          <label
+            key={`${question.id}_${option.key}`}
+            style={{
+              display: "flex",
+              alignItems: "flex-start",
+              gap: "8px",
+              cursor: "pointer",
+              color: isDarkMode ? "#f3f3f3" : "#222222",
+              lineHeight: 1.35,
+            }}
+          >
+            <input
+              type="radio"
+              name={`scoring_${question.id}`}
+              checked={currentData.selectedKey === option.key}
+              onChange={() => handleSelect(option)}
+              style={{ marginTop: "2px", width: "14px", height: "14px", cursor: "pointer" }}
+            />
+            <span>{option.text}</span>
+          </label>
+        ))}
+      </div>
     </div>
   )
 }
@@ -411,7 +448,7 @@ const CompactScoringQuestion = ({
   continuumLabels,
   isDarkMode,
 }) => {
-  const [fieldData, setFieldData] = useActiveData(fd => fd.field.data)
+  const [fieldData, setFieldData] = useFormSessionData(fd => fd.field.data)
   const currentData = fieldData?.[question.id] || { selectedKey: null }
   const options = useMemo(
     () => resolveQuestionOptions(question, sharedOptions),
@@ -584,7 +621,7 @@ const MatrixScoringRow = ({
   options,
   isDarkMode,
 }) => {
-  const [fieldData, setFieldData] = useActiveData(fd => fd.field.data)
+  const [fieldData, setFieldData] = useFormSessionData(fd => fd.field.data)
   const currentData = fieldData?.[question.id] || { selectedKey: null }
 
   useEffect(() => {
@@ -659,7 +696,7 @@ const GroupedChecklistQuestion = ({
   sharedOptions,
   isDarkMode,
 }) => {
-  const [fieldData, setFieldData] = useActiveData(fd => fd.field.data)
+  const [fieldData, setFieldData] = useFormSessionData(fd => fd.field.data)
   const currentData = fieldData?.[question.id] || null
   const { checkedOption, uncheckedOption } = useMemo(
     () => resolveChecklistOptions(question, sharedOptions),
@@ -938,7 +975,7 @@ const ScoringModule = ({
   showProgress = true,
   ...props
 }) => {
-  const [fd, setFd] = useActiveData()
+  const [fd, setFd] = useFormSessionData()
   const theme = useTheme()
   const isDarkMode = theme?.isInverted || false
   const sharedOptions = useMemo(() => resolveMatrixOptions(config), [config])

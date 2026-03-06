@@ -1,0 +1,26 @@
+{
+  "name": "FormSessionRuntime",
+  "title": "Form Session Runtime",
+  "description": "Reusable local form-session provider and state helpers for bundled NHForms components.",
+  "version": {
+    "major": 1,
+    "minor": 0,
+    "patch": 0
+  },
+  "type": "component",
+  "owner": "MOIS",
+  "author": "MOIS Exporter",
+  "publisher": "MOIS",
+  "globalIdentifier": "",
+  "requiredFormViewerVersion": {
+    "major": 0,
+    "minor": 1,
+    "patch": 0
+  },
+  "requiredMoisVersion": {
+    "major": 2,
+    "minor": 28,
+    "patch": 10
+  },
+  "components": []
+}

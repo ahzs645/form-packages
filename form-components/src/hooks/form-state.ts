@@ -61,6 +61,14 @@ const normalizeFormData = (input?: Partial<FormDataState> | null): FormDataState
   };
 };
 
+const getOverrideFormStateContext = () => {
+  if (typeof globalThis === 'undefined') return null;
+  const maybeContext = (globalThis as any).__MOIS_FORM_STATE_CONTEXT__;
+  if (!maybeContext || typeof maybeContext !== 'object') return null;
+  if (!('Provider' in maybeContext) || !('Consumer' in maybeContext)) return null;
+  return maybeContext as typeof FormStateContext;
+};
+
 /**
  * Set the InitialData from form code (called by code-transformer after form execution)
  * This merges the InitialData into form data so forms can access fd.field.data.*
@@ -242,7 +250,10 @@ export const LocalFormStateProvider = ({
  * - setFormData accepts either an immer updater function or a partial object
  */
 export const useActiveDataForForms = (selector?: (data: any) => any): [any, (updater: any) => void] => {
-  const context = useContext(FormStateContext);
+  const overrideContextObject = getOverrideFormStateContext();
+  const overrideContextValue = useContext(overrideContextObject || FormStateContext);
+  const defaultContextValue = useContext(FormStateContext);
+  const context = overrideContextObject ? (overrideContextValue || defaultContextValue) : defaultContextValue;
 
   // Fallback for when used outside of FormStateProvider
   if (!context) {

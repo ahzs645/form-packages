@@ -269,53 +269,6 @@ const _toNumericValue = (value) => {
   return null
 }
 
-const _cloneSubformSessionState = (fd) => {
-  const snapshot = {
-    field: {
-      data: fd?.field?.data || {},
-      status: fd?.field?.status || {},
-      history: Array.isArray(fd?.field?.history) ? fd.field.history : [],
-    },
-    uiState: {
-      ...(fd?.uiState || {}),
-      sections: fd?.uiState?.sections || {},
-    },
-    tempArea: fd?.tempArea || {},
-  }
-
-  return JSON.parse(JSON.stringify(snapshot))
-}
-
-const _mergeSubformSessionState = (draft, sessionState) => {
-  if (!draft.field) {
-    draft.field = { data: {}, status: {}, history: [] }
-  }
-  if (!draft.field.data) {
-    draft.field.data = {}
-  }
-  if (!draft.field.status) {
-    draft.field.status = {}
-  }
-  if (!Array.isArray(draft.field.history)) {
-    draft.field.history = []
-  }
-
-  Object.entries(sessionState?.field?.data || {}).forEach(([fieldId, value]) => {
-    draft.field.data[fieldId] = JSON.parse(JSON.stringify(value))
-  })
-
-  Object.entries(sessionState?.field?.status || {}).forEach(([fieldId, value]) => {
-    draft.field.status[fieldId] = JSON.parse(JSON.stringify(value))
-  })
-
-  if (sessionState?.tempArea && typeof sessionState.tempArea === "object") {
-    draft.tempArea = {
-      ...(draft.tempArea || {}),
-      ...JSON.parse(JSON.stringify(sessionState.tempArea)),
-    }
-  }
-}
-
 const _evaluateExpression = (expression, varsByName) => {
   if (typeof expression !== "string") return null
   const trimmed = expression.trim()
@@ -449,6 +402,31 @@ const _computeMorphineEquivalent = (doseValue, equivalentDoseMg, baseEquivalentD
   if (!Number.isFinite(equivalentDose) || equivalentDose <= 0) return null
   if (!Number.isFinite(baseDose) || baseDose <= 0) return null
   return (dose * baseDose) / equivalentDose
+}
+
+const _LOCAL_INPUT_STYLE = (isDarkMode) => ({
+  width: "100%",
+  minHeight: "34px",
+  borderRadius: "2px",
+  border: `1px solid ${isDarkMode ? "#5a5a5a" : "#b8b8b8"}`,
+  backgroundColor: isDarkMode ? "#1a1a1a" : "#fff",
+  color: isDarkMode ? "#fff" : "#111",
+  padding: "6px 8px",
+  fontSize: "14px",
+  boxSizing: "border-box",
+})
+
+const _LOCAL_TEXTAREA_STYLE = (isDarkMode) => ({
+  ..._LOCAL_INPUT_STYLE(isDarkMode),
+  minHeight: "96px",
+  resize: "vertical",
+  fontFamily: "inherit",
+})
+
+const _LOCAL_RADIO_GROUP_STYLE = {
+  display: "flex",
+  flexDirection: "column",
+  gap: "8px",
 }
 
 // ================================================
@@ -676,7 +654,7 @@ const SubformScoringInner = ({
   ...props
 }) => {
   const [internalIsOpen, setInternalIsOpen] = useState(false)
-  const [fd] = useActiveData()
+  const [fd] = useFormSessionData()
   const theme = useTheme()
   const isDarkMode = theme?.isInverted || false
   const isDialogOpen = typeof controlledIsOpen === "boolean" ? controlledIsOpen : internalIsOpen
@@ -1046,21 +1024,30 @@ const SubformScoringInner = ({
     }
 
     if (field.type === "number") {
-      const spinButtonProps = {}
-      if (Number.isFinite(field.min)) spinButtonProps.min = field.min
-      if (Number.isFinite(field.max)) spinButtonProps.max = field.max
-      if (Number.isFinite(field.step)) spinButtonProps.step = field.step
-      const hasSpinProps = Object.keys(spinButtonProps).length > 0
+      const inputValue = dataEntryValues[field.id]
       return (
-        <Numeric
-          key={`field-${field.id}`}
-          {...commonProps}
-          storeAsNumber
-          buttonControls={hasSpinProps}
-          spinButtonProps={hasSpinProps ? spinButtonProps : undefined}
-          value={dataEntryValues[field.id] ?? ""}
-          onChange={(value) => setDataEntryValue(field.id, value)}
-        />
+        <div key={`field-${field.id}`}>
+          <Label required={required}>{field.label}</Label>
+          <input
+            type="number"
+            inputMode="decimal"
+            min={Number.isFinite(field.min) ? field.min : undefined}
+            max={Number.isFinite(field.max) ? field.max : undefined}
+            step={Number.isFinite(field.step) ? field.step : "any"}
+            placeholder={field.placeholder}
+            value={inputValue === null || inputValue === undefined ? "" : String(inputValue)}
+            onChange={(event) => {
+              const nextRaw = event?.target?.value ?? ""
+              if (!nextRaw) {
+                setDataEntryValue(field.id, null)
+                return
+              }
+              const parsed = Number(nextRaw)
+              setDataEntryValue(field.id, Number.isFinite(parsed) ? parsed : nextRaw)
+            }}
+            style={_LOCAL_INPUT_STYLE(isDarkMode)}
+          />
+        </div>
       )
     }
 
@@ -1086,25 +1073,31 @@ const SubformScoringInner = ({
 
     if (field.type === "date") {
       return (
-        <DateSelect
-          key={`field-${field.id}`}
-          {...commonProps}
-          placeholder={field.placeholder}
-          value={dataEntryValues[field.id]}
-          onChange={(value) => setDataEntryValue(field.id, value)}
-        />
+        <div key={`field-${field.id}`}>
+          <Label required={required}>{field.label}</Label>
+          <input
+            type="date"
+            placeholder={field.placeholder}
+            value={dataEntryValues[field.id] ?? ""}
+            onChange={(event) => setDataEntryValue(field.id, event?.target?.value ?? "")}
+            style={_LOCAL_INPUT_STYLE(isDarkMode)}
+          />
+        </div>
       )
     }
 
     if (field.type === "datetime") {
       return (
-        <DateTimeSelect
-          key={`field-${field.id}`}
-          {...commonProps}
-          placeholder={field.placeholder}
-          value={dataEntryValues[field.id]}
-          onChange={(value) => setDataEntryValue(field.id, value)}
-        />
+        <div key={`field-${field.id}`}>
+          <Label required={required}>{field.label}</Label>
+          <input
+            type="datetime-local"
+            placeholder={field.placeholder}
+            value={dataEntryValues[field.id] ?? ""}
+            onChange={(event) => setDataEntryValue(field.id, event?.target?.value ?? "")}
+            style={_LOCAL_INPUT_STYLE(isDarkMode)}
+          />
+        </div>
       )
     }
 
@@ -1112,39 +1105,44 @@ const SubformScoringInner = ({
       const optionList = (field.options || []).map((option) => ({ key: option, text: option }))
       const useRadio = field.choiceStyle === "radio"
       if (useRadio) {
-        if (hasExternalDataEntryStore) {
-          return (
-            <div key={`field-${field.id}`}>
-              <Label required={required}>{field.label}</Label>
-              <OptionChoice
-                displayStyle="radio"
-                options={optionList}
-                selectedKey={dataEntryValues[field.id] ?? undefined}
-                onChange={(_, option) => setDataEntryValue(field.id, option?.key ?? null)}
-                multiline
-              />
-            </div>
-          )
-        }
         return (
-          <SimpleCodeChecklist
-            key={`field-${field.id}`}
-            {...commonProps}
-            optionList={optionList}
-            selectionType="single"
-            multiline
-          />
+          <div key={`field-${field.id}`}>
+            <Label required={required}>{field.label}</Label>
+            <div style={_LOCAL_RADIO_GROUP_STYLE}>
+              {optionList.map((option) => (
+                <label
+                  key={`${field.id}_${option.key}`}
+                  style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}
+                >
+                  <input
+                    type="radio"
+                    name={`subform_choice_${field.id}`}
+                    checked={dataEntryValues[field.id] === option.key}
+                    onChange={() => setDataEntryValue(field.id, option.key)}
+                  />
+                  <span>{option.text}</span>
+                </label>
+              ))}
+            </div>
+          </div>
         )
       }
       return (
-        <SimpleCodeSelect
-          key={`field-${field.id}`}
-          {...commonProps}
-          optionList={optionList}
-          selectionType="single"
-          value={dataEntryValues[field.id]}
-          onChange={(value) => setDataEntryValue(field.id, value)}
-        />
+        <div key={`field-${field.id}`}>
+          <Label required={required}>{field.label}</Label>
+          <select
+            value={dataEntryValues[field.id] ?? ""}
+            onChange={(event) => setDataEntryValue(field.id, event?.target?.value || null)}
+            style={_LOCAL_INPUT_STYLE(isDarkMode)}
+          >
+            <option value="">Select...</option>
+            {optionList.map((option) => (
+              <option key={`${field.id}_${option.key}`} value={option.key}>
+                {option.text}
+              </option>
+            ))}
+          </select>
+        </div>
       )
     }
 
@@ -1153,42 +1151,41 @@ const SubformScoringInner = ({
         ? field.options
         : ["Yes", "No"]
       const optionList = yesNoOptions.map((option) => ({ key: option, text: option }))
-      if (hasExternalDataEntryStore) {
-        return (
-          <div key={`field-${field.id}`}>
-            <Label required={required}>{field.label}</Label>
-            <OptionChoice
-              displayStyle="radio"
-              options={optionList}
-              selectedKey={dataEntryValues[field.id] ?? undefined}
-              onChange={(_, option) => setDataEntryValue(field.id, option?.key ?? null)}
-              multiline
-            />
-          </div>
-        )
-      }
       return (
-        <SimpleCodeChecklist
-          key={`field-${field.id}`}
-          {...commonProps}
-          optionList={optionList}
-          selectionType="single"
-          multiline
-        />
+        <div key={`field-${field.id}`}>
+          <Label required={required}>{field.label}</Label>
+          <div style={_LOCAL_RADIO_GROUP_STYLE}>
+            {optionList.map((option) => (
+              <label
+                key={`${field.id}_${option.key}`}
+                style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}
+              >
+                <input
+                  type="radio"
+                  name={`subform_boolean_${field.id}`}
+                  checked={dataEntryValues[field.id] === option.key}
+                  onChange={() => setDataEntryValue(field.id, option.key)}
+                />
+                <span>{option.text}</span>
+              </label>
+            ))}
+          </div>
+        </div>
       )
     }
 
     if (field.type === "textarea") {
       return (
-        <TextArea
-          key={`field-${field.id}`}
-          {...commonProps}
-          multiline
-          rows={field.rows || 4}
-          placeholder={field.placeholder}
-          value={dataEntryValues[field.id] ?? ""}
-          onChange={(_, value) => setDataEntryValue(field.id, value ?? "")}
-        />
+        <div key={`field-${field.id}`}>
+          <Label required={required}>{field.label}</Label>
+          <textarea
+            rows={field.rows || 4}
+            placeholder={field.placeholder}
+            value={dataEntryValues[field.id] ?? ""}
+            onChange={(event) => setDataEntryValue(field.id, event?.target?.value ?? "")}
+            style={_LOCAL_TEXTAREA_STYLE(isDarkMode)}
+          />
+        </div>
       )
     }
 
@@ -1234,13 +1231,16 @@ const SubformScoringInner = ({
     }
 
     return (
-      <TextArea
-        key={`field-${field.id}`}
-        {...commonProps}
-        placeholder={field.placeholder}
-        value={dataEntryValues[field.id] ?? ""}
-        onChange={(_, value) => setDataEntryValue(field.id, value ?? "")}
-      />
+      <div key={`field-${field.id}`}>
+        <Label required={required}>{field.label}</Label>
+        <input
+          type="text"
+          placeholder={field.placeholder}
+          value={dataEntryValues[field.id] ?? ""}
+          onChange={(event) => setDataEntryValue(field.id, event?.target?.value ?? "")}
+          style={_LOCAL_INPUT_STYLE(isDarkMode)}
+        />
+      </div>
     )
   }
 
@@ -1690,16 +1690,16 @@ const SubformScoring = (props) => {
   } = props
   const [parentFd] = useActiveData()
   const [internalIsOpen, setInternalIsOpen] = useState(false)
-  const [sessionSeed, setSessionSeed] = useState(() => _cloneSubformSessionState(parentFd))
+  const [sessionSeed, setSessionSeed] = useState(() => cloneFormSessionState(parentFd))
 
   const isDialogOpen = typeof controlledIsOpen === "boolean" ? controlledIsOpen : internalIsOpen
   const effectiveInitialData = useMemo(() => (
-    isDialogOpen ? sessionSeed : _cloneSubformSessionState(parentFd)
+    isDialogOpen ? sessionSeed : cloneFormSessionState(parentFd)
   ), [isDialogOpen, parentFd, sessionSeed])
 
   const handleOpenChange = useCallback((nextValue) => {
     if (nextValue) {
-      setSessionSeed(_cloneSubformSessionState(parentFd))
+      setSessionSeed(cloneFormSessionState(parentFd))
     }
     if (typeof controlledIsOpen !== "boolean") {
       setInternalIsOpen(nextValue)
@@ -1709,14 +1709,16 @@ const SubformScoring = (props) => {
 
   const handleCommitToParent = useCallback((sessionFd) => {
     if (!parentFd?.setFormData) return
-    const sessionState = _cloneSubformSessionState(sessionFd)
-    parentFd.setFormData((draft) => {
-      _mergeSubformSessionState(draft, sessionState)
+    const sessionState = cloneFormSessionState(sessionFd)
+    parentFd.setFormData((current) => {
+      const nextState = cloneFormSessionState(current)
+      mergeFormSessionState(nextState, sessionState)
+      return nextState
     })
   }, [parentFd])
 
   return (
-    <LocalFormStateProvider initialFormData={effectiveInitialData}>
+    <FormSessionProvider initialFormData={effectiveInitialData}>
       <SubformScoringInner
         {...props}
         id={id}
@@ -1724,6 +1726,6 @@ const SubformScoring = (props) => {
         onOpenChange={handleOpenChange}
         onCommitToParent={handleCommitToParent}
       />
-    </LocalFormStateProvider>
+    </FormSessionProvider>
   )
 }

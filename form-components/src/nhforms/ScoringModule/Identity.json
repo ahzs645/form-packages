@@ -21,5 +21,8 @@
     "major": 2,
     "minor": 26,
     "patch": 12
-  }
+  },
+  "components": [
+    "FormSessionRuntime"
+  ]
 }
