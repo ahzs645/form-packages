@@ -37,6 +37,31 @@ const _buildScoreMap = (questions, sharedOptions) => {
   return map
 }
 
+const _resolveChecklistOptions = (question, sharedOptions) => {
+  const options = _resolveQuestionOptions(question, sharedOptions)
+  if (!Array.isArray(options) || options.length === 0) {
+    return { checkedOption: null, uncheckedOption: null }
+  }
+
+  const checklist = question?.checklist || {}
+  const checkedFromConfig = options.find((option) => option.key === checklist.checkedOptionKey) || null
+  const uncheckedFromConfig = options.find((option) => option.key === checklist.uncheckedOptionKey) || null
+
+  const checkedOption =
+    checkedFromConfig ||
+    [...options].sort((left, right) => (right.score ?? 0) - (left.score ?? 0))[0] ||
+    null
+
+  const uncheckedOption =
+    uncheckedFromConfig ||
+    options.find((option) => (option.score ?? 0) === 0) ||
+    [...options].sort((left, right) => (left.score ?? 0) - (right.score ?? 0)).find((option) => option.key !== checkedOption?.key) ||
+    checkedOption ||
+    null
+
+  return { checkedOption, uncheckedOption }
+}
+
 const _normalizeScoreToken = (value) => String(value ?? "").trim().toLowerCase()
 
 const _collectScoreCandidates = (value, out = new Set(), depth = 0) => {
@@ -599,6 +624,7 @@ const SubformScoring = ({
   const calculatedTotals = useMemo(() => {
     if (isDataEntryMode) return {}
     const results = {}
+    const questionsById = new Map((config.questions || []).map((question) => [question.id, question]))
     for (const total of config.totals || []) {
       let score = 0
       let isComplete = true
@@ -608,6 +634,14 @@ const SubformScoring = ({
         const answerScore = _getScoreFromValue(answer, optionScoreMap)
         if (answerScore !== null) {
           score += answerScore * (term.weight || 1)
+        } else if (config.layout === "grouped-checklist") {
+          const question = questionsById.get(term.questionId)
+          const { uncheckedOption } = _resolveChecklistOptions(question, config.sharedOptions)
+          if (uncheckedOption) {
+            score += (uncheckedOption.score ?? 0) * (term.weight || 1)
+          } else {
+            isComplete = false
+          }
         } else {
           isComplete = false
         }
@@ -615,7 +649,7 @@ const SubformScoring = ({
       results[total.id] = { score: isComplete ? score : null, isComplete }
     }
     return results
-  }, [isDataEntryMode, answers, config.totals, scoreMap])
+  }, [isDataEntryMode, answers, config.layout, config.questions, config.sharedOptions, config.totals, scoreMap])
 
   // Data-entry-mode values and calculations
   const dataEntryFields = useMemo(() => {

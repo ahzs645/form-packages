@@ -38,6 +38,15 @@ const {
  * @property {ScoringOptionConfig[]} [options] - Answer options with scores
  * @property {boolean} [multiline] - Use vertical layout for options
  * @property {string} [codeSystem] - Optional code system reference
+ * @property {{ checkedOptionKey?: string, uncheckedOptionKey?: string }} [checklist] - Optional grouped-checklist option mapping
+ */
+
+/**
+ * @typedef {Object} ScoringQuestionGroupConfig
+ * @property {string} id - Unique group ID
+ * @property {string} [title] - Optional section heading
+ * @property {string} [prompt] - Prompt shown above the group's questions
+ * @property {string[]} questionIds - Questions rendered in this group
  */
 
 /**
@@ -66,9 +75,10 @@ const {
 
 /**
  * @typedef {Object} ScoringConfig
- * @property {"stacked"|"compact"|"matrix"} [layout] - Preferred question layout
+ * @property {"stacked"|"compact"|"matrix"|"grouped-checklist"} [layout] - Preferred question layout
  * @property {{ min?: string, max?: string }} [continuumLabels] - Optional captions for the left/right ends of a compact scale
  * @property {ScoringOptionConfig[]} [sharedOptions] - Shared scale for matrix-style questionnaires
+ * @property {ScoringQuestionGroupConfig[]} [groups] - Optional grouped-checklist sections
  * @property {ScoringQuestionConfig[]} questions - Question configurations
  * @property {ScoreTotalConfig[]} totals - Total/score configurations
  */
@@ -285,6 +295,31 @@ const resolveMatrixOptions = (config) => {
 
   if (!winnerSignature || winnerCount < 2) return []
   return optionsBySignature.get(winnerSignature) || []
+}
+
+const resolveChecklistOptions = (question, sharedOptions) => {
+  const options = resolveQuestionOptions(question, sharedOptions)
+  if (!Array.isArray(options) || options.length === 0) {
+    return { checkedOption: null, uncheckedOption: null }
+  }
+
+  const checklist = question?.checklist || {}
+  const checkedFromConfig = options.find((option) => option.key === checklist.checkedOptionKey) || null
+  const uncheckedFromConfig = options.find((option) => option.key === checklist.uncheckedOptionKey) || null
+
+  const checkedOption =
+    checkedFromConfig ||
+    [...options].sort((left, right) => (right.score ?? 0) - (left.score ?? 0))[0] ||
+    null
+
+  const uncheckedOption =
+    uncheckedFromConfig ||
+    options.find((option) => (option.score ?? 0) === 0) ||
+    [...options].sort((left, right) => (left.score ?? 0) - (right.score ?? 0)).find((option) => option.key !== checkedOption?.key) ||
+    checkedOption ||
+    null
+
+  return { checkedOption, uncheckedOption }
 }
 
 // ================================================
@@ -588,6 +623,133 @@ const MatrixScoringRow = ({
   )
 }
 
+const GroupedChecklistQuestion = ({
+  question,
+  sharedOptions,
+  isDarkMode,
+}) => {
+  const [fieldData, setFieldData] = useActiveData(fd => fd.field.data)
+  const currentData = fieldData?.[question.id] || null
+  const { checkedOption, uncheckedOption } = useMemo(
+    () => resolveChecklistOptions(question, sharedOptions),
+    [question, sharedOptions]
+  )
+
+  useEffect(() => {
+    if (fieldData?.[question.id] || !uncheckedOption) return
+    setFieldData({
+      [question.id]: {
+        selectedKey: uncheckedOption.key,
+        value: uncheckedOption.key,
+        response: uncheckedOption.text,
+        detailResponse: uncheckedOption.description || uncheckedOption.text,
+      }
+    })
+  }, [fieldData, question.id, setFieldData, uncheckedOption])
+
+  const checked = currentData?.selectedKey === checkedOption?.key
+
+  const handleToggle = (event) => {
+    const nextChecked = Boolean(event?.target?.checked)
+    const nextOption = nextChecked ? checkedOption : uncheckedOption
+    if (!nextOption) {
+      setFieldData({ [question.id]: null })
+      return
+    }
+    setFieldData({
+      [question.id]: {
+        selectedKey: nextOption.key,
+        value: nextOption.key,
+        response: nextOption.text,
+        detailResponse: nextOption.description || nextOption.text,
+      }
+    })
+  }
+
+  return (
+    <label
+      style={{
+        display: "flex",
+        alignItems: "flex-start",
+        gap: "8px",
+        cursor: "pointer",
+        padding: "2px 0",
+        lineHeight: 1.35,
+        color: isDarkMode ? "#f3f3f3" : "#222222",
+      }}
+    >
+      <input
+        type="checkbox"
+        checked={Boolean(checked)}
+        onChange={handleToggle}
+        style={{ marginTop: "2px", width: "14px", height: "14px", cursor: "pointer" }}
+      />
+      <span style={{ fontSize: "12px" }}>{question.label}</span>
+    </label>
+  )
+}
+
+const GroupedChecklistSection = ({
+  group,
+  questionsById,
+  sharedOptions,
+  isDarkMode,
+}) => {
+  const sectionQuestions = (group.questionIds || [])
+    .map((questionId) => questionsById.get(questionId))
+    .filter(Boolean)
+
+  if (sectionQuestions.length === 0) return null
+
+  return (
+    <div
+      style={{
+        ...QUESTION_CONTAINER_STYLE,
+        backgroundColor: isDarkMode ? "#2a2a2a" : "#f8f8f8",
+        border: `1px solid ${isDarkMode ? "#404040" : "#e0e0e0"}`,
+        marginBottom: "12px",
+      }}
+    >
+      {group.title ? (
+        <Text
+          styles={{
+            root: {
+              fontSize: "12px",
+              fontWeight: 700,
+              textTransform: "uppercase",
+              letterSpacing: "0.03em",
+              marginBottom: "8px",
+            }
+          }}
+        >
+          {group.title}
+        </Text>
+      ) : null}
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(220px, 2fr) minmax(180px, 1fr)", gap: "12px" }}>
+        <div>
+          {group.prompt ? (
+            <Text styles={{ root: { fontSize: "12px", lineHeight: 1.35 } }}>
+              {group.prompt}
+            </Text>
+          ) : null}
+        </div>
+        <div>
+          <Stack tokens={{ childrenGap: 2 }}>
+            {sectionQuestions.map((question) => (
+              <GroupedChecklistQuestion
+                key={question.id}
+                question={question}
+                sharedOptions={sharedOptions}
+                isDarkMode={isDarkMode}
+              />
+            ))}
+          </Stack>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 const MatrixScoringTable = ({
   questions,
   options,
@@ -750,6 +912,7 @@ const ScoringModule = ({
   const isDarkMode = theme?.isInverted || false
   const sharedOptions = useMemo(() => resolveMatrixOptions(config), [config])
   const continuumLabels = config.continuumLabels || null
+  const questionGroups = Array.isArray(config.groups) ? config.groups : null
 
   // Build score maps from config
   const scoreMap = useMemo(() => buildScoreMap(config.questions, sharedOptions), [config.questions, sharedOptions])
@@ -771,6 +934,7 @@ const ScoringModule = ({
   // Calculate totals
   const calculatedTotals = useMemo(() => {
     const results = {}
+    const questionsById = new Map((config.questions || []).map((question) => [question.id, question]))
 
     for (const total of config.totals || []) {
       let score = 0
@@ -783,6 +947,14 @@ const ScoringModule = ({
 
         if (answerScore !== null) {
           score += answerScore * (term.weight || 1)
+        } else if (config.layout === "grouped-checklist") {
+          const question = questionsById.get(term.questionId)
+          const { uncheckedOption } = resolveChecklistOptions(question, sharedOptions)
+          if (uncheckedOption) {
+            score += (uncheckedOption.score ?? 0) * (term.weight || 1)
+          } else {
+            isComplete = false
+          }
         } else {
           isComplete = false
         }
@@ -795,7 +967,7 @@ const ScoringModule = ({
     }
 
     return results
-  }, [answers, config.totals, scoreMap])
+  }, [answers, config.layout, config.questions, config.totals, scoreMap, sharedOptions])
 
   // Calculate progress
   const progress = useMemo(() => {
@@ -813,6 +985,8 @@ const ScoringModule = ({
   const normalizedLayout = config.layout || "stacked"
   const shouldRenderMatrix = normalizedLayout === "matrix" && Boolean(matrixSignature)
   const shouldRenderCompact = normalizedLayout === "compact"
+  const shouldRenderGroupedChecklist = normalizedLayout === "grouped-checklist"
+  const effectiveShowProgress = showProgress && !shouldRenderGroupedChecklist
   const matrixQuestions = useMemo(() => {
     if (!shouldRenderMatrix) return []
     return (config.questions || []).filter((question) => {
@@ -825,6 +999,22 @@ const ScoringModule = ({
     if (!shouldRenderMatrix) return config.questions || []
     return (config.questions || []).filter((question) => !matrixQuestionIds.has(question.id))
   }, [config.questions, matrixQuestionIds, shouldRenderMatrix])
+  const questionsById = useMemo(
+    () => new Map((config.questions || []).map((question) => [question.id, question])),
+    [config.questions]
+  )
+  const groupedQuestionIds = useMemo(() => {
+    if (!shouldRenderGroupedChecklist) return new Set()
+    const ids = new Set()
+    ;(questionGroups || []).forEach((group) => {
+      ;(group.questionIds || []).forEach((questionId) => ids.add(questionId))
+    })
+    return ids
+  }, [questionGroups, shouldRenderGroupedChecklist])
+  const checklistUngroupedQuestions = useMemo(() => {
+    if (!shouldRenderGroupedChecklist) return []
+    return (config.questions || []).filter((question) => !groupedQuestionIds.has(question.id))
+  }, [config.questions, groupedQuestionIds, shouldRenderGroupedChecklist])
 
   // Container styles
   const containerStyle = {
@@ -846,14 +1036,14 @@ const ScoringModule = ({
 
   return (
     <div style={containerStyle}>
-      {(title || showProgress) && (
+      {(title || effectiveShowProgress) && (
         <div style={headerStyle}>
           {title && (
             <Text variant="large" styles={{ root: { fontWeight: 600 } }}>
               {title}
             </Text>
           )}
-          {showProgress && (
+          {effectiveShowProgress && (
             <div style={progressStyle}>
               {progress.answered} of {progress.total} questions answered ({progress.percentage}%)
             </div>
@@ -873,26 +1063,60 @@ const ScoringModule = ({
         </div>
       )}
 
-      <Stack tokens={{ childrenGap: 8 }}>
-        {stackedQuestions.map((question) => (
-          shouldRenderCompact ? (
-            <CompactScoringQuestion
-              key={question.id}
-              question={question}
-              sharedOptions={sharedOptions}
-              continuumLabels={continuumLabels}
-              isDarkMode={isDarkMode}
-            />
-          ) : (
-            <ScoringQuestion
-              key={question.id}
-              question={question}
+      {shouldRenderGroupedChecklist ? (
+        <div>
+          {(questionGroups || []).map((group) => (
+            <GroupedChecklistSection
+              key={group.id}
+              group={group}
+              questionsById={questionsById}
               sharedOptions={sharedOptions}
               isDarkMode={isDarkMode}
             />
-          )
-        ))}
-      </Stack>
+          ))}
+          {checklistUngroupedQuestions.length > 0 ? (
+            <div
+              style={{
+                ...QUESTION_CONTAINER_STYLE,
+                backgroundColor: isDarkMode ? "#2a2a2a" : "#f8f8f8",
+                border: `1px solid ${isDarkMode ? "#404040" : "#e0e0e0"}`,
+              }}
+            >
+              <Stack tokens={{ childrenGap: 2 }}>
+                {checklistUngroupedQuestions.map((question) => (
+                  <GroupedChecklistQuestion
+                    key={question.id}
+                    question={question}
+                    sharedOptions={sharedOptions}
+                    isDarkMode={isDarkMode}
+                  />
+                ))}
+              </Stack>
+            </div>
+          ) : null}
+        </div>
+      ) : (
+        <Stack tokens={{ childrenGap: 8 }}>
+          {stackedQuestions.map((question) => (
+            shouldRenderCompact ? (
+              <CompactScoringQuestion
+                key={question.id}
+                question={question}
+                sharedOptions={sharedOptions}
+                continuumLabels={continuumLabels}
+                isDarkMode={isDarkMode}
+              />
+            ) : (
+              <ScoringQuestion
+                key={question.id}
+                question={question}
+                sharedOptions={sharedOptions}
+                isDarkMode={isDarkMode}
+              />
+            )
+          ))}
+        </Stack>
+      )}
 
       {/* Totals */}
       {(config.totals || []).map((total) => (
@@ -941,6 +1165,12 @@ const createScoringQuestion = (def) => ({
   label: def.label,
   multiline: def.multiline ?? false,
   codeSystem: def.codeSystem,
+  checklist: def.checklist
+    ? {
+        checkedOptionKey: def.checklist.checkedOptionKey,
+        uncheckedOptionKey: def.checklist.uncheckedOptionKey,
+      }
+    : undefined,
   options: (def.options || []).map((opt, idx) => ({
     key: opt.key || `${idx}`,
     text: opt.text || opt.label || `Option ${idx + 1}`,
@@ -999,7 +1229,7 @@ const createScoringTotal = (def) => ({
  */
 const createScoringConfig = (def) => ({
   layout:
-    def.layout === "matrix" || def.layout === "compact"
+    def.layout === "matrix" || def.layout === "compact" || def.layout === "grouped-checklist"
       ? def.layout
       : "stacked",
   continuumLabels: def.continuumLabels
@@ -1013,6 +1243,12 @@ const createScoringConfig = (def) => ({
     text: opt.text || opt.label || `Option ${idx + 1}`,
     score: opt.score ?? idx,
     description: opt.description,
+  })),
+  groups: (def.groups || []).map((group, index) => ({
+    id: group.id || `group_${index + 1}`,
+    title: group.title,
+    prompt: group.prompt,
+    questionIds: Array.isArray(group.questionIds) ? group.questionIds : [],
   })),
   questions: (def.questions || []).map(createScoringQuestion),
   totals: (def.totals || []).map(createScoringTotal),
