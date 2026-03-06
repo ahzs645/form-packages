@@ -14,7 +14,7 @@ import { produce } from 'immer';
 
 interface FormDataState {
   field: { data: Record<string, any>; status: Record<string, any> };
-  uiState: { sections: Record<string, any> };
+  uiState: { sections: Record<string, any> | Array<any>; [key: string]: any };
   tempArea?: Record<string, any>;
 }
 
@@ -40,6 +40,26 @@ let currentFormData: FormDataState = {
 
 // Global setter reference (set by FormStateProvider)
 let globalSetFormData: ((updater: any) => void) | null = null;
+
+const deepClone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
+
+const normalizeFormData = (input?: Partial<FormDataState> | null): FormDataState => {
+  const field = input?.field && typeof input.field === 'object' ? input.field : {};
+  const uiState = input?.uiState && typeof input.uiState === 'object' ? input.uiState : {};
+  const sections = (uiState as any).sections ?? [{ isComplete: false }];
+
+  return {
+    field: {
+      data: deepClone((field as any).data || {}),
+      status: deepClone((field as any).status || {}),
+    },
+    uiState: {
+      ...deepClone(uiState),
+      sections: deepClone(sections),
+    },
+    tempArea: deepClone(input?.tempArea || {}),
+  };
+};
 
 /**
  * Set the InitialData from form code (called by code-transformer after form execution)
@@ -76,10 +96,10 @@ export const getInitialData = (): Record<string, any> => {
 export const initFormData = () => {
   globalInitialData = {};
   if (globalSetFormData) {
-    globalSetFormData({
+    globalSetFormData(normalizeFormData({
       field: { data: {}, status: {} },
       uiState: { sections: {} },
-    });
+    }));
   }
 };
 
@@ -114,13 +134,16 @@ const applyFormDataUpdate = (prevState: FormDataState, updater: any): FormDataSt
 /**
  * Form State Provider - wraps forms to provide state context
  */
-export const FormStateProvider = ({ children }: { children: React.ReactNode }) => {
-  const [formData, setFormDataState] = useState<FormDataState>({
-    field: { data: {}, status: {} },
-    // Initialize sections as an array with a default section that is NOT complete
-    // This allows forms to check fd.uiState.sections[0].isComplete === false
-    uiState: { sections: [{ isComplete: false }] },
-  });
+const BaseFormStateProvider = ({
+  children,
+  initialFormData,
+  registerGlobally,
+}: {
+  children: React.ReactNode;
+  initialFormData?: Partial<FormDataState>;
+  registerGlobally: boolean;
+}) => {
+  const [formData, setFormDataState] = useState<FormDataState>(() => normalizeFormData(initialFormData));
 
   // Track if we're currently in a render phase to defer setState calls during render
   const isRenderingRef = React.useRef(false);
@@ -158,14 +181,20 @@ export const FormStateProvider = ({ children }: { children: React.ReactNode }) =
     setFormDataState(prev => applyFormDataUpdate(prev, updater));
   }, []);
 
+  React.useEffect(() => {
+    if (!initialFormData) return;
+    setFormDataState(normalizeFormData(initialFormData));
+  }, [initialFormData]);
+
   // Update global references
   React.useEffect(() => {
+    if (!registerGlobally) return;
     currentFormData = formData;
     globalSetFormData = setFormData;
     return () => {
       globalSetFormData = null;
     };
-  }, [formData, setFormData]);
+  }, [formData, registerGlobally, setFormData]);
 
   const contextValue = useMemo(() => ({
     formData,
@@ -178,6 +207,32 @@ export const FormStateProvider = ({ children }: { children: React.ReactNode }) =
     children
   );
 };
+
+export const FormStateProvider = ({ children }: { children: React.ReactNode }) => React.createElement(
+  BaseFormStateProvider,
+  {
+    registerGlobally: true,
+    initialFormData: {
+      field: { data: {}, status: {} },
+      // Initialize sections as an array with a default section that is NOT complete
+      // This allows forms to check fd.uiState.sections[0].isComplete === false
+      uiState: { sections: [{ isComplete: false }] },
+    },
+  },
+  children
+);
+
+export const LocalFormStateProvider = ({
+  children,
+  initialFormData,
+}: {
+  children: React.ReactNode;
+  initialFormData?: Partial<FormDataState>;
+}) => React.createElement(
+  BaseFormStateProvider,
+  { registerGlobally: false, initialFormData },
+  children
+);
 
 /**
  * Custom useActiveData that matches mois-form-tester pattern exactly.

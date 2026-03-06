@@ -269,6 +269,53 @@ const _toNumericValue = (value) => {
   return null
 }
 
+const _cloneSubformSessionState = (fd) => {
+  const snapshot = {
+    field: {
+      data: fd?.field?.data || {},
+      status: fd?.field?.status || {},
+      history: Array.isArray(fd?.field?.history) ? fd.field.history : [],
+    },
+    uiState: {
+      ...(fd?.uiState || {}),
+      sections: fd?.uiState?.sections || {},
+    },
+    tempArea: fd?.tempArea || {},
+  }
+
+  return JSON.parse(JSON.stringify(snapshot))
+}
+
+const _mergeSubformSessionState = (draft, sessionState) => {
+  if (!draft.field) {
+    draft.field = { data: {}, status: {}, history: [] }
+  }
+  if (!draft.field.data) {
+    draft.field.data = {}
+  }
+  if (!draft.field.status) {
+    draft.field.status = {}
+  }
+  if (!Array.isArray(draft.field.history)) {
+    draft.field.history = []
+  }
+
+  Object.entries(sessionState?.field?.data || {}).forEach(([fieldId, value]) => {
+    draft.field.data[fieldId] = JSON.parse(JSON.stringify(value))
+  })
+
+  Object.entries(sessionState?.field?.status || {}).forEach(([fieldId, value]) => {
+    draft.field.status[fieldId] = JSON.parse(JSON.stringify(value))
+  })
+
+  if (sessionState?.tempArea && typeof sessionState.tempArea === "object") {
+    draft.tempArea = {
+      ...(draft.tempArea || {}),
+      ...JSON.parse(JSON.stringify(sessionState.tempArea)),
+    }
+  }
+}
+
 const _evaluateExpression = (expression, varsByName) => {
   if (typeof expression !== "string") return null
   const trimmed = expression.trim()
@@ -606,7 +653,7 @@ const ProgressSummaryItem = ({ answered, total, percentage, isDarkMode }) => {
 // Main component
 // ================================================
 
-const SubformScoring = ({
+const SubformScoringInner = ({
   id = "subformScoring",
   mode,
   title,
@@ -623,6 +670,7 @@ const SubformScoring = ({
   completeButtonText = "Done",
   cancelButtonText = "Cancel",
   onComplete,
+  onCommitToParent,
   dataEntryValueRoot,
   onDataEntryValueChange,
   ...props
@@ -1622,6 +1670,7 @@ const SubformScoring = ({
                 calculatedTotals,
               })
               if (shouldClose !== false) {
+                onCommitToParent?.(fd)
                 setDialogOpen(false)
               }
             }}
@@ -1630,5 +1679,51 @@ const SubformScoring = ({
         </Stack>
       </Dialog>
     </div>
+  )
+}
+
+const SubformScoring = (props) => {
+  const {
+    id = "subformScoring",
+    isOpen: controlledIsOpen,
+    onOpenChange,
+  } = props
+  const [parentFd] = useActiveData()
+  const [internalIsOpen, setInternalIsOpen] = useState(false)
+  const [sessionSeed, setSessionSeed] = useState(() => _cloneSubformSessionState(parentFd))
+
+  const isDialogOpen = typeof controlledIsOpen === "boolean" ? controlledIsOpen : internalIsOpen
+  const effectiveInitialData = useMemo(() => (
+    isDialogOpen ? sessionSeed : _cloneSubformSessionState(parentFd)
+  ), [isDialogOpen, parentFd, sessionSeed])
+
+  const handleOpenChange = useCallback((nextValue) => {
+    if (nextValue) {
+      setSessionSeed(_cloneSubformSessionState(parentFd))
+    }
+    if (typeof controlledIsOpen !== "boolean") {
+      setInternalIsOpen(nextValue)
+    }
+    onOpenChange?.(nextValue)
+  }, [controlledIsOpen, onOpenChange, parentFd])
+
+  const handleCommitToParent = useCallback((sessionFd) => {
+    if (!parentFd?.setFormData) return
+    const sessionState = _cloneSubformSessionState(sessionFd)
+    parentFd.setFormData((draft) => {
+      _mergeSubformSessionState(draft, sessionState)
+    })
+  }, [parentFd])
+
+  return (
+    <LocalFormStateProvider initialFormData={effectiveInitialData}>
+      <SubformScoringInner
+        {...props}
+        id={id}
+        isOpen={isDialogOpen}
+        onOpenChange={handleOpenChange}
+        onCommitToParent={handleCommitToParent}
+      />
+    </LocalFormStateProvider>
   )
 }
