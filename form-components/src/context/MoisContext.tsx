@@ -860,9 +860,14 @@ export interface SourceDataWithHooks extends SourceData {
 export function useSourceData(): SourceDataWithHooks {
   const context = useContext(SourceDataContext);
   const sourceData = context || defaultSourceData;
+  const initialData = getInitialData();
 
   return {
     ...sourceData,
+    sourceFormData: {
+      ...sourceData.sourceFormData,
+      ...initialData,
+    },
     useAppSettings: () => defaultAppSettings,
   };
 }
