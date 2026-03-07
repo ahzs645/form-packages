@@ -11,6 +11,9 @@ import React from 'react';
 import { produce } from 'immer';
 import * as FluentUI from '@fluentui/react';
 import * as Babel from '@babel/standalone';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import rehypeRaw from 'rehype-raw';
 
 // Import hooks and components directly from source files to avoid circular dependency
 // (build-scope.ts imports nhformsComponents, so we can't import from ../lib which loads build-scope)
@@ -253,6 +256,9 @@ const buildNHFormsScope = (additionalComponents: Record<string, any> = {}) => {
 
     // Markdown component for rendering markdown content
     Markdown,
+    ReactMarkdown,
+    remarkGfm,
+    rehypeRaw,
 
     // Immer
     produce,

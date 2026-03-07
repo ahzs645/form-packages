@@ -1,0 +1,7 @@
+{
+  "name": "RichMarkdownBlock",
+  "title": "Rich Markdown Block",
+  "description": "Read-only markdown display with GitHub-flavored markdown table support for imported builder rich text",
+  "category": "Display",
+  "version": "1.0.0"
+}
