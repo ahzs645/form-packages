@@ -220,14 +220,14 @@ export const FormStateProvider = ({ children }: { children: React.ReactNode }) =
   BaseFormStateProvider,
   {
     registerGlobally: true,
+    children,
     initialFormData: {
       field: { data: {}, status: {} },
       // Initialize sections as an array with a default section that is NOT complete
       // This allows forms to check fd.uiState.sections[0].isComplete === false
       uiState: { sections: [{ isComplete: false }] },
     },
-  },
-  children
+  }
 );
 
 export const LocalFormStateProvider = ({
@@ -238,8 +238,7 @@ export const LocalFormStateProvider = ({
   initialFormData?: Partial<FormDataState>;
 }) => React.createElement(
   BaseFormStateProvider,
-  { registerGlobally: false, initialFormData },
-  children
+  { registerGlobally: false, initialFormData, children }
 );
 
 /**
@@ -271,9 +270,8 @@ export const useActiveDataForForms = (selector?: (data: any) => any): [any, (upd
     ...formData,
     field: formData.field || { data: {}, status: {} },
     uiState: {
-      sections: {},
       ...(formData.uiState || {}),
-      sections: formData.uiState?.sections || {},
+      sections: formData.uiState?.sections ?? {},
     },
   }), [formData]);
 

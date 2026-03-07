@@ -885,9 +885,8 @@ export function useActiveData<T = ActiveData>(selector?: (data: ActiveData) => T
     field: activeContext.field || { data: {}, status: {}, history: [] },
     formData: activeContext.formData || {},
     uiState: {
-      sections: {},
       ...(activeContext.uiState || {}),
-      sections: activeContext.uiState?.sections || {},
+      sections: activeContext.uiState?.sections ?? {},
     },
     tempArea: activeContext.tempArea || {},
   }), [activeContext]);
