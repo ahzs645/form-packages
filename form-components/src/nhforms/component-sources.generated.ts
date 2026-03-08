@@ -7563,6 +7563,7 @@ const ScaleLegend = ({ legends }) => {
 type ScaleQuestionProps = {
   id?: string
   label?: JSX.Element | string
+  labelHtml?: string
   dropdownOptions?: any
   tooltip?: { rating: number, description: string }[]
   showInlineLabels?: boolean
@@ -7584,6 +7585,7 @@ const createScaleQuestion = ({
   return ({
     id,
     label,
+    labelHtml,
     dropdownOptions,
     tooltip,
     showInlineLabels = true,
@@ -7673,7 +7675,11 @@ const createScaleQuestion = ({
               </StackItem>
               <StackItem disableShrink>
                 <Stack>
-                  <Label styles={QUESTION_defaultLabelStyle}>{label}</Label>
+                  <Label styles={QUESTION_defaultLabelStyle}>
+                    {typeof labelHtml === "string" && labelHtml.trim()
+                      ? <div dangerouslySetInnerHTML={{ __html: labelHtml }} />
+                      : label}
+                  </Label>
                   {dropdownOptions && (
                     <Stack horizontal>
                       <Dropdown
