@@ -309,6 +309,8 @@ function loadComponentCode(code: string, componentName: string, additionalCompon
     'EditableTable', 'EditableTableSchema', 'createTableColumns',
     // ScoringModule exports
     'ScoringModule', 'ScoringModuleSchema', 'createScoringQuestion', 'createScoringTotal', 'createScoringConfig', 'ScoringScales',
+    // FormSessionRuntime exports
+    'FormSessionProvider', 'cloneFormSessionState', 'mergeFormSessionState', 'useFormSessionData',
     // SubformScoring exports
     'SubformScoring',
     // PDF regeneration exports
@@ -551,6 +553,11 @@ export const {
   createScoringTotal,
   createScoringConfig,
   ScoringScales,
+  // FormSessionRuntime
+  FormSessionProvider,
+  cloneFormSessionState,
+  mergeFormSessionState,
+  useFormSessionData,
   // SubformScoring
   SubformScoring,
   // PDF regeneration
