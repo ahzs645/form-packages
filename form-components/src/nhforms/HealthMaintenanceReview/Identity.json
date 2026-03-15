@@ -1,0 +1,13 @@
+{
+  "name": "HealthMaintenanceReview",
+  "title": "Health Maintenance Review",
+  "description": "Read-only preventive care review modal driven by patient context, observations, active conditions, and a configurable JSON ruleset.",
+  "version": {
+    "major": 1,
+    "minor": 0,
+    "patch": 0
+  },
+  "type": "component",
+  "owner": "MOIS Styleguide",
+  "components": []
+}

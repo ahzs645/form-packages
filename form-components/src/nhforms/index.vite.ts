@@ -533,6 +533,7 @@ export const {
   RelationshipStatus,
   FirstNationsStatus,
   FindCodeSelect,
+  HealthMaintenanceReview,
   // HFC components
   HFC_PT_ASMT_PatientAssessment,
   HFC_PT_ASMT_PatientSummary,
