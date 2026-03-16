@@ -1169,8 +1169,8 @@ const ItemCard = ({ item }) => (
   <div
     key={item.id}
     style={{
-      display: 'grid',
-      gridTemplateColumns: 'minmax(0, 1.8fr) minmax(0, 1fr) auto',
+      display: 'flex',
+      flexWrap: 'wrap',
       gap: 14,
       alignItems: 'center',
       padding: 14,
@@ -1179,7 +1179,7 @@ const ItemCard = ({ item }) => (
       background: '#ffffff',
     }}
   >
-    <div style={{ minWidth: 0 }}>
+    <div style={{ minWidth: 220, flex: '2 1 320px' }}>
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
         <Text styles={{ root: { color: '#0f172a', fontWeight: 700 } }}>{item.title}</Text>
         {item.isConditionSpecific ? (
@@ -1215,7 +1215,7 @@ const ItemCard = ({ item }) => (
         </Text>
       </div>
     </div>
-    <div style={{ minWidth: 0 }}>
+    <div style={{ minWidth: 160, flex: '1 1 200px' }}>
       <Text
         styles={{
           root: {
@@ -1232,7 +1232,7 @@ const ItemCard = ({ item }) => (
         Latest: {item.latestDate}
       </Text>
     </div>
-    <div style={{ display: 'grid', justifyItems: 'end', gap: 8 }}>
+    <div style={{ display: 'grid', justifyItems: 'end', gap: 8, marginLeft: 'auto' }}>
       <StatusBadge status={item.status} />
       {item.trendPoints.length >= 2 ? <Sparkline points={item.trendPoints} /> : null}
     </div>
@@ -1424,6 +1424,8 @@ const HealthMaintenanceReview = ({
       <Dialog
         hidden={!isOpen}
         onDismiss={() => setIsOpen(false)}
+        minWidth='min(96vw, 920px)'
+        maxWidth='min(96vw, 1180px)'
         dialogContentProps={{
           type: DialogType.largeHeader,
           title: modalTitle,
@@ -1431,12 +1433,6 @@ const HealthMaintenanceReview = ({
         }}
         modalProps={{
           isBlocking: false,
-          styles: {
-            main: {
-              width: '96vw',
-              maxWidth: 1180,
-            },
-          },
         }}
       >
         <div
