@@ -534,6 +534,7 @@ export const {
   FirstNationsStatus,
   FindCodeSelect,
   HealthMaintenanceReview,
+  ObservationChart,
   // HFC components
   HFC_PT_ASMT_PatientAssessment,
   HFC_PT_ASMT_PatientSummary,
