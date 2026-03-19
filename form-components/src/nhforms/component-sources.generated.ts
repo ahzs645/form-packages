@@ -1666,9 +1666,6 @@ const ConditionalField = ({
   } else if (mode === 'controller' && controllerFieldId) {
     const controllerValue = fd?.field?.data?.[controllerFieldId]
 
-    // DEBUG: Log ConditionalField controller evaluation
-    console.log('[ConditionalField] mode=controller', { controllerFieldId, showWhen, controllerValue, optionValues, invertMatch, showWhenNull, fieldId, formDataKeys: Object.keys(fd?.field?.data || {}) })
-
     // If optionValues is provided, use choice matching instead of boolean matching
     if (optionValues && optionValues.length > 0) {
       isVisible = checkChoiceMatch(controllerValue, optionValues, invertMatch)
@@ -1679,9 +1676,6 @@ const ConditionalField = ({
         ? (normalizeValue(controllerValue) === null ? true : checkControllerMatch(controllerValue, showWhen))
         : checkControllerMatch(controllerValue, showWhen)
     }
-
-    // DEBUG: Log visibility result
-    console.log('[ConditionalField] isVisible:', isVisible)
   } else {
     // Inherit - check if all parent groups are visible
     isVisible = parentContext.parentChain.every(parentId => {
@@ -4666,18 +4660,20 @@ const HFC_PT_ASMT_PatientAssessment = () => {
                     optionSize="tiny"
                 >
                     <table>
-                        <tr>
-                            <td style={{fontSize: "14px", fontWeight: "600", width:"20%", minWidth:"200px"}}># of alcoholic drinks?</td>
-                            <td style={{width:"5%"}}><TextArea fieldId="ptAsAlcoholCount" size="small" labelProps={{style:{minWidth:"0px"}}}/></td>
-                            <td style={{width:"10%",textAlign:"center"}}>Per</td>
-                            <td style={{width:"25%"}}><SimpleCodeSelect optionList={[
-                                {key:"day",text:"Day"},
-                                {key:"week",text:"Week"},
-                                ]}
-                                showOtherOption
-                                fieldId="ptAsAlcoholFreq"
-                            /></td>
-                        </tr>
+                        <tbody>
+                            <tr>
+                                <td style={{fontSize: "14px", fontWeight: "600", width:"20%", minWidth:"200px"}}># of alcoholic drinks?</td>
+                                <td style={{width:"5%"}}><TextArea fieldId="ptAsAlcoholCount" size="small" labelProps={{style:{minWidth:"0px"}}}/></td>
+                                <td style={{width:"10%",textAlign:"center"}}>Per</td>
+                                <td style={{width:"25%"}}><SimpleCodeSelect optionList={[
+                                    {key:"day",text:"Day"},
+                                    {key:"week",text:"Week"},
+                                    ]}
+                                    showOtherOption
+                                    fieldId="ptAsAlcoholFreq"
+                                /></td>
+                            </tr>
+                        </tbody>
                     </table>
                 </SimpleCodeChecklist>
 
@@ -4689,26 +4685,28 @@ const HFC_PT_ASMT_PatientAssessment = () => {
                     optionSize="tiny"
                 >
                     <table>
-                        <tr>
-                            <td style={{fontSize: "14px", fontWeight: "600", width:"20%", minWidth:"210px"}}># of cigarettes smoked?</td>
-                            <td style={{width:"5%"}}><TextArea fieldId="ptAsCigCount" size="tiny" labelProps={{style:{minWidth:"0px"}}}/></td>
-                            <td style={{width:"5%", maxWidth:"100px"}}><SimpleCodeSelect optionList={[
-                                {key:"single",text:"Individual"},
-                                {key:"pack20",text:"Pack (20)"},
-                                {key:"pack25",text:"Pack (25)"},
-                                ]}
-                                fieldId="ptAsCigType"
-                                size={{width:"100px"}}
+                        <tbody>
+                            <tr>
+                                <td style={{fontSize: "14px", fontWeight: "600", width:"20%", minWidth:"210px"}}># of cigarettes smoked?</td>
+                                <td style={{width:"5%"}}><TextArea fieldId="ptAsCigCount" size="tiny" labelProps={{style:{minWidth:"0px"}}}/></td>
+                                <td style={{width:"5%", maxWidth:"100px"}}><SimpleCodeSelect optionList={[
+                                    {key:"single",text:"Individual"},
+                                    {key:"pack20",text:"Pack (20)"},
+                                    {key:"pack25",text:"Pack (25)"},
+                                    ]}
+                                    fieldId="ptAsCigType"
+                                    size={{width:"100px"}}
+                                    /></td>
+                                <td style={{width:"10%", textAlign:"center"}}>Per</td>
+                                <td style={{width:"25%"}}><SimpleCodeSelect optionList={[
+                                    {key:"day",text:"Day"},
+                                    {key:"week",text:"Week"},
+                                    ]}
+                                    showOtherOption
+                                    fieldId="ptAsCigFreq"
                                 /></td>
-                            <td style={{width:"10%", textAlign:"center"}}>Per</td>
-                            <td style={{width:"25%"}}><SimpleCodeSelect optionList={[
-                                {key:"day",text:"Day"},
-                                {key:"week",text:"Week"},
-                                ]}
-                                showOtherOption
-                                fieldId="ptAsCigFreq"
-                            /></td>
-                        </tr>
+                            </tr>
+                        </tbody>
                     </table>
                 </SimpleCodeChecklist>
                
@@ -4764,7 +4762,7 @@ const HFC_PT_ASMT_PatientAssessment = () => {
                 <tbody>
                     {symptomsTable.map((obs)=>{
                               return (
-                                <TableMeasureRow label={obs.display} testId={obs.code} fieldId={obs.fieldId}/>
+                                <TableMeasureRow key={obs.fieldId} label={obs.display} testId={obs.code} fieldId={obs.fieldId}/>
                               )
                             })
                     }
@@ -4820,7 +4818,7 @@ const HFC_PT_ASMT_PatientAssessment = () => {
                 <tbody>
                     {swellingTable.map((obs)=>{
                               return (
-                                <TableMeasureRow label={obs.display} testId={obs.code} fieldId={obs.fieldId}/>
+                                <TableMeasureRow key={obs.fieldId} label={obs.display} testId={obs.code} fieldId={obs.fieldId}/>
                               )
                             })
                     }
@@ -4898,17 +4896,19 @@ const HFC_PT_ASMT_PatientAssessment = () => {
                 <div className="hideonprint"><Link href="https://www.hiv.uw.edu/page/mental-health-screening/phq-2" target="_blank">PHQ2 Questionnaire reference</Link></div>
                 <br/>
                 <table style={{borderCollapse:"collapse",border:"1px solid black", pageBreakInside:"avoid"}}>
-                    <tr style={{borderBottom:"2px solid darkgrey", backgroundColor:"lightgray",pageBreakInside:"avoid"}}>
-                        <th style={{textAlign:"left", width:"60%",borderCollapse:"collapse"}}>Over the last 2 weeks, how often have you been bothered by any of the following problems?</th>
-                        <th style={{textAlign:"center", width:"10%",borderCollapse:"collapse"}}>Not at all</th>
-                        <th style={{textAlign:"center", width:"10%",borderCollapse:"collapse"}}>Several Days</th>
-                        <th style={{textAlign:"center", width:"15%",borderCollapse:"collapse"}}>More than half days</th>
-                        <th style={{textAlign:"center", width:"15%",borderCollapse:"collapse"}}>Nearly everyday</th>
-                    </tr>
+                    <thead>
+                        <tr style={{borderBottom:"2px solid darkgrey", backgroundColor:"lightgray",pageBreakInside:"avoid"}}>
+                            <th style={{textAlign:"left", width:"60%",borderCollapse:"collapse"}}>Over the last 2 weeks, how often have you been bothered by any of the following problems?</th>
+                            <th style={{textAlign:"center", width:"10%",borderCollapse:"collapse"}}>Not at all</th>
+                            <th style={{textAlign:"center", width:"10%",borderCollapse:"collapse"}}>Several Days</th>
+                            <th style={{textAlign:"center", width:"15%",borderCollapse:"collapse"}}>More than half days</th>
+                            <th style={{textAlign:"center", width:"15%",borderCollapse:"collapse"}}>Nearly everyday</th>
+                        </tr>
+                    </thead>
+                    <tbody>
                     {fd.field?.data?.PHQ9Questionnaire?.Questions.map((obj)=>{
-                            
                             return obj.questionIndex<= 2 ?(
-                                    <tr style={{backgroundColor:\`\${obj.questionIndex%2===1?null:'#eee'}\`,pageBreakInside:"avoid"}}>
+                                    <tr key={\`phq2-\${obj.questionIndex}\`} style={{backgroundColor:\`\${obj.questionIndex%2===1?null:'#eee'}\`,pageBreakInside:"avoid"}}>
                                         <td style={{padding:"5px 7px",pageBreakInside:"avoid"}}>{\`\${obj.questionIndex}. \${obj.questionText}\`}</td>
                                         <td style={{height:"1px",pageBreakInside:"avoid"}}><DefaultButton toggle checked={obj.selectedAnswer.fieldId === \`PHQ9Q\${obj.questionIndex}0\`} className={\`\${obj.selectedAnswer.fieldId === \`PHQ9Q\${obj.questionIndex}0\`?"phqans":""}\`} styles={PHQ9btnstyle} text="0" onClick={()=>toggleSelect(obj.questionIndex-1,obj.selectedAnswer.fieldId === \`PHQ9Q\${obj.questionIndex}0\`?null:0)}/></td>
                                         <td style={{height:"1px",pageBreakInside:"avoid"}}><DefaultButton toggle checked={obj.selectedAnswer.fieldId === \`PHQ9Q\${obj.questionIndex}1\`} className={\`\${obj.selectedAnswer.fieldId === \`PHQ9Q\${obj.questionIndex}1\`?"phqans":""}\`} styles={PHQ9btnstyle} text="1" onClick={()=>toggleSelect(obj.questionIndex-1,obj.selectedAnswer.fieldId === \`PHQ9Q\${obj.questionIndex}1\`?null:1)}/></td>
@@ -4919,6 +4919,7 @@ const HFC_PT_ASMT_PatientAssessment = () => {
                             ):null
                             }
                         )}
+                    </tbody>
                 </table>
             </SubTitle>
             
@@ -4937,17 +4938,19 @@ const HFC_PT_ASMT_PatientAssessment = () => {
                     <br />
                     
                     <table style={{borderCollapse:"collapse",border:"1px solid black"}}>
-                        <tr style={{borderBottom:"2px solid darkgrey", backgroundColor:"lightgray",pageBreakInside:"avoid"}}>
-                            <th style={{textAlign:"left", width:"60%",borderCollapse:"collapse"}}>Over the last 2 weeks, how often have you been bothered by any of the following problems?</th>
-                            <th style={{textAlign:"center", width:"10%",borderCollapse:"collapse"}}>Not at all</th>
-                            <th style={{textAlign:"center", width:"10%",borderCollapse:"collapse"}}>Several Days</th>
-                            <th style={{textAlign:"center", width:"15%",borderCollapse:"collapse"}}>More than half days</th>
-                            <th style={{textAlign:"center", width:"15%",borderCollapse:"collapse"}}>Nearly everyday</th>
-                        </tr>
+                        <thead>
+                            <tr style={{borderBottom:"2px solid darkgrey", backgroundColor:"lightgray",pageBreakInside:"avoid"}}>
+                                <th style={{textAlign:"left", width:"60%",borderCollapse:"collapse"}}>Over the last 2 weeks, how often have you been bothered by any of the following problems?</th>
+                                <th style={{textAlign:"center", width:"10%",borderCollapse:"collapse"}}>Not at all</th>
+                                <th style={{textAlign:"center", width:"10%",borderCollapse:"collapse"}}>Several Days</th>
+                                <th style={{textAlign:"center", width:"15%",borderCollapse:"collapse"}}>More than half days</th>
+                                <th style={{textAlign:"center", width:"15%",borderCollapse:"collapse"}}>Nearly everyday</th>
+                            </tr>
+                        </thead>
+                        <tbody>
                         {fd.field?.data?.PHQ9Questionnaire?.Questions.map((obj)=>{
-                                
                                 return (
-                                        <tr style={{backgroundColor:\`\${obj.questionIndex%2===1?null:'#eee'}\`,pageBreakInside:"avoid"}}>
+                                        <tr key={\`phq9-\${obj.questionIndex}\`} style={{backgroundColor:\`\${obj.questionIndex%2===1?null:'#eee'}\`,pageBreakInside:"avoid"}}>
                                             <td style={{padding:"5px 7px",pageBreakInside:"avoid"}}>{\`\${obj.questionIndex}. \${obj.questionText}\`}</td>
                                             <td style={{height:"1px",pageBreakInside:"avoid"}}><DefaultButton toggle checked={obj.selectedAnswer.fieldId === \`PHQ9Q\${obj.questionIndex}0\`} className={\`\${obj.selectedAnswer.fieldId === \`PHQ9Q\${obj.questionIndex}0\`?"phqans":""}\`} styles={PHQ9btnstyle} text="0" onClick={()=>toggleSelect(obj.questionIndex-1,obj.selectedAnswer.fieldId === \`PHQ9Q\${obj.questionIndex}0\`?null:0)}/></td>
                                             <td style={{height:"1px",pageBreakInside:"avoid"}}><DefaultButton toggle checked={obj.selectedAnswer.fieldId === \`PHQ9Q\${obj.questionIndex}1\`} className={\`\${obj.selectedAnswer.fieldId === \`PHQ9Q\${obj.questionIndex}1\`?"phqans":""}\`} styles={PHQ9btnstyle} text="1" onClick={()=>toggleSelect(obj.questionIndex-1,obj.selectedAnswer.fieldId === \`PHQ9Q\${obj.questionIndex}1\`?null:1)}/></td>
@@ -4957,6 +4960,7 @@ const HFC_PT_ASMT_PatientAssessment = () => {
                                 )
                                 }
                             )}
+                        </tbody>
                     </table>
                     
                     
@@ -4965,11 +4969,13 @@ const HFC_PT_ASMT_PatientAssessment = () => {
                
                 {(fd.field?.data?.PHQ9Questionnaire?.PHQ9Score>9||(fd.field?.data?.PHQ9Questionnaire?.Questions?.[8]?.selectedAnswer?.value>0)) ?
                     <table style={{width:"100%",backgroundColor:"#ffb6c142",pageBreakInside:"avoid",marginLeft:"2em",maxWidth:"858px"}}>
-                        <tr style={{pageBreakInside:"avoid"}}>
-                            <td style={{width:"21%"}}><Heading text="Inform MD?"/></td>
-                            <td style={{width:"15%"}}><SimpleCodeChecklist fieldId="ptAsPHQ9InformDoc" codeSystem="MOIS-YESNO" size="small" optionSize=""/></td>
-                            <td style={{width:"60%"}}><TextArea placeholder="Additional Comments" fieldId="ptAsPHQ9InformDocNotes" multiline textFieldProps={{autoAdjustHeight:true,resizable:false}} labelProps={{style:{minWidth:"0px"}}}/></td>
-                        </tr>    
+                        <tbody>
+                            <tr style={{pageBreakInside:"avoid"}}>
+                                <td style={{width:"21%"}}><Heading text="Inform MD?"/></td>
+                                <td style={{width:"15%"}}><SimpleCodeChecklist fieldId="ptAsPHQ9InformDoc" codeSystem="MOIS-YESNO" size="small" optionSize=""/></td>
+                                <td style={{width:"60%"}}><TextArea placeholder="Additional Comments" fieldId="ptAsPHQ9InformDocNotes" multiline textFieldProps={{autoAdjustHeight:true,resizable:false}} labelProps={{style:{minWidth:"0px"}}}/></td>
+                            </tr>
+                        </tbody>
                     </table>
                     :
                     null
@@ -5000,11 +5006,13 @@ const HFC_PT_ASMT_PatientAssessment = () => {
                 textFieldProps={{autoAdjustHeight:true,resizable:false}}
             />
             <table>
-                <tr style={{pageBreakInside:"avoid"}}>
-                    <td style={{width:"25%",verticalAlign:"text-top"}}><Heading text="Group and/or 1:1 Heart Failure Education Complete?"/></td>
-                    <td style={{width:"15%"}}><SimpleCodeChecklist fieldId="ptAsGrpHFEdComplete" codeSystem="MOIS-YESNO" size="small" optionSize=""/></td>
-                    <td style={{width:"60%"}}><TextArea placeholder="Additional Comments" fieldId="ptAsGrpHFEdNotes" multiline textFieldProps={{autoAdjustHeight:true,resizable:false}} labelProps={{style:{minWidth:"0px"}}}/></td>
-                </tr>    
+                <tbody>
+                    <tr style={{pageBreakInside:"avoid"}}>
+                        <td style={{width:"25%",verticalAlign:"text-top"}}><Heading text="Group and/or 1:1 Heart Failure Education Complete?"/></td>
+                        <td style={{width:"15%"}}><SimpleCodeChecklist fieldId="ptAsGrpHFEdComplete" codeSystem="MOIS-YESNO" size="small" optionSize=""/></td>
+                        <td style={{width:"60%"}}><TextArea placeholder="Additional Comments" fieldId="ptAsGrpHFEdNotes" multiline textFieldProps={{autoAdjustHeight:true,resizable:false}} labelProps={{style:{minWidth:"0px"}}}/></td>
+                    </tr>
+                </tbody>
             </table>
 
 
@@ -5877,7 +5885,8 @@ const PHQ9Quest=
     "PHQ9Score":null,
     "PHQ2Score":null,
     "Difficulties":{}
-    }`,
+    }
+`,
   './HFC_PT_ASMT_PatientSummary/index.jsx': `
 const HFC_PT_ASMT_PatientSummary = (props) => {
     const [fd,setFd]=useActiveData()
@@ -17814,6 +17823,77 @@ const _buildScaleLegendSignature = (field) => {
   )
 }
 
+const _buildDataEntryRenderGroups = (fields) => {
+  const groups = []
+  let matrixBuffer = null
+
+  const flushMatrixBuffer = () => {
+    if (!matrixBuffer || matrixBuffer.fields.length === 0) return
+    if (matrixBuffer.fields.length === 1) {
+      groups.push({ type: "field", field: matrixBuffer.fields[0] })
+    } else {
+      groups.push({
+        type: "scaleMatrix",
+        matrixGroupId: matrixBuffer.matrixGroupId,
+        signature: matrixBuffer.signature,
+        options: matrixBuffer.options,
+        fields: matrixBuffer.fields,
+      })
+    }
+    matrixBuffer = null
+  }
+
+  for (const field of fields || []) {
+    const matrixGroupId = typeof field?.matrixGroupId === "string" ? field.matrixGroupId.trim() : ""
+    const isMatrixCandidate = field?.type === "scale" && matrixGroupId
+
+    if (!isMatrixCandidate) {
+      flushMatrixBuffer()
+      groups.push({ type: "field", field })
+      continue
+    }
+
+    const signature = _buildScaleLegendSignature(field)
+    const options = _buildScaleOptions(field)
+    if (
+      matrixBuffer &&
+      matrixBuffer.matrixGroupId === matrixGroupId &&
+      matrixBuffer.signature === signature
+    ) {
+      matrixBuffer.fields.push(field)
+      continue
+    }
+
+    flushMatrixBuffer()
+    matrixBuffer = {
+      matrixGroupId,
+      signature,
+      options,
+      fields: [field],
+    }
+  }
+
+  flushMatrixBuffer()
+  return groups
+}
+
+const _isScaleChoiceSelected = (value, option) => {
+  const optionValue = String(option?.value ?? "")
+  if (value && typeof value === "object") {
+    if (value.selectedKey !== null && value.selectedKey !== undefined) {
+      return String(value.selectedKey) === optionValue
+    }
+    if (Number.isFinite(value.value)) {
+      return Number(value.value) === Number(option.value)
+    }
+  }
+  const numeric = _toNumericValue(value)
+  if (numeric !== null) {
+    return numeric === Number(option.value)
+  }
+  return false
+}
+
 const _formatNumericValue = (value, precision = 1) => {
   if (value === null || value === undefined || !Number.isFinite(Number(value))) return null
   const numeric = Number(value)
@@ -18190,6 +18270,10 @@ const SubformScoringInner = ({
       map.set(field.id, field)
     }
     return map
+  }, [dataEntryFields])
+
+  const dataEntryRenderGroups = useMemo(() => {
+    return _buildDataEntryRenderGroups(dataEntryFields)
   }, [dataEntryFields])
 
   const dataEntryCalculatorConfig = useMemo(() => {
@@ -18677,6 +18761,117 @@ const SubformScoringInner = ({
     )
   }
 
+  const renderDataEntryScaleMatrix = (group) => {
+    const options = Array.isArray(group?.options) ? group.options : []
+    const fields = Array.isArray(group?.fields) ? group.fields : []
+    if (options.length === 0 || fields.length === 0) return null
+
+    const columnTemplate = \`minmax(240px, 1.8fr) repeat(\${options.length}, minmax(56px, 1fr))\`
+
+    return (
+      <div
+        key={\`matrix-\${group.matrixGroupId || fields.map((field) => field.id).join("-")}\`}
+        style={{
+          width: "100%",
+          border: \`1px solid \${isDarkMode ? "#404040" : "#d8d8d8"}\`,
+          borderRadius: "8px",
+          overflowX: "auto",
+          backgroundColor: isDarkMode ? "#161616" : "#fff",
+        }}
+      >
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: columnTemplate,
+            gap: "8px",
+            alignItems: "end",
+            padding: "10px 12px",
+            borderBottom: \`1px solid \${isDarkMode ? "#333" : "#ececec"}\`,
+            backgroundColor: isDarkMode ? "#202020" : "#f8f8f8",
+            minWidth: \`\${Math.max(640, 260 + options.length * 76)}px\`,
+          }}
+        >
+          <span />
+          {options.map((option, index) => (
+            <div
+              key={\`matrix-header-\${index}-\${option.value}\`}
+              style={{
+                textAlign: "center",
+                fontSize: "11px",
+                lineHeight: 1.3,
+                fontWeight: 700,
+                color: isDarkMode ? "#f3f3f3" : "#222",
+              }}
+            >
+              <div>{option.description || option.label || option.value}</div>
+              {String(option.description || option.label || "") !== String(option.value) ? (
+                <div style={{ fontSize: "10px", fontWeight: 500, opacity: 0.75 }}>
+                  {option.value}
+                </div>
+              ) : null}
+            </div>
+          ))}
+        </div>
+
+        {fields.map((field, rowIndex) => (
+          <div
+            key={\`matrix-row-\${field.id}\`}
+            style={{
+              display: "grid",
+              gridTemplateColumns: columnTemplate,
+              gap: "8px",
+              alignItems: "center",
+              padding: "10px 12px",
+              borderBottom: rowIndex < fields.length - 1
+                ? \`1px solid \${isDarkMode ? "#2a2a2a" : "#f0f0f0"}\`
+                : "none",
+              minWidth: \`\${Math.max(640, 260 + options.length * 76)}px\`,
+            }}
+          >
+            <div>
+              <Label required={field.required === true}>{field.label}</Label>
+              {field.helpText ? (
+                <Text styles={{ root: { fontSize: "12px", color: isDarkMode ? "#a0a0a0" : "#666", marginTop: "2px" } }}>
+                  {field.helpText}
+                </Text>
+              ) : null}
+            </div>
+
+            {options.map((option) => {
+              const checked = _isScaleChoiceSelected(dataEntryValues[field.id], option)
+              return (
+                <label
+                  key={\`matrix-option-\${field.id}-\${option.value}\`}
+                  style={{
+                    display: "flex",
+                    justifyContent: "center",
+                    alignItems: "center",
+                    cursor: "pointer",
+                    minHeight: "34px",
+                  }}
+                >
+                  <input
+                    type="radio"
+                    name={\`subform_matrix_\${field.id}\`}
+                    checked={checked}
+                    onChange={() =>
+                      setDataEntryValue(field.id, {
+                        selectedKey: String(option.value),
+                        value: option.value,
+                        response: option.label || String(option.value),
+                        detailResponse: option.description || option.label || String(option.value),
+                      })
+                    }
+                  />
+                </label>
+              )
+            })}
+          </div>
+        ))}
+      </div>
+    )
+  }
+
   const renderMorphineCalculator = () => {
     if (!isMorphineCalculatorMode || !dataEntryCalculatorConfig) return null
 
@@ -19012,7 +19207,19 @@ const SubformScoringInner = ({
               renderMorphineCalculator()
             ) : dataEntryFields.length > 0 ? (
               <div style={{ display: "flex", flexWrap: "wrap", columnGap: "12px", rowGap: "10px" }}>
-                {dataEntryFields.map((field, index) => {
+                {dataEntryRenderGroups.map((entry, index) => {
+                  if (entry.type === "scaleMatrix") {
+                    return (
+                      <div
+                        key={\`matrix-group-\${entry.matrixGroupId || index}\`}
+                        style={{ flex: "1 0 100%", maxWidth: "100%" }}
+                      >
+                        {renderDataEntryScaleMatrix(entry)}
+                      </div>
+                    )
+                  }
+
+                  const field = entry.field
                   const isHeading = _isHeadingField(field)
                   const basis = _resolveFieldWidthBasis(field)
                   let showLegendForScale = undefined
@@ -19020,7 +19227,9 @@ const SubformScoringInner = ({
                     const currentSignature = _buildScaleLegendSignature(field)
                     let previousScaleSignature = null
                     for (let prevIndex = index - 1; prevIndex >= 0; prevIndex -= 1) {
-                      const previousField = dataEntryFields[prevIndex]
+                      const previousEntry = dataEntryRenderGroups[prevIndex]
+                      if (!previousEntry || previousEntry.type !== "field") break
+                      const previousField = previousEntry.field
                       if (_isHeadingField(previousField)) break
                       if (previousField?.type === "scale" && previousField.showLegend === true) {
                         previousScaleSignature = _buildScaleLegendSignature(previousField)
@@ -19033,15 +19242,16 @@ const SubformScoringInner = ({
                     ? { flex: "1 0 100%", maxWidth: "100%" }
                     : { flex: \`1 1 \${basis}\`, maxWidth: basis, minWidth: "220px" }
                   return (
-                  <div key={field.id} style={containerStyle}>
-                    {renderDataEntryField(field, { showLegend: showLegendForScale })}
-                    {field.helpText && !isHeading && (
-                      <Text styles={{ root: { fontSize: "12px", color: isDarkMode ? "#a0a0a0" : "#666", marginTop: "2px" } }}>
-                        {field.helpText}
-                      </Text>
-                    )}
-                  </div>
-                )})}
+                    <div key={field.id} style={containerStyle}>
+                      {renderDataEntryField(field, { showLegend: showLegendForScale })}
+                      {field.helpText && !isHeading && (
+                        <Text styles={{ root: { fontSize: "12px", color: isDarkMode ? "#a0a0a0" : "#666", marginTop: "2px" } }}>
+                          {field.helpText}
+                        </Text>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
             ) : (
               <Text styles={{ root: { fontSize: "13px", color: isDarkMode ? "#a0a0a0" : "#666" } }}>
