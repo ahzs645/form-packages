@@ -69,6 +69,12 @@ const getOverrideFormStateContext = () => {
   return maybeContext as typeof FormStateContext;
 };
 
+const DEFAULT_FORM_STATE: Partial<FormDataState> = {
+  field: { data: {}, status: {} },
+  // Keep a stable default reference so provider rerenders do not wipe form state.
+  uiState: { sections: [{ isComplete: false }] },
+};
+
 /**
  * Set the InitialData from form code (called by code-transformer after form execution)
  * This merges the InitialData into form data so forms can access fd.field.data.*
@@ -134,9 +140,14 @@ const applyFormDataUpdate = (prevState: FormDataState, updater: any): FormDataSt
     return prevState;
   }
 
-  // Force a new object reference (like mois-form-tester does)
-  // This ensures React detects the change and re-renders consumers
-  return JSON.parse(JSON.stringify(newState));
+  // Preserve no-op immer updates so derived effects can short-circuit correctly.
+  if (newState === prevState) {
+    return prevState;
+  }
+
+  // Keep state unfrozen because some legacy NHForms components still mutate
+  // nested values before committing them back through setFormData.
+  return deepClone(newState);
 };
 
 /**
@@ -157,13 +168,15 @@ const BaseFormStateProvider = ({
   const isRenderingRef = React.useRef(false);
   const pendingUpdatesRef = React.useRef<any[]>([]);
 
-  // Process any pending updates (called after render via useEffect)
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     isRenderingRef.current = false;
+  });
+
+  // Process any pending updates that were queued during render.
+  React.useEffect(() => {
     if (pendingUpdatesRef.current.length > 0) {
       const updates = [...pendingUpdatesRef.current];
       pendingUpdatesRef.current = [];
-      // Apply all pending updates
       updates.forEach(update => {
         setFormDataState(prev => applyFormDataUpdate(prev, update));
       });
@@ -176,12 +189,8 @@ const BaseFormStateProvider = ({
   // Create setFormData function that handles various input types
   // Defers updates that happen during render to avoid React warnings
   const setFormData = useCallback((updater: any) => {
-    // Debug: log when setFormData is called
-    console.log('[setFormData] called', typeof updater);
-
     // If called during render, defer the update to after render
     if (isRenderingRef.current) {
-      console.log('[setFormData] deferred (during render)');
       pendingUpdatesRef.current.push(updater);
       return;
     }
@@ -221,12 +230,7 @@ export const FormStateProvider = ({ children }: { children: React.ReactNode }) =
   {
     registerGlobally: true,
     children,
-    initialFormData: {
-      field: { data: {}, status: {} },
-      // Initialize sections as an array with a default section that is NOT complete
-      // This allows forms to check fd.uiState.sections[0].isComplete === false
-      uiState: { sections: [{ isComplete: false }] },
-    },
+    initialFormData: DEFAULT_FORM_STATE,
   }
 );
 
@@ -260,9 +264,9 @@ export const useActiveDataForForms = (selector?: (data: any) => any): [any, (upd
     const emptyData = {
       field: { data: {}, status: {} },
       uiState: { sections: {} },
-      setFormData: () => { console.log('[useActiveDataForForms] FALLBACK setFormData called - this is a no-op!'); },
+      setFormData: () => {},
     };
-    return [emptyData, () => { console.log('[useActiveDataForForms] FALLBACK setter called - this is a no-op!'); }];
+    return [emptyData, () => {}];
   }
 
   const { formData, setFormData } = context;
@@ -293,13 +297,7 @@ export const useActiveDataForForms = (selector?: (data: any) => any): [any, (upd
     ];
   }
 
-  // Debug: Create a wrapped setter to trace calls
-  const wrappedSetFormData = (updater: any) => {
-    console.log('[useActiveDataForForms] setFd called with', typeof updater);
-    setFormData(updater);
-  };
-
-  return [formDataWithSetter, wrappedSetFormData];
+  return [formDataWithSetter, setFormData];
 };
 
 /**

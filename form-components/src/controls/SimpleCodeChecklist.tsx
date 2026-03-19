@@ -21,6 +21,28 @@ export interface Coding {
   system?: string;
 }
 
+const normalizeSingleSelectionKey = (value: Coding | Coding[] | string | string[] | null | undefined): string | undefined => {
+  if (!value) return undefined;
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) {
+    const first = value[0];
+    return typeof first === "string" ? first : first?.code ?? first?.display ?? undefined;
+  }
+  return value.code ?? value.display ?? undefined;
+};
+
+const normalizeMultipleSelectionKeys = (value: Coding | Coding[] | string | string[] | null | undefined): string[] => {
+  if (!value) return [];
+  if (typeof value === "string") return [value];
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => (typeof entry === "string" ? entry : entry?.code ?? entry?.display ?? null))
+      .filter((entry): entry is string => typeof entry === "string" && entry.length > 0);
+  }
+  const single = value.code ?? value.display ?? undefined;
+  return single ? [single] : [];
+};
+
 export interface SimpleCodeChecklistProps {
   /** Props for the attached action bar (eg: onEdit, onDelete, etc) */
   actions?: any;
@@ -122,7 +144,7 @@ export const SimpleCodeChecklist: React.FC<SimpleCodeChecklistProps> = ({
   const effectiveFieldId = fieldId || id;
 
   // Helper to get value from activeData
-  const getValueFromActiveData = (): Coding | Coding[] | null => {
+  const getValueFromActiveData = (): Coding | Coding[] | string | string[] | null => {
     if (effectiveFieldId && activeData?.field?.data) {
       return (activeData.field.data as any)[effectiveFieldId] ?? null;
     }
@@ -132,25 +154,14 @@ export const SimpleCodeChecklist: React.FC<SimpleCodeChecklistProps> = ({
   const activeValue = getValueFromActiveData();
 
   const [selectedKey, setSelectedKey] = useState<string | undefined>(() => {
-    // Check activeData first
-    if (activeValue && !Array.isArray(activeValue)) {
-      return activeValue.code ?? undefined;
-    }
-    if (defaultValue && !Array.isArray(defaultValue)) {
-      return defaultValue.code ?? undefined;
-    }
-    return undefined;
+    return normalizeSingleSelectionKey(activeValue) ?? normalizeSingleSelectionKey(defaultValue as Coding | Coding[] | undefined);
   });
 
   const [selectedKeys, setSelectedKeys] = useState<string[]>(() => {
-    // Check activeData first
-    if (activeValue && Array.isArray(activeValue)) {
-      return activeValue.map(c => c.code).filter((c): c is string => c !== null);
-    }
-    if (defaultValue && Array.isArray(defaultValue)) {
-      return defaultValue.map(c => c.code).filter((c): c is string => c !== null);
-    }
-    return [];
+    const nextKeys = normalizeMultipleSelectionKeys(activeValue);
+    return nextKeys.length > 0
+      ? nextKeys
+      : normalizeMultipleSelectionKeys(defaultValue as Coding | Coding[] | undefined);
   });
 
   const [otherText, setOtherText] = useState('');
@@ -168,17 +179,12 @@ export const SimpleCodeChecklist: React.FC<SimpleCodeChecklistProps> = ({
 
   // Derive effective selected value(s) from activeData or local state
   const effectiveSelectedKey = (() => {
-    if (activeValue && !Array.isArray(activeValue)) {
-      return activeValue.code ?? selectedKey;
-    }
-    return selectedKey;
+    return normalizeSingleSelectionKey(activeValue) ?? selectedKey;
   })();
 
   const effectiveSelectedKeys = (() => {
-    if (activeValue && Array.isArray(activeValue)) {
-      return activeValue.map(c => c.code).filter((c): c is string => c !== null);
-    }
-    return selectedKeys;
+    const nextKeys = normalizeMultipleSelectionKeys(activeValue);
+    return nextKeys.length > 0 ? nextKeys : selectedKeys;
   })();
 
   const isEmpty = selectionType === 'multiple'

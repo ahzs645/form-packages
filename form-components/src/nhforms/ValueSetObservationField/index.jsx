@@ -28,6 +28,23 @@ const normalizeObservationOptions = (optionList, codeSystem, sd) => {
   }
   return []
 }
+const stripVolatilePayloadFields = (value) => {
+  if (Array.isArray(value)) {
+    return value.map((item) => stripVolatilePayloadFields(item))
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([key]) => key !== "collectedDateTime")
+        .map(([key, nestedValue]) => [key, stripVolatilePayloadFields(nestedValue)])
+    )
+  }
+  return value
+}
+const payloadsEqual = (left, right) => (
+  JSON.stringify(stripVolatilePayloadFields(left ?? null)) ===
+  JSON.stringify(stripVolatilePayloadFields(right ?? null))
+)
 
 const setNestedPayload = (setFormData, componentId, payloadType, payload) => {
   setFormData((draft) => {
@@ -37,7 +54,7 @@ const setNestedPayload = (setFormData, componentId, payloadType, payload) => {
     const key = payloadType === "webform" ? "webformUpdatesByComponent" : "dcoUpdatesByComponent"
     const nextGroup = container[key] ?? {}
     const currentPayload = nextGroup[componentId]
-    if (JSON.stringify(currentPayload ?? null) === JSON.stringify(payload ?? null)) {
+    if (payloadsEqual(currentPayload, payload)) {
       return
     }
     if (payload == null || (Array.isArray(payload) && payload.length === 0)) {

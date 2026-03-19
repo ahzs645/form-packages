@@ -142,6 +142,84 @@ const _normalizeMirroredCellValue = (value, column) => {
   return value
 }
 
+const _normalizeSourceCellValue = (value, column) => {
+  if (column?.type === "checkbox") {
+    return Boolean(value)
+  }
+
+  if (value === undefined || value === null) {
+    return column?.type === "checkbox" ? false : ""
+  }
+
+  if (column?.type === "dropdown") {
+    if (typeof value === "string") return value
+    if (Array.isArray(value)) {
+      const first = value[0]
+      if (typeof first === "string") return first
+      return _stringifyValue(first)
+    }
+    if (typeof value === "object") {
+      return _stringifyValue(value.code ?? value.display ?? value.value ?? value.key ?? value.text ?? "")
+    }
+  }
+
+  if (column?.type === "number") {
+    if (typeof value === "number") return value
+    if (typeof value === "string") return value
+  }
+
+  if (typeof value === "string") return value
+  return _stringifyValue(value)
+}
+
+const _buildRowsFromSourceFields = ({
+  fieldData,
+  columns = [],
+  sourceFieldIds = {},
+  sourceFieldIdsByRow = {},
+  initialRows = 1,
+}) => {
+  if (!fieldData || typeof fieldData !== "object") return []
+  if (!Array.isArray(columns) || columns.length === 0) return []
+
+  const explicitRowIndexes = Object.keys(sourceFieldIdsByRow || {})
+    .map((key) => Number(key))
+    .filter((value) => Number.isFinite(value))
+    .sort((left, right) => left - right)
+
+  const inferredRowCount = explicitRowIndexes.length > 0
+    ? explicitRowIndexes[explicitRowIndexes.length - 1] + 1
+    : Math.max(initialRows, 1)
+
+  const rows = []
+
+  for (let rowIndex = 0; rowIndex < inferredRowCount; rowIndex += 1) {
+    const row = _makeEmptyRow(columns, rowIndex)
+    let hasMeaningfulValue = false
+
+    columns.forEach((column) => {
+      const sourceFieldId = sourceFieldIdsByRow?.[rowIndex]?.[column.id]
+        || sourceFieldIds?.[column.id]
+        || null
+      if (!sourceFieldId) return
+
+      const rawValue = fieldData[sourceFieldId]
+      const normalizedValue = _normalizeSourceCellValue(rawValue, column)
+      _setValueAtPath(row, column.dataPath || column.id, normalizedValue)
+
+      if (_isMeaningfulValue(normalizedValue)) {
+        hasMeaningfulValue = true
+      }
+    })
+
+    if (hasMeaningfulValue) {
+      rows.push(row)
+    }
+  }
+
+  return rows
+}
+
 const _normalizeUniqueToken = (row, columnId, columns = []) => {
   const column = columns.find((item) => item.id === columnId) || { id: columnId, dataPath: columnId }
   const raw = _getValueAtPath(row, column.dataPath || column.id)
@@ -516,6 +594,13 @@ EditableTable = ({
   }
 
   const rows = getRows()
+  const sourceSeedRows = useMemo(() => _buildRowsFromSourceFields({
+    fieldData: fd?.field?.data,
+    columns,
+    sourceFieldIds,
+    sourceFieldIdsByRow,
+    initialRows,
+  }), [fd?.field?.data, columns, sourceFieldIds, sourceFieldIdsByRow, initialRows])
 
   useEffect(() => {
     if (rows) return
@@ -532,6 +617,16 @@ EditableTable = ({
       setVisibleRows(rowCount)
     }
   }, [rows, visibleRows])
+
+  useEffect(() => {
+    if (sourceSeedRows.length === 0) return
+
+    const existingRows = Array.isArray(rows) ? rows : []
+    const hasMeaningfulRows = existingRows.some((row) => !_isRowEmpty(row, columns))
+    if (hasMeaningfulRows) return
+
+    setRows(sourceSeedRows)
+  }, [rows, columns, setRows, sourceSeedRows])
 
   const currentRows = Array.isArray(rows) ? rows : []
 
