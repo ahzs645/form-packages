@@ -263,9 +263,14 @@ export const OptionChoice: React.FC<OptionChoiceProps> = ({
     return checked ? yesText : noText;
   };
 
+  const normalizedCustomOptions: IChoiceGroupOption[] = (customOptions ?? []).map((option, index) => ({
+    ...option,
+    key: option.key ?? option.text ?? String(index),
+  }));
+
   // Use custom options or default Yes/No
   const radioOptions: IChoiceGroupOption[] = useCustomOptions
-    ? customOptions
+    ? normalizedCustomOptions
     : [
         { key: 'Y', text: yesText },
         { key: 'N', text: noText },
