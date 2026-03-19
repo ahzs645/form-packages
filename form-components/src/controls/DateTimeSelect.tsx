@@ -6,10 +6,12 @@
 
 import React, { useEffect, useState } from 'react';
 import { IDatePickerProps } from '@fluentui/react';
-import { DateSelect } from './DateSelect';
+import { DateSelect, formatCanonicalDate, parseDateValue } from './DateSelect';
 import { TimeSelect } from '../controls/TimeSelect';
 import { LayoutItem } from '../controls/LayoutItem';
 import { useActiveDataForForms } from '../hooks/form-state';
+
+type SupportedDateFormat = 'yyyy.MM.dd' | 'dd/MM/yyyy' | 'MM-dd-yyyy' | 'yyyy-MM-dd';
 
 export interface DateTimeSelectProps {
   /** Props for the attached action bar (eg: onEdit, onDelete, etc) */
@@ -18,6 +20,8 @@ export interface DateTimeSelectProps {
   borderless?: boolean;
   /** Override props to underlying DatePicker component */
   datePickerProps?: Partial<IDatePickerProps>;
+  /** Display format for the rendered date value */
+  dateFormat?: SupportedDateFormat;
   /** Initial date value YYYY-MM-DD, YYYY/MM/DD, or YYYY.MM.DD */
   defaultValue?: string;
   /** Default time value HH:MM */
@@ -68,6 +72,7 @@ export const DateTimeSelect: React.FC<DateTimeSelectProps> = ({
   actions,
   borderless,
   datePickerProps,
+  dateFormat,
   defaultValue,
   defaultTime = '00:00',
   disabled,
@@ -83,7 +88,7 @@ export const DateTimeSelect: React.FC<DateTimeSelectProps> = ({
   moisModule,
   note,
   onChange,
-  placeholder = 'YYYY.MM.DD',
+  placeholder,
   placement,
   readOnly,
   required,
@@ -110,6 +115,51 @@ export const DateTimeSelect: React.FC<DateTimeSelectProps> = ({
   useEffect(() => {
     setTimeValue(persistedTime ?? defaultTime);
   }, [defaultTime, persistedTime]);
+
+  useEffect(() => {
+    if (!effectiveFieldId || !defaultValue) return;
+    if (
+      activeValue
+      && typeof activeValue === 'object'
+      && (
+        typeof (activeValue as { date?: string }).date === 'string'
+        || typeof (activeValue as { time?: string }).time === 'string'
+      )
+    ) {
+      return;
+    }
+
+    const parsedDefault = parseDateValue(defaultValue, dateFormat);
+    if (!parsedDefault) return;
+    const formattedDate = formatCanonicalDate(parsedDefault);
+
+    setActiveData((draft: any) => {
+      if (!draft.field) draft.field = { data: {}, status: {}, history: [] };
+      if (!draft.field.data) draft.field.data = {};
+
+      const currentValue = draft.field.data?.[effectiveFieldId];
+      if (
+        currentValue
+        && typeof currentValue === 'object'
+        && (
+          typeof currentValue.date === 'string'
+          || typeof currentValue.time === 'string'
+        )
+      ) {
+        return;
+      }
+
+      const nextValue = {
+        date: formattedDate,
+        time: defaultTime,
+      };
+      draft.field.data[effectiveFieldId] = nextValue;
+      (linkedFieldIds ?? []).forEach((linkedFieldId) => {
+        if (!linkedFieldId || linkedFieldId === effectiveFieldId) return;
+        draft.field.data[linkedFieldId] = { ...nextValue };
+      });
+    });
+  }, [activeValue, dateFormat, defaultTime, defaultValue, effectiveFieldId, linkedFieldIds, setActiveData]);
 
   if (hidden) return null;
 
@@ -164,6 +214,7 @@ export const DateTimeSelect: React.FC<DateTimeSelectProps> = ({
         <DateSelect
           inline
           placeholder={placeholder}
+          dateFormat={dateFormat}
           defaultValue={defaultValue}
           value={dateValue}
           disabled={disabled}

@@ -4,9 +4,18 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { DatePicker, Label, Stack, Toggle, IDatePickerProps } from '@fluentui/react';
+import { DatePicker, DefaultButton, IDatePickerProps, Stack, Toggle } from '@fluentui/react';
 import { LayoutItem } from '../controls/LayoutItem';
 import { useActiveDataForForms } from '../hooks/form-state';
+
+type SupportedDateFormat = 'yyyy.MM.dd' | 'dd/MM/yyyy' | 'MM-dd-yyyy' | 'yyyy-MM-dd';
+const DEFAULT_DATE_FORMAT: SupportedDateFormat = 'yyyy.MM.dd';
+const DATE_PLACEHOLDER_MAP: Record<SupportedDateFormat, string> = {
+  'yyyy.MM.dd': 'YYYY.MM.DD',
+  'dd/MM/yyyy': 'DD/MM/YYYY',
+  'MM-dd-yyyy': 'MM-DD-YYYY',
+  'yyyy-MM-dd': 'YYYY-MM-DD',
+};
 
 export interface DateSelectProps {
   /** Props for the attached action bar (eg: onEdit, onDelete, etc) */
@@ -17,6 +26,8 @@ export interface DateSelectProps {
   buttonControls?: boolean;
   /** Override props to underlying Fluent component */
   datePickerProps?: Partial<IDatePickerProps>;
+  /** Display format for the rendered date value */
+  dateFormat?: SupportedDateFormat;
   /** Optional mapping for composite date fields (day/month/year PDF fields) */
   componentFields?: Array<{
     fieldId: string;
@@ -74,7 +85,7 @@ export interface DateSelectProps {
   inline?: boolean;
 }
 
-const formatDate = (date?: Date): string => {
+export const formatCanonicalDate = (date?: Date): string => {
   if (!date) return '';
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -82,15 +93,84 @@ const formatDate = (date?: Date): string => {
   return `${year}.${month}.${day}`;
 };
 
-const parseDate = (dateStr: string): Date | undefined => {
-  if (!dateStr) return undefined;
-  // Support YYYY-MM-DD, YYYY/MM/DD, or YYYY.MM.DD
-  const normalized = dateStr.replace(/[\/\.]/g, '-');
-  const parts = normalized.split('-');
-  if (parts.length === 3) {
-    return new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+const createDate = (year: number, month: number, day: number): Date | undefined => {
+  const parsed = new Date(year, month - 1, day);
+  if (
+    Number.isNaN(parsed.getTime())
+    || parsed.getFullYear() !== year
+    || parsed.getMonth() !== month - 1
+    || parsed.getDate() !== day
+  ) {
+    return undefined;
   }
+  return parsed;
+};
+
+const parseDateByFormat = (dateStr: string, format: SupportedDateFormat): Date | undefined => {
+  if (!dateStr) return undefined;
+  const trimmed = dateStr.trim();
+  if (!trimmed) return undefined;
+
+  const separatorPattern = '[./-]';
+  let match: RegExpMatchArray | null = null;
+  switch (format) {
+    case 'dd/MM/yyyy':
+      match = trimmed.match(new RegExp(`^(\\d{1,2})${separatorPattern}(\\d{1,2})${separatorPattern}(\\d{4})$`));
+      return match ? createDate(Number(match[3]), Number(match[2]), Number(match[1])) : undefined;
+    case 'MM-dd-yyyy':
+      match = trimmed.match(new RegExp(`^(\\d{1,2})${separatorPattern}(\\d{1,2})${separatorPattern}(\\d{4})$`));
+      return match ? createDate(Number(match[3]), Number(match[1]), Number(match[2])) : undefined;
+    case 'yyyy-MM-dd':
+    case 'yyyy.MM.dd':
+    default:
+      match = trimmed.match(new RegExp(`^(\\d{4})${separatorPattern}(\\d{1,2})${separatorPattern}(\\d{1,2})$`));
+      return match ? createDate(Number(match[1]), Number(match[2]), Number(match[3])) : undefined;
+  }
+};
+
+export const parseDateValue = (
+  dateStr: string,
+  preferredFormat: SupportedDateFormat = DEFAULT_DATE_FORMAT
+): Date | undefined => {
+  if (!dateStr) return undefined;
+
+  const formats = Array.from(new Set<SupportedDateFormat>([
+    preferredFormat,
+    DEFAULT_DATE_FORMAT,
+    'yyyy-MM-dd',
+    'dd/MM/yyyy',
+    'MM-dd-yyyy',
+  ]));
+
+  for (const format of formats) {
+    const parsed = parseDateByFormat(dateStr, format);
+    if (parsed) return parsed;
+  }
+
   return undefined;
+};
+
+const formatDisplayDate = (
+  date: Date | undefined,
+  format: SupportedDateFormat = DEFAULT_DATE_FORMAT
+): string => {
+  if (!date) return '';
+
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+
+  switch (format) {
+    case 'dd/MM/yyyy':
+      return `${day}/${month}/${year}`;
+    case 'MM-dd-yyyy':
+      return `${month}-${day}-${year}`;
+    case 'yyyy-MM-dd':
+      return `${year}-${month}-${day}`;
+    case 'yyyy.MM.dd':
+    default:
+      return `${year}.${month}.${day}`;
+  }
 };
 
 const buildDateFromComponents = (
@@ -122,11 +202,24 @@ const buildDateFromComponents = (
   return `${normalizedYear}.${normalizedMonth}.${normalizedDay}`;
 };
 
+const calculateAge = (date: Date | undefined): string => {
+  if (!date) return '';
+  const today = new Date();
+  let age = today.getFullYear() - date.getFullYear();
+  const monthDelta = today.getMonth() - date.getMonth();
+  if (monthDelta < 0 || (monthDelta === 0 && today.getDate() < date.getDate())) {
+    age -= 1;
+  }
+  return age >= 0 ? `${age} years` : '';
+};
+
 export const DateSelect: React.FC<DateSelectProps> = ({
   actions,
   borderless,
+  buttonControls,
   componentFields,
   datePickerProps,
+  dateFormat = DEFAULT_DATE_FORMAT,
   defaultValue,
   disabled,
   fieldId,
@@ -142,12 +235,13 @@ export const DateSelect: React.FC<DateSelectProps> = ({
   moisModule,
   note,
   onChange,
-  placeholder = 'YYYY.MM.DD',
+  placeholder,
   placement,
   readOnly,
   refresh,
   required,
   section,
+  showAge,
   size = 'small',
   sourceId,
   value,
@@ -157,24 +251,81 @@ export const DateSelect: React.FC<DateSelectProps> = ({
   const activeValue = effectiveFieldId ? activeData?.field?.data?.[effectiveFieldId] : undefined;
   const compositeValue = buildDateFromComponents(componentFields, activeData?.field?.data);
   const resolvedValue =
-    value ||
-    (typeof activeValue === 'string' ? activeValue : '') ||
-    compositeValue ||
-    defaultValue ||
-    '';
+    value !== undefined
+      ? value
+      : (typeof activeValue === 'string' ? activeValue : '') || compositeValue || defaultValue || '';
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(
-    parseDate(resolvedValue)
+    parseDateValue(resolvedValue, dateFormat)
   );
+  const resolvedPlaceholder = placeholder ?? DATE_PLACEHOLDER_MAP[dateFormat] ?? DATE_PLACEHOLDER_MAP[DEFAULT_DATE_FORMAT];
 
   useEffect(() => {
-    setSelectedDate(parseDate(resolvedValue));
-  }, [resolvedValue]);
+    setSelectedDate(parseDateValue(resolvedValue, dateFormat));
+  }, [dateFormat, resolvedValue]);
+
+  useEffect(() => {
+    if (!effectiveFieldId || value !== undefined || compositeValue || !defaultValue) return;
+    if (
+      typeof activeValue === 'string'
+        ? activeValue.trim().length > 0
+        : activeValue !== undefined && activeValue !== null
+    ) {
+      return;
+    }
+
+    const parsedDefault = parseDateValue(defaultValue, dateFormat);
+    if (!parsedDefault) return;
+    const formatted = formatCanonicalDate(parsedDefault);
+
+    setActiveData((draft: any) => {
+      if (!draft.field) draft.field = { data: {}, status: {}, history: [] };
+      if (!draft.field.data) draft.field.data = {};
+
+      const currentValue = draft.field.data?.[effectiveFieldId];
+      if (
+        typeof currentValue === 'string'
+          ? currentValue.trim().length > 0
+          : currentValue !== undefined && currentValue !== null
+      ) {
+        return;
+      }
+
+      draft.field.data[effectiveFieldId] = formatted;
+      (linkedFieldIds ?? []).forEach((linkedFieldId) => {
+        if (!linkedFieldId || linkedFieldId === effectiveFieldId) return;
+        draft.field.data[linkedFieldId] = formatted;
+      });
+
+      if (Array.isArray(componentFields) && componentFields.length > 0) {
+        const [year, month, day] = formatted.split('.');
+        componentFields.forEach((component: { fieldId: string; role: string }) => {
+          if (!component?.fieldId) return;
+          const nextValue =
+            component.role === 'year' ? year
+              : component.role === 'month' ? month
+                : component.role === 'day' ? day
+                  : null;
+          draft.field.data[component.fieldId] = nextValue;
+        });
+      }
+    });
+  }, [
+    activeValue,
+    componentFields,
+    compositeValue,
+    dateFormat,
+    defaultValue,
+    effectiveFieldId,
+    linkedFieldIds,
+    setActiveData,
+    value,
+  ]);
 
   if (hidden) return null;
 
   const handleDateChange = (date: Date | null | undefined) => {
     setSelectedDate(date || undefined);
-    const formatted = date ? formatDate(date) : '';
+    const formatted = date ? formatCanonicalDate(date) : '';
 
     if (effectiveFieldId) {
       setActiveData((draft: any) => {
@@ -209,18 +360,17 @@ export const DateSelect: React.FC<DateSelectProps> = ({
     }
   };
 
-  // The core DatePicker element
-  const datePickerElement = (
+  const datePickerInput = (
     <DatePicker
       value={selectedDate}
       onSelectDate={handleDateChange}
-      placeholder={placeholder}
+      placeholder={resolvedPlaceholder}
       disabled={disabled || readOnly}
       borderless={borderless || readOnly}
-      formatDate={formatDate}
+      formatDate={(date) => formatDisplayDate(date, dateFormat)}
       allowTextInput={true}
       disableAutoFocus={true}
-      parseDateFromString={(str) => parseDate(str) || null}
+      parseDateFromString={(str) => parseDateValue(str, dateFormat) || null}
       tabIndex={readOnly ? -1 : undefined}
       styles={{
         root: { flex: '2 2 0', minWidth: '80px', maxWidth: '160px' },
@@ -230,19 +380,32 @@ export const DateSelect: React.FC<DateSelectProps> = ({
     />
   );
 
-  // Inline mode: render DatePicker that fills its container
+  const datePickerElement = buttonControls && !inline ? (
+    <div>
+      {datePickerInput}
+      {!readOnly && (
+        <Stack horizontal tokens={{ childrenGap: 8 }} styles={{ root: { marginTop: 8 } }}>
+          <DefaultButton text="Today" onClick={() => handleDateChange(new Date())} disabled={disabled} />
+          <DefaultButton text="Clear" onClick={() => handleDateChange(null)} disabled={disabled} />
+        </Stack>
+      )}
+    </div>
+  ) : (
+    datePickerInput
+  );
+
   if (inline) {
     return (
       <DatePicker
         value={selectedDate}
         onSelectDate={handleDateChange}
-        placeholder={placeholder}
+        placeholder={resolvedPlaceholder}
         disabled={disabled || readOnly}
         borderless={borderless || readOnly}
-        formatDate={formatDate}
+        formatDate={(date) => formatDisplayDate(date, dateFormat)}
         allowTextInput={true}
         disableAutoFocus={true}
-        parseDateFromString={(str) => parseDate(str) || null}
+        parseDateFromString={(str) => parseDateValue(str, dateFormat) || null}
         tabIndex={readOnly ? -1 : undefined}
         styles={{
           root: { width: '100%' },
@@ -253,7 +416,13 @@ export const DateSelect: React.FC<DateSelectProps> = ({
     );
   }
 
-  // Use LayoutItem for consistent layout handling
+  const resolvedLabel = showAge && label
+    ? (() => {
+        const age = calculateAge(selectedDate);
+        return age ? `${label} (${age})` : label;
+      })()
+    : label;
+
   return (
     <LayoutItem
       actions={actions}
@@ -263,7 +432,7 @@ export const DateSelect: React.FC<DateSelectProps> = ({
       id={id}
       index={index}
       isComplete={isComplete}
-      label={label}
+      label={resolvedLabel}
       labelPosition={labelPosition}
       layoutId={layoutId}
       moisModule={moisModule}
