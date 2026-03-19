@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useCallback, useMemo } from 'react';
-import { TextField, SpinButton, ISpinButtonProps } from '@fluentui/react';
+import { TextField, SpinButton, ISpinButtonProps, ITextFieldProps } from '@fluentui/react';
 import { LayoutItem } from './LayoutItem';
 import { useTheme, useSourceData, useSection } from '../context/MoisContext';
 import { useActiveDataForForms } from '../hooks/form-state';
@@ -60,6 +60,8 @@ export interface NumericProps {
   sourceId?: string;
   /** Override default props for SpinButton control */
   spinButtonProps?: Partial<ISpinButtonProps>;
+  /** Override default props for TextField control when not using SpinButton mode */
+  textFieldProps?: ITextFieldProps;
   /** Store value as number instead of string */
   storeAsNumber?: boolean;
   /** Type of value to validate */
@@ -107,6 +109,7 @@ export const Numeric: React.FC<NumericProps> = ({
   size = 'small',
   sourceId,
   spinButtonProps,
+  textFieldProps,
   storeAsNumber,
   typeNumber = 'number',
   value,
@@ -291,6 +294,7 @@ export const Numeric: React.FC<NumericProps> = ({
           root: { width: '100%' },
           field: readOnly ? { backgroundColor: 'transparent' } : undefined,
         }}
+        {...textFieldProps}
       />
     );
   }
@@ -377,6 +381,7 @@ export const Numeric: React.FC<NumericProps> = ({
           ...fieldStyles,
           field: readOnly ? { backgroundColor: 'transparent' } : undefined,
         }}
+        {...textFieldProps}
       />
     </LayoutItem>
   );

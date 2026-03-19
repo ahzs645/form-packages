@@ -563,18 +563,20 @@ const HFC_PT_ASMT_PatientAssessment = () => {
                     optionSize="tiny"
                 >
                     <table>
-                        <tr>
-                            <td style={{fontSize: "14px", fontWeight: "600", width:"20%", minWidth:"200px"}}># of alcoholic drinks?</td>
-                            <td style={{width:"5%"}}><TextArea fieldId="ptAsAlcoholCount" size="small" labelProps={{style:{minWidth:"0px"}}}/></td>
-                            <td style={{width:"10%",textAlign:"center"}}>Per</td>
-                            <td style={{width:"25%"}}><SimpleCodeSelect optionList={[
-                                {key:"day",text:"Day"},
-                                {key:"week",text:"Week"},
-                                ]}
-                                showOtherOption
-                                fieldId="ptAsAlcoholFreq"
-                            /></td>
-                        </tr>
+                        <tbody>
+                            <tr>
+                                <td style={{fontSize: "14px", fontWeight: "600", width:"20%", minWidth:"200px"}}># of alcoholic drinks?</td>
+                                <td style={{width:"5%"}}><TextArea fieldId="ptAsAlcoholCount" size="small" labelProps={{style:{minWidth:"0px"}}}/></td>
+                                <td style={{width:"10%",textAlign:"center"}}>Per</td>
+                                <td style={{width:"25%"}}><SimpleCodeSelect optionList={[
+                                    {key:"day",text:"Day"},
+                                    {key:"week",text:"Week"},
+                                    ]}
+                                    showOtherOption
+                                    fieldId="ptAsAlcoholFreq"
+                                /></td>
+                            </tr>
+                        </tbody>
                     </table>
                 </SimpleCodeChecklist>
 
@@ -586,26 +588,28 @@ const HFC_PT_ASMT_PatientAssessment = () => {
                     optionSize="tiny"
                 >
                     <table>
-                        <tr>
-                            <td style={{fontSize: "14px", fontWeight: "600", width:"20%", minWidth:"210px"}}># of cigarettes smoked?</td>
-                            <td style={{width:"5%"}}><TextArea fieldId="ptAsCigCount" size="tiny" labelProps={{style:{minWidth:"0px"}}}/></td>
-                            <td style={{width:"5%", maxWidth:"100px"}}><SimpleCodeSelect optionList={[
-                                {key:"single",text:"Individual"},
-                                {key:"pack20",text:"Pack (20)"},
-                                {key:"pack25",text:"Pack (25)"},
-                                ]}
-                                fieldId="ptAsCigType"
-                                size={{width:"100px"}}
+                        <tbody>
+                            <tr>
+                                <td style={{fontSize: "14px", fontWeight: "600", width:"20%", minWidth:"210px"}}># of cigarettes smoked?</td>
+                                <td style={{width:"5%"}}><TextArea fieldId="ptAsCigCount" size="tiny" labelProps={{style:{minWidth:"0px"}}}/></td>
+                                <td style={{width:"5%", maxWidth:"100px"}}><SimpleCodeSelect optionList={[
+                                    {key:"single",text:"Individual"},
+                                    {key:"pack20",text:"Pack (20)"},
+                                    {key:"pack25",text:"Pack (25)"},
+                                    ]}
+                                    fieldId="ptAsCigType"
+                                    size={{width:"100px"}}
+                                    /></td>
+                                <td style={{width:"10%", textAlign:"center"}}>Per</td>
+                                <td style={{width:"25%"}}><SimpleCodeSelect optionList={[
+                                    {key:"day",text:"Day"},
+                                    {key:"week",text:"Week"},
+                                    ]}
+                                    showOtherOption
+                                    fieldId="ptAsCigFreq"
                                 /></td>
-                            <td style={{width:"10%", textAlign:"center"}}>Per</td>
-                            <td style={{width:"25%"}}><SimpleCodeSelect optionList={[
-                                {key:"day",text:"Day"},
-                                {key:"week",text:"Week"},
-                                ]}
-                                showOtherOption
-                                fieldId="ptAsCigFreq"
-                            /></td>
-                        </tr>
+                            </tr>
+                        </tbody>
                     </table>
                 </SimpleCodeChecklist>
                
@@ -661,7 +665,7 @@ const HFC_PT_ASMT_PatientAssessment = () => {
                 <tbody>
                     {symptomsTable.map((obs)=>{
                               return (
-                                <TableMeasureRow label={obs.display} testId={obs.code} fieldId={obs.fieldId}/>
+                                <TableMeasureRow key={obs.fieldId} label={obs.display} testId={obs.code} fieldId={obs.fieldId}/>
                               )
                             })
                     }
@@ -717,7 +721,7 @@ const HFC_PT_ASMT_PatientAssessment = () => {
                 <tbody>
                     {swellingTable.map((obs)=>{
                               return (
-                                <TableMeasureRow label={obs.display} testId={obs.code} fieldId={obs.fieldId}/>
+                                <TableMeasureRow key={obs.fieldId} label={obs.display} testId={obs.code} fieldId={obs.fieldId}/>
                               )
                             })
                     }
@@ -795,17 +799,19 @@ const HFC_PT_ASMT_PatientAssessment = () => {
                 <div className="hideonprint"><Link href="https://www.hiv.uw.edu/page/mental-health-screening/phq-2" target="_blank">PHQ2 Questionnaire reference</Link></div>
                 <br/>
                 <table style={{borderCollapse:"collapse",border:"1px solid black", pageBreakInside:"avoid"}}>
-                    <tr style={{borderBottom:"2px solid darkgrey", backgroundColor:"lightgray",pageBreakInside:"avoid"}}>
-                        <th style={{textAlign:"left", width:"60%",borderCollapse:"collapse"}}>Over the last 2 weeks, how often have you been bothered by any of the following problems?</th>
-                        <th style={{textAlign:"center", width:"10%",borderCollapse:"collapse"}}>Not at all</th>
-                        <th style={{textAlign:"center", width:"10%",borderCollapse:"collapse"}}>Several Days</th>
-                        <th style={{textAlign:"center", width:"15%",borderCollapse:"collapse"}}>More than half days</th>
-                        <th style={{textAlign:"center", width:"15%",borderCollapse:"collapse"}}>Nearly everyday</th>
-                    </tr>
+                    <thead>
+                        <tr style={{borderBottom:"2px solid darkgrey", backgroundColor:"lightgray",pageBreakInside:"avoid"}}>
+                            <th style={{textAlign:"left", width:"60%",borderCollapse:"collapse"}}>Over the last 2 weeks, how often have you been bothered by any of the following problems?</th>
+                            <th style={{textAlign:"center", width:"10%",borderCollapse:"collapse"}}>Not at all</th>
+                            <th style={{textAlign:"center", width:"10%",borderCollapse:"collapse"}}>Several Days</th>
+                            <th style={{textAlign:"center", width:"15%",borderCollapse:"collapse"}}>More than half days</th>
+                            <th style={{textAlign:"center", width:"15%",borderCollapse:"collapse"}}>Nearly everyday</th>
+                        </tr>
+                    </thead>
+                    <tbody>
                     {fd.field?.data?.PHQ9Questionnaire?.Questions.map((obj)=>{
-                            
                             return obj.questionIndex<= 2 ?(
-                                    <tr style={{backgroundColor:`${obj.questionIndex%2===1?null:'#eee'}`,pageBreakInside:"avoid"}}>
+                                    <tr key={`phq2-${obj.questionIndex}`} style={{backgroundColor:`${obj.questionIndex%2===1?null:'#eee'}`,pageBreakInside:"avoid"}}>
                                         <td style={{padding:"5px 7px",pageBreakInside:"avoid"}}>{`${obj.questionIndex}. ${obj.questionText}`}</td>
                                         <td style={{height:"1px",pageBreakInside:"avoid"}}><DefaultButton toggle checked={obj.selectedAnswer.fieldId === `PHQ9Q${obj.questionIndex}0`} className={`${obj.selectedAnswer.fieldId === `PHQ9Q${obj.questionIndex}0`?"phqans":""}`} styles={PHQ9btnstyle} text="0" onClick={()=>toggleSelect(obj.questionIndex-1,obj.selectedAnswer.fieldId === `PHQ9Q${obj.questionIndex}0`?null:0)}/></td>
                                         <td style={{height:"1px",pageBreakInside:"avoid"}}><DefaultButton toggle checked={obj.selectedAnswer.fieldId === `PHQ9Q${obj.questionIndex}1`} className={`${obj.selectedAnswer.fieldId === `PHQ9Q${obj.questionIndex}1`?"phqans":""}`} styles={PHQ9btnstyle} text="1" onClick={()=>toggleSelect(obj.questionIndex-1,obj.selectedAnswer.fieldId === `PHQ9Q${obj.questionIndex}1`?null:1)}/></td>
@@ -816,6 +822,7 @@ const HFC_PT_ASMT_PatientAssessment = () => {
                             ):null
                             }
                         )}
+                    </tbody>
                 </table>
             </SubTitle>
             
@@ -834,17 +841,19 @@ const HFC_PT_ASMT_PatientAssessment = () => {
                     <br />
                     
                     <table style={{borderCollapse:"collapse",border:"1px solid black"}}>
-                        <tr style={{borderBottom:"2px solid darkgrey", backgroundColor:"lightgray",pageBreakInside:"avoid"}}>
-                            <th style={{textAlign:"left", width:"60%",borderCollapse:"collapse"}}>Over the last 2 weeks, how often have you been bothered by any of the following problems?</th>
-                            <th style={{textAlign:"center", width:"10%",borderCollapse:"collapse"}}>Not at all</th>
-                            <th style={{textAlign:"center", width:"10%",borderCollapse:"collapse"}}>Several Days</th>
-                            <th style={{textAlign:"center", width:"15%",borderCollapse:"collapse"}}>More than half days</th>
-                            <th style={{textAlign:"center", width:"15%",borderCollapse:"collapse"}}>Nearly everyday</th>
-                        </tr>
+                        <thead>
+                            <tr style={{borderBottom:"2px solid darkgrey", backgroundColor:"lightgray",pageBreakInside:"avoid"}}>
+                                <th style={{textAlign:"left", width:"60%",borderCollapse:"collapse"}}>Over the last 2 weeks, how often have you been bothered by any of the following problems?</th>
+                                <th style={{textAlign:"center", width:"10%",borderCollapse:"collapse"}}>Not at all</th>
+                                <th style={{textAlign:"center", width:"10%",borderCollapse:"collapse"}}>Several Days</th>
+                                <th style={{textAlign:"center", width:"15%",borderCollapse:"collapse"}}>More than half days</th>
+                                <th style={{textAlign:"center", width:"15%",borderCollapse:"collapse"}}>Nearly everyday</th>
+                            </tr>
+                        </thead>
+                        <tbody>
                         {fd.field?.data?.PHQ9Questionnaire?.Questions.map((obj)=>{
-                                
                                 return (
-                                        <tr style={{backgroundColor:`${obj.questionIndex%2===1?null:'#eee'}`,pageBreakInside:"avoid"}}>
+                                        <tr key={`phq9-${obj.questionIndex}`} style={{backgroundColor:`${obj.questionIndex%2===1?null:'#eee'}`,pageBreakInside:"avoid"}}>
                                             <td style={{padding:"5px 7px",pageBreakInside:"avoid"}}>{`${obj.questionIndex}. ${obj.questionText}`}</td>
                                             <td style={{height:"1px",pageBreakInside:"avoid"}}><DefaultButton toggle checked={obj.selectedAnswer.fieldId === `PHQ9Q${obj.questionIndex}0`} className={`${obj.selectedAnswer.fieldId === `PHQ9Q${obj.questionIndex}0`?"phqans":""}`} styles={PHQ9btnstyle} text="0" onClick={()=>toggleSelect(obj.questionIndex-1,obj.selectedAnswer.fieldId === `PHQ9Q${obj.questionIndex}0`?null:0)}/></td>
                                             <td style={{height:"1px",pageBreakInside:"avoid"}}><DefaultButton toggle checked={obj.selectedAnswer.fieldId === `PHQ9Q${obj.questionIndex}1`} className={`${obj.selectedAnswer.fieldId === `PHQ9Q${obj.questionIndex}1`?"phqans":""}`} styles={PHQ9btnstyle} text="1" onClick={()=>toggleSelect(obj.questionIndex-1,obj.selectedAnswer.fieldId === `PHQ9Q${obj.questionIndex}1`?null:1)}/></td>
@@ -854,6 +863,7 @@ const HFC_PT_ASMT_PatientAssessment = () => {
                                 )
                                 }
                             )}
+                        </tbody>
                     </table>
                     
                     
@@ -862,11 +872,13 @@ const HFC_PT_ASMT_PatientAssessment = () => {
                
                 {(fd.field?.data?.PHQ9Questionnaire?.PHQ9Score>9||(fd.field?.data?.PHQ9Questionnaire?.Questions?.[8]?.selectedAnswer?.value>0)) ?
                     <table style={{width:"100%",backgroundColor:"#ffb6c142",pageBreakInside:"avoid",marginLeft:"2em",maxWidth:"858px"}}>
-                        <tr style={{pageBreakInside:"avoid"}}>
-                            <td style={{width:"21%"}}><Heading text="Inform MD?"/></td>
-                            <td style={{width:"15%"}}><SimpleCodeChecklist fieldId="ptAsPHQ9InformDoc" codeSystem="MOIS-YESNO" size="small" optionSize=""/></td>
-                            <td style={{width:"60%"}}><TextArea placeholder="Additional Comments" fieldId="ptAsPHQ9InformDocNotes" multiline textFieldProps={{autoAdjustHeight:true,resizable:false}} labelProps={{style:{minWidth:"0px"}}}/></td>
-                        </tr>    
+                        <tbody>
+                            <tr style={{pageBreakInside:"avoid"}}>
+                                <td style={{width:"21%"}}><Heading text="Inform MD?"/></td>
+                                <td style={{width:"15%"}}><SimpleCodeChecklist fieldId="ptAsPHQ9InformDoc" codeSystem="MOIS-YESNO" size="small" optionSize=""/></td>
+                                <td style={{width:"60%"}}><TextArea placeholder="Additional Comments" fieldId="ptAsPHQ9InformDocNotes" multiline textFieldProps={{autoAdjustHeight:true,resizable:false}} labelProps={{style:{minWidth:"0px"}}}/></td>
+                            </tr>
+                        </tbody>
                     </table>
                     :
                     null
@@ -897,11 +909,13 @@ const HFC_PT_ASMT_PatientAssessment = () => {
                 textFieldProps={{autoAdjustHeight:true,resizable:false}}
             />
             <table>
-                <tr style={{pageBreakInside:"avoid"}}>
-                    <td style={{width:"25%",verticalAlign:"text-top"}}><Heading text="Group and/or 1:1 Heart Failure Education Complete?"/></td>
-                    <td style={{width:"15%"}}><SimpleCodeChecklist fieldId="ptAsGrpHFEdComplete" codeSystem="MOIS-YESNO" size="small" optionSize=""/></td>
-                    <td style={{width:"60%"}}><TextArea placeholder="Additional Comments" fieldId="ptAsGrpHFEdNotes" multiline textFieldProps={{autoAdjustHeight:true,resizable:false}} labelProps={{style:{minWidth:"0px"}}}/></td>
-                </tr>    
+                <tbody>
+                    <tr style={{pageBreakInside:"avoid"}}>
+                        <td style={{width:"25%",verticalAlign:"text-top"}}><Heading text="Group and/or 1:1 Heart Failure Education Complete?"/></td>
+                        <td style={{width:"15%"}}><SimpleCodeChecklist fieldId="ptAsGrpHFEdComplete" codeSystem="MOIS-YESNO" size="small" optionSize=""/></td>
+                        <td style={{width:"60%"}}><TextArea placeholder="Additional Comments" fieldId="ptAsGrpHFEdNotes" multiline textFieldProps={{autoAdjustHeight:true,resizable:false}} labelProps={{style:{minWidth:"0px"}}}/></td>
+                    </tr>
+                </tbody>
             </table>
 
 

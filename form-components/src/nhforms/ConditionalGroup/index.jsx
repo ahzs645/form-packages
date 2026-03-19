@@ -465,9 +465,6 @@ const ConditionalField = ({
   } else if (mode === 'controller' && controllerFieldId) {
     const controllerValue = fd?.field?.data?.[controllerFieldId]
 
-    // DEBUG: Log ConditionalField controller evaluation
-    console.log('[ConditionalField] mode=controller', { controllerFieldId, showWhen, controllerValue, optionValues, invertMatch, showWhenNull, fieldId, formDataKeys: Object.keys(fd?.field?.data || {}) })
-
     // If optionValues is provided, use choice matching instead of boolean matching
     if (optionValues && optionValues.length > 0) {
       isVisible = checkChoiceMatch(controllerValue, optionValues, invertMatch)
@@ -478,9 +475,6 @@ const ConditionalField = ({
         ? (normalizeValue(controllerValue) === null ? true : checkControllerMatch(controllerValue, showWhen))
         : checkControllerMatch(controllerValue, showWhen)
     }
-
-    // DEBUG: Log visibility result
-    console.log('[ConditionalField] isVisible:', isVisible)
   } else {
     // Inherit - check if all parent groups are visible
     isVisible = parentContext.parentChain.every(parentId => {
