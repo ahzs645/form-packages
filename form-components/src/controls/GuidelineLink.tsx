@@ -4,7 +4,7 @@
  */
 
 import React from 'react';
-import { Text } from '@fluentui/react';
+import { Link, Text } from '@fluentui/react';
 import { useTheme } from '../context/MoisContext';
 
 export interface GuidelineLinkProps {
@@ -16,6 +16,8 @@ export interface GuidelineLinkProps {
   label?: string;
   /** Link target */
   target?: "_blank" | "_self" | "_parent" | "_top";
+  /** Visual treatment */
+  appearance?: "button" | "inline";
 }
 
 /**
@@ -23,11 +25,46 @@ export interface GuidelineLinkProps {
  *
  * A small button with a "?" that opens external guidelines/documentation
  */
-export const GuidelineLink: React.FC<GuidelineLinkProps> = ({ href, url, label, target = "_blank" }) => {
+export const GuidelineLink: React.FC<GuidelineLinkProps> = ({
+  href,
+  url,
+  label,
+  target = "_blank",
+  appearance = "button",
+}) => {
   const theme = useTheme();
   const resolvedHref = href ?? url ?? "";
   const resolvedLabel = label ?? "?";
   const isDisabled = !resolvedHref;
+
+  if (appearance === "inline") {
+    return isDisabled ? (
+      <Text
+        styles={{
+          root: {
+            color: theme.palette.neutralTertiary,
+            opacity: 0.8,
+          },
+        }}
+      >
+        {resolvedLabel}
+      </Text>
+    ) : (
+      <Link
+        href={resolvedHref}
+        target={target}
+        rel={target === "_blank" ? "noopener noreferrer" : undefined}
+        underline
+        styles={{
+          root: {
+            alignSelf: 'flex-start',
+          },
+        }}
+      >
+        {resolvedLabel}
+      </Link>
+    );
+  }
 
   return (
     <button

@@ -46,6 +46,8 @@ export interface TextAreaProps {
   moisModule?: string;
   /** Whether or not the text field is a multiline text area. */
   multiline?: boolean;
+  /** Maximum number of characters allowed. */
+  maxCharLimit?: number;
   /** Annotation shown near the control */
   note?: string;
   /** onChange callback for updating value (Overrides normal update processing) */
@@ -62,6 +64,8 @@ export interface TextAreaProps {
   refresh?: boolean;
   /** Is this field required to have a value? */
   required?: boolean;
+  /** Show a live character count when maxCharLimit is set. */
+  showCharLimit?: boolean;
   /** For multiline text fields, specifies the initial number of rows shown. */
   rows?: number;
   /** Advanced: Override section settings */
@@ -105,6 +109,7 @@ export const TextArea: React.FC<TextAreaProps> = ({
   layoutId,
   moisModule,
   multiline = false,
+  maxCharLimit,
   note,
   onChange,
   onValidate,
@@ -113,6 +118,7 @@ export const TextArea: React.FC<TextAreaProps> = ({
   readOnly,
   refresh,
   required,
+  showCharLimit,
   rows,
   section,
   size,
@@ -125,6 +131,10 @@ export const TextArea: React.FC<TextAreaProps> = ({
   const [activeData, setActiveData] = useActiveDataForForms();
   const [internalValue, setInternalValue] = useState(value ?? defaultValue ?? '');
   const [errorMessage, setErrorMessage] = useState<string | undefined>();
+  const effectiveMaxCharLimit =
+    typeof maxCharLimit === 'number' && Number.isFinite(maxCharLimit) && maxCharLimit > 0
+      ? Math.round(maxCharLimit)
+      : undefined;
   const effectiveFieldId = fieldId || id;
   const activeValue = effectiveFieldId ? activeData?.field?.data?.[effectiveFieldId] : undefined;
   const persistedValue = typeof activeValue === 'string' ? activeValue : undefined;
@@ -132,7 +142,8 @@ export const TextArea: React.FC<TextAreaProps> = ({
   const displayValue = value !== undefined ? value : (persistedValue ?? internalValue);
 
   const handleChange = (ev: React.FormEvent<HTMLInputElement | HTMLTextAreaElement>, newValue?: string) => {
-    const val = newValue ?? '';
+    const rawValue = newValue ?? '';
+    const val = effectiveMaxCharLimit ? rawValue.slice(0, effectiveMaxCharLimit) : rawValue;
     setInternalValue(val);
 
     if (effectiveFieldId) {
@@ -171,6 +182,10 @@ export const TextArea: React.FC<TextAreaProps> = ({
   const displayValueStr = displayValue != null ? String(displayValue) : '';
   const isEmpty = !displayValue || displayValueStr.trim() === '';
   const requiresHighlight = required && isEmpty;
+  const description =
+    showCharLimit && effectiveMaxCharLimit
+      ? `${displayValueStr.length}/${effectiveMaxCharLimit}`
+      : undefined;
   const theme = useTheme();
 
   // Determine effective label position based on section layout
@@ -236,6 +251,7 @@ export const TextArea: React.FC<TextAreaProps> = ({
         borderless={borderless ?? readOnly}
         tabIndex={readOnly ? -1 : tabIndex}
         errorMessage={errorMessage}
+        description={description}
         styles={{
           root: { width: '100%' },
           field: {
@@ -289,6 +305,7 @@ export const TextArea: React.FC<TextAreaProps> = ({
         borderless={borderless ?? readOnly}
         tabIndex={readOnly ? -1 : tabIndex}
         errorMessage={errorMessage}
+        description={description}
         styles={textFieldStyles}
         {...textFieldProps}
       />
