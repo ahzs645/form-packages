@@ -17447,7 +17447,7 @@ const SignaturePad = ({
  * mode="data-entry": opens regular fields in a dialog with optional calculations.
  */
 
-const { useState, useMemo, useCallback } = React
+const { useState, useMemo, useCallback, useEffect } = React
 const {
   Stack,
   Label,
@@ -17821,6 +17821,117 @@ const _buildScaleLegendSignature = (field) => {
       legend: String(option.description || option.label || option.value),
     }))
   )
+}
+
+const _usesStructuredSelectableOptions = (field) =>
+  Array.isArray(field?.options) &&
+  field.options.some((option) => option && typeof option === "object" && !Array.isArray(option))
+
+const _normalizeSelectableOptions = (field, fallbackOptions = []) => {
+  const rawOptions = Array.isArray(field?.options) && field.options.length > 0
+    ? field.options
+    : fallbackOptions
+
+  return rawOptions
+    .map((option, index) => {
+      if (option && typeof option === "object" && !Array.isArray(option)) {
+        const rawValue =
+          option.value ??
+          option.key ??
+          option.id ??
+          option.label ??
+          option.text ??
+          index
+        const key = String(option.key ?? option.id ?? rawValue ?? \`option_\${index + 1}\`)
+        const text = String(option.label ?? option.text ?? rawValue ?? \`Option \${index + 1}\`)
+        const description =
+          typeof option.description === "string" && option.description.trim()
+            ? option.description.trim()
+            : undefined
+        return {
+          key,
+          text,
+          value: rawValue,
+          description,
+        }
+      }
+
+      const text = String(option ?? "").trim()
+      if (!text) return null
+      return {
+        key: text,
+        text,
+        value: text,
+        description: undefined,
+      }
+    })
+    .filter(Boolean)
+}
+
+const _optionMatchesValue = (option, value) => {
+  if (!option) return false
+
+  const candidates = Array.from(_collectScoreCandidates(value)).map((candidate) => _normalizeScoreToken(candidate))
+  if (candidates.length === 0) return false
+
+  const optionTokens = [
+    option.key,
+    option.value,
+    option.text,
+    option.description,
+  ]
+    .map((candidate) => _normalizeScoreToken(candidate))
+    .filter(Boolean)
+
+  return optionTokens.some((candidate) => candidates.includes(candidate))
+}
+
+const _isSelectableOptionSelected = (value, option) => {
+  if (value && typeof value === "object" && value.selectedKey !== null && value.selectedKey !== undefined) {
+    return String(value.selectedKey) === String(option?.key ?? "")
+  }
+  return _optionMatchesValue(option, value)
+}
+
+const _serializeSelectableValue = (field, option) => {
+  if (!option) return null
+  if (!_usesStructuredSelectableOptions(field)) {
+    return option.key
+  }
+  return {
+    selectedKey: option.key,
+    value: option.value,
+    response: option.text,
+    detailResponse: option.description || option.text,
+  }
+}
+
+const _resolveFieldDefaultValue = (field) => {
+  if (!field || _isHeadingField(field)) return undefined
+
+  const explicitDefault = field.defaultValue ?? field.default_value
+  if (explicitDefault === undefined) return undefined
+
+  if (field.type === "choice" || field.type === "booleanYesNo") {
+    const fallbackOptions = field.type === "booleanYesNo" ? ["Yes", "No"] : []
+    const options = _normalizeSelectableOptions(field, fallbackOptions)
+    const matchedOption = options.find((option) => _optionMatchesValue(option, explicitDefault))
+    return matchedOption ? _serializeSelectableValue(field, matchedOption) : explicitDefault
+  }
+
+  if (field.type === "scale") {
+    const options = _buildScaleOptions(field)
+    const matchedOption = options.find((option) => _optionMatchesValue(option, explicitDefault))
+    if (!matchedOption) return explicitDefault
+    return {
+      selectedKey: String(matchedOption.value),
+      value: matchedOption.value,
+      response: matchedOption.label || String(matchedOption.value),
+      detailResponse: matchedOption.description || matchedOption.label || String(matchedOption.value),
+    }
+  }
+
+  return explicitDefault
 }
 
 const _buildDataEntryRenderGroups = (fields) => {
@@ -18383,6 +18494,41 @@ const SubformScoringInner = ({
     return result
   }, [isDataEntryMode, isMorphineCalculatorMode, dataEntryCalculatorConfig, dataEntryFields, fd, hasExternalDataEntryStore, dataEntryValueRoot])
 
+  useEffect(() => {
+    if (!isDataEntryMode || !isDialogOpen) return
+
+    const pendingDefaults = []
+    for (const field of dataEntryFields) {
+      if (!field?.id || _isMeaningfulValue(dataEntryValues[field.id])) continue
+      const defaultValue = _resolveFieldDefaultValue(field)
+      if (defaultValue === undefined) continue
+      pendingDefaults.push([field.id, defaultValue])
+    }
+
+    if (pendingDefaults.length === 0) return
+
+    if (typeof onDataEntryValueChange === "function") {
+      pendingDefaults.forEach(([fieldId, defaultValue]) => {
+        onDataEntryValueChange(fieldId, defaultValue)
+      })
+      return
+    }
+
+    if (!fd?.setFormData) return
+
+    fd.setFormData((draft) => {
+      if (!draft.field) {
+        draft.field = { data: {}, status: {}, history: [] }
+      }
+      if (!draft.field.data) {
+        draft.field.data = {}
+      }
+      pendingDefaults.forEach(([fieldId, defaultValue]) => {
+        draft.field.data[fieldId] = defaultValue
+      })
+    })
+  }, [isDataEntryMode, isDialogOpen, dataEntryFields, dataEntryValues, fd, onDataEntryValueChange])
+
   const dataEntryCalculations = useMemo(() => {
     return Array.isArray(dataEntryConfig?.calculations) ? dataEntryConfig.calculations : []
   }, [dataEntryConfig])
@@ -18619,8 +18765,9 @@ const SubformScoringInner = ({
     }
 
     if (field.type === "choice") {
-      const optionList = (field.options || []).map((option) => ({ key: option, text: option }))
+      const optionList = _normalizeSelectableOptions(field)
       const useRadio = field.choiceStyle === "radio"
+      const selectedOption = optionList.find((option) => _isSelectableOptionSelected(dataEntryValues[field.id], option)) || null
       if (useRadio) {
         return (
           <div key={\`field-\${field.id}\`}>
@@ -18634,8 +18781,8 @@ const SubformScoringInner = ({
                   <input
                     type="radio"
                     name={\`subform_choice_\${field.id}\`}
-                    checked={dataEntryValues[field.id] === option.key}
-                    onChange={() => setDataEntryValue(field.id, option.key)}
+                    checked={Boolean(selectedOption && selectedOption.key === option.key)}
+                    onChange={() => setDataEntryValue(field.id, _serializeSelectableValue(field, option))}
                   />
                   <span>{option.text}</span>
                 </label>
@@ -18648,8 +18795,16 @@ const SubformScoringInner = ({
         <div key={\`field-\${field.id}\`}>
           <Label required={required}>{field.label}</Label>
           <select
-            value={dataEntryValues[field.id] ?? ""}
-            onChange={(event) => setDataEntryValue(field.id, event?.target?.value || null)}
+            value={selectedOption?.key ?? ""}
+            onChange={(event) => {
+              const nextKey = event?.target?.value || null
+              if (!nextKey) {
+                setDataEntryValue(field.id, null)
+                return
+              }
+              const nextOption = optionList.find((option) => option.key === nextKey) || null
+              setDataEntryValue(field.id, nextOption ? _serializeSelectableValue(field, nextOption) : nextKey)
+            }}
             style={_LOCAL_INPUT_STYLE(isDarkMode)}
           >
             <option value="">Select...</option>
@@ -18664,28 +18819,26 @@ const SubformScoringInner = ({
     }
 
     if (field.type === "booleanYesNo") {
-      const yesNoOptions = (field.options && field.options.length >= 2)
-        ? field.options
-        : ["Yes", "No"]
-      const optionList = yesNoOptions.map((option) => ({ key: option, text: option }))
+      const optionList = _normalizeSelectableOptions(field, ["Yes", "No"])
+      const selectedOption = optionList.find((option) => _isSelectableOptionSelected(dataEntryValues[field.id], option)) || null
       return (
         <div key={\`field-\${field.id}\`}>
           <Label required={required}>{field.label}</Label>
           <div style={_LOCAL_RADIO_GROUP_STYLE}>
             {optionList.map((option) => (
               <label
-                key={\`\${field.id}_\${option.key}\`}
-                style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}
-              >
-                <input
-                  type="radio"
-                  name={\`subform_boolean_\${field.id}\`}
-                  checked={dataEntryValues[field.id] === option.key}
-                  onChange={() => setDataEntryValue(field.id, option.key)}
-                />
-                <span>{option.text}</span>
-              </label>
-            ))}
+                  key={\`\${field.id}_\${option.key}\`}
+                  style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}
+                >
+                  <input
+                    type="radio"
+                    name={\`subform_boolean_\${field.id}\`}
+                    checked={Boolean(selectedOption && selectedOption.key === option.key)}
+                    onChange={() => setDataEntryValue(field.id, _serializeSelectableValue(field, option))}
+                  />
+                  <span>{option.text}</span>
+                </label>
+              ))}
           </div>
         </div>
       )
