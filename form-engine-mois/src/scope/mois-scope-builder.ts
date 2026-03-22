@@ -7,6 +7,13 @@
 
 import { BaseScopeBuilder, FluentNamespace } from '@mois/form-engine-core';
 import type { ScopeConfig } from '@mois/form-engine-core';
+import {
+  getAuthorshipLockInfo,
+  registerAuthorshipRowTarget,
+  prepareAuthorshipPersist,
+  commitPreparedAuthorshipPersist,
+  releasePreparedAuthorshipClaim,
+} from '@mois/form-components';
 
 // Re-export types
 export type { ScopeConfig };
@@ -78,16 +85,35 @@ const dateHelpers = {
 const formActions = {
   saveDraft: (sd: any, fd: any, data: any) => {
     console.log('saveDraft called', { sd, fd, data });
+    if (data?.formData && typeof fd?.setFormData === 'function') {
+      fd.setFormData((draft: any) => {
+        draft.field = draft.field || { data: {}, status: {}, history: [] };
+        draft.field.data = { ...(draft.field?.data || {}), ...data.formData };
+      });
+    }
+    return true;
   },
   closeForm: () => {
     console.log('closeForm called');
   },
   saveSubmit: (sd: any, fd: any, data: any) => {
     console.log('saveSubmit called', { sd, fd, data });
+    if (data?.formData && typeof fd?.setFormData === 'function') {
+      fd.setFormData((draft: any) => {
+        draft.field = draft.field || { data: {}, status: {}, history: [] };
+        draft.field.data = { ...(draft.field?.data || {}), ...data.formData };
+      });
+    }
+    return true;
   },
   refresh: () => {
     console.log('refresh called');
   },
+  getAuthorshipLockInfo,
+  registerAuthorshipRowTarget,
+  prepareAuthorshipPersist,
+  commitPreparedAuthorshipPersist,
+  releasePreparedAuthorshipClaim,
 };
 
 /**

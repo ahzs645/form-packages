@@ -7,6 +7,7 @@
 
 import React, { createContext, useContext, useState, useCallback, useMemo } from 'react';
 import { produce } from 'immer';
+import { normalizeAuthorshipStore, syncAuthorshipMirrors } from '../authorship';
 
 // ============================================================================
 // Types
@@ -16,6 +17,7 @@ interface FormDataState {
   field: { data: Record<string, any>; status: Record<string, any> };
   uiState: { sections: Record<string, any> | Array<any>; [key: string]: any };
   tempArea?: Record<string, any>;
+  formData: Record<string, any>;
 }
 
 interface FormStateContextValue {
@@ -36,6 +38,7 @@ let globalInitialData: Record<string, any> = {};
 let currentFormData: FormDataState = {
   field: { data: {}, status: {} },
   uiState: { sections: {} },
+  formData: {},
 };
 
 // Global setter reference (set by FormStateProvider)
@@ -47,10 +50,20 @@ const normalizeFormData = (input?: Partial<FormDataState> | null): FormDataState
   const field = input?.field && typeof input.field === 'object' ? input.field : {};
   const uiState = input?.uiState && typeof input.uiState === 'object' ? input.uiState : {};
   const sections = (uiState as any).sections ?? [{ isComplete: false }];
+  const fieldData = deepClone((field as any).data || {});
+  const currentFormData = input?.formData && typeof input.formData === 'object' ? input.formData : {};
+  const mergedFormData = {
+    ...deepClone(currentFormData),
+    ...fieldData,
+    __authorship: normalizeAuthorshipStore(currentFormData.__authorship ?? fieldData.__authorship),
+  };
 
   return {
     field: {
-      data: deepClone((field as any).data || {}),
+      data: {
+        ...fieldData,
+        __authorship: mergedFormData.__authorship,
+      },
       status: deepClone((field as any).status || {}),
     },
     uiState: {
@@ -58,6 +71,7 @@ const normalizeFormData = (input?: Partial<FormDataState> | null): FormDataState
       sections: deepClone(sections),
     },
     tempArea: deepClone(input?.tempArea || {}),
+    formData: mergedFormData,
   };
 };
 
@@ -73,6 +87,7 @@ const DEFAULT_FORM_STATE: Partial<FormDataState> = {
   field: { data: {}, status: {} },
   // Keep a stable default reference so provider rerenders do not wipe form state.
   uiState: { sections: [{ isComplete: false }] },
+  formData: {},
 };
 
 /**
@@ -92,6 +107,10 @@ export const setInitialData = (data: Record<string, any>) => {
           ...prev.field.data,
           ...data,
         },
+      },
+      formData: {
+        ...(prev.formData || {}),
+        ...data,
       },
     }));
   }
@@ -113,6 +132,7 @@ export const initFormData = () => {
     globalSetFormData(normalizeFormData({
       field: { data: {}, status: {} },
       uiState: { sections: {} },
+      formData: {},
     }));
   }
 };
@@ -147,7 +167,7 @@ const applyFormDataUpdate = (prevState: FormDataState, updater: any): FormDataSt
 
   // Keep state unfrozen because some legacy NHForms components still mutate
   // nested values before committing them back through setFormData.
-  return deepClone(newState);
+  return syncAuthorshipMirrors(deepClone(newState));
 };
 
 /**
@@ -264,6 +284,7 @@ export const useActiveDataForForms = (selector?: (data: any) => any): [any, (upd
     const emptyData = {
       field: { data: {}, status: {} },
       uiState: { sections: {} },
+      formData: {},
       setFormData: () => {},
     };
     return [emptyData, () => {}];
@@ -276,6 +297,13 @@ export const useActiveDataForForms = (selector?: (data: any) => any): [any, (upd
     uiState: {
       ...(formData.uiState || {}),
       sections: formData.uiState?.sections ?? {},
+    },
+    formData: {
+      ...(formData.formData || {}),
+      ...(formData.field?.data || {}),
+      __authorship: normalizeAuthorshipStore(
+        formData.formData?.__authorship ?? formData.field?.data?.__authorship
+      ),
     },
   }), [formData]);
 

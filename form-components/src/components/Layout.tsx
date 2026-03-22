@@ -14,6 +14,7 @@ import {
   useTheme,
   produce
 } from '../context/MoisContext';
+import { DEFAULT_AUTHORSHIP_POLICY, getAuthorshipLockInfo, registerAuthorshipFieldTarget } from '../authorship';
 
 // ============================================================================
 // Grid Component
@@ -242,6 +243,7 @@ export interface SectionProps {
   isComplete?: boolean;
   sectionComplete?: (sd: any, ad: any, sectionNum: number) => boolean;
   focusZone?: boolean;
+  authorshipPolicy?: SectionContextValue['authorshipPolicy'];
 }
 
 export const Section: React.FC<SectionProps> = ({
@@ -256,6 +258,7 @@ export const Section: React.FC<SectionProps> = ({
   isComplete,
   sectionComplete = () => false,
   focusZone = false,
+  authorshipPolicy,
 }) => {
   const parentSection = useSection();
   const sourceData = useSourceData();
@@ -278,6 +281,7 @@ export const Section: React.FC<SectionProps> = ({
     sourceSelector,
     sectionComplete,
     focusZoneRoot: focusZone ? ref.current : parentSection.focusZoneRoot,
+    authorshipPolicy: authorshipPolicy ?? parentSection.authorshipPolicy ?? DEFAULT_AUTHORSHIP_POLICY,
   };
 
   // Update uiState with section completion status
@@ -375,15 +379,25 @@ export const LayoutItem: React.FC<LayoutItemProps> = ({
 }) => {
   const section = useSection(sectionOverrides);
   const sourceData = useSourceData();
-  const [activeData] = useActiveData();
+  const [activeData, setActiveData] = useActiveData();
   const theme = useTheme();
 
   const mId = layoutId ?? fieldId ?? id;
   const key = `${mId}${index ?? ''}`;
 
+  useEffect(() => {
+    if (!mId) return;
+    setActiveData(produce((draft: any) => {
+      registerAuthorshipFieldTarget(draft, mId, section.authorshipPolicy);
+    }));
+  }, [mId, section.authorshipPolicy, setActiveData]);
+
   // Determine read-only state
   const isComplete = section.sectionComplete(sourceData, activeData, section.sectionNum);
-  const readOnly = propReadOnly || isComplete || sourceData.lifecycleState.isPrinting;
+  const authorshipLockInfo = section.authorshipPolicy?.enabled && section.authorshipPolicy.granularity !== 'row'
+    ? getAuthorshipLockInfo(activeData, { scope: 'field', fieldId: mId ?? undefined }, sourceData?.userProfile?.identity?.fullName)
+    : { locked: false };
+  const readOnly = propReadOnly || !!authorshipLockInfo.locked || isComplete || sourceData.lifecycleState.isPrinting;
 
   // Handle hidden items
   if (hidden) {
@@ -468,6 +482,12 @@ export const LayoutItem: React.FC<LayoutItemProps> = ({
   };
 
   const content = typeof children === 'function' ? children(renderProps) : children;
+  const renderedNote = note || authorshipLockInfo.note ? (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      {note && <div>{note}</div>}
+      {authorshipLockInfo.note && <div style={{ fontSize: 12, color: '#605e5c' }}>{authorshipLockInfo.note}</div>}
+    </div>
+  ) : null;
 
   return (
     <div key={key} style={wrapperStyle}>
@@ -504,9 +524,9 @@ export const LayoutItem: React.FC<LayoutItemProps> = ({
             {content}
           </div>
         </div>
-        {note && (
+        {renderedNote && (
           <div style={{ flex: '1', margin: '5px', marginLeft: '10px' }}>
-            {note}
+            {renderedNote}
           </div>
         )}
       </div>

@@ -279,6 +279,13 @@ import { SubTitle, SubTitleGroupProvider } from '../controls/SubTitle';
 
 // Import GuidelineLink
 import { GuidelineLink } from '../controls/GuidelineLink';
+import {
+  getAuthorshipLockInfo,
+  registerAuthorshipRowTarget,
+  prepareAuthorshipPersist,
+  commitPreparedAuthorshipPersist,
+  releasePreparedAuthorshipClaim,
+} from '../authorship';
 
 /**
  * SaveOnClose Component
@@ -734,13 +741,32 @@ export const buildScope = (): Record<string, any> => ({
   // Form action functions (standalone versions for direct calls)
   saveDraft: (sd: any, fd: any, data: any) => {
     console.log('saveDraft called', { sd, fd, data });
+    if (data?.formData && typeof fd?.setFormData === 'function') {
+      fd.setFormData((draft: any) => {
+        draft.field = draft.field || { data: {}, status: {}, history: [] };
+        draft.field.data = { ...(draft.field?.data || {}), ...data.formData };
+      });
+    }
+    return true;
   },
   closeForm: () => {
     console.log('closeForm called');
   },
   saveSubmit: (sd: any, fd: any, data: any) => {
     console.log('saveSubmit called', { sd, fd, data });
+    if (data?.formData && typeof fd?.setFormData === 'function') {
+      fd.setFormData((draft: any) => {
+        draft.field = draft.field || { data: {}, status: {}, history: [] };
+        draft.field.data = { ...(draft.field?.data || {}), ...data.formData };
+      });
+    }
+    return true;
   },
+  getAuthorshipLockInfo,
+  registerAuthorshipRowTarget,
+  prepareAuthorshipPersist,
+  commitPreparedAuthorshipPersist,
+  releasePreparedAuthorshipClaim,
 
   // Date/Age/Time helper functions (from MoisFunction, exposed at root for convenience)
   getDateString: (date: any) => date ? new Date(date).toISOString().split('T')[0] : '',

@@ -8,6 +8,7 @@ import { produce, Draft } from 'immer';
 import { mockCodeLists } from './mockCodeLists';
 import optionListsRaw from '../data/optionLists.json';
 import { getInitialData } from '../hooks/form-state';
+import { DEFAULT_AUTHORSHIP_POLICY, AuthorshipPolicy, syncAuthorshipMirrors } from '../authorship';
 
 // Import the complete example data for DebugView
 import selectedActiveData from '../data/selected-active.json';
@@ -512,6 +513,7 @@ export interface SectionContextValue {
   sourceSelector?: (sd: any) => any;
   sectionComplete: (sd: any, ad: any, sectionNum: number) => boolean;
   focusZoneRoot?: HTMLElement | null;
+  authorshipPolicy?: AuthorshipPolicy;
 }
 
 // ============================================================================
@@ -527,6 +529,7 @@ const SectionContext = createContext<SectionContextValue>({
   activeSelector: (fd: any) => fd?.field?.data ?? fd,
   sourceSelector: (sd: any) => sd?.patient ?? sd,
   sectionComplete: () => false,
+  authorshipPolicy: DEFAULT_AUTHORSHIP_POLICY,
 });
 
 // ============================================================================
@@ -922,6 +925,7 @@ export function useSection(overrides?: Partial<SectionContextValue>): SectionCon
     sourceSelector: overrides?.sourceSelector ?? context.sourceSelector,
     sectionComplete: overrides?.sectionComplete ?? context.sectionComplete,
     focusZoneRoot: overrides?.focusZoneRoot ?? context.focusZoneRoot,
+    authorshipPolicy: overrides?.authorshipPolicy ?? context.authorshipPolicy,
   }), [context, overrides]);
 }
 
@@ -1085,7 +1089,11 @@ export function MoisProvider({ children, sourceData: customSourceData }: MoisPro
   // Initialize activeData with the profile data
   const [activeData, setActiveData] = useState<Omit<ActiveData, 'setFormData'>>({
     field: activeDataSource.field || { data: {}, status: {}, history: [] },
-    formData: {},
+    formData: {
+      ...(activeDataSource.formData || {}),
+      ...(activeDataSource.field?.data || {}),
+      __authorship: activeDataSource.formData?.__authorship ?? activeDataSource.field?.data?.__authorship ?? { version: 1, claims: {} },
+    },
     uiState: activeDataSource.uiState || { sections: {}, editing: false },
     tempArea: activeDataSource.tempArea || {},
     // Use the full example data from the profile
@@ -1094,13 +1102,17 @@ export function MoisProvider({ children, sourceData: customSourceData }: MoisPro
 
   // Update activeData when profile changes
   useEffect(() => {
-    setActiveData({
+    setActiveData(syncAuthorshipMirrors({
       field: activeDataSource.field || { data: {}, status: {}, history: [] },
-      formData: {},
+      formData: {
+        ...(activeDataSource.formData || {}),
+        ...(activeDataSource.field?.data || {}),
+        __authorship: activeDataSource.formData?.__authorship ?? activeDataSource.field?.data?.__authorship ?? { version: 1, claims: {} },
+      },
       uiState: activeDataSource.uiState || { sections: {}, editing: false },
       tempArea: activeDataSource.tempArea || {},
       example: activeDataSource.example || sourceData.example,
-    });
+    }));
   }, [activeDataSource, sourceData.example]);
 
   const setFormData = useCallback((updater: ((draft: Draft<ActiveData>) => void) | ((base: ActiveData) => ActiveData) | Partial<ActiveData>) => {
@@ -1109,7 +1121,7 @@ export function MoisProvider({ children, sourceData: customSourceData }: MoisPro
       if (typeof updater !== 'function') {
         if (updater && typeof updater === 'object') {
           // Merge the object with current state
-          return { ...current, ...updater } as ActiveData;
+          return syncAuthorshipMirrors({ ...current, ...updater } as ActiveData);
         }
         return current;
       }
@@ -1120,13 +1132,13 @@ export function MoisProvider({ children, sourceData: customSourceData }: MoisPro
         const result = updater(current as any);
         if (result !== undefined && typeof result === 'object') {
           // It's a curried producer - use the result directly
-          return result as ActiveData;
+          return syncAuthorshipMirrors(result as ActiveData);
         }
       } catch {
         // Not a curried producer, fall through to recipe handling
       }
       // It's a recipe function - wrap with produce
-      return produce(current, updater as any);
+      return syncAuthorshipMirrors(produce(current, updater as any));
     });
   }, []);
 
@@ -1157,6 +1169,7 @@ export interface SectionProviderProps {
   sourceSelector?: SectionContextValue['sourceSelector'];
   statusSelector?: SectionContextValue['statusSelector'];
   sectionComplete?: SectionContextValue['sectionComplete'];
+  authorshipPolicy?: SectionContextValue['authorshipPolicy'];
 }
 
 export function SectionProvider({
@@ -1168,6 +1181,7 @@ export function SectionProvider({
   sourceSelector,
   statusSelector,
   sectionComplete,
+  authorshipPolicy,
 }: SectionProviderProps) {
   const parentSection = useContext(SectionContext);
 
@@ -1181,6 +1195,7 @@ export function SectionProvider({
     statusSelector: statusSelector ?? parentSection.statusSelector,
     sectionComplete: sectionComplete ?? parentSection.sectionComplete,
     focusZoneRoot: parentSection.focusZoneRoot,
+    authorshipPolicy: authorshipPolicy ?? parentSection.authorshipPolicy,
   }), [
     parentSection,
     layout,
@@ -1190,6 +1205,7 @@ export function SectionProvider({
     sourceSelector,
     statusSelector,
     sectionComplete,
+    authorshipPolicy,
   ]);
 
   return (

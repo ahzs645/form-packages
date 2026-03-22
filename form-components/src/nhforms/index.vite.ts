@@ -53,6 +53,13 @@ import { Observation } from '../archetypes/Observation';
 import { ObservationPanel } from '../archetypes/ObservationPanel';
 import { Query } from '../archetypes/Query';
 import { SaveStatus } from '../components/SaveStatus';
+import {
+  getAuthorshipLockInfo,
+  registerAuthorshipRowTarget,
+  prepareAuthorshipPersist,
+  commitPreparedAuthorshipPersist,
+  releasePreparedAuthorshipClaim,
+} from '../authorship';
 
 // Import all component files as raw strings using Vite's glob import
 const componentModules = import.meta.glob('./**/index.jsx', {
@@ -92,8 +99,26 @@ const refresh = (sd: any) => {
 // Mock saveDraft function for forms
 const saveDraft = async (sd: any, fd: any, data: any) => {
   console.log('saveDraft called', { sd, fd, data });
+  if (data?.formData && typeof fd?.setFormData === 'function') {
+    fd.setFormData((draft: any) => {
+      draft.field = draft.field || { data: {}, status: {}, history: [] };
+      draft.field.data = { ...(draft.field?.data || {}), ...data.formData };
+    });
+  }
   triggerToast('Draft saved');
-  return Promise.resolve();
+  return Promise.resolve(true);
+};
+
+const saveSubmit = async (sd: any, fd: any, data: any) => {
+  console.log('saveSubmit called', { sd, fd, data });
+  if (data?.formData && typeof fd?.setFormData === 'function') {
+    fd.setFormData((draft: any) => {
+      draft.field = draft.field || { data: {}, status: {}, history: [] };
+      draft.field.data = { ...(draft.field?.data || {}), ...data.formData };
+    });
+  }
+  triggerToast('Submitted');
+  return Promise.resolve(true);
 };
 
 // Simple Markdown component for rendering markdown text in NHForms components
@@ -240,6 +265,8 @@ const buildNHFormsScope = (additionalComponents: Record<string, any> = {}) => {
     SubForm,
     Heading,
     SaveStatus,
+    getAuthorshipLockInfo,
+    registerAuthorshipRowTarget,
 
     // Shared utility functions (from CommonSchemaDefn)
     selectAll,
@@ -253,6 +280,10 @@ const buildNHFormsScope = (additionalComponents: Record<string, any> = {}) => {
     // Form action functions
     refresh,
     saveDraft,
+    saveSubmit,
+    prepareAuthorshipPersist,
+    commitPreparedAuthorshipPersist,
+    releasePreparedAuthorshipClaim,
 
     // Markdown component for rendering markdown content
     Markdown,

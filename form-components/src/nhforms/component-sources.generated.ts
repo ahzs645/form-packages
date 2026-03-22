@@ -13296,6 +13296,10 @@ const buildSeriesDefinitions = (props) => {
         width: coerceNumber(entry.width, 2),
         dash: Array.isArray(entry.dash) ? entry.dash.map((item) => Number(item)).filter(Number.isFinite) : undefined,
         pointSize: coerceNumber(entry.pointSize, 0),
+        showPoints: typeof entry.showPoints === "boolean" ? entry.showPoints : undefined,
+        pointStroke: normalizeString(entry.pointStroke, normalizeString(entry.stroke, OBSERVATION_CHART_PALETTE[index % OBSERVATION_CHART_PALETTE.length])),
+        pointFill: normalizeString(entry.pointFill, normalizeString(entry.stroke, OBSERVATION_CHART_PALETTE[index % OBSERVATION_CHART_PALETTE.length])),
+        includeInSummary: entry.includeInSummary !== false,
         dataKey: normalizeString(entry.dataKey || entry.key),
         parser: normalizeString(entry.parser, normalizeString(props.parser, "number")),
         valuePath: normalizeString(entry.valuePath, normalizeString(props.valuePath, "value")),
@@ -13320,6 +13324,10 @@ const buildSeriesDefinitions = (props) => {
       width: coerceNumber(props.strokeWidth, 2),
       dash: undefined,
       pointSize: coerceNumber(props.pointSize, 0),
+      showPoints: typeof props.showPoints === "boolean" ? props.showPoints : undefined,
+      pointStroke: normalizeString(props.pointStroke, normalizeString(props.stroke, OBSERVATION_CHART_PALETTE[0])),
+      pointFill: normalizeString(props.pointFill, normalizeString(props.stroke, OBSERVATION_CHART_PALETTE[0])),
+      includeInSummary: props.includeInSummary !== false,
       dataKey: normalizeString(props.dataKey || "value"),
       parser: normalizeString(props.parser, "number"),
       valuePath: normalizeString(props.valuePath, "value"),
@@ -13449,6 +13457,7 @@ const finalizeChartRows = (rows, seriesDefs, props) => {
 
   const summaryParts = seriesDefs
     .map((seriesDef, index) => {
+      if (seriesDef.includeInSummary === false) return ""
       for (let rowIndex = sortedRows.length - 1; rowIndex >= 0; rowIndex -= 1) {
         const value = sortedRows[rowIndex].values[index]
         if (!Number.isFinite(value)) continue
@@ -13501,17 +13510,22 @@ const buildUPlotOptions = (props, width, height, chartPayload) => {
   ]
 
   chartPayload.seriesDefs.forEach((seriesDef) => {
+    const seriesPointSize = Math.max(0, coerceNumber(seriesDef.pointSize, 0))
+    const seriesShowsPoints = typeof seriesDef.showPoints === "boolean"
+      ? seriesDef.showPoints
+      : showPoints || seriesPointSize > 0
+
     chartSeries.push({
       label: seriesDef.label,
       stroke: seriesDef.stroke,
       width: coerceNumber(seriesDef.width, 2),
       dash: Array.isArray(seriesDef.dash) && seriesDef.dash.length > 0 ? seriesDef.dash : undefined,
       points: {
-        show: showPoints,
-        size: Math.max(4, coerceNumber(seriesDef.pointSize, 0) || 4),
+        show: seriesShowsPoints,
+        size: Math.max(4, seriesPointSize || 4),
         width: 2,
-        stroke: seriesDef.stroke,
-        fill: "#ffffff",
+        stroke: normalizeString(seriesDef.pointStroke, seriesDef.stroke),
+        fill: normalizeString(seriesDef.pointFill, seriesDef.stroke),
       },
       value: (_self, rawValue) => {
         if (rawValue === null || rawValue === undefined) return "–"
@@ -13798,6 +13812,14 @@ const toNumericValue = (value) => {
   const numeric = Number(value)
   return Number.isFinite(numeric) ? numeric : 0
 }
+
+const getCurrentActorName = (sd, fd) => (
+  fd?.field?.data?.createdBy
+  || fd?.formData?.createdBy
+  || sd?.userProfile?.identity?.fullName
+  || sd?.webform?.provider?.name
+  || ""
+)
 const setPanelPayload = (setFormData, componentId, payloadType, payload) => {
   setFormData((draft) => {
     if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
@@ -13832,6 +13854,7 @@ const ObservationPanelEditor = ({
 }) => {
   const [fd, setFormData] = useActiveData()
   const sd = useSourceData()
+  const section = useSection()
   const componentId = id || fieldId || "ObservationPanelEditor"
   const effectiveFieldId = fieldId || componentId
   const rootValue = fd?.field?.data?.[effectiveFieldId] ?? {}
@@ -13839,6 +13862,22 @@ const ObservationPanelEditor = ({
   const totalDefs = useMemo(() => normalizePanelTotals(totals), [totals])
   const maxHistory = Number(historyConfig?.maxRows) > 0 ? Number(historyConfig.maxRows) : 5
   const createdBy = fd?.field?.data?.createdBy ?? sd?.userProfile?.identity?.fullName
+  const currentActorName = getCurrentActorName(sd, fd)
+  const authorshipPolicy = section?.authorshipPolicy || { enabled: false, granularity: "row", lockOn: "save" }
+
+  useEffect(() => {
+    if (!authorshipPolicy?.enabled || authorshipPolicy?.granularity !== "row") return
+    const rowIds = rowDefs.map((row) => row.id).filter(Boolean)
+    if (rowIds.length === 0) return
+    setFormData((draft) => {
+      registerAuthorshipRowTarget(draft, {
+        componentId,
+        fieldId: effectiveFieldId,
+        rowIds,
+        policy: authorshipPolicy,
+      })
+    })
+  }, [authorshipPolicy, componentId, effectiveFieldId, rowDefs, setFormData])
 
   const computedTotals = useMemo(() => {
     const next = {}
@@ -13920,7 +13959,8 @@ const ObservationPanelEditor = ({
       const current = draft.field.data[effectiveFieldId] && typeof draft.field.data[effectiveFieldId] === "object"
         ? draft.field.data[effectiveFieldId]
         : {}
-      draft.field.data[effectiveFieldId] = { ...current, [rowId]: nextValue }
+      const { __authorship, ...rowValues } = current
+      draft.field.data[effectiveFieldId] = { ...rowValues, [rowId]: nextValue }
     })
   }
 
@@ -13929,28 +13969,46 @@ const ObservationPanelEditor = ({
       <Label>{title}</Label>
       {rowDefs.map((row) => {
         const value = getPanelValue(rootValue, row.id)
+        const rowLockInfo = authorshipPolicy?.enabled
+          ? getAuthorshipLockInfo(fd, { scope: "row", componentId, rowKey: row.id }, currentActorName)
+          : { locked: false }
+        const rowReadOnly = !!rowLockInfo.locked
         if (row.type === "coded") {
           const optionList = Array.isArray(row.options)
             ? row.options.map((option) => ({ key: String(option), text: String(option) }))
             : []
           return (
-            <ChoiceGroup
-              key={row.id}
-              label={row.label}
-              options={optionList}
-              selectedKey={value == null ? undefined : String(value)}
-              onChange={(_event, option) => setRowValue(row.id, option?.key ?? "")}
-            />
+            <Stack key={row.id} tokens={{ childrenGap: 4 }}>
+              <ChoiceGroup
+                label={row.label}
+                options={optionList}
+                selectedKey={value == null ? undefined : String(value)}
+                onChange={rowReadOnly ? undefined : (_event, option) => setRowValue(row.id, option?.key ?? "")}
+                disabled={rowReadOnly}
+              />
+              {rowLockInfo.note ? (
+                <Text variant="small" styles={{ root: { color: "#605e5c" } }}>
+                  {rowLockInfo.note}
+                </Text>
+              ) : null}
+            </Stack>
           )
         }
         return (
-          <TextField
-            key={row.id}
-            label={row.label}
-            value={value ?? ""}
-            onChange={(_event, nextValue) => setRowValue(row.id, row.type === "numeric" ? Number(nextValue ?? 0) : (nextValue ?? ""))}
-            multiline={row.type === "text"}
-          />
+          <Stack key={row.id} tokens={{ childrenGap: 4 }}>
+            <TextField
+              label={row.label}
+              value={value ?? ""}
+              onChange={rowReadOnly ? undefined : (_event, nextValue) => setRowValue(row.id, row.type === "numeric" ? Number(nextValue ?? 0) : (nextValue ?? ""))}
+              multiline={row.type === "text"}
+              readOnly={rowReadOnly}
+            />
+            {rowLockInfo.note ? (
+              <Text variant="small" styles={{ root: { color: "#605e5c" } }}>
+                {rowLockInfo.note}
+              </Text>
+            ) : null}
+          </Stack>
         )
       })}
       {totalDefs.length > 0 ? <Separator /> : null}
@@ -14167,7 +14225,106 @@ const coercePositiveInt = (value, fallback) => {
   return Math.max(1, Math.floor(parsed))
 }
 
+const stripVolatilePayloadFields = (value) => {
+  if (Array.isArray(value)) {
+    return value.map((item) => stripVolatilePayloadFields(item))
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([key]) => key !== "collectedDateTime")
+        .map(([key, nestedValue]) => [key, stripVolatilePayloadFields(nestedValue)])
+    )
+  }
+  return value
+}
+
+const payloadsEqual = (left, right) => (
+  JSON.stringify(stripVolatilePayloadFields(left ?? null)) ===
+  JSON.stringify(stripVolatilePayloadFields(right ?? null))
+)
+
+const setNestedPayload = (setFormData, componentId, payloadType, payload) => {
+  setFormData((draft) => {
+    if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
+    if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
+    const container = draft.field.data.__componentPayloads ?? {}
+    const key = payloadType === "webform" ? "webformUpdatesByComponent" : "dcoUpdatesByComponent"
+    const nextGroup = container[key] ?? {}
+    const currentPayload = nextGroup[componentId]
+    if (payloadsEqual(currentPayload, payload)) {
+      return
+    }
+    if (payload == null || (Array.isArray(payload) && payload.length === 0)) {
+      delete nextGroup[componentId]
+    } else {
+      nextGroup[componentId] = payload
+    }
+    container[key] = nextGroup
+    draft.field.data.__componentPayloads = container
+  })
+}
+
+const toObservationList = (source) => (
+  Array.isArray(source)
+    ? source.filter((entry) => entry && typeof entry === "object")
+    : []
+)
+
+const normalizeObservationItems = ({
+  items,
+  valuePath,
+  datePath,
+  unitsPath,
+  codePath,
+  commentPath,
+  codeFilter,
+  commentFilter,
+  documentDate,
+  applyDocumentDateFilter = true,
+}) => (
+  toObservationList(items)
+    .map((entry, index) => {
+      const entryValue = valuePath ? resolvePathValue(entry, valuePath) : undefined
+      const entryDate = datePath ? resolvePathValue(entry, datePath) : undefined
+      const entryUnits = unitsPath ? resolvePathValue(entry, unitsPath) : undefined
+      const entryCode = codePath ? resolvePathValue(entry, codePath) : undefined
+      const entryComment = commentPath ? resolvePathValue(entry, commentPath) : undefined
+      const parsedDate = parseDateValue(entryDate)
+      const numericTime = parsedDate ? parsedDate.getTime() : 0
+
+      return {
+        index,
+        raw: entry,
+        rawDate: entryDate,
+        dateText: formatDate(entryDate) || "-",
+        dateTime: parsedDate,
+        dateTimeValue: numericTime,
+        valueText: stringifyValue(entryValue),
+        unitsText: stringifyValue(entryUnits),
+        codeText: stringifyValue(entryCode),
+        commentText: stringifyValue(entryComment),
+      }
+    })
+    .filter((entry) => Boolean(entry))
+    .filter((entry) => {
+      if (!entry) return false
+      if (!entry.valueText) return false
+      if (codeFilter && entry.codeText !== codeFilter) return false
+      if (commentFilter && entry.commentText !== commentFilter) return false
+      if (applyDocumentDateFilter && documentDate && entry.dateTime && entry.dateTime > documentDate) return false
+      return true
+    })
+    .sort((a, b) => {
+      if (a.dateTimeValue !== b.dateTimeValue) {
+        return b.dateTimeValue - a.dateTimeValue
+      }
+      return a.index - b.index
+    })
+)
+
 const PastMeasurementField = ({
+  id,
   fieldId,
   label = "Measurement",
   placeholder,
@@ -14182,6 +14339,10 @@ const PastMeasurementField = ({
   docDateFieldPath = "docDate",
   maxHistory = 5,
   autoFillFromHistory = false,
+  persistenceMode = "formOnly",
+  valueType = "TEXT",
+  saveDescription,
+  saveUnits,
   showHistory = true,
   showHistoryList = false,
   emptyHistoryText = "No past measurement available",
@@ -14194,82 +14355,132 @@ const PastMeasurementField = ({
 }) => {
   const [fd, setFormData] = useActiveData()
   const sd = useSourceData()
+  const componentId = id || fieldId || "PastMeasurementField"
+  const effectiveFieldId = fieldId || componentId
 
   const fieldData = fd?.field?.data ?? {}
-  const currentValue = fieldId ? fieldData[fieldId] : ""
+  const hasStoredValue = effectiveFieldId
+    ? Object.prototype.hasOwnProperty.call(fieldData, effectiveFieldId)
+    : false
+  const storedValue = effectiveFieldId ? fieldData[effectiveFieldId] : ""
   const effectiveHistorySize = coercePositiveInt(maxHistory, 5)
+  const codeFilter = stringifyValue(observationCode)
+  const commentFilter = stringifyValue(observationComment)
+  const documentDate = docDateFieldPath ? parseDateValue(resolvePathValue(fieldData, docDateFieldPath)) : null
 
   const historyItems = useMemo(() => {
-    const sourceItems = resolveMoisValue(sd, historySourcePath)
-    if (!Array.isArray(sourceItems)) return []
-
-    const codeFilter = stringifyValue(observationCode)
-    const commentFilter = stringifyValue(observationComment)
-    const documentDate = docDateFieldPath ? parseDateValue(resolvePathValue(fieldData, docDateFieldPath)) : null
-
-    const normalized = sourceItems
-      .map((entry, index) => {
-        if (!entry || typeof entry !== "object") return null
-
-        const entryValue = valuePath ? resolvePathValue(entry, valuePath) : undefined
-        const entryDate = datePath ? resolvePathValue(entry, datePath) : undefined
-        const entryUnits = unitsPath ? resolvePathValue(entry, unitsPath) : undefined
-        const entryCode = codePath ? resolvePathValue(entry, codePath) : undefined
-        const entryComment = commentPath ? resolvePathValue(entry, commentPath) : undefined
-
-        const parsedDate = parseDateValue(entryDate)
-        const numericTime = parsedDate ? parsedDate.getTime() : 0
-
-        return {
-          index,
-          rawDate: entryDate,
-          dateText: formatDate(entryDate) || "-",
-          dateTime: parsedDate,
-          dateTimeValue: numericTime,
-          valueText: stringifyValue(entryValue),
-          unitsText: stringifyValue(entryUnits),
-          codeText: stringifyValue(entryCode),
-          commentText: stringifyValue(entryComment),
-        }
-      })
-      .filter((entry) => Boolean(entry))
-      .filter((entry) => {
-        if (!entry) return false
-        if (!entry.valueText) return false
-        if (codeFilter && entry.codeText !== codeFilter) return false
-        if (commentFilter && entry.commentText !== commentFilter) return false
-        if (documentDate && entry.dateTime && entry.dateTime > documentDate) return false
-        return true
-      })
-      .sort((a, b) => {
-        if (a.dateTimeValue !== b.dateTimeValue) {
-          return b.dateTimeValue - a.dateTimeValue
-        }
-        return a.index - b.index
-      })
-
-    return normalized.slice(0, effectiveHistorySize)
+    return normalizeObservationItems({
+      items: resolveMoisValue(sd, historySourcePath),
+      valuePath,
+      datePath,
+      unitsPath,
+      codePath,
+      commentPath,
+      codeFilter,
+      commentFilter,
+      documentDate,
+      applyDocumentDateFilter: true,
+    }).slice(0, effectiveHistorySize)
   }, [
+    codeFilter,
     commentPath,
     codePath,
+    commentFilter,
     datePath,
-    docDateFieldPath,
+    documentDate,
     effectiveHistorySize,
-    fieldData,
     historySourcePath,
-    observationCode,
-    observationComment,
     sd,
     unitsPath,
     valuePath,
   ])
 
+  const linkedObservationItem = useMemo(() => (
+    normalizeObservationItems({
+      items: sd?.webform?.observations,
+      valuePath,
+      datePath,
+      unitsPath,
+      codePath,
+      commentPath,
+      codeFilter,
+      commentFilter,
+      documentDate: null,
+      applyDocumentDateFilter: false,
+    })[0] ?? null
+  ), [codeFilter, commentPath, codePath, commentFilter, datePath, sd, unitsPath, valuePath])
+
   const latestHistoryItem = historyItems[0] ?? null
+  const resolvedCurrentValue = hasMeaningfulValue(storedValue)
+    ? storedValue
+    : linkedObservationItem?.valueText ?? latestHistoryItem?.valueText ?? ""
 
   useEffect(() => {
-    if (!fieldId || !autoFillFromHistory) return
+    if (persistenceMode !== "observationAndForm") {
+      setNestedPayload(setFormData, componentId, "dco", null)
+      return
+    }
+    if (!observationCode || !effectiveFieldId) {
+      setNestedPayload(setFormData, componentId, "dco", null)
+      return
+    }
+
+    const oldObs = linkedObservationItem?.raw
+    const oldId = oldObs?.observationId ?? 0
+    const hasExplicitValue = hasStoredValue
+    const explicitValue = hasExplicitValue ? stringifyValue(storedValue) : ""
+
+    if (!hasExplicitValue) {
+      setNestedPayload(setFormData, componentId, "dco", null)
+      return
+    }
+
+    if (!explicitValue) {
+      setNestedPayload(setFormData, componentId, "dco", oldId ? [{ observationId: -oldId }] : null)
+      return
+    }
+
+    const createdBy = fieldData.createdBy ?? sd?.userProfile?.identity?.fullName
+    const resolvedUnits = stringifyValue(saveUnits) || linkedObservationItem?.unitsText || latestHistoryItem?.unitsText || ""
+
+    setNestedPayload(setFormData, componentId, "dco", [{
+      observationId: oldId,
+      observationCode,
+      observationClass: "DCOBS",
+      value: explicitValue,
+      valueType: String(valueType || "TEXT"),
+      status: oldId ? "C" : "F",
+      description: stringifyValue(saveDescription) || label || "Measurement",
+      units: resolvedUnits,
+      orderedBy: createdBy,
+      collectedBy: createdBy,
+      collectedDateTime: getDateTimeString(new Date()),
+      ...(commentFilter ? { comment: commentFilter } : {}),
+    }])
+  }, [
+    componentId,
+    effectiveFieldId,
+    fieldData,
+    hasStoredValue,
+    label,
+    latestHistoryItem,
+    linkedObservationItem,
+    observationCode,
+    persistenceMode,
+    saveDescription,
+    saveUnits,
+    sd,
+    setFormData,
+    storedValue,
+    valueType,
+    commentFilter,
+  ])
+
+  useEffect(() => {
+    if (!effectiveFieldId || !autoFillFromHistory) return
     if (!latestHistoryItem?.valueText) return
-    if (hasMeaningfulValue(currentValue)) return
+    if (hasMeaningfulValue(storedValue)) return
+    if (linkedObservationItem?.valueText) return
 
     setFormData((draft) => {
       if (!draft.field) {
@@ -14278,13 +14489,13 @@ const PastMeasurementField = ({
       if (!draft.field.data || typeof draft.field.data !== "object") {
         draft.field.data = {}
       }
-      if (hasMeaningfulValue(draft.field.data[fieldId])) return
-      draft.field.data[fieldId] = latestHistoryItem.valueText
+      if (hasMeaningfulValue(draft.field.data[effectiveFieldId])) return
+      draft.field.data[effectiveFieldId] = latestHistoryItem.valueText
     })
-  }, [autoFillFromHistory, currentValue, fieldId, latestHistoryItem, setFormData])
+  }, [autoFillFromHistory, effectiveFieldId, latestHistoryItem, linkedObservationItem, setFormData, storedValue])
 
   const handleValueChange = (event, nextValue) => {
-    if (!fieldId) return
+    if (!effectiveFieldId) return
     if (readOnly || disabled) return
 
     const updatedValue = nextValue ?? ""
@@ -14295,7 +14506,7 @@ const PastMeasurementField = ({
       if (!draft.field.data || typeof draft.field.data !== "object") {
         draft.field.data = {}
       }
-      draft.field.data[fieldId] = updatedValue
+      draft.field.data[effectiveFieldId] = updatedValue
     })
 
     if (typeof onChange === "function") {
@@ -14328,7 +14539,7 @@ const PastMeasurementField = ({
       <Stack horizontal verticalAlign="end" tokens={{ childrenGap: 10 }} styles={{ root: { flexWrap: "wrap" } }}>
         <StackItem grow styles={{ root: { minWidth: 220 } }}>
           <TextField
-            value={stringifyValue(currentValue)}
+            value={stringifyValue(resolvedCurrentValue)}
             placeholder={placeholder}
             onChange={handleValueChange}
             disabled={disabled}
@@ -15272,6 +15483,32 @@ const _normalizeSaveOnCloseOptions = (value) => {
   return {}
 }
 
+const _collectComponentPayloads = (fd) => {
+  const payloads = fd?.field?.data?.__componentPayloads
+  const dcoGroups = payloads?.dcoUpdatesByComponent || {}
+  const webformGroups = payloads?.webformUpdatesByComponent || {}
+  const DCOUpdates = Object.values(dcoGroups).flatMap((entry) => Array.isArray(entry) ? entry : [])
+  const panelUpdates = Object.values(webformGroups).flatMap((entry) => Array.isArray(entry?.panelUpdates) ? entry.panelUpdates : [])
+  const narratives = Object.values(webformGroups).flatMap((entry) => Array.isArray(entry?.narratives) ? entry.narratives : [])
+  const webformUpdate = panelUpdates.length || narratives.length
+    ? {
+        ...(panelUpdates.length ? { panelUpdates } : {}),
+        ...(narratives.length ? { narratives } : {}),
+      }
+    : null
+
+  return { DCOUpdates, webformUpdate }
+}
+
+const _buildDefaultSavePayload = (fd, formDataOverride) => {
+  const componentPayload = _collectComponentPayloads(fd)
+  return {
+    formData: formDataOverride ?? fd?.field?.data,
+    webformUpdate: componentPayload.webformUpdate,
+    DCOUpdates: componentPayload.DCOUpdates,
+  }
+}
+
 const _useChangeAwareDirtyState = ({
   watchedValue,
   disabled = false,
@@ -15359,9 +15596,12 @@ const SaveOnClose = ({
       if (sd?.webform?.isDraft === "N") return
       if (onlyWhenChanged && !hasChanged) return
 
+      const prepared = typeof prepareAuthorshipPersist === "function"
+        ? prepareAuthorshipPersist(sd, fd, "save")
+        : null
       const saveData = getSaveData
         ? getSaveData()
-        : { formData: fd?.field?.data, webformUpdate: null }
+        : _buildDefaultSavePayload(fd, prepared?.formData)
 
       saveDraft(sd, fd, saveData)
     }
@@ -15405,9 +15645,12 @@ const useSaveOnClose = (getSaveData, options = {}) => {
       if (sd?.webform?.isDraft === "N") return
       if ((normalizedOptions.onlyWhenChanged ?? true) && !hasChanged) return
 
+      const prepared = typeof prepareAuthorshipPersist === "function"
+        ? prepareAuthorshipPersist(sd, fd, "save")
+        : null
       const saveData = getSaveData
         ? getSaveData()
-        : { formData: fd?.field?.data, webformUpdate: null }
+        : _buildDefaultSavePayload(fd, prepared?.formData)
 
       saveDraft(sd, fd, saveData)
     }
@@ -17827,6 +18070,18 @@ const _usesStructuredSelectableOptions = (field) =>
   Array.isArray(field?.options) &&
   field.options.some((option) => option && typeof option === "object" && !Array.isArray(option))
 
+const _getSelectableOptionNumericValue = (option) => {
+  const rawValue = option?.value ?? option?.key ?? null
+  if (typeof rawValue === "number" && Number.isFinite(rawValue)) return rawValue
+  if (typeof rawValue === "string") {
+    const trimmed = rawValue.trim()
+    if (!trimmed) return null
+    const numeric = Number(trimmed)
+    return Number.isFinite(numeric) ? numeric : null
+  }
+  return null
+}
+
 const _normalizeSelectableOptions = (field, fallbackOptions = []) => {
   const rawOptions = Array.isArray(field?.options) && field.options.length > 0
     ? field.options
@@ -17906,6 +18161,28 @@ const _serializeSelectableValue = (field, option) => {
   }
 }
 
+const _resolveSelectableBinaryOptions = (field, fallbackOptions = []) => {
+  const options = _normalizeSelectableOptions(field, fallbackOptions)
+  if (options.length === 0) {
+    return { checkedOption: null, uncheckedOption: null }
+  }
+
+  const uncheckedOption =
+    options.find((option) => _getSelectableOptionNumericValue(option) === 0) ||
+    null
+
+  const checkedOption =
+    options.find((option) => option !== uncheckedOption && _getSelectableOptionNumericValue(option) !== 0) ||
+    options.find((option) => option !== uncheckedOption) ||
+    options[0] ||
+    null
+
+  return {
+    checkedOption,
+    uncheckedOption,
+  }
+}
+
 const _resolveFieldDefaultValue = (field) => {
   if (!field || _isHeadingField(field)) return undefined
 
@@ -17932,6 +18209,17 @@ const _resolveFieldDefaultValue = (field) => {
   }
 
   return explicitDefault
+}
+
+const _resolveFieldEmptyNumericValue = (field) => {
+  if (!field || _isHeadingField(field)) return null
+  const rawValue = field.emptyValue ?? field.empty_value
+  if (typeof rawValue === "number" && Number.isFinite(rawValue)) return rawValue
+  if (typeof rawValue === "string" && rawValue.trim()) {
+    const numeric = Number(rawValue)
+    return Number.isFinite(numeric) ? numeric : null
+  }
+  return null
 }
 
 const _buildDataEntryRenderGroups = (fields) => {
@@ -18547,7 +18835,9 @@ const SubformScoringInner = ({
       }
     }
     for (const fieldId of variableFieldIds) {
-      vars[fieldId] = _toNumericValue(dataEntryValues[fieldId])
+      const configuredField = dataEntryFieldById.get(fieldId) || null
+      const numericValue = _toNumericValue(dataEntryValues[fieldId])
+      vars[fieldId] = numericValue !== null ? numericValue : _resolveFieldEmptyNumericValue(configuredField)
     }
     const result = {}
     for (const calculation of dataEntryCalculations) {
@@ -18560,7 +18850,7 @@ const SubformScoringInner = ({
       result[calculation.id] = precision === null ? value : Number(value.toFixed(precision))
     }
     return result
-  }, [isDataEntryMode, isMorphineCalculatorMode, dataEntryCalculatorConfig, dataEntryFields, dataEntryValues, dataEntryCalculations])
+  }, [isDataEntryMode, isMorphineCalculatorMode, dataEntryCalculatorConfig, dataEntryFieldById, dataEntryFields, dataEntryValues, dataEntryCalculations])
 
   const progress = useMemo(() => {
     if (isDataEntryMode) {
@@ -18821,6 +19111,54 @@ const SubformScoringInner = ({
     if (field.type === "booleanYesNo") {
       const optionList = _normalizeSelectableOptions(field, ["Yes", "No"])
       const selectedOption = optionList.find((option) => _isSelectableOptionSelected(dataEntryValues[field.id], option)) || null
+      const renderStyle = String(field.renderStyle || field.render_style || "").trim().toLowerCase()
+      if (renderStyle === "checkbox" || renderStyle === "checklist-row") {
+        const { checkedOption, uncheckedOption } = _resolveSelectableBinaryOptions(field, ["Yes", "No"])
+        const checked = checkedOption ? _isSelectableOptionSelected(dataEntryValues[field.id], checkedOption) : false
+        const controlLabel = checkedOption?.text || "Yes"
+        return (
+          <div key={\`field-\${field.id}\`}>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "minmax(0, 1fr) auto",
+                gap: "12px",
+                alignItems: "center",
+              }}
+            >
+              <Label required={required} styles={{ root: { marginBottom: 0 } }}>
+                {field.label}
+              </Label>
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  cursor: "pointer",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={Boolean(checked)}
+                  onChange={(event) => {
+                    if (event?.target?.checked) {
+                      setDataEntryValue(field.id, _serializeSelectableValue(field, checkedOption))
+                      return
+                    }
+                    if (_resolveFieldEmptyNumericValue(field) !== null) {
+                      setDataEntryValue(field.id, null)
+                      return
+                    }
+                    setDataEntryValue(field.id, uncheckedOption ? _serializeSelectableValue(field, uncheckedOption) : null)
+                  }}
+                />
+                <span>{controlLabel}</span>
+              </label>
+            </div>
+          </div>
+        )
+      }
       return (
         <div key={\`field-\${field.id}\`}>
           <Label required={required}>{field.label}</Label>
@@ -19546,11 +19884,32 @@ const normalizeGuardActions = (actions) => {
     }))
 }
 
-const buildDefaultSavePayload = (fd) => ({
-  formData: fd?.field?.data,
-  webformUpdate: null,
-  documentUpdate: null,
-})
+const collectComponentPayloads = (fd) => {
+  const payloads = fd?.field?.data?.__componentPayloads
+  const dcoGroups = payloads?.dcoUpdatesByComponent || {}
+  const webformGroups = payloads?.webformUpdatesByComponent || {}
+  const DCOUpdates = Object.values(dcoGroups).flatMap((entry) => Array.isArray(entry) ? entry : [])
+  const panelUpdates = Object.values(webformGroups).flatMap((entry) => Array.isArray(entry?.panelUpdates) ? entry.panelUpdates : [])
+  const narratives = Object.values(webformGroups).flatMap((entry) => Array.isArray(entry?.narratives) ? entry.narratives : [])
+  const webformUpdate = panelUpdates.length || narratives.length
+    ? {
+        ...(panelUpdates.length ? { panelUpdates } : {}),
+        ...(narratives.length ? { narratives } : {}),
+      }
+    : null
+
+  return { DCOUpdates, webformUpdate }
+}
+
+const buildDefaultSavePayload = (fd, formDataOverride) => {
+  const componentPayload = collectComponentPayloads(fd)
+  return {
+    formData: formDataOverride ?? fd?.field?.data,
+    webformUpdate: componentPayload.webformUpdate,
+    documentUpdate: null,
+    DCOUpdates: componentPayload.DCOUpdates,
+  }
+}
 
 const UnsavedChangesGuard = ({
   watchedValue,
@@ -19614,17 +19973,29 @@ const UnsavedChangesGuard = ({
       return
     }
 
-    const payload = typeof getSaveData === "function" ? getSaveData() : buildDefaultSavePayload(fd)
+    const persistAction = actionId === "sign" ? "sign" : "save"
+    const prepared = typeof prepareAuthorshipPersist === "function"
+      ? prepareAuthorshipPersist(sd, fd, persistAction)
+      : null
+    const payload = typeof getSaveData === "function"
+      ? getSaveData()
+      : buildDefaultSavePayload(fd, prepared?.formData)
 
     if (actionId === "sign" && typeof saveSubmit === "function") {
-      await saveSubmit(sd, fd, payload)
+      const success = await saveSubmit(sd, fd, payload)
+      if (success !== false && typeof commitPreparedAuthorshipPersist === "function") {
+        commitPreparedAuthorshipPersist(fd, prepared)
+      }
       markSaved()
       setIsOpen(false)
       return
     }
 
     if (typeof saveDraft === "function") {
-      await saveDraft(sd, fd, payload)
+      const success = await saveDraft(sd, fd, payload)
+      if (success !== false && typeof commitPreparedAuthorshipPersist === "function") {
+        commitPreparedAuthorshipPersist(fd, prepared)
+      }
       markSaved()
     }
     setIsOpen(false)

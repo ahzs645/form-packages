@@ -321,3 +321,29 @@ export type { LivePreviewProps } from './scope';
 // NHForms
 // ============================================================================
 export { nhformsComponents } from './nhforms';
+
+// ============================================================================
+// Authorship
+// ============================================================================
+export {
+  DEFAULT_AUTHORSHIP_POLICY,
+  normalizeAuthorshipPolicy,
+  normalizeAuthorshipStore,
+  normalizeAuthorshipTargetRegistry,
+  getAuthorshipClaim,
+  getAuthorshipLockInfo,
+  registerAuthorshipFieldTarget,
+  registerAuthorshipRowTarget,
+  prepareAuthorshipPersist,
+  commitPreparedAuthorshipPersist,
+  releasePreparedAuthorshipClaim,
+} from './authorship';
+export type {
+  AuthorshipClaim,
+  AuthorshipLockInfo,
+  AuthorshipPersistAction,
+  AuthorshipPolicy,
+  AuthorshipState,
+  AuthorshipStore,
+  AuthorshipTargetRegistry,
+} from './authorship';

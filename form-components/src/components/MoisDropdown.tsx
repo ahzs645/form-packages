@@ -5,7 +5,8 @@
 
 import React, { useMemo, useCallback, useRef, useEffect } from 'react';
 import { Dropdown, IDropdownOption, IDropdownStyles } from '@fluentui/react';
-import { useSection, useActiveData, useCodeList } from '../context/MoisContext';
+import { useSection, useActiveData, useSourceData, useCodeList } from '../context/MoisContext';
+import { getAuthorshipLockInfo, registerAuthorshipFieldTarget } from '../authorship';
 
 export interface MoisDropdownProps {
   fieldId?: string;
@@ -60,8 +61,20 @@ export const MoisDropdown: React.FC<MoisDropdownProps> = ({
   ...rest
 }) => {
   const section = useSection();
-  const [activeData] = useActiveData();
+  const [activeData, setActiveData] = useActiveData();
+  const sourceData = useSourceData();
   const codeList = useCodeList(codeSystem || '');
+  useEffect(() => {
+    const targetFieldId = fieldId || sourceId || layoutId;
+    if (!targetFieldId) return;
+    setActiveData((draft: any) => {
+      registerAuthorshipFieldTarget(draft, targetFieldId, section.authorshipPolicy);
+    });
+  }, [fieldId, layoutId, section.authorshipPolicy, setActiveData, sourceId]);
+  const authorshipLockInfo = section.authorshipPolicy?.enabled
+    ? getAuthorshipLockInfo(activeData, { scope: 'field', fieldId: fieldId || sourceId || layoutId }, sourceData?.userProfile?.identity?.fullName)
+    : { locked: false };
+  const effectiveReadOnly = readOnly || !!authorshipLockInfo.locked;
 
   // Get value from props or activeData
   const value = propValue ?? (fieldId && section.activeSelector
@@ -120,12 +133,17 @@ export const MoisDropdown: React.FC<MoisDropdownProps> = ({
         selectedKey={value || undefined}
         options={options}
         placeholder={placeholder}
-        disabled={disabled || readOnly}
+        disabled={disabled || effectiveReadOnly}
         required={required}
         onChange={handleChange}
         styles={dropdownStyles}
         {...rest}
       />
+      {authorshipLockInfo.note ? (
+        <div style={{ fontSize: 12, color: '#605e5c', marginTop: 4 }}>
+          {authorshipLockInfo.note}
+        </div>
+      ) : null}
     </div>
   );
 };

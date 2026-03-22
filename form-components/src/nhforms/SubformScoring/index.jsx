@@ -385,6 +385,18 @@ const _usesStructuredSelectableOptions = (field) =>
   Array.isArray(field?.options) &&
   field.options.some((option) => option && typeof option === "object" && !Array.isArray(option))
 
+const _getSelectableOptionNumericValue = (option) => {
+  const rawValue = option?.value ?? option?.key ?? null
+  if (typeof rawValue === "number" && Number.isFinite(rawValue)) return rawValue
+  if (typeof rawValue === "string") {
+    const trimmed = rawValue.trim()
+    if (!trimmed) return null
+    const numeric = Number(trimmed)
+    return Number.isFinite(numeric) ? numeric : null
+  }
+  return null
+}
+
 const _normalizeSelectableOptions = (field, fallbackOptions = []) => {
   const rawOptions = Array.isArray(field?.options) && field.options.length > 0
     ? field.options
@@ -464,6 +476,28 @@ const _serializeSelectableValue = (field, option) => {
   }
 }
 
+const _resolveSelectableBinaryOptions = (field, fallbackOptions = []) => {
+  const options = _normalizeSelectableOptions(field, fallbackOptions)
+  if (options.length === 0) {
+    return { checkedOption: null, uncheckedOption: null }
+  }
+
+  const uncheckedOption =
+    options.find((option) => _getSelectableOptionNumericValue(option) === 0) ||
+    null
+
+  const checkedOption =
+    options.find((option) => option !== uncheckedOption && _getSelectableOptionNumericValue(option) !== 0) ||
+    options.find((option) => option !== uncheckedOption) ||
+    options[0] ||
+    null
+
+  return {
+    checkedOption,
+    uncheckedOption,
+  }
+}
+
 const _resolveFieldDefaultValue = (field) => {
   if (!field || _isHeadingField(field)) return undefined
 
@@ -490,6 +524,17 @@ const _resolveFieldDefaultValue = (field) => {
   }
 
   return explicitDefault
+}
+
+const _resolveFieldEmptyNumericValue = (field) => {
+  if (!field || _isHeadingField(field)) return null
+  const rawValue = field.emptyValue ?? field.empty_value
+  if (typeof rawValue === "number" && Number.isFinite(rawValue)) return rawValue
+  if (typeof rawValue === "string" && rawValue.trim()) {
+    const numeric = Number(rawValue)
+    return Number.isFinite(numeric) ? numeric : null
+  }
+  return null
 }
 
 const _buildDataEntryRenderGroups = (fields) => {
@@ -1105,7 +1150,9 @@ const SubformScoringInner = ({
       }
     }
     for (const fieldId of variableFieldIds) {
-      vars[fieldId] = _toNumericValue(dataEntryValues[fieldId])
+      const configuredField = dataEntryFieldById.get(fieldId) || null
+      const numericValue = _toNumericValue(dataEntryValues[fieldId])
+      vars[fieldId] = numericValue !== null ? numericValue : _resolveFieldEmptyNumericValue(configuredField)
     }
     const result = {}
     for (const calculation of dataEntryCalculations) {
@@ -1118,7 +1165,7 @@ const SubformScoringInner = ({
       result[calculation.id] = precision === null ? value : Number(value.toFixed(precision))
     }
     return result
-  }, [isDataEntryMode, isMorphineCalculatorMode, dataEntryCalculatorConfig, dataEntryFields, dataEntryValues, dataEntryCalculations])
+  }, [isDataEntryMode, isMorphineCalculatorMode, dataEntryCalculatorConfig, dataEntryFieldById, dataEntryFields, dataEntryValues, dataEntryCalculations])
 
   const progress = useMemo(() => {
     if (isDataEntryMode) {
@@ -1379,6 +1426,54 @@ const SubformScoringInner = ({
     if (field.type === "booleanYesNo") {
       const optionList = _normalizeSelectableOptions(field, ["Yes", "No"])
       const selectedOption = optionList.find((option) => _isSelectableOptionSelected(dataEntryValues[field.id], option)) || null
+      const renderStyle = String(field.renderStyle || field.render_style || "").trim().toLowerCase()
+      if (renderStyle === "checkbox" || renderStyle === "checklist-row") {
+        const { checkedOption, uncheckedOption } = _resolveSelectableBinaryOptions(field, ["Yes", "No"])
+        const checked = checkedOption ? _isSelectableOptionSelected(dataEntryValues[field.id], checkedOption) : false
+        const controlLabel = checkedOption?.text || "Yes"
+        return (
+          <div key={`field-${field.id}`}>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "minmax(0, 1fr) auto",
+                gap: "12px",
+                alignItems: "center",
+              }}
+            >
+              <Label required={required} styles={{ root: { marginBottom: 0 } }}>
+                {field.label}
+              </Label>
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  cursor: "pointer",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={Boolean(checked)}
+                  onChange={(event) => {
+                    if (event?.target?.checked) {
+                      setDataEntryValue(field.id, _serializeSelectableValue(field, checkedOption))
+                      return
+                    }
+                    if (_resolveFieldEmptyNumericValue(field) !== null) {
+                      setDataEntryValue(field.id, null)
+                      return
+                    }
+                    setDataEntryValue(field.id, uncheckedOption ? _serializeSelectableValue(field, uncheckedOption) : null)
+                  }}
+                />
+                <span>{controlLabel}</span>
+              </label>
+            </div>
+          </div>
+        )
+      }
       return (
         <div key={`field-${field.id}`}>
           <Label required={required}>{field.label}</Label>

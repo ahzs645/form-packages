@@ -7,9 +7,10 @@
 
 import React from 'react';
 import { Label, TextField, IconButton, DatePicker, ILabelProps } from '@fluentui/react';
-import { useSection, useTheme } from '../context/MoisContext';
+import { useSection, useTheme, useActiveData, useSourceData } from '../context/MoisContext';
 import { Linear } from './Linear';
 import { Action, ActionBarProps } from './Action';
+import { getAuthorshipLockInfo, registerAuthorshipFieldTarget } from '../authorship';
 
 export interface LayoutItemChildProps {
   disabled?: boolean;
@@ -103,6 +104,8 @@ export const LayoutItem: React.FC<LayoutItemProps> = ({
 }) => {
   // Get section context (with optional overrides)
   const sectionContext = useSection(sectionOverride);
+  const [activeData, setActiveData] = useActiveData();
+  const sourceData = useSourceData();
   const theme = useTheme();
 
   // Compute the layout ID
@@ -110,6 +113,13 @@ export const LayoutItem: React.FC<LayoutItemProps> = ({
   // Stable field marker used by renderer->PDF sync click detection.
   const syncFieldId = fieldId ?? id ?? computedLayoutId;
   const key = `${computedLayoutId}${index ?? ''}`;
+
+  React.useEffect(() => {
+    if (!computedLayoutId) return;
+    setActiveData((draft: any) => {
+      registerAuthorshipFieldTarget(draft, computedLayoutId, sectionContext.authorshipPolicy);
+    });
+  }, [computedLayoutId, sectionContext.authorshipPolicy, setActiveData]);
 
   // Get layout from section context
   const layout = sectionContext.layout;
@@ -124,7 +134,10 @@ export const LayoutItem: React.FC<LayoutItemProps> = ({
 
   // Determine readOnly and isComplete from section context
   const isComplete = isCompleteProp ?? false;
-  const readOnly = readOnlyProp ?? isComplete;
+  const authorshipLockInfo = sectionContext.authorshipPolicy?.enabled && sectionContext.authorshipPolicy.granularity !== 'row'
+    ? getAuthorshipLockInfo(activeData, { scope: 'field', fieldId: computedLayoutId }, sourceData?.userProfile?.identity?.fullName)
+    : { locked: false };
+  const readOnly = (readOnlyProp ?? false) || !!authorshipLockInfo.locked || isComplete;
   let hidden = hiddenProp;
   let label = labelProp;
 
@@ -240,6 +253,13 @@ export const LayoutItem: React.FC<LayoutItemProps> = ({
     return children;
   };
 
+  const renderedNote = note || authorshipLockInfo.note ? (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      {note && <div>{note}</div>}
+      {authorshipLockInfo.note && <div style={{ fontSize: 12, color: '#605e5c' }}>{authorshipLockInfo.note}</div>}
+    </div>
+  ) : null;
+
   // Helper function to render actions
   const renderActionsBar = () => {
     // Check if actions is an object with action handlers (not a React element)
@@ -334,9 +354,9 @@ export const LayoutItem: React.FC<LayoutItemProps> = ({
             </div>
 
             {/* Note */}
-            {note && (
+            {renderedNote && (
               <div style={{ flex: '1', margin: '5px', marginLeft: '10px' }}>
-                {note}
+                {renderedNote}
               </div>
             )}
           </div>
@@ -383,9 +403,9 @@ export const LayoutItem: React.FC<LayoutItemProps> = ({
         </div>
 
         {/* Note */}
-        {note && (
+        {renderedNote && (
           <div style={{ flex: '1', margin: '5px', marginLeft: '10px' }}>
-            {note}
+            {renderedNote}
           </div>
         )}
       </div>

@@ -18,11 +18,32 @@ const normalizeGuardActions = (actions) => {
     }))
 }
 
-const buildDefaultSavePayload = (fd) => ({
-  formData: fd?.field?.data,
-  webformUpdate: null,
-  documentUpdate: null,
-})
+const collectComponentPayloads = (fd) => {
+  const payloads = fd?.field?.data?.__componentPayloads
+  const dcoGroups = payloads?.dcoUpdatesByComponent || {}
+  const webformGroups = payloads?.webformUpdatesByComponent || {}
+  const DCOUpdates = Object.values(dcoGroups).flatMap((entry) => Array.isArray(entry) ? entry : [])
+  const panelUpdates = Object.values(webformGroups).flatMap((entry) => Array.isArray(entry?.panelUpdates) ? entry.panelUpdates : [])
+  const narratives = Object.values(webformGroups).flatMap((entry) => Array.isArray(entry?.narratives) ? entry.narratives : [])
+  const webformUpdate = panelUpdates.length || narratives.length
+    ? {
+        ...(panelUpdates.length ? { panelUpdates } : {}),
+        ...(narratives.length ? { narratives } : {}),
+      }
+    : null
+
+  return { DCOUpdates, webformUpdate }
+}
+
+const buildDefaultSavePayload = (fd, formDataOverride) => {
+  const componentPayload = collectComponentPayloads(fd)
+  return {
+    formData: formDataOverride ?? fd?.field?.data,
+    webformUpdate: componentPayload.webformUpdate,
+    documentUpdate: null,
+    DCOUpdates: componentPayload.DCOUpdates,
+  }
+}
 
 const UnsavedChangesGuard = ({
   watchedValue,
@@ -86,17 +107,29 @@ const UnsavedChangesGuard = ({
       return
     }
 
-    const payload = typeof getSaveData === "function" ? getSaveData() : buildDefaultSavePayload(fd)
+    const persistAction = actionId === "sign" ? "sign" : "save"
+    const prepared = typeof prepareAuthorshipPersist === "function"
+      ? prepareAuthorshipPersist(sd, fd, persistAction)
+      : null
+    const payload = typeof getSaveData === "function"
+      ? getSaveData()
+      : buildDefaultSavePayload(fd, prepared?.formData)
 
     if (actionId === "sign" && typeof saveSubmit === "function") {
-      await saveSubmit(sd, fd, payload)
+      const success = await saveSubmit(sd, fd, payload)
+      if (success !== false && typeof commitPreparedAuthorshipPersist === "function") {
+        commitPreparedAuthorshipPersist(fd, prepared)
+      }
       markSaved()
       setIsOpen(false)
       return
     }
 
     if (typeof saveDraft === "function") {
-      await saveDraft(sd, fd, payload)
+      const success = await saveDraft(sd, fd, payload)
+      if (success !== false && typeof commitPreparedAuthorshipPersist === "function") {
+        commitPreparedAuthorshipPersist(fd, prepared)
+      }
       markSaved()
     }
     setIsOpen(false)

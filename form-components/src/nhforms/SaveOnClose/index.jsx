@@ -17,6 +17,32 @@ const _normalizeSaveOnCloseOptions = (value) => {
   return {}
 }
 
+const _collectComponentPayloads = (fd) => {
+  const payloads = fd?.field?.data?.__componentPayloads
+  const dcoGroups = payloads?.dcoUpdatesByComponent || {}
+  const webformGroups = payloads?.webformUpdatesByComponent || {}
+  const DCOUpdates = Object.values(dcoGroups).flatMap((entry) => Array.isArray(entry) ? entry : [])
+  const panelUpdates = Object.values(webformGroups).flatMap((entry) => Array.isArray(entry?.panelUpdates) ? entry.panelUpdates : [])
+  const narratives = Object.values(webformGroups).flatMap((entry) => Array.isArray(entry?.narratives) ? entry.narratives : [])
+  const webformUpdate = panelUpdates.length || narratives.length
+    ? {
+        ...(panelUpdates.length ? { panelUpdates } : {}),
+        ...(narratives.length ? { narratives } : {}),
+      }
+    : null
+
+  return { DCOUpdates, webformUpdate }
+}
+
+const _buildDefaultSavePayload = (fd, formDataOverride) => {
+  const componentPayload = _collectComponentPayloads(fd)
+  return {
+    formData: formDataOverride ?? fd?.field?.data,
+    webformUpdate: componentPayload.webformUpdate,
+    DCOUpdates: componentPayload.DCOUpdates,
+  }
+}
+
 const _useChangeAwareDirtyState = ({
   watchedValue,
   disabled = false,
@@ -104,9 +130,12 @@ const SaveOnClose = ({
       if (sd?.webform?.isDraft === "N") return
       if (onlyWhenChanged && !hasChanged) return
 
+      const prepared = typeof prepareAuthorshipPersist === "function"
+        ? prepareAuthorshipPersist(sd, fd, "save")
+        : null
       const saveData = getSaveData
         ? getSaveData()
-        : { formData: fd?.field?.data, webformUpdate: null }
+        : _buildDefaultSavePayload(fd, prepared?.formData)
 
       saveDraft(sd, fd, saveData)
     }
@@ -150,9 +179,12 @@ const useSaveOnClose = (getSaveData, options = {}) => {
       if (sd?.webform?.isDraft === "N") return
       if ((normalizedOptions.onlyWhenChanged ?? true) && !hasChanged) return
 
+      const prepared = typeof prepareAuthorshipPersist === "function"
+        ? prepareAuthorshipPersist(sd, fd, "save")
+        : null
       const saveData = getSaveData
         ? getSaveData()
-        : { formData: fd?.field?.data, webformUpdate: null }
+        : _buildDefaultSavePayload(fd, prepared?.formData)
 
       saveDraft(sd, fd, saveData)
     }

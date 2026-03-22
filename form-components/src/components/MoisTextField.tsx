@@ -5,7 +5,8 @@
 
 import React from 'react';
 import { TextField, Label, ITextFieldStyles } from '@fluentui/react';
-import { useSection, useActiveData, useTheme } from '../context/MoisContext';
+import { useSection, useActiveData, useSourceData, useTheme } from '../context/MoisContext';
+import { getAuthorshipLockInfo, registerAuthorshipFieldTarget } from '../authorship';
 
 export interface MoisTextFieldProps {
   fieldId?: string;
@@ -56,7 +57,19 @@ export const MoisTextField: React.FC<MoisTextFieldProps> = ({
 }) => {
   const section = useSection();
   const [activeData, setActiveData] = useActiveData();
+  const sourceData = useSourceData();
   const theme = useTheme();
+  React.useEffect(() => {
+    const targetFieldId = fieldId || sourceId || layoutId;
+    if (!targetFieldId) return;
+    setActiveData((draft: any) => {
+      registerAuthorshipFieldTarget(draft, targetFieldId, section.authorshipPolicy);
+    });
+  }, [fieldId, layoutId, section.authorshipPolicy, setActiveData, sourceId]);
+  const authorshipLockInfo = section.authorshipPolicy?.enabled
+    ? getAuthorshipLockInfo(activeData, { scope: 'field', fieldId: fieldId || sourceId || layoutId }, sourceData?.userProfile?.identity?.fullName)
+    : { locked: false };
+  const effectiveReadOnly = readOnly || !!authorshipLockInfo.locked;
 
   // Get value from props or activeData
   const value = propValue ?? (fieldId && section.activeSelector
@@ -103,14 +116,15 @@ export const MoisTextField: React.FC<MoisTextFieldProps> = ({
         value={value}
         onChange={handleChange}
         placeholder={placeholder}
-        readOnly={readOnly}
+        readOnly={effectiveReadOnly}
         disabled={disabled}
         borderless={borderless}
         multiline={multiline}
         rows={multiline ? rows : undefined}
         required={required}
         styles={textFieldStyles}
-        tabIndex={readOnly ? -1 : 0}
+        description={authorshipLockInfo.note}
+        tabIndex={effectiveReadOnly ? -1 : 0}
         {...rest}
       />
     </div>

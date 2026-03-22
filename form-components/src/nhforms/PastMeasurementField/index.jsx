@@ -129,7 +129,106 @@ const coercePositiveInt = (value, fallback) => {
   return Math.max(1, Math.floor(parsed))
 }
 
+const stripVolatilePayloadFields = (value) => {
+  if (Array.isArray(value)) {
+    return value.map((item) => stripVolatilePayloadFields(item))
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([key]) => key !== "collectedDateTime")
+        .map(([key, nestedValue]) => [key, stripVolatilePayloadFields(nestedValue)])
+    )
+  }
+  return value
+}
+
+const payloadsEqual = (left, right) => (
+  JSON.stringify(stripVolatilePayloadFields(left ?? null)) ===
+  JSON.stringify(stripVolatilePayloadFields(right ?? null))
+)
+
+const setNestedPayload = (setFormData, componentId, payloadType, payload) => {
+  setFormData((draft) => {
+    if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
+    if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
+    const container = draft.field.data.__componentPayloads ?? {}
+    const key = payloadType === "webform" ? "webformUpdatesByComponent" : "dcoUpdatesByComponent"
+    const nextGroup = container[key] ?? {}
+    const currentPayload = nextGroup[componentId]
+    if (payloadsEqual(currentPayload, payload)) {
+      return
+    }
+    if (payload == null || (Array.isArray(payload) && payload.length === 0)) {
+      delete nextGroup[componentId]
+    } else {
+      nextGroup[componentId] = payload
+    }
+    container[key] = nextGroup
+    draft.field.data.__componentPayloads = container
+  })
+}
+
+const toObservationList = (source) => (
+  Array.isArray(source)
+    ? source.filter((entry) => entry && typeof entry === "object")
+    : []
+)
+
+const normalizeObservationItems = ({
+  items,
+  valuePath,
+  datePath,
+  unitsPath,
+  codePath,
+  commentPath,
+  codeFilter,
+  commentFilter,
+  documentDate,
+  applyDocumentDateFilter = true,
+}) => (
+  toObservationList(items)
+    .map((entry, index) => {
+      const entryValue = valuePath ? resolvePathValue(entry, valuePath) : undefined
+      const entryDate = datePath ? resolvePathValue(entry, datePath) : undefined
+      const entryUnits = unitsPath ? resolvePathValue(entry, unitsPath) : undefined
+      const entryCode = codePath ? resolvePathValue(entry, codePath) : undefined
+      const entryComment = commentPath ? resolvePathValue(entry, commentPath) : undefined
+      const parsedDate = parseDateValue(entryDate)
+      const numericTime = parsedDate ? parsedDate.getTime() : 0
+
+      return {
+        index,
+        raw: entry,
+        rawDate: entryDate,
+        dateText: formatDate(entryDate) || "-",
+        dateTime: parsedDate,
+        dateTimeValue: numericTime,
+        valueText: stringifyValue(entryValue),
+        unitsText: stringifyValue(entryUnits),
+        codeText: stringifyValue(entryCode),
+        commentText: stringifyValue(entryComment),
+      }
+    })
+    .filter((entry) => Boolean(entry))
+    .filter((entry) => {
+      if (!entry) return false
+      if (!entry.valueText) return false
+      if (codeFilter && entry.codeText !== codeFilter) return false
+      if (commentFilter && entry.commentText !== commentFilter) return false
+      if (applyDocumentDateFilter && documentDate && entry.dateTime && entry.dateTime > documentDate) return false
+      return true
+    })
+    .sort((a, b) => {
+      if (a.dateTimeValue !== b.dateTimeValue) {
+        return b.dateTimeValue - a.dateTimeValue
+      }
+      return a.index - b.index
+    })
+)
+
 const PastMeasurementField = ({
+  id,
   fieldId,
   label = "Measurement",
   placeholder,
@@ -144,6 +243,10 @@ const PastMeasurementField = ({
   docDateFieldPath = "docDate",
   maxHistory = 5,
   autoFillFromHistory = false,
+  persistenceMode = "formOnly",
+  valueType = "TEXT",
+  saveDescription,
+  saveUnits,
   showHistory = true,
   showHistoryList = false,
   emptyHistoryText = "No past measurement available",
@@ -156,82 +259,132 @@ const PastMeasurementField = ({
 }) => {
   const [fd, setFormData] = useActiveData()
   const sd = useSourceData()
+  const componentId = id || fieldId || "PastMeasurementField"
+  const effectiveFieldId = fieldId || componentId
 
   const fieldData = fd?.field?.data ?? {}
-  const currentValue = fieldId ? fieldData[fieldId] : ""
+  const hasStoredValue = effectiveFieldId
+    ? Object.prototype.hasOwnProperty.call(fieldData, effectiveFieldId)
+    : false
+  const storedValue = effectiveFieldId ? fieldData[effectiveFieldId] : ""
   const effectiveHistorySize = coercePositiveInt(maxHistory, 5)
+  const codeFilter = stringifyValue(observationCode)
+  const commentFilter = stringifyValue(observationComment)
+  const documentDate = docDateFieldPath ? parseDateValue(resolvePathValue(fieldData, docDateFieldPath)) : null
 
   const historyItems = useMemo(() => {
-    const sourceItems = resolveMoisValue(sd, historySourcePath)
-    if (!Array.isArray(sourceItems)) return []
-
-    const codeFilter = stringifyValue(observationCode)
-    const commentFilter = stringifyValue(observationComment)
-    const documentDate = docDateFieldPath ? parseDateValue(resolvePathValue(fieldData, docDateFieldPath)) : null
-
-    const normalized = sourceItems
-      .map((entry, index) => {
-        if (!entry || typeof entry !== "object") return null
-
-        const entryValue = valuePath ? resolvePathValue(entry, valuePath) : undefined
-        const entryDate = datePath ? resolvePathValue(entry, datePath) : undefined
-        const entryUnits = unitsPath ? resolvePathValue(entry, unitsPath) : undefined
-        const entryCode = codePath ? resolvePathValue(entry, codePath) : undefined
-        const entryComment = commentPath ? resolvePathValue(entry, commentPath) : undefined
-
-        const parsedDate = parseDateValue(entryDate)
-        const numericTime = parsedDate ? parsedDate.getTime() : 0
-
-        return {
-          index,
-          rawDate: entryDate,
-          dateText: formatDate(entryDate) || "-",
-          dateTime: parsedDate,
-          dateTimeValue: numericTime,
-          valueText: stringifyValue(entryValue),
-          unitsText: stringifyValue(entryUnits),
-          codeText: stringifyValue(entryCode),
-          commentText: stringifyValue(entryComment),
-        }
-      })
-      .filter((entry) => Boolean(entry))
-      .filter((entry) => {
-        if (!entry) return false
-        if (!entry.valueText) return false
-        if (codeFilter && entry.codeText !== codeFilter) return false
-        if (commentFilter && entry.commentText !== commentFilter) return false
-        if (documentDate && entry.dateTime && entry.dateTime > documentDate) return false
-        return true
-      })
-      .sort((a, b) => {
-        if (a.dateTimeValue !== b.dateTimeValue) {
-          return b.dateTimeValue - a.dateTimeValue
-        }
-        return a.index - b.index
-      })
-
-    return normalized.slice(0, effectiveHistorySize)
+    return normalizeObservationItems({
+      items: resolveMoisValue(sd, historySourcePath),
+      valuePath,
+      datePath,
+      unitsPath,
+      codePath,
+      commentPath,
+      codeFilter,
+      commentFilter,
+      documentDate,
+      applyDocumentDateFilter: true,
+    }).slice(0, effectiveHistorySize)
   }, [
+    codeFilter,
     commentPath,
     codePath,
+    commentFilter,
     datePath,
-    docDateFieldPath,
+    documentDate,
     effectiveHistorySize,
-    fieldData,
     historySourcePath,
-    observationCode,
-    observationComment,
     sd,
     unitsPath,
     valuePath,
   ])
 
+  const linkedObservationItem = useMemo(() => (
+    normalizeObservationItems({
+      items: sd?.webform?.observations,
+      valuePath,
+      datePath,
+      unitsPath,
+      codePath,
+      commentPath,
+      codeFilter,
+      commentFilter,
+      documentDate: null,
+      applyDocumentDateFilter: false,
+    })[0] ?? null
+  ), [codeFilter, commentPath, codePath, commentFilter, datePath, sd, unitsPath, valuePath])
+
   const latestHistoryItem = historyItems[0] ?? null
+  const resolvedCurrentValue = hasMeaningfulValue(storedValue)
+    ? storedValue
+    : linkedObservationItem?.valueText ?? latestHistoryItem?.valueText ?? ""
 
   useEffect(() => {
-    if (!fieldId || !autoFillFromHistory) return
+    if (persistenceMode !== "observationAndForm") {
+      setNestedPayload(setFormData, componentId, "dco", null)
+      return
+    }
+    if (!observationCode || !effectiveFieldId) {
+      setNestedPayload(setFormData, componentId, "dco", null)
+      return
+    }
+
+    const oldObs = linkedObservationItem?.raw
+    const oldId = oldObs?.observationId ?? 0
+    const hasExplicitValue = hasStoredValue
+    const explicitValue = hasExplicitValue ? stringifyValue(storedValue) : ""
+
+    if (!hasExplicitValue) {
+      setNestedPayload(setFormData, componentId, "dco", null)
+      return
+    }
+
+    if (!explicitValue) {
+      setNestedPayload(setFormData, componentId, "dco", oldId ? [{ observationId: -oldId }] : null)
+      return
+    }
+
+    const createdBy = fieldData.createdBy ?? sd?.userProfile?.identity?.fullName
+    const resolvedUnits = stringifyValue(saveUnits) || linkedObservationItem?.unitsText || latestHistoryItem?.unitsText || ""
+
+    setNestedPayload(setFormData, componentId, "dco", [{
+      observationId: oldId,
+      observationCode,
+      observationClass: "DCOBS",
+      value: explicitValue,
+      valueType: String(valueType || "TEXT"),
+      status: oldId ? "C" : "F",
+      description: stringifyValue(saveDescription) || label || "Measurement",
+      units: resolvedUnits,
+      orderedBy: createdBy,
+      collectedBy: createdBy,
+      collectedDateTime: getDateTimeString(new Date()),
+      ...(commentFilter ? { comment: commentFilter } : {}),
+    }])
+  }, [
+    componentId,
+    effectiveFieldId,
+    fieldData,
+    hasStoredValue,
+    label,
+    latestHistoryItem,
+    linkedObservationItem,
+    observationCode,
+    persistenceMode,
+    saveDescription,
+    saveUnits,
+    sd,
+    setFormData,
+    storedValue,
+    valueType,
+    commentFilter,
+  ])
+
+  useEffect(() => {
+    if (!effectiveFieldId || !autoFillFromHistory) return
     if (!latestHistoryItem?.valueText) return
-    if (hasMeaningfulValue(currentValue)) return
+    if (hasMeaningfulValue(storedValue)) return
+    if (linkedObservationItem?.valueText) return
 
     setFormData((draft) => {
       if (!draft.field) {
@@ -240,13 +393,13 @@ const PastMeasurementField = ({
       if (!draft.field.data || typeof draft.field.data !== "object") {
         draft.field.data = {}
       }
-      if (hasMeaningfulValue(draft.field.data[fieldId])) return
-      draft.field.data[fieldId] = latestHistoryItem.valueText
+      if (hasMeaningfulValue(draft.field.data[effectiveFieldId])) return
+      draft.field.data[effectiveFieldId] = latestHistoryItem.valueText
     })
-  }, [autoFillFromHistory, currentValue, fieldId, latestHistoryItem, setFormData])
+  }, [autoFillFromHistory, effectiveFieldId, latestHistoryItem, linkedObservationItem, setFormData, storedValue])
 
   const handleValueChange = (event, nextValue) => {
-    if (!fieldId) return
+    if (!effectiveFieldId) return
     if (readOnly || disabled) return
 
     const updatedValue = nextValue ?? ""
@@ -257,7 +410,7 @@ const PastMeasurementField = ({
       if (!draft.field.data || typeof draft.field.data !== "object") {
         draft.field.data = {}
       }
-      draft.field.data[fieldId] = updatedValue
+      draft.field.data[effectiveFieldId] = updatedValue
     })
 
     if (typeof onChange === "function") {
@@ -290,7 +443,7 @@ const PastMeasurementField = ({
       <Stack horizontal verticalAlign="end" tokens={{ childrenGap: 10 }} styles={{ root: { flexWrap: "wrap" } }}>
         <StackItem grow styles={{ root: { minWidth: 220 } }}>
           <TextField
-            value={stringifyValue(currentValue)}
+            value={stringifyValue(resolvedCurrentValue)}
             placeholder={placeholder}
             onChange={handleValueChange}
             disabled={disabled}

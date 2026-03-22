@@ -3,11 +3,12 @@
  * The TextArea control is used to display and edit text elements.
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { TextField, Stack, Toggle, ITextFieldProps } from '@fluentui/react';
 import { LayoutItem } from './LayoutItem';
-import { useTheme, useSection } from '../context/MoisContext';
+import { useTheme, useSection, useSourceData } from '../context/MoisContext';
 import { useActiveDataForForms } from '../hooks/form-state';
+import { getAuthorshipLockInfo, registerAuthorshipFieldTarget } from '../authorship';
 
 export interface TextAreaProps {
   /** Props for the attached action bar (eg: onEdit, onDelete, etc) */
@@ -131,6 +132,7 @@ export const TextArea: React.FC<TextAreaProps> = ({
   const [activeData, setActiveData] = useActiveDataForForms();
   const [internalValue, setInternalValue] = useState(value ?? defaultValue ?? '');
   const [errorMessage, setErrorMessage] = useState<string | undefined>();
+  const sourceData = useSourceData();
   const effectiveMaxCharLimit =
     typeof maxCharLimit === 'number' && Number.isFinite(maxCharLimit) && maxCharLimit > 0
       ? Math.round(maxCharLimit)
@@ -142,6 +144,7 @@ export const TextArea: React.FC<TextAreaProps> = ({
   const displayValue = value !== undefined ? value : (persistedValue ?? internalValue);
 
   const handleChange = (ev: React.FormEvent<HTMLInputElement | HTMLTextAreaElement>, newValue?: string) => {
+    if (effectiveReadOnly) return;
     const rawValue = newValue ?? '';
     const val = effectiveMaxCharLimit ? rawValue.slice(0, effectiveMaxCharLimit) : rawValue;
     setInternalValue(val);
@@ -190,6 +193,16 @@ export const TextArea: React.FC<TextAreaProps> = ({
 
   // Determine effective label position based on section layout
   const sectionContext = useSection(section);
+  useEffect(() => {
+    if (!effectiveFieldId) return;
+    setActiveData((draft: any) => {
+      registerAuthorshipFieldTarget(draft, effectiveFieldId, sectionContext.authorshipPolicy);
+    });
+  }, [effectiveFieldId, sectionContext.authorshipPolicy, setActiveData]);
+  const authorshipLockInfo = sectionContext.authorshipPolicy?.enabled
+    ? getAuthorshipLockInfo(activeData, { scope: 'field', fieldId: effectiveFieldId }, sourceData?.userProfile?.identity?.fullName)
+    : { locked: false };
+  const effectiveReadOnly = !!readOnly || !!authorshipLockInfo.locked;
   const effectiveLabelPosition = labelPosition ?? (
     sectionContext.layout === 'flex' ? 'top' :
     sectionContext.layout === 'linear' ? 'left' : 'top'
@@ -208,7 +221,7 @@ export const TextArea: React.FC<TextAreaProps> = ({
   // Determine field background color
   const getFieldBackground = () => {
     if (requiresHighlight) return theme.mois.requiredBackground;
-    if (readOnly && !requiresHighlight) return 'transparent';
+    if (effectiveReadOnly && !requiresHighlight) return 'transparent';
     return undefined;
   };
 
@@ -247,9 +260,9 @@ export const TextArea: React.FC<TextAreaProps> = ({
         rows={multiline ? (rows ?? 3) : undefined}
         placeholder={placeholder}
         disabled={disabled}
-        readOnly={readOnly}
-        borderless={borderless ?? readOnly}
-        tabIndex={readOnly ? -1 : tabIndex}
+        readOnly={effectiveReadOnly}
+        borderless={borderless ?? effectiveReadOnly}
+        tabIndex={effectiveReadOnly ? -1 : tabIndex}
         errorMessage={errorMessage}
         description={description}
         styles={{
@@ -279,7 +292,7 @@ export const TextArea: React.FC<TextAreaProps> = ({
       noTopLabel={shouldSuppressLayoutItemLabel}
       note={note}
       placement={placement}
-      readOnly={readOnly}
+      readOnly={effectiveReadOnly}
       required={required}
       section={section}
       size={effectiveSize}
@@ -293,7 +306,7 @@ export const TextArea: React.FC<TextAreaProps> = ({
         label={fluentLabel}
         required={required}
         disabled={disabled}
-        readOnly={readOnly}
+        readOnly={effectiveReadOnly}
         value={displayValue}
         // Note: We don't pass defaultValue because we always provide a controlled value
         // via displayValue. The defaultValue is already used to initialize internalValue.
@@ -302,8 +315,8 @@ export const TextArea: React.FC<TextAreaProps> = ({
         multiline={multiline}
         rows={multiline ? (rows ?? 3) : undefined}
         placeholder={placeholder}
-        borderless={borderless ?? readOnly}
-        tabIndex={readOnly ? -1 : tabIndex}
+        borderless={borderless ?? effectiveReadOnly}
+        tabIndex={effectiveReadOnly ? -1 : tabIndex}
         errorMessage={errorMessage}
         description={description}
         styles={textFieldStyles}

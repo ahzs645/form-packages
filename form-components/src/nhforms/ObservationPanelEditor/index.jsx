@@ -29,6 +29,14 @@ const toNumericValue = (value) => {
   const numeric = Number(value)
   return Number.isFinite(numeric) ? numeric : 0
 }
+
+const getCurrentActorName = (sd, fd) => (
+  fd?.field?.data?.createdBy
+  || fd?.formData?.createdBy
+  || sd?.userProfile?.identity?.fullName
+  || sd?.webform?.provider?.name
+  || ""
+)
 const setPanelPayload = (setFormData, componentId, payloadType, payload) => {
   setFormData((draft) => {
     if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
@@ -63,6 +71,7 @@ const ObservationPanelEditor = ({
 }) => {
   const [fd, setFormData] = useActiveData()
   const sd = useSourceData()
+  const section = useSection()
   const componentId = id || fieldId || "ObservationPanelEditor"
   const effectiveFieldId = fieldId || componentId
   const rootValue = fd?.field?.data?.[effectiveFieldId] ?? {}
@@ -70,6 +79,22 @@ const ObservationPanelEditor = ({
   const totalDefs = useMemo(() => normalizePanelTotals(totals), [totals])
   const maxHistory = Number(historyConfig?.maxRows) > 0 ? Number(historyConfig.maxRows) : 5
   const createdBy = fd?.field?.data?.createdBy ?? sd?.userProfile?.identity?.fullName
+  const currentActorName = getCurrentActorName(sd, fd)
+  const authorshipPolicy = section?.authorshipPolicy || { enabled: false, granularity: "row", lockOn: "save" }
+
+  useEffect(() => {
+    if (!authorshipPolicy?.enabled || authorshipPolicy?.granularity !== "row") return
+    const rowIds = rowDefs.map((row) => row.id).filter(Boolean)
+    if (rowIds.length === 0) return
+    setFormData((draft) => {
+      registerAuthorshipRowTarget(draft, {
+        componentId,
+        fieldId: effectiveFieldId,
+        rowIds,
+        policy: authorshipPolicy,
+      })
+    })
+  }, [authorshipPolicy, componentId, effectiveFieldId, rowDefs, setFormData])
 
   const computedTotals = useMemo(() => {
     const next = {}
@@ -151,7 +176,8 @@ const ObservationPanelEditor = ({
       const current = draft.field.data[effectiveFieldId] && typeof draft.field.data[effectiveFieldId] === "object"
         ? draft.field.data[effectiveFieldId]
         : {}
-      draft.field.data[effectiveFieldId] = { ...current, [rowId]: nextValue }
+      const { __authorship, ...rowValues } = current
+      draft.field.data[effectiveFieldId] = { ...rowValues, [rowId]: nextValue }
     })
   }
 
@@ -160,28 +186,46 @@ const ObservationPanelEditor = ({
       <Label>{title}</Label>
       {rowDefs.map((row) => {
         const value = getPanelValue(rootValue, row.id)
+        const rowLockInfo = authorshipPolicy?.enabled
+          ? getAuthorshipLockInfo(fd, { scope: "row", componentId, rowKey: row.id }, currentActorName)
+          : { locked: false }
+        const rowReadOnly = !!rowLockInfo.locked
         if (row.type === "coded") {
           const optionList = Array.isArray(row.options)
             ? row.options.map((option) => ({ key: String(option), text: String(option) }))
             : []
           return (
-            <ChoiceGroup
-              key={row.id}
-              label={row.label}
-              options={optionList}
-              selectedKey={value == null ? undefined : String(value)}
-              onChange={(_event, option) => setRowValue(row.id, option?.key ?? "")}
-            />
+            <Stack key={row.id} tokens={{ childrenGap: 4 }}>
+              <ChoiceGroup
+                label={row.label}
+                options={optionList}
+                selectedKey={value == null ? undefined : String(value)}
+                onChange={rowReadOnly ? undefined : (_event, option) => setRowValue(row.id, option?.key ?? "")}
+                disabled={rowReadOnly}
+              />
+              {rowLockInfo.note ? (
+                <Text variant="small" styles={{ root: { color: "#605e5c" } }}>
+                  {rowLockInfo.note}
+                </Text>
+              ) : null}
+            </Stack>
           )
         }
         return (
-          <TextField
-            key={row.id}
-            label={row.label}
-            value={value ?? ""}
-            onChange={(_event, nextValue) => setRowValue(row.id, row.type === "numeric" ? Number(nextValue ?? 0) : (nextValue ?? ""))}
-            multiline={row.type === "text"}
-          />
+          <Stack key={row.id} tokens={{ childrenGap: 4 }}>
+            <TextField
+              label={row.label}
+              value={value ?? ""}
+              onChange={rowReadOnly ? undefined : (_event, nextValue) => setRowValue(row.id, row.type === "numeric" ? Number(nextValue ?? 0) : (nextValue ?? ""))}
+              multiline={row.type === "text"}
+              readOnly={rowReadOnly}
+            />
+            {rowLockInfo.note ? (
+              <Text variant="small" styles={{ root: { color: "#605e5c" } }}>
+                {rowLockInfo.note}
+              </Text>
+            ) : null}
+          </Stack>
         )
       })}
       {totalDefs.length > 0 ? <Separator /> : null}

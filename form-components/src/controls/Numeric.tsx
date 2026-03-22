@@ -8,6 +8,7 @@ import { TextField, SpinButton, ISpinButtonProps, ITextFieldProps } from '@fluen
 import { LayoutItem } from './LayoutItem';
 import { useTheme, useSourceData, useSection } from '../context/MoisContext';
 import { useActiveDataForForms } from '../hooks/form-state';
+import { getAuthorshipLockInfo, registerAuthorshipFieldTarget } from '../authorship';
 
 export interface NumericProps {
   /** Props for the attached action bar (eg: onEdit, onDelete, etc) */
@@ -120,6 +121,17 @@ export const Numeric: React.FC<NumericProps> = ({
   const sourceData = useSourceData();
   const sectionContext = useSection();
   const [activeData, setActiveData] = useActiveDataForForms();
+  React.useEffect(() => {
+    const targetFieldId = sourceId || id || fieldId;
+    if (!targetFieldId) return;
+    setActiveData((draft: any) => {
+      registerAuthorshipFieldTarget(draft, targetFieldId, sectionContext.authorshipPolicy);
+    });
+  }, [fieldId, id, sectionContext.authorshipPolicy, setActiveData, sourceId]);
+  const authorshipLockInfo = sectionContext.authorshipPolicy?.enabled
+    ? getAuthorshipLockInfo(activeData, { scope: 'field', fieldId: sourceId || id || fieldId }, sourceData?.userProfile?.identity?.fullName)
+    : { locked: false };
+  const effectiveReadOnly = !!readOnly || !!authorshipLockInfo.locked;
 
   // Get effective sourceId (from explicit prop, id prop, or fieldId)
   const effectiveSourceId = sourceId || id || fieldId;
@@ -160,6 +172,7 @@ export const Numeric: React.FC<NumericProps> = ({
 
   const updateActiveValue = useCallback((rawValue: string) => {
     if (!effectiveSourceId) return;
+    if (effectiveReadOnly) return;
     setActiveData((draft: any) => {
       if (!draft.field) draft.field = { data: {}, status: {}, history: [] };
       if (!draft.field.data) draft.field.data = {};
@@ -180,7 +193,7 @@ export const Numeric: React.FC<NumericProps> = ({
         draft.field.data[linkedFieldId] = nextValue;
       });
     });
-  }, [effectiveSourceId, linkedFieldIds, setActiveData, storeAsNumber, typeNumber]);
+  }, [effectiveSourceId, linkedFieldIds, setActiveData, storeAsNumber, typeNumber, effectiveReadOnly]);
 
   // Get size styles from theme
   const getSizeStyles = (): React.CSSProperties => {
@@ -259,7 +272,7 @@ export const Numeric: React.FC<NumericProps> = ({
 
   // Inline mode: render just the input without LayoutItem wrapper
   if (inline) {
-    if (buttonControls && !readOnly) {
+    if (buttonControls && !effectiveReadOnly) {
       const defaultSpinProps: Partial<ISpinButtonProps> = {
         min: typeNumber === 'year' ? 1900 : undefined,
         max: typeNumber === 'year' ? 2100 : undefined,
@@ -285,14 +298,14 @@ export const Numeric: React.FC<NumericProps> = ({
         value={displayValue}
         onChange={handleChange}
         disabled={disabled}
-        readOnly={readOnly}
+        readOnly={effectiveReadOnly}
         placeholder={placeholder}
         errorMessage={errorMessage}
-        borderless={readOnly}
-        tabIndex={readOnly ? -1 : undefined}
+        borderless={effectiveReadOnly}
+        tabIndex={effectiveReadOnly ? -1 : undefined}
         styles={{
           root: { width: '100%' },
-          field: readOnly ? { backgroundColor: 'transparent' } : undefined,
+          field: effectiveReadOnly ? { backgroundColor: 'transparent' } : undefined,
         }}
         {...textFieldProps}
       />
@@ -300,7 +313,7 @@ export const Numeric: React.FC<NumericProps> = ({
   }
 
   // SpinButton mode
-  if (buttonControls && !readOnly) {
+  if (buttonControls && !effectiveReadOnly) {
     const defaultSpinProps: Partial<ISpinButtonProps> = {
       min: typeNumber === 'year' ? 1900 : undefined,
       max: typeNumber === 'year' ? 2100 : undefined,
@@ -323,7 +336,7 @@ export const Numeric: React.FC<NumericProps> = ({
         moisModule={moisModule}
         note={note}
         placement={placement}
-        readOnly={readOnly}
+        readOnly={effectiveReadOnly}
         required={required}
         section={section}
         size={size}
@@ -361,7 +374,7 @@ export const Numeric: React.FC<NumericProps> = ({
       moisModule={moisModule}
       note={note}
       placement={placement}
-      readOnly={readOnly}
+      readOnly={effectiveReadOnly}
       required={required}
       section={section}
       size={size}
@@ -372,14 +385,14 @@ export const Numeric: React.FC<NumericProps> = ({
         value={displayValue}
         onChange={handleChange}
         disabled={disabled}
-        readOnly={readOnly}
+        readOnly={effectiveReadOnly}
         placeholder={placeholder}
         errorMessage={errorMessage}
-        borderless={readOnly}
-        tabIndex={readOnly ? -1 : undefined}
+        borderless={effectiveReadOnly}
+        tabIndex={effectiveReadOnly ? -1 : undefined}
         styles={{
           ...fieldStyles,
-          field: readOnly ? { backgroundColor: 'transparent' } : undefined,
+          field: effectiveReadOnly ? { backgroundColor: 'transparent' } : undefined,
         }}
         {...textFieldProps}
       />

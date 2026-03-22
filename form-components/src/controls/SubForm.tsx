@@ -21,7 +21,7 @@ import {
   IDropdownOption,
   Stack,
 } from '@fluentui/react';
-import { useActiveData, produce, useTheme } from '../context/MoisContext';
+import { useActiveData, produce, useTheme, SectionProvider, SectionContextValue } from '../context/MoisContext';
 import { Column } from './Column';
 import { SimpleCodeSelect } from './SimpleCodeSelect';
 import { TextArea } from './TextArea';
@@ -52,8 +52,10 @@ export interface SubFormProps {
   onCancel?: () => void;
   /** Default action when focus leaves (makes subform inline) */
   onDefaultAction?: () => void;
+  /** Optional authorship locking policy for controls inside the subform */
+  authorshipPolicy?: SectionContextValue['authorshipPolicy'];
   /** Advanced: Override section settings */
-  section?: any;
+  section?: Partial<SectionContextValue>;
   /** Custom styles for the container */
   style?: React.CSSProperties;
   /** Temporary storage area for subform data */
@@ -73,7 +75,9 @@ export const SubForm: React.FC<SubFormProps> = ({
   moisModule,
   onCancel,
   onDefaultAction,
+  authorshipPolicy,
   style,
+  section,
 }) => {
   const theme = useTheme();
 
@@ -88,6 +92,15 @@ export const SubForm: React.FC<SubFormProps> = ({
     ...(minWidth ? { minWidth: typeof minWidth === 'number' ? `${minWidth}px` : minWidth } : {}),
     ...inlineStyle,
   };
+  const sectionContent = section ? (
+    <SectionProvider {...section} authorshipPolicy={authorshipPolicy ?? section.authorshipPolicy}>
+      {children}
+    </SectionProvider>
+  ) : authorshipPolicy ? (
+    <SectionProvider authorshipPolicy={authorshipPolicy}>
+      {children}
+    </SectionProvider>
+  ) : children;
 
   if (inline) {
     // Inline mode with focus trap and papayawhip border
@@ -102,7 +115,7 @@ export const SubForm: React.FC<SubFormProps> = ({
               {label}
             </div>
           )}
-          {children}
+          {sectionContent}
         </div>
       </FocusTrapZone>
     );
@@ -134,7 +147,7 @@ export const SubForm: React.FC<SubFormProps> = ({
       minWidth={typeof minWidth === 'number' ? minWidth : parseInt(String(minWidth)) || 480}
     >
       <div style={containerStyle} data-component="SubForm">
-        {children}
+        {sectionContent}
       </div>
     </Dialog>
   );

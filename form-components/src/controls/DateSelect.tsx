@@ -7,6 +7,8 @@ import React, { useEffect, useState } from 'react';
 import { DatePicker, DefaultButton, IDatePickerProps, Stack, Toggle } from '@fluentui/react';
 import { LayoutItem } from '../controls/LayoutItem';
 import { useActiveDataForForms } from '../hooks/form-state';
+import { useSourceData, useSection } from '../context/MoisContext';
+import { getAuthorshipLockInfo, registerAuthorshipFieldTarget } from '../authorship';
 
 type SupportedDateFormat = 'yyyy.MM.dd' | 'dd/MM/yyyy' | 'MM-dd-yyyy' | 'yyyy-MM-dd';
 const DEFAULT_DATE_FORMAT: SupportedDateFormat = 'yyyy.MM.dd';
@@ -247,7 +249,19 @@ export const DateSelect: React.FC<DateSelectProps> = ({
   value,
 }) => {
   const [activeData, setActiveData] = useActiveDataForForms();
+  const sourceData = useSourceData();
+  const sectionContext = useSection(section);
   const effectiveFieldId = fieldId || id;
+  useEffect(() => {
+    if (!effectiveFieldId) return;
+    setActiveData((draft: any) => {
+      registerAuthorshipFieldTarget(draft, effectiveFieldId, sectionContext.authorshipPolicy);
+    });
+  }, [effectiveFieldId, sectionContext.authorshipPolicy, setActiveData]);
+  const authorshipLockInfo = sectionContext.authorshipPolicy?.enabled
+    ? getAuthorshipLockInfo(activeData, { scope: 'field', fieldId: effectiveFieldId }, sourceData?.userProfile?.identity?.fullName)
+    : { locked: false };
+  const effectiveReadOnly = !!readOnly || !!authorshipLockInfo.locked;
   const activeValue = effectiveFieldId ? activeData?.field?.data?.[effectiveFieldId] : undefined;
   const compositeValue = buildDateFromComponents(componentFields, activeData?.field?.data);
   const resolvedValue =
@@ -265,6 +279,7 @@ export const DateSelect: React.FC<DateSelectProps> = ({
 
   useEffect(() => {
     if (!effectiveFieldId || value !== undefined || compositeValue || !defaultValue) return;
+    if (effectiveReadOnly) return;
     if (
       typeof activeValue === 'string'
         ? activeValue.trim().length > 0
@@ -317,13 +332,17 @@ export const DateSelect: React.FC<DateSelectProps> = ({
     defaultValue,
     effectiveFieldId,
     linkedFieldIds,
+    sectionContext,
     setActiveData,
+    sourceData,
+    effectiveReadOnly,
     value,
   ]);
 
   if (hidden) return null;
 
   const handleDateChange = (date: Date | null | undefined) => {
+    if (effectiveReadOnly) return;
     setSelectedDate(date || undefined);
     const formatted = date ? formatCanonicalDate(date) : '';
 
@@ -365,13 +384,13 @@ export const DateSelect: React.FC<DateSelectProps> = ({
       value={selectedDate}
       onSelectDate={handleDateChange}
       placeholder={resolvedPlaceholder}
-      disabled={disabled || readOnly}
-      borderless={borderless || readOnly}
+      disabled={disabled || effectiveReadOnly}
+      borderless={borderless || effectiveReadOnly}
       formatDate={(date) => formatDisplayDate(date, dateFormat)}
       allowTextInput={true}
       disableAutoFocus={true}
       parseDateFromString={(str) => parseDateValue(str, dateFormat) || null}
-      tabIndex={readOnly ? -1 : undefined}
+      tabIndex={effectiveReadOnly ? -1 : undefined}
       styles={{
         root: { flex: '2 2 0', minWidth: '80px', maxWidth: '160px' },
         textField: { width: '100%' },
@@ -383,7 +402,7 @@ export const DateSelect: React.FC<DateSelectProps> = ({
   const datePickerElement = buttonControls && !inline ? (
     <div>
       {datePickerInput}
-      {!readOnly && (
+      {!effectiveReadOnly && (
         <Stack horizontal tokens={{ childrenGap: 8 }} styles={{ root: { marginTop: 8 } }}>
           <DefaultButton text="Today" onClick={() => handleDateChange(new Date())} disabled={disabled} />
           <DefaultButton text="Clear" onClick={() => handleDateChange(null)} disabled={disabled} />
@@ -400,13 +419,13 @@ export const DateSelect: React.FC<DateSelectProps> = ({
         value={selectedDate}
         onSelectDate={handleDateChange}
         placeholder={resolvedPlaceholder}
-        disabled={disabled || readOnly}
-        borderless={borderless || readOnly}
+        disabled={disabled || effectiveReadOnly}
+        borderless={borderless || effectiveReadOnly}
         formatDate={(date) => formatDisplayDate(date, dateFormat)}
         allowTextInput={true}
         disableAutoFocus={true}
         parseDateFromString={(str) => parseDateValue(str, dateFormat) || null}
-        tabIndex={readOnly ? -1 : undefined}
+        tabIndex={effectiveReadOnly ? -1 : undefined}
         styles={{
           root: { width: '100%' },
           textField: { width: '100%' },
@@ -438,7 +457,7 @@ export const DateSelect: React.FC<DateSelectProps> = ({
       moisModule={moisModule}
       note={note}
       placement={placement}
-      readOnly={readOnly}
+      readOnly={effectiveReadOnly}
       required={required}
       section={section}
       size={size as 'small' | 'medium' | 'large' | 'max' | React.CSSProperties}

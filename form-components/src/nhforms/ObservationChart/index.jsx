@@ -247,6 +247,10 @@ const buildSeriesDefinitions = (props) => {
         width: coerceNumber(entry.width, 2),
         dash: Array.isArray(entry.dash) ? entry.dash.map((item) => Number(item)).filter(Number.isFinite) : undefined,
         pointSize: coerceNumber(entry.pointSize, 0),
+        showPoints: typeof entry.showPoints === "boolean" ? entry.showPoints : undefined,
+        pointStroke: normalizeString(entry.pointStroke, normalizeString(entry.stroke, OBSERVATION_CHART_PALETTE[index % OBSERVATION_CHART_PALETTE.length])),
+        pointFill: normalizeString(entry.pointFill, normalizeString(entry.stroke, OBSERVATION_CHART_PALETTE[index % OBSERVATION_CHART_PALETTE.length])),
+        includeInSummary: entry.includeInSummary !== false,
         dataKey: normalizeString(entry.dataKey || entry.key),
         parser: normalizeString(entry.parser, normalizeString(props.parser, "number")),
         valuePath: normalizeString(entry.valuePath, normalizeString(props.valuePath, "value")),
@@ -271,6 +275,10 @@ const buildSeriesDefinitions = (props) => {
       width: coerceNumber(props.strokeWidth, 2),
       dash: undefined,
       pointSize: coerceNumber(props.pointSize, 0),
+      showPoints: typeof props.showPoints === "boolean" ? props.showPoints : undefined,
+      pointStroke: normalizeString(props.pointStroke, normalizeString(props.stroke, OBSERVATION_CHART_PALETTE[0])),
+      pointFill: normalizeString(props.pointFill, normalizeString(props.stroke, OBSERVATION_CHART_PALETTE[0])),
+      includeInSummary: props.includeInSummary !== false,
       dataKey: normalizeString(props.dataKey || "value"),
       parser: normalizeString(props.parser, "number"),
       valuePath: normalizeString(props.valuePath, "value"),
@@ -400,6 +408,7 @@ const finalizeChartRows = (rows, seriesDefs, props) => {
 
   const summaryParts = seriesDefs
     .map((seriesDef, index) => {
+      if (seriesDef.includeInSummary === false) return ""
       for (let rowIndex = sortedRows.length - 1; rowIndex >= 0; rowIndex -= 1) {
         const value = sortedRows[rowIndex].values[index]
         if (!Number.isFinite(value)) continue
@@ -452,17 +461,22 @@ const buildUPlotOptions = (props, width, height, chartPayload) => {
   ]
 
   chartPayload.seriesDefs.forEach((seriesDef) => {
+    const seriesPointSize = Math.max(0, coerceNumber(seriesDef.pointSize, 0))
+    const seriesShowsPoints = typeof seriesDef.showPoints === "boolean"
+      ? seriesDef.showPoints
+      : showPoints || seriesPointSize > 0
+
     chartSeries.push({
       label: seriesDef.label,
       stroke: seriesDef.stroke,
       width: coerceNumber(seriesDef.width, 2),
       dash: Array.isArray(seriesDef.dash) && seriesDef.dash.length > 0 ? seriesDef.dash : undefined,
       points: {
-        show: showPoints,
-        size: Math.max(4, coerceNumber(seriesDef.pointSize, 0) || 4),
+        show: seriesShowsPoints,
+        size: Math.max(4, seriesPointSize || 4),
         width: 2,
-        stroke: seriesDef.stroke,
-        fill: "#ffffff",
+        stroke: normalizeString(seriesDef.pointStroke, seriesDef.stroke),
+        fill: normalizeString(seriesDef.pointFill, seriesDef.stroke),
       },
       value: (_self, rawValue) => {
         if (rawValue === null || rawValue === undefined) return "–"
