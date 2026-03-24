@@ -13,7 +13,16 @@
 const UPlotLib = (function () {
   const root = typeof globalThis !== "undefined"
     ? globalThis
-    : (typeof window !== "undefined" ? window : {});
+    : {};
+  if (
+    !root ||
+    typeof root.document === "undefined" ||
+    typeof root.navigator === "undefined" ||
+    typeof root.devicePixelRatio === "undefined" ||
+    typeof root.matchMedia !== "function"
+  ) {
+    return null;
+  }
   const window = root;
   const self = root;
   const document = root.document;
@@ -636,6 +645,11 @@ const ObservationChart = ({
     setRenderError("")
 
     if (!chartPayload.hasData) {
+      return undefined
+    }
+
+    if (!UPlotLib) {
+      setRenderError("Observation chart is unavailable in this environment")
       return undefined
     }
 
