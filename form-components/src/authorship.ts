@@ -408,6 +408,10 @@ export const syncAuthorshipMirrors = <T extends { field?: { data?: Record<string
   const nextAuthorship = normalizeAuthorshipStore(
     currentFormData.__authorship ?? fieldData.__authorship
   );
+  const nextFieldData = {
+    ...deepClone(fieldData),
+    __authorship: nextAuthorship,
+  };
 
   const mirroredFormData = {
     ...deepClone(currentFormData),
@@ -415,16 +419,16 @@ export const syncAuthorshipMirrors = <T extends { field?: { data?: Record<string
     __authorship: nextAuthorship,
   };
 
-  if (!nextState.field) {
-    nextState.field = { data: {}, status: {}, history: [] };
-  }
-  if (!nextState.field.data || typeof nextState.field.data !== 'object') {
-    nextState.field.data = {};
-  }
-
-  nextState.field.data.__authorship = nextAuthorship;
-  nextState.formData = mirroredFormData;
-  return nextState;
+  return {
+    ...nextState,
+    field: {
+      ...(nextState.field && typeof nextState.field === 'object'
+        ? nextState.field
+        : { status: {}, history: [] }),
+      data: nextFieldData,
+    },
+    formData: mirroredFormData,
+  };
 };
 
 export const createAuthorshipClaim = ({

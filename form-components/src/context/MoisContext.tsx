@@ -15,6 +15,9 @@ import selectedActiveData from '../data/selected-active.json';
 import selectedSourceData from '../data/selected-source.json';
 import themeObject from '../data/theme-object.json';
 
+const deepClone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
+const normalizeActiveDataState = <T,>(value: T): T => syncAuthorshipMirrors(deepClone(value as any)) as T;
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -1102,7 +1105,7 @@ export function MoisProvider({ children, sourceData: customSourceData }: MoisPro
 
   // Update activeData when profile changes
   useEffect(() => {
-    setActiveData(syncAuthorshipMirrors({
+    setActiveData(normalizeActiveDataState({
       field: activeDataSource.field || { data: {}, status: {}, history: [] },
       formData: {
         ...(activeDataSource.formData || {}),
@@ -1121,7 +1124,7 @@ export function MoisProvider({ children, sourceData: customSourceData }: MoisPro
       if (typeof updater !== 'function') {
         if (updater && typeof updater === 'object') {
           // Merge the object with current state
-          return syncAuthorshipMirrors({ ...current, ...updater } as ActiveData);
+          return normalizeActiveDataState({ ...current, ...updater } as ActiveData);
         }
         return current;
       }
@@ -1132,13 +1135,13 @@ export function MoisProvider({ children, sourceData: customSourceData }: MoisPro
         const result = updater(current as any);
         if (result !== undefined && typeof result === 'object') {
           // It's a curried producer - use the result directly
-          return syncAuthorshipMirrors(result as ActiveData);
+          return normalizeActiveDataState(result as ActiveData);
         }
       } catch {
         // Not a curried producer, fall through to recipe handling
       }
       // It's a recipe function - wrap with produce
-      return syncAuthorshipMirrors(produce(current, updater as any));
+      return normalizeActiveDataState(produce(current, updater as any));
     });
   }, []);
 
