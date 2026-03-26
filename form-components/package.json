@@ -9,6 +9,8 @@
     ".": "./src/index.ts",
     "./controls": "./src/controls/index.ts",
     "./components": "./src/components/index.ts",
+    "./archetypes": "./src/archetypes/index.ts",
+    "./dialogs": "./src/dialogs/index.ts",
     "./hooks": "./src/hooks/index.ts",
     "./scope": "./src/scope/index.ts",
     "./nhforms": "./src/nhforms/index.ts",
