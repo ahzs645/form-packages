@@ -18566,6 +18566,7 @@ const SubformScoringInner = ({
   dataEntryConfig = { fields: [], calculations: [] },
   summaryConfig = {},
   modalConfig = {},
+  hideTitle = false,
   showProgress = true,
   isOpen: controlledIsOpen,
   onOpenChange,
@@ -19679,7 +19680,7 @@ const SubformScoringInner = ({
             iconProps={{ iconName: hasAnyAnswers ? "EditNote" : "ClipboardList" }}
           />
         )}
-        {!hideTriggerButton && title && (
+        {!hideTriggerButton && !hideTitle && title && (
           <Text styles={{ root: { fontWeight: 600, fontSize: "14px" } }}>
             {title}
           </Text>
