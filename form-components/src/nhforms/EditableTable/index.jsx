@@ -230,13 +230,20 @@ const _normalizeChoiceOptions = (options = []) => {
   if (!Array.isArray(options)) return []
 
   return options
-    .map((option) => {
-      if (typeof option === "string") return option.trim()
+    .map((option, index) => {
+      if (typeof option === "string") {
+        const trimmed = option.trim()
+        if (!trimmed) return null
+        return { key: trimmed || `option_${index + 1}`, text: trimmed }
+      }
       if (option && typeof option === "object") {
         const candidate = option.text || option.display || option.label || option.code || option.key || option.value
-        return typeof candidate === "string" ? candidate.trim() : ""
+        const trimmed = typeof candidate === "string" ? candidate.trim() : ""
+        if (!trimmed) return null
+        const rawKey = option.key || option.code || option.value || option.id || trimmed
+        return { key: String(rawKey), text: trimmed }
       }
-      return ""
+      return null
     })
     .filter(Boolean)
 }
@@ -440,6 +447,14 @@ const _buildSubformFieldFromColumn = (column) => {
         id: fieldId,
         label,
         type: "date",
+        placeholder: column.placeholder,
+        required: column.required === true,
+      }
+    case "time":
+      return {
+        id: fieldId,
+        label,
+        type: "time",
         placeholder: column.placeholder,
         required: column.required === true,
       }
@@ -926,13 +941,24 @@ EditableTable = ({
         )
 
       case "dropdown":
+        const dropdownOptions = _normalizeChoiceOptions(column.options)
         return (
           <SimpleCodeSelect
             inline={inline}
-            optionList={column.options || []}
+            optionList={dropdownOptions}
             value={value ? { code: value, display: value } : undefined}
             onChange={(coding) => onValueChange(rowIndex, column.id, coding?.code || "")}
             placeholder={column.placeholder || "Select..."}
+          />
+        )
+
+      case "time":
+        return (
+          <TimeSelect
+            inline={inline}
+            value={value || ""}
+            onChange={(event, newValue) => onValueChange(rowIndex, column.id, newValue || "")}
+            placeholder={column.placeholder || "HH:mm"}
           />
         )
 

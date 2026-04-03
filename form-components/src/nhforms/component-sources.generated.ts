@@ -1199,6 +1199,171 @@ const CompactChoiceFieldMultiSchema = {
   items: { type: 'string' },
 }
 `,
+  './ComputedField/index.jsx': `const { useEffect, useMemo } = React
+
+const _escapeRegExp = (value) => String(value).replace(/[.*+?^\${}()|[\\]\\\\]/g, "\\\\$&")
+
+const _toNumericValue = (value) => {
+  if (value === undefined || value === null || value === "") return null
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null
+  }
+  if (typeof value === "boolean") {
+    return value ? 1 : 0
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim()
+    if (!trimmed) return null
+    const parsed = Number(trimmed)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+  if (Array.isArray(value)) {
+    return value.length
+  }
+  if (typeof value === "object") {
+    if (Number.isFinite(value.selectedCount)) {
+      return Number(value.selectedCount)
+    }
+    const candidate = value.value ?? value.selectedKey ?? value.display ?? value.text ?? value.code ?? value.key ?? value.response
+    return _toNumericValue(candidate)
+  }
+  return null
+}
+
+const _extractComputedReferences = (expression) => {
+  const bracketedRefs = Array.from(expression.matchAll(/\\[([^\\]]+)\\]/g))
+    .map((match) => match[1]?.trim() ?? "")
+    .filter(Boolean)
+  const unwrappedExpression = expression.replace(/\\[([^\\]]+)\\]/g, " ")
+  const bareRefs = unwrappedExpression.match(/[A-Za-z_][A-Za-z0-9_]*/g) || []
+  return Array.from(new Set([...bracketedRefs, ...bareRefs]))
+}
+
+const _isSafeComputedExpression = (expression) => {
+  const strippedExpression = expression.replace(/\\[([^\\]]+)\\]/g, " ")
+  return /^[0-9+\\-*/().,\\s_a-zA-Z]+$/.test(strippedExpression)
+}
+
+const _roundComputedValue = (value, precision) => {
+  if (!Number.isFinite(value)) return null
+  if (!Number.isFinite(precision) || precision < 0) return value
+  return Number(value.toFixed(Math.round(precision)))
+}
+
+const _evaluateComputedExpression = (expression, valuesByFieldId, currentFieldId) => {
+  if (typeof expression !== "string") return null
+  const trimmed = expression.trim()
+  if (!trimmed) return null
+  if (!_isSafeComputedExpression(trimmed)) return null
+
+  const refs = _extractComputedReferences(trimmed)
+  if (currentFieldId && refs.includes(currentFieldId)) {
+    return null
+  }
+
+  let prepared = trimmed
+
+  const bracketedRefs = Array.from(trimmed.matchAll(/\\[([^\\]]+)\\]/g))
+    .map((match) => match[1]?.trim() ?? "")
+    .filter(Boolean)
+  const uniqueBracketedRefs = Array.from(new Set(bracketedRefs)).sort((a, b) => b.length - a.length)
+  for (const ref of uniqueBracketedRefs) {
+    const numeric = _toNumericValue(valuesByFieldId?.[ref])
+    if (!Number.isFinite(numeric)) return null
+    prepared = prepared.replace(new RegExp(\`\\\\[\${_escapeRegExp(ref)}\\\\]\`, "g"), String(numeric))
+  }
+
+  const bareRefs = prepared.match(/[A-Za-z_][A-Za-z0-9_]*/g) || []
+  const uniqueBareRefs = Array.from(new Set(bareRefs)).sort((a, b) => b.length - a.length)
+  for (const ref of uniqueBareRefs) {
+    const numeric = _toNumericValue(valuesByFieldId?.[ref])
+    if (!Number.isFinite(numeric)) return null
+    prepared = prepared.replace(new RegExp(\`\\\\b\${_escapeRegExp(ref)}\\\\b\`, "g"), String(numeric))
+  }
+
+  try {
+    const result = Function(\`"use strict"; return (\${prepared});\`)()
+    return typeof result === "number" && Number.isFinite(result) ? result : null
+  } catch (error) {
+    return null
+  }
+}
+
+const _toDisplayValue = (value, precision, resultType) => {
+  if (!Number.isFinite(value)) return ""
+  if (Number.isFinite(precision) && precision >= 0) {
+    const rounded = value.toFixed(Math.round(precision))
+    return resultType === "text" ? rounded : String(Number(rounded))
+  }
+  return String(value)
+}
+
+const ComputedField = ({
+  fieldId,
+  label,
+  expression,
+  precision,
+  resultType = "number",
+  labelPosition = "left",
+  placeholder = "Calculated automatically",
+  size,
+  required = false,
+  readOnly = true,
+}) => {
+  const [fd, setFd] = useActiveData()
+  const valuesByFieldId = fd?.field?.data || {}
+
+  const computedValue = useMemo(
+    () => _evaluateComputedExpression(expression, valuesByFieldId, fieldId),
+    [expression, fieldId, valuesByFieldId]
+  )
+
+  const roundedValue = useMemo(
+    () => _roundComputedValue(computedValue, precision),
+    [computedValue, precision]
+  )
+
+  const storedValue = useMemo(() => {
+    if (!Number.isFinite(roundedValue)) return null
+    if (resultType === "text") {
+      return _toDisplayValue(roundedValue, precision, "text")
+    }
+    return roundedValue
+  }, [precision, resultType, roundedValue])
+
+  const displayValue = useMemo(() => {
+    if (!Number.isFinite(roundedValue)) return ""
+    return _toDisplayValue(roundedValue, precision, resultType)
+  }, [precision, resultType, roundedValue])
+
+  useEffect(() => {
+    if (!fieldId) return
+    setFd((draft) => {
+      if (!draft.field) {
+        draft.field = { data: {}, status: {}, history: [] }
+      }
+      if (!draft.field.data || typeof draft.field.data !== "object") {
+        draft.field.data = {}
+      }
+      if (draft.field.data[fieldId] === storedValue) return
+      draft.field.data[fieldId] = storedValue
+    })
+  }, [fieldId, setFd, storedValue])
+
+  return (
+    <TextArea
+      fieldId={fieldId}
+      label={label}
+      value={displayValue}
+      labelPosition={labelPosition}
+      placeholder={placeholder}
+      readOnly={readOnly !== false}
+      required={required}
+      size={size}
+    />
+  )
+}
+`,
   './ConditionalGroup/index.jsx': `/**
  * ConditionalGroup - Logic Gate System for Conditional Field Visibility
  *
@@ -2210,13 +2375,20 @@ const _normalizeChoiceOptions = (options = []) => {
   if (!Array.isArray(options)) return []
 
   return options
-    .map((option) => {
-      if (typeof option === "string") return option.trim()
+    .map((option, index) => {
+      if (typeof option === "string") {
+        const trimmed = option.trim()
+        if (!trimmed) return null
+        return { key: trimmed || \`option_\${index + 1}\`, text: trimmed }
+      }
       if (option && typeof option === "object") {
         const candidate = option.text || option.display || option.label || option.code || option.key || option.value
-        return typeof candidate === "string" ? candidate.trim() : ""
+        const trimmed = typeof candidate === "string" ? candidate.trim() : ""
+        if (!trimmed) return null
+        const rawKey = option.key || option.code || option.value || option.id || trimmed
+        return { key: String(rawKey), text: trimmed }
       }
-      return ""
+      return null
     })
     .filter(Boolean)
 }
@@ -2420,6 +2592,14 @@ const _buildSubformFieldFromColumn = (column) => {
         id: fieldId,
         label,
         type: "date",
+        placeholder: column.placeholder,
+        required: column.required === true,
+      }
+    case "time":
+      return {
+        id: fieldId,
+        label,
+        type: "time",
         placeholder: column.placeholder,
         required: column.required === true,
       }
@@ -2906,13 +3086,24 @@ EditableTable = ({
         )
 
       case "dropdown":
+        const dropdownOptions = _normalizeChoiceOptions(column.options)
         return (
           <SimpleCodeSelect
             inline={inline}
-            optionList={column.options || []}
+            optionList={dropdownOptions}
             value={value ? { code: value, display: value } : undefined}
             onChange={(coding) => onValueChange(rowIndex, column.id, coding?.code || "")}
             placeholder={column.placeholder || "Select..."}
+          />
+        )
+
+      case "time":
+        return (
+          <TimeSelect
+            inline={inline}
+            value={value || ""}
+            onChange={(event, newValue) => onValueChange(rowIndex, column.id, newValue || "")}
+            placeholder={column.placeholder || "HH:mm"}
           />
         )
 
@@ -20426,6 +20617,31 @@ export const componentIdentities: Record<string, any> = {
       "major": 2,
       "minor": 26,
       "patch": 12
+    }
+  },
+  'ComputedField': {
+    "name": "ComputedField",
+    "title": "Computed Field",
+    "description": "A read-only formula field that derives its value from other form fields.",
+    "version": {
+      "major": 1,
+      "minor": 0,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "Bright Health",
+    "author": "Bright Health",
+    "publisher": "Bright Health",
+    "globalIdentifier": "",
+    "requiredFormViewerVersion": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "requiredMoisVersion": {
+      "major": 2,
+      "minor": 26,
+      "patch": 18
     }
   },
   'ConditionalGroup': {
