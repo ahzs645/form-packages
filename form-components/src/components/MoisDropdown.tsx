@@ -7,6 +7,7 @@ import React, { useMemo, useCallback, useRef, useEffect } from 'react';
 import { Dropdown, IDropdownOption, IDropdownStyles } from '@fluentui/react';
 import { useSection, useActiveData, useSourceData, useCodeList } from '../context/MoisContext';
 import { getAuthorshipLockInfo, registerAuthorshipFieldTarget } from '../authorship';
+import { readSectionActiveFieldValue, readSectionFieldStatus } from '../runtime/mois-contract';
 
 export interface MoisDropdownProps {
   fieldId?: string;
@@ -64,22 +65,24 @@ export const MoisDropdown: React.FC<MoisDropdownProps> = ({
   const [activeData, setActiveData] = useActiveData();
   const sourceData = useSourceData();
   const codeList = useCodeList(codeSystem || '');
+  const resolvedFieldId = fieldId || sourceId || layoutId;
   useEffect(() => {
-    const targetFieldId = fieldId || sourceId || layoutId;
-    if (!targetFieldId) return;
+    if (!resolvedFieldId) return;
     setActiveData((draft: any) => {
-      registerAuthorshipFieldTarget(draft, targetFieldId, section.authorshipPolicy);
+      registerAuthorshipFieldTarget(draft, resolvedFieldId, section.authorshipPolicy);
     });
-  }, [fieldId, layoutId, section.authorshipPolicy, setActiveData, sourceId]);
+  }, [resolvedFieldId, section.authorshipPolicy, setActiveData]);
   const authorshipLockInfo = section.authorshipPolicy?.enabled
-    ? getAuthorshipLockInfo(activeData, { scope: 'field', fieldId: fieldId || sourceId || layoutId }, sourceData?.userProfile?.identity?.fullName)
+    ? getAuthorshipLockInfo(activeData, { scope: 'field', fieldId: resolvedFieldId }, sourceData?.userProfile?.identity?.fullName)
     : { locked: false };
   const effectiveReadOnly = readOnly || !!authorshipLockInfo.locked;
+  const fieldStatus = readSectionFieldStatus(activeData, section, resolvedFieldId);
 
   // Get value from props or activeData
-  const value = propValue ?? (fieldId && section.activeSelector
-    ? (section.activeSelector(activeData) as any)?.[fieldId]
-    : fieldId ? (activeData as any).formData?.[fieldId] : undefined) ?? defaultValue ?? '';
+  const value = propValue
+    ?? readSectionActiveFieldValue(activeData, section, resolvedFieldId)
+    ?? defaultValue
+    ?? '';
 
   // Memoize options to prevent recreating array on every render
   const options: IDropdownOption[] = useMemo(() => {
@@ -136,6 +139,7 @@ export const MoisDropdown: React.FC<MoisDropdownProps> = ({
         disabled={disabled || effectiveReadOnly}
         required={required}
         onChange={handleChange}
+        errorMessage={rest.errorMessage ?? fieldStatus?.errorMessage}
         styles={dropdownStyles}
         {...rest}
       />

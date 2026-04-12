@@ -6,8 +6,14 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { MaskedTextField, Label, ITextFieldProps } from '@fluentui/react';
 import { LayoutItem } from './LayoutItem';
-import { useTheme } from '../context/MoisContext';
+import { useTheme, useSection } from '../context/MoisContext';
 import { useActiveDataForForms } from '../hooks/form-state';
+import {
+  readSectionActiveFieldValue,
+  readSectionFieldStatus,
+  writeSectionActiveFieldValue,
+  writeSectionFieldError,
+} from '../runtime/mois-contract';
 
 export interface TimeSelectProps {
   /** Props for the attached action bar (eg: onEdit, onDelete, etc) */
@@ -104,14 +110,23 @@ export const TimeSelect: React.FC<TimeSelectProps> = ({
   validateOnKeyStroke,
   value: controlledValue,
 }) => {
+  const sectionContext = useSection(section);
   const [activeData, setActiveData] = useActiveDataForForms();
-  const effectiveFieldId = fieldId || id;
-  const activeValue = effectiveFieldId ? activeData?.field?.data?.[effectiveFieldId] : undefined;
+  const effectiveFieldId = sourceId || fieldId || id;
+  const activeValue = effectiveFieldId
+    ? readSectionActiveFieldValue(activeData, sectionContext, effectiveFieldId)
+    : undefined;
   const resolvedValue = controlledValue !== undefined
     ? controlledValue
     : (typeof activeValue === 'string' ? activeValue : defaultValue);
   const [internalValue, setInternalValue] = useState(resolvedValue);
-  const [error, setError] = useState<string | undefined>();
+  const statusEntry = effectiveFieldId
+    ? readSectionFieldStatus(activeData, sectionContext, effectiveFieldId)
+    : undefined;
+  const error =
+    statusEntry && typeof statusEntry === 'object' && typeof statusEntry.errorMessage === 'string'
+      ? statusEntry.errorMessage
+      : undefined;
   const theme = useTheme();
 
   useEffect(() => {
@@ -153,29 +168,31 @@ export const TimeSelect: React.FC<TimeSelectProps> = ({
     }
 
     if (validateOnKeyStroke) {
-      setError(validateTime(val));
+      if (effectiveFieldId) {
+        setActiveData((draft: any) => {
+          writeSectionFieldError(draft, sectionContext, effectiveFieldId, validateTime(val));
+        });
+      }
     }
 
     if (effectiveFieldId) {
       setActiveData((draft: any) => {
-        if (!draft.field) draft.field = { data: {}, status: {}, history: [] };
-        if (!draft.field.data) draft.field.data = {};
-        draft.field.data[effectiveFieldId] = val || null;
-        (linkedFieldIds ?? []).forEach((linkedFieldId) => {
-          if (!linkedFieldId || linkedFieldId === effectiveFieldId) return;
-          draft.field.data[linkedFieldId] = val || null;
-        });
+        writeSectionActiveFieldValue(draft, sectionContext, effectiveFieldId, val || null, linkedFieldIds ?? []);
       });
     }
 
     onChange?.(event, val);
-  }, [controlledValue, effectiveFieldId, linkedFieldIds, onChange, setActiveData, validateOnKeyStroke, validateTime]);
+  }, [controlledValue, effectiveFieldId, linkedFieldIds, onChange, sectionContext, setActiveData, validateOnKeyStroke, validateTime]);
 
   const handleBlur = useCallback(() => {
     if (!validateOnKeyStroke) {
-      setError(validateTime(value));
+      if (effectiveFieldId) {
+        setActiveData((draft: any) => {
+          writeSectionFieldError(draft, sectionContext, effectiveFieldId, validateTime(value));
+        });
+      }
     }
-  }, [validateOnKeyStroke, validateTime, value]);
+  }, [effectiveFieldId, sectionContext, setActiveData, validateOnKeyStroke, validateTime, value]);
 
   if (hidden) {
     return null;

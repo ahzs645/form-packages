@@ -12,7 +12,8 @@ import {
   IChoiceGroupOption,
 } from '@fluentui/react';
 import { LayoutItem } from './LayoutItem';
-import { useActiveData } from '../context/MoisContext';
+import { useActiveData, useSection } from '../context/MoisContext';
+import { readSectionActiveFieldValue, writeSectionActiveFieldValue } from '../runtime/mois-contract';
 
 export interface OptionChoiceProps {
   /** Props for the attached action bar (eg: onEdit, onDelete, etc) */
@@ -125,15 +126,16 @@ export const OptionChoice: React.FC<OptionChoiceProps> = ({
 }) => {
   // Use active data for shared state when fieldId is provided
   const [activeData, setActiveData] = useActiveData();
-  const effectiveFieldId = fieldId || id;
+  const sectionContext = useSection(section);
+  const effectiveFieldId = fieldId || id || layoutId;
 
   // Determine if we're using custom options mode
   const useCustomOptions = customOptions && customOptions.length > 0;
 
   // Get value from active data if fieldId is provided
   const getValueFromActiveData = (): boolean | null => {
-    if (effectiveFieldId && activeData?.field?.data) {
-      const storedValue = (activeData.field.data as any)[effectiveFieldId];
+    if (effectiveFieldId) {
+      const storedValue = readSectionActiveFieldValue(activeData, sectionContext, effectiveFieldId);
       if (storedValue === null || storedValue === undefined) return null;
       if (typeof storedValue === 'boolean') return storedValue;
       if (storedValue?.code === 'Y') return true;
@@ -162,8 +164,8 @@ export const OptionChoice: React.FC<OptionChoiceProps> = ({
     if (controlledSelectedKey !== undefined) return controlledSelectedKey;
 
     // Check active data first
-    if (effectiveFieldId && activeData?.field?.data) {
-      const storedValue = (activeData.field.data as any)[effectiveFieldId];
+    if (effectiveFieldId) {
+      const storedValue = readSectionActiveFieldValue(activeData, sectionContext, effectiveFieldId);
       if (storedValue !== null && storedValue !== undefined) {
         if (typeof storedValue === 'string') return storedValue;
         if (storedValue?.code) return storedValue.code;
@@ -193,17 +195,15 @@ export const OptionChoice: React.FC<OptionChoiceProps> = ({
   const updateActiveData = (newValue: boolean | null) => {
     if (effectiveFieldId) {
       setActiveData((draft: any) => {
-        if (!draft.field) draft.field = { data: {}, status: {}, history: [] };
-        if (!draft.field.data) draft.field.data = {};
         // Store as MOIS-YESNO coding
         if (newValue === null) {
-          draft.field.data[effectiveFieldId] = null;
+          writeSectionActiveFieldValue(draft, sectionContext, effectiveFieldId, null);
         } else {
-          draft.field.data[effectiveFieldId] = {
+          writeSectionActiveFieldValue(draft, sectionContext, effectiveFieldId, {
             code: newValue ? 'Y' : 'N',
             display: newValue ? yesText : noText,
             system: 'MOIS-YESNO',
-          };
+          });
         }
       });
     }

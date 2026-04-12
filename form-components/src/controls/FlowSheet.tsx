@@ -7,6 +7,7 @@
 import React, { useMemo } from 'react';
 import { Label, TextField, DatePicker } from '@fluentui/react';
 import { useSourceData, useActiveData, useSection, SectionContextValue } from '../context/MoisContext';
+import { getSectionActiveTarget, getSectionSourceTarget } from '../runtime/mois-contract';
 
 export interface SectionInfo {
   readOnlyOptions?: {
@@ -84,15 +85,11 @@ export const FlowSheet: React.FC<FlowSheetProps> = ({
   // Get the list of items to display
   const items = useMemo(() => {
     if (fieldId) {
-      // Get from active data using activeSelector
-      const selector = sectionContext.activeSelector || ((ad: any) => ad);
-      const selectedData = selector(activeData);
+      const selectedData = getSectionActiveTarget(activeData, sectionContext);
       return selectedData?.[fieldId] || [];
     }
     if (sourceId) {
-      // Get from source data using sourceSelector
-      const selector = sectionContext.sourceSelector || ((sd: any) => sd);
-      const selectedData = selector(sourceData);
+      const selectedData = getSectionSourceTarget(sourceData, sectionContext);
       return selectedData?.[sourceId] || [];
     }
     return [];

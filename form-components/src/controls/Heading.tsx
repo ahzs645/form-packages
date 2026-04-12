@@ -5,6 +5,7 @@
 
 import React, { Children } from 'react';
 import { Stack, Label } from '@fluentui/react';
+import { LinkToMois } from '../components/LinkToMois';
 
 export interface HeadingProps {
   /** Child controls are indented below the label */
@@ -15,6 +16,8 @@ export interface HeadingProps {
   labelStyles?: React.CSSProperties;
   /** Show link to MOIS windows client module */
   moisModule?: string | null;
+  /** Optional record id for record-specific MOIS navigation */
+  objectId?: number;
   /** @deprecated Use label */
   text?: string;
   /** Style override */
@@ -32,26 +35,12 @@ export const Heading: React.FC<HeadingProps> = ({
   label,
   labelStyles = {},
   moisModule = null,
+  objectId,
   text,
   style,
 }) => {
   // Support deprecated 'text' prop
   const headingText = label || text;
-
-  const handleMoisClick = () => {
-    if (moisModule) {
-      console.log(`Navigate to MOIS module: ${moisModule}`);
-      // In real implementation, this would navigate to the MOIS module
-    }
-  };
-
-  const stackStyles: React.CSSProperties = {
-    display: 'flex',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: '4px',
-    ...style,
-  };
 
   const childrenWrapperStyles: React.CSSProperties = {
     marginLeft: '2em',
@@ -59,33 +48,10 @@ export const Heading: React.FC<HeadingProps> = ({
 
   return (
     <>
-      <Stack horizontal verticalAlign="center" tokens={{ childrenGap: 4 }}>
+      <Stack horizontal verticalAlign="center" tokens={{ childrenGap: 4 }} style={style}>
         <Label style={labelStyles}>{headingText}</Label>
         {moisModule && (
-          <button
-            onClick={handleMoisClick}
-            style={{
-              backgroundColor: 'transparent',
-              border: '0px',
-              cursor: 'pointer',
-              padding: 0,
-            }}
-            title={`Link to MOIS: ${moisModule}`}
-          >
-            <div style={{ marginTop: '4px' }}>
-              <img
-                src="./img/GotoRecord.png"
-                alt="Link to Mois"
-                style={{ width: '16px' }}
-                onError={(e) => {
-                  // Fallback if image doesn't load - show an icon
-                  const target = e.target as HTMLImageElement;
-                  target.style.display = 'none';
-                  target.parentElement!.innerHTML = '<span style="font-size: 14px; color: #0078d4;">&#8599;</span>';
-                }}
-              />
-            </div>
-          </button>
+          <LinkToMois moisModule={moisModule} objectId={objectId} />
         )}
       </Stack>
       {Children.count(children) > 0 && (

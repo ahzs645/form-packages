@@ -20943,7 +20943,11 @@ export const componentIdentities: Record<string, any> = {
       "major": 2,
       "minor": 28,
       "patch": 10
-    }
+    },
+    "components": [
+      "ReferralSource",
+      "ServiceRequests"
+    ]
   },
   'HFC_PT_ASMT_SnapShot': {
     "name": "hfc_pt_asmt_patientsnapshot",

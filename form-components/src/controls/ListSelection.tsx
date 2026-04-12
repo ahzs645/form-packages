@@ -23,6 +23,7 @@ import {
 } from '@fluentui/react';
 import { LayoutItem } from './LayoutItem';
 import { useTheme, useSourceData, useActiveData, useSection, produce } from '../context/MoisContext';
+import { readSectionActiveFieldValue, writeSectionActiveFieldValue } from '../runtime/mois-contract';
 
 // Default filter predicate - accepts all items
 const defaultFilterPred = () => true;
@@ -233,10 +234,8 @@ export const ListSelection: React.FC<ListSelectionProps> = ({
   // Get selected items from active data (for real-time sync)
   const selectedFromActiveData = useMemo(() => {
     if (!resolvedFieldId) return [];
-    const activeSelector = section.activeSelector || ((fd: any) => fd?.field?.data ?? fd);
-    const fieldData = activeSelector(activeData);
-    return fieldData?.[resolvedFieldId] ?? [];
-  }, [resolvedFieldId, activeData, section.activeSelector]);
+    return (readSectionActiveFieldValue(activeData, section, resolvedFieldId) as any[]) ?? [];
+  }, [resolvedFieldId, activeData, section]);
 
   // Local state for selected items (fallback when not using active data)
   const [localSelectedItems, setLocalSelectedItems] = useState<any[]>([]);
@@ -257,7 +256,7 @@ export const ListSelection: React.FC<ListSelectionProps> = ({
   const isSelectingRef = useRef(isSelecting);
   const resolvedFieldIdRef = useRef(resolvedFieldId);
   const setActiveDataRef = useRef(setActiveData);
-  const sectionActiveSelectorRef = useRef(section.activeSelector);
+  const sectionRef = useRef(section);
 
   // Keep refs up to date
   useEffect(() => {
@@ -273,8 +272,8 @@ export const ListSelection: React.FC<ListSelectionProps> = ({
   }, [setActiveData]);
 
   useEffect(() => {
-    sectionActiveSelectorRef.current = section.activeSelector;
-  }, [section.activeSelector]);
+    sectionRef.current = section;
+  }, [section]);
 
   // Create selection object once - use refs for callbacks to avoid recreation
   const selection = useMemo(() => {
@@ -290,11 +289,7 @@ export const ListSelection: React.FC<ListSelectionProps> = ({
           if (fieldId) {
             // Sync to active data
             setActiveDataRef.current(produce((draft: any) => {
-              const activeSelector = sectionActiveSelectorRef.current || ((fd: any) => fd?.field?.data ?? fd);
-              const fieldData = activeSelector(draft);
-              if (fieldData) {
-                fieldData[fieldId] = selected;
-              }
+              writeSectionActiveFieldValue(draft, sectionRef.current, fieldId, selected);
             }));
           } else {
             // Sync to local state

@@ -9,6 +9,12 @@ import { LayoutItem } from './LayoutItem';
 import { useTheme, useSection, useSourceData } from '../context/MoisContext';
 import { useActiveDataForForms } from '../hooks/form-state';
 import { getAuthorshipLockInfo, registerAuthorshipFieldTarget } from '../authorship';
+import {
+  readSectionActiveFieldValue,
+  readSectionFieldStatus,
+  writeSectionActiveFieldValue,
+  writeSectionFieldError,
+} from '../runtime/mois-contract';
 
 export interface TextAreaProps {
   /** Props for the attached action bar (eg: onEdit, onDelete, etc) */
@@ -129,17 +135,26 @@ export const TextArea: React.FC<TextAreaProps> = ({
   validateOnKeyStroke,
   value,
 }) => {
+  const sectionContext = useSection(section);
   const [activeData, setActiveData] = useActiveDataForForms();
   const [internalValue, setInternalValue] = useState(value ?? defaultValue ?? '');
-  const [errorMessage, setErrorMessage] = useState<string | undefined>();
   const sourceData = useSourceData();
   const effectiveMaxCharLimit =
     typeof maxCharLimit === 'number' && Number.isFinite(maxCharLimit) && maxCharLimit > 0
       ? Math.round(maxCharLimit)
       : undefined;
-  const effectiveFieldId = fieldId || id;
-  const activeValue = effectiveFieldId ? activeData?.field?.data?.[effectiveFieldId] : undefined;
+  const effectiveFieldId = sourceId || fieldId || id;
+  const activeValue = effectiveFieldId
+    ? readSectionActiveFieldValue(activeData, sectionContext, effectiveFieldId)
+    : undefined;
   const persistedValue = typeof activeValue === 'string' ? activeValue : undefined;
+  const statusEntry = effectiveFieldId
+    ? readSectionFieldStatus(activeData, sectionContext, effectiveFieldId)
+    : undefined;
+  const errorMessage =
+    statusEntry && typeof statusEntry === 'object' && typeof statusEntry.errorMessage === 'string'
+      ? statusEntry.errorMessage
+      : undefined;
 
   const displayValue = value !== undefined ? value : (persistedValue ?? internalValue);
 
@@ -151,13 +166,7 @@ export const TextArea: React.FC<TextAreaProps> = ({
 
     if (effectiveFieldId) {
       setActiveData((draft: any) => {
-        if (!draft.field) draft.field = { data: {}, status: {}, history: [] };
-        if (!draft.field.data) draft.field.data = {};
-        draft.field.data[effectiveFieldId] = val;
-        (linkedFieldIds ?? []).forEach((linkedFieldId) => {
-          if (!linkedFieldId || linkedFieldId === effectiveFieldId) return;
-          draft.field.data[linkedFieldId] = val;
-        });
+        writeSectionActiveFieldValue(draft, sectionContext, effectiveFieldId, val, linkedFieldIds ?? []);
       });
     }
 
@@ -168,7 +177,11 @@ export const TextArea: React.FC<TextAreaProps> = ({
     // Validate on keystroke if enabled
     if (onValidate && validateOnKeyStroke) {
       const error = onValidate(val);
-      setErrorMessage(error);
+      if (effectiveFieldId) {
+        setActiveData((draft: any) => {
+          writeSectionFieldError(draft, sectionContext, effectiveFieldId, error);
+        });
+      }
     }
   };
 
@@ -176,7 +189,11 @@ export const TextArea: React.FC<TextAreaProps> = ({
     // Validate on blur by default
     if (onValidate && !validateOnKeyStroke) {
       const error = onValidate(displayValue);
-      setErrorMessage(error);
+      if (effectiveFieldId) {
+        setActiveData((draft: any) => {
+          writeSectionFieldError(draft, sectionContext, effectiveFieldId, error);
+        });
+      }
     }
   };
 
@@ -192,7 +209,6 @@ export const TextArea: React.FC<TextAreaProps> = ({
   const theme = useTheme();
 
   // Determine effective label position based on section layout
-  const sectionContext = useSection(section);
   useEffect(() => {
     if (!effectiveFieldId) return;
     setActiveData((draft: any) => {

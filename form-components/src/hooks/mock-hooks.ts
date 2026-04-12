@@ -11,6 +11,7 @@ import { useSourceData } from '../context/MoisContext';
 import { useActiveDataForForms } from './form-state';
 // Import the proper useMutation from the API module
 import { useMutation as useMutationImpl } from './api';
+import { emitMoisNavigateEvent } from '../runtime/mois-contract';
 
 /**
  * useOnLoad - Called when a form loads
@@ -19,12 +20,22 @@ import { useMutation as useMutationImpl } from './api';
 export const useOnLoad = (callback?: (sourceData: any, formData: any) => void) => {
   const sourceData = useSourceData();
   const [formData, setFormData] = useActiveDataForForms();
+  const callbackRef = React.useRef(callback);
+  const formDataRef = React.useRef(formData);
 
   React.useEffect(() => {
-    if (formData && typeof callback === 'function') {
-      callback(sourceData, { ...formData, setFormData });
+    callbackRef.current = callback;
+  }, [callback]);
+
+  React.useEffect(() => {
+    formDataRef.current = formData;
+  }, [formData]);
+
+  React.useEffect(() => {
+    if (typeof callbackRef.current === 'function') {
+      callbackRef.current(sourceData, { ...formDataRef.current, setFormData });
     }
-  }, []);
+  }, [sourceData, setFormData]);
 };
 
 /**
@@ -33,12 +44,22 @@ export const useOnLoad = (callback?: (sourceData: any, formData: any) => void) =
 export const useOnRefresh = (callback?: (sourceData: any, formData: any) => void) => {
   const sourceData = useSourceData();
   const [formData, setFormData] = useActiveDataForForms();
+  const callbackRef = React.useRef(callback);
+  const formDataRef = React.useRef(formData);
 
   React.useEffect(() => {
-    if (typeof callback === 'function') {
-      callback(sourceData, { ...formData, setFormData });
+    callbackRef.current = callback;
+  }, [callback]);
+
+  React.useEffect(() => {
+    formDataRef.current = formData;
+  }, [formData]);
+
+  React.useEffect(() => {
+    if (typeof callbackRef.current === 'function') {
+      callbackRef.current(sourceData, { ...formDataRef.current, setFormData });
     }
-  }, []);
+  }, [sourceData, setFormData]);
 };
 
 /**
@@ -86,6 +107,10 @@ export const useHotKey = () => {};
  */
 export const useMoisNavigate = (moisModule?: string) => {
   return (target?: { objectType: string; objectId: number }) => {
+    const detail = target
+      ? { action: 'navigate-record', target, moisModule: moisModule ?? null }
+      : { action: 'navigate-module', moisModule: moisModule ?? null };
+    emitMoisNavigateEvent(detail);
     if (target) {
       console.log(`Mois.navigate to ${target.objectType} with id ${target.objectId}`);
     } else if (moisModule) {

@@ -9,6 +9,13 @@ import { LayoutItem } from './LayoutItem';
 import { useTheme, useSourceData, useSection } from '../context/MoisContext';
 import { useActiveDataForForms } from '../hooks/form-state';
 import { getAuthorshipLockInfo, registerAuthorshipFieldTarget } from '../authorship';
+import {
+  getSectionSourceTarget,
+  readSectionActiveFieldValue,
+  readSectionFieldStatus,
+  writeSectionActiveFieldValue,
+  writeSectionFieldError,
+} from '../runtime/mois-contract';
 
 export interface NumericProps {
   /** Props for the attached action bar (eg: onEdit, onDelete, etc) */
@@ -135,15 +142,22 @@ export const Numeric: React.FC<NumericProps> = ({
 
   // Get effective sourceId (from explicit prop, id prop, or fieldId)
   const effectiveSourceId = sourceId || id || fieldId;
-  const activeValue = effectiveSourceId ? activeData?.field?.data?.[effectiveSourceId] : undefined;
+  const activeValue = effectiveSourceId
+    ? readSectionActiveFieldValue(activeData, sectionContext, effectiveSourceId)
+    : undefined;
+  const statusEntry = effectiveSourceId
+    ? readSectionFieldStatus(activeData, sectionContext, effectiveSourceId)
+    : undefined;
+  const statusErrorMessage =
+    statusEntry && typeof statusEntry === 'object' && typeof statusEntry.errorMessage === 'string'
+      ? statusEntry.errorMessage
+      : '';
 
   // Get initial value from source data if sourceId is provided
   const sourceValue = useMemo(() => {
     if (!effectiveSourceId) return undefined;
 
-    // Use section's sourceSelector if available
-    const sourceSelector = sectionContext?.sourceSelector || ((sd: any) => sd?.patient);
-    const sourceObj = sourceSelector(sourceData);
+    const sourceObj = getSectionSourceTarget(sourceData, sectionContext);
 
     if (sourceObj && effectiveSourceId in sourceObj) {
       const val = sourceObj[effectiveSourceId];
@@ -162,8 +176,6 @@ export const Numeric: React.FC<NumericProps> = ({
   }, [value, activeValue, sourceValue, defaultValue]);
 
   const [localValue, setLocalValue] = useState<string>(initialValue);
-  const [errorMessage, setErrorMessage] = useState<string>('');
-
   const displayValue = value !== undefined
     ? String(value)
     : activeValue !== undefined && activeValue !== null
@@ -174,26 +186,18 @@ export const Numeric: React.FC<NumericProps> = ({
     if (!effectiveSourceId) return;
     if (effectiveReadOnly) return;
     setActiveData((draft: any) => {
-      if (!draft.field) draft.field = { data: {}, status: {}, history: [] };
-      if (!draft.field.data) draft.field.data = {};
       if (!rawValue) {
-        draft.field.data[effectiveSourceId] = null;
-        (linkedFieldIds ?? []).forEach((linkedFieldId) => {
-          if (!linkedFieldId || linkedFieldId === effectiveSourceId) return;
-          draft.field.data[linkedFieldId] = null;
-        });
+        writeSectionActiveFieldValue(draft, sectionContext, effectiveSourceId, null, linkedFieldIds ?? []);
+        writeSectionFieldError(draft, sectionContext, effectiveSourceId, null);
         return;
       }
       const nextValue = storeAsNumber
         ? (typeNumber === 'decimal' ? parseFloat(rawValue) : parseInt(rawValue, 10))
         : rawValue;
-      draft.field.data[effectiveSourceId] = nextValue;
-      (linkedFieldIds ?? []).forEach((linkedFieldId) => {
-        if (!linkedFieldId || linkedFieldId === effectiveSourceId) return;
-        draft.field.data[linkedFieldId] = nextValue;
-      });
+      writeSectionActiveFieldValue(draft, sectionContext, effectiveSourceId, nextValue, linkedFieldIds ?? []);
+      writeSectionFieldError(draft, sectionContext, effectiveSourceId, null);
     });
-  }, [effectiveSourceId, linkedFieldIds, setActiveData, storeAsNumber, typeNumber, effectiveReadOnly]);
+  }, [effectiveSourceId, linkedFieldIds, sectionContext, setActiveData, storeAsNumber, typeNumber, effectiveReadOnly]);
 
   // Get size styles from theme
   const getSizeStyles = (): React.CSSProperties => {
@@ -235,7 +239,11 @@ export const Numeric: React.FC<NumericProps> = ({
     setLocalValue(val);
 
     const error = validate(val);
-    setErrorMessage(error);
+    if (effectiveSourceId) {
+      setActiveData((draft: any) => {
+        writeSectionFieldError(draft, sectionContext, effectiveSourceId, error || null);
+      });
+    }
 
     if (!error) {
       updateActiveValue(val);
@@ -248,12 +256,17 @@ export const Numeric: React.FC<NumericProps> = ({
         onChange(val || undefined);
       }
     }
-  }, [validate, onChange, storeAsNumber, typeNumber]);
+  }, [effectiveSourceId, onChange, sectionContext, setActiveData, storeAsNumber, typeNumber, updateActiveValue, validate]);
 
   const handleSpinChange = useCallback((_: any, newValue?: string) => {
     const val = newValue || '';
     setLocalValue(val);
     updateActiveValue(val);
+    if (effectiveSourceId) {
+      setActiveData((draft: any) => {
+        writeSectionFieldError(draft, sectionContext, effectiveSourceId, null);
+      });
+    }
 
     if (onChange) {
       if (storeAsNumber && val) {
@@ -262,7 +275,7 @@ export const Numeric: React.FC<NumericProps> = ({
         onChange(val || undefined);
       }
     }
-  }, [onChange, storeAsNumber, typeNumber, updateActiveValue]);
+  }, [effectiveSourceId, onChange, sectionContext, setActiveData, storeAsNumber, typeNumber, updateActiveValue]);
 
   const isEmpty = !displayValue || displayValue.trim() === '';
 
@@ -300,7 +313,7 @@ export const Numeric: React.FC<NumericProps> = ({
         disabled={disabled}
         readOnly={effectiveReadOnly}
         placeholder={placeholder}
-        errorMessage={errorMessage}
+        errorMessage={statusErrorMessage}
         borderless={effectiveReadOnly}
         tabIndex={effectiveReadOnly ? -1 : undefined}
         styles={{
@@ -387,7 +400,7 @@ export const Numeric: React.FC<NumericProps> = ({
         disabled={disabled}
         readOnly={effectiveReadOnly}
         placeholder={placeholder}
-        errorMessage={errorMessage}
+        errorMessage={statusErrorMessage}
         borderless={effectiveReadOnly}
         tabIndex={effectiveReadOnly ? -1 : undefined}
         styles={{

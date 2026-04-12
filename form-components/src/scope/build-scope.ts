@@ -80,6 +80,8 @@ import {
   mergeStyles,
   mergeStyleSets,
 } from '@fluentui/react';
+import { recordMoisRuntimeAction } from '../runtime/mois-contract';
+import { PreviewAjv } from '../runtime/preview-ajv';
 
 // Import from lib/index
 import {
@@ -719,24 +721,8 @@ export const buildScope = (): Record<string, any> => ({
   confirm: () => true,
   prompt: () => 'user input',
 
-  // Mock Ajv (JSON Schema validator) for preview mode
-  // In production, forms use the real Ajv library for validation before submit
-  Ajv: class MockAjv {
-    errors: any[] | null = null;
-    constructor(_options?: any) {}
-    validate(_schema: any, _data: any): boolean {
-      // In preview mode, always return valid (we're not actually saving)
-      this.errors = null;
-      console.log('[Preview] Ajv validation skipped in preview mode');
-      return true;
-    }
-    compile(_schema: any) {
-      return (_data: any) => {
-        this.errors = null;
-        return true;
-      };
-    }
-  },
+  // Preview Ajv shim with real type/required inspection for authoring feedback.
+  Ajv: PreviewAjv,
 
   // Form action functions (standalone versions for direct calls)
   saveDraft: (sd: any, fd: any, data: any) => {
@@ -745,6 +731,7 @@ export const buildScope = (): Record<string, any> => ({
       fd.setFormData((draft: any) => {
         draft.field = draft.field || { data: {}, status: {}, history: [] };
         draft.field.data = { ...(draft.field?.data || {}), ...data.formData };
+        recordMoisRuntimeAction(draft, 'saveDraft', data);
       });
     }
     return true;
@@ -758,6 +745,18 @@ export const buildScope = (): Record<string, any> => ({
       fd.setFormData((draft: any) => {
         draft.field = draft.field || { data: {}, status: {}, history: [] };
         draft.field.data = { ...(draft.field?.data || {}), ...data.formData };
+        recordMoisRuntimeAction(draft, 'saveSubmit', data);
+      });
+    }
+    return true;
+  },
+  signSubmit: (sd: any, fd: any, data: any) => {
+    console.log('signSubmit called', { sd, fd, data });
+    if (data?.formData && typeof fd?.setFormData === 'function') {
+      fd.setFormData((draft: any) => {
+        draft.field = draft.field || { data: {}, status: {}, history: [] };
+        draft.field.data = { ...(draft.field?.data || {}), ...data.formData };
+        recordMoisRuntimeAction(draft, 'signSubmit', data);
       });
     }
     return true;

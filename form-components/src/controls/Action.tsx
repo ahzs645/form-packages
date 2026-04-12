@@ -5,6 +5,7 @@
 
 import React, { useState } from 'react';
 import { IconButton, IIconProps, Stack, Toggle, MessageBar, MessageBarType } from '@fluentui/react';
+import { LinkToMois as MoisLinkToMois } from '../components/LinkToMois';
 
 export interface ActionButtonProps {
   /** Icon name from Fluent UI icons */
@@ -58,6 +59,7 @@ const Bar: React.FC<ActionBarProps> = ({
   onDelete,
   onInfo,
   style,
+  moisModule,
 }) => {
   // If hidden, don't render anything
   if (hidden) {
@@ -78,9 +80,13 @@ const Bar: React.FC<ActionBarProps> = ({
           {onCancel && <Cancel onClick={onCancel} />}
           {onDelete && <Delete onClick={onDelete} />}
           {onInfo && <Info onClick={onInfo} />}
+          {moisModule && <MoisLinkToMois moisModule={moisModule} />}
         </>
       ) : (
-        children
+        <>
+          {children}
+          {moisModule && <MoisLinkToMois moisModule={moisModule} />}
+        </>
       )}
     </div>
   );
@@ -170,34 +176,7 @@ const LinkToMois: React.FC<Omit<ActionButtonProps, 'iconName'> & { moisModule: s
   objectId,
   onClick,
 }) => {
-  const handleClick = () => {
-    if (onClick) {
-      onClick();
-    } else {
-      console.log('Navigate to MOIS module:', moisModule, objectId);
-    }
-  };
-  return (
-    <button
-      type="button"
-      onClick={handleClick}
-      title={`Link to Mois`}
-      aria-label={`Open ${moisModule} in MOIS`}
-      style={{
-        backgroundColor: 'transparent',
-        border: '0px',
-        cursor: 'pointer',
-      }}
-    >
-      <div style={{ marginTop: '4px' }}>
-        <img
-          src="./img/GotoRecord.png"
-          alt="Link to Mois"
-          style={{ width: '16px' }}
-        />
-      </div>
-    </button>
-  );
+  return <MoisLinkToMois moisModule={moisModule} objectId={objectId} onClick={onClick} />;
 };
 
 // Toast item interface for stacking toasts

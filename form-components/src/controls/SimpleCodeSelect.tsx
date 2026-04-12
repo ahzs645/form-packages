@@ -8,6 +8,11 @@ import { Dropdown, IDropdownOption, TextField, Toggle, Stack } from '@fluentui/r
 import { LayoutItem } from './LayoutItem';
 import { useTheme, useCodeList, useSection } from '../context/MoisContext';
 import { useActiveDataForForms } from '../hooks/form-state';
+import {
+  readSectionActiveFieldValue,
+  readSectionFieldStatus,
+  writeSectionActiveFieldValue,
+} from '../runtime/mois-contract';
 
 export interface Coding {
   code: string | null;
@@ -153,7 +158,8 @@ export const SimpleCodeSelect: React.FC<SimpleCodeSelectProps> = ({
   style,
 }) => {
   const [activeData, setActiveData] = useActiveDataForForms();
-  const effectiveFieldId = fieldId || id;
+  const sectionContext = useSection(section);
+  const effectiveFieldId = fieldId || id || sourceId || layoutId;
   // Derive codeSystem from id if not explicitly provided
   // e.g., id="maritalStatus" → codeSystem="MOIS-MARITALSTATUS"
   const derivedCodeSystem = codeSystem || (id ? `MOIS-${id.replace(/([a-z])([A-Z])/g, '$1$2').toUpperCase()}` : '');
@@ -190,7 +196,8 @@ export const SimpleCodeSelect: React.FC<SimpleCodeSelectProps> = ({
   };
 
   const parsedOptions = parseOptions();
-  const activeValue = effectiveFieldId ? activeData?.field?.data?.[effectiveFieldId] : undefined;
+  const activeValue = readSectionActiveFieldValue(activeData, sectionContext, effectiveFieldId);
+  const fieldStatus = readSectionFieldStatus(activeData, sectionContext, effectiveFieldId);
 
   const getKeysFromValue = (val: Coding | Coding[] | string | undefined): string[] => {
     if (!val) return [];
@@ -232,15 +239,8 @@ export const SimpleCodeSelect: React.FC<SimpleCodeSelectProps> = ({
   const updateActiveData = (newKeys: string[], otherDisplayValue?: string) => {
     if (!effectiveFieldId) return;
     setActiveData((draft: any) => {
-      if (!draft.field) draft.field = { data: {}, status: {}, history: [] };
-      if (!draft.field.data) draft.field.data = {};
-
       if (newKeys.length === 0) {
-        draft.field.data[effectiveFieldId] = null;
-        (linkedFieldIds ?? []).forEach((linkedFieldId) => {
-          if (!linkedFieldId || linkedFieldId === effectiveFieldId) return;
-          draft.field.data[linkedFieldId] = null;
-        });
+        writeSectionActiveFieldValue(draft, sectionContext, effectiveFieldId, null, linkedFieldIds ?? []);
         return;
       }
 
@@ -261,15 +261,7 @@ export const SimpleCodeSelect: React.FC<SimpleCodeSelectProps> = ({
       });
 
       const storedValue = isMultiple ? codings : codings[0];
-      draft.field.data[effectiveFieldId] = storedValue;
-      (linkedFieldIds ?? []).forEach((linkedFieldId) => {
-        if (!linkedFieldId || linkedFieldId === effectiveFieldId) return;
-        draft.field.data[linkedFieldId] = Array.isArray(storedValue)
-          ? storedValue.map((coding) => ({ ...coding }))
-          : storedValue
-            ? { ...storedValue }
-            : null;
-      });
+      writeSectionActiveFieldValue(draft, sectionContext, effectiveFieldId, storedValue, linkedFieldIds ?? []);
     });
   };
 
@@ -325,7 +317,6 @@ export const SimpleCodeSelect: React.FC<SimpleCodeSelectProps> = ({
   const theme = useTheme();
 
   // Determine effective label position based on section layout
-  const sectionContext = useSection(section);
   const effectiveLabelPosition = labelPosition ?? (
     sectionContext.layout === 'flex' ? 'top' :
     sectionContext.layout === 'linear' ? 'left' : 'top'
@@ -366,6 +357,7 @@ export const SimpleCodeSelect: React.FC<SimpleCodeSelectProps> = ({
           value={displayValue}
           readOnly
           borderless
+          errorMessage={fieldStatus?.errorMessage}
           placeholder={placeholder}
           styles={{
             root: { width: '100%' },
@@ -472,6 +464,7 @@ export const SimpleCodeSelect: React.FC<SimpleCodeSelectProps> = ({
           options={isMultiple ? options : [{ key: '', text: placeholder }, ...options]}
           disabled={disabled}
           placeholder={placeholder}
+          errorMessage={fieldStatus?.errorMessage}
           styles={{
             root: { width: '100%' },
             ...dropdownProps?.styles,
@@ -489,6 +482,7 @@ export const SimpleCodeSelect: React.FC<SimpleCodeSelectProps> = ({
               }
             }}
             placeholder="Other"
+            errorMessage={fieldStatus?.errorMessage}
             styles={{
               root: { marginTop: '4px' },
             }}

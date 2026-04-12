@@ -7,6 +7,7 @@ import React from 'react';
 import { TextField, Label, ITextFieldStyles } from '@fluentui/react';
 import { useSection, useActiveData, useSourceData, useTheme } from '../context/MoisContext';
 import { getAuthorshipLockInfo, registerAuthorshipFieldTarget } from '../authorship';
+import { readSectionActiveFieldValue, readSectionFieldStatus } from '../runtime/mois-contract';
 
 export interface MoisTextFieldProps {
   fieldId?: string;
@@ -59,22 +60,24 @@ export const MoisTextField: React.FC<MoisTextFieldProps> = ({
   const [activeData, setActiveData] = useActiveData();
   const sourceData = useSourceData();
   const theme = useTheme();
+  const resolvedFieldId = fieldId || sourceId || layoutId;
   React.useEffect(() => {
-    const targetFieldId = fieldId || sourceId || layoutId;
-    if (!targetFieldId) return;
+    if (!resolvedFieldId) return;
     setActiveData((draft: any) => {
-      registerAuthorshipFieldTarget(draft, targetFieldId, section.authorshipPolicy);
+      registerAuthorshipFieldTarget(draft, resolvedFieldId, section.authorshipPolicy);
     });
-  }, [fieldId, layoutId, section.authorshipPolicy, setActiveData, sourceId]);
+  }, [resolvedFieldId, section.authorshipPolicy, setActiveData]);
   const authorshipLockInfo = section.authorshipPolicy?.enabled
-    ? getAuthorshipLockInfo(activeData, { scope: 'field', fieldId: fieldId || sourceId || layoutId }, sourceData?.userProfile?.identity?.fullName)
+    ? getAuthorshipLockInfo(activeData, { scope: 'field', fieldId: resolvedFieldId }, sourceData?.userProfile?.identity?.fullName)
     : { locked: false };
   const effectiveReadOnly = readOnly || !!authorshipLockInfo.locked;
+  const fieldStatus = readSectionFieldStatus(activeData, section, resolvedFieldId);
 
   // Get value from props or activeData
-  const value = propValue ?? (fieldId && section.activeSelector
-    ? (section.activeSelector(activeData) as any)?.[fieldId]
-    : fieldId ? (activeData as any).formData?.[fieldId] : undefined) ?? defaultValue ?? '';
+  const value = propValue
+    ?? readSectionActiveFieldValue(activeData, section, resolvedFieldId)
+    ?? defaultValue
+    ?? '';
 
   // Handle change
   const handleChange = (
@@ -123,6 +126,7 @@ export const MoisTextField: React.FC<MoisTextFieldProps> = ({
         rows={multiline ? rows : undefined}
         required={required}
         styles={textFieldStyles}
+        errorMessage={rest.errorMessage ?? fieldStatus?.errorMessage}
         description={authorshipLockInfo.note}
         tabIndex={effectiveReadOnly ? -1 : 0}
         {...rest}

@@ -12,8 +12,9 @@ import {
 } from '@fluentui/react';
 import { LayoutItem } from './LayoutItem';
 import { OptionChoice } from './OptionChoice';
-import { useCodeList } from '../context/MoisContext';
+import { useCodeList, useSection } from '../context/MoisContext';
 import { useActiveDataForForms } from '../hooks/form-state';
+import { readSectionActiveFieldValue, writeSectionActiveFieldValue } from '../runtime/mois-contract';
 
 export interface Coding {
   code: string | null;
@@ -137,16 +138,18 @@ export const SimpleCodeChecklist: React.FC<SimpleCodeChecklistProps> = ({
   defaultValue,
   children,
   conditionalCodes,
+  sourceId,
 }) => {
   // Get code list from codeSystem if provided and optionList is not
   const codeListItems = useCodeList(codeSystem || '');
   const [activeData, setActiveData] = useActiveDataForForms();
-  const effectiveFieldId = fieldId || id;
+  const sectionContext = useSection(section);
+  const effectiveFieldId = fieldId || id || sourceId || layoutId;
 
   // Helper to get value from activeData
   const getValueFromActiveData = (): Coding | Coding[] | string | string[] | null => {
-    if (effectiveFieldId && activeData?.field?.data) {
-      return (activeData.field.data as any)[effectiveFieldId] ?? null;
+    if (effectiveFieldId) {
+      return (readSectionActiveFieldValue(activeData, sectionContext, effectiveFieldId) as any) ?? null;
     }
     return null;
   };
@@ -170,9 +173,7 @@ export const SimpleCodeChecklist: React.FC<SimpleCodeChecklistProps> = ({
   const updateActiveData = (value: Coding | Coding[] | null) => {
     if (effectiveFieldId) {
       setActiveData((draft: any) => {
-        if (!draft.field) draft.field = { data: {}, status: {}, history: [] };
-        if (!draft.field.data) draft.field.data = {};
-        draft.field.data[effectiveFieldId] = value;
+        writeSectionActiveFieldValue(draft, sectionContext, effectiveFieldId, value);
       });
     }
   };

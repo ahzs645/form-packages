@@ -21,5 +21,9 @@
       "major": 2,
       "minor": 28,
       "patch": 10
-    }
+    },
+    "components": [
+      "ReferralSource",
+      "ServiceRequests"
+    ]
   }

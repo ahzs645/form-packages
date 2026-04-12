@@ -5,6 +5,7 @@
 
 import React, { useState, useCallback, useContext, createContext } from 'react';
 import { Stack, Label, IconButton, IButtonStyles, ILabelStyles } from '@fluentui/react';
+import { LinkToMois } from '../components/LinkToMois';
 
 // Context for managing exclusive collapsed sections by groupId
 interface SubTitleGroupContextType {
@@ -130,12 +131,6 @@ export const SubTitle: React.FC<SubTitleProps> = ({
     onToggleCollapsed?.(newCollapsed);
   }, [isCollapsed, controlledCollapsed, groupId, sectionId, setExpandedInGroup, onToggleCollapsed]);
 
-  // Handle MOIS link click
-  const handleMoisLink = useCallback(() => {
-    console.log('Navigate to MOIS module:', moisModule);
-    // In actual implementation, this would trigger navigation
-  }, [moisModule]);
-
   const containerStyles: React.CSSProperties = {
     width: '100%',
     backgroundColor: background,
@@ -200,34 +195,10 @@ export const SubTitle: React.FC<SubTitleProps> = ({
 
         {/* MOIS module link */}
         {moisModule && (
-          <button
-            onClick={handleMoisLink}
-            style={{
-              backgroundColor: 'transparent',
-              border: 'none',
-              cursor: 'pointer',
-              padding: 0,
-              width: '20px',
-              height: '20px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              marginLeft: '4px',
-            }}
-            aria-label={`Open ${moisModule} in MOIS`}
-            title={`Open in MOIS: ${moisModule}`}
-          >
-            <img
-              src="./img/GotoRecord.png"
-              alt="Link to MOIS"
-              style={{ width: '16px', height: '16px' }}
-              onError={(e) => {
-                // Fallback to icon if image doesn't load
-                const target = e.target as HTMLImageElement;
-                target.style.display = 'none';
-              }}
-            />
-          </button>
+          <LinkToMois
+            moisModule={moisModule}
+            styles={{ root: { marginLeft: '4px' } }}
+          />
         )}
 
         {/* Action buttons - with proper flex layout to push to right */}

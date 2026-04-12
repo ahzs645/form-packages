@@ -7,8 +7,13 @@
 import React, { useState } from 'react';
 import { Text, Icon } from '@fluentui/react';
 import { useActiveData, useSourceData, useSection, SectionContextValue } from '../context/MoisContext';
+import { readSectionActiveFieldValue, readSectionSourceFieldValue } from '../runtime/mois-contract';
 
 export interface DebugViewProps {
+  /** Override the rendered title */
+  title?: string;
+  /** Direct debug payload override */
+  data?: unknown;
   /** Source or active data */
   dataType?: 'source' | 'active';
   /** Portions of the selected information can be replaced using this object */
@@ -31,11 +36,15 @@ export interface DebugViewProps {
   section?: Partial<SectionContextValue>;
   /** Normally this control is only shown in debug and test builds, but that can be changed */
   showInProduction?: boolean;
+  /** Initial collapsed state */
+  startCollapsed?: boolean;
   /** Source field name */
   sourceId?: string;
 }
 
 export const DebugView: React.FC<DebugViewProps> = ({
+  title,
+  data: explicitData,
   dataType = 'active',
   excluded = {
     patient: '...',
@@ -52,6 +61,7 @@ export const DebugView: React.FC<DebugViewProps> = ({
   refresh,
   section,
   showInProduction = false,
+  startCollapsed = true,
   sourceId,
 }) => {
   // Resolve field IDs
@@ -62,7 +72,11 @@ export const DebugView: React.FC<DebugViewProps> = ({
   const sourceData = useSourceData();
   const sectionContext = useSection(section);
 
-  const [isCollapsed, setIsCollapsed] = useState(true);
+  const [isCollapsed, setIsCollapsed] = useState(startCollapsed);
+
+  React.useEffect(() => {
+    setIsCollapsed(startCollapsed);
+  }, [startCollapsed]);
 
   // Don't show if hidden
   if (hidden) return null;
@@ -79,18 +93,18 @@ export const DebugView: React.FC<DebugViewProps> = ({
     let data: any;
     let displayFieldName: string | null = null;
 
-    if (dataType === 'active') {
+    if (explicitData !== undefined) {
+      data = explicitData;
+    } else if (dataType === 'active') {
       if (resolvedFieldId) {
-        const activeSelector = sectionContext.activeSelector;
-        data = activeSelector ? activeSelector(activeData)?.[resolvedFieldId] : (activeData as any)?.[resolvedFieldId];
+        data = readSectionActiveFieldValue(activeData, sectionContext, resolvedFieldId);
         displayFieldName = resolvedFieldId;
       } else {
         data = activeData;
       }
     } else {
       if (resolvedSourceId) {
-        const sourceSelector = sectionContext.sourceSelector;
-        data = sourceSelector ? sourceSelector(sourceData)?.[resolvedSourceId] : (sourceData as any)?.[resolvedSourceId];
+        data = readSectionSourceFieldValue(sourceData, sectionContext, resolvedSourceId);
         displayFieldName = resolvedSourceId;
       } else {
         data = sourceData;
@@ -135,6 +149,8 @@ export const DebugView: React.FC<DebugViewProps> = ({
       alignItems: 'center',
     };
 
+    const resolvedTitle = title ?? `Selected ${dataType} data${displayFieldName ? `[${displayFieldName}]` : ''}`;
+
     return (
       <div style={containerStyle}>
         <Text
@@ -146,7 +162,7 @@ export const DebugView: React.FC<DebugViewProps> = ({
             iconName={isCollapsed ? 'ChevronDown' : 'ChevronUp'}
             style={{ margin: '5px' }}
           />
-          Selected {dataType} data{displayFieldName ? `[${displayFieldName}]` : ''}
+          {resolvedTitle}
         </Text>
         {!isCollapsed && (
           <pre style={{ margin: '8px 0', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>

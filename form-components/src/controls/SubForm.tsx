@@ -28,6 +28,8 @@ import { TextArea } from './TextArea';
 import { ButtonBar } from './ButtonBar';
 import { SaveButton } from '../components/SaveButton';
 import { Action } from './Action';
+import { LinkToMois } from '../components/LinkToMois';
+import { readSectionActiveFieldValue, writeSectionActiveFieldValue } from '../runtime/mois-contract';
 
 export interface SubFormProps {
   /** Child controls to render in the subform */
@@ -128,11 +130,7 @@ export const SubForm: React.FC<SubFormProps> = ({
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
         {label}
         {moisModule && (
-          <button style={{ backgroundColor: 'transparent', border: 0, cursor: 'pointer' }}>
-            <div style={{ marginTop: '4px' }}>
-              <img src="./img/GotoRecord.png" alt="Link to Mois" style={{ width: '16px' }} />
-            </div>
-          </button>
+          <LinkToMois moisModule={moisModule} />
         )}
       </div>
     ) as any : undefined,
@@ -295,7 +293,7 @@ export const SubFormDemo3: React.FC = () => {
   });
 
   const handleSelection = (id: string) => {
-    setGender(fd?.field?.data?.[id]);
+    setGender(readSectionActiveFieldValue(fd, undefined, id) as any);
     setEditing(null);
   };
 
@@ -303,7 +301,7 @@ export const SubFormDemo3: React.FC = () => {
     setGender(editing!);
     setFd(
       produce((draft: any) => {
-        draft.field.data[id] = editing;
+        writeSectionActiveFieldValue(draft, undefined, id, editing);
       })
     );
     setEditing(null);

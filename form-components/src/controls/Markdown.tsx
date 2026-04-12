@@ -8,6 +8,12 @@ import { Pivot, PivotItem, TextField } from '@fluentui/react';
 import ReactMarkdown from 'react-markdown';
 import { useTheme, useSection, useActiveData, useSourceData, SectionContextValue } from '../context/MoisContext';
 import { LayoutItem, LayoutItemProps } from './LayoutItem';
+import {
+  getSectionActiveTarget,
+  getSectionSourceTarget,
+  readSectionActiveFieldValue,
+  readSectionSourceFieldValue,
+} from '../runtime/mois-contract';
 
 export interface SectionInfo {
   name?: string;
@@ -163,15 +169,15 @@ export const Markdown: React.FC<MarkdownProps> = (props) => {
 
   // Get section context for selectors and layout
   const sectionContext = useSection(section);
-  const { activeSelector, sourceSelector, layout } = sectionContext;
+  const { layout } = sectionContext;
 
   // Get active and source data
   const [activeData] = useActiveData();
   const sourceData = useSourceData();
 
   // Apply selectors to get the relevant data objects
-  const activeFieldData = activeSelector ? activeSelector(activeData) : activeData;
-  const sourceFieldData = sourceSelector ? sourceSelector(sourceData) : sourceData;
+  const activeFieldData = getSectionActiveTarget(activeData, sectionContext);
+  const sourceFieldData = getSectionSourceTarget(sourceData, sectionContext);
 
   // Resolve the content value (matching MOIS original fallback chain):
   // source prop → value prop → fieldId from activeData → sourceId from sourceData → defaultValue → ""
@@ -191,8 +197,8 @@ export const Markdown: React.FC<MarkdownProps> = (props) => {
   // Resolve content from data sources if not directly provided
   const resolvedContent =
     source ??
-    (fieldId && activeFieldData ? activeFieldData[fieldId] : null) ??
-    (sourceId && sourceFieldData ? sourceFieldData[sourceId] : null) ??
+    readSectionActiveFieldValue(activeData, sectionContext, fieldId) ??
+    readSectionSourceFieldValue(sourceData, sectionContext, sourceId) ??
     defaultValue ??
     '';
 

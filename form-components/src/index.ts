@@ -347,3 +347,25 @@ export type {
   AuthorshipStore,
   AuthorshipTargetRegistry,
 } from './authorship';
+
+// ============================================================================
+// Runtime contract
+// ============================================================================
+export {
+  ensureMoisRuntimeDebugState,
+  emitMoisNavigateEvent,
+  getSectionActiveTarget,
+  getSectionSourceTarget,
+  getSectionStatusTarget,
+  readSectionActiveFieldValue,
+  readSectionFieldStatus,
+  readSectionSourceFieldValue,
+  recordMoisRuntimeAction,
+  writeSectionActiveFieldValue,
+  writeSectionFieldError,
+} from './runtime/mois-contract';
+export type {
+  MoisRuntimeActionName,
+  MoisRuntimeActionRecord,
+  MoisRuntimeDebugState,
+} from './runtime/mois-contract';

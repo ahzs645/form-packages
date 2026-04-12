@@ -65,6 +65,7 @@ import {
   commitPreparedAuthorshipPersist,
   releasePreparedAuthorshipClaim,
 } from '../authorship';
+import { recordMoisRuntimeAction } from '../runtime/mois-contract';
 
 // Import pre-generated component sources (Next.js doesn't support Vite's import.meta.glob)
 // Regenerate with: node scripts/generate-nhforms-sources.js
@@ -105,6 +106,7 @@ const saveDraft = async (sd: any, fd: any, data: any) => {
     fd.setFormData((draft: any) => {
       draft.field = draft.field || { data: {}, status: {}, history: [] };
       draft.field.data = { ...(draft.field?.data || {}), ...data.formData };
+      recordMoisRuntimeAction(draft, 'saveDraft', data);
     });
   }
   triggerToast('Draft saved');
@@ -117,9 +119,23 @@ const saveSubmit = async (sd: any, fd: any, data: any) => {
     fd.setFormData((draft: any) => {
       draft.field = draft.field || { data: {}, status: {}, history: [] };
       draft.field.data = { ...(draft.field?.data || {}), ...data.formData };
+      recordMoisRuntimeAction(draft, 'saveSubmit', data);
     });
   }
   triggerToast('Submitted');
+  return Promise.resolve(true);
+};
+
+const signSubmit = async (sd: any, fd: any, data: any) => {
+  console.log('signSubmit called', { sd, fd, data });
+  if (data?.formData && typeof fd?.setFormData === 'function') {
+    fd.setFormData((draft: any) => {
+      draft.field = draft.field || { data: {}, status: {}, history: [] };
+      draft.field.data = { ...(draft.field?.data || {}), ...data.formData };
+      recordMoisRuntimeAction(draft, 'signSubmit', data);
+    });
+  }
+  triggerToast('Signed and submitted');
   return Promise.resolve(true);
 };
 
@@ -288,6 +304,7 @@ const buildNHFormsScope = (additionalComponents: Record<string, any> = {}) => {
     refresh,
     saveDraft,
     saveSubmit,
+    signSubmit,
 
     // Markdown component for rendering markdown content
     Markdown,

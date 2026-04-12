@@ -15,6 +15,7 @@ import {
   produce
 } from '../context/MoisContext';
 import { DEFAULT_AUTHORSHIP_POLICY, getAuthorshipLockInfo, registerAuthorshipFieldTarget } from '../authorship';
+import { getSectionActiveTarget } from '../runtime/mois-contract';
 
 // ============================================================================
 // Grid Component
@@ -627,7 +628,7 @@ export const AuditStamp: React.FC<AuditStampProps> = ({
   if (hidden) return null;
 
   // Get stamp data from activeSelector using fieldId
-  const data = section.activeSelector ? section.activeSelector(activeData) : (activeData as any);
+  const data = getSectionActiveTarget(activeData, section);
   const rawStamp = data?.[fieldId] || data?.stamp;
 
   // Format ISO datetime to display format (YYYY.MM.DD - HH:mm)

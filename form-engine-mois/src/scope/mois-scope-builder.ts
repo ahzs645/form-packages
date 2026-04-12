@@ -13,6 +13,7 @@ import {
   prepareAuthorshipPersist,
   commitPreparedAuthorshipPersist,
   releasePreparedAuthorshipClaim,
+  recordMoisRuntimeAction,
 } from '@mois/form-components';
 
 // Re-export types
@@ -89,6 +90,7 @@ const formActions = {
       fd.setFormData((draft: any) => {
         draft.field = draft.field || { data: {}, status: {}, history: [] };
         draft.field.data = { ...(draft.field?.data || {}), ...data.formData };
+        recordMoisRuntimeAction(draft, 'saveDraft', data);
       });
     }
     return true;
@@ -102,6 +104,18 @@ const formActions = {
       fd.setFormData((draft: any) => {
         draft.field = draft.field || { data: {}, status: {}, history: [] };
         draft.field.data = { ...(draft.field?.data || {}), ...data.formData };
+        recordMoisRuntimeAction(draft, 'saveSubmit', data);
+      });
+    }
+    return true;
+  },
+  signSubmit: (sd: any, fd: any, data: any) => {
+    console.log('signSubmit called', { sd, fd, data });
+    if (data?.formData && typeof fd?.setFormData === 'function') {
+      fd.setFormData((draft: any) => {
+        draft.field = draft.field || { data: {}, status: {}, history: [] };
+        draft.field.data = { ...(draft.field?.data || {}), ...data.formData };
+        recordMoisRuntimeAction(draft, 'signSubmit', data);
       });
     }
     return true;

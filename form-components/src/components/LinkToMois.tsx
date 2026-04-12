@@ -14,6 +14,12 @@ export interface LinkToMoisProps {
   moisModule: string;
   /** The ID of the specific item to link to within the module */
   objectId?: number;
+  /** Optional click hook before MOIS navigation */
+  onClick?: () => void;
+  /** Optional style overrides */
+  styles?: { root?: React.CSSProperties };
+  /** Optional button title */
+  title?: string;
 }
 
 // Module name to object type mapping
@@ -56,6 +62,9 @@ export type MoisModule = keyof typeof MODULE_TO_OBJECT_TYPE;
 export const LinkToMois: React.FC<LinkToMoisProps> = ({
   moisModule,
   objectId,
+  onClick,
+  styles,
+  title,
 }) => {
   const navigate = useMoisNavigate(moisModule);
   const sourceData = useSourceData();
@@ -78,18 +87,23 @@ export const LinkToMois: React.FC<LinkToMoisProps> = ({
   }
 
   const handleClick = () => {
+    onClick?.();
     navigate(target);
   };
 
   return (
     <button
-      hidden={sourceData.lifecycleState.isPrinting}
+      type="button"
+      hidden={sourceData.lifecycleState?.isPrinting}
       style={{
         backgroundColor: 'Transparent',
         border: '0',
         cursor: 'pointer',
+        ...(styles?.root ?? {}),
       }}
       onClick={handleClick}
+      title={title ?? `Open ${moisModule} in MOIS`}
+      aria-label={title ?? `Open ${moisModule} in MOIS`}
     >
       <div style={{ marginTop: '4px' }}>
         <img

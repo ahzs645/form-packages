@@ -9,6 +9,11 @@ import { LayoutItem } from '../controls/LayoutItem';
 import { useActiveDataForForms } from '../hooks/form-state';
 import { useSourceData, useSection } from '../context/MoisContext';
 import { getAuthorshipLockInfo, registerAuthorshipFieldTarget } from '../authorship';
+import {
+  getSectionActiveTarget,
+  readSectionActiveFieldValue,
+  writeSectionActiveFieldValue,
+} from '../runtime/mois-contract';
 
 type SupportedDateFormat = 'yyyy.MM.dd' | 'dd/MM/yyyy' | 'MM-dd-yyyy' | 'yyyy-MM-dd';
 const DEFAULT_DATE_FORMAT: SupportedDateFormat = 'yyyy.MM.dd';
@@ -251,7 +256,7 @@ export const DateSelect: React.FC<DateSelectProps> = ({
   const [activeData, setActiveData] = useActiveDataForForms();
   const sourceData = useSourceData();
   const sectionContext = useSection(section);
-  const effectiveFieldId = fieldId || id;
+  const effectiveFieldId = fieldId || id || sourceId || layoutId;
   useEffect(() => {
     if (!effectiveFieldId) return;
     setActiveData((draft: any) => {
@@ -262,8 +267,11 @@ export const DateSelect: React.FC<DateSelectProps> = ({
     ? getAuthorshipLockInfo(activeData, { scope: 'field', fieldId: effectiveFieldId }, sourceData?.userProfile?.identity?.fullName)
     : { locked: false };
   const effectiveReadOnly = !!readOnly || !!authorshipLockInfo.locked;
-  const activeValue = effectiveFieldId ? activeData?.field?.data?.[effectiveFieldId] : undefined;
-  const compositeValue = buildDateFromComponents(componentFields, activeData?.field?.data);
+  const activeValue = readSectionActiveFieldValue(activeData, sectionContext, effectiveFieldId);
+  const compositeValue = buildDateFromComponents(
+    componentFields,
+    getSectionActiveTarget(activeData, sectionContext) as Record<string, any> | undefined
+  );
   const resolvedValue =
     value !== undefined
       ? value
@@ -293,10 +301,7 @@ export const DateSelect: React.FC<DateSelectProps> = ({
     const formatted = formatCanonicalDate(parsedDefault);
 
     setActiveData((draft: any) => {
-      if (!draft.field) draft.field = { data: {}, status: {}, history: [] };
-      if (!draft.field.data) draft.field.data = {};
-
-      const currentValue = draft.field.data?.[effectiveFieldId];
+      const currentValue = readSectionActiveFieldValue(draft, sectionContext, effectiveFieldId);
       if (
         typeof currentValue === 'string'
           ? currentValue.trim().length > 0
@@ -305,13 +310,11 @@ export const DateSelect: React.FC<DateSelectProps> = ({
         return;
       }
 
-      draft.field.data[effectiveFieldId] = formatted;
-      (linkedFieldIds ?? []).forEach((linkedFieldId) => {
-        if (!linkedFieldId || linkedFieldId === effectiveFieldId) return;
-        draft.field.data[linkedFieldId] = formatted;
-      });
+      writeSectionActiveFieldValue(draft, sectionContext, effectiveFieldId, formatted, linkedFieldIds ?? []);
 
       if (Array.isArray(componentFields) && componentFields.length > 0) {
+        const activeTarget = getSectionActiveTarget(draft, sectionContext);
+        if (!activeTarget) return;
         const [year, month, day] = formatted.split('.');
         componentFields.forEach((component: { fieldId: string; role: string }) => {
           if (!component?.fieldId) return;
@@ -320,7 +323,7 @@ export const DateSelect: React.FC<DateSelectProps> = ({
               : component.role === 'month' ? month
                 : component.role === 'day' ? day
                   : null;
-          draft.field.data[component.fieldId] = nextValue;
+          activeTarget[component.fieldId] = nextValue;
         });
       }
     });
@@ -348,15 +351,11 @@ export const DateSelect: React.FC<DateSelectProps> = ({
 
     if (effectiveFieldId) {
       setActiveData((draft: any) => {
-        if (!draft.field) draft.field = { data: {}, status: {}, history: [] };
-        if (!draft.field.data) draft.field.data = {};
-        draft.field.data[effectiveFieldId] = formatted || null;
-        (linkedFieldIds ?? []).forEach((linkedFieldId) => {
-          if (!linkedFieldId || linkedFieldId === effectiveFieldId) return;
-          draft.field.data[linkedFieldId] = formatted || null;
-        });
+        writeSectionActiveFieldValue(draft, sectionContext, effectiveFieldId, formatted || null, linkedFieldIds ?? []);
 
         if (Array.isArray(componentFields) && componentFields.length > 0) {
+          const activeTarget = getSectionActiveTarget(draft, sectionContext);
+          if (!activeTarget) return;
           const parsed = formatted
             ? (() => {
                 const normalized = formatted.replace(/[\/\.]/g, "-");
@@ -368,7 +367,7 @@ export const DateSelect: React.FC<DateSelectProps> = ({
           componentFields.forEach((component: { fieldId: string; role: string }) => {
             if (!component?.fieldId) return;
             const nextValue = parsed ? parsed[component.role as "year" | "month" | "day"] ?? null : null;
-            draft.field.data[component.fieldId] = nextValue;
+            activeTarget[component.fieldId] = nextValue;
           });
         }
       });

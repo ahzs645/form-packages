@@ -10,6 +10,11 @@ import { DateSelect, formatCanonicalDate, parseDateValue } from './DateSelect';
 import { TimeSelect } from '../controls/TimeSelect';
 import { LayoutItem } from '../controls/LayoutItem';
 import { useActiveDataForForms } from '../hooks/form-state';
+import { useSection } from '../context/MoisContext';
+import {
+  readSectionActiveFieldValue,
+  writeSectionActiveFieldValue,
+} from '../runtime/mois-contract';
 
 type SupportedDateFormat = 'yyyy.MM.dd' | 'dd/MM/yyyy' | 'MM-dd-yyyy' | 'yyyy-MM-dd';
 
@@ -97,8 +102,9 @@ export const DateTimeSelect: React.FC<DateTimeSelectProps> = ({
   vertical,
 }) => {
   const [activeData, setActiveData] = useActiveDataForForms();
-  const effectiveFieldId = fieldId || id;
-  const activeValue = effectiveFieldId ? activeData?.field?.data?.[effectiveFieldId] : undefined;
+  const sectionContext = useSection(section);
+  const effectiveFieldId = fieldId || id || layoutId;
+  const activeValue = readSectionActiveFieldValue(activeData, sectionContext, effectiveFieldId);
   const persistedDate = activeValue && typeof activeValue === 'object' && typeof activeValue.date === 'string'
     ? activeValue.date
     : undefined;
@@ -134,10 +140,7 @@ export const DateTimeSelect: React.FC<DateTimeSelectProps> = ({
     const formattedDate = formatCanonicalDate(parsedDefault);
 
     setActiveData((draft: any) => {
-      if (!draft.field) draft.field = { data: {}, status: {}, history: [] };
-      if (!draft.field.data) draft.field.data = {};
-
-      const currentValue = draft.field.data?.[effectiveFieldId];
+      const currentValue = readSectionActiveFieldValue(draft, sectionContext, effectiveFieldId);
       if (
         currentValue
         && typeof currentValue === 'object'
@@ -153,38 +156,24 @@ export const DateTimeSelect: React.FC<DateTimeSelectProps> = ({
         date: formattedDate,
         time: defaultTime,
       };
-      draft.field.data[effectiveFieldId] = nextValue;
-      (linkedFieldIds ?? []).forEach((linkedFieldId) => {
-        if (!linkedFieldId || linkedFieldId === effectiveFieldId) return;
-        draft.field.data[linkedFieldId] = { ...nextValue };
-      });
+      writeSectionActiveFieldValue(draft, sectionContext, effectiveFieldId, nextValue, linkedFieldIds ?? []);
     });
-  }, [activeValue, dateFormat, defaultTime, defaultValue, effectiveFieldId, linkedFieldIds, setActiveData]);
+  }, [activeValue, dateFormat, defaultTime, defaultValue, effectiveFieldId, linkedFieldIds, sectionContext, setActiveData]);
 
   if (hidden) return null;
 
   const updateActiveData = (nextDate?: string, nextTime?: string) => {
     if (!effectiveFieldId) return;
     setActiveData((draft: any) => {
-      if (!draft.field) draft.field = { data: {}, status: {}, history: [] };
-      if (!draft.field.data) draft.field.data = {};
       if (!nextDate && !nextTime) {
-        draft.field.data[effectiveFieldId] = null;
-        (linkedFieldIds ?? []).forEach((linkedFieldId) => {
-          if (!linkedFieldId || linkedFieldId === effectiveFieldId) return;
-          draft.field.data[linkedFieldId] = null;
-        });
+        writeSectionActiveFieldValue(draft, sectionContext, effectiveFieldId, null, linkedFieldIds ?? []);
         return;
       }
       const nextValue = {
         date: nextDate,
         time: nextTime,
       };
-      draft.field.data[effectiveFieldId] = nextValue;
-      (linkedFieldIds ?? []).forEach((linkedFieldId) => {
-        if (!linkedFieldId || linkedFieldId === effectiveFieldId) return;
-        draft.field.data[linkedFieldId] = { ...nextValue };
-      });
+      writeSectionActiveFieldValue(draft, sectionContext, effectiveFieldId, nextValue, linkedFieldIds ?? []);
     });
   };
 
