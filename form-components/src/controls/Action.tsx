@@ -161,7 +161,7 @@ const GotoRecord: React.FC<Omit<ActionButtonProps, 'iconName'>> = ({ onClick }) 
     >
       <div style={{ marginTop: '4px' }}>
         <img
-          src="./img/GotoRecord.png"
+          src="/img/GotoRecord.png"
           alt="Link to Mois"
           style={{ width: '16px' }}
         />

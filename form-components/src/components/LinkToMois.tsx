@@ -108,7 +108,7 @@ export const LinkToMois: React.FC<LinkToMoisProps> = ({
       <div style={{ marginTop: '4px' }}>
         <img
           style={{ width: '16px' }}
-          src="./img/GotoRecord.png"
+          src="/img/GotoRecord.png"
           alt="Link to Mois"
         />
       </div>
