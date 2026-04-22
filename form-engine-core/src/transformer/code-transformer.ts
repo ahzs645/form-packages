@@ -8,6 +8,8 @@
 import React from 'react';
 import type { TransformOptions } from './types';
 
+const globallyWarnedMissingSymbols = new Set<string>();
+
 /**
  * HTML attribute to JSX attribute mapping
  * React uses camelCase for DOM attributes
@@ -191,12 +193,16 @@ const createFormComponent = (
 
     // Create a placeholder that works as both a React component and a data object.
     // This allows missing variables to be used in JSX (<Missing />) or as data (missing.x['04002']).
+    const placeholderCache = new Map<string, any>();
     const createPlaceholder = (name: string): any => {
+      const cached = placeholderCache.get(name);
+      if (cached) return cached;
+
       const component = (props?: any) =>
         React.createElement('div', { 'data-missing': name, style: { display: 'contents' } }, props?.children);
       component.displayName = `Placeholder_${name}`;
 
-      return new Proxy(component, {
+      const placeholder = new Proxy(component, {
         get(_target, prop) {
           if (prop === 'displayName') return `Placeholder_${name}`;
           if (prop === Symbol.toPrimitive) return () => '';
@@ -219,6 +225,8 @@ const createFormComponent = (
           return component.apply(thisArg, args as [any]);
         },
       });
+      placeholderCache.set(name, placeholder);
+      return placeholder;
     };
 
     // Known optional form variables that don't need warnings
@@ -227,17 +235,23 @@ const createFormComponent = (
       '__scope__', 'style', 'handleBeforeUnload', 'undefined',
       'FormComponent', 'arguments'  // FormComponent is always local, arguments is JS built-in
     ]);
+    const warnedMissingSymbols = new Set<string>();
 
     const scopeProxy = new Proxy(scope, {
       get(target, prop) {
         if (typeof prop === 'symbol') return undefined;
         if (prop in target) return target[prop as string];
         // Return placeholder for missing components (suppress warnings for known optional vars)
-        if (!optionalFormVars.has(String(prop))) {
-          console.warn(`[Form] Missing: ${String(prop)}`);
-          onMissingSymbol?.(String(prop));
+        const propName = String(prop);
+        if (!optionalFormVars.has(propName) && !warnedMissingSymbols.has(propName)) {
+          warnedMissingSymbols.add(propName);
+          onMissingSymbol?.(propName);
+          if (!onMissingSymbol && !globallyWarnedMissingSymbols.has(propName)) {
+            globallyWarnedMissingSymbols.add(propName);
+            console.warn(`[Form] Missing: ${propName}`);
+          }
         }
-        return createPlaceholder(String(prop));
+        return createPlaceholder(propName);
       },
       set(target, prop, value) {
         // Capture assignments like InitialData = {...}, Schema = {...}, Query = {...}

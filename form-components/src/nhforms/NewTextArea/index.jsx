@@ -18,7 +18,7 @@ const NewTextArea = (props) => {
 
     return(
         <div>
-            <div class={showonprint}>
+            <div className={showonprint}>
                 <div style={{display:"flex",flexDirection:`${props.labelPosition ==="top"?"column":"row"}`, marginTop:"8px", marginBottom:"8px" }}>
                     {props.label?.length >0 ?
                         <Fluent.Label styles={{root:{flexGrow:"1", maxWidth:"240px",marginRight:"10px"}}}>{props.label}</Fluent.Label>
@@ -27,7 +27,7 @@ const NewTextArea = (props) => {
                 </div>
             </div>
 
-            <div class={hideonprint}>
+            <div className={hideonprint}>
                 <TextArea
                     {...props}
                 />

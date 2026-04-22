@@ -9,6 +9,8 @@ import React from 'react';
 import { buildScope } from './build-scope';
 import { setInitialData } from '../hooks/form-state';
 
+const globallyWarnedMissingSymbols = new Set<string>();
+
 /**
  * Creates a React component from a code string using Babel transformation.
  * Shared by CodePreview and Playground.
@@ -53,20 +55,34 @@ const createFormComponent = (cleanCode: string, Babel: any): React.FC => {
     const scope = buildScope();
 
     // Create a proxy that returns placeholders for undefined properties
+    const placeholderCache = new Map<string, any>();
     const createPlaceholder = (name: string): any => {
+      const cached = placeholderCache.get(name);
+      if (cached) return cached;
+
       const PlaceholderComponent: React.FC<{ children?: React.ReactNode }> = ({ children }) =>
         React.createElement('div', { 'data-missing': name, style: { display: 'contents' } }, children);
       PlaceholderComponent.displayName = `Placeholder_${name}`;
+      placeholderCache.set(name, PlaceholderComponent);
       return PlaceholderComponent;
     };
+
+    const warnedMissingSymbols = new Set<string>();
 
     const scopeProxy = new Proxy(scope, {
       get(target, prop) {
         if (typeof prop === 'symbol') return undefined;
         if (prop in target) return target[prop as string];
         // Return placeholder for missing components
-        console.warn(`[Form] Missing: ${String(prop)}`);
-        return createPlaceholder(String(prop));
+        const propName = String(prop);
+        if (!warnedMissingSymbols.has(propName)) {
+          warnedMissingSymbols.add(propName);
+          if (!globallyWarnedMissingSymbols.has(propName)) {
+            globallyWarnedMissingSymbols.add(propName);
+            console.warn(`[Form] Missing: ${propName}`);
+          }
+        }
+        return createPlaceholder(propName);
       },
       set(target, prop, value) {
         // Capture assignments like InitialData = {...}, Schema = {...}, Query = {...}

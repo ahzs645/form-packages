@@ -115,10 +115,26 @@ const INTERPRETATION_BOX_STYLE = {
  * @param {ScoringQuestionConfig[]} questions
  * @returns {Map<string, Map<string, number>>} Map of questionId -> (optionKey -> score)
  */
+const normalizeScoringOption = (option, index = 0) => {
+  const keyValue = option?.key ?? option?.id ?? option?.code ?? option?.value ?? `${index}`
+  const textValue = option?.text ?? option?.label ?? option?.display ?? option?.state ?? String(keyValue)
+  return {
+    ...option,
+    key: String(keyValue),
+    text: String(textValue),
+    score: option?.score ?? (typeof option?.value === "number" ? option.value : index),
+    description: option?.description,
+  }
+}
+
+const normalizeScoringOptions = (options) => (
+  Array.isArray(options) ? options.map(normalizeScoringOption) : []
+)
+
 const resolveQuestionOptions = (question, sharedOptions) => {
-  const questionOptions = Array.isArray(question?.options) ? question.options : []
+  const questionOptions = normalizeScoringOptions(question?.options)
   if (questionOptions.length > 0) return questionOptions
-  return Array.isArray(sharedOptions) ? sharedOptions : []
+  return normalizeScoringOptions(sharedOptions)
 }
 
 const buildScoreMap = (questions, sharedOptions) => {
@@ -269,7 +285,7 @@ const serializeOptionSignature = (options) =>
   JSON.stringify((options || []).map((option) => [option.key, option.score ?? 0, option.text || "", option.description || ""]))
 
 const resolveMatrixOptions = (config) => {
-  const explicitShared = Array.isArray(config?.sharedOptions) ? config.sharedOptions : []
+  const explicitShared = normalizeScoringOptions(config?.sharedOptions)
   if (explicitShared.length > 0) return explicitShared
 
   const questions = Array.isArray(config?.questions) ? config.questions : []
@@ -277,7 +293,7 @@ const resolveMatrixOptions = (config) => {
   const countsBySignature = new Map()
 
   questions.forEach((question) => {
-    const questionOptions = Array.isArray(question?.options) ? question.options : []
+    const questionOptions = normalizeScoringOptions(question?.options)
     if (questionOptions.length === 0) return
     const signature = serializeOptionSignature(questionOptions)
     optionsBySignature.set(signature, questionOptions)
@@ -1286,12 +1302,7 @@ const createScoringQuestion = (def) => ({
         uncheckedOptionKey: def.checklist.uncheckedOptionKey,
       }
     : undefined,
-  options: (def.options || []).map((opt, idx) => ({
-    key: opt.key || `${idx}`,
-    text: opt.text || opt.label || `Option ${idx + 1}`,
-    score: opt.score ?? idx,
-    description: opt.description,
-  })),
+  options: normalizeScoringOptions(def.options),
 })
 
 /**
@@ -1353,12 +1364,7 @@ const createScoringConfig = (def) => ({
         max: def.continuumLabels.max,
       }
     : undefined,
-  sharedOptions: (def.sharedOptions || []).map((opt, idx) => ({
-    key: opt.key || `${idx}`,
-    text: opt.text || opt.label || `Option ${idx + 1}`,
-    score: opt.score ?? idx,
-    description: opt.description,
-  })),
+  sharedOptions: normalizeScoringOptions(def.sharedOptions),
   groups: (def.groups || []).map((group, index) => ({
     id: group.id || `group_${index + 1}`,
     title: group.title,

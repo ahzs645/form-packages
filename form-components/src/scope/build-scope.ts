@@ -80,7 +80,11 @@ import {
   mergeStyles,
   mergeStyleSets,
 } from '@fluentui/react';
-import { recordMoisRuntimeAction } from '../runtime/mois-contract';
+import {
+  applyShimmedMoisLifecyclePreviewState,
+  emitMoisPreviewDiagnosticEvent,
+  recordMoisRuntimeAction,
+} from '../runtime/mois-contract';
 import { PreviewAjv } from '../runtime/preview-ajv';
 
 // Import from lib/index
@@ -196,6 +200,9 @@ import {
   FormCreationHistory,
   FormVersion,
   LinkToMois,
+  MoisDialog,
+  MoisDropdown,
+  MoisTextField,
   Page,
   PageSelector,
   PageSelect,
@@ -572,6 +579,9 @@ export const buildScope = (): Record<string, any> => ({
   FormCreationHistory,
   FormVersion,
   LinkToMois,
+  MoisDialog,
+  MoisDropdown,
+  MoisTextField,
   Page,
   PageSelector,
   PageSelect,
@@ -727,6 +737,7 @@ export const buildScope = (): Record<string, any> => ({
   // Form action functions (standalone versions for direct calls)
   saveDraft: (sd: any, fd: any, data: any) => {
     console.log('saveDraft called', { sd, fd, data });
+    applyShimmedMoisLifecyclePreviewState(sd, 'saveDraft', data);
     if (data?.formData && typeof fd?.setFormData === 'function') {
       fd.setFormData((draft: any) => {
         draft.field = draft.field || { data: {}, status: {}, history: [] };
@@ -736,11 +747,39 @@ export const buildScope = (): Record<string, any> => ({
     }
     return true;
   },
-  closeForm: () => {
+  closeForm: (sd?: any, fd?: any) => {
     console.log('closeForm called');
+    applyShimmedMoisLifecyclePreviewState(sd, 'closeForm');
+    if (typeof fd?.setFormData === 'function') {
+      fd.setFormData((draft: any) => {
+        recordMoisRuntimeAction(draft, 'closeForm', { requestedAt: new Date().toISOString() });
+      });
+    }
+    emitMoisPreviewDiagnosticEvent({
+      severity: 'warning',
+      source: 'shimmed-close-preview',
+      message: 'Browser preview cannot fully emulate Shimmed MOIS Electron close interception; window.close() may be ignored here.',
+      path: 'closeForm',
+    });
+  },
+  cancelForm: (sd?: any, fd?: any) => {
+    console.log('cancelForm called');
+    applyShimmedMoisLifecyclePreviewState(sd, 'cancelForm');
+    if (typeof fd?.setFormData === 'function') {
+      fd.setFormData((draft: any) => {
+        recordMoisRuntimeAction(draft, 'cancelForm', { requestedAt: new Date().toISOString() });
+      });
+    }
+    emitMoisPreviewDiagnosticEvent({
+      severity: 'warning',
+      source: 'shimmed-close-preview',
+      message: 'Cancel in Shimmed MOIS dispatches form-canceled and relies on Electron close interception; browser preview records the request only.',
+      path: 'cancelForm',
+    });
   },
   saveSubmit: (sd: any, fd: any, data: any) => {
     console.log('saveSubmit called', { sd, fd, data });
+    applyShimmedMoisLifecyclePreviewState(sd, 'saveSubmit', data);
     if (data?.formData && typeof fd?.setFormData === 'function') {
       fd.setFormData((draft: any) => {
         draft.field = draft.field || { data: {}, status: {}, history: [] };
@@ -750,8 +789,51 @@ export const buildScope = (): Record<string, any> => ({
     }
     return true;
   },
+  sign: (reason: string, sd: any, fd?: any) => {
+    const signatureRecord = {
+      documentId: sd?.formParams?.documentId ?? sd?.webform?.documentId ?? null,
+      recordState: 'SIGNED',
+      note: reason ?? '',
+    };
+    console.log('sign called', { sd, fd, signatureRecord });
+    applyShimmedMoisLifecyclePreviewState(sd, 'sign', { signatureRecord });
+    if (typeof fd?.setFormData === 'function') {
+      fd.setFormData((draft: any) => {
+        draft.uiState = draft.uiState || { sections: {} };
+        draft.uiState.sections = draft.uiState.sections || {};
+        draft.uiState.sections[0] = {
+          ...(draft.uiState.sections[0] || {}),
+          isComplete: true,
+        };
+        recordMoisRuntimeAction(draft, 'sign', { signatureRecord });
+      });
+    }
+    return true;
+  },
+  unsign: (reason: string, sd: any, fd?: any) => {
+    const signatureRecord = {
+      documentId: sd?.formParams?.documentId ?? sd?.webform?.documentId ?? null,
+      recordState: 'UNSIGNED',
+      note: reason ?? '',
+    };
+    console.log('unsign called', { sd, fd, signatureRecord });
+    applyShimmedMoisLifecyclePreviewState(sd, 'unsign', { signatureRecord });
+    if (typeof fd?.setFormData === 'function') {
+      fd.setFormData((draft: any) => {
+        draft.uiState = draft.uiState || { sections: {} };
+        draft.uiState.sections = draft.uiState.sections || {};
+        draft.uiState.sections[0] = {
+          ...(draft.uiState.sections[0] || {}),
+          isComplete: false,
+        };
+        recordMoisRuntimeAction(draft, 'unsign', { signatureRecord });
+      });
+    }
+    return true;
+  },
   signSubmit: (sd: any, fd: any, data: any) => {
     console.log('signSubmit called', { sd, fd, data });
+    applyShimmedMoisLifecyclePreviewState(sd, 'signSubmit', data);
     if (data?.formData && typeof fd?.setFormData === 'function') {
       fd.setFormData((draft: any) => {
         draft.field = draft.field || { data: {}, status: {}, history: [] };

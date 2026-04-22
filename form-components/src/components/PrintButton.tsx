@@ -5,7 +5,11 @@
 
 import React from 'react';
 import { DefaultButton } from '@fluentui/react';
-import { useButtonSize, ButtonSize } from '../context/MoisContext';
+import { useButtonSize, ButtonSize, useSourceData } from '../context/MoisContext';
+import {
+  applyShimmedMoisLifecyclePreviewState,
+  emitMoisPreviewDiagnosticEvent,
+} from '../runtime/mois-contract';
 
 /** Print options for customizing print behavior */
 export interface PrintOptions {
@@ -48,6 +52,7 @@ export const PrintButton: React.FC<PrintButtonProps> = ({
   size = 'small',
   text,
 }) => {
+  const sourceData = useSourceData();
   // Use label, fall back to deprecated text prop, then default
   const buttonText = label || text || 'Print';
 
@@ -58,8 +63,19 @@ export const PrintButton: React.FC<PrintButtonProps> = ({
     if (onClick) {
       onClick();
     } else {
-      // Default print behavior
+      applyShimmedMoisLifecyclePreviewState(sourceData, 'print-started', printOptions);
+      emitMoisPreviewDiagnosticEvent({
+        severity: 'warning',
+        source: 'shimmed-print-preview',
+        message: 'Preview PrintButton uses browser window.print(); Shimmed MOIS print/render completion is IPC-driven.',
+        path: 'PrintButton',
+        detail: {
+          expectedRenderCompleteShape: { type: 'printed', data: [] },
+          printOptions,
+        },
+      });
       window.print();
+      applyShimmedMoisLifecyclePreviewState(sourceData, 'printed', { type: 'printed', data: [] });
     }
   };
 

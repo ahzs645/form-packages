@@ -5,8 +5,7 @@
 
 import React, { createContext, useContext, useState, useCallback, useMemo, useEffect, ReactNode } from 'react';
 import { produce, Draft } from 'immer';
-import { mockCodeLists } from './mockCodeLists';
-import optionListsRaw from '../data/optionLists.json';
+import { mockCodeLists, previewOptionListsRaw } from './mockCodeLists';
 import { getInitialData } from '../hooks/form-state';
 import { DEFAULT_AUTHORSHIP_POLICY, AuthorshipPolicy, syncAuthorshipMirrors } from '../authorship';
 
@@ -74,6 +73,13 @@ export interface SourceData {
     isLoading: boolean;
     isPrinting: boolean;
     isMutating?: boolean;
+    isSubmitting?: boolean;
+    isLockedForUpdate?: boolean;
+    closeRequested?: boolean;
+    cancelled?: boolean;
+  };
+  previewOptions?: {
+    strictMemoryCode?: boolean;
   };
   userProfile?: {
     userProfileId: number;
@@ -686,7 +692,7 @@ export const defaultSourceData: SourceData = {
   },
   webform: {
     isDraft: 'Y',
-    recordState: 'active',
+    recordState: 'UNSIGNED',
     encounter: {
       appointmentDateTime: '2024-01-15T09:00:00',
       visitCode: { code: 'OV', display: 'Office Visit' },
@@ -707,8 +713,9 @@ export const defaultSourceData: SourceData = {
   // Forms typically check: Object.keys(sd.sourceFormData).length > 0
   sourceFormData: {},
   auth: { jwToken: '', apiServer: '' },
-  optionLists: optionListsRaw as Record<string, any>,
-  lifecycleState: { isLoading: false, isPrinting: false, isMutating: false },
+  optionLists: previewOptionListsRaw as Record<string, any>,
+  lifecycleState: { isLoading: false, isPrinting: false, isMutating: false, isSubmitting: false },
+  previewOptions: { strictMemoryCode: false },
   // queryResult mirrors the patient data structure for components that access sd.queryResult.patient[0]
   queryResult: {
     patient: [
@@ -859,6 +866,8 @@ const defaultAppSettings: AppSettings = {
   },
 };
 
+const getDefaultAppSettings = () => defaultAppSettings;
+
 export interface SourceDataWithHooks extends SourceData {
   useAppSettings: () => AppSettings;
 }
@@ -868,14 +877,14 @@ export function useSourceData(): SourceDataWithHooks {
   const sourceData = context || defaultSourceData;
   const initialData = getInitialData();
 
-  return {
+  return useMemo(() => ({
     ...sourceData,
     sourceFormData: {
       ...sourceData.sourceFormData,
       ...initialData,
     },
-    useAppSettings: () => defaultAppSettings,
-  };
+    useAppSettings: getDefaultAppSettings,
+  }), [initialData, sourceData]);
 }
 
 export function useActiveData<T = ActiveData>(selector?: (data: ActiveData) => T): [T & { setFormData: (updater: (draft: any) => void) => void }, (updater: (draft: any) => void) => void] {
@@ -902,6 +911,29 @@ export function useActiveData<T = ActiveData>(selector?: (data: ActiveData) => T
     tempArea: activeContext.tempArea || {},
   }), [activeContext]);
   const setFormData = activeContext.setFormData;
+  const scopedSetFormData = useCallback((updates: any) => {
+    if (!selector) {
+      setFormData(updates);
+      return;
+    }
+
+    setFormData((draft: any) => {
+      const target = selector(draft);
+      if (!target || typeof target !== 'object') return;
+
+      if (typeof updates === 'function') {
+        const result = updates(target);
+        if (result && typeof result === 'object') {
+          Object.assign(target, result);
+        }
+        return;
+      }
+
+      if (updates && typeof updates === 'object') {
+        Object.assign(target, updates);
+      }
+    });
+  }, [selector, setFormData]);
 
   // Get the data (with optional selector)
   const rawData = selector ? selector(normalizedActiveContext as ActiveData) : normalizedActiveContext;
@@ -909,10 +941,10 @@ export function useActiveData<T = ActiveData>(selector?: (data: ActiveData) => T
   // Attach setFormData to the data object so forms can use fd.setFormData
   const dataWithSetter = useMemo(() => ({
     ...rawData as any,
-    setFormData,
-  }), [rawData, setFormData]);
+    setFormData: scopedSetFormData,
+  }), [rawData, scopedSetFormData]);
 
-  return [dataWithSetter as T & { setFormData: (updater: (draft: any) => void) => void }, setFormData];
+  return [dataWithSetter as T & { setFormData: (updater: (draft: any) => void) => void }, scopedSetFormData];
 }
 
 export function useSection(overrides?: Partial<SectionContextValue>): SectionContextValue {
@@ -939,12 +971,92 @@ const defaultCodeListFallback: CodeListItem[] = [
   { code: 'CODE3', display: 'Option 3', system: 'UNKNOWN' },
 ];
 
+const warnedFallbackCodeSystems = new Set<string>();
+const pendingMemoryCodeDiagnostics = {
+  fallback: new Set<string>(),
+  strict: new Set<string>(),
+};
+let memoryCodeDiagnosticFlushScheduled = false;
+
+function isStrictMemoryCodePreview(sourceData: any): boolean {
+  if (sourceData?.previewOptions?.strictMemoryCode === true || sourceData?.strictMemoryCode === true) {
+    return true;
+  }
+
+  if (typeof window === 'undefined') return false;
+  try {
+    return window.localStorage?.getItem('mois-preview-strict-memorycode') === 'true';
+  } catch {
+    return false;
+  }
+}
+
+function emitMemoryCodeDiagnostic(system: string, strict: boolean) {
+  if (typeof window === 'undefined') return;
+  const key = `${system}:${strict ? 'strict' : 'fallback'}`;
+  if (warnedFallbackCodeSystems.has(key)) return;
+  warnedFallbackCodeSystems.add(key);
+
+  pendingMemoryCodeDiagnostics[strict ? 'strict' : 'fallback'].add(system);
+  if (memoryCodeDiagnosticFlushScheduled) return;
+  memoryCodeDiagnosticFlushScheduled = true;
+
+  const flushDiagnostics = () => {
+    memoryCodeDiagnosticFlushScheduled = false;
+
+    ([
+      { strict: false, systems: pendingMemoryCodeDiagnostics.fallback },
+      { strict: true, systems: pendingMemoryCodeDiagnostics.strict },
+    ] as const).forEach(({ strict: isStrict, systems }) => {
+      if (systems.size === 0) return;
+
+      const systemList = Array.from(systems).sort();
+      systems.clear();
+      const shownSystems = systemList.slice(0, 6).join(', ');
+      const remainingCount = systemList.length - 6;
+      const systemSummary = remainingCount > 0
+        ? `${shownSystems}, and ${remainingCount} more`
+        : shownSystems;
+
+      window.dispatchEvent(new CustomEvent('mois:preview-diagnostic', {
+        detail: {
+          severity: 'warning',
+          source: 'shimmed-memory-code-preview',
+          message: isStrict
+            ? `Unknown MemoryCode systems returned empty lists in strict preview mode: ${systemSummary}.`
+            : `Unknown MemoryCode systems are using preview fallback options: ${systemSummary}. Shimmed MOIS may return empty lists or server/auth errors.`,
+          path: isStrict ? 'useCodeList(strict)' : 'useCodeList(fallback)',
+          detail: { systems: systemList, strictMemoryCode: isStrict },
+        },
+      }));
+    });
+  };
+
+  if (typeof queueMicrotask === 'function') {
+    queueMicrotask(flushDiagnostics);
+    return;
+  }
+
+  window.setTimeout(flushDiagnostics, 0);
+}
+
 export function useCodeList(system: string): CodeListItem[] {
+  const sourceData = useSourceData();
+  const normalizedSystem = system?.trim() || '';
+  const strict = isStrictMemoryCodePreview(sourceData);
+  const resolved = mockCodeLists[normalizedSystem];
+
+  useEffect(() => {
+    if (resolved || !normalizedSystem) return;
+    emitMemoryCodeDiagnostic(normalizedSystem, strict);
+  }, [normalizedSystem, resolved, strict]);
+
   // Use mockCodeLists which has proper CodeListItem[] format.
   // sourceData.optionLists contains raw {code: display} format for direct sd.optionLists access.
   return useMemo(() => {
-    return mockCodeLists[system] || defaultCodeListFallback;
-  }, [system]);
+    if (resolved) return resolved;
+    return strict ? [] : defaultCodeListFallback;
+  }, [resolved, strict]);
 }
 
 export function useOptionLists() {

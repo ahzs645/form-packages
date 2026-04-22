@@ -88,6 +88,35 @@ const _cloneRow = (row = {}, columns = []) => {
   return copy
 }
 
+const _normalizeTableColumns = (columns = []) => {
+  if (!Array.isArray(columns)) return []
+
+  return columns.map((column, index) => {
+    const id = column?.id || column?.key || column?.fieldName || column?.name || `column_${index + 1}`
+    return {
+      ...column,
+      id,
+      title: column?.title || column?.label || column?.name || id,
+      type: column?.type || "text",
+      dataPath: column?.dataPath || column?.fieldName || id,
+    }
+  })
+}
+
+const _normalizeInitialRowCount = (initialRows) => {
+  if (Array.isArray(initialRows)) return Math.max(initialRows.length, 1)
+  const count = Number(initialRows)
+  return Number.isFinite(count) && count > 0 ? Math.floor(count) : 1
+}
+
+const _normalizeInitialRows = (initialRows, columns = []) => {
+  if (!Array.isArray(initialRows)) return []
+  return initialRows.map((row, index) => ({
+    ..._cloneRow(row, columns),
+    _rowId: row?._rowId || `row_${index}`,
+  }))
+}
+
 const _isMeaningfulValue = (value) => {
   if (value === undefined || value === null) return false
   if (typeof value === "string") return value.trim().length > 0
@@ -493,9 +522,9 @@ const _buildSubformFieldFromColumn = (column) => {
 
 EditableTable = ({
   id = "editableTable",
-  columns = [],
+  columns: columnsProp = [],
   maxRows = 10,
-  initialRows = 1,
+  initialRows: initialRowsProp = 1,
   label = "",
   mode = "inline",
   modalTitle,
@@ -517,7 +546,10 @@ EditableTable = ({
   const [fd] = useActiveData()
   const theme = useTheme()
   const isDarkMode = theme?.isInverted || false
-  const [visibleRows, setVisibleRows] = useState(Math.max(initialRows, 1))
+  const columns = useMemo(() => _normalizeTableColumns(columnsProp), [columnsProp])
+  const initialRowCount = _normalizeInitialRowCount(initialRowsProp)
+  const initialSeedRows = useMemo(() => _normalizeInitialRows(initialRowsProp, columns), [initialRowsProp, columns])
+  const [visibleRows, setVisibleRows] = useState(initialRowCount)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [editingRowIndex, setEditingRowIndex] = useState(null)
   const [draftRow, setDraftRow] = useState(null)
@@ -614,17 +646,19 @@ EditableTable = ({
     columns,
     sourceFieldIds,
     sourceFieldIdsByRow,
-    initialRows,
-  }), [fd?.field?.data, columns, sourceFieldIds, sourceFieldIdsByRow, initialRows])
+    initialRows: initialRowCount,
+  }), [fd?.field?.data, columns, sourceFieldIds, sourceFieldIdsByRow, initialRowCount])
 
   useEffect(() => {
     if (rows) return
 
     const seededRows = isModalMode
       ? []
-      : Array.from({ length: Math.max(initialRows, 1) }, (_, index) => _makeEmptyRow(columns, index))
+      : initialSeedRows.length > 0
+        ? initialSeedRows
+        : Array.from({ length: initialRowCount }, (_, index) => _makeEmptyRow(columns, index))
     setRows(seededRows)
-  }, [rows, isModalMode, initialRows, id, columns])
+  }, [rows, isModalMode, initialSeedRows, initialRowCount, id, columns])
 
   useEffect(() => {
     const rowCount = Array.isArray(rows) ? rows.length : 0
@@ -897,7 +931,7 @@ EditableTable = ({
     }
 
     const paddedRows = []
-    const rowCount = Math.max(visibleRows, Math.max(initialRows, 1))
+    const rowCount = Math.max(visibleRows, initialRowCount)
     for (let index = 0; index < rowCount; index += 1) {
       paddedRows.push({
         row: currentRows[index] || _makeEmptyRow(columns, index),
@@ -1051,7 +1085,7 @@ EditableTable = ({
           <thead>
             <tr style={headerRowStyle}>
               {showRowNumbers && (
-                <th style={rowNumberHeaderStyle}>#</th>
+                <th key="row-number" style={rowNumberHeaderStyle}>#</th>
               )}
               {tableColumns.map((col) => (
                 <th
@@ -1066,13 +1100,13 @@ EditableTable = ({
                 </th>
               ))}
               {(isModalMode && shouldShowActions) && (
-                <th className="hideonprint" style={{ ...headerCellStyle, width: "96px" }} />
+                <th key="actions" className="hideonprint" style={{ ...headerCellStyle, width: "96px" }} />
               )}
             </tr>
           </thead>
           <tbody>
             {displayRows.length === 0 && isModalMode ? (
-              <tr>
+              <tr key="empty">
                 <td
                   colSpan={tableColumns.length + (showRowNumbers ? 1 : 0) + (shouldShowActions ? 1 : 0)}
                   style={{ ...bodyCellStyle, textAlign: "center", color: isDarkMode ? "#bdbdbd" : "#666666" }}
@@ -1089,7 +1123,7 @@ EditableTable = ({
                 return (
                   <tr key={row?._rowId || `row_${rowIndex}`}>
                     {showRowNumbers && (
-                      <td style={rowNumberCellStyle}>
+                      <td key="row-number" style={rowNumberCellStyle}>
                         {isModalMode ? (
                           <Text>{displayIndex + 1}</Text>
                         ) : (
@@ -1125,7 +1159,7 @@ EditableTable = ({
                       </td>
                     ))}
                     {(isModalMode && shouldShowActions) && (
-                      <td className="hideonprint" style={bodyCellStyle}>
+                      <td key="actions" className="hideonprint" style={bodyCellStyle}>
                         <div style={{ display: "flex", gap: "4px", justifyContent: "flex-end" }}>
                           {allowDeleteRows && (
                             <IconButton
@@ -1256,7 +1290,7 @@ const EditableTableSchema = {
 }
 
 const createTableColumns = (columnDefs) => {
-  return columnDefs.map((def) => ({
+  return _normalizeTableColumns(columnDefs).map((def) => ({
     id: def.id,
     title: def.title || def.id,
     type: def.type || "text",

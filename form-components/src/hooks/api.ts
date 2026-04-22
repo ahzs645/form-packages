@@ -10,17 +10,34 @@ export interface QueryResult<T = any> {
   loading: boolean;
   error: Error | undefined;
   refetch: () => void;
+  status: string;
 }
 
 export interface MutationState<T = any> {
   data: T | undefined;
   loading: boolean;
   error: Error | undefined;
+  status: string;
 }
+
+export interface MoisQueryStatus {
+  loading: boolean;
+  error: Error | undefined;
+  status: string;
+}
+
+export interface MoisMutationStatus {
+  loading: boolean;
+  error: Error | undefined;
+  status: string;
+}
+
+export type QueryTuple<T = any> = [T, MoisQueryStatus, () => void];
 
 export type MutationResult<T = any> = [
   (variables?: any) => Promise<T>,
-  MutationState<T>
+  T | undefined,
+  MoisMutationStatus
 ];
 
 /**
@@ -60,39 +77,49 @@ const createDeepProxy = (): any => {
 };
 
 /**
- * Mock useQuery hook for form preview
- * Returns a tuple [data, refetch] to match MOIS useQuery API.
+ * Mock useQuery hook for form preview.
+ * Shimmed MOIS returns [queryResult, status, reload].
  * The data is a deep proxy so any property chain access returns safe empty values.
  */
-export const useQuery = <T = any>(_query: string, _variables?: any): [T, () => void] => {
-  const [, setLoading] = React.useState(false);
+export const useQuery = <T = any>(_query: string, _variables?: any): QueryTuple<T> => {
+  const [loading, setLoading] = React.useState(false);
+  const [status, setStatus] = React.useState('ready');
 
-  const refetch = React.useCallback(() => {
+  const reload = React.useCallback(() => {
     setLoading(true);
+    setStatus('loading');
     setTimeout(() => {
       setLoading(false);
+      setStatus('ready');
       console.log('[Mock useQuery] refetch called');
     }, 100);
   }, []);
 
-  return [createDeepProxy() as T, refetch];
+  return [
+    createDeepProxy() as T,
+    { loading, error: undefined, status },
+    reload,
+  ];
 };
 
 /**
  * Mock useMutation hook for form preview
- * Returns [mutateFunction, { data, loading, error }] like Apollo Client
+ * Shimmed MOIS returns [mutateFunction, queryResult, status].
  */
 export const useMutation = <T = any>(_mutation: string): MutationResult<T> => {
   const [loading, setLoading] = React.useState(false);
+  const [status, setStatus] = React.useState('ready');
   const [data, setData] = React.useState<T | undefined>(undefined);
 
   const mutate = React.useCallback(async (variables?: any): Promise<T> => {
     setLoading(true);
+    setStatus('loading');
     console.log('[Mock useMutation] called with:', variables);
 
     return new Promise((resolve) => {
       setTimeout(() => {
         setLoading(false);
+        setStatus('ready');
         const result = {} as T;
         setData(result);
         resolve(result);
@@ -100,13 +127,13 @@ export const useMutation = <T = any>(_mutation: string): MutationResult<T> => {
     });
   }, []);
 
-  // Return as array [mutateFunction, state] like Apollo Client
   return [
     mutate,
+    data,
     {
-      data,
       loading,
       error: undefined,
+      status,
     },
   ];
 };

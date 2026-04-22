@@ -10,8 +10,13 @@ import React from 'react';
 import { useSourceData } from '../context/MoisContext';
 import { useActiveDataForForms } from './form-state';
 // Import the proper useMutation from the API module
-import { useMutation as useMutationImpl } from './api';
-import { emitMoisNavigateEvent } from '../runtime/mois-contract';
+import { useMutation as useMutationImpl, type QueryTuple } from './api';
+import {
+  emitMoisNavigateEvent,
+  registerMoisFormLock,
+  releaseMoisFormLock,
+  testMoisFormLock,
+} from '../runtime/mois-contract';
 
 /**
  * useOnLoad - Called when a form loads
@@ -76,25 +81,56 @@ export const useMutation = useMutationImpl;
 /**
  * useQuery - GraphQL query hook
  * Returns sourceData.queryResult as query data so forms get mock data in preview mode.
- * Returns [data, refetch] tuple to match the MOIS useQuery API.
+ * Shimmed MOIS returns [queryResult, status, reload].
  */
-export const useQuery = (_query?: string, _variables?: any): [any, () => void] => {
+export const useQuery = (_query?: string, _variables?: any): QueryTuple<any> => {
   const sourceData = useSourceData();
-  const refetch = React.useCallback(() => {
+  const [loading, setLoading] = React.useState(false);
+  const [status, setStatus] = React.useState('ready');
+  const reload = React.useCallback(() => {
+    setLoading(true);
+    setStatus('loading');
     console.log('[Mock useQuery] refetch called');
+    setTimeout(() => {
+      setLoading(false);
+      setStatus('ready');
+    }, 100);
   }, []);
-  return [sourceData.queryResult || {}, refetch];
+  return [
+    sourceData.queryResult || {},
+    { loading, error: undefined, status },
+    reload,
+  ];
 };
 
 /**
  * useFormLock - Lock management for forms
  */
-export const useFormLock = () => {};
+export const useFormLock = (lockPolicy?: any) => {
+  const lockPolicyRef = React.useRef(lockPolicy);
+  const lockName = lockPolicy?.name;
+
+  React.useEffect(() => {
+    lockPolicyRef.current = lockPolicy;
+  }, [lockPolicy]);
+
+  React.useEffect(() => {
+    if (!lockPolicy) return undefined;
+
+    registerMoisFormLock(lockPolicy, 'useFormLock');
+
+    return () => {
+      releaseMoisFormLock(lockPolicyRef.current?.scope ?? lockPolicy.scope, 'useFormLock');
+    };
+  }, [lockName]);
+
+  return "";
+};
 
 /**
  * testLock - Test if a lock is active
  */
-export const testLock = () => false;
+export const testLock = (lockOrScope?: any) => testMoisFormLock(lockOrScope);
 
 /**
  * useHotKey - Register keyboard shortcuts

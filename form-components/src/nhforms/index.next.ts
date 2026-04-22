@@ -36,6 +36,7 @@ import { LayoutItem } from '../controls/LayoutItem';
 import { useActiveDataForForms } from '../hooks/form-state';
 import { useOnLoad, useOnRefresh, useMutation } from '../hooks/mock-hooks';
 import { SubmitButton, NameBlock, Form } from '../components';
+import { applyShimmedMoisLifecyclePreviewState } from '../runtime/mois-contract';
 import { SubTitle } from '../controls/SubTitle';
 import { FluentNamespace } from '../scope/fluent-namespace';
 import { LinkToMois } from '../components/LinkToMois';
@@ -102,6 +103,7 @@ const refresh = (sd: any) => {
 // Mock saveDraft function for forms
 const saveDraft = async (sd: any, fd: any, data: any) => {
   console.log('saveDraft called', { sd, fd, data });
+  applyShimmedMoisLifecyclePreviewState(sd, 'saveDraft', data);
   if (data?.formData && typeof fd?.setFormData === 'function') {
     fd.setFormData((draft: any) => {
       draft.field = draft.field || { data: {}, status: {}, history: [] };
@@ -115,6 +117,7 @@ const saveDraft = async (sd: any, fd: any, data: any) => {
 
 const saveSubmit = async (sd: any, fd: any, data: any) => {
   console.log('saveSubmit called', { sd, fd, data });
+  applyShimmedMoisLifecyclePreviewState(sd, 'saveSubmit', data);
   if (data?.formData && typeof fd?.setFormData === 'function') {
     fd.setFormData((draft: any) => {
       draft.field = draft.field || { data: {}, status: {}, history: [] };
@@ -128,6 +131,7 @@ const saveSubmit = async (sd: any, fd: any, data: any) => {
 
 const signSubmit = async (sd: any, fd: any, data: any) => {
   console.log('signSubmit called', { sd, fd, data });
+  applyShimmedMoisLifecyclePreviewState(sd, 'signSubmit', data);
   if (data?.formData && typeof fd?.setFormData === 'function') {
     fd.setFormData((draft: any) => {
       draft.field = draft.field || { data: {}, status: {}, history: [] };
@@ -515,6 +519,50 @@ if (typeof window !== 'undefined') {
  */
 export const nhformsComponentGroups: Record<string, Record<string, any>> = {};
 
+function createRegistryModuleAlias(displayName: string, exports: Record<string, any>): Record<string, any> {
+  const RegistryModulePreview: React.FC = () => React.createElement(
+    'div',
+    {
+      style: {
+        padding: '8px',
+        color: '#0f5132',
+        background: '#d1e7dd',
+        border: '1px solid #badbcc',
+        borderRadius: '4px',
+        fontSize: '12px',
+      },
+    },
+    `${displayName} registry module loaded`
+  );
+  RegistryModulePreview.displayName = `${displayName}RegistryModulePreview`;
+  return { ...exports, All: RegistryModulePreview };
+}
+
+function applyRegistryModuleAliases(registry: Record<string, any>): void {
+  registry.CommonSchemaDefn = createRegistryModuleAlias('CommonSchemaDefn', {
+    commonSchemaDefn: registry.commonSchemaDefn,
+    nameBlockSchema: registry.nameBlockSchema,
+    NameBlockFields: registry.NameBlockFields,
+    formHistorySchema: registry.formHistorySchema,
+    makeValueSetOptions: registry.makeValueSetOptions,
+    makeTextObsUpdates: registry.makeTextObsUpdates,
+    makeCodedObsUpdates: registry.makeCodedObsUpdates,
+    makeObsUpdatesFromVs: registry.makeObsUpdatesFromVs,
+    ynuaOptions: registry.ynuaOptions,
+  });
+
+  registry.FormSessionRuntime = createRegistryModuleAlias('FormSessionRuntime', {
+    FormSessionProvider: registry.FormSessionProvider,
+    cloneFormSessionState: registry.cloneFormSessionState,
+    mergeFormSessionState: registry.mergeFormSessionState,
+    useFormSessionData: registry.useFormSessionData,
+  });
+
+  registry.UseChangeWatch = createRegistryModuleAlias('UseChangeWatch', {
+    useChangeWatch: registry.useChangeWatch,
+  });
+}
+
 /**
  * Load all NHForms components with two-pass loading for cross-references
  * Pass 1: Load all components (some may have missing dependencies)
@@ -545,6 +593,8 @@ function loadAllComponents(): Record<string, any> {
     const components = loadComponentCode(code, name, nhformsRegistry);
     Object.assign(nhformsRegistry, components);
   }
+
+  applyRegistryModuleAliases(nhformsRegistry);
 
   // Summary log (single line instead of verbose per-component logs)
   console.log(`NHForms: Loaded ${Object.keys(nhformsRegistry).length} exports from ${componentSources.length} components`);
@@ -652,6 +702,9 @@ export const {
   makeCodedObsUpdates,
   makeObsUpdatesFromVs,
   ynuaOptions,
+  CommonSchemaDefn,
+  FormSessionRuntime,
+  UseChangeWatch,
   commonSchemaDefn,
   nameBlockSchema,
   NameBlockFields,

@@ -54,6 +54,11 @@ const MODULE_TO_OBJECT_TYPE: Record<string, string> = {
   'SOCIAL HISTORY': 'SocialHistory',
 };
 
+const PREVIEW_ONLY_MODULES = new Set([
+  'LOGIC_TEST',
+  'WEBFORM_TEST',
+]);
+
 // Available chart link modules
 export const MOIS_MODULES = Object.keys(MODULE_TO_OBJECT_TYPE) as readonly string[];
 
@@ -68,14 +73,16 @@ export const LinkToMois: React.FC<LinkToMoisProps> = ({
 }) => {
   const navigate = useMoisNavigate(moisModule);
   const sourceData = useSourceData();
+  const normalizedModule = moisModule?.trim().toUpperCase() ?? '';
 
   // Look up object type from module name (case-insensitive)
-  const objectType = MODULE_TO_OBJECT_TYPE[moisModule?.toUpperCase()];
+  const objectType = MODULE_TO_OBJECT_TYPE[normalizedModule];
+  const isPreviewOnlyModule = PREVIEW_ONLY_MODULES.has(normalizedModule);
 
-  // Warn if module name not recognized
-  if (objectType === undefined) {
+  React.useEffect(() => {
+    if (!normalizedModule || objectType !== undefined || isPreviewOnlyModule) return;
     console.warn('Missing or unexpected module name in LinkToMois: ', moisModule);
-  }
+  }, [isPreviewOnlyModule, moisModule, normalizedModule, objectType]);
 
   // Build navigation target if we have both objectId and objectType
   let target: { objectType: string; objectId: number } | undefined;
@@ -102,8 +109,8 @@ export const LinkToMois: React.FC<LinkToMoisProps> = ({
         ...(styles?.root ?? {}),
       }}
       onClick={handleClick}
-      title={title ?? `Open ${moisModule} in MOIS`}
-      aria-label={title ?? `Open ${moisModule} in MOIS`}
+      title={title ?? `Open ${moisModule || 'module'} in MOIS`}
+      aria-label={title ?? `Open ${moisModule || 'module'} in MOIS`}
     >
       <div style={{ marginTop: '4px' }}>
         <img

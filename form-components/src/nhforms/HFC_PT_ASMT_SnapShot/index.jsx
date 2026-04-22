@@ -48,11 +48,8 @@ const HFC_PT_ASMT_SnapShot = (props) => {
         data: fieldData,
       }})
     }
-
+    
     function _onChoiceChange(opt,choice){
-        console.log(opt)
-        console.log(choice);;
-
         var fieldData = opt.target.type!="checkbox"
             ?   
                 {
@@ -313,7 +310,7 @@ const HFC_PT_ASMT_SnapShot = (props) => {
                 {optlist.map((obj)=>{
                     
                     return(
-                        <>
+                        <React.Fragment key={obj.key ?? obj.text}>
                             <div style={{display:"flex",flexDirection:"row"}}>
                                 <div style={{width:"25%"}}>
                                     <SimpleCodeChecklist 
@@ -335,7 +332,7 @@ const HFC_PT_ASMT_SnapShot = (props) => {
                                 </div>
                             </div>
 
-                        </>
+                        </React.Fragment>
                     
                     )
                     }
@@ -385,9 +382,8 @@ const HFC_PT_ASMT_SnapShot = (props) => {
                             :   
                             
                             fd.field.data.FollowUpAppts.appointments.map((obj,index)=>{
-                                console.log(fd.field.data.FollowUpAppts.appointments[index]);
                                 return( 
-                                <div style={{display:"table-row", pageBreakInside:"avoid"}}>
+                                <div key={obj.id ?? obj.ptSnapFUDate ?? index} style={{display:"table-row", pageBreakInside:"avoid"}}>
                                     <div style={{maxWidth:"20%",...tableCellStyle}}>
                                         <div className="showonprint showapptonprint"> 
                                             {fd.field.data.FollowUpAppts.appointments[index].ptSnapFUDate?`${getDateString(new Date(fd.field.data.FollowUpAppts.appointments[index].ptSnapFUDate),"-")} ${getTimeString(new Date(fd.field.data.FollowUpAppts.appointments[index].ptSnapFUDate))}`:null }
@@ -423,7 +419,6 @@ const HFC_PT_ASMT_SnapShot = (props) => {
                                                     {key:"blend",text:"Blended Heart Failure/Cardiac Risk Reduction Education"}
                                                 ]}
                                                 showOtherOption
-                                                size={{width:"100%"}}
                                                 section={{activeSelector:(fd)=>fd.field.data.FollowUpAppts.appointments[index]}}
                                             />
                                         </div>

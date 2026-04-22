@@ -78,11 +78,59 @@ import { NameBlock } from '../components/NameBlock';
 import { SubmitButton } from '../components/SubmitButton';
 import { PrintButton } from '../components/PrintButton';
 import { FormImage } from '../components/FormImage';
+import {
+  applyShimmedMoisLifecyclePreviewState,
+  emitMoisPreviewDiagnosticEvent,
+  recordMoisRuntimeAction,
+} from '../runtime/mois-contract';
 
 // Trigger toast notification via window event (connects to App.tsx toast system)
 const triggerToast = (message: string) => {
   window.dispatchEvent(new CustomEvent('mois-toast', { detail: message }));
 };
+
+function applyPreviewFormAction(action: 'saveDraft' | 'saveSubmit' | 'signSubmit', sd?: any, fd?: any, data?: any) {
+  applyShimmedMoisLifecyclePreviewState(sd, action, data);
+  if (typeof fd?.setFormData === 'function') {
+    fd.setFormData((draft: any) => {
+      draft.field = draft.field || { data: {}, status: {}, history: [] };
+      if (data?.formData) {
+        draft.field.data = { ...(draft.field?.data || {}), ...data.formData };
+      }
+      recordMoisRuntimeAction(draft, action, data ?? {});
+    });
+  }
+  return true;
+}
+
+function applyPreviewSignatureAction(action: 'sign' | 'unsign', reason?: string, sd?: any, fd?: any) {
+  const signatureRecord = {
+    documentId: sd?.formParams?.documentId ?? sd?.webform?.documentId ?? null,
+    recordState: action === 'sign' ? 'SIGNED' : 'UNSIGNED',
+    note: reason ?? '',
+  };
+
+  applyShimmedMoisLifecyclePreviewState(sd, action, { signatureRecord });
+  if (typeof fd?.setFormData === 'function') {
+    fd.setFormData((draft: any) => {
+      draft.uiState = draft.uiState || { sections: {} };
+      draft.uiState.sections = draft.uiState.sections || {};
+      draft.uiState.sections[0] = {
+        ...(draft.uiState.sections[0] || {}),
+        isComplete: action === 'sign',
+      };
+      recordMoisRuntimeAction(draft, action, { signatureRecord });
+    });
+  }
+  emitMoisPreviewDiagnosticEvent({
+    severity: 'info',
+    source: 'mois-function-preview',
+    message: `Preview ${action === 'sign' ? 'signed' : 'unsigned'} the form through MoisFunction.${action}.`,
+    path: `MoisFunction.${action}`,
+    detail: { signatureRecord },
+  });
+  return true;
+}
 
 /**
  * MoisFunction - MOIS API functions available in code
@@ -94,10 +142,32 @@ export const MoisFunction = {
     console.log('Toast message:', message);
     triggerToast(message);
   },
-  save: () => { console.log('Save called'); triggerToast('Save called'); },
+  save: (sd?: any, fd?: any, data?: any) => {
+    console.log('Save called');
+    triggerToast('Save called');
+    return applyPreviewFormAction('saveDraft', sd, fd, data);
+  },
+  saveDraft: (sd?: any, fd?: any, data?: any) => applyPreviewFormAction('saveDraft', sd, fd, data),
+  saveSubmit: (sd?: any, fd?: any, data?: any) => applyPreviewFormAction('saveSubmit', sd, fd, data),
   close: () => { console.log('Close called'); triggerToast('Close called'); },
   print: () => { console.log('Print called'); triggerToast('Print called'); },
-  sign: () => { console.log('Sign called'); triggerToast('Sign called'); },
+  sign: (reason?: string, sd?: any, fd?: any) => {
+    console.log('Sign called');
+    triggerToast('Sign called');
+    return applyPreviewSignatureAction('sign', reason, sd, fd);
+  },
+  unsign: (reason?: string, sd?: any, fd?: any) => {
+    console.log('Unsign called');
+    triggerToast('Unsign called');
+    return applyPreviewSignatureAction('unsign', reason, sd, fd);
+  },
+  signSubmit: (reasonOrSd?: any, sdOrFd?: any, fdOrData?: any, maybeData?: any) => {
+    const hasReason = typeof reasonOrSd === 'string';
+    const sd = hasReason ? sdOrFd : reasonOrSd;
+    const fd = hasReason ? fdOrData : sdOrFd;
+    const data = hasReason ? maybeData : fdOrData;
+    return applyPreviewFormAction('signSubmit', sd, fd, data);
+  },
   refresh: () => { console.log('Refresh called'); triggerToast('Refresh called'); },
 };
 

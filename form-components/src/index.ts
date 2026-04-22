@@ -352,19 +352,33 @@ export type {
 // Runtime contract
 // ============================================================================
 export {
+  applyShimmedMoisLifecyclePreviewState,
+  clearMoisFormLocks,
   ensureMoisRuntimeDebugState,
+  emitMoisPreviewDiagnosticEvent,
   emitMoisNavigateEvent,
+  getMoisFormLockKey,
+  getMoisFormLockState,
   getSectionActiveTarget,
   getSectionSourceTarget,
   getSectionStatusTarget,
   readSectionActiveFieldValue,
   readSectionFieldStatus,
   readSectionSourceFieldValue,
+  registerMoisFormLock,
+  releaseMoisFormLock,
   recordMoisRuntimeAction,
+  testMoisFormLock,
   writeSectionActiveFieldValue,
   writeSectionFieldError,
 } from './runtime/mois-contract';
 export type {
+  MoisFormLockEventDetail,
+  MoisFormLockEventRecord,
+  MoisFormLockEventType,
+  MoisFormLockPolicy,
+  MoisFormLockRecord,
+  MoisFormLockState,
   MoisRuntimeActionName,
   MoisRuntimeActionRecord,
   MoisRuntimeDebugState,

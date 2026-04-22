@@ -115,6 +115,16 @@ const UnsavedChangesGuard = ({
       ? getSaveData()
       : buildDefaultSavePayload(fd, prepared?.formData)
 
+    if (actionId === "sign" && typeof signSubmit === "function") {
+      const success = await signSubmit(sd, fd, payload)
+      if (success !== false && typeof commitPreparedAuthorshipPersist === "function") {
+        commitPreparedAuthorshipPersist(fd, prepared)
+      }
+      markSaved()
+      setIsOpen(false)
+      return
+    }
+
     if (actionId === "sign" && typeof saveSubmit === "function") {
       const success = await saveSubmit(sd, fd, payload)
       if (success !== false && typeof commitPreparedAuthorshipPersist === "function") {

@@ -13,6 +13,8 @@ import {
   prepareAuthorshipPersist,
   commitPreparedAuthorshipPersist,
   releasePreparedAuthorshipClaim,
+  applyShimmedMoisLifecyclePreviewState,
+  emitMoisPreviewDiagnosticEvent,
   recordMoisRuntimeAction,
 } from '@mois/form-components';
 
@@ -86,6 +88,7 @@ const dateHelpers = {
 const formActions = {
   saveDraft: (sd: any, fd: any, data: any) => {
     console.log('saveDraft called', { sd, fd, data });
+    applyShimmedMoisLifecyclePreviewState(sd, 'saveDraft', data);
     if (data?.formData && typeof fd?.setFormData === 'function') {
       fd.setFormData((draft: any) => {
         draft.field = draft.field || { data: {}, status: {}, history: [] };
@@ -95,11 +98,39 @@ const formActions = {
     }
     return true;
   },
-  closeForm: () => {
+  closeForm: (sd?: any, fd?: any) => {
     console.log('closeForm called');
+    applyShimmedMoisLifecyclePreviewState(sd, 'closeForm');
+    if (typeof fd?.setFormData === 'function') {
+      fd.setFormData((draft: any) => {
+        recordMoisRuntimeAction(draft, 'closeForm', { requestedAt: new Date().toISOString() });
+      });
+    }
+    emitMoisPreviewDiagnosticEvent({
+      severity: 'warning',
+      source: 'shimmed-close-preview',
+      message: 'Browser preview cannot fully emulate Shimmed MOIS Electron close interception; window.close() may be ignored here.',
+      path: 'closeForm',
+    });
+  },
+  cancelForm: (sd?: any, fd?: any) => {
+    console.log('cancelForm called');
+    applyShimmedMoisLifecyclePreviewState(sd, 'cancelForm');
+    if (typeof fd?.setFormData === 'function') {
+      fd.setFormData((draft: any) => {
+        recordMoisRuntimeAction(draft, 'cancelForm', { requestedAt: new Date().toISOString() });
+      });
+    }
+    emitMoisPreviewDiagnosticEvent({
+      severity: 'warning',
+      source: 'shimmed-close-preview',
+      message: 'Cancel in Shimmed MOIS dispatches form-canceled and relies on Electron close interception; browser preview records the request only.',
+      path: 'cancelForm',
+    });
   },
   saveSubmit: (sd: any, fd: any, data: any) => {
     console.log('saveSubmit called', { sd, fd, data });
+    applyShimmedMoisLifecyclePreviewState(sd, 'saveSubmit', data);
     if (data?.formData && typeof fd?.setFormData === 'function') {
       fd.setFormData((draft: any) => {
         draft.field = draft.field || { data: {}, status: {}, history: [] };
@@ -111,6 +142,7 @@ const formActions = {
   },
   signSubmit: (sd: any, fd: any, data: any) => {
     console.log('signSubmit called', { sd, fd, data });
+    applyShimmedMoisLifecyclePreviewState(sd, 'signSubmit', data);
     if (data?.formData && typeof fd?.setFormData === 'function') {
       fd.setFormData((draft: any) => {
         draft.field = draft.field || { data: {}, status: {}, history: [] };

@@ -2233,6 +2233,35 @@ const _cloneRow = (row = {}, columns = []) => {
   return copy
 }
 
+const _normalizeTableColumns = (columns = []) => {
+  if (!Array.isArray(columns)) return []
+
+  return columns.map((column, index) => {
+    const id = column?.id || column?.key || column?.fieldName || column?.name || \`column_\${index + 1}\`
+    return {
+      ...column,
+      id,
+      title: column?.title || column?.label || column?.name || id,
+      type: column?.type || "text",
+      dataPath: column?.dataPath || column?.fieldName || id,
+    }
+  })
+}
+
+const _normalizeInitialRowCount = (initialRows) => {
+  if (Array.isArray(initialRows)) return Math.max(initialRows.length, 1)
+  const count = Number(initialRows)
+  return Number.isFinite(count) && count > 0 ? Math.floor(count) : 1
+}
+
+const _normalizeInitialRows = (initialRows, columns = []) => {
+  if (!Array.isArray(initialRows)) return []
+  return initialRows.map((row, index) => ({
+    ..._cloneRow(row, columns),
+    _rowId: row?._rowId || \`row_\${index}\`,
+  }))
+}
+
 const _isMeaningfulValue = (value) => {
   if (value === undefined || value === null) return false
   if (typeof value === "string") return value.trim().length > 0
@@ -2638,9 +2667,9 @@ const _buildSubformFieldFromColumn = (column) => {
 
 EditableTable = ({
   id = "editableTable",
-  columns = [],
+  columns: columnsProp = [],
   maxRows = 10,
-  initialRows = 1,
+  initialRows: initialRowsProp = 1,
   label = "",
   mode = "inline",
   modalTitle,
@@ -2662,7 +2691,10 @@ EditableTable = ({
   const [fd] = useActiveData()
   const theme = useTheme()
   const isDarkMode = theme?.isInverted || false
-  const [visibleRows, setVisibleRows] = useState(Math.max(initialRows, 1))
+  const columns = useMemo(() => _normalizeTableColumns(columnsProp), [columnsProp])
+  const initialRowCount = _normalizeInitialRowCount(initialRowsProp)
+  const initialSeedRows = useMemo(() => _normalizeInitialRows(initialRowsProp, columns), [initialRowsProp, columns])
+  const [visibleRows, setVisibleRows] = useState(initialRowCount)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [editingRowIndex, setEditingRowIndex] = useState(null)
   const [draftRow, setDraftRow] = useState(null)
@@ -2759,17 +2791,19 @@ EditableTable = ({
     columns,
     sourceFieldIds,
     sourceFieldIdsByRow,
-    initialRows,
-  }), [fd?.field?.data, columns, sourceFieldIds, sourceFieldIdsByRow, initialRows])
+    initialRows: initialRowCount,
+  }), [fd?.field?.data, columns, sourceFieldIds, sourceFieldIdsByRow, initialRowCount])
 
   useEffect(() => {
     if (rows) return
 
     const seededRows = isModalMode
       ? []
-      : Array.from({ length: Math.max(initialRows, 1) }, (_, index) => _makeEmptyRow(columns, index))
+      : initialSeedRows.length > 0
+        ? initialSeedRows
+        : Array.from({ length: initialRowCount }, (_, index) => _makeEmptyRow(columns, index))
     setRows(seededRows)
-  }, [rows, isModalMode, initialRows, id, columns])
+  }, [rows, isModalMode, initialSeedRows, initialRowCount, id, columns])
 
   useEffect(() => {
     const rowCount = Array.isArray(rows) ? rows.length : 0
@@ -3042,7 +3076,7 @@ EditableTable = ({
     }
 
     const paddedRows = []
-    const rowCount = Math.max(visibleRows, Math.max(initialRows, 1))
+    const rowCount = Math.max(visibleRows, initialRowCount)
     for (let index = 0; index < rowCount; index += 1) {
       paddedRows.push({
         row: currentRows[index] || _makeEmptyRow(columns, index),
@@ -3196,7 +3230,7 @@ EditableTable = ({
           <thead>
             <tr style={headerRowStyle}>
               {showRowNumbers && (
-                <th style={rowNumberHeaderStyle}>#</th>
+                <th key="row-number" style={rowNumberHeaderStyle}>#</th>
               )}
               {tableColumns.map((col) => (
                 <th
@@ -3211,13 +3245,13 @@ EditableTable = ({
                 </th>
               ))}
               {(isModalMode && shouldShowActions) && (
-                <th className="hideonprint" style={{ ...headerCellStyle, width: "96px" }} />
+                <th key="actions" className="hideonprint" style={{ ...headerCellStyle, width: "96px" }} />
               )}
             </tr>
           </thead>
           <tbody>
             {displayRows.length === 0 && isModalMode ? (
-              <tr>
+              <tr key="empty">
                 <td
                   colSpan={tableColumns.length + (showRowNumbers ? 1 : 0) + (shouldShowActions ? 1 : 0)}
                   style={{ ...bodyCellStyle, textAlign: "center", color: isDarkMode ? "#bdbdbd" : "#666666" }}
@@ -3234,7 +3268,7 @@ EditableTable = ({
                 return (
                   <tr key={row?._rowId || \`row_\${rowIndex}\`}>
                     {showRowNumbers && (
-                      <td style={rowNumberCellStyle}>
+                      <td key="row-number" style={rowNumberCellStyle}>
                         {isModalMode ? (
                           <Text>{displayIndex + 1}</Text>
                         ) : (
@@ -3270,7 +3304,7 @@ EditableTable = ({
                       </td>
                     ))}
                     {(isModalMode && shouldShowActions) && (
-                      <td className="hideonprint" style={bodyCellStyle}>
+                      <td key="actions" className="hideonprint" style={bodyCellStyle}>
                         <div style={{ display: "flex", gap: "4px", justifyContent: "flex-end" }}>
                           {allowDeleteRows && (
                             <IconButton
@@ -3401,7 +3435,7 @@ const EditableTableSchema = {
 }
 
 const createTableColumns = (columnDefs) => {
-  return columnDefs.map((def) => ({
+  return _normalizeTableColumns(columnDefs).map((def) => ({
     id: def.id,
     title: def.title || def.id,
     type: def.type || "text",
@@ -6987,11 +7021,8 @@ const HFC_PT_ASMT_SnapShot = (props) => {
         data: fieldData,
       }})
     }
-
+    
     function _onChoiceChange(opt,choice){
-        console.log(opt)
-        console.log(choice);;
-
         var fieldData = opt.target.type!="checkbox"
             ?   
                 {
@@ -7252,7 +7283,7 @@ const HFC_PT_ASMT_SnapShot = (props) => {
                 {optlist.map((obj)=>{
                     
                     return(
-                        <>
+                        <React.Fragment key={obj.key ?? obj.text}>
                             <div style={{display:"flex",flexDirection:"row"}}>
                                 <div style={{width:"25%"}}>
                                     <SimpleCodeChecklist 
@@ -7274,7 +7305,7 @@ const HFC_PT_ASMT_SnapShot = (props) => {
                                 </div>
                             </div>
 
-                        </>
+                        </React.Fragment>
                     
                     )
                     }
@@ -7324,9 +7355,8 @@ const HFC_PT_ASMT_SnapShot = (props) => {
                             :   
                             
                             fd.field.data.FollowUpAppts.appointments.map((obj,index)=>{
-                                console.log(fd.field.data.FollowUpAppts.appointments[index]);
                                 return( 
-                                <div style={{display:"table-row", pageBreakInside:"avoid"}}>
+                                <div key={obj.id ?? obj.ptSnapFUDate ?? index} style={{display:"table-row", pageBreakInside:"avoid"}}>
                                     <div style={{maxWidth:"20%",...tableCellStyle}}>
                                         <div className="showonprint showapptonprint"> 
                                             {fd.field.data.FollowUpAppts.appointments[index].ptSnapFUDate?\`\${getDateString(new Date(fd.field.data.FollowUpAppts.appointments[index].ptSnapFUDate),"-")} \${getTimeString(new Date(fd.field.data.FollowUpAppts.appointments[index].ptSnapFUDate))}\`:null }
@@ -7362,7 +7392,6 @@ const HFC_PT_ASMT_SnapShot = (props) => {
                                                     {key:"blend",text:"Blended Heart Failure/Cardiac Risk Reduction Education"}
                                                 ]}
                                                 showOtherOption
-                                                size={{width:"100%"}}
                                                 section={{activeSelector:(fd)=>fd.field.data.FollowUpAppts.appointments[index]}}
                                             />
                                         </div>
@@ -13220,7 +13249,7 @@ const NarrativeReportBuilder = ({
 
     return(
         <div>
-            <div class={showonprint}>
+            <div className={showonprint}>
                 <div style={{display:"flex",flexDirection:\`\${props.labelPosition ==="top"?"column":"row"}\`, marginTop:"8px", marginBottom:"8px" }}>
                     {props.label?.length >0 ?
                         <Fluent.Label styles={{root:{flexGrow:"1", maxWidth:"240px",marginRight:"10px"}}}>{props.label}</Fluent.Label>
@@ -13229,7 +13258,7 @@ const NarrativeReportBuilder = ({
                 </div>
             </div>
 
-            <div class={hideonprint}>
+            <div className={hideonprint}>
                 <TextArea
                     {...props}
                 />
@@ -16237,10 +16266,26 @@ const INTERPRETATION_BOX_STYLE = {
  * @param {ScoringQuestionConfig[]} questions
  * @returns {Map<string, Map<string, number>>} Map of questionId -> (optionKey -> score)
  */
+const normalizeScoringOption = (option, index = 0) => {
+  const keyValue = option?.key ?? option?.id ?? option?.code ?? option?.value ?? \`\${index}\`
+  const textValue = option?.text ?? option?.label ?? option?.display ?? option?.state ?? String(keyValue)
+  return {
+    ...option,
+    key: String(keyValue),
+    text: String(textValue),
+    score: option?.score ?? (typeof option?.value === "number" ? option.value : index),
+    description: option?.description,
+  }
+}
+
+const normalizeScoringOptions = (options) => (
+  Array.isArray(options) ? options.map(normalizeScoringOption) : []
+)
+
 const resolveQuestionOptions = (question, sharedOptions) => {
-  const questionOptions = Array.isArray(question?.options) ? question.options : []
+  const questionOptions = normalizeScoringOptions(question?.options)
   if (questionOptions.length > 0) return questionOptions
-  return Array.isArray(sharedOptions) ? sharedOptions : []
+  return normalizeScoringOptions(sharedOptions)
 }
 
 const buildScoreMap = (questions, sharedOptions) => {
@@ -16391,7 +16436,7 @@ const serializeOptionSignature = (options) =>
   JSON.stringify((options || []).map((option) => [option.key, option.score ?? 0, option.text || "", option.description || ""]))
 
 const resolveMatrixOptions = (config) => {
-  const explicitShared = Array.isArray(config?.sharedOptions) ? config.sharedOptions : []
+  const explicitShared = normalizeScoringOptions(config?.sharedOptions)
   if (explicitShared.length > 0) return explicitShared
 
   const questions = Array.isArray(config?.questions) ? config.questions : []
@@ -16399,7 +16444,7 @@ const resolveMatrixOptions = (config) => {
   const countsBySignature = new Map()
 
   questions.forEach((question) => {
-    const questionOptions = Array.isArray(question?.options) ? question.options : []
+    const questionOptions = normalizeScoringOptions(question?.options)
     if (questionOptions.length === 0) return
     const signature = serializeOptionSignature(questionOptions)
     optionsBySignature.set(signature, questionOptions)
@@ -17408,12 +17453,7 @@ const createScoringQuestion = (def) => ({
         uncheckedOptionKey: def.checklist.uncheckedOptionKey,
       }
     : undefined,
-  options: (def.options || []).map((opt, idx) => ({
-    key: opt.key || \`\${idx}\`,
-    text: opt.text || opt.label || \`Option \${idx + 1}\`,
-    score: opt.score ?? idx,
-    description: opt.description,
-  })),
+  options: normalizeScoringOptions(def.options),
 })
 
 /**
@@ -17475,12 +17515,7 @@ const createScoringConfig = (def) => ({
         max: def.continuumLabels.max,
       }
     : undefined,
-  sharedOptions: (def.sharedOptions || []).map((opt, idx) => ({
-    key: opt.key || \`\${idx}\`,
-    text: opt.text || opt.label || \`Option \${idx + 1}\`,
-    score: opt.score ?? idx,
-    description: opt.description,
-  })),
+  sharedOptions: normalizeScoringOptions(def.sharedOptions),
   groups: (def.groups || []).map((group, index) => ({
     id: group.id || \`group_\${index + 1}\`,
     title: group.title,
@@ -20186,6 +20221,16 @@ const UnsavedChangesGuard = ({
     const payload = typeof getSaveData === "function"
       ? getSaveData()
       : buildDefaultSavePayload(fd, prepared?.formData)
+
+    if (actionId === "sign" && typeof signSubmit === "function") {
+      const success = await signSubmit(sd, fd, payload)
+      if (success !== false && typeof commitPreparedAuthorshipPersist === "function") {
+        commitPreparedAuthorshipPersist(fd, prepared)
+      }
+      markSaved()
+      setIsOpen(false)
+      return
+    }
 
     if (actionId === "sign" && typeof saveSubmit === "function") {
       const success = await saveSubmit(sd, fd, payload)
