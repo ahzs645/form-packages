@@ -81,7 +81,7 @@ function preprocessHtmlToJsx(code: string): string {
  * @returns A React functional component
  */
 export const createComponentFromCode = (code: string, options: TransformOptions): React.FC => {
-  const { babel, scopeBuilder, onInitialData } = options;
+  const { babel, scopeBuilder, onInitialData, onMissingSymbol } = options;
 
   let cleanCode = code
     .replace(/\r\n/g, '\n')
@@ -102,7 +102,7 @@ export const createComponentFromCode = (code: string, options: TransformOptions)
                                /\bfunction\s+FormComponent\b/.test(cleanCode);
 
   if (definesFormComponent) {
-    return createFormComponent(cleanCode, babel, scopeBuilder, onInitialData);
+    return createFormComponent(cleanCode, babel, scopeBuilder, onInitialData, onMissingSymbol);
   }
 
   return createSimpleComponent(cleanCode, babel, scopeBuilder);
@@ -124,7 +124,8 @@ const createFormComponent = (
   cleanCode: string,
   Babel: any,
   scopeBuilder: TransformOptions['scopeBuilder'],
-  onInitialData?: (data: Record<string, any>) => void
+  onInitialData?: (data: Record<string, any>) => void,
+  onMissingSymbol?: (symbolName: string) => void
 ): React.FC => {
   try {
     const transformed = Babel.transform(cleanCode, {
@@ -234,6 +235,7 @@ const createFormComponent = (
         // Return placeholder for missing components (suppress warnings for known optional vars)
         if (!optionalFormVars.has(String(prop))) {
           console.warn(`[Form] Missing: ${String(prop)}`);
+          onMissingSymbol?.(String(prop));
         }
         return createPlaceholder(String(prop));
       },

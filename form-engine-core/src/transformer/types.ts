@@ -20,6 +20,9 @@ export interface TransformOptions {
   /** Callback when InitialData is extracted from form code */
   onInitialData?: (data: Record<string, any>) => void;
 
+  /** Callback when preview scope has to substitute an unresolved symbol */
+  onMissingSymbol?: (symbolName: string) => void;
+
   /** File name hint for Babel (affects error messages) */
   filename?: string;
 }
