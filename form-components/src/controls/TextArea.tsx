@@ -10,6 +10,7 @@ import { useTheme, useSection, useSourceData } from '../context/MoisContext';
 import { useActiveDataForForms } from '../hooks/form-state';
 import { getAuthorshipLockInfo, registerAuthorshipFieldTarget } from '../authorship';
 import {
+  getSectionSourceTarget,
   readSectionActiveFieldValue,
   readSectionFieldStatus,
   writeSectionActiveFieldValue,
@@ -143,11 +144,18 @@ export const TextArea: React.FC<TextAreaProps> = ({
     typeof maxCharLimit === 'number' && Number.isFinite(maxCharLimit) && maxCharLimit > 0
       ? Math.round(maxCharLimit)
       : undefined;
-  const effectiveFieldId = sourceId || fieldId || id;
+  const effectiveFieldId = fieldId || id || sourceId;
+  const effectiveSourceId = sourceId || id || fieldId;
   const activeValue = effectiveFieldId
     ? readSectionActiveFieldValue(activeData, sectionContext, effectiveFieldId)
     : undefined;
   const persistedValue = typeof activeValue === 'string' ? activeValue : undefined;
+  const sourceValue = (() => {
+    if (!effectiveSourceId) return undefined;
+    const sourceTarget = getSectionSourceTarget(sourceData, sectionContext);
+    const value = sourceTarget?.[effectiveSourceId];
+    return value !== undefined && value !== null ? String(value) : undefined;
+  })();
   const statusEntry = effectiveFieldId
     ? readSectionFieldStatus(activeData, sectionContext, effectiveFieldId)
     : undefined;
@@ -156,7 +164,7 @@ export const TextArea: React.FC<TextAreaProps> = ({
       ? statusEntry.errorMessage
       : undefined;
 
-  const displayValue = value !== undefined ? value : (persistedValue ?? internalValue);
+  const displayValue = value !== undefined ? value : (persistedValue ?? sourceValue ?? internalValue);
 
   const handleChange = (ev: React.FormEvent<HTMLInputElement | HTMLTextAreaElement>, newValue?: string) => {
     if (effectiveReadOnly) return;

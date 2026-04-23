@@ -83,6 +83,7 @@ import {
   emitMoisPreviewDiagnosticEvent,
   recordMoisRuntimeAction,
 } from '../runtime/mois-contract';
+import { PreviewAjv } from '../runtime/preview-ajv';
 
 // Trigger toast notification via window event (connects to App.tsx toast system)
 const triggerToast = (message: string) => {
@@ -136,6 +137,11 @@ function applyPreviewSignatureAction(action: 'sign' | 'unsign', reason?: string,
  * MoisFunction - MOIS API functions available in code
  */
 export const MoisFunction = {
+  Ajv: PreviewAjv,
+  showValidationErrors: (errors: any[] = []) => {
+    console.log('MoisFunction.showValidationErrors called', errors);
+    triggerToast(`Validation errors: ${errors?.length || 0}`);
+  },
   notify: (opts: any) => {
     console.log('MoisFunction.notify called with:', JSON.stringify(opts));
     const message = typeof opts === 'string' ? opts : opts?.message || 'Notification';

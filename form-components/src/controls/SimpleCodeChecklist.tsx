@@ -22,6 +22,8 @@ export interface Coding {
   system?: string;
 }
 
+const OTHER_OPTION_KEY = "__mois_other__";
+
 const normalizeSingleSelectionKey = (value: Coding | Coding[] | string | string[] | null | undefined): string | undefined => {
   if (!value) return undefined;
   if (typeof value === "string") return value;
@@ -42,6 +44,22 @@ const normalizeMultipleSelectionKeys = (value: Coding | Coding[] | string | stri
   }
   const single = value.code ?? value.display ?? undefined;
   return single ? [single] : [];
+};
+
+const normalizeOptionKey = (value: unknown): string => String(value ?? "");
+
+const findOtherText = (
+  value: Coding | Coding[] | string | string[] | null | undefined,
+  optionKeys: Set<string>
+): string => {
+  const values = Array.isArray(value) ? value : value ? [value] : [];
+  for (const entry of values) {
+    const key = typeof entry === "string" ? entry : entry?.code ?? entry?.display ?? "";
+    if (key && !optionKeys.has(key) && key !== OTHER_OPTION_KEY) {
+      return typeof entry === "string" ? entry : entry.display ?? entry.code ?? "";
+    }
+  }
+  return "";
 };
 
 export interface SimpleCodeChecklistProps {
@@ -145,6 +163,8 @@ export const SimpleCodeChecklist: React.FC<SimpleCodeChecklistProps> = ({
   const [activeData, setActiveData] = useActiveDataForForms();
   const sectionContext = useSection(section);
   const effectiveFieldId = fieldId || id || sourceId || layoutId;
+  const effectiveReadOnly = Boolean(readOnly || isComplete);
+  const controlsDisabled = disabled || effectiveReadOnly;
 
   // Helper to get value from activeData
   const getValueFromActiveData = (): Coding | Coding[] | string | string[] | null => {
@@ -167,10 +187,11 @@ export const SimpleCodeChecklist: React.FC<SimpleCodeChecklistProps> = ({
       : normalizeMultipleSelectionKeys(defaultValue as Coding | Coding[] | undefined);
   });
 
-  const [otherText, setOtherText] = useState('');
+  const [otherText, setOtherText] = useState<string | null>(null);
 
   // Helper to update activeData
   const updateActiveData = (value: Coding | Coding[] | null) => {
+    if (effectiveReadOnly) return;
     if (effectiveFieldId) {
       setActiveData((draft: any) => {
         writeSectionActiveFieldValue(draft, sectionContext, effectiveFieldId, value);
@@ -218,36 +239,87 @@ export const SimpleCodeChecklist: React.FC<SimpleCodeChecklistProps> = ({
   };
 
   const options = getOptions();
+  const renderedOptions = showOtherOption
+    ? [
+        ...options,
+        ...(options.some((option) => normalizeOptionKey(option.key) === OTHER_OPTION_KEY)
+          ? []
+          : [{ key: OTHER_OPTION_KEY, text: "Other" }]),
+      ]
+    : options;
+  const optionKeys = new Set(options.map((option) => normalizeOptionKey(option.key)));
+  const displayOptionKeys = new Set(renderedOptions.map((option) => normalizeOptionKey(option.key)));
+  const activeOtherText = findOtherText(activeValue, optionKeys);
+  const resolvedOtherText = otherText ?? activeOtherText;
+  const effectiveSingleSelectionKey =
+    showOtherOption && effectiveSelectedKey && !displayOptionKeys.has(effectiveSelectedKey)
+      ? OTHER_OPTION_KEY
+      : effectiveSelectedKey;
+  const effectiveMultipleSelectionKeys = showOtherOption
+    ? Array.from(new Set(effectiveSelectedKeys.map((key) => displayOptionKeys.has(key) ? key : OTHER_OPTION_KEY)))
+    : effectiveSelectedKeys;
+
+  const buildCodingFromKey = (key: string, otherOverride = resolvedOtherText): Coding | null => {
+    if (key === OTHER_OPTION_KEY) {
+      const text = otherOverride.trim();
+      return text ? { code: text, display: text, system: codeSystem } : null;
+    }
+    const opt = options.find((entry) => normalizeOptionKey(entry.key) === key);
+    return {
+      code: key,
+      display: opt?.text || key,
+      system: codeSystem,
+    };
+  };
+
+  const commitOtherText = (text = resolvedOtherText) => {
+    if (!showOtherOption || effectiveReadOnly) return;
+    const trimmed = text.trim();
+    if (selectionType === "multiple") {
+      const nextKeys = effectiveMultipleSelectionKeys.includes(OTHER_OPTION_KEY)
+        ? effectiveMultipleSelectionKeys
+        : [...effectiveMultipleSelectionKeys, OTHER_OPTION_KEY];
+      setSelectedKeys(nextKeys);
+      const codings = nextKeys
+        .map((key) => buildCodingFromKey(key, trimmed))
+        .filter((entry): entry is Coding => Boolean(entry));
+      updateActiveData(codings.length > 0 ? codings : null);
+      return;
+    }
+
+    setSelectedKey(trimmed ? OTHER_OPTION_KEY : undefined);
+    updateActiveData(trimmed ? { code: trimmed, display: trimmed, system: codeSystem } : null);
+  };
 
   const handleCheckboxChange = (key: string, checked?: boolean) => {
+    if (controlsDisabled) return;
     let newKeys: string[];
     if (checked) {
-      newKeys = [...effectiveSelectedKeys, key];
+      newKeys = Array.from(new Set([...effectiveMultipleSelectionKeys, key]));
     } else {
-      newKeys = effectiveSelectedKeys.filter(k => k !== key);
+      newKeys = effectiveMultipleSelectionKeys.filter(k => k !== key);
     }
     setSelectedKeys(newKeys);
     // Update activeData with array of Coding objects
-    const codings: Coding[] = newKeys.map(k => {
-      const opt = options.find(o => o.key === k);
-      return {
-        code: k,
-        display: opt?.text || k,
-        system: codeSystem,
-      };
-    });
+    const codings: Coding[] = newKeys
+      .map(k => buildCodingFromKey(k))
+      .filter((entry): entry is Coding => Boolean(entry));
     updateActiveData(codings.length > 0 ? codings : null);
   };
 
   const showChildren = conditionalCodes && effectiveSelectedKey && conditionalCodes.includes(effectiveSelectedKey);
 
   const handleOptionChoiceChange = (ev: any, option: IChoiceGroupOption) => {
-    setSelectedKey(option?.key);
+    if (controlsDisabled) return;
+    const key = normalizeOptionKey(option?.key);
+    setSelectedKey(key);
     // Update activeData with Coding object
-    if (option?.key) {
+    if (key === OTHER_OPTION_KEY) {
+      commitOtherText(resolvedOtherText);
+    } else if (key) {
       updateActiveData({
-        code: option.key,
-        display: option.text || option.key,
+        code: key,
+        display: option.text || key,
         system: codeSystem,
       });
     } else {
@@ -256,16 +328,19 @@ export const SimpleCodeChecklist: React.FC<SimpleCodeChecklistProps> = ({
   };
 
   const renderSingleSelect = () => (
-    <OptionChoice
-      displayStyle="radio"
-      options={options}
-      selectedKey={effectiveSelectedKey}
-      onChange={handleOptionChoiceChange}
-      disabled={disabled}
-      required={required}
-      multiline={multiline}
-      labelPosition="none"
-    />
+    <>
+      <OptionChoice
+        displayStyle="radio"
+        options={renderedOptions}
+        selectedKey={effectiveSingleSelectionKey}
+        onChange={handleOptionChoiceChange}
+        disabled={controlsDisabled}
+        required={required}
+        multiline={multiline}
+        labelPosition="none"
+      />
+      {showOtherOption && effectiveSingleSelectionKey === OTHER_OPTION_KEY ? renderOtherInput() : null}
+    </>
   );
 
   const renderMultiSelect = () => (
@@ -278,17 +353,37 @@ export const SimpleCodeChecklist: React.FC<SimpleCodeChecklistProps> = ({
         width: '100%',
       }}
     >
-      {options.map((option, idx) => (
+      {renderedOptions.map((option, idx) => (
         <Checkbox
           key={`${option.key}-${idx}`}
           label={option.text}
-          checked={effectiveSelectedKeys.includes(option.key)}
-          onChange={(ev, checked) => handleCheckboxChange(option.key, checked)}
-          disabled={disabled}
+          checked={effectiveMultipleSelectionKeys.includes(normalizeOptionKey(option.key))}
+          onChange={(ev, checked) => handleCheckboxChange(normalizeOptionKey(option.key), checked)}
+          disabled={controlsDisabled}
         />
       ))}
+      {showOtherOption && effectiveMultipleSelectionKeys.includes(OTHER_OPTION_KEY) ? renderOtherInput() : null}
     </div>
   );
+
+  function renderOtherInput() {
+    return (
+      <TextField
+        value={resolvedOtherText}
+        placeholder={placeholder}
+        disabled={controlsDisabled}
+        readOnly={effectiveReadOnly}
+        onChange={(_, value) => setOtherText(value ?? "")}
+        onBlur={() => commitOtherText(resolvedOtherText)}
+        onKeyDown={(event: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+          if (event.key === "Enter") {
+            commitOtherText(resolvedOtherText);
+          }
+        }}
+        styles={{ root: { marginTop: 8, maxWidth: 320 } }}
+      />
+    );
+  }
 
   return (
     <LayoutItem
@@ -306,7 +401,7 @@ export const SimpleCodeChecklist: React.FC<SimpleCodeChecklistProps> = ({
       moisModule={moisModule}
       note={note}
       placement={placement}
-      readOnly={readOnly}
+      readOnly={effectiveReadOnly}
       required={required}
       section={section}
     >

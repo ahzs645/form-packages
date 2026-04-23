@@ -126,27 +126,26 @@ export const Numeric: React.FC<NumericProps> = ({
 }) => {
   const theme = useTheme();
   const sourceData = useSourceData();
-  const sectionContext = useSection();
+  const sectionContext = useSection(section);
   const [activeData, setActiveData] = useActiveDataForForms();
+  const effectiveFieldId = fieldId || id || sourceId;
+  const effectiveSourceId = sourceId || id || fieldId;
   React.useEffect(() => {
-    const targetFieldId = sourceId || id || fieldId;
-    if (!targetFieldId) return;
+    if (!effectiveFieldId) return;
     setActiveData((draft: any) => {
-      registerAuthorshipFieldTarget(draft, targetFieldId, sectionContext.authorshipPolicy);
+      registerAuthorshipFieldTarget(draft, effectiveFieldId, sectionContext.authorshipPolicy);
     });
-  }, [fieldId, id, sectionContext.authorshipPolicy, setActiveData, sourceId]);
+  }, [effectiveFieldId, sectionContext.authorshipPolicy, setActiveData]);
   const authorshipLockInfo = sectionContext.authorshipPolicy?.enabled
-    ? getAuthorshipLockInfo(activeData, { scope: 'field', fieldId: sourceId || id || fieldId }, sourceData?.userProfile?.identity?.fullName)
+    ? getAuthorshipLockInfo(activeData, { scope: 'field', fieldId: effectiveFieldId }, sourceData?.userProfile?.identity?.fullName)
     : { locked: false };
   const effectiveReadOnly = !!readOnly || !!authorshipLockInfo.locked;
 
-  // Get effective sourceId (from explicit prop, id prop, or fieldId)
-  const effectiveSourceId = sourceId || id || fieldId;
-  const activeValue = effectiveSourceId
-    ? readSectionActiveFieldValue(activeData, sectionContext, effectiveSourceId)
+  const activeValue = effectiveFieldId
+    ? readSectionActiveFieldValue(activeData, sectionContext, effectiveFieldId)
     : undefined;
-  const statusEntry = effectiveSourceId
-    ? readSectionFieldStatus(activeData, sectionContext, effectiveSourceId)
+  const statusEntry = effectiveFieldId
+    ? readSectionFieldStatus(activeData, sectionContext, effectiveFieldId)
     : undefined;
   const statusErrorMessage =
     statusEntry && typeof statusEntry === 'object' && typeof statusEntry.errorMessage === 'string'
@@ -183,21 +182,21 @@ export const Numeric: React.FC<NumericProps> = ({
       : (sourceValue !== undefined && localValue === '' ? String(sourceValue) : localValue);
 
   const updateActiveValue = useCallback((rawValue: string) => {
-    if (!effectiveSourceId) return;
+    if (!effectiveFieldId) return;
     if (effectiveReadOnly) return;
     setActiveData((draft: any) => {
       if (!rawValue) {
-        writeSectionActiveFieldValue(draft, sectionContext, effectiveSourceId, null, linkedFieldIds ?? []);
-        writeSectionFieldError(draft, sectionContext, effectiveSourceId, null);
+        writeSectionActiveFieldValue(draft, sectionContext, effectiveFieldId, null, linkedFieldIds ?? []);
+        writeSectionFieldError(draft, sectionContext, effectiveFieldId, null);
         return;
       }
       const nextValue = storeAsNumber
         ? (typeNumber === 'decimal' ? parseFloat(rawValue) : parseInt(rawValue, 10))
         : rawValue;
-      writeSectionActiveFieldValue(draft, sectionContext, effectiveSourceId, nextValue, linkedFieldIds ?? []);
-      writeSectionFieldError(draft, sectionContext, effectiveSourceId, null);
+      writeSectionActiveFieldValue(draft, sectionContext, effectiveFieldId, nextValue, linkedFieldIds ?? []);
+      writeSectionFieldError(draft, sectionContext, effectiveFieldId, null);
     });
-  }, [effectiveSourceId, linkedFieldIds, sectionContext, setActiveData, storeAsNumber, typeNumber, effectiveReadOnly]);
+  }, [effectiveFieldId, linkedFieldIds, sectionContext, setActiveData, storeAsNumber, typeNumber, effectiveReadOnly]);
 
   // Get size styles from theme
   const getSizeStyles = (): React.CSSProperties => {
@@ -239,9 +238,9 @@ export const Numeric: React.FC<NumericProps> = ({
     setLocalValue(val);
 
     const error = validate(val);
-    if (effectiveSourceId) {
+    if (effectiveFieldId) {
       setActiveData((draft: any) => {
-        writeSectionFieldError(draft, sectionContext, effectiveSourceId, error || null);
+        writeSectionFieldError(draft, sectionContext, effectiveFieldId, error || null);
       });
     }
 
@@ -256,15 +255,15 @@ export const Numeric: React.FC<NumericProps> = ({
         onChange(val || undefined);
       }
     }
-  }, [effectiveSourceId, onChange, sectionContext, setActiveData, storeAsNumber, typeNumber, updateActiveValue, validate]);
+  }, [effectiveFieldId, onChange, sectionContext, setActiveData, storeAsNumber, typeNumber, updateActiveValue, validate]);
 
   const handleSpinChange = useCallback((_: any, newValue?: string) => {
     const val = newValue || '';
     setLocalValue(val);
     updateActiveValue(val);
-    if (effectiveSourceId) {
+    if (effectiveFieldId) {
       setActiveData((draft: any) => {
-        writeSectionFieldError(draft, sectionContext, effectiveSourceId, null);
+        writeSectionFieldError(draft, sectionContext, effectiveFieldId, null);
       });
     }
 
@@ -275,7 +274,7 @@ export const Numeric: React.FC<NumericProps> = ({
         onChange(val || undefined);
       }
     }
-  }, [effectiveSourceId, onChange, sectionContext, setActiveData, storeAsNumber, typeNumber, updateActiveValue]);
+  }, [effectiveFieldId, onChange, sectionContext, setActiveData, storeAsNumber, typeNumber, updateActiveValue]);
 
   const isEmpty = !displayValue || displayValue.trim() === '';
 

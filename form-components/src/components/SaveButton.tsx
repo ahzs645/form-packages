@@ -5,7 +5,11 @@
 
 import React, { useState } from 'react';
 import { DefaultButton, MessageBar, MessageBarType } from '@fluentui/react';
-import { useButtonSize, ButtonSize } from '../context/MoisContext';
+import { useActiveData, useButtonSize, ButtonSize, useSourceData } from '../context/MoisContext';
+import {
+  applyShimmedMoisLifecyclePreviewState,
+  recordMoisRuntimeAction,
+} from '../runtime/mois-contract';
 
 export interface SaveButtonProps {
   /** Indicate whether the button is disabled or not */
@@ -39,9 +43,25 @@ export const SaveButton: React.FC<SaveButtonProps> = ({
   text = 'Save draft',
 }) => {
   const [showToast, setShowToast] = useState(false);
+  const sourceData = useSourceData();
+  const [activeData, setActiveData] = useActiveData();
 
   // Get theme-based button styles (centralized)
   const buttonStyles = useButtonSize(size);
+
+  const applyDefaultSave = () => {
+    const payload = getSaveData?.() ?? { formData: activeData?.field?.data ?? {} };
+    applyShimmedMoisLifecyclePreviewState(sourceData, 'saveDraft', payload);
+    setActiveData((draft: any) => {
+      draft.field = draft.field || { data: {}, status: {}, history: [] };
+      if (payload?.formData) {
+        draft.field.data = { ...(draft.field?.data || {}), ...payload.formData };
+      }
+      recordMoisRuntimeAction(draft, 'saveDraft', payload);
+    });
+    setShowToast(true);
+    setTimeout(() => setShowToast(false), 3000);
+  };
 
   const handleClick = () => {
     if (onClick) {
@@ -49,9 +69,7 @@ export const SaveButton: React.FC<SaveButtonProps> = ({
     } else if (onSave) {
       onSave();
     } else {
-      // Default save action - show toast notification
-      setShowToast(true);
-      setTimeout(() => setShowToast(false), 3000);
+      applyDefaultSave();
     }
   };
 

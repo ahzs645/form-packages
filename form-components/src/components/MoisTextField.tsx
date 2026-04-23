@@ -7,7 +7,11 @@ import React from 'react';
 import { TextField, Label, ITextFieldStyles } from '@fluentui/react';
 import { useSection, useActiveData, useSourceData, useTheme } from '../context/MoisContext';
 import { getAuthorshipLockInfo, registerAuthorshipFieldTarget } from '../authorship';
-import { readSectionActiveFieldValue, readSectionFieldStatus } from '../runtime/mois-contract';
+import {
+  readSectionActiveFieldValue,
+  readSectionFieldStatus,
+  writeSectionActiveFieldValue,
+} from '../runtime/mois-contract';
 
 export interface MoisTextFieldProps {
   fieldId?: string;
@@ -84,6 +88,11 @@ export const MoisTextField: React.FC<MoisTextFieldProps> = ({
     event: React.FormEvent<HTMLInputElement | HTMLTextAreaElement>,
     newValue?: string
   ) => {
+    if (!effectiveReadOnly && resolvedFieldId) {
+      setActiveData((draft: any) => {
+        writeSectionActiveFieldValue(draft, section, resolvedFieldId, newValue ?? '');
+      });
+    }
     if (onChange) {
       onChange(event, newValue);
     }

@@ -24,14 +24,11 @@ const _collectComponentPayloads = (fd) => {
   const DCOUpdates = Object.values(dcoGroups).flatMap((entry) => Array.isArray(entry) ? entry : [])
   const panelUpdates = Object.values(webformGroups).flatMap((entry) => Array.isArray(entry?.panelUpdates) ? entry.panelUpdates : [])
   const narratives = Object.values(webformGroups).flatMap((entry) => Array.isArray(entry?.narratives) ? entry.narratives : [])
-  const webformUpdate = panelUpdates.length || narratives.length
-    ? {
-        ...(panelUpdates.length ? { panelUpdates } : {}),
-        ...(narratives.length ? { narratives } : {}),
-      }
-    : null
+  const panels = panelUpdates.length ? panelUpdates : undefined
+  const linkedPanels = panelUpdates.length ? panelUpdates : undefined
+  const webformUpdate = narratives.length ? { narratives } : null
 
-  return { DCOUpdates, webformUpdate }
+  return { DCOUpdates, webformUpdate, panels, linkedPanels, narratives: narratives.length ? narratives : undefined }
 }
 
 const _buildDefaultSavePayload = (fd, formDataOverride) => {
@@ -39,6 +36,9 @@ const _buildDefaultSavePayload = (fd, formDataOverride) => {
   return {
     formData: formDataOverride ?? fd?.field?.data,
     webformUpdate: componentPayload.webformUpdate,
+    panels: componentPayload.panels,
+    linkedPanels: componentPayload.linkedPanels,
+    narratives: componentPayload.narratives,
     DCOUpdates: componentPayload.DCOUpdates,
   }
 }

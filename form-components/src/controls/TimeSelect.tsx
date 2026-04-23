@@ -6,9 +6,10 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { MaskedTextField, Label, ITextFieldProps } from '@fluentui/react';
 import { LayoutItem } from './LayoutItem';
-import { useTheme, useSection } from '../context/MoisContext';
+import { useTheme, useSection, useSourceData } from '../context/MoisContext';
 import { useActiveDataForForms } from '../hooks/form-state';
 import {
+  getSectionSourceTarget,
   readSectionActiveFieldValue,
   readSectionFieldStatus,
   writeSectionActiveFieldValue,
@@ -112,13 +113,21 @@ export const TimeSelect: React.FC<TimeSelectProps> = ({
 }) => {
   const sectionContext = useSection(section);
   const [activeData, setActiveData] = useActiveDataForForms();
-  const effectiveFieldId = sourceId || fieldId || id;
+  const sourceData = useSourceData();
+  const effectiveFieldId = fieldId || id || sourceId;
+  const effectiveSourceId = sourceId || id || fieldId;
   const activeValue = effectiveFieldId
     ? readSectionActiveFieldValue(activeData, sectionContext, effectiveFieldId)
     : undefined;
+  const sourceValue = (() => {
+    if (!effectiveSourceId) return undefined;
+    const sourceTarget = getSectionSourceTarget(sourceData, sectionContext);
+    const value = sourceTarget?.[effectiveSourceId];
+    return typeof value === 'string' ? value : undefined;
+  })();
   const resolvedValue = controlledValue !== undefined
     ? controlledValue
-    : (typeof activeValue === 'string' ? activeValue : defaultValue);
+    : (typeof activeValue === 'string' ? activeValue : (sourceValue ?? defaultValue));
   const [internalValue, setInternalValue] = useState(resolvedValue);
   const statusEntry = effectiveFieldId
     ? readSectionFieldStatus(activeData, sectionContext, effectiveFieldId)
@@ -161,6 +170,7 @@ export const TimeSelect: React.FC<TimeSelectProps> = ({
     event: React.FormEvent<HTMLInputElement | HTMLTextAreaElement>,
     newValue?: string
   ) => {
+    if (readOnly) return;
     const val = newValue || '';
 
     if (controlledValue === undefined) {

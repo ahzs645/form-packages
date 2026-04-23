@@ -7,7 +7,11 @@ import React, { useMemo, useCallback, useRef, useEffect } from 'react';
 import { Dropdown, IDropdownOption, IDropdownStyles } from '@fluentui/react';
 import { useSection, useActiveData, useSourceData, useCodeList } from '../context/MoisContext';
 import { getAuthorshipLockInfo, registerAuthorshipFieldTarget } from '../authorship';
-import { readSectionActiveFieldValue, readSectionFieldStatus } from '../runtime/mois-contract';
+import {
+  readSectionActiveFieldValue,
+  readSectionFieldStatus,
+  writeSectionActiveFieldValue,
+} from '../runtime/mois-contract';
 
 export interface MoisDropdownProps {
   fieldId?: string;
@@ -79,10 +83,13 @@ export const MoisDropdown: React.FC<MoisDropdownProps> = ({
   const fieldStatus = readSectionFieldStatus(activeData, section, resolvedFieldId);
 
   // Get value from props or activeData
-  const value = propValue
+  const rawValue = propValue
     ?? readSectionActiveFieldValue(activeData, section, resolvedFieldId)
     ?? defaultValue
     ?? '';
+  const value = rawValue && typeof rawValue === 'object'
+    ? ((rawValue as any).code ?? (rawValue as any).key ?? (rawValue as any).display ?? '')
+    : rawValue;
 
   // Memoize options to prevent recreating array on every render
   const options: IDropdownOption[] = useMemo(() => {
@@ -109,10 +116,15 @@ export const MoisDropdown: React.FC<MoisDropdownProps> = ({
     event: React.FormEvent<HTMLDivElement>,
     option?: IDropdownOption
   ) => {
+    if (!effectiveReadOnly && resolvedFieldId) {
+      setActiveData((draft: any) => {
+        writeSectionActiveFieldValue(draft, section, resolvedFieldId, option?.key ?? null);
+      });
+    }
     if (onChangeRef.current) {
       onChangeRef.current(event, option);
     }
-  }, []);
+  }, [effectiveReadOnly, resolvedFieldId, section, setActiveData]);
 
   // Memoize size configuration
   const sizeConfig = useMemo(() => {

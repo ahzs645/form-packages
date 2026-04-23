@@ -143,4 +143,11 @@ export class PreviewAjv {
   compile(schema: JsonSchema) {
     return (data: unknown) => this.validate(schema, data);
   }
+
+  errorsText(errors: PreviewAjvError[] | null | undefined = this.errors): string {
+    if (!errors || errors.length === 0) return "No errors";
+    return errors
+      .map((error) => `${error.instancePath || "data"} ${error.message}`)
+      .join(", ");
+  }
 }

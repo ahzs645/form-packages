@@ -889,7 +889,7 @@ export const buildScope = (): Record<string, any> => ({
     name: 'FormPreview',
     description: '',
     version: { major: 1, minor: 0, patch: 0 },
-    type: 'form',
+    type: 'ATTACHMENT',
     owner: 'Preview',
     author: 'Preview',
     publisher: 'Preview',

@@ -1,6 +1,10 @@
 import React from 'react';
 import { PrimaryButton } from '@fluentui/react';
 import { useActiveData, useButtonSize, ButtonSize, useSourceData } from '../context/MoisContext';
+import {
+  applyShimmedMoisLifecyclePreviewState,
+  recordMoisRuntimeAction,
+} from '../runtime/mois-contract';
 
 export interface SubmitButtonProps {
   /** Should the form be automatically signed when submitted? */
@@ -50,6 +54,23 @@ export const SubmitButton: React.FC<SubmitButtonProps> = ({
       onClick(e);
     } else if (onSubmit) {
       onSubmit(sourceData, activeData, autoSign, noClose, getSaveData);
+    } else {
+      const action = autoSign ? 'signSubmit' : 'saveSubmit';
+      const payload = getSaveData?.(sourceData, activeData) ?? { formData: activeData?.field?.data ?? {} };
+      applyShimmedMoisLifecyclePreviewState(sourceData, action, payload);
+      setActiveData((draft: any) => {
+        draft.field = draft.field || { data: {}, status: {}, history: [] };
+        if (payload?.formData) {
+          draft.field.data = { ...(draft.field?.data || {}), ...payload.formData };
+        }
+        draft.uiState = draft.uiState || { sections: {} };
+        draft.uiState.sections = draft.uiState.sections || {};
+        draft.uiState.sections[0] = {
+          ...(draft.uiState.sections[0] || {}),
+          isComplete: true,
+        };
+        recordMoisRuntimeAction(draft, action, payload);
+      });
     }
   };
 

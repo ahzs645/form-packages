@@ -8,6 +8,7 @@ describe("buildScope", () => {
     expect(typeof scope.MoisDialog).toBe("function");
     expect(typeof scope.MoisDropdown).toBe("function");
     expect(typeof scope.MoisTextField).toBe("function");
+    expect(scope.Identity.type).toBe("ATTACHMENT");
   });
 
   it("exposes NHForms helper modules under their Identity names", () => {
@@ -19,6 +20,8 @@ describe("buildScope", () => {
     expect(scope.CommonSchemaDefn?.commonSchemaDefn).toBeTruthy();
     expect(typeof scope.FormSessionRuntime?.FormSessionProvider).toBe("function");
     expect(typeof scope.UseChangeWatch?.useChangeWatch).toBe("function");
+    expect(typeof scope.MoisFunction?.Ajv).toBe("function");
+    expect(typeof scope.MoisFunction?.showValidationErrors).toBe("function");
   });
 
   it("mutates preview lifecycle state using Shimmed save and sign semantics", () => {
