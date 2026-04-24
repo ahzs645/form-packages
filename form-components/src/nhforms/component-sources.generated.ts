@@ -1780,14 +1780,23 @@ const checkChoiceMatch = (fieldValue, optionValues, invert = false) => {
     return invert // If no value and inverted (not-selected), return true
   }
 
-  // Handle array values (multi-select fields)
-  if (Array.isArray(fieldValue)) {
-    const hasMatch = optionValues.some(opt => fieldValue.includes(opt))
-    return invert ? !hasMatch : hasMatch
+  const normalizeComparableValues = (value) => {
+    if (Array.isArray(value)) {
+      return value.flatMap((entry) => normalizeComparableValues(entry))
+    }
+    if (value && typeof value === 'object') {
+      return [value.code, value.display, value.value, value.text]
+        .filter((entry) => entry !== null && entry !== undefined)
+        .map((entry) => String(entry))
+    }
+    return [String(value)]
   }
 
-  // Handle single value
-  const hasMatch = optionValues.includes(fieldValue)
+  const normalizedOptionValues = optionValues.map((entry) => String(entry))
+  const fieldValues = normalizeComparableValues(fieldValue)
+
+  // Handle array values (multi-select fields)
+  const hasMatch = normalizedOptionValues.some(opt => fieldValues.includes(opt))
   return invert ? !hasMatch : hasMatch
 }
 
