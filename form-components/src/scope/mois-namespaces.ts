@@ -90,6 +90,34 @@ const triggerToast = (message: string) => {
   window.dispatchEvent(new CustomEvent('mois-toast', { detail: message }));
 };
 
+type ValidationDispatch = (event: { type: string; message: string; detailErrors?: unknown[] }) => void;
+
+function getObjectProperty(value: unknown, key: string): unknown {
+  return value && typeof value === 'object' ? (value as Record<string, unknown>)[key] : undefined;
+}
+
+function normalizeValidationErrors(validatorOrErrors: unknown): unknown[] {
+  if (Array.isArray(validatorOrErrors)) return validatorOrErrors;
+  const errors = getObjectProperty(validatorOrErrors, 'errors');
+  if (Array.isArray(errors)) return errors;
+  return [];
+}
+
+function reportPreviewValidationErrors(validatorOrErrors: unknown = [], dispatch?: ValidationDispatch) {
+  const errors = normalizeValidationErrors(validatorOrErrors);
+  const errorsText = getObjectProperty(validatorOrErrors, 'errorsText');
+  const message =
+    typeof errorsText === 'function'
+      ? `Validation errors: ${errorsText(errors, { dataVar: 'Saved form data' })}`
+      : `Validation errors: ${errors.length}`;
+
+  console.log('showValidationErrors called', errors);
+  if (typeof dispatch === 'function') {
+    dispatch({ type: 'error', message, detailErrors: errors });
+  }
+  triggerToast(message);
+}
+
 function applyPreviewFormAction(action: 'saveDraft' | 'saveSubmit' | 'signSubmit', sd?: any, fd?: any, data?: any) {
   applyShimmedMoisLifecyclePreviewState(sd, action, data);
   if (typeof fd?.setFormData === 'function') {
@@ -138,10 +166,7 @@ function applyPreviewSignatureAction(action: 'sign' | 'unsign', reason?: string,
  */
 export const MoisFunction = {
   Ajv: PreviewAjv,
-  showValidationErrors: (errors: any[] = []) => {
-    console.log('MoisFunction.showValidationErrors called', errors);
-    triggerToast(`Validation errors: ${errors?.length || 0}`);
-  },
+  showValidationErrors: reportPreviewValidationErrors,
   notify: (opts: any) => {
     console.log('MoisFunction.notify called with:', JSON.stringify(opts));
     const message = typeof opts === 'string' ? opts : opts?.message || 'Notification';
@@ -399,10 +424,7 @@ export const AihsActions = {
     const message = typeof opts === 'string' ? opts : opts?.message || 'Notification';
     triggerToast(message);
   },
-  showValidationErrors: (errors: any[]) => {
-    console.log('AihsActions.showValidationErrors called', errors);
-    triggerToast(`Validation errors: ${errors?.length || 0}`);
-  },
+  showValidationErrors: reportPreviewValidationErrors,
 };
 
 /**
