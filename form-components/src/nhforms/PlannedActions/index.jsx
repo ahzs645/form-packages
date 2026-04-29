@@ -9,7 +9,7 @@ const PlannedActions = ({
   selectText = "Select actions",
   filterPred=plannedActionsActiveOnly,
   ...props
-}: Props) => {
+}) => {
 
   return (
     <ListSelection
@@ -20,7 +20,7 @@ const PlannedActions = ({
 
 }
 
-const plannedActionsColumns: ColumnSelection = [
+const plannedActionsColumns = [
   {
     id: "plannedActionId",
     type: "key",

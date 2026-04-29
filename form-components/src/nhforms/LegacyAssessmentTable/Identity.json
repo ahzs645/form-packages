@@ -1,0 +1,25 @@
+{
+  "name": "LegacyAssessmentTable",
+  "title": "Legacy Assessment Table",
+  "description": "Renders legacy two-column assessment score tables with bound inputs and calculated totals.",
+  "version": {
+    "major": 0,
+    "minor": 1,
+    "patch": 0
+  },
+  "type": "component",
+  "owner": "MOIS Exporter",
+  "author": "MOIS Exporter",
+  "publisher": "MOIS",
+  "globalIdentifier": "",
+  "requiredFormViewerVersion": {
+    "major": 0,
+    "minor": 1,
+    "patch": 0
+  },
+  "requiredMoisVersion": {
+    "major": 2,
+    "minor": 28,
+    "patch": 5
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "name": "LegacyPatientFileSections",
+  "title": "Legacy Patient File Sections",
+  "description": "Renders legacy encounter, document, and client demographic sections bound to the loaded patient file.",
+  "version": {
+    "major": 0,
+    "minor": 1,
+    "patch": 0
+  },
+  "type": "component",
+  "owner": "MOIS Exporter",
+  "author": "MOIS Exporter",
+  "publisher": "MOIS",
+  "globalIdentifier": "",
+  "requiredFormViewerVersion": {
+    "major": 0,
+    "minor": 1,
+    "patch": 0
+  },
+  "requiredMoisVersion": {
+    "major": 2,
+    "minor": 28,
+    "patch": 5
+  }
+}

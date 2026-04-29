@@ -12,6 +12,13 @@ export interface ActionButtonProps {
   iconName?: string;
   /** Click handler */
   onClick?: () => void;
+  /** Handler aliases used by legacy NHForms Action.* buttons */
+  onRefresh?: () => void;
+  onAccept?: () => void;
+  onAdd?: () => void;
+  onCancel?: () => void;
+  onDelete?: () => void;
+  onInfo?: () => void;
   /** Whether the button is disabled */
   disabled?: boolean;
   /** Aria label for accessibility */
@@ -96,16 +103,24 @@ const Bar: React.FC<ActionBarProps> = ({
 const Button: React.FC<ActionButtonProps> = ({
   iconName = 'Add',
   onClick,
+  onRefresh,
+  onEdit,
+  onAccept,
+  onAdd,
+  onCancel,
+  onDelete,
+  onInfo,
   disabled,
   ariaLabel,
   title,
 }) => {
   const iconProps: IIconProps = { iconName };
+  const clickHandler = onClick || onRefresh || onEdit || onAccept || onAdd || onCancel || onDelete || onInfo;
 
   return (
     <IconButton
       iconProps={iconProps}
-      onClick={onClick}
+      onClick={clickHandler}
       disabled={disabled}
       ariaLabel={ariaLabel || iconName}
       title={title}

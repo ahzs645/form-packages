@@ -23,6 +23,33 @@ const DATE_PLACEHOLDER_MAP: Record<SupportedDateFormat, string> = {
   'MM-dd-yyyy': 'MM-DD-YYYY',
   'yyyy-MM-dd': 'YYYY-MM-DD',
 };
+const DEFAULT_DATE_PICKER_STRINGS: NonNullable<IDatePickerProps['strings']> = {
+  months: [
+    'January',
+    'February',
+    'March',
+    'April',
+    'May',
+    'June',
+    'July',
+    'August',
+    'September',
+    'October',
+    'November',
+    'December',
+  ],
+  shortMonths: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
+  days: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'],
+  shortDays: ['S', 'M', 'T', 'W', 'T', 'F', 'S'],
+  goToToday: 'Go to today',
+  prevMonthAriaLabel: 'Go to previous month',
+  nextMonthAriaLabel: 'Go to next month',
+  prevYearAriaLabel: 'Go to previous year',
+  nextYearAriaLabel: 'Go to next year',
+  closeButtonAriaLabel: 'Close date picker',
+  isRequiredErrorMessage: 'A date is required',
+  invalidInputErrorMessage: 'Enter a valid date',
+};
 
 export interface DateSelectProps {
   /** Props for the attached action bar (eg: onEdit, onDelete, etc) */
@@ -281,6 +308,7 @@ export const DateSelect: React.FC<DateSelectProps> = ({
   );
   const resolvedPlaceholder = placeholder ?? DATE_PLACEHOLDER_MAP[dateFormat] ?? DATE_PLACEHOLDER_MAP[DEFAULT_DATE_FORMAT];
   const datePickerStrings = {
+    ...DEFAULT_DATE_PICKER_STRINGS,
     invalidInputErrorMessage: `Enter a valid date in ${resolvedPlaceholder} format`,
     ...(datePickerProps?.strings ?? {}),
   } as IDatePickerProps['strings'];

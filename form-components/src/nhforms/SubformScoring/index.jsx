@@ -14,7 +14,143 @@ const {
   DefaultButton,
   Dialog,
   DialogType,
+  Toggle,
 } = Fluent
+
+var __SubformScoringSessionContext = (() => {
+  const root = typeof globalThis !== "undefined"
+    ? globalThis
+    : (typeof window !== "undefined" ? window : {})
+  if (!root.__MOIS_FORM_STATE_CONTEXT__) {
+    root.__MOIS_FORM_STATE_CONTEXT__ = React.createContext(null)
+  }
+  return root.__MOIS_FORM_STATE_CONTEXT__
+})()
+
+var __cloneSubformScoringSessionValue = (value, fallback) => {
+  const target = value === undefined ? fallback : value
+  return JSON.parse(JSON.stringify(target))
+}
+
+var cloneFormSessionState = typeof cloneFormSessionState !== "undefined"
+  ? cloneFormSessionState
+  : (fd) => ({
+      field: {
+        data: __cloneSubformScoringSessionValue(fd?.field?.data, {}),
+        status: __cloneSubformScoringSessionValue(fd?.field?.status, {}),
+        history: __cloneSubformScoringSessionValue(Array.isArray(fd?.field?.history) ? fd.field.history : [], []),
+      },
+      uiState: {
+        ...__cloneSubformScoringSessionValue(fd?.uiState || {}, {}),
+        sections: __cloneSubformScoringSessionValue(fd?.uiState?.sections ?? {}, {}),
+      },
+      tempArea: __cloneSubformScoringSessionValue(fd?.tempArea || {}, {}),
+    })
+
+var mergeFormSessionState = typeof mergeFormSessionState !== "undefined"
+  ? mergeFormSessionState
+  : (draft, sessionState) => {
+      if (!draft.field) {
+        draft.field = { data: {}, status: {}, history: [] }
+      }
+      if (!draft.field.data) draft.field.data = {}
+      if (!draft.field.status) draft.field.status = {}
+      if (!Array.isArray(draft.field.history)) draft.field.history = []
+
+      Object.entries(sessionState?.field?.data || {}).forEach(([fieldId, value]) => {
+        draft.field.data[fieldId] = __cloneSubformScoringSessionValue(value, null)
+      })
+      Object.entries(sessionState?.field?.status || {}).forEach(([fieldId, value]) => {
+        draft.field.status[fieldId] = __cloneSubformScoringSessionValue(value, null)
+      })
+      if (sessionState?.tempArea && typeof sessionState.tempArea === "object") {
+        draft.tempArea = {
+          ...(draft.tempArea || {}),
+          ...__cloneSubformScoringSessionValue(sessionState.tempArea, {}),
+        }
+      }
+    }
+
+var FormSessionProvider = typeof FormSessionProvider !== "undefined"
+  ? FormSessionProvider
+  : ({ children, initialFormData }) => {
+      const normalize = (input) => cloneFormSessionState(input)
+      const [formData, setFormDataState] = useState(() => normalize(initialFormData))
+
+      useEffect(() => {
+        setFormDataState(normalize(initialFormData))
+      }, [initialFormData])
+
+      const setFormData = useCallback((updater) => {
+        setFormDataState((prev) => {
+          if (typeof updater === "function") {
+            try {
+              const next = cloneFormSessionState(prev)
+              const result = updater(next)
+              return cloneFormSessionState(result || next)
+            } catch (error) {
+              return prev
+            }
+          }
+          if (updater && typeof updater === "object") {
+            return cloneFormSessionState({ ...prev, ...updater })
+          }
+          return prev
+        })
+      }, [])
+
+      return (
+        <__SubformScoringSessionContext.Provider value={{ formData, setFormData }}>
+          {children}
+        </__SubformScoringSessionContext.Provider>
+      )
+    }
+
+var useFormSessionData = typeof useFormSessionData !== "undefined"
+  ? useFormSessionData
+  : (selector) => {
+      const sessionContext = React.useContext(__SubformScoringSessionContext)
+      const [fallbackData, fallbackSetData] = useActiveData(selector)
+      const normalizedSessionData = useMemo(() => {
+        if (!sessionContext?.formData) return null
+        return {
+          ...sessionContext.formData,
+          field: sessionContext.formData.field || { data: {}, status: {}, history: [] },
+          uiState: {
+            sections: {},
+            ...(sessionContext.formData.uiState || {}),
+            sections: sessionContext.formData.uiState?.sections || {},
+          },
+          tempArea: sessionContext.formData.tempArea || {},
+        }
+      }, [sessionContext])
+      const sessionSetFormData = useCallback((updater) => {
+        sessionContext?.setFormData?.(updater)
+      }, [sessionContext])
+      if (!sessionContext) return [fallbackData, fallbackSetData]
+      const selected = selector ? selector(normalizedSessionData) : normalizedSessionData
+      const selectedWithSetter =
+        selected && typeof selected === "object" && !Array.isArray(selected)
+          ? { ...selected, setFormData: sessionSetFormData }
+          : selected
+      const scopedSetter = (updates) => {
+        if (!selector) {
+          sessionSetFormData(updates)
+          return
+        }
+        sessionSetFormData((draft) => {
+          const target = selector(draft)
+          if (!target || typeof target !== "object") return
+          if (typeof updates === "function") {
+            const result = updates(target)
+            if (result && typeof result === "object") Object.assign(target, result)
+            return
+          }
+          if (updates && typeof updates === "object") Object.assign(target, updates)
+        })
+      }
+      return [selectedWithSetter, scopedSetter]
+    }
 
 // ================================================
 // Scoring helpers (same logic as ScoringModule)
@@ -1075,6 +1211,10 @@ const SubformScoringInner = ({
       Array.isArray(dataEntryCalculatorConfig?.rows) &&
       dataEntryCalculatorConfig.rows.length > 0
   }, [isDataEntryMode, dataEntryCalculatorConfig])
+  const useBloodGlucoseReadingLayout =
+    isDataEntryMode &&
+    String(modalConfig?.layout || modalConfig?.variant || "").trim().toLowerCase() === "blood-glucose-reading"
+  const [showBloodGlucoseUsEntry, setShowBloodGlucoseUsEntry] = useState(false)
 
   const dataEntryValues = useMemo(() => {
     if (!isDataEntryMode) return {}
@@ -1819,6 +1959,114 @@ const SubformScoringInner = ({
     )
   }
 
+  const renderBloodGlucoseReadingEditor = () => {
+    const rowLabels = ["AC/B", "PC/B", "AC/L", "PC/L", "AC/D", "PC/D", "HS"]
+    const dateField = dataEntryFieldById.get("Date") || { id: "Date", label: "Select reading date" }
+    const commentsField = dataEntryFieldById.get("Comments") || { id: "Comments", label: "Comments", rows: 3 }
+    const fieldExists = (fieldId) => dataEntryFieldById.has(fieldId)
+    const renderNumberInput = (fieldId) => (
+      <input
+        id={fieldId}
+        type="number"
+        inputMode="decimal"
+        step="any"
+        value={dataEntryValues[fieldId] === null || dataEntryValues[fieldId] === undefined ? "" : String(dataEntryValues[fieldId])}
+        onChange={(event) => {
+          const nextRaw = event?.target?.value ?? ""
+          if (!nextRaw) {
+            setDataEntryValue(fieldId, null)
+            return
+          }
+          const parsed = Number(nextRaw)
+          setDataEntryValue(fieldId, Number.isFinite(parsed) ? parsed : nextRaw)
+        }}
+        style={{
+          width: "100%",
+          minWidth: "0",
+          border: `1px solid ${isDarkMode ? "#5a5a5a" : "#b8b8b8"}`,
+          backgroundColor: isDarkMode ? "#1a1a1a" : "#fff",
+          color: isDarkMode ? "#fff" : "#111",
+          padding: "4px 6px",
+          fontSize: "14px",
+          textAlign: "center",
+        }}
+      />
+    )
+
+    return (
+      <div data-component="SubForm" style={{ minWidth: "min(96vw, 760px)" }}>
+        <Stack tokens={{ childrenGap: 12 }}>
+          <div
+            data-field-id={dateField.id}
+            style={{ breakInside: "avoid", margin: "0 10px", flex: "2 2 0", minWidth: 80, maxWidth: 180 }}
+          >
+            <Label required={dateField.required === true}>{dateField.label || "Select reading date"}</Label>
+            <input
+              id={dateField.id}
+              type="date"
+              value={dataEntryValues[dateField.id] ?? ""}
+              onChange={(event) => setDataEntryValue(dateField.id, event?.target?.value ?? "")}
+              style={_LOCAL_INPUT_STYLE(isDarkMode)}
+            />
+          </div>
+
+          <Toggle
+            label="Show US (mg/dl) entry"
+            checked={showBloodGlucoseUsEntry}
+            onText="Yes"
+            offText="No"
+            onChange={(_event, checked) => setShowBloodGlucoseUsEntry(Boolean(checked))}
+          />
+
+          <table
+            id="entryTable"
+            style={{
+              width: "100%",
+              border: "1px solid black",
+              borderCollapse: "collapse",
+              marginBottom: 10,
+            }}
+          >
+            <thead>
+              <tr>
+                <th style={{ width: showBloodGlucoseUsEntry ? "40%" : "50%" }} />
+                <th style={{ width: showBloodGlucoseUsEntry ? "30%" : "50%" }}>CAD (mmol/L)</th>
+                {showBloodGlucoseUsEntry && <th style={{ width: "30%" }}>US (mg/dL)</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {rowLabels.map((label, index) => {
+                const cadFieldId = `${label}.cad`
+                const usFieldId = `${label}.us`
+                if (!fieldExists(cadFieldId) && !fieldExists(usFieldId)) return null
+                return (
+                  <tr key={`bg-reading-${label}`} style={{ backgroundColor: index % 2 === 0 ? "whitesmoke" : "transparent" }}>
+                    <td style={{ border: "1px solid black", padding: "6px 8px", fontWeight: 600 }}>{label}</td>
+                    <td style={{ border: "1px solid black", padding: "6px 8px" }}>{renderNumberInput(cadFieldId)}</td>
+                    {showBloodGlucoseUsEntry && (
+                      <td style={{ border: "1px solid black", padding: "6px 8px" }}>{renderNumberInput(usFieldId)}</td>
+                    )}
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+
+          <div data-field-id={commentsField.id} style={{ breakInside: "avoid", margin: "0 10px", maxWidth: 360 }}>
+            <Label>{commentsField.label || "Comments"}</Label>
+            <textarea
+              id={commentsField.id}
+              rows={commentsField.rows || 3}
+              value={dataEntryValues[commentsField.id] ?? ""}
+              onChange={(event) => setDataEntryValue(commentsField.id, event?.target?.value ?? "")}
+              style={_LOCAL_TEXTAREA_STYLE(isDarkMode)}
+            />
+          </div>
+        </Stack>
+      </div>
+    )
+  }
+
   const renderSummaryItem = (item, index) => {
     if (isDataEntryMode) {
       switch (item.type) {
@@ -2010,7 +2258,9 @@ const SubformScoringInner = ({
       >
         {isDataEntryMode ? (
           <div style={{ maxHeight: "65vh", overflowY: "auto", paddingRight: "4px" }}>
-            {isMorphineCalculatorMode ? (
+            {useBloodGlucoseReadingLayout ? (
+              renderBloodGlucoseReadingEditor()
+            ) : isMorphineCalculatorMode ? (
               renderMorphineCalculator()
             ) : dataEntryFields.length > 0 ? (
               <div style={{ display: "flex", flexWrap: "wrap", columnGap: "12px", rowGap: "10px" }}>

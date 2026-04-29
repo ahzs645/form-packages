@@ -1,4 +1,4 @@
-const { useEffect, useMemo } = React
+const { useEffect, useMemo, useState } = React
 const { Stack, StackItem, Label, Link, Text, TextField } = Fluent
 
 const isNonEmptyString = (value) => typeof value === "string" && value.trim().length > 0
@@ -249,14 +249,21 @@ const PastMeasurementField = ({
   saveUnits,
   showHistory = true,
   showHistoryList = false,
+  showHistoryOnFocus = false,
+  historyInitiallyVisible = false,
   emptyHistoryText = "No past measurement available",
   graphLinkText = "Graph",
   graphHref,
   openGraphInNewTab = true,
+  abnormalLow,
+  abnormalHigh,
+  abnormalMessage = "Abnormal",
+  normalMessage = "",
   readOnly = false,
   disabled = false,
   onChange,
 }) => {
+  const [historyFocused, setHistoryFocused] = useState(historyInitiallyVisible)
   const [fd, setFormData] = useActiveData()
   const sd = useSourceData()
   const componentId = id || fieldId || "PastMeasurementField"
@@ -318,6 +325,17 @@ const PastMeasurementField = ({
   const resolvedCurrentValue = hasMeaningfulValue(storedValue)
     ? storedValue
     : linkedObservationItem?.valueText ?? latestHistoryItem?.valueText ?? ""
+  const numericCurrentValue = Number(stringifyValue(resolvedCurrentValue))
+  const hasNumericCurrentValue = Number.isFinite(numericCurrentValue)
+  const abnormalLowValue = Number(abnormalLow)
+  const abnormalHighValue = Number(abnormalHigh)
+  const hasAbnormalLow = Number.isFinite(abnormalLowValue)
+  const hasAbnormalHigh = Number.isFinite(abnormalHighValue)
+  const isAbnormal = hasNumericCurrentValue && (
+    (hasAbnormalLow && numericCurrentValue < abnormalLowValue) ||
+    (hasAbnormalHigh && numericCurrentValue > abnormalHighValue)
+  )
+  const shouldShowHistory = showHistory && (!showHistoryOnFocus || historyFocused)
 
   useEffect(() => {
     if (persistenceMode !== "observationAndForm") {
@@ -446,12 +464,16 @@ const PastMeasurementField = ({
             value={stringifyValue(resolvedCurrentValue)}
             placeholder={placeholder}
             onChange={handleValueChange}
+            onFocus={() => setHistoryFocused(true)}
+            onBlur={() => {
+              if (!historyInitiallyVisible) setHistoryFocused(false)
+            }}
             disabled={disabled}
             readOnly={readOnly}
           />
         </StackItem>
 
-        {showHistory ? (
+        {shouldShowHistory ? (
           <StackItem styles={{ root: { minWidth: 220 } }}>
             <Stack horizontal verticalAlign="center" tokens={{ childrenGap: 8 }} styles={{ root: { flexWrap: "wrap" } }}>
               {isNonEmptyString(graphLinkText) ? (
@@ -470,12 +492,25 @@ const PastMeasurementField = ({
                 )
               ) : null}
               <Text variant="small">{historySummary}</Text>
+              {hasNumericCurrentValue && (isAbnormal ? abnormalMessage : normalMessage) ? (
+                <Text
+                  variant="small"
+                  styles={{
+                    root: {
+                      color: isAbnormal ? "#a4262c" : "#107c10",
+                      fontWeight: 600,
+                    },
+                  }}
+                >
+                  {isAbnormal ? abnormalMessage : normalMessage}
+                </Text>
+              ) : null}
             </Stack>
           </StackItem>
         ) : null}
       </Stack>
 
-      {showHistory && showHistoryList && historyItems.length > 1 ? (
+      {shouldShowHistory && showHistoryList && historyItems.length > 1 ? (
         <Text variant="xSmall">Recent: {recentHistoryText}</Text>
       ) : null}
     </Stack>

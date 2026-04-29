@@ -1,0 +1,25 @@
+{
+  "name": "CustomJsxBlock",
+  "title": "Custom JSX Block",
+  "description": "Escape hatch for hand-authored JSX or HTML snippets that need to be emitted directly into generated MOIS forms.",
+  "version": {
+    "major": 0,
+    "minor": 1,
+    "patch": 0
+  },
+  "type": "component",
+  "owner": "MOIS Exporter",
+  "author": "MOIS Exporter",
+  "publisher": "MOIS",
+  "globalIdentifier": "",
+  "requiredFormViewerVersion": {
+    "major": 0,
+    "minor": 1,
+    "patch": 0
+  },
+  "requiredMoisVersion": {
+    "major": 2,
+    "minor": 28,
+    "patch": 5
+  }
+}

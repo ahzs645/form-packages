@@ -94,6 +94,27 @@ export interface TextAreaProps {
   inline?: boolean;
 }
 
+const coerceTextAreaValue = (input: unknown): string | undefined => {
+  if (input === undefined || input === null) return undefined;
+  if (typeof input === 'string') return input;
+  if (typeof input === 'number' || typeof input === 'boolean') return String(input);
+  if (Array.isArray(input)) {
+    const values = input.map(coerceTextAreaValue).filter((value): value is string => Boolean(value));
+    return values.length > 0 ? values.join(', ') : undefined;
+  }
+  if (typeof input === 'object') {
+    const record = input as Record<string, unknown>;
+    return (
+      coerceTextAreaValue(record.text) ??
+      coerceTextAreaValue(record.display) ??
+      coerceTextAreaValue(record.name) ??
+      coerceTextAreaValue(record.value) ??
+      coerceTextAreaValue(record.code)
+    );
+  }
+  return String(input);
+};
+
 /**
  * TextArea - The TextArea control is used to display and edit text elements.
  */
@@ -149,12 +170,12 @@ export const TextArea: React.FC<TextAreaProps> = ({
   const activeValue = effectiveFieldId
     ? readSectionActiveFieldValue(activeData, sectionContext, effectiveFieldId)
     : undefined;
-  const persistedValue = typeof activeValue === 'string' ? activeValue : undefined;
+  const persistedValue = coerceTextAreaValue(activeValue);
   const sourceValue = (() => {
     if (!effectiveSourceId) return undefined;
     const sourceTarget = getSectionSourceTarget(sourceData, sectionContext);
     const value = sourceTarget?.[effectiveSourceId];
-    return value !== undefined && value !== null ? String(value) : undefined;
+    return coerceTextAreaValue(value);
   })();
   const statusEntry = effectiveFieldId
     ? readSectionFieldStatus(activeData, sectionContext, effectiveFieldId)

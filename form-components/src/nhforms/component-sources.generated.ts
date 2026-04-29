@@ -1800,6 +1800,41 @@ const checkChoiceMatch = (fieldValue, optionValues, invert = false) => {
   return invert ? !hasMatch : hasMatch
 }
 
+const normalizeComparableValue = (value) => {
+  if (value && typeof value === 'object') {
+    return value.code ?? value.display ?? value.value ?? value.text ?? ''
+  }
+  return value
+}
+
+const checkComparisonMatch = (fieldValue, operator, expectedValue) => {
+  const normalized = normalizeComparableValue(fieldValue)
+  if (operator === 'filled') {
+    if (Array.isArray(normalized)) return normalized.length > 0
+    if (normalized && typeof normalized === 'object') return Object.keys(normalized).length > 0
+    return normalized !== null && normalized !== undefined && String(normalized).trim() !== ''
+  }
+  if (operator === 'empty') {
+    return !checkComparisonMatch(fieldValue, 'filled', expectedValue)
+  }
+  if (normalized === null || normalized === undefined || normalized === '') return false
+
+  if (operator && operator.startsWith('number-')) {
+    const left = Number(normalized)
+    const right = Number(expectedValue)
+    if (!Number.isFinite(left) || !Number.isFinite(right)) return false
+    if (operator === 'number-gt') return left > right
+    if (operator === 'number-gte') return left >= right
+    if (operator === 'number-lt') return left < right
+    if (operator === 'number-lte') return left <= right
+    return left === right
+  }
+
+  const left = String(normalized)
+  const right = String(expectedValue ?? '')
+  return operator === 'not-equals' ? left !== right : left === right
+}
+
 /**
  * ConditionalField - A field wrapper with visibility rules
  *
@@ -1821,6 +1856,8 @@ const ConditionalField = ({
   controllerFieldId,
   showWhen = 'yes',
   optionValues,
+  operator,
+  compareValue,
   invertMatch = false,
   showWhenNull = false,
   containerStyle,
@@ -1843,6 +1880,9 @@ const ConditionalField = ({
     // If optionValues is provided, use choice matching instead of boolean matching
     if (optionValues && optionValues.length > 0) {
       isVisible = checkChoiceMatch(controllerValue, optionValues, invertMatch)
+    } else if (operator) {
+      const matches = checkComparisonMatch(controllerValue, operator, compareValue)
+      isVisible = invertMatch ? !matches : matches
     } else {
       // Boolean matching (yes/no)
       // When controller is null/unset, field is hidden (both show and hide rules)
@@ -2151,6 +2191,237 @@ const connectionsColumns: ColumnSelection = [
 const SelectActiveConnections = cr => (!cr.stopDate)
 
 const ConnectionsFields = "connectionId startDate stopDate connectionType {code display system} name"
+`,
+  './CustomJsxBlock/index.jsx': `const { useMemo } = React
+
+function CustomJsxBlock({
+  id,
+  fieldId,
+  label,
+  jsxSource,
+  source,
+  code,
+  mode = "jsx",
+  htmlSource,
+  style,
+}) {
+  const displaySource = useMemo(() => {
+    const raw = jsxSource || source || code || htmlSource || ""
+    return typeof raw === "string" ? raw.trim() : ""
+  }, [jsxSource, source, code, htmlSource])
+
+  if (mode === "html" || htmlSource) {
+    return (
+      <div
+        id={id || fieldId}
+        data-field-id={fieldId || id}
+        data-custom-jsx-block
+        style={style}
+        dangerouslySetInnerHTML={{ __html: htmlSource || displaySource }}
+      />
+    )
+  }
+
+  return (
+    <div
+      id={id || fieldId}
+      data-field-id={fieldId || id}
+      data-custom-jsx-block
+      style={{
+        border: "1px dashed #c8c6c4",
+        background: "#faf9f8",
+        color: "#323130",
+        padding: 8,
+        fontSize: 12,
+        whiteSpace: "pre-wrap",
+        ...style,
+      }}
+    >
+      {label ? <div style={{ fontWeight: 600, marginBottom: 4 }}>{label}</div> : null}
+      {displaySource || "Custom JSX source will render in the MOIS export."}
+    </div>
+  )
+}
+
+`,
+  './DentalWeightConverter/index.jsx': `const { useCallback, useMemo, useRef } = React
+
+const _sanitizeDentalWeight = (value) => {
+  const text = String(value ?? "")
+  const numeric = text.replace(/[^0-9.]/g, "").replace(/(\\.\\d?).*$/, "$1")
+  const parts = numeric.split(".")
+  if (parts.length > 2) {
+    return parts[0] + "." + parts.slice(1).join("").slice(0, 1)
+  }
+  return numeric
+}
+
+const _readDentalField = (fd, fieldId) => fd?.field?.data?.[fieldId] ?? fd?.formData?.[fieldId] ?? ""
+
+const _positiveNumber = (value) => {
+  const parsed = Number.parseFloat(value)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null
+}
+
+function DentalWeightConverter({
+  id = "dentalWeightConverter",
+  label = "Child's Weight",
+  helperText = "(automatically converted)",
+  kgFieldId = "cWeightkg",
+  lbFieldId = "cWeightlb",
+  kgSuffix = "kg",
+  lbSuffix = "lb",
+  clearText = "Clear Weights",
+  conversionFactor = 2.2,
+  precision = 1,
+}) {
+  const [fd, setFd] = useActiveData()
+  const lastEditedRef = useRef(null)
+  const data = fd?.field?.data || {}
+  const kgValue = _readDentalField(fd, kgFieldId)
+  const lbValue = _readDentalField(fd, lbFieldId)
+
+  const setDentalValues = useCallback((updates) => {
+    setFd((draft) => {
+      draft.field = draft.field || { data: {}, status: {} }
+      draft.field.data = draft.field.data || {}
+      draft.formData = draft.formData || {}
+      Object.assign(draft.field.data, updates)
+      Object.assign(draft.formData, updates)
+    })
+  }, [setFd])
+
+  const updateWeight = useCallback((fieldId, oppositeFieldId, value) => {
+    const nextValue = _sanitizeDentalWeight(value)
+    lastEditedRef.current = { fieldId, value: nextValue }
+    setDentalValues({
+      [fieldId]: nextValue,
+      [oppositeFieldId]: "",
+    })
+  }, [setDentalValues])
+
+  const convertWeights = useCallback(() => {
+    const fixedPrecision = Number.isFinite(Number(precision)) ? Number(precision) : 1
+    const factor = _positiveNumber(conversionFactor) || 2.2
+    const lastEdited = lastEditedRef.current
+    const pounds = _positiveNumber(lastEdited?.fieldId === lbFieldId ? lastEdited.value : data[lbFieldId])
+    const kilograms = _positiveNumber(lastEdited?.fieldId === kgFieldId ? lastEdited.value : data[kgFieldId])
+
+    if (pounds != null) {
+      lastEditedRef.current = null
+      setDentalValues({
+        [lbFieldId]: pounds.toFixed(fixedPrecision),
+        [kgFieldId]: (pounds / factor).toFixed(fixedPrecision),
+      })
+      return
+    }
+
+    if (kilograms != null) {
+      lastEditedRef.current = null
+      setDentalValues({
+        [kgFieldId]: kilograms.toFixed(fixedPrecision),
+        [lbFieldId]: (kilograms * factor).toFixed(fixedPrecision),
+      })
+    }
+  }, [conversionFactor, data, kgFieldId, lbFieldId, precision, setDentalValues])
+
+  const clearWeights = useCallback(() => {
+    lastEditedRef.current = null
+    setDentalValues({
+      [kgFieldId]: "",
+      [lbFieldId]: "",
+    })
+  }, [kgFieldId, lbFieldId, setDentalValues])
+
+  const disabled = useMemo(() => !kgValue && !lbValue, [kgValue, lbValue])
+
+  const cellStyle = {
+    breakInside: "avoid",
+    margin: "0px 10px",
+    flex: "2 2 0px",
+    minWidth: 80,
+    maxWidth: 160,
+  }
+
+  const fieldWrapperStyle = {
+    display: "flex",
+    flexFlow: "column",
+    minWidth: 80,
+  }
+
+  return (
+    <div data-field-id={id} data-component="DentalWeightConverter" style={{ margin: "8px 0px" }}>
+      <div>
+        <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(4, 1fr)" }}>
+          <div style={{ ...cellStyle, gridArea: "1 / 1 / 2 / 2" }}>
+            <div style={fieldWrapperStyle}>
+              <div style={{ flex: "2 1 0%", display: "flex", flexFlow: "wrap", minWidth: 80 }}>
+                <span
+                  id={\`\${id}Label\`}
+                  style={{
+                    fontWeight: 600,
+                    display: "inline-flex",
+                    flexDirection: "column",
+                    justifyContent: "center",
+                  }}
+                >
+                  {label}
+                  <br />
+                  {helperText}
+                </span>
+              </div>
+            </div>
+            <div style={{ clear: "both" }} />
+          </div>
+
+          <div style={{ ...cellStyle, gridArea: "1 / 2 / 2 / 3" }}>
+            <div style={fieldWrapperStyle}>
+              <div style={{ flex: "2 1 0%", display: "flex", flexFlow: "wrap", minWidth: 80 }}>
+                <TextField
+                  id={kgFieldId}
+                  value={String(kgValue ?? "")}
+                  suffix={kgSuffix}
+                  aria-labelledby={\`\${id}Label\`}
+                  onChange={(event, nextValue) => updateWeight(kgFieldId, lbFieldId, nextValue ?? event?.target?.value ?? "")}
+                  onBlur={convertWeights}
+                />
+              </div>
+            </div>
+            <div style={{ clear: "both" }} />
+          </div>
+
+          <div style={{ ...cellStyle, gridArea: "2 / 2 / 3 / 3" }}>
+            <div style={fieldWrapperStyle}>
+              <div style={{ flex: "2 1 0%", display: "flex", flexFlow: "wrap", minWidth: 80 }}>
+                <TextField
+                  id={lbFieldId}
+                  value={String(lbValue ?? "")}
+                  suffix={lbSuffix}
+                  aria-labelledby={\`\${id}Label\`}
+                  onChange={(event, nextValue) => updateWeight(lbFieldId, kgFieldId, nextValue ?? event?.target?.value ?? "")}
+                  onBlur={convertWeights}
+                />
+              </div>
+            </div>
+            <div style={{ clear: "both" }} />
+          </div>
+
+          <DefaultButton
+            text={clearText}
+            disabled={disabled}
+            style={{ gridArea: "1 / 3 / 2 / 4", alignSelf: "center" }}
+            onClick={clearWeights}
+          />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const DentalWeightConverterSchema = {
+  cWeightkg: { type: "string" },
+  cWeightlb: { type: "string" },
+}
 `,
   './EditableTable/index.jsx': `/**
  * EditableTable - Repeating row table with inline and modal editing modes.
@@ -4076,6 +4347,177 @@ const firstNationsStatusSchema = {
   livingOnReserve:    { $ref: "#/definitions/ynu" },
   reserveName:        { type: ["string","null"] },
 }
+`,
+  './FocusedObservationHistory/index.jsx': `const { useEffect, useMemo, useState } = React
+const { Stack, Text, Label, Link } = Fluent
+
+const pathSegments = (path) => String(path || "").split(".").map((part) => part.trim()).filter(Boolean)
+
+const resolvePath = (root, path) => {
+  if (!root || !path) return undefined
+  let current = root
+  for (const segment of pathSegments(path)) {
+    if (Array.isArray(current)) {
+      current = current.map((entry) => entry?.[segment]).filter((entry) => entry !== undefined && entry !== null)
+      if (current.length === 0) return undefined
+      continue
+    }
+    if (!current || typeof current !== "object") return undefined
+    current = current[segment]
+  }
+  return current
+}
+
+const resolveMoisValue = (source, path) => {
+  if (!source || !path) return undefined
+  const direct = resolvePath(source, path)
+  if (direct !== undefined && direct !== null) return direct
+  if (path.startsWith("patient.")) {
+    const patientPath = path.slice("patient.".length)
+    return resolvePath(source.patient ?? source, patientPath)
+  }
+  return undefined
+}
+
+const textValue = (value) => {
+  if (value === undefined || value === null) return ""
+  if (typeof value === "string") return value.trim()
+  if (typeof value === "number" || typeof value === "boolean") return String(value)
+  if (Array.isArray(value)) return value.map(textValue).filter(Boolean).join(", ")
+  if (typeof value === "object") {
+    for (const key of ["display", "text", "value", "code", "id", "name"]) {
+      const candidate = textValue(value[key])
+      if (candidate) return candidate
+    }
+  }
+  return ""
+}
+
+const parseDate = (value) => {
+  const raw = textValue(value)
+  if (!raw) return null
+  const parsed = new Date(raw.includes("T") ? raw : raw.replace(/\\./g, "-"))
+  return Number.isNaN(parsed.getTime()) ? null : parsed
+}
+
+const formatDate = (value) => {
+  const parsed = parseDate(value)
+  if (!parsed) return textValue(value)
+  const year = parsed.getFullYear()
+  const month = String(parsed.getMonth() + 1).padStart(2, "0")
+  const day = String(parsed.getDate()).padStart(2, "0")
+  return \`\${year}.\${month}.\${day}\`
+}
+
+const normalizeItems = ({
+  source,
+  valuePath,
+  datePath,
+  unitsPath,
+  codePath,
+  commentPath,
+  observationCode,
+  observationComment,
+  maxRows,
+}) => {
+  const rows = Array.isArray(source) ? source : []
+  return rows
+    .map((entry, index) => {
+      const date = resolvePath(entry, datePath)
+      const parsedDate = parseDate(date)
+      return {
+        index,
+        date,
+        dateText: formatDate(date) || "-",
+        dateTime: parsedDate ? parsedDate.getTime() : 0,
+        valueText: textValue(resolvePath(entry, valuePath)),
+        unitsText: textValue(resolvePath(entry, unitsPath)),
+        codeText: textValue(resolvePath(entry, codePath)),
+        commentText: textValue(resolvePath(entry, commentPath)),
+      }
+    })
+    .filter((entry) => entry.valueText)
+    .filter((entry) => !observationCode || entry.codeText === observationCode)
+    .filter((entry) => !observationComment || entry.commentText === observationComment)
+    .sort((left, right) => right.dateTime - left.dateTime || left.index - right.index)
+    .slice(0, Math.max(1, Number(maxRows) || 5))
+}
+
+const getFocusedFieldId = (target) => {
+  if (!target || typeof target.closest !== "function") return ""
+  const host = target.closest("[data-field-id]")
+  if (host?.getAttribute) return host.getAttribute("data-field-id") || ""
+  return target.getAttribute?.("data-field-id") || target.name || target.id || ""
+}
+
+function FocusedObservationHistory({
+  id,
+  title = "History",
+  watchFieldId,
+  historySourcePath = "patient.observations",
+  valuePath = "value",
+  datePath = "collectedDateTime",
+  unitsPath = "units",
+  codePath = "observationCode",
+  commentPath = "comment",
+  observationCode = "",
+  observationComment = "",
+  maxRows = 5,
+  showWhenNotFocused = false,
+  emptyText = "No history found",
+  graphLabel = "Graph",
+  graphHref,
+}) {
+  const sd = useSourceData()
+  const [activeFieldId, setActiveFieldId] = useState("")
+
+  useEffect(() => {
+    const handleFocus = (event) => setActiveFieldId(getFocusedFieldId(event.target))
+    const handleBlur = () => window.setTimeout(() => setActiveFieldId(getFocusedFieldId(document.activeElement)), 0)
+    document.addEventListener("focusin", handleFocus)
+    document.addEventListener("focusout", handleBlur)
+    return () => {
+      document.removeEventListener("focusin", handleFocus)
+      document.removeEventListener("focusout", handleBlur)
+    }
+  }, [])
+
+  const isVisible = showWhenNotFocused || !watchFieldId || activeFieldId === watchFieldId
+  const items = useMemo(() => normalizeItems({
+    source: resolveMoisValue(sd, historySourcePath),
+    valuePath,
+    datePath,
+    unitsPath,
+    codePath,
+    commentPath,
+    observationCode: textValue(observationCode),
+    observationComment: textValue(observationComment),
+    maxRows,
+  }), [codePath, commentPath, datePath, historySourcePath, maxRows, observationCode, observationComment, sd, unitsPath, valuePath])
+
+  if (!isVisible) return null
+
+  return (
+    <Stack id={id} data-focused-observation-history tokens={{ childrenGap: 4 }}>
+      {title ? <Label>{title}</Label> : null}
+      {graphLabel ? (
+        graphHref ? <Link href={graphHref} target="_blank" rel="noreferrer">{graphLabel}</Link> : <Text variant="small">{graphLabel}</Text>
+      ) : null}
+      {items.length === 0 ? (
+        <Text variant="small">{emptyText}</Text>
+      ) : (
+        <Stack tokens={{ childrenGap: 2 }}>
+          {items.map((item) => (
+            <Text key={\`\${item.dateText}-\${item.index}\`} variant="small">
+              {item.dateText}: {item.valueText}{item.unitsText ? \` (\${item.unitsText})\` : ""}
+            </Text>
+          ))}
+        </Stack>
+      )}
+    </Stack>
+  )
+}
+
 `,
   './FormSessionRuntime/index.jsx': `const { createContext, useCallback, useContext, useEffect, useMemo, useState } = React
 
@@ -9744,6 +10186,15 @@ const Scale5ToolTip = props => {
 }
 
 const HonosFinalScore = props => {
+  const [fd] = useActiveData()
+  const questionIds = Array.isArray(props.questionIds) ? props.questionIds : []
+  const scoredQuestionIds = Array.isArray(props.scoredQuestionIds) ? props.scoredQuestionIds : questionIds
+  const calculatedTotal = scoredQuestionIds.reduce((total, questionId) => {
+    const rawValue = fd?.field?.data?.[questionId]?.value ?? fd?.field?.data?.[questionId]
+    const numericValue = Number(rawValue)
+    return Number.isFinite(numericValue) ? total + numericValue : total
+  }, 0)
+  const totalScore = typeof props.totalScore === "number" ? props.totalScore : calculatedTotal
   const finalScoreStyle = {
     margin: "0px 0px 15px 0px",
   }
@@ -9751,7 +10202,7 @@ const HonosFinalScore = props => {
   return (
     <div style={finalScoreStyle}>
       <Text variant='xLarge'>
-        <b>Final Score: {props.totalScore}</b>
+        <b>Final Score: {totalScore}</b>
       </Text>
     </div>
   )
@@ -11778,6 +12229,1037 @@ const HotspotMapField = ({
 HotspotMapField.createConfig = createHotspotMapConfig
 HotspotMapField.importSvgHotspots = importSvgHotspots
 HotspotMapField.normalizeHotspots = normalizeHotspots
+`,
+  './LayoutTable/index.jsx': `const renderLayoutTableField = (cell, readOnly) => {
+  const fieldId = cell.fieldId || cell.id
+  const label = cell.label || ""
+  const labelProp = label ? { label } : {}
+  const sharedProps = { fieldId, labelPosition: label ? "top" : "none", readOnly }
+
+  switch (cell.inputType) {
+    case "number":
+      return <Numeric {...sharedProps} {...labelProp} />
+    case "date":
+      return <DateSelect {...sharedProps} {...labelProp} />
+    case "time":
+      return <TimeSelect {...sharedProps} {...labelProp} />
+    case "booleanYesNo":
+      return <SimpleCodeSelect {...sharedProps} {...labelProp} codeSystem="MOIS-YESNO" />
+    case "textarea":
+      return <TextArea {...sharedProps} {...labelProp} multiline textFieldProps={{ autoAdjustHeight: true, resizable: false }} />
+    case "text":
+    default:
+      return <TextArea {...sharedProps} {...labelProp} />
+  }
+}
+
+const cellStyle = (cell, config) => ({
+  border: config.bordered === false ? undefined : \`1px solid \${config.borderColor || "#000"}\`,
+  padding: \`\${Number(config.cellPadding ?? (config.compact ? 3 : 6)) || 0}px\`,
+  verticalAlign: cell.verticalAlign || "top",
+  textAlign: cell.align || "left",
+  width: cell.width || undefined,
+  backgroundColor: cell.backgroundColor || undefined,
+  fontWeight: cell.header ? 700 : undefined,
+  pageBreakInside: config.pageBreakInsideAvoid === false ? undefined : "avoid",
+  whiteSpace: cell.kind === "text" ? "pre-wrap" : undefined,
+})
+
+function LayoutTable({
+  id,
+  label,
+  rows = [],
+  bordered = true,
+  compact = false,
+  fullWidth = true,
+  cellPadding,
+  borderColor = "#000",
+  pageBreakInsideAvoid = true,
+  readOnly = false,
+}) {
+  const config = { bordered, compact, fullWidth, cellPadding, borderColor, pageBreakInsideAvoid }
+  const tableRows = Array.isArray(rows) ? rows : []
+
+  if (tableRows.length === 0) return null
+
+  return (
+    <div id={id} data-layout-table style={{ width: fullWidth ? "100%" : undefined, pageBreakInside: pageBreakInsideAvoid ? "avoid" : undefined }}>
+      {label ? <div style={{ fontWeight: 600, marginBottom: 4 }}>{label}</div> : null}
+      <table
+        style={{
+          width: fullWidth ? "100%" : undefined,
+          borderCollapse: "collapse",
+          pageBreakInside: pageBreakInsideAvoid ? "avoid" : undefined,
+        }}
+      >
+        <tbody>
+          {tableRows.map((row, rowIndex) => (
+            <tr key={row.id || rowIndex} style={{ pageBreakInside: pageBreakInsideAvoid ? "avoid" : undefined }}>
+              {(Array.isArray(row.cells) ? row.cells : []).map((cell, cellIndex) => {
+                const Tag = cell.header ? "th" : "td"
+                return (
+                  <Tag
+                    key={cell.id || cellIndex}
+                    colSpan={Math.max(1, Number(cell.colSpan) || 1)}
+                    rowSpan={Math.max(1, Number(cell.rowSpan) || 1)}
+                    style={cellStyle(cell, config)}
+                  >
+                    {cell.kind === "field" ? renderLayoutTableField(cell, readOnly) : (cell.text || "")}
+                  </Tag>
+                )
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+`,
+  './LegacyAssessmentTable/index.jsx': `const { useMemo, useCallback, useEffect } = React
+
+const numberOrBlank = (value) => {
+  if (value == null || value === "") return ""
+  const number = Number(value)
+  return Number.isFinite(number) ? String(number) : ""
+}
+
+const getFieldValue = (fd, fieldId, fallback = "") => {
+  const value = fd?.field?.data?.[fieldId] ?? fd?.formData?.[fieldId]
+  return value == null ? fallback : value
+}
+
+function LegacyAssessmentTable({
+  id = "legacyAssessmentTable",
+  title = "Assessment",
+  encounterDate = "2026-04-28",
+  enteredBy = "DR. PREVIEW USER",
+  rows = [],
+  totalFieldId = "totalScore",
+  totalLabel = "Total Score",
+  min = 1,
+  max = 5,
+  step = 1,
+}) {
+  const [fd, setFd] = useActiveData()
+
+  const scoreRows = useMemo(() => {
+    if (Array.isArray(rows) && rows.length > 0) return rows
+    return []
+  }, [rows])
+
+  const total = useMemo(() => {
+    let hasValue = false
+    const sum = scoreRows.reduce((nextTotal, row) => {
+      const raw = getFieldValue(fd, row.fieldId)
+      if (raw == null || raw === "") return nextTotal
+      const value = Number(raw)
+      if (!Number.isFinite(value)) return nextTotal
+      hasValue = true
+      return nextTotal + value
+    }, 0)
+    return hasValue ? sum : ""
+  }, [fd, scoreRows])
+
+  useEffect(() => {
+    setFd((draft) => {
+      draft.field = draft.field || { data: {}, status: {} }
+      draft.field.data = draft.field.data || {}
+      draft.formData = draft.formData || {}
+      draft.field.data[totalFieldId] = total
+      draft.formData[totalFieldId] = total
+    })
+  }, [setFd, total, totalFieldId])
+
+  const setScore = useCallback((fieldId, value) => {
+    setFd((draft) => {
+      draft.field = draft.field || { data: {}, status: {} }
+      draft.field.data = draft.field.data || {}
+      draft.formData = draft.formData || {}
+      draft.field.data[fieldId] = value
+      draft.formData[fieldId] = value
+    })
+  }, [setFd])
+
+  const tableStyle = {
+    borderCollapse: "collapse",
+    border: "1px solid darkgrey",
+    width: "auto",
+    maxWidth: "100%",
+  }
+  const labelCellStyle = {
+    maxWidth: 200,
+    minHeight: 20,
+    display: "flex",
+    padding: 10,
+    justifyContent: "center",
+    alignItems: "center",
+    fontSize: "1.2em",
+    whiteSpace: "normal",
+    textAlign: "center",
+    borderCollapse: "collapse",
+    borderRight: "1px solid darkgrey",
+  }
+  const valueCellStyle = {
+    maxWidth: 150,
+    minWidth: 120,
+    minHeight: 20,
+    justifyContent: "center",
+    alignItems: "center",
+    fontSize: "1.2em",
+    whiteSpace: "normal",
+    textAlign: "center",
+    borderCollapse: "collapse",
+    borderRight: "2px solid black",
+    padding: "8px 10px",
+  }
+  const inputStyle = {
+    fontSize: "inherit",
+    textAlign: "center",
+    width: 52,
+    border: "none",
+    background: "#ffffff",
+  }
+
+  const renderRow = (row, index, valueContent) => (
+    <tr key={row.id || row.fieldId || row.label} style={index % 2 === 0 ? { backgroundColor: "whitesmoke" } : undefined}>
+      <td style={labelCellStyle}>{row.label}</td>
+      <td style={valueCellStyle}>{valueContent}</td>
+    </tr>
+  )
+
+  return (
+    <div data-field-id={id} data-component="LegacyAssessmentTable" style={{ width: "100%" }}>
+      <div style={{ width: "100%" }}>
+        <div className="ms-Stack" style={{ backgroundColor: "rgb(237, 235, 233)", padding: "2px 5px" }}>
+          <Label>{title}</Label>
+        </div>
+      </div>
+      <table style={tableStyle}>
+        <tbody>
+          {renderRow({ label: "Encounter Date", id: "encounterDate" }, 0, <span style={{ fontSize: "inherit", textAlign: "center" }}>{encounterDate}</span>)}
+          {scoreRows.map((row, index) =>
+            renderRow(
+              row,
+              index + 1,
+              <input
+                id={row.fieldId}
+                min={row.min ?? min}
+                max={row.max ?? max}
+                step={row.step ?? step}
+                required={row.required ?? true}
+                type="number"
+                value={numberOrBlank(getFieldValue(fd, row.fieldId))}
+                style={inputStyle}
+                onChange={(event) => setScore(row.fieldId, event.target.value)}
+              />
+            )
+          )}
+          {renderRow({ label: totalLabel, id: totalFieldId }, scoreRows.length + 1, <span id={totalFieldId}>{numberOrBlank(total)}</span>)}
+          {renderRow({ label: "Entered By", id: "enteredBy" }, scoreRows.length + 2, enteredBy)}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+`,
+  './LegacyButtonGroup/index.jsx': `const { useMemo, useState } = React
+
+function LegacyButtonGroup({
+  id = "legacyButtonGroup",
+  actions = [],
+  justifyContent = "space-evenly",
+  padding = 10,
+  gap = 10,
+  buttonMaxWidth = 280,
+  dialogTitle = "Action payload",
+  dialogMinWidth = 620,
+  okText = "Ok",
+  cancelText = "Cancel",
+}) {
+  const [activeAction, setActiveAction] = useState(null)
+  const [draftValues, setDraftValues] = useState({})
+  const normalizedActions = useMemo(() => {
+    if (!Array.isArray(actions)) return []
+    return actions
+      .map((action, index) => ({
+        id: action?.id || \`\${id}_action_\${index}\`,
+        label: action?.label || action?.text || \`Action \${index + 1}\`,
+        dialogTitle: action?.dialogTitle || action?.modalTitle || dialogTitle,
+        payload: action?.payload || action?.mutationPayload || action?.documentUpdate || null,
+        fields: Array.isArray(action?.fields) ? action.fields : [],
+        maxWidth: action?.maxWidth || buttonMaxWidth,
+      }))
+      .filter((action) => action.label)
+  }, [actions, buttonMaxWidth, dialogTitle, id])
+
+  const openAction = (action) => {
+    const initialValues = {}
+    action.fields.forEach((field) => {
+      initialValues[field.id] = field.value ?? field.defaultValue ?? ""
+    })
+    setDraftValues(initialValues)
+    setActiveAction(action)
+  }
+
+  const setValue = (fieldId, value) => {
+    setDraftValues((current) => ({ ...current, [fieldId]: value }))
+  }
+
+  const formattedPayload = activeAction?.payload
+    ? JSON.stringify(activeAction.payload, null, 2)
+    : "No payload configured."
+
+  const renderField = (field) => {
+    const value = draftValues[field.id] ?? ""
+    const commonStyle = {
+      breakInside: "avoid",
+      margin: "0px 10px",
+      ...(field.gridArea ? { gridArea: field.gridArea } : {}),
+      ...(field.maxWidth ? { maxWidth: field.maxWidth } : {}),
+      ...(field.minWidth ? { minWidth: field.minWidth } : {}),
+    }
+    const inputStyle = {
+      width: field.width || (field.type === "date" ? 160 : 320),
+      maxWidth: field.maxWidth || (field.type === "date" ? 160 : 320),
+    }
+
+    let control = null
+    if (field.type === "dropdown") {
+      const options = Array.isArray(field.options)
+        ? field.options.map((option) => ({
+            key: option.key ?? option.value ?? option,
+            text: option.text ?? option.label ?? option.value ?? option,
+          }))
+        : []
+      control = (
+        <Dropdown
+          selectedKey={value}
+          placeholder={field.placeholder || "Please select"}
+          options={options}
+          styles={{ root: inputStyle }}
+          onChange={(_, option) => setValue(field.id, option?.key ?? "")}
+        />
+      )
+    } else if (field.type === "combo") {
+      const options = Array.isArray(field.options)
+        ? field.options.map((option) => ({
+            key: option.key ?? option.value ?? option,
+            text: option.text ?? option.label ?? option.value ?? option,
+          }))
+        : []
+      control = (
+        <ComboBox
+          id={field.id}
+          selectedKey={value}
+          text={value}
+          placeholder={field.placeholder || "Please select an option"}
+          options={options}
+          styles={{ root: inputStyle }}
+          allowFreeform
+          autoComplete="on"
+          onChange={(_, option, __, inputValue) => setValue(field.id, option?.key ?? inputValue ?? "")}
+        />
+      )
+    } else {
+      control = (
+        <TextField
+          value={value}
+          multiline={field.type === "textarea"}
+          rows={field.rows || (field.type === "textarea" ? 3 : undefined)}
+          placeholder={field.placeholder || (field.type === "date" ? "YYYY.MM.DD" : undefined)}
+          styles={{ root: inputStyle }}
+          onChange={(_, nextValue) => setValue(field.id, nextValue || "")}
+        />
+      )
+    }
+
+    return (
+      <div key={field.id} style={commonStyle}>
+        <Label>{field.label}</Label>
+        <div style={{ display: "flex", flexFlow: "column", minWidth: field.minWidth || 160, alignItems: "flex-start" }}>
+          {control}
+        </div>
+        <div style={{ clear: "both" }} />
+      </div>
+    )
+  }
+
+  const hasFormFields = Array.isArray(activeAction?.fields) && activeAction.fields.length > 0
+
+  return (
+    <div data-field-id={id} data-legacy-button-group>
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "row",
+          justifyContent,
+          gap,
+          padding,
+          flexWrap: "wrap",
+        }}
+      >
+        {normalizedActions.map((action) => (
+          <DefaultButton
+            key={action.id}
+            text={action.label}
+            style={{ maxWidth: action.maxWidth }}
+            onClick={() => openAction(action)}
+          />
+        ))}
+      </div>
+
+      <Dialog
+        hidden={!activeAction}
+        onDismiss={() => setActiveAction(null)}
+        minWidth={dialogMinWidth}
+        dialogContentProps={{
+          type: DialogType.normal,
+          title: activeAction?.dialogTitle || activeAction?.label || dialogTitle,
+        }}
+        modalProps={{ isBlocking: false }}
+      >
+        {hasFormFields ? (
+          <div data-component="SubForm" style={{ minWidth: 500 }}>
+            <div style={{ display: "grid", gap: 10, gridTemplateColumns: "1fr 1fr" }}>
+              {activeAction.fields.map(renderField)}
+            </div>
+          </div>
+        ) : (
+          <pre
+            style={{
+              maxHeight: 360,
+              overflow: "auto",
+              whiteSpace: "pre-wrap",
+              background: "#f3f2f1",
+              border: "1px solid #edebe9",
+              padding: 8,
+              fontSize: 12,
+            }}
+          >
+            {formattedPayload}
+          </pre>
+        )}
+        <DialogFooter>
+          <PrimaryButton
+            text={okText}
+            onClick={() => {
+              setActiveAction(null)
+              setDraftValues({})
+            }}
+          />
+          <DefaultButton
+            text={cancelText}
+            onClick={() => {
+              setActiveAction(null)
+              setDraftValues({})
+            }}
+          />
+        </DialogFooter>
+      </Dialog>
+    </div>
+  )
+}
+`,
+  './LegacyFormContextHeader/index.jsx': `const { useEffect, useMemo } = React
+
+const legacyContextText = (value, fallback = "") => {
+  if (value == null) return fallback
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value)
+  if (Array.isArray(value)) return value.map((item) => legacyContextText(item)).filter(Boolean).join(", ")
+  return value.display || value.text || value.name || value.code || fallback
+}
+
+const legacyContextVisitCode = (value, fallback = "") => {
+  if (value == null) return fallback
+  if (typeof value === "object") {
+    const code = value.code || value.key || ""
+    const display = value.display || value.text || ""
+    if (code && display) return \`\${code} (\${display})\`
+    return display || code || fallback
+  }
+  return String(value)
+}
+
+const legacyContextDate = (value, separator = ".") => {
+  const raw = legacyContextText(value)
+  if (!raw) return ""
+  const match = raw.match(/^(\\d{4})[-.](\\d{2})[-.](\\d{2})/)
+  if (match) return \`\${match[1]}\${separator}\${match[2]}\${separator}\${match[3]}\`
+  return raw
+}
+
+const legacyContextDateTime = (value) => {
+  const raw = legacyContextText(value)
+  if (!raw) return ""
+  const match = raw.match(/^(\\d{4})[-.](\\d{2})[-.](\\d{2})(?:T|\\s)?(\\d{2})?:?(\\d{2})?/)
+  if (!match) return raw
+  const date = \`\${match[1]}-\${match[2]}-\${match[3]}\`
+  if (!match[4]) return date
+  return \`\${date} \${match[4]}:\${match[5] || "00"}\`
+}
+
+const legacyFieldWrap = {
+  breakInside: "avoid",
+  margin: "0px 10px",
+  flex: "3 3 0px",
+  minWidth: 160,
+  maxWidth: 320,
+}
+
+const legacySmallFieldWrap = {
+  ...legacyFieldWrap,
+  flex: "2 2 0px",
+  minWidth: 80,
+  maxWidth: 160,
+}
+
+const legacyTextStyles = {
+  fieldGroup: { background: "#fff" },
+  field: { color: "#323130" },
+}
+
+function LegacyFormContextHeader({
+  id = "legacyFormContextHeader",
+  formDateFieldId = "formDate",
+  createdByFieldId = "createdBy",
+  encounterDateFieldId = "encDate",
+  visitCodeFieldId = "visCode",
+  visitReasonFieldId = "visReason",
+  providerFieldId = "daybookProvider",
+  attendingProviderFieldId = "attendingProvider",
+  serviceLocationFieldId = "serviceLoc",
+  createdByFallback = "DR. PREVIEW USER",
+  serviceLocationFallback = "FAMILY PRACTICE",
+  formDateLabel = "Form Date:",
+  createdByLabel = "Form Created by:",
+}) {
+  const sd = useSourceData()
+  const [fd, setFd] = useActiveData()
+
+  const values = useMemo(() => {
+    const encounter = sd?.webform?.encounter || sd?.encounter || fd?.example?.encounter || {}
+    const providerName = legacyContextText(
+      sd?.webform?.provider?.name ||
+        sd?.userProfile?.desktopProvider?.name ||
+        sd?.userProfile?.identity?.fullName ||
+        createdByFallback,
+      createdByFallback
+    )
+    const appointmentDateTime = encounter?.appointmentDateTime || encounter?.date || new Date().toISOString()
+    return {
+      [formDateFieldId]: legacyContextDate(sd?.webform?.documentDate || sd?.webform?.createdDate || new Date().toISOString(), "."),
+      [createdByFieldId]: providerName,
+      [encounterDateFieldId]: legacyContextDateTime(appointmentDateTime),
+      [visitCodeFieldId]: legacyContextVisitCode(encounter?.visitCode || encounter?.code, ""),
+      [visitReasonFieldId]: legacyContextText(encounter?.visitReason1 || encounter?.visitReason || encounter?.reason, ""),
+      [providerFieldId]: providerName,
+      [attendingProviderFieldId]: legacyContextText(encounter?.attendingProvider, providerName),
+      [serviceLocationFieldId]: legacyContextText(encounter?.location, serviceLocationFallback),
+    }
+  }, [
+    attendingProviderFieldId,
+    createdByFallback,
+    createdByFieldId,
+    encounterDateFieldId,
+    fd,
+    formDateFieldId,
+    providerFieldId,
+    sd,
+    serviceLocationFallback,
+    serviceLocationFieldId,
+    visitCodeFieldId,
+    visitReasonFieldId,
+  ])
+
+  useEffect(() => {
+    setFd((draft) => {
+      draft.field = draft.field || { data: {}, status: {} }
+      draft.field.data = draft.field.data || {}
+      draft.formData = draft.formData || {}
+      Object.assign(draft.field.data, values)
+      Object.assign(draft.formData, values)
+    })
+  }, [setFd, values])
+
+  const renderReadOnlyField = (fieldId, label, value) => (
+    <div data-field-id={fieldId} style={legacyFieldWrap}>
+      <div style={{ display: "flex", flexFlow: "column", minWidth: 160, width: "100%" }}>
+        <div style={{ flex: "1 1 0px", display: "flex", flexFlow: "wrap", minWidth: 160, width: "100%" }}>
+          <TextField
+            id={fieldId}
+            label={label}
+            value={value}
+            readOnly
+            borderless
+            tabIndex={-1}
+            styles={legacyTextStyles}
+          />
+        </div>
+      </div>
+      <div style={{ clear: "both" }} />
+    </div>
+  )
+
+  return (
+    <div data-field-id={id} data-component="LegacyFormContextHeader">
+      <div style={{ width: "100%" }}>
+        <div style={legacySmallFieldWrap} data-field-id={formDateFieldId}>
+          <Label>{formDateLabel}</Label>
+          <DatePicker
+            value={values[formDateFieldId] ? new Date(values[formDateFieldId].replace(/\\./g, "-")) : undefined}
+            formatDate={() => values[formDateFieldId]}
+            placeholder="YYYY.MM.DD"
+            disabled
+          />
+          <div style={{ clear: "both" }} />
+        </div>
+        <div style={legacyFieldWrap} data-field-id={createdByFieldId}>
+          <Label>{createdByLabel}</Label>
+          <TextField id={createdByFieldId} value={values[createdByFieldId]} readOnly disabled placeholder="Please search" styles={legacyTextStyles} />
+          <div style={{ clear: "both" }} />
+        </div>
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "row", flexWrap: "wrap" }}>
+        {renderReadOnlyField(encounterDateFieldId, "Encounter Date:", values[encounterDateFieldId])}
+        {renderReadOnlyField(visitCodeFieldId, "Visit Code:", values[visitCodeFieldId])}
+      </div>
+      {renderReadOnlyField(visitReasonFieldId, "Visit Reason", values[visitReasonFieldId])}
+      {renderReadOnlyField(providerFieldId, "Provider:", values[providerFieldId])}
+      {renderReadOnlyField(attendingProviderFieldId, "Attending Provider:", values[attendingProviderFieldId])}
+      {renderReadOnlyField(serviceLocationFieldId, "Service Location:", values[serviceLocationFieldId])}
+    </div>
+  )
+}
+
+const LegacyFormContextHeaderSchema = {
+  formDate: { type: "string" },
+  createdBy: { type: "string" },
+  encDate: { type: "string" },
+  visCode: { type: "string" },
+  visReason: { type: "string" },
+  daybookProvider: { type: "string" },
+  attendingProvider: { type: "string" },
+  serviceLoc: { type: "string" },
+}
+`,
+  './LegacyModerateRiskGuidance/index.jsx': `const DEFAULT_NON_COMPLIANT_INTERVENTIONS = [
+  "Medication as per order",
+  "Code white team response standyby",
+  "Security notified of patient situation if necessary",
+  "2 or 3 person approach with specific roles for each care provider",
+  "Use of basic mechanical restraint options",
+  "Relocate to a quieter area if possible",
+  "Referral to additional clinical resources (I.E. aquired brain injury program, mental health & addictions, geriatritian, etc.)",
+  "Client certified",
+]
+
+const DEFAULT_COMPLIANT_INTERVENTIONS = [
+  "Ask patient/client how you can help? Information required? Basic needs met?",
+  "Relocate to a quieter area if possible",
+  "Determine if family member or significant other can assist",
+  "Referral to additional clinical resources (I.E. aquired brain injury program, mental health & addictions, geriatritian, etc.)",
+  "Offer alternative activities",
+  "Involve family",
+]
+
+const normalizeList = (items, fallback) => {
+  if (!Array.isArray(items) || items.length === 0) return fallback
+  return items.filter((item) => typeof item === "string" && item.trim()).map((item) => item.trim())
+}
+
+function LegacyModerateRiskGuidance({
+  id = "legacyModerateRiskGuidance",
+  assessmentModule = "MEASUREMENTS",
+  treatmentPlanModule = "CHARTACTION",
+  nonCompliantInterventions = DEFAULT_NON_COMPLIANT_INTERVENTIONS,
+  compliantInterventions = DEFAULT_COMPLIANT_INTERVENTIONS,
+}) {
+  const nonCompliant = normalizeList(nonCompliantInterventions, DEFAULT_NON_COMPLIANT_INTERVENTIONS)
+  const compliant = normalizeList(compliantInterventions, DEFAULT_COMPLIANT_INTERVENTIONS)
+
+  return (
+    <div id={id} data-field-id={id}>
+      <ol type="1">
+        <li>
+          <strong>Determine if patient/client is complian to simple requests</strong>
+          {\`: e.g. Please sit down" or "Please walk here". If patient/client is suffering cognitive impairment or has a language barrier, using hand gestures may be required\`}
+        </li>
+        <li>
+          <strong>Determine underlying causes using one or more of the following assessment tools</strong>
+          {": "}
+          <LinkToMois moisModule={assessmentModule} title={\`Open \${assessmentModule} in MOIS\`} />
+          <br />
+          <ol type="a">
+            <li>PRISME</li>
+            <li>MSE - Mental Status Exam</li>
+            <li>CAM - Continuous Assessment Method</li>
+          </ol>
+        </li>
+        <li>
+          <strong>Non-Compliant</strong>
+          <br />
+          <ol type="a">
+            <li>Alert place if clinical judgments indicates</li>
+            <li>
+              Treatment plan includes interventions to address potentially aggressive behaviours{" "}
+              <LinkToMois moisModule={treatmentPlanModule} title={\`Open \${treatmentPlanModule} in MOIS\`} />
+            </li>
+          </ol>
+        </li>
+        <li>
+          <strong>
+            Consider the following interventions. This is not an inclusive or prioritized list and all interventions may not be required.
+          </strong>
+          <br />
+          <div style={{ display: "flex", flexDirection: "row", justifyContent: "space-evenly", border: "1px solid lightgrey", marginRight: 20 }}>
+            <div style={{ width: "45%" }}>
+              <p><strong>NON-COMPLIANT: CONSIDER THESE INTERVENTIONS</strong></p>
+              <ul style={{ listStyleType: "none", paddingLeft: 0 }}>
+                {nonCompliant.map((item) => <li key={item}>{item}</li>)}
+                <li><b>Continually check for compliance</b></li>
+              </ul>
+            </div>
+            <div style={{ width: "45%" }}>
+              <p><strong>COMPLIANT: CONSIDER THESE INTERVENTIONS</strong></p>
+              <ul style={{ listStyleType: "none", paddingLeft: 0 }}>
+                {compliant.map((item) => <li key={item}>{item}</li>)}
+              </ul>
+            </div>
+          </div>
+        </li>
+      </ol>
+    </div>
+  )
+}
+`,
+  './LegacyMoisLinkList/index.jsx': `const normalizeItems = (items) => {
+  if (!Array.isArray(items)) return []
+  return items
+    .map((item, index) => {
+      const source = item && typeof item === "object" ? item : { label: item }
+      const label = typeof source.label === "string" && source.label.trim()
+        ? source.label.trim()
+        : \`Item \${index + 1}\`
+      const moisModule = typeof source.moisModule === "string" && source.moisModule.trim()
+        ? source.moisModule.trim()
+        : ""
+
+      return {
+        id: source.id || \`\${label.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "")}_\${index}\`,
+        label,
+        moisModule,
+        objectId: typeof source.objectId === "number" ? source.objectId : undefined,
+        title: typeof source.title === "string" && source.title.trim()
+          ? source.title.trim()
+          : \`Open \${moisModule || label} in MOIS\`,
+      }
+    })
+    .filter((item) => item.label)
+}
+
+function LegacyMoisLinkList({
+  id = "legacyMoisLinkList",
+  introText,
+  items = [],
+  marginLeft = "2em",
+  paddingBottom = 20,
+  marginTop = 5,
+  itemGap = 4,
+}) {
+  const normalizedItems = normalizeItems(items)
+
+  return (
+    <div id={id} data-field-id={id}>
+      {introText ? <p style={{ marginTop: 5, marginBottom: 5 }}>{introText}</p> : null}
+      <div style={{ marginLeft }}>
+        <ul style={{ paddingBottom, marginTop }}>
+          {normalizedItems.map((item) => (
+            <li key={item.id} style={{ marginBottom: itemGap }}>
+              {item.label}
+              {item.moisModule ? (
+                <LinkToMois
+                  moisModule={item.moisModule}
+                  objectId={item.objectId}
+                  title={item.title}
+                />
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  )
+}
+`,
+  './LegacyPatientFileSections/index.jsx': `const { useCallback, useMemo } = React
+
+const textValue = (value, fallback = "") => {
+  if (value == null) return fallback
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value)
+  if (Array.isArray(value)) return value.map((item) => textValue(item)).filter(Boolean).join(", ")
+  return value.display || value.text || value.name || value.code || fallback
+}
+
+const compactLines = (lines) => lines.map((line) => textValue(line).trim()).filter(Boolean)
+
+const formatDate = (value) => {
+  const raw = textValue(value)
+  if (!raw) return ""
+  const match = raw.match(/^(\\d{4})[-.](\\d{2})[-.](\\d{2})/)
+  if (match) return \`\${match[1]}.\${match[2]}.\${match[3]}\`
+  return raw
+}
+
+const optionCode = (value, fallback = "") => {
+  if (value == null) return fallback
+  if (typeof value === "object") return value.code ?? value.key ?? fallback
+  return String(value)
+}
+
+const optionDisplay = (value, fallback = "") => {
+  if (value == null) return fallback
+  if (typeof value === "object") return value.display ?? value.text ?? value.code ?? fallback
+  return String(value)
+}
+
+const mergeObjects = (...objects) =>
+  objects.reduce((merged, value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return merged
+    return { ...merged, ...value }
+  }, {})
+
+const getPatientFromData = (data) => {
+  const queryPatient = Array.isArray(data?.queryResult?.patient) ? data.queryResult.patient[0] : null
+  return mergeObjects(
+    queryPatient,
+    data?.patient,
+    data?.example?.patient,
+    data?.example?.demographics,
+    data?.field?.data?.__patientFile
+  )
+}
+
+const formatAddress = (address) => {
+  if (!address) return ""
+  if (typeof address === "string") return address
+  if (address.text) return textValue(address.text)
+  const cityLine = compactLines([address.city, address.province]).join(", ")
+  const countryLine = compactLines([address.country, address.postalCode]).join(" ")
+  return compactLines([address.line1, address.line2, cityLine, countryLine]).join("\\n")
+}
+
+const formatContact = (telecom) => {
+  if (!telecom) return ""
+  if (typeof telecom === "string") return telecom
+  const lines = []
+  if (telecom.homePhone) lines.push(\`Home: \${telecom.homePhone} Leave msg: \${optionCode(telecom.homeMessage, "N") === "Y" ? "Yes" : "No"}\`)
+  if (telecom.workPhone) lines.push(\`Work: \${telecom.workPhone}\${telecom.workExt ? \` Ext: \${telecom.workExt}\` : ""}\`)
+  if (telecom.cellPhone) lines.push(\`Cell: \${telecom.cellPhone}\`)
+  if (telecom.homeEmail) lines.push(\`Email: \${telecom.homeEmail}\`)
+  return lines.join("\\n")
+}
+
+function LegacyPatientFileSections({
+  id = "legacyPatientFileSections",
+  serviceLocation = "FAMILY PRACTICE",
+  createdBy = "DR. PREVIEW USER",
+  dateCreated = "",
+  quickNavTarget = "clientDemographics",
+  sections = ["encounter", "document", "demographics"],
+  showSectionTitles = true,
+}) {
+  const [fd, setFd] = useActiveData()
+  const sd = useSourceData()
+
+  const patient = useMemo(() => mergeObjects(getPatientFromData(sd), getPatientFromData(fd)), [fd, sd])
+  const encounter = useMemo(() => mergeObjects(sd?.webform?.encounter, sd?.encounter, fd?.example?.encounter), [fd, sd])
+  const providerName = textValue(sd?.webform?.provider?.name || sd?.userProfile?.desktopProvider?.name || createdBy, createdBy)
+  const createdDate = dateCreated || formatDate(sd?.webform?.createdDate || sd?.webform?.documentDate || encounter?.appointmentDateTime || new Date().toISOString())
+
+  const writePatientUpdates = useCallback((updates) => {
+    setFd((draft) => {
+      draft.example = draft.example || {}
+      draft.example.demographics = { ...(draft.example.demographics || patient), ...updates }
+      draft.example.patient = { ...(draft.example.patient || patient), ...updates }
+      draft.patient = { ...(draft.patient || patient), ...updates }
+      draft.field = draft.field || { data: {}, status: {} }
+      draft.field.data = draft.field.data || {}
+      draft.field.data.__patientFile = { ...(draft.field.data.__patientFile || patient), ...updates }
+      draft.field.data.__patientFileUpdates = { ...(draft.field.data.__patientFileUpdates || {}), ...updates }
+      draft.formData = draft.formData || {}
+      draft.formData.__patientFileUpdates = { ...(draft.formData.__patientFileUpdates || {}), ...updates }
+    })
+  }, [patient, setFd])
+
+  const preferredPhoneOptions = [
+    { key: "1", text: "Home" },
+    { key: "2", text: "Work" },
+    { key: "3", text: "Cell" },
+    { key: "4", text: "Pager" },
+  ]
+
+  const healthNumber = textValue(patient.healthNumber || patient.insuranceNumber)
+  const insuranceBy = optionCode(patient.insuranceBy, patient.healthNumberBy || "BC")
+  const insuranceNumber = textValue(patient.insuranceNumber || patient.healthNumber)
+  const insuranceText = compactLines([insuranceBy && insuranceNumber ? \`\${insuranceBy}: \${insuranceNumber}\` : "", patient.insuranceDependent ? \`Dep: \${patient.insuranceDependent}\` : ""]).join("\\n")
+  const preferredCode = optionCode(patient.preferredPhone, "1")
+  const activeText = optionDisplay(patient.active, "")
+  const addressText = formatAddress(patient.address)
+  const contactText = formatContact(patient.telecom)
+
+  const visibleSections = useMemo(() => {
+    const requested = Array.isArray(sections) ? sections : [sections]
+    return new Set(requested.map((section) => String(section).toLowerCase()))
+  }, [sections])
+
+  const sectionTitleStyle = {
+    background: "#f3f2f1",
+    borderTop: "1px solid #c8c6c4",
+    borderBottom: "1px solid #c8c6c4",
+    padding: "6px 10px",
+    fontWeight: 600,
+    color: "#323130",
+  }
+  const gridStyle = {
+    display: "grid",
+    gap: "10px 16px",
+    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+    padding: "10px 0 14px",
+  }
+  const fieldWrapStyle = {
+    breakInside: "avoid",
+    margin: "0 10px",
+  }
+  const whiteTextFieldStyles = {
+    fieldGroup: {
+      backgroundColor: "#ffffff",
+      selectors: {
+        ":after": { borderColor: "#605e5c" },
+      },
+    },
+    field: {
+      backgroundColor: "#ffffff",
+    },
+  }
+  const whiteFlexTextFieldStyles = {
+    root: { flex: 1 },
+    fieldGroup: whiteTextFieldStyles.fieldGroup,
+    field: whiteTextFieldStyles.field,
+  }
+  const whiteDropdownStyles = {
+    title: { backgroundColor: "#ffffff" },
+    dropdown: { backgroundColor: "#ffffff" },
+  }
+  const editButtonStyle = { alignSelf: "flex-end", marginTop: 22 }
+
+  const updateContactText = (nextValue) => {
+    writePatientUpdates({
+      telecom: {
+        ...(patient.telecom || {}),
+        displayText: nextValue || "",
+      },
+    })
+  }
+
+  const renderTitle = (title) => {
+    if (!showSectionTitles) return null
+    return <div style={sectionTitleStyle}>{title}</div>
+  }
+
+  const renderEncounterDetails = () => (
+    <>
+      {renderTitle("Encounter Details")}
+      <div style={gridStyle}>
+        <div style={fieldWrapStyle}>
+          <TextField label="Service Location" value={textValue(encounter?.location || serviceLocation)} readOnly borderless tabIndex={-1} styles={whiteTextFieldStyles} />
+        </div>
+        <div style={fieldWrapStyle}>
+          <TextField label="Current Status" value={activeText} readOnly borderless tabIndex={-1} styles={whiteTextFieldStyles} />
+        </div>
+      </div>
+    </>
+  )
+
+  const renderDocumentDetails = () => (
+    <>
+      {renderTitle("Document Details")}
+      <div style={gridStyle}>
+        <div style={fieldWrapStyle}>
+          <TextField label="Created By" value={providerName} readOnly borderless tabIndex={-1} styles={whiteTextFieldStyles} />
+        </div>
+        <div style={fieldWrapStyle}>
+          <TextField label="Date Created" value={createdDate} readOnly borderless tabIndex={-1} styles={whiteTextFieldStyles} />
+        </div>
+      </div>
+    </>
+  )
+
+  const renderClientDemographics = () => (
+    <>
+      {renderTitle("Client Demographics")}
+      <div style={gridStyle}>
+        <div style={fieldWrapStyle}>
+          <TextField
+            label="Health number"
+            value={healthNumber}
+            styles={whiteTextFieldStyles}
+            onChange={(_, value) => writePatientUpdates({ healthNumber: value || "", insuranceNumber: value || "" })}
+          />
+        </div>
+        <div style={{ ...fieldWrapStyle, display: "flex", gap: 6 }}>
+          <TextField label="Insurance" value={insuranceText} readOnly borderless multiline rows={2} tabIndex={-1} styles={whiteFlexTextFieldStyles} />
+          <IconButton ariaLabel="Edit insurance" iconProps={{ iconName: "Edit" }} style={editButtonStyle} onClick={() => writePatientUpdates({ __lastEditRequest: "insurance" })} />
+        </div>
+        <div style={fieldWrapStyle}>
+          <TextField
+            label="Address"
+            value={addressText}
+            multiline
+            rows={5}
+            borderless
+            styles={whiteTextFieldStyles}
+            onChange={(_, value) => writePatientUpdates({ address: { ...(patient.address || {}), text: value || "" } })}
+          />
+        </div>
+        <div style={{ ...fieldWrapStyle, display: "flex", gap: 6 }}>
+          <TextField
+            label="Contact"
+            value={patient.telecom?.displayText || contactText}
+            multiline
+            rows={5}
+            borderless
+            onChange={(_, value) => updateContactText(value)}
+            styles={whiteFlexTextFieldStyles}
+          />
+          <IconButton ariaLabel="Edit contact" iconProps={{ iconName: "Edit" }} style={editButtonStyle} onClick={() => writePatientUpdates({ __lastEditRequest: "contact" })} />
+        </div>
+        <div style={fieldWrapStyle}>
+          <Dropdown
+            label="Preferred phone"
+            selectedKey={preferredCode}
+            options={preferredPhoneOptions}
+            styles={whiteDropdownStyles}
+            onChange={(_, option) => {
+              if (!option) return
+              writePatientUpdates({ preferredPhone: { code: option.key, display: option.text, system: "MOIS-PREFERREDPHONE" } })
+            }}
+          />
+        </div>
+      </div>
+    </>
+  )
+
+  return (
+    <div id={quickNavTarget} data-field-id={id} data-component="LegacyPatientFileSections">
+      {visibleSections.has("encounter") ? renderEncounterDetails() : null}
+      {visibleSections.has("document") ? renderDocumentDetails() : null}
+      {visibleSections.has("demographics") || visibleSections.has("clientdemographics") ? renderClientDemographics() : null}
+    </div>
+  )
+}
 `,
   './LongTermMedications/index.jsx': `/**
  * Display a list of long term medication orders for this patient.
@@ -14337,7 +15819,7 @@ classification { code display system }
 hoursPerWeek
 \`
 `,
-  './PastMeasurementField/index.jsx': `const { useEffect, useMemo } = React
+  './PastMeasurementField/index.jsx': `const { useEffect, useMemo, useState } = React
 const { Stack, StackItem, Label, Link, Text, TextField } = Fluent
 
 const isNonEmptyString = (value) => typeof value === "string" && value.trim().length > 0
@@ -14588,14 +16070,21 @@ const PastMeasurementField = ({
   saveUnits,
   showHistory = true,
   showHistoryList = false,
+  showHistoryOnFocus = false,
+  historyInitiallyVisible = false,
   emptyHistoryText = "No past measurement available",
   graphLinkText = "Graph",
   graphHref,
   openGraphInNewTab = true,
+  abnormalLow,
+  abnormalHigh,
+  abnormalMessage = "Abnormal",
+  normalMessage = "",
   readOnly = false,
   disabled = false,
   onChange,
 }) => {
+  const [historyFocused, setHistoryFocused] = useState(historyInitiallyVisible)
   const [fd, setFormData] = useActiveData()
   const sd = useSourceData()
   const componentId = id || fieldId || "PastMeasurementField"
@@ -14657,6 +16146,17 @@ const PastMeasurementField = ({
   const resolvedCurrentValue = hasMeaningfulValue(storedValue)
     ? storedValue
     : linkedObservationItem?.valueText ?? latestHistoryItem?.valueText ?? ""
+  const numericCurrentValue = Number(stringifyValue(resolvedCurrentValue))
+  const hasNumericCurrentValue = Number.isFinite(numericCurrentValue)
+  const abnormalLowValue = Number(abnormalLow)
+  const abnormalHighValue = Number(abnormalHigh)
+  const hasAbnormalLow = Number.isFinite(abnormalLowValue)
+  const hasAbnormalHigh = Number.isFinite(abnormalHighValue)
+  const isAbnormal = hasNumericCurrentValue && (
+    (hasAbnormalLow && numericCurrentValue < abnormalLowValue) ||
+    (hasAbnormalHigh && numericCurrentValue > abnormalHighValue)
+  )
+  const shouldShowHistory = showHistory && (!showHistoryOnFocus || historyFocused)
 
   useEffect(() => {
     if (persistenceMode !== "observationAndForm") {
@@ -14785,12 +16285,16 @@ const PastMeasurementField = ({
             value={stringifyValue(resolvedCurrentValue)}
             placeholder={placeholder}
             onChange={handleValueChange}
+            onFocus={() => setHistoryFocused(true)}
+            onBlur={() => {
+              if (!historyInitiallyVisible) setHistoryFocused(false)
+            }}
             disabled={disabled}
             readOnly={readOnly}
           />
         </StackItem>
 
-        {showHistory ? (
+        {shouldShowHistory ? (
           <StackItem styles={{ root: { minWidth: 220 } }}>
             <Stack horizontal verticalAlign="center" tokens={{ childrenGap: 8 }} styles={{ root: { flexWrap: "wrap" } }}>
               {isNonEmptyString(graphLinkText) ? (
@@ -14809,12 +16313,25 @@ const PastMeasurementField = ({
                 )
               ) : null}
               <Text variant="small">{historySummary}</Text>
+              {hasNumericCurrentValue && (isAbnormal ? abnormalMessage : normalMessage) ? (
+                <Text
+                  variant="small"
+                  styles={{
+                    root: {
+                      color: isAbnormal ? "#a4262c" : "#107c10",
+                      fontWeight: 600,
+                    },
+                  }}
+                >
+                  {isAbnormal ? abnormalMessage : normalMessage}
+                </Text>
+              ) : null}
             </Stack>
           </StackItem>
         ) : null}
       </Stack>
 
-      {showHistory && showHistoryList && historyItems.length > 1 ? (
+      {shouldShowHistory && showHistoryList && historyItems.length > 1 ? (
         <Text variant="xSmall">Recent: {recentHistoryText}</Text>
       ) : null}
     </Stack>
@@ -15403,7 +16920,7 @@ const PlannedActions = ({
   selectText = "Select actions",
   filterPred=plannedActionsActiveOnly,
   ...props
-}: Props) => {
+}) => {
 
   return (
     <ListSelection
@@ -15414,7 +16931,7 @@ const PlannedActions = ({
 
 }
 
-const plannedActionsColumns: ColumnSelection = [
+const plannedActionsColumns = [
   {
     id: "plannedActionId",
     type: "key",
@@ -17948,7 +19465,143 @@ const {
   DefaultButton,
   Dialog,
   DialogType,
+  Toggle,
 } = Fluent
+
+var __SubformScoringSessionContext = (() => {
+  const root = typeof globalThis !== "undefined"
+    ? globalThis
+    : (typeof window !== "undefined" ? window : {})
+  if (!root.__MOIS_FORM_STATE_CONTEXT__) {
+    root.__MOIS_FORM_STATE_CONTEXT__ = React.createContext(null)
+  }
+  return root.__MOIS_FORM_STATE_CONTEXT__
+})()
+
+var __cloneSubformScoringSessionValue = (value, fallback) => {
+  const target = value === undefined ? fallback : value
+  return JSON.parse(JSON.stringify(target))
+}
+
+var cloneFormSessionState = typeof cloneFormSessionState !== "undefined"
+  ? cloneFormSessionState
+  : (fd) => ({
+      field: {
+        data: __cloneSubformScoringSessionValue(fd?.field?.data, {}),
+        status: __cloneSubformScoringSessionValue(fd?.field?.status, {}),
+        history: __cloneSubformScoringSessionValue(Array.isArray(fd?.field?.history) ? fd.field.history : [], []),
+      },
+      uiState: {
+        ...__cloneSubformScoringSessionValue(fd?.uiState || {}, {}),
+        sections: __cloneSubformScoringSessionValue(fd?.uiState?.sections ?? {}, {}),
+      },
+      tempArea: __cloneSubformScoringSessionValue(fd?.tempArea || {}, {}),
+    })
+
+var mergeFormSessionState = typeof mergeFormSessionState !== "undefined"
+  ? mergeFormSessionState
+  : (draft, sessionState) => {
+      if (!draft.field) {
+        draft.field = { data: {}, status: {}, history: [] }
+      }
+      if (!draft.field.data) draft.field.data = {}
+      if (!draft.field.status) draft.field.status = {}
+      if (!Array.isArray(draft.field.history)) draft.field.history = []
+
+      Object.entries(sessionState?.field?.data || {}).forEach(([fieldId, value]) => {
+        draft.field.data[fieldId] = __cloneSubformScoringSessionValue(value, null)
+      })
+      Object.entries(sessionState?.field?.status || {}).forEach(([fieldId, value]) => {
+        draft.field.status[fieldId] = __cloneSubformScoringSessionValue(value, null)
+      })
+      if (sessionState?.tempArea && typeof sessionState.tempArea === "object") {
+        draft.tempArea = {
+          ...(draft.tempArea || {}),
+          ...__cloneSubformScoringSessionValue(sessionState.tempArea, {}),
+        }
+      }
+    }
+
+var FormSessionProvider = typeof FormSessionProvider !== "undefined"
+  ? FormSessionProvider
+  : ({ children, initialFormData }) => {
+      const normalize = (input) => cloneFormSessionState(input)
+      const [formData, setFormDataState] = useState(() => normalize(initialFormData))
+
+      useEffect(() => {
+        setFormDataState(normalize(initialFormData))
+      }, [initialFormData])
+
+      const setFormData = useCallback((updater) => {
+        setFormDataState((prev) => {
+          if (typeof updater === "function") {
+            try {
+              const next = cloneFormSessionState(prev)
+              const result = updater(next)
+              return cloneFormSessionState(result || next)
+            } catch (error) {
+              return prev
+            }
+          }
+          if (updater && typeof updater === "object") {
+            return cloneFormSessionState({ ...prev, ...updater })
+          }
+          return prev
+        })
+      }, [])
+
+      return (
+        <__SubformScoringSessionContext.Provider value={{ formData, setFormData }}>
+          {children}
+        </__SubformScoringSessionContext.Provider>
+      )
+    }
+
+var useFormSessionData = typeof useFormSessionData !== "undefined"
+  ? useFormSessionData
+  : (selector) => {
+      const sessionContext = React.useContext(__SubformScoringSessionContext)
+      const [fallbackData, fallbackSetData] = useActiveData(selector)
+      const normalizedSessionData = useMemo(() => {
+        if (!sessionContext?.formData) return null
+        return {
+          ...sessionContext.formData,
+          field: sessionContext.formData.field || { data: {}, status: {}, history: [] },
+          uiState: {
+            sections: {},
+            ...(sessionContext.formData.uiState || {}),
+            sections: sessionContext.formData.uiState?.sections || {},
+          },
+          tempArea: sessionContext.formData.tempArea || {},
+        }
+      }, [sessionContext])
+      const sessionSetFormData = useCallback((updater) => {
+        sessionContext?.setFormData?.(updater)
+      }, [sessionContext])
+      if (!sessionContext) return [fallbackData, fallbackSetData]
+      const selected = selector ? selector(normalizedSessionData) : normalizedSessionData
+      const selectedWithSetter =
+        selected && typeof selected === "object" && !Array.isArray(selected)
+          ? { ...selected, setFormData: sessionSetFormData }
+          : selected
+      const scopedSetter = (updates) => {
+        if (!selector) {
+          sessionSetFormData(updates)
+          return
+        }
+        sessionSetFormData((draft) => {
+          const target = selector(draft)
+          if (!target || typeof target !== "object") return
+          if (typeof updates === "function") {
+            const result = updates(target)
+            if (result && typeof result === "object") Object.assign(target, result)
+            return
+          }
+          if (updates && typeof updates === "object") Object.assign(target, updates)
+        })
+      }
+      return [selectedWithSetter, scopedSetter]
+    }
 
 // ================================================
 // Scoring helpers (same logic as ScoringModule)
@@ -19009,6 +20662,10 @@ const SubformScoringInner = ({
       Array.isArray(dataEntryCalculatorConfig?.rows) &&
       dataEntryCalculatorConfig.rows.length > 0
   }, [isDataEntryMode, dataEntryCalculatorConfig])
+  const useBloodGlucoseReadingLayout =
+    isDataEntryMode &&
+    String(modalConfig?.layout || modalConfig?.variant || "").trim().toLowerCase() === "blood-glucose-reading"
+  const [showBloodGlucoseUsEntry, setShowBloodGlucoseUsEntry] = useState(false)
 
   const dataEntryValues = useMemo(() => {
     if (!isDataEntryMode) return {}
@@ -19753,6 +21410,114 @@ const SubformScoringInner = ({
     )
   }
 
+  const renderBloodGlucoseReadingEditor = () => {
+    const rowLabels = ["AC/B", "PC/B", "AC/L", "PC/L", "AC/D", "PC/D", "HS"]
+    const dateField = dataEntryFieldById.get("Date") || { id: "Date", label: "Select reading date" }
+    const commentsField = dataEntryFieldById.get("Comments") || { id: "Comments", label: "Comments", rows: 3 }
+    const fieldExists = (fieldId) => dataEntryFieldById.has(fieldId)
+    const renderNumberInput = (fieldId) => (
+      <input
+        id={fieldId}
+        type="number"
+        inputMode="decimal"
+        step="any"
+        value={dataEntryValues[fieldId] === null || dataEntryValues[fieldId] === undefined ? "" : String(dataEntryValues[fieldId])}
+        onChange={(event) => {
+          const nextRaw = event?.target?.value ?? ""
+          if (!nextRaw) {
+            setDataEntryValue(fieldId, null)
+            return
+          }
+          const parsed = Number(nextRaw)
+          setDataEntryValue(fieldId, Number.isFinite(parsed) ? parsed : nextRaw)
+        }}
+        style={{
+          width: "100%",
+          minWidth: "0",
+          border: \`1px solid \${isDarkMode ? "#5a5a5a" : "#b8b8b8"}\`,
+          backgroundColor: isDarkMode ? "#1a1a1a" : "#fff",
+          color: isDarkMode ? "#fff" : "#111",
+          padding: "4px 6px",
+          fontSize: "14px",
+          textAlign: "center",
+        }}
+      />
+    )
+
+    return (
+      <div data-component="SubForm" style={{ minWidth: "min(96vw, 760px)" }}>
+        <Stack tokens={{ childrenGap: 12 }}>
+          <div
+            data-field-id={dateField.id}
+            style={{ breakInside: "avoid", margin: "0 10px", flex: "2 2 0", minWidth: 80, maxWidth: 180 }}
+          >
+            <Label required={dateField.required === true}>{dateField.label || "Select reading date"}</Label>
+            <input
+              id={dateField.id}
+              type="date"
+              value={dataEntryValues[dateField.id] ?? ""}
+              onChange={(event) => setDataEntryValue(dateField.id, event?.target?.value ?? "")}
+              style={_LOCAL_INPUT_STYLE(isDarkMode)}
+            />
+          </div>
+
+          <Toggle
+            label="Show US (mg/dl) entry"
+            checked={showBloodGlucoseUsEntry}
+            onText="Yes"
+            offText="No"
+            onChange={(_event, checked) => setShowBloodGlucoseUsEntry(Boolean(checked))}
+          />
+
+          <table
+            id="entryTable"
+            style={{
+              width: "100%",
+              border: "1px solid black",
+              borderCollapse: "collapse",
+              marginBottom: 10,
+            }}
+          >
+            <thead>
+              <tr>
+                <th style={{ width: showBloodGlucoseUsEntry ? "40%" : "50%" }} />
+                <th style={{ width: showBloodGlucoseUsEntry ? "30%" : "50%" }}>CAD (mmol/L)</th>
+                {showBloodGlucoseUsEntry && <th style={{ width: "30%" }}>US (mg/dL)</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {rowLabels.map((label, index) => {
+                const cadFieldId = \`\${label}.cad\`
+                const usFieldId = \`\${label}.us\`
+                if (!fieldExists(cadFieldId) && !fieldExists(usFieldId)) return null
+                return (
+                  <tr key={\`bg-reading-\${label}\`} style={{ backgroundColor: index % 2 === 0 ? "whitesmoke" : "transparent" }}>
+                    <td style={{ border: "1px solid black", padding: "6px 8px", fontWeight: 600 }}>{label}</td>
+                    <td style={{ border: "1px solid black", padding: "6px 8px" }}>{renderNumberInput(cadFieldId)}</td>
+                    {showBloodGlucoseUsEntry && (
+                      <td style={{ border: "1px solid black", padding: "6px 8px" }}>{renderNumberInput(usFieldId)}</td>
+                    )}
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+
+          <div data-field-id={commentsField.id} style={{ breakInside: "avoid", margin: "0 10px", maxWidth: 360 }}>
+            <Label>{commentsField.label || "Comments"}</Label>
+            <textarea
+              id={commentsField.id}
+              rows={commentsField.rows || 3}
+              value={dataEntryValues[commentsField.id] ?? ""}
+              onChange={(event) => setDataEntryValue(commentsField.id, event?.target?.value ?? "")}
+              style={_LOCAL_TEXTAREA_STYLE(isDarkMode)}
+            />
+          </div>
+        </Stack>
+      </div>
+    )
+  }
+
   const renderSummaryItem = (item, index) => {
     if (isDataEntryMode) {
       switch (item.type) {
@@ -19944,7 +21709,9 @@ const SubformScoringInner = ({
       >
         {isDataEntryMode ? (
           <div style={{ maxHeight: "65vh", overflowY: "auto", paddingRight: "4px" }}>
-            {isMorphineCalculatorMode ? (
+            {useBloodGlucoseReadingLayout ? (
+              renderBloodGlucoseReadingEditor()
+            ) : isMorphineCalculatorMode ? (
               renderMorphineCalculator()
             ) : dataEntryFields.length > 0 ? (
               <div style={{ display: "flex", flexWrap: "wrap", columnGap: "12px", rowGap: "10px" }}>
@@ -20134,6 +21901,34 @@ const normalizeGuardActions = (actions) => {
     }))
 }
 
+const normalizeFooterActions = (actions, dialogLibraryId, showPrintButton) => {
+  if (Array.isArray(actions) && actions.length > 0) {
+    return actions
+      .filter((action) => action && typeof action === "object" && typeof action.id === "string")
+      .map((action) => ({
+        id: action.id,
+        label: typeof action.label === "string" && action.label.trim() ? action.label.trim() : action.id,
+        primary: action.primary === true,
+        disabledWhenSigned: action.disabledWhenSigned === true,
+        hiddenWhenSigned: action.hiddenWhenSigned === true,
+      }))
+  }
+
+  const footerActions = []
+  if (showPrintButton) footerActions.push({ id: "print", label: "Print" })
+
+  if (dialogLibraryId === "save_discard_cancel") {
+    footerActions.push({ id: "sign", label: "Sign & Save", primary: true })
+    footerActions.push({ id: "close", label: "Close" })
+    return footerActions
+  }
+
+  footerActions.push({ id: "save", label: "Save Draft", disabledWhenSigned: true })
+  footerActions.push({ id: "sign", label: "Sign & Save", primary: true })
+  footerActions.push({ id: "close", label: "Close" })
+  return footerActions
+}
+
 const collectComponentPayloads = (fd) => {
   const payloads = fd?.field?.data?.__componentPayloads
   const dcoGroups = payloads?.dcoUpdatesByComponent || {}
@@ -20163,15 +21958,25 @@ const buildDefaultSavePayload = (fd, formDataOverride) => {
 
 const UnsavedChangesGuard = ({
   watchedValue,
+  dialogLibraryId = "save_sign_discard_cancel",
   promptTitle = "Save changes?",
   promptBody = "Unsaved changes were detected. Save before closing?",
+  promptMessage,
   actions,
+  footerActions,
+  showFooterActions = true,
+  footerBackground = "rgba(112, 170, 228, 0.4)",
+  footerJustifyContent = "flex-start",
   closeButtonText = "Close",
   showCloseButton = true,
-  showDirtyState = true,
+  showDirtyState = false,
+  showPrintButton = false,
   onlyWhenChanged = true,
   interceptClose = true,
   interceptUnload = true,
+  autoSaveOnUnload = false,
+  closeAfterAction = false,
+  skipWhenSigned = true,
   getSaveData,
 }) => {
   const sd = useSourceData()
@@ -20182,6 +21987,10 @@ const UnsavedChangesGuard = ({
   const [isDirty, setIsDirty] = useState(false)
   const [isOpen, setIsOpen] = useState(false)
   const actionItems = useMemo(() => normalizeGuardActions(actions), [actions])
+  const footerActionItems = useMemo(
+    () => normalizeFooterActions(footerActions, dialogLibraryId, showPrintButton),
+    [dialogLibraryId, footerActions, showPrintButton]
+  )
 
   useEffect(() => {
     if (warmupRef.current > 0) {
@@ -20195,15 +22004,25 @@ const UnsavedChangesGuard = ({
   useEffect(() => {
     if (!interceptUnload) return undefined
     const handler = (event) => {
-      if (sd?.webform?.isDraft === "N") return undefined
+      if (skipWhenSigned && sd?.webform?.isDraft === "N") return undefined
       if (onlyWhenChanged && !isDirty) return undefined
+      if (autoSaveOnUnload && typeof saveDraft === "function") {
+        const prepared = typeof prepareAuthorshipPersist === "function"
+          ? prepareAuthorshipPersist(sd, fd, "save")
+          : null
+        const payload = typeof getSaveData === "function"
+          ? getSaveData()
+          : buildDefaultSavePayload(fd, prepared?.formData)
+        saveDraft(sd, fd, payload)
+        return undefined
+      }
       event.preventDefault()
       event.returnValue = ""
       return ""
     }
     window.addEventListener("beforeunload", handler)
     return () => window.removeEventListener("beforeunload", handler)
-  }, [interceptUnload, isDirty, onlyWhenChanged, sd])
+  }, [autoSaveOnUnload, fd, getSaveData, interceptUnload, isDirty, onlyWhenChanged, sd, skipWhenSigned])
 
   const markSaved = () => {
     baselineRef.current = trackedValue
@@ -20212,13 +22031,41 @@ const UnsavedChangesGuard = ({
   }
 
   const handleAction = async (actionId) => {
+    const closeWindow = () => {
+      if (!closeAfterAction || typeof window === "undefined") return
+      if (Array.isArray(window.__moisPreviewDiagnostics)) return
+      window.close()
+    }
+
     if (actionId === "cancel") {
       setIsOpen(false)
       return
     }
 
+    if (actionId === "close") {
+      if (!interceptClose || (!onlyWhenChanged || !isDirty)) {
+        if (typeof window !== "undefined") {
+          if (Array.isArray(window.__moisPreviewDiagnostics)) {
+            MoisFunction?.close?.()
+          } else {
+            window.close()
+          }
+        }
+        return
+      }
+      setIsOpen(true)
+      return
+    }
+
     if (actionId === "discard") {
       markSaved()
+      setIsOpen(false)
+      closeWindow()
+      return
+    }
+
+    if (actionId === "print") {
+      if (typeof window !== "undefined") window.print()
       setIsOpen(false)
       return
     }
@@ -20238,6 +22085,7 @@ const UnsavedChangesGuard = ({
       }
       markSaved()
       setIsOpen(false)
+      if (success !== false) closeWindow()
       return
     }
 
@@ -20248,6 +22096,7 @@ const UnsavedChangesGuard = ({
       }
       markSaved()
       setIsOpen(false)
+      if (success !== false) closeWindow()
       return
     }
 
@@ -20259,10 +22108,27 @@ const UnsavedChangesGuard = ({
       markSaved()
     }
     setIsOpen(false)
+    closeWindow()
   }
 
   const primaryAction = actionItems.find((action) => action.primary) ?? actionItems[0]
   const secondaryActions = actionItems.filter((action) => action.id !== primaryAction?.id)
+  const promptText = promptMessage || promptBody
+  const isSigned = sd?.webform?.recordState === "SIGNED" || sd?.webform?.isDraft === "N"
+
+  const renderFooterAction = (action) => {
+    if (action.hiddenWhenSigned && isSigned) return null
+    const ButtonComponent = action.primary ? PrimaryButton : DefaultButton
+    const disabled = action.disabled === true || (action.disabledWhenSigned && isSigned) || sd?.lifecycleState?.isMutating === true
+    return (
+      <ButtonComponent
+        key={action.id}
+        text={action.label}
+        disabled={disabled}
+        onClick={() => handleAction(action.id)}
+      />
+    )
+  }
 
   return (
     <Stack tokens={{ childrenGap: 8 }}>
@@ -20271,7 +22137,7 @@ const UnsavedChangesGuard = ({
           {isDirty ? "Unsaved changes detected" : "No unsaved changes"}
         </Text>
       ) : null}
-      {showCloseButton && interceptClose ? (
+      {showCloseButton && interceptClose && !showFooterActions ? (
         <DefaultButton
           text={closeButtonText}
           onClick={() => {
@@ -20281,13 +22147,35 @@ const UnsavedChangesGuard = ({
           }}
         />
       ) : null}
+      {showPrintButton && !showFooterActions ? (
+        <DefaultButton text="Print" onClick={() => handleAction("print")} />
+      ) : null}
+      {showFooterActions ? (
+        <div className="hideonprint">
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: footerJustifyContent,
+              gap: 8,
+              flexWrap: "wrap",
+              background: footerBackground,
+              padding: "8px 10px",
+            }}
+          >
+            {footerActionItems.map(renderFooterAction)}
+            <SaveStatus noHide />
+          </div>
+        </div>
+      ) : null}
       <Dialog
         hidden={!isOpen}
         onDismiss={() => setIsOpen(false)}
         dialogContentProps={{
           type: DialogType.normal,
           title: promptTitle,
-          subText: promptBody,
+          subText: promptText,
         }}
       >
         <Stack horizontal horizontalAlign="end" tokens={{ childrenGap: 8 }}>
@@ -20773,6 +22661,57 @@ export const componentIdentities: Record<string, any> = {
       "patch": 12
     }
   },
+  'CustomJsxBlock': {
+    "name": "CustomJsxBlock",
+    "title": "Custom JSX Block",
+    "description": "Escape hatch for hand-authored JSX or HTML snippets that need to be emitted directly into generated MOIS forms.",
+    "version": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "MOIS Exporter",
+    "author": "MOIS Exporter",
+    "publisher": "MOIS",
+    "globalIdentifier": "",
+    "requiredFormViewerVersion": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "requiredMoisVersion": {
+      "major": 2,
+      "minor": 28,
+      "patch": 5
+    }
+  },
+  'DentalWeightConverter': {
+    "name": "DentalWeightConverter",
+    "title": "Dental Weight Converter",
+    "description": "Legacy dental-screen child weight entry with kg/lb dual-unit conversion and clear action.",
+    "version": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "MOIS Exporter",
+    "author": "MOIS Exporter",
+    "publisher": "MOIS",
+    "globalIdentifier": "",
+    "requiredFormViewerVersion": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "requiredMoisVersion": {
+      "major": 2,
+      "minor": 28,
+      "patch": 5
+    },
+    "components": []
+  },
   'EditableTable': {
     "name": "EditableTable",
     "title": "Editable Table with Inline or Modal Row Editing",
@@ -20896,6 +22835,31 @@ export const componentIdentities: Record<string, any> = {
       "major": 2,
       "minor": 26,
       "patch": 12
+    }
+  },
+  'FocusedObservationHistory': {
+    "name": "FocusedObservationHistory",
+    "title": "Focused Observation History",
+    "description": "Reusable focus-driven historical observation display for native MOIS fields and builder fields.",
+    "version": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "MOIS Exporter",
+    "author": "MOIS Exporter",
+    "publisher": "MOIS",
+    "globalIdentifier": "",
+    "requiredFormViewerVersion": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "requiredMoisVersion": {
+      "major": 2,
+      "minor": 28,
+      "patch": 5
     }
   },
   'FormSessionRuntime': {
@@ -21096,6 +23060,184 @@ export const componentIdentities: Record<string, any> = {
       "major": 2,
       "minor": 26,
       "patch": 12
+    }
+  },
+  'LayoutTable': {
+    "name": "LayoutTable",
+    "title": "Layout Table",
+    "description": "Editable exact table-cell layout for printable legacy forms.",
+    "version": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "MOIS Exporter",
+    "author": "MOIS Exporter",
+    "publisher": "MOIS",
+    "globalIdentifier": "",
+    "requiredFormViewerVersion": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "requiredMoisVersion": {
+      "major": 2,
+      "minor": 28,
+      "patch": 5
+    }
+  },
+  'LegacyAssessmentTable': {
+    "name": "LegacyAssessmentTable",
+    "title": "Legacy Assessment Table",
+    "description": "Renders legacy two-column assessment score tables with bound inputs and calculated totals.",
+    "version": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "MOIS Exporter",
+    "author": "MOIS Exporter",
+    "publisher": "MOIS",
+    "globalIdentifier": "",
+    "requiredFormViewerVersion": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "requiredMoisVersion": {
+      "major": 2,
+      "minor": 28,
+      "patch": 5
+    }
+  },
+  'LegacyButtonGroup': {
+    "name": "LegacyButtonGroup",
+    "title": "Legacy Button Group",
+    "description": "Renders legacy-style action buttons that can open a dialog with configured payload metadata.",
+    "version": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "MOIS Exporter",
+    "author": "MOIS Exporter",
+    "publisher": "MOIS",
+    "globalIdentifier": "",
+    "requiredFormViewerVersion": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "requiredMoisVersion": {
+      "major": 2,
+      "minor": 28,
+      "patch": 5
+    }
+  },
+  'LegacyFormContextHeader': {
+    "name": "LegacyFormContextHeader",
+    "title": "Legacy Form Context Header",
+    "description": "Read-only legacy form date, author, provider, visit, and service-location context pulled from MOIS source data.",
+    "version": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "MOIS Exporter",
+    "author": "MOIS Exporter",
+    "publisher": "MOIS",
+    "globalIdentifier": "",
+    "requiredFormViewerVersion": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "requiredMoisVersion": {
+      "major": 2,
+      "minor": 28,
+      "patch": 5
+    },
+    "components": []
+  },
+  'LegacyModerateRiskGuidance': {
+    "name": "LegacyModerateRiskGuidance",
+    "title": "Legacy Moderate Risk Guidance",
+    "description": "Renders the ABS moderate-risk ordered guidance with MOIS links and intervention columns",
+    "version": {
+      "major": 1,
+      "minor": 0,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "Northern Health",
+    "author": "Northern Health",
+    "publisher": "Northern Health",
+    "globalIdentifier": "",
+    "requiredFormViewerVersion": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "requiredMoisVersion": {
+      "major": 2,
+      "minor": 26,
+      "patch": 12
+    },
+    "components": []
+  },
+  'LegacyMoisLinkList': {
+    "name": "LegacyMoisLinkList",
+    "title": "Legacy MOIS Link List",
+    "description": "Renders legacy list items with LinkToMois icon buttons for chart modules",
+    "version": {
+      "major": 1,
+      "minor": 0,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "Northern Health",
+    "author": "Northern Health",
+    "publisher": "Northern Health",
+    "globalIdentifier": "",
+    "requiredFormViewerVersion": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "requiredMoisVersion": {
+      "major": 2,
+      "minor": 26,
+      "patch": 12
+    },
+    "components": []
+  },
+  'LegacyPatientFileSections': {
+    "name": "LegacyPatientFileSections",
+    "title": "Legacy Patient File Sections",
+    "description": "Renders legacy encounter, document, and client demographic sections bound to the loaded patient file.",
+    "version": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "MOIS Exporter",
+    "author": "MOIS Exporter",
+    "publisher": "MOIS",
+    "globalIdentifier": "",
+    "requiredFormViewerVersion": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "requiredMoisVersion": {
+      "major": 2,
+      "minor": 28,
+      "patch": 5
     }
   },
   'LongTermMedications': {

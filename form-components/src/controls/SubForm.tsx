@@ -136,13 +136,19 @@ export const SubForm: React.FC<SubFormProps> = ({
     ) as any : undefined,
     ...dialogContentProps,
   };
+  const dialogMinWidth =
+    typeof minWidth === 'number'
+      ? minWidth
+      : typeof minWidth === 'string' && minWidth.trim()
+        ? minWidth
+        : 480;
 
   return (
     <Dialog
       hidden={false}
       onDismiss={onCancel}
       dialogContentProps={defaultDialogContentProps}
-      minWidth={typeof minWidth === 'number' ? minWidth : parseInt(String(minWidth)) || 480}
+      minWidth={dialogMinWidth}
     >
       <div style={containerStyle} data-component="SubForm">
         {sectionContent}

@@ -200,6 +200,18 @@ export const MoisFunction = {
     return applyPreviewFormAction('signSubmit', sd, fd, data);
   },
   refresh: () => { console.log('Refresh called'); triggerToast('Refresh called'); },
+  mapSourceToActive: (columns: any[] = []) => {
+    return (item: any = {}) => {
+      const result: Record<string, any> = {};
+      for (const col of columns) {
+        if (!col) continue;
+        const id = col.id ?? col.key ?? col.fieldName;
+        if (!id) continue;
+        result[id] = typeof col.onColumnMap === 'function' ? col.onColumnMap(item) : item[id];
+      }
+      return result;
+    };
+  },
 };
 
 /**

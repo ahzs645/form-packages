@@ -498,6 +498,15 @@ const Scale5ToolTip = props => {
 }
 
 const HonosFinalScore = props => {
+  const [fd] = useActiveData()
+  const questionIds = Array.isArray(props.questionIds) ? props.questionIds : []
+  const scoredQuestionIds = Array.isArray(props.scoredQuestionIds) ? props.scoredQuestionIds : questionIds
+  const calculatedTotal = scoredQuestionIds.reduce((total, questionId) => {
+    const rawValue = fd?.field?.data?.[questionId]?.value ?? fd?.field?.data?.[questionId]
+    const numericValue = Number(rawValue)
+    return Number.isFinite(numericValue) ? total + numericValue : total
+  }, 0)
+  const totalScore = typeof props.totalScore === "number" ? props.totalScore : calculatedTotal
   const finalScoreStyle = {
     margin: "0px 0px 15px 0px",
   }
@@ -505,7 +514,7 @@ const HonosFinalScore = props => {
   return (
     <div style={finalScoreStyle}>
       <Text variant='xLarge'>
-        <b>Final Score: {props.totalScore}</b>
+        <b>Final Score: {totalScore}</b>
       </Text>
     </div>
   )

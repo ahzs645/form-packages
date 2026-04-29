@@ -7,6 +7,7 @@ export interface SectionProps extends LayoutProps {
   collapsible?: boolean;
   defaultExpanded?: boolean;
   activeSelector?: (formData: any) => any;
+  borderless?: boolean;
 }
 
 /**
@@ -21,6 +22,7 @@ export const Section: React.FC<SectionProps> = ({
   title,
   collapsible = false,
   defaultExpanded = true,
+  borderless = false,
   children
 }) => {
   const [expanded, setExpanded] = React.useState(defaultExpanded);
@@ -31,8 +33,8 @@ export const Section: React.FC<SectionProps> = ({
       styles={{
         root: {
           padding: 16,
-          border: '1px solid #edebe9',
-          borderRadius: 4,
+          border: borderless ? 'none' : '1px solid #edebe9',
+          borderRadius: borderless ? 0 : 4,
           marginBottom: 16
         }
       }}

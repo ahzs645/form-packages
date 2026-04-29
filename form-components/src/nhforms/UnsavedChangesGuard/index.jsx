@@ -18,6 +18,34 @@ const normalizeGuardActions = (actions) => {
     }))
 }
 
+const normalizeFooterActions = (actions, dialogLibraryId, showPrintButton) => {
+  if (Array.isArray(actions) && actions.length > 0) {
+    return actions
+      .filter((action) => action && typeof action === "object" && typeof action.id === "string")
+      .map((action) => ({
+        id: action.id,
+        label: typeof action.label === "string" && action.label.trim() ? action.label.trim() : action.id,
+        primary: action.primary === true,
+        disabledWhenSigned: action.disabledWhenSigned === true,
+        hiddenWhenSigned: action.hiddenWhenSigned === true,
+      }))
+  }
+
+  const footerActions = []
+  if (showPrintButton) footerActions.push({ id: "print", label: "Print" })
+
+  if (dialogLibraryId === "save_discard_cancel") {
+    footerActions.push({ id: "sign", label: "Sign & Save", primary: true })
+    footerActions.push({ id: "close", label: "Close" })
+    return footerActions
+  }
+
+  footerActions.push({ id: "save", label: "Save Draft", disabledWhenSigned: true })
+  footerActions.push({ id: "sign", label: "Sign & Save", primary: true })
+  footerActions.push({ id: "close", label: "Close" })
+  return footerActions
+}
+
 const collectComponentPayloads = (fd) => {
   const payloads = fd?.field?.data?.__componentPayloads
   const dcoGroups = payloads?.dcoUpdatesByComponent || {}
@@ -47,15 +75,25 @@ const buildDefaultSavePayload = (fd, formDataOverride) => {
 
 const UnsavedChangesGuard = ({
   watchedValue,
+  dialogLibraryId = "save_sign_discard_cancel",
   promptTitle = "Save changes?",
   promptBody = "Unsaved changes were detected. Save before closing?",
+  promptMessage,
   actions,
+  footerActions,
+  showFooterActions = true,
+  footerBackground = "rgba(112, 170, 228, 0.4)",
+  footerJustifyContent = "flex-start",
   closeButtonText = "Close",
   showCloseButton = true,
-  showDirtyState = true,
+  showDirtyState = false,
+  showPrintButton = false,
   onlyWhenChanged = true,
   interceptClose = true,
   interceptUnload = true,
+  autoSaveOnUnload = false,
+  closeAfterAction = false,
+  skipWhenSigned = true,
   getSaveData,
 }) => {
   const sd = useSourceData()
@@ -66,6 +104,10 @@ const UnsavedChangesGuard = ({
   const [isDirty, setIsDirty] = useState(false)
   const [isOpen, setIsOpen] = useState(false)
   const actionItems = useMemo(() => normalizeGuardActions(actions), [actions])
+  const footerActionItems = useMemo(
+    () => normalizeFooterActions(footerActions, dialogLibraryId, showPrintButton),
+    [dialogLibraryId, footerActions, showPrintButton]
+  )
 
   useEffect(() => {
     if (warmupRef.current > 0) {
@@ -79,15 +121,25 @@ const UnsavedChangesGuard = ({
   useEffect(() => {
     if (!interceptUnload) return undefined
     const handler = (event) => {
-      if (sd?.webform?.isDraft === "N") return undefined
+      if (skipWhenSigned && sd?.webform?.isDraft === "N") return undefined
       if (onlyWhenChanged && !isDirty) return undefined
+      if (autoSaveOnUnload && typeof saveDraft === "function") {
+        const prepared = typeof prepareAuthorshipPersist === "function"
+          ? prepareAuthorshipPersist(sd, fd, "save")
+          : null
+        const payload = typeof getSaveData === "function"
+          ? getSaveData()
+          : buildDefaultSavePayload(fd, prepared?.formData)
+        saveDraft(sd, fd, payload)
+        return undefined
+      }
       event.preventDefault()
       event.returnValue = ""
       return ""
     }
     window.addEventListener("beforeunload", handler)
     return () => window.removeEventListener("beforeunload", handler)
-  }, [interceptUnload, isDirty, onlyWhenChanged, sd])
+  }, [autoSaveOnUnload, fd, getSaveData, interceptUnload, isDirty, onlyWhenChanged, sd, skipWhenSigned])
 
   const markSaved = () => {
     baselineRef.current = trackedValue
@@ -96,13 +148,41 @@ const UnsavedChangesGuard = ({
   }
 
   const handleAction = async (actionId) => {
+    const closeWindow = () => {
+      if (!closeAfterAction || typeof window === "undefined") return
+      if (Array.isArray(window.__moisPreviewDiagnostics)) return
+      window.close()
+    }
+
     if (actionId === "cancel") {
       setIsOpen(false)
       return
     }
 
+    if (actionId === "close") {
+      if (!interceptClose || (!onlyWhenChanged || !isDirty)) {
+        if (typeof window !== "undefined") {
+          if (Array.isArray(window.__moisPreviewDiagnostics)) {
+            MoisFunction?.close?.()
+          } else {
+            window.close()
+          }
+        }
+        return
+      }
+      setIsOpen(true)
+      return
+    }
+
     if (actionId === "discard") {
       markSaved()
+      setIsOpen(false)
+      closeWindow()
+      return
+    }
+
+    if (actionId === "print") {
+      if (typeof window !== "undefined") window.print()
       setIsOpen(false)
       return
     }
@@ -122,6 +202,7 @@ const UnsavedChangesGuard = ({
       }
       markSaved()
       setIsOpen(false)
+      if (success !== false) closeWindow()
       return
     }
 
@@ -132,6 +213,7 @@ const UnsavedChangesGuard = ({
       }
       markSaved()
       setIsOpen(false)
+      if (success !== false) closeWindow()
       return
     }
 
@@ -143,10 +225,27 @@ const UnsavedChangesGuard = ({
       markSaved()
     }
     setIsOpen(false)
+    closeWindow()
   }
 
   const primaryAction = actionItems.find((action) => action.primary) ?? actionItems[0]
   const secondaryActions = actionItems.filter((action) => action.id !== primaryAction?.id)
+  const promptText = promptMessage || promptBody
+  const isSigned = sd?.webform?.recordState === "SIGNED" || sd?.webform?.isDraft === "N"
+
+  const renderFooterAction = (action) => {
+    if (action.hiddenWhenSigned && isSigned) return null
+    const ButtonComponent = action.primary ? PrimaryButton : DefaultButton
+    const disabled = action.disabled === true || (action.disabledWhenSigned && isSigned) || sd?.lifecycleState?.isMutating === true
+    return (
+      <ButtonComponent
+        key={action.id}
+        text={action.label}
+        disabled={disabled}
+        onClick={() => handleAction(action.id)}
+      />
+    )
+  }
 
   return (
     <Stack tokens={{ childrenGap: 8 }}>
@@ -155,7 +254,7 @@ const UnsavedChangesGuard = ({
           {isDirty ? "Unsaved changes detected" : "No unsaved changes"}
         </Text>
       ) : null}
-      {showCloseButton && interceptClose ? (
+      {showCloseButton && interceptClose && !showFooterActions ? (
         <DefaultButton
           text={closeButtonText}
           onClick={() => {
@@ -165,13 +264,35 @@ const UnsavedChangesGuard = ({
           }}
         />
       ) : null}
+      {showPrintButton && !showFooterActions ? (
+        <DefaultButton text="Print" onClick={() => handleAction("print")} />
+      ) : null}
+      {showFooterActions ? (
+        <div className="hideonprint">
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: footerJustifyContent,
+              gap: 8,
+              flexWrap: "wrap",
+              background: footerBackground,
+              padding: "8px 10px",
+            }}
+          >
+            {footerActionItems.map(renderFooterAction)}
+            <SaveStatus noHide />
+          </div>
+        </div>
+      ) : null}
       <Dialog
         hidden={!isOpen}
         onDismiss={() => setIsOpen(false)}
         dialogContentProps={{
           type: DialogType.normal,
           title: promptTitle,
-          subText: promptBody,
+          subText: promptText,
         }}
       >
         <Stack horizontal horizontalAlign="end" tokens={{ childrenGap: 8 }}>

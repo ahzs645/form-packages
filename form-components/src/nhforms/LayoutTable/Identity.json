@@ -1,0 +1,25 @@
+{
+  "name": "LayoutTable",
+  "title": "Layout Table",
+  "description": "Editable exact table-cell layout for printable legacy forms.",
+  "version": {
+    "major": 0,
+    "minor": 1,
+    "patch": 0
+  },
+  "type": "component",
+  "owner": "MOIS Exporter",
+  "author": "MOIS Exporter",
+  "publisher": "MOIS",
+  "globalIdentifier": "",
+  "requiredFormViewerVersion": {
+    "major": 0,
+    "minor": 1,
+    "patch": 0
+  },
+  "requiredMoisVersion": {
+    "major": 2,
+    "minor": 28,
+    "patch": 5
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "name": "DentalWeightConverter",
+  "title": "Dental Weight Converter",
+  "description": "Legacy dental-screen child weight entry with kg/lb dual-unit conversion and clear action.",
+  "version": {
+    "major": 0,
+    "minor": 1,
+    "patch": 0
+  },
+  "type": "component",
+  "owner": "MOIS Exporter",
+  "author": "MOIS Exporter",
+  "publisher": "MOIS",
+  "globalIdentifier": "",
+  "requiredFormViewerVersion": {
+    "major": 0,
+    "minor": 1,
+    "patch": 0
+  },
+  "requiredMoisVersion": {
+    "major": 2,
+    "minor": 28,
+    "patch": 5
+  },
+  "components": []
+}

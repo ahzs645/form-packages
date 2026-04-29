@@ -42,6 +42,7 @@ import { FluentNamespace } from '../scope/fluent-namespace';
 import { LinkToMois } from '../components/LinkToMois';
 import { DateSelect } from '../controls/DateSelect';
 import { DateTimeSelect } from '../controls/DateTimeSelect';
+import { TimeSelect } from '../controls/TimeSelect';
 import { Title } from '../controls/Title';
 import { Header } from '../controls/Header';
 import { Column } from '../controls/Column';
@@ -278,6 +279,7 @@ const buildNHFormsScope = (additionalComponents: Record<string, any> = {}) => {
     Form,
     DateSelect,
     DateTimeSelect,
+    TimeSelect,
     Title,
     Header,
     Column,

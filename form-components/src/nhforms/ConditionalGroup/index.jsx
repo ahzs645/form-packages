@@ -434,6 +434,41 @@ const checkChoiceMatch = (fieldValue, optionValues, invert = false) => {
   return invert ? !hasMatch : hasMatch
 }
 
+const normalizeComparableValue = (value) => {
+  if (value && typeof value === 'object') {
+    return value.code ?? value.display ?? value.value ?? value.text ?? ''
+  }
+  return value
+}
+
+const checkComparisonMatch = (fieldValue, operator, expectedValue) => {
+  const normalized = normalizeComparableValue(fieldValue)
+  if (operator === 'filled') {
+    if (Array.isArray(normalized)) return normalized.length > 0
+    if (normalized && typeof normalized === 'object') return Object.keys(normalized).length > 0
+    return normalized !== null && normalized !== undefined && String(normalized).trim() !== ''
+  }
+  if (operator === 'empty') {
+    return !checkComparisonMatch(fieldValue, 'filled', expectedValue)
+  }
+  if (normalized === null || normalized === undefined || normalized === '') return false
+
+  if (operator && operator.startsWith('number-')) {
+    const left = Number(normalized)
+    const right = Number(expectedValue)
+    if (!Number.isFinite(left) || !Number.isFinite(right)) return false
+    if (operator === 'number-gt') return left > right
+    if (operator === 'number-gte') return left >= right
+    if (operator === 'number-lt') return left < right
+    if (operator === 'number-lte') return left <= right
+    return left === right
+  }
+
+  const left = String(normalized)
+  const right = String(expectedValue ?? '')
+  return operator === 'not-equals' ? left !== right : left === right
+}
+
 /**
  * ConditionalField - A field wrapper with visibility rules
  *
@@ -455,6 +490,8 @@ const ConditionalField = ({
   controllerFieldId,
   showWhen = 'yes',
   optionValues,
+  operator,
+  compareValue,
   invertMatch = false,
   showWhenNull = false,
   containerStyle,
@@ -477,6 +514,9 @@ const ConditionalField = ({
     // If optionValues is provided, use choice matching instead of boolean matching
     if (optionValues && optionValues.length > 0) {
       isVisible = checkChoiceMatch(controllerValue, optionValues, invertMatch)
+    } else if (operator) {
+      const matches = checkComparisonMatch(controllerValue, operator, compareValue)
+      isVisible = invertMatch ? !matches : matches
     } else {
       // Boolean matching (yes/no)
       // When controller is null/unset, field is hidden (both show and hide rules)

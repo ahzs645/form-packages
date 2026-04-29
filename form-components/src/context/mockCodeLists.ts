@@ -56,6 +56,11 @@ const SEVERITY_SCALE = {
  * the target runtime without claiming the lists are canonical clinical values.
  */
 export const supplementalOptionLists: Record<string, Record<string, string>> = {
+  'MOIS-PREFSUBJECTCODE': {
+    '04001': 'TELEPHONE RISK ASSESSMENT',
+    '04002': 'VIOLENCE RISK ASSESSMENT',
+    '04003': 'HOME RISK ASSESSMENT',
+  },
   'MOIS-PANELNAME': {
     MSE: 'Mental Status Exam',
     PHQ2: 'PHQ-2',
@@ -272,8 +277,20 @@ export const supplementalOptionLists: Record<string, Record<string, string>> = {
 };
 
 export const previewOptionListsRaw: Record<string, Record<string, string>> = {
-  ...(optionListsData as Record<string, Record<string, string>>),
-  ...supplementalOptionLists,
+  ...Object.fromEntries(
+    Object.entries(optionListsData as Record<string, Record<string, string>>).map(([system, values]) => [
+      system,
+      {
+        ...values,
+        ...(supplementalOptionLists[system] ?? {}),
+      },
+    ])
+  ),
+  ...Object.fromEntries(
+    Object.entries(supplementalOptionLists).filter(
+      ([system]) => !Object.prototype.hasOwnProperty.call(optionListsData, system)
+    )
+  ),
 };
 
 /**

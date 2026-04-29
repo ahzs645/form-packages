@@ -41,6 +41,10 @@ export interface SubTitleProps {
   background?: string;
   /** Child elements (content to collapse) */
   children?: React.ReactNode;
+  /** Expanded child content background color */
+  contentBackground?: string;
+  /** Expanded child content style override */
+  contentStyle?: React.CSSProperties;
   /** Override collapse button styles */
   collapseButtonStyles?: IButtonStyles;
   /** Group ID for exclusive collapse (only one in group can be open) */
@@ -79,6 +83,8 @@ let sectionIdCounter = 0;
 export const SubTitle: React.FC<SubTitleProps> = ({
   background = 'rgb(237, 235, 233)',
   children,
+  contentBackground = '#ffffff',
+  contentStyle,
   collapseButtonStyles,
   groupId,
   isCollapsed: controlledCollapsed,
@@ -133,9 +139,12 @@ export const SubTitle: React.FC<SubTitleProps> = ({
 
   const containerStyles: React.CSSProperties = {
     width: '100%',
+    ...style,
+  };
+
+  const headerStyles: React.CSSProperties = {
     backgroundColor: background,
     padding: '2px 5px',
-    ...style,
   };
 
   const defaultCollapseButtonStyles: IButtonStyles = {
@@ -174,7 +183,7 @@ export const SubTitle: React.FC<SubTitleProps> = ({
 
   return (
     <div style={containerStyles}>
-      <Stack horizontal verticalAlign="center">
+      <Stack horizontal verticalAlign="center" style={headerStyles}>
         {/* Collapse button */}
         {hasCollapse && (
           <IconButton
@@ -211,7 +220,7 @@ export const SubTitle: React.FC<SubTitleProps> = ({
 
       {/* Collapsible content */}
       {hasCollapse && !isCollapsed && (
-        <div style={{ marginLeft: '2em' }}>
+        <div style={{ backgroundColor: contentBackground, paddingLeft: '2em', ...contentStyle }}>
           {children}
         </div>
       )}
