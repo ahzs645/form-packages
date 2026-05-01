@@ -8,6 +8,204 @@
  */
 
 export const componentModules: Record<string, string> = {
+  './ActionButtonGroup/index.jsx': `const { useMemo, useState } = React
+
+function ActionButtonGroup({
+  id = "legacyButtonGroup",
+  actions = [],
+  justifyContent = "space-evenly",
+  padding = 10,
+  gap = 10,
+  buttonMaxWidth = 280,
+  dialogTitle = "Action payload",
+  dialogMinWidth = 620,
+  okText = "Ok",
+  cancelText = "Cancel",
+}) {
+  const [activeAction, setActiveAction] = useState(null)
+  const [draftValues, setDraftValues] = useState({})
+  const normalizedActions = useMemo(() => {
+    if (!Array.isArray(actions)) return []
+    return actions
+      .map((action, index) => ({
+        id: action?.id || \`\${id}_action_\${index}\`,
+        label: action?.label || action?.text || \`Action \${index + 1}\`,
+        dialogTitle: action?.dialogTitle || action?.modalTitle || dialogTitle,
+        payload: action?.payload || action?.mutationPayload || action?.documentUpdate || null,
+        fields: Array.isArray(action?.fields) ? action.fields : [],
+        maxWidth: action?.maxWidth || buttonMaxWidth,
+      }))
+      .filter((action) => action.label)
+  }, [actions, buttonMaxWidth, dialogTitle, id])
+
+  const openAction = (action) => {
+    const initialValues = {}
+    action.fields.forEach((field) => {
+      initialValues[field.id] = field.value ?? field.defaultValue ?? ""
+    })
+    setDraftValues(initialValues)
+    setActiveAction(action)
+  }
+
+  const setValue = (fieldId, value) => {
+    setDraftValues((current) => ({ ...current, [fieldId]: value }))
+  }
+
+  const formattedPayload = activeAction?.payload
+    ? JSON.stringify(activeAction.payload, null, 2)
+    : "No payload configured."
+
+  const renderField = (field) => {
+    const value = draftValues[field.id] ?? ""
+    const commonStyle = {
+      breakInside: "avoid",
+      margin: "0px 10px",
+      ...(field.gridArea ? { gridArea: field.gridArea } : {}),
+      ...(field.maxWidth ? { maxWidth: field.maxWidth } : {}),
+      ...(field.minWidth ? { minWidth: field.minWidth } : {}),
+    }
+    const inputStyle = {
+      width: field.width || (field.type === "date" ? 160 : 320),
+      maxWidth: field.maxWidth || (field.type === "date" ? 160 : 320),
+    }
+
+    let control = null
+    if (field.type === "dropdown") {
+      const options = Array.isArray(field.options)
+        ? field.options.map((option) => ({
+            key: option.key ?? option.value ?? option,
+            text: option.text ?? option.label ?? option.value ?? option,
+          }))
+        : []
+      control = (
+        <Dropdown
+          selectedKey={value}
+          placeholder={field.placeholder || "Please select"}
+          options={options}
+          styles={{ root: inputStyle }}
+          onChange={(_, option) => setValue(field.id, option?.key ?? "")}
+        />
+      )
+    } else if (field.type === "combo") {
+      const options = Array.isArray(field.options)
+        ? field.options.map((option) => ({
+            key: option.key ?? option.value ?? option,
+            text: option.text ?? option.label ?? option.value ?? option,
+          }))
+        : []
+      control = (
+        <ComboBox
+          id={field.id}
+          selectedKey={value}
+          text={value}
+          placeholder={field.placeholder || "Please select an option"}
+          options={options}
+          styles={{ root: inputStyle }}
+          allowFreeform
+          autoComplete="on"
+          onChange={(_, option, __, inputValue) => setValue(field.id, option?.key ?? inputValue ?? "")}
+        />
+      )
+    } else {
+      control = (
+        <TextField
+          value={value}
+          multiline={field.type === "textarea"}
+          rows={field.rows || (field.type === "textarea" ? 3 : undefined)}
+          placeholder={field.placeholder || (field.type === "date" ? "YYYY.MM.DD" : undefined)}
+          styles={{ root: inputStyle }}
+          onChange={(_, nextValue) => setValue(field.id, nextValue || "")}
+        />
+      )
+    }
+
+    return (
+      <div key={field.id} style={commonStyle}>
+        <Label>{field.label}</Label>
+        <div style={{ display: "flex", flexFlow: "column", minWidth: field.minWidth || 160, alignItems: "flex-start" }}>
+          {control}
+        </div>
+        <div style={{ clear: "both" }} />
+      </div>
+    )
+  }
+
+  const hasFormFields = Array.isArray(activeAction?.fields) && activeAction.fields.length > 0
+
+  return (
+    <div data-field-id={id} data-action-button-group>
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "row",
+          justifyContent,
+          gap,
+          padding,
+          flexWrap: "wrap",
+        }}
+      >
+        {normalizedActions.map((action) => (
+          <DefaultButton
+            key={action.id}
+            text={action.label}
+            style={{ maxWidth: action.maxWidth }}
+            onClick={() => openAction(action)}
+          />
+        ))}
+      </div>
+
+      <Dialog
+        hidden={!activeAction}
+        onDismiss={() => setActiveAction(null)}
+        minWidth={dialogMinWidth}
+        dialogContentProps={{
+          type: DialogType.normal,
+          title: activeAction?.dialogTitle || activeAction?.label || dialogTitle,
+        }}
+        modalProps={{ isBlocking: false }}
+      >
+        {hasFormFields ? (
+          <div data-component="SubForm" style={{ minWidth: 500 }}>
+            <div style={{ display: "grid", gap: 10, gridTemplateColumns: "1fr 1fr" }}>
+              {activeAction.fields.map(renderField)}
+            </div>
+          </div>
+        ) : (
+          <pre
+            style={{
+              maxHeight: 360,
+              overflow: "auto",
+              whiteSpace: "pre-wrap",
+              background: "#f3f2f1",
+              border: "1px solid #edebe9",
+              padding: 8,
+              fontSize: 12,
+            }}
+          >
+            {formattedPayload}
+          </pre>
+        )}
+        <DialogFooter>
+          <PrimaryButton
+            text={okText}
+            onClick={() => {
+              setActiveAction(null)
+              setDraftValues({})
+            }}
+          />
+          <DefaultButton
+            text={cancelText}
+            onClick={() => {
+              setActiveAction(null)
+              setDraftValues({})
+            }}
+          />
+        </DialogFooter>
+      </Dialog>
+    </div>
+  )
+}
+`,
   './AliasIdList/index.jsx': `
 const AliasIdList = ({
   label = "Alias Patient Identifiers",
@@ -133,6 +331,153 @@ const allergyColumns: ColumnSelection = [
 ]
 
 const AllergiesFields = "allergyId startDate stopDate substance reactions"
+`,
+  './AssessmentScoringTable/index.jsx': `const { useMemo, useCallback, useEffect } = React
+
+const numberOrBlank = (value) => {
+  if (value == null || value === "") return ""
+  const number = Number(value)
+  return Number.isFinite(number) ? String(number) : ""
+}
+
+const getFieldValue = (fd, fieldId, fallback = "") => {
+  const value = fd?.field?.data?.[fieldId] ?? fd?.formData?.[fieldId]
+  return value == null ? fallback : value
+}
+
+function AssessmentScoringTable({
+  id = "legacyAssessmentTable",
+  title = "Assessment",
+  encounterDate = "2026-04-28",
+  enteredBy = "DR. PREVIEW USER",
+  rows = [],
+  totalFieldId = "totalScore",
+  totalLabel = "Total Score",
+  min = 1,
+  max = 5,
+  step = 1,
+}) {
+  const [fd, setFd] = useActiveData()
+
+  const scoreRows = useMemo(() => {
+    if (Array.isArray(rows) && rows.length > 0) return rows
+    return []
+  }, [rows])
+
+  const total = useMemo(() => {
+    let hasValue = false
+    const sum = scoreRows.reduce((nextTotal, row) => {
+      const raw = getFieldValue(fd, row.fieldId)
+      if (raw == null || raw === "") return nextTotal
+      const value = Number(raw)
+      if (!Number.isFinite(value)) return nextTotal
+      hasValue = true
+      return nextTotal + value
+    }, 0)
+    return hasValue ? sum : ""
+  }, [fd, scoreRows])
+
+  useEffect(() => {
+    setFd((draft) => {
+      draft.field = draft.field || { data: {}, status: {} }
+      draft.field.data = draft.field.data || {}
+      draft.formData = draft.formData || {}
+      draft.field.data[totalFieldId] = total
+      draft.formData[totalFieldId] = total
+    })
+  }, [setFd, total, totalFieldId])
+
+  const setScore = useCallback((fieldId, value) => {
+    setFd((draft) => {
+      draft.field = draft.field || { data: {}, status: {} }
+      draft.field.data = draft.field.data || {}
+      draft.formData = draft.formData || {}
+      draft.field.data[fieldId] = value
+      draft.formData[fieldId] = value
+    })
+  }, [setFd])
+
+  const tableStyle = {
+    borderCollapse: "collapse",
+    border: "1px solid darkgrey",
+    width: "auto",
+    maxWidth: "100%",
+  }
+  const labelCellStyle = {
+    maxWidth: 200,
+    minHeight: 20,
+    display: "flex",
+    padding: 10,
+    justifyContent: "center",
+    alignItems: "center",
+    fontSize: "1.2em",
+    whiteSpace: "normal",
+    textAlign: "center",
+    borderCollapse: "collapse",
+    borderRight: "1px solid darkgrey",
+  }
+  const valueCellStyle = {
+    maxWidth: 150,
+    minWidth: 120,
+    minHeight: 20,
+    justifyContent: "center",
+    alignItems: "center",
+    fontSize: "1.2em",
+    whiteSpace: "normal",
+    textAlign: "center",
+    borderCollapse: "collapse",
+    borderRight: "2px solid black",
+    padding: "8px 10px",
+  }
+  const inputStyle = {
+    fontSize: "inherit",
+    textAlign: "center",
+    width: 52,
+    border: "none",
+    background: "#ffffff",
+  }
+
+  const renderRow = (row, index, valueContent) => (
+    <tr key={row.id || row.fieldId || row.label} style={index % 2 === 0 ? { backgroundColor: "whitesmoke" } : undefined}>
+      <td style={labelCellStyle}>{row.label}</td>
+      <td style={valueCellStyle}>{valueContent}</td>
+    </tr>
+  )
+
+  return (
+    <div data-field-id={id} data-component="AssessmentScoringTable" style={{ width: "100%" }}>
+      <div style={{ width: "100%" }}>
+        <div className="ms-Stack" style={{ backgroundColor: "rgb(237, 235, 233)", padding: "2px 5px" }}>
+          <Label>{title}</Label>
+        </div>
+      </div>
+      <table style={tableStyle}>
+        <tbody>
+          {renderRow({ label: "Encounter Date", id: "encounterDate" }, 0, <span style={{ fontSize: "inherit", textAlign: "center" }}>{encounterDate}</span>)}
+          {scoreRows.map((row, index) =>
+            renderRow(
+              row,
+              index + 1,
+              <input
+                id={row.fieldId}
+                min={row.min ?? min}
+                max={row.max ?? max}
+                step={row.step ?? step}
+                required={row.required ?? true}
+                type="number"
+                value={numberOrBlank(getFieldValue(fd, row.fieldId))}
+                style={inputStyle}
+                onChange={(event) => setScore(row.fieldId, event.target.value)}
+              />
+            )
+          )}
+          {renderRow({ label: totalLabel, id: totalFieldId }, scoreRows.length + 1, <span id={totalFieldId}>{numberOrBlank(total)}</span>)}
+          {renderRow({ label: "Entered By", id: "enteredBy" }, scoreRows.length + 2, enteredBy)}
+        </tbody>
+      </table>
+    </div>
+  )
+}
 `,
   './CommonSchemaDefn/index.jsx': `
 const commonSchemaDefn = {
@@ -1467,6 +1812,9 @@ const LogicGateContext = createContext({
  * Normalize a value to 'yes', 'no', or null
  */
 const normalizeValue = (value) => {
+  if (value && typeof value === 'object') {
+    return normalizeValue(value.code ?? value.display ?? value.value ?? value.text ?? value.label)
+  }
   if (value === true || value === 'yes' || value === 'Y' || value === 1) {
     return 'yes'
   }
@@ -1474,6 +1822,21 @@ const normalizeValue = (value) => {
     return 'no'
   }
   return null
+}
+
+const readControllerValue = (data, fieldId) => {
+  if (!data || !fieldId) return undefined
+  if (Object.prototype.hasOwnProperty.call(data, fieldId)) return data[fieldId]
+  if (typeof data !== 'object') return undefined
+
+  for (const value of Object.values(data)) {
+    if (value && typeof value === 'object') {
+      const nestedValue = readControllerValue(value, fieldId)
+      if (nestedValue !== undefined) return nestedValue
+    }
+  }
+
+  return undefined
 }
 
 /**
@@ -1875,7 +2238,7 @@ const ConditionalField = ({
     // Always visible regardless of parent gates
     isVisible = true
   } else if (mode === 'controller' && controllerFieldId) {
-    const controllerValue = fd?.field?.data?.[controllerFieldId]
+    const controllerValue = readControllerValue(fd?.field?.data, controllerFieldId)
 
     // If optionValues is provided, use choice matching instead of boolean matching
     if (optionValues && optionValues.length > 0) {
@@ -4518,6 +4881,189 @@ function FocusedObservationHistory({
   )
 }
 
+`,
+  './FormContextHeader/index.jsx': `const { useEffect, useMemo } = React
+
+const legacyContextText = (value, fallback = "") => {
+  if (value == null) return fallback
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value)
+  if (Array.isArray(value)) return value.map((item) => legacyContextText(item)).filter(Boolean).join(", ")
+  return value.display || value.text || value.name || value.code || fallback
+}
+
+const legacyContextVisitCode = (value, fallback = "") => {
+  if (value == null) return fallback
+  if (typeof value === "object") {
+    const code = value.code || value.key || ""
+    const display = value.display || value.text || ""
+    if (code && display) return \`\${code} (\${display})\`
+    return display || code || fallback
+  }
+  return String(value)
+}
+
+const legacyContextDate = (value, separator = ".") => {
+  const raw = legacyContextText(value)
+  if (!raw) return ""
+  const match = raw.match(/^(\\d{4})[-.](\\d{2})[-.](\\d{2})/)
+  if (match) return \`\${match[1]}\${separator}\${match[2]}\${separator}\${match[3]}\`
+  return raw
+}
+
+const legacyContextDateTime = (value) => {
+  const raw = legacyContextText(value)
+  if (!raw) return ""
+  const match = raw.match(/^(\\d{4})[-.](\\d{2})[-.](\\d{2})(?:T|\\s)?(\\d{2})?:?(\\d{2})?/)
+  if (!match) return raw
+  const date = \`\${match[1]}-\${match[2]}-\${match[3]}\`
+  if (!match[4]) return date
+  return \`\${date} \${match[4]}:\${match[5] || "00"}\`
+}
+
+const legacyFieldWrap = {
+  breakInside: "avoid",
+  margin: "0px 10px",
+  flex: "3 3 0px",
+  minWidth: 160,
+  maxWidth: 320,
+}
+
+const legacySmallFieldWrap = {
+  ...legacyFieldWrap,
+  flex: "2 2 0px",
+  minWidth: 80,
+  maxWidth: 160,
+}
+
+const legacyTextStyles = {
+  fieldGroup: { background: "#fff" },
+  field: { color: "#323130" },
+}
+
+function FormContextHeader({
+  id = "formContextHeader",
+  formDateFieldId = "formDate",
+  createdByFieldId = "createdBy",
+  encounterDateFieldId = "encDate",
+  visitCodeFieldId = "visCode",
+  visitReasonFieldId = "visReason",
+  providerFieldId = "daybookProvider",
+  attendingProviderFieldId = "attendingProvider",
+  serviceLocationFieldId = "serviceLoc",
+  createdByFallback = "DR. PREVIEW USER",
+  serviceLocationFallback = "FAMILY PRACTICE",
+  formDateLabel = "Form Date:",
+  createdByLabel = "Form Created by:",
+}) {
+  const sd = useSourceData()
+  const [fd, setFd] = useActiveData()
+
+  const values = useMemo(() => {
+    const encounter = sd?.webform?.encounter || sd?.encounter || fd?.example?.encounter || {}
+    const providerName = legacyContextText(
+      sd?.webform?.provider?.name ||
+        sd?.userProfile?.desktopProvider?.name ||
+        sd?.userProfile?.identity?.fullName ||
+        createdByFallback,
+      createdByFallback
+    )
+    const appointmentDateTime = encounter?.appointmentDateTime || encounter?.date || new Date().toISOString()
+    return {
+      [formDateFieldId]: legacyContextDate(sd?.webform?.documentDate || sd?.webform?.createdDate || new Date().toISOString(), "."),
+      [createdByFieldId]: providerName,
+      [encounterDateFieldId]: legacyContextDateTime(appointmentDateTime),
+      [visitCodeFieldId]: legacyContextVisitCode(encounter?.visitCode || encounter?.code, ""),
+      [visitReasonFieldId]: legacyContextText(encounter?.visitReason1 || encounter?.visitReason || encounter?.reason, ""),
+      [providerFieldId]: providerName,
+      [attendingProviderFieldId]: legacyContextText(encounter?.attendingProvider, providerName),
+      [serviceLocationFieldId]: legacyContextText(encounter?.location, serviceLocationFallback),
+    }
+  }, [
+    attendingProviderFieldId,
+    createdByFallback,
+    createdByFieldId,
+    encounterDateFieldId,
+    fd,
+    formDateFieldId,
+    providerFieldId,
+    sd,
+    serviceLocationFallback,
+    serviceLocationFieldId,
+    visitCodeFieldId,
+    visitReasonFieldId,
+  ])
+
+  useEffect(() => {
+    setFd((draft) => {
+      draft.field = draft.field || { data: {}, status: {} }
+      draft.field.data = draft.field.data || {}
+      draft.formData = draft.formData || {}
+      Object.assign(draft.field.data, values)
+      Object.assign(draft.formData, values)
+    })
+  }, [setFd, values])
+
+  const renderReadOnlyField = (fieldId, label, value) => (
+    <div data-field-id={fieldId} style={legacyFieldWrap}>
+      <div style={{ display: "flex", flexFlow: "column", minWidth: 160, width: "100%" }}>
+        <div style={{ flex: "1 1 0px", display: "flex", flexFlow: "wrap", minWidth: 160, width: "100%" }}>
+          <TextField
+            id={fieldId}
+            label={label}
+            value={value}
+            readOnly
+            borderless
+            tabIndex={-1}
+            styles={legacyTextStyles}
+          />
+        </div>
+      </div>
+      <div style={{ clear: "both" }} />
+    </div>
+  )
+
+  return (
+    <div data-field-id={id} data-component="FormContextHeader">
+      <div style={{ width: "100%" }}>
+        <div style={legacySmallFieldWrap} data-field-id={formDateFieldId}>
+          <Label>{formDateLabel}</Label>
+          <DatePicker
+            value={values[formDateFieldId] ? new Date(values[formDateFieldId].replace(/\\./g, "-")) : undefined}
+            formatDate={() => values[formDateFieldId]}
+            placeholder="YYYY.MM.DD"
+            disabled
+          />
+          <div style={{ clear: "both" }} />
+        </div>
+        <div style={legacyFieldWrap} data-field-id={createdByFieldId}>
+          <Label>{createdByLabel}</Label>
+          <TextField id={createdByFieldId} value={values[createdByFieldId]} readOnly disabled placeholder="Please search" styles={legacyTextStyles} />
+          <div style={{ clear: "both" }} />
+        </div>
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "row", flexWrap: "wrap" }}>
+        {renderReadOnlyField(encounterDateFieldId, "Encounter Date:", values[encounterDateFieldId])}
+        {renderReadOnlyField(visitCodeFieldId, "Visit Code:", values[visitCodeFieldId])}
+      </div>
+      {renderReadOnlyField(visitReasonFieldId, "Visit Reason", values[visitReasonFieldId])}
+      {renderReadOnlyField(providerFieldId, "Provider:", values[providerFieldId])}
+      {renderReadOnlyField(attendingProviderFieldId, "Attending Provider:", values[attendingProviderFieldId])}
+      {renderReadOnlyField(serviceLocationFieldId, "Service Location:", values[serviceLocationFieldId])}
+    </div>
+  )
+}
+
+const FormContextHeaderSchema = {
+  formDate: { type: "string" },
+  createdBy: { type: "string" },
+  encDate: { type: "string" },
+  visCode: { type: "string" },
+  visReason: { type: "string" },
+  daybookProvider: { type: "string" },
+  attendingProvider: { type: "string" },
+  serviceLoc: { type: "string" },
+}
 `,
   './FormSessionRuntime/index.jsx': `const { createContext, useCallback, useContext, useEffect, useMemo, useState } = React
 
@@ -12230,13 +12776,40 @@ HotspotMapField.createConfig = createHotspotMapConfig
 HotspotMapField.importSvgHotspots = importSvgHotspots
 HotspotMapField.normalizeHotspots = normalizeHotspots
 `,
-  './LayoutTable/index.jsx': `const renderLayoutTableField = (cell, readOnly) => {
+  './LayoutTable/index.jsx': `const normalizeLayoutTableOptionList = (optionList) => {
+  if (!Array.isArray(optionList)) return []
+  return optionList
+    .map((option) => {
+      if (typeof option === "string") return { code: option, display: option }
+      if (!option || typeof option !== "object") return null
+      const code = option.code ?? option.key ?? option.value ?? option.display ?? option.text ?? option.label
+      const display = option.display ?? option.text ?? option.label ?? option.code ?? option.key ?? option.value
+      return code || display ? { code: String(code ?? display), display: String(display ?? code) } : null
+    })
+    .filter(Boolean)
+}
+
+const isCheckedValue = (value) => value === true || value === "true" || value === "Y" || value === "yes" || value === 1
+
+const renderLayoutTableField = (cell, readOnly, data, setFieldValue) => {
   const fieldId = cell.fieldId || cell.id
   const label = cell.label || ""
   const labelProp = label ? { label } : {}
   const sharedProps = { fieldId, labelPosition: label ? "top" : "none", readOnly }
+  const optionList = normalizeLayoutTableOptionList(cell.optionList ?? cell.options)
 
   switch (cell.inputType) {
+    case "booleanSingle":
+      return (
+        <Checkbox
+          name={cell.name || fieldId}
+          label={label}
+          ariaLabel={label || fieldId}
+          checked={isCheckedValue(data?.[fieldId])}
+          disabled={readOnly}
+          onChange={(_, checked) => setFieldValue(fieldId, Boolean(checked))}
+        />
+      )
     case "number":
       return <Numeric {...sharedProps} {...labelProp} />
     case "date":
@@ -12245,12 +12818,61 @@ HotspotMapField.normalizeHotspots = normalizeHotspots
       return <TimeSelect {...sharedProps} {...labelProp} />
     case "booleanYesNo":
       return <SimpleCodeSelect {...sharedProps} {...labelProp} codeSystem="MOIS-YESNO" />
+    case "choice":
+      return optionList.length > 0
+        ? <SimpleCodeSelect {...sharedProps} {...labelProp} optionList={optionList} />
+        : <SimpleCodeSelect {...sharedProps} {...labelProp} codeSystem={cell.codeSystem} />
     case "textarea":
       return <TextArea {...sharedProps} {...labelProp} multiline textFieldProps={{ autoAdjustHeight: true, resizable: false }} />
     case "text":
     default:
       return <TextArea {...sharedProps} {...labelProp} />
   }
+}
+
+const renderLayoutTableFieldList = (cell, readOnly, data, setFieldValue) => {
+  const fields = Array.isArray(cell.fields) ? cell.fields : []
+  if (fields.length === 0) return null
+
+  return (
+    <div style={{ display: "flex", flexFlow: "wrap", justifyContent: cell.justifyContent || "space-between", gap: cell.gap || undefined }}>
+      {fields.map((field, index) => (
+        <div key={field.id || field.fieldId || index}>
+          {renderLayoutTableField({ ...field, id: field.id || field.fieldId }, readOnly, data, setFieldValue)}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+const renderLayoutTableResources = (cell) => {
+  const resources = Array.isArray(cell.resources) ? cell.resources.filter((resource) => resource?.url && resource?.label) : []
+  if (resources.length === 0) return cell.text || ""
+
+  const renderLink = (resource, index) => (
+    <a key={\`\${resource.url}-\${index}\`} href={resource.url} target="_blank" rel="noreferrer">
+      {resource.label}
+    </a>
+  )
+
+  if (resources.length === 1 && cell.resourceListStyle !== "disc") {
+    return <span>{renderLink(resources[0], 0)}</span>
+  }
+
+  return (
+    <ul style={{ marginTop: 0, marginBottom: 0, paddingLeft: cell.resourceListStyle === "none" ? 0 : undefined, listStyleType: cell.resourceListStyle || "disc" }}>
+      {resources.map((resource, index) => (
+        <li key={\`\${resource.url}-\${index}\`}>{renderLink(resource, index)}</li>
+      ))}
+    </ul>
+  )
+}
+
+const renderLayoutTableCellContent = (cell, readOnly, data, setFieldValue) => {
+  if (cell.kind === "field") return renderLayoutTableField(cell, readOnly, data, setFieldValue)
+  if (cell.kind === "fieldList") return renderLayoutTableFieldList(cell, readOnly, data, setFieldValue)
+  if (cell.kind === "resources") return renderLayoutTableResources(cell)
+  return cell.text || ""
 }
 
 const cellStyle = (cell, config) => ({
@@ -12265,6 +12887,48 @@ const cellStyle = (cell, config) => ({
   whiteSpace: cell.kind === "text" ? "pre-wrap" : undefined,
 })
 
+const normalizeComparableValue = (value) => {
+  if (value && typeof value === "object") {
+    return value.value ?? value.code ?? value.key ?? value.text ?? value.display ?? value.label ?? ""
+  }
+
+  return value
+}
+
+const isYesLikeValue = (value) => {
+  const normalized = normalizeComparableValue(value)
+  if (value === true || normalized === true || value === 1 || normalized === 1) return true
+
+  return ["y", "yes", "true", "1"].includes(String(normalized ?? "").trim().toLowerCase())
+}
+
+const isNoLikeValue = (value) => {
+  const normalized = normalizeComparableValue(value)
+  if (value === false || normalized === false || value === 0 || normalized === 0) return true
+
+  return ["n", "no", "false", "0"].includes(String(normalized ?? "").trim().toLowerCase())
+}
+
+const rowIsVisible = (row, data) => {
+  const rule = row?.visibleWhen
+  if (!rule?.fieldId) return true
+
+  const value = data?.[rule.fieldId]
+  const comparableValue = normalizeComparableValue(value)
+
+  switch (rule.operator || "truthy") {
+    case "yes":
+      return isYesLikeValue(value)
+    case "equals":
+      return comparableValue === rule.value
+    case "notEquals":
+      return comparableValue !== rule.value
+    case "truthy":
+    default:
+      return Boolean(comparableValue) && !isNoLikeValue(value)
+  }
+}
+
 function LayoutTable({
   id,
   label,
@@ -12277,10 +12941,23 @@ function LayoutTable({
   pageBreakInsideAvoid = true,
   readOnly = false,
 }) {
+  const [fd, setFd] = useActiveData()
   const config = { bordered, compact, fullWidth, cellPadding, borderColor, pageBreakInsideAvoid }
   const tableRows = Array.isArray(rows) ? rows : []
+  const activeData = fd?.field?.data || fd?.formData || {}
+  const visibleRows = tableRows.filter((row) => rowIsVisible(row, activeData))
+  const setFieldValue = (fieldId, value) => {
+    if (typeof setFd !== "function") return
+    setFd((draft) => {
+      draft.field = draft.field || { data: {}, status: {} }
+      draft.field.data = draft.field.data || {}
+      draft.formData = draft.formData || {}
+      draft.field.data[fieldId] = value
+      draft.formData[fieldId] = value
+    })
+  }
 
-  if (tableRows.length === 0) return null
+  if (visibleRows.length === 0) return null
 
   return (
     <div id={id} data-layout-table style={{ width: fullWidth ? "100%" : undefined, pageBreakInside: pageBreakInsideAvoid ? "avoid" : undefined }}>
@@ -12293,7 +12970,7 @@ function LayoutTable({
         }}
       >
         <tbody>
-          {tableRows.map((row, rowIndex) => (
+          {visibleRows.map((row, rowIndex) => (
             <tr key={row.id || rowIndex} style={{ pageBreakInside: pageBreakInsideAvoid ? "avoid" : undefined }}>
               {(Array.isArray(row.cells) ? row.cells : []).map((cell, cellIndex) => {
                 const Tag = cell.header ? "th" : "td"
@@ -12304,7 +12981,7 @@ function LayoutTable({
                     rowSpan={Math.max(1, Number(cell.rowSpan) || 1)}
                     style={cellStyle(cell, config)}
                   >
-                    {cell.kind === "field" ? renderLayoutTableField(cell, readOnly) : (cell.text || "")}
+                    {renderLayoutTableCellContent(cell, readOnly, activeData, setFieldValue)}
                   </Tag>
                 )
               })}
@@ -12315,534 +12992,71 @@ function LayoutTable({
     </div>
   )
 }
-
 `,
-  './LegacyAssessmentTable/index.jsx': `const { useMemo, useCallback, useEffect } = React
+  './LegacyHighRiskGuidance/index.jsx': `const DEFAULT_INTERVENTIONS = [
+  "Medication options - as per physician order: often require rapid tranquilization (IM)",
+  "Code white team response",
+  "Security if available",
+  "Search and secure belongings",
+  "Advanced restrating options: seclusion, mechanical, rapid tranquilization (IM)",
+  "Constant care provider - if patient placed in 4 point restraint or seclusion",
+  "Patient/client transfer to tertiary/regional facility",
+  "RCMP Assistance",
+]
 
-const numberOrBlank = (value) => {
-  if (value == null || value === "") return ""
-  const number = Number(value)
-  return Number.isFinite(number) ? String(number) : ""
+const normalizeList = (items, fallback) => {
+  if (!Array.isArray(items) || items.length === 0) return fallback
+  const normalized = items.filter((item) => typeof item === "string" && item.trim()).map((item) => item.trim())
+  return normalized.length > 0 ? normalized : fallback
 }
 
-const getFieldValue = (fd, fieldId, fallback = "") => {
-  const value = fd?.field?.data?.[fieldId] ?? fd?.formData?.[fieldId]
-  return value == null ? fallback : value
-}
-
-function LegacyAssessmentTable({
-  id = "legacyAssessmentTable",
-  title = "Assessment",
-  encounterDate = "2026-04-28",
-  enteredBy = "DR. PREVIEW USER",
-  rows = [],
-  totalFieldId = "totalScore",
-  totalLabel = "Total Score",
-  min = 1,
-  max = 5,
-  step = 1,
+function LegacyHighRiskGuidance({
+  id = "legacyHighRiskGuidance",
+  treatmentPlanModule = "CHARTACTION",
+  interventions = DEFAULT_INTERVENTIONS,
 }) {
-  const [fd, setFd] = useActiveData()
-
-  const scoreRows = useMemo(() => {
-    if (Array.isArray(rows) && rows.length > 0) return rows
-    return []
-  }, [rows])
-
-  const total = useMemo(() => {
-    let hasValue = false
-    const sum = scoreRows.reduce((nextTotal, row) => {
-      const raw = getFieldValue(fd, row.fieldId)
-      if (raw == null || raw === "") return nextTotal
-      const value = Number(raw)
-      if (!Number.isFinite(value)) return nextTotal
-      hasValue = true
-      return nextTotal + value
-    }, 0)
-    return hasValue ? sum : ""
-  }, [fd, scoreRows])
-
-  useEffect(() => {
-    setFd((draft) => {
-      draft.field = draft.field || { data: {}, status: {} }
-      draft.field.data = draft.field.data || {}
-      draft.formData = draft.formData || {}
-      draft.field.data[totalFieldId] = total
-      draft.formData[totalFieldId] = total
-    })
-  }, [setFd, total, totalFieldId])
-
-  const setScore = useCallback((fieldId, value) => {
-    setFd((draft) => {
-      draft.field = draft.field || { data: {}, status: {} }
-      draft.field.data = draft.field.data || {}
-      draft.formData = draft.formData || {}
-      draft.field.data[fieldId] = value
-      draft.formData[fieldId] = value
-    })
-  }, [setFd])
-
-  const tableStyle = {
-    borderCollapse: "collapse",
-    border: "1px solid darkgrey",
-    width: "auto",
-    maxWidth: "100%",
-  }
-  const labelCellStyle = {
-    maxWidth: 200,
-    minHeight: 20,
-    display: "flex",
-    padding: 10,
-    justifyContent: "center",
-    alignItems: "center",
-    fontSize: "1.2em",
-    whiteSpace: "normal",
-    textAlign: "center",
-    borderCollapse: "collapse",
-    borderRight: "1px solid darkgrey",
-  }
-  const valueCellStyle = {
-    maxWidth: 150,
-    minWidth: 120,
-    minHeight: 20,
-    justifyContent: "center",
-    alignItems: "center",
-    fontSize: "1.2em",
-    whiteSpace: "normal",
-    textAlign: "center",
-    borderCollapse: "collapse",
-    borderRight: "2px solid black",
-    padding: "8px 10px",
-  }
-  const inputStyle = {
-    fontSize: "inherit",
-    textAlign: "center",
-    width: 52,
-    border: "none",
-    background: "#ffffff",
-  }
-
-  const renderRow = (row, index, valueContent) => (
-    <tr key={row.id || row.fieldId || row.label} style={index % 2 === 0 ? { backgroundColor: "whitesmoke" } : undefined}>
-      <td style={labelCellStyle}>{row.label}</td>
-      <td style={valueCellStyle}>{valueContent}</td>
-    </tr>
-  )
+  const interventionItems = normalizeList(interventions, DEFAULT_INTERVENTIONS)
 
   return (
-    <div data-field-id={id} data-component="LegacyAssessmentTable" style={{ width: "100%" }}>
-      <div style={{ width: "100%" }}>
-        <div className="ms-Stack" style={{ backgroundColor: "rgb(237, 235, 233)", padding: "2px 5px" }}>
-          <Label>{title}</Label>
-        </div>
-      </div>
-      <table style={tableStyle}>
-        <tbody>
-          {renderRow({ label: "Encounter Date", id: "encounterDate" }, 0, <span style={{ fontSize: "inherit", textAlign: "center" }}>{encounterDate}</span>)}
-          {scoreRows.map((row, index) =>
-            renderRow(
-              row,
-              index + 1,
-              <input
-                id={row.fieldId}
-                min={row.min ?? min}
-                max={row.max ?? max}
-                step={row.step ?? step}
-                required={row.required ?? true}
-                type="number"
-                value={numberOrBlank(getFieldValue(fd, row.fieldId))}
-                style={inputStyle}
-                onChange={(event) => setScore(row.fieldId, event.target.value)}
-              />
-            )
-          )}
-          {renderRow({ label: totalLabel, id: totalFieldId }, scoreRows.length + 1, <span id={totalFieldId}>{numberOrBlank(total)}</span>)}
-          {renderRow({ label: "Entered By", id: "enteredBy" }, scoreRows.length + 2, enteredBy)}
-        </tbody>
-      </table>
+    <div id={id} data-field-id={id}>
+      <ol type="1">
+        <li>
+          <strong>Immediately notify supervisor (Managers, Team Leads, In-Charge, or PCC)</strong>
+        </li>
+        <li>
+          <strong>Compliant</strong>
+          <br />
+          <ol type="a">
+            <li>Recommended aggressive behaviour alert is activated</li>
+            <li>
+              Treatment plan includes interventions for de-escalation etc.
+              <LinkToMois moisModule={treatmentPlanModule} title={\`Open \${treatmentPlanModule} in MOIS\`} />
+            </li>
+          </ol>
+        </li>
+        <li>
+          <strong>Non-Compliant</strong>
+          <br />
+          <ol type="a">
+            <li>Aggressive behaviour alert is activated</li>
+            <li>
+              Treatment plan includes interventions which decrease aggression/violence and address patient and staff safety{" "}
+              <LinkToMois moisModule={treatmentPlanModule} title={\`Open \${treatmentPlanModule} in MOIS\`} />
+            </li>
+          </ol>
+        </li>
+        <li>
+          <strong>
+            Consider the following interventions. This is not an inclusive or prioritized list and all interventions may not be required.
+          </strong>
+          <br />
+          <ul type="disc">
+            {interventionItems.map((item) => <li key={item}>{item}</li>)}
+          </ul>
+        </li>
+      </ol>
     </div>
   )
-}
-`,
-  './LegacyButtonGroup/index.jsx': `const { useMemo, useState } = React
-
-function LegacyButtonGroup({
-  id = "legacyButtonGroup",
-  actions = [],
-  justifyContent = "space-evenly",
-  padding = 10,
-  gap = 10,
-  buttonMaxWidth = 280,
-  dialogTitle = "Action payload",
-  dialogMinWidth = 620,
-  okText = "Ok",
-  cancelText = "Cancel",
-}) {
-  const [activeAction, setActiveAction] = useState(null)
-  const [draftValues, setDraftValues] = useState({})
-  const normalizedActions = useMemo(() => {
-    if (!Array.isArray(actions)) return []
-    return actions
-      .map((action, index) => ({
-        id: action?.id || \`\${id}_action_\${index}\`,
-        label: action?.label || action?.text || \`Action \${index + 1}\`,
-        dialogTitle: action?.dialogTitle || action?.modalTitle || dialogTitle,
-        payload: action?.payload || action?.mutationPayload || action?.documentUpdate || null,
-        fields: Array.isArray(action?.fields) ? action.fields : [],
-        maxWidth: action?.maxWidth || buttonMaxWidth,
-      }))
-      .filter((action) => action.label)
-  }, [actions, buttonMaxWidth, dialogTitle, id])
-
-  const openAction = (action) => {
-    const initialValues = {}
-    action.fields.forEach((field) => {
-      initialValues[field.id] = field.value ?? field.defaultValue ?? ""
-    })
-    setDraftValues(initialValues)
-    setActiveAction(action)
-  }
-
-  const setValue = (fieldId, value) => {
-    setDraftValues((current) => ({ ...current, [fieldId]: value }))
-  }
-
-  const formattedPayload = activeAction?.payload
-    ? JSON.stringify(activeAction.payload, null, 2)
-    : "No payload configured."
-
-  const renderField = (field) => {
-    const value = draftValues[field.id] ?? ""
-    const commonStyle = {
-      breakInside: "avoid",
-      margin: "0px 10px",
-      ...(field.gridArea ? { gridArea: field.gridArea } : {}),
-      ...(field.maxWidth ? { maxWidth: field.maxWidth } : {}),
-      ...(field.minWidth ? { minWidth: field.minWidth } : {}),
-    }
-    const inputStyle = {
-      width: field.width || (field.type === "date" ? 160 : 320),
-      maxWidth: field.maxWidth || (field.type === "date" ? 160 : 320),
-    }
-
-    let control = null
-    if (field.type === "dropdown") {
-      const options = Array.isArray(field.options)
-        ? field.options.map((option) => ({
-            key: option.key ?? option.value ?? option,
-            text: option.text ?? option.label ?? option.value ?? option,
-          }))
-        : []
-      control = (
-        <Dropdown
-          selectedKey={value}
-          placeholder={field.placeholder || "Please select"}
-          options={options}
-          styles={{ root: inputStyle }}
-          onChange={(_, option) => setValue(field.id, option?.key ?? "")}
-        />
-      )
-    } else if (field.type === "combo") {
-      const options = Array.isArray(field.options)
-        ? field.options.map((option) => ({
-            key: option.key ?? option.value ?? option,
-            text: option.text ?? option.label ?? option.value ?? option,
-          }))
-        : []
-      control = (
-        <ComboBox
-          id={field.id}
-          selectedKey={value}
-          text={value}
-          placeholder={field.placeholder || "Please select an option"}
-          options={options}
-          styles={{ root: inputStyle }}
-          allowFreeform
-          autoComplete="on"
-          onChange={(_, option, __, inputValue) => setValue(field.id, option?.key ?? inputValue ?? "")}
-        />
-      )
-    } else {
-      control = (
-        <TextField
-          value={value}
-          multiline={field.type === "textarea"}
-          rows={field.rows || (field.type === "textarea" ? 3 : undefined)}
-          placeholder={field.placeholder || (field.type === "date" ? "YYYY.MM.DD" : undefined)}
-          styles={{ root: inputStyle }}
-          onChange={(_, nextValue) => setValue(field.id, nextValue || "")}
-        />
-      )
-    }
-
-    return (
-      <div key={field.id} style={commonStyle}>
-        <Label>{field.label}</Label>
-        <div style={{ display: "flex", flexFlow: "column", minWidth: field.minWidth || 160, alignItems: "flex-start" }}>
-          {control}
-        </div>
-        <div style={{ clear: "both" }} />
-      </div>
-    )
-  }
-
-  const hasFormFields = Array.isArray(activeAction?.fields) && activeAction.fields.length > 0
-
-  return (
-    <div data-field-id={id} data-legacy-button-group>
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "row",
-          justifyContent,
-          gap,
-          padding,
-          flexWrap: "wrap",
-        }}
-      >
-        {normalizedActions.map((action) => (
-          <DefaultButton
-            key={action.id}
-            text={action.label}
-            style={{ maxWidth: action.maxWidth }}
-            onClick={() => openAction(action)}
-          />
-        ))}
-      </div>
-
-      <Dialog
-        hidden={!activeAction}
-        onDismiss={() => setActiveAction(null)}
-        minWidth={dialogMinWidth}
-        dialogContentProps={{
-          type: DialogType.normal,
-          title: activeAction?.dialogTitle || activeAction?.label || dialogTitle,
-        }}
-        modalProps={{ isBlocking: false }}
-      >
-        {hasFormFields ? (
-          <div data-component="SubForm" style={{ minWidth: 500 }}>
-            <div style={{ display: "grid", gap: 10, gridTemplateColumns: "1fr 1fr" }}>
-              {activeAction.fields.map(renderField)}
-            </div>
-          </div>
-        ) : (
-          <pre
-            style={{
-              maxHeight: 360,
-              overflow: "auto",
-              whiteSpace: "pre-wrap",
-              background: "#f3f2f1",
-              border: "1px solid #edebe9",
-              padding: 8,
-              fontSize: 12,
-            }}
-          >
-            {formattedPayload}
-          </pre>
-        )}
-        <DialogFooter>
-          <PrimaryButton
-            text={okText}
-            onClick={() => {
-              setActiveAction(null)
-              setDraftValues({})
-            }}
-          />
-          <DefaultButton
-            text={cancelText}
-            onClick={() => {
-              setActiveAction(null)
-              setDraftValues({})
-            }}
-          />
-        </DialogFooter>
-      </Dialog>
-    </div>
-  )
-}
-`,
-  './LegacyFormContextHeader/index.jsx': `const { useEffect, useMemo } = React
-
-const legacyContextText = (value, fallback = "") => {
-  if (value == null) return fallback
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value)
-  if (Array.isArray(value)) return value.map((item) => legacyContextText(item)).filter(Boolean).join(", ")
-  return value.display || value.text || value.name || value.code || fallback
-}
-
-const legacyContextVisitCode = (value, fallback = "") => {
-  if (value == null) return fallback
-  if (typeof value === "object") {
-    const code = value.code || value.key || ""
-    const display = value.display || value.text || ""
-    if (code && display) return \`\${code} (\${display})\`
-    return display || code || fallback
-  }
-  return String(value)
-}
-
-const legacyContextDate = (value, separator = ".") => {
-  const raw = legacyContextText(value)
-  if (!raw) return ""
-  const match = raw.match(/^(\\d{4})[-.](\\d{2})[-.](\\d{2})/)
-  if (match) return \`\${match[1]}\${separator}\${match[2]}\${separator}\${match[3]}\`
-  return raw
-}
-
-const legacyContextDateTime = (value) => {
-  const raw = legacyContextText(value)
-  if (!raw) return ""
-  const match = raw.match(/^(\\d{4})[-.](\\d{2})[-.](\\d{2})(?:T|\\s)?(\\d{2})?:?(\\d{2})?/)
-  if (!match) return raw
-  const date = \`\${match[1]}-\${match[2]}-\${match[3]}\`
-  if (!match[4]) return date
-  return \`\${date} \${match[4]}:\${match[5] || "00"}\`
-}
-
-const legacyFieldWrap = {
-  breakInside: "avoid",
-  margin: "0px 10px",
-  flex: "3 3 0px",
-  minWidth: 160,
-  maxWidth: 320,
-}
-
-const legacySmallFieldWrap = {
-  ...legacyFieldWrap,
-  flex: "2 2 0px",
-  minWidth: 80,
-  maxWidth: 160,
-}
-
-const legacyTextStyles = {
-  fieldGroup: { background: "#fff" },
-  field: { color: "#323130" },
-}
-
-function LegacyFormContextHeader({
-  id = "legacyFormContextHeader",
-  formDateFieldId = "formDate",
-  createdByFieldId = "createdBy",
-  encounterDateFieldId = "encDate",
-  visitCodeFieldId = "visCode",
-  visitReasonFieldId = "visReason",
-  providerFieldId = "daybookProvider",
-  attendingProviderFieldId = "attendingProvider",
-  serviceLocationFieldId = "serviceLoc",
-  createdByFallback = "DR. PREVIEW USER",
-  serviceLocationFallback = "FAMILY PRACTICE",
-  formDateLabel = "Form Date:",
-  createdByLabel = "Form Created by:",
-}) {
-  const sd = useSourceData()
-  const [fd, setFd] = useActiveData()
-
-  const values = useMemo(() => {
-    const encounter = sd?.webform?.encounter || sd?.encounter || fd?.example?.encounter || {}
-    const providerName = legacyContextText(
-      sd?.webform?.provider?.name ||
-        sd?.userProfile?.desktopProvider?.name ||
-        sd?.userProfile?.identity?.fullName ||
-        createdByFallback,
-      createdByFallback
-    )
-    const appointmentDateTime = encounter?.appointmentDateTime || encounter?.date || new Date().toISOString()
-    return {
-      [formDateFieldId]: legacyContextDate(sd?.webform?.documentDate || sd?.webform?.createdDate || new Date().toISOString(), "."),
-      [createdByFieldId]: providerName,
-      [encounterDateFieldId]: legacyContextDateTime(appointmentDateTime),
-      [visitCodeFieldId]: legacyContextVisitCode(encounter?.visitCode || encounter?.code, ""),
-      [visitReasonFieldId]: legacyContextText(encounter?.visitReason1 || encounter?.visitReason || encounter?.reason, ""),
-      [providerFieldId]: providerName,
-      [attendingProviderFieldId]: legacyContextText(encounter?.attendingProvider, providerName),
-      [serviceLocationFieldId]: legacyContextText(encounter?.location, serviceLocationFallback),
-    }
-  }, [
-    attendingProviderFieldId,
-    createdByFallback,
-    createdByFieldId,
-    encounterDateFieldId,
-    fd,
-    formDateFieldId,
-    providerFieldId,
-    sd,
-    serviceLocationFallback,
-    serviceLocationFieldId,
-    visitCodeFieldId,
-    visitReasonFieldId,
-  ])
-
-  useEffect(() => {
-    setFd((draft) => {
-      draft.field = draft.field || { data: {}, status: {} }
-      draft.field.data = draft.field.data || {}
-      draft.formData = draft.formData || {}
-      Object.assign(draft.field.data, values)
-      Object.assign(draft.formData, values)
-    })
-  }, [setFd, values])
-
-  const renderReadOnlyField = (fieldId, label, value) => (
-    <div data-field-id={fieldId} style={legacyFieldWrap}>
-      <div style={{ display: "flex", flexFlow: "column", minWidth: 160, width: "100%" }}>
-        <div style={{ flex: "1 1 0px", display: "flex", flexFlow: "wrap", minWidth: 160, width: "100%" }}>
-          <TextField
-            id={fieldId}
-            label={label}
-            value={value}
-            readOnly
-            borderless
-            tabIndex={-1}
-            styles={legacyTextStyles}
-          />
-        </div>
-      </div>
-      <div style={{ clear: "both" }} />
-    </div>
-  )
-
-  return (
-    <div data-field-id={id} data-component="LegacyFormContextHeader">
-      <div style={{ width: "100%" }}>
-        <div style={legacySmallFieldWrap} data-field-id={formDateFieldId}>
-          <Label>{formDateLabel}</Label>
-          <DatePicker
-            value={values[formDateFieldId] ? new Date(values[formDateFieldId].replace(/\\./g, "-")) : undefined}
-            formatDate={() => values[formDateFieldId]}
-            placeholder="YYYY.MM.DD"
-            disabled
-          />
-          <div style={{ clear: "both" }} />
-        </div>
-        <div style={legacyFieldWrap} data-field-id={createdByFieldId}>
-          <Label>{createdByLabel}</Label>
-          <TextField id={createdByFieldId} value={values[createdByFieldId]} readOnly disabled placeholder="Please search" styles={legacyTextStyles} />
-          <div style={{ clear: "both" }} />
-        </div>
-      </div>
-
-      <div style={{ display: "flex", flexDirection: "row", flexWrap: "wrap" }}>
-        {renderReadOnlyField(encounterDateFieldId, "Encounter Date:", values[encounterDateFieldId])}
-        {renderReadOnlyField(visitCodeFieldId, "Visit Code:", values[visitCodeFieldId])}
-      </div>
-      {renderReadOnlyField(visitReasonFieldId, "Visit Reason", values[visitReasonFieldId])}
-      {renderReadOnlyField(providerFieldId, "Provider:", values[providerFieldId])}
-      {renderReadOnlyField(attendingProviderFieldId, "Attending Provider:", values[attendingProviderFieldId])}
-      {renderReadOnlyField(serviceLocationFieldId, "Service Location:", values[serviceLocationFieldId])}
-    </div>
-  )
-}
-
-const LegacyFormContextHeaderSchema = {
-  formDate: { type: "string" },
-  createdBy: { type: "string" },
-  encDate: { type: "string" },
-  visCode: { type: "string" },
-  visReason: { type: "string" },
-  daybookProvider: { type: "string" },
-  attendingProvider: { type: "string" },
-  serviceLoc: { type: "string" },
 }
 `,
   './LegacyModerateRiskGuidance/index.jsx': `const DEFAULT_NON_COMPLIANT_INTERVENTIONS = [
@@ -12935,332 +13149,6 @@ function LegacyModerateRiskGuidance({
   )
 }
 `,
-  './LegacyMoisLinkList/index.jsx': `const normalizeItems = (items) => {
-  if (!Array.isArray(items)) return []
-  return items
-    .map((item, index) => {
-      const source = item && typeof item === "object" ? item : { label: item }
-      const label = typeof source.label === "string" && source.label.trim()
-        ? source.label.trim()
-        : \`Item \${index + 1}\`
-      const moisModule = typeof source.moisModule === "string" && source.moisModule.trim()
-        ? source.moisModule.trim()
-        : ""
-
-      return {
-        id: source.id || \`\${label.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "")}_\${index}\`,
-        label,
-        moisModule,
-        objectId: typeof source.objectId === "number" ? source.objectId : undefined,
-        title: typeof source.title === "string" && source.title.trim()
-          ? source.title.trim()
-          : \`Open \${moisModule || label} in MOIS\`,
-      }
-    })
-    .filter((item) => item.label)
-}
-
-function LegacyMoisLinkList({
-  id = "legacyMoisLinkList",
-  introText,
-  items = [],
-  marginLeft = "2em",
-  paddingBottom = 20,
-  marginTop = 5,
-  itemGap = 4,
-}) {
-  const normalizedItems = normalizeItems(items)
-
-  return (
-    <div id={id} data-field-id={id}>
-      {introText ? <p style={{ marginTop: 5, marginBottom: 5 }}>{introText}</p> : null}
-      <div style={{ marginLeft }}>
-        <ul style={{ paddingBottom, marginTop }}>
-          {normalizedItems.map((item) => (
-            <li key={item.id} style={{ marginBottom: itemGap }}>
-              {item.label}
-              {item.moisModule ? (
-                <LinkToMois
-                  moisModule={item.moisModule}
-                  objectId={item.objectId}
-                  title={item.title}
-                />
-              ) : null}
-            </li>
-          ))}
-        </ul>
-      </div>
-    </div>
-  )
-}
-`,
-  './LegacyPatientFileSections/index.jsx': `const { useCallback, useMemo } = React
-
-const textValue = (value, fallback = "") => {
-  if (value == null) return fallback
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value)
-  if (Array.isArray(value)) return value.map((item) => textValue(item)).filter(Boolean).join(", ")
-  return value.display || value.text || value.name || value.code || fallback
-}
-
-const compactLines = (lines) => lines.map((line) => textValue(line).trim()).filter(Boolean)
-
-const formatDate = (value) => {
-  const raw = textValue(value)
-  if (!raw) return ""
-  const match = raw.match(/^(\\d{4})[-.](\\d{2})[-.](\\d{2})/)
-  if (match) return \`\${match[1]}.\${match[2]}.\${match[3]}\`
-  return raw
-}
-
-const optionCode = (value, fallback = "") => {
-  if (value == null) return fallback
-  if (typeof value === "object") return value.code ?? value.key ?? fallback
-  return String(value)
-}
-
-const optionDisplay = (value, fallback = "") => {
-  if (value == null) return fallback
-  if (typeof value === "object") return value.display ?? value.text ?? value.code ?? fallback
-  return String(value)
-}
-
-const mergeObjects = (...objects) =>
-  objects.reduce((merged, value) => {
-    if (!value || typeof value !== "object" || Array.isArray(value)) return merged
-    return { ...merged, ...value }
-  }, {})
-
-const getPatientFromData = (data) => {
-  const queryPatient = Array.isArray(data?.queryResult?.patient) ? data.queryResult.patient[0] : null
-  return mergeObjects(
-    queryPatient,
-    data?.patient,
-    data?.example?.patient,
-    data?.example?.demographics,
-    data?.field?.data?.__patientFile
-  )
-}
-
-const formatAddress = (address) => {
-  if (!address) return ""
-  if (typeof address === "string") return address
-  if (address.text) return textValue(address.text)
-  const cityLine = compactLines([address.city, address.province]).join(", ")
-  const countryLine = compactLines([address.country, address.postalCode]).join(" ")
-  return compactLines([address.line1, address.line2, cityLine, countryLine]).join("\\n")
-}
-
-const formatContact = (telecom) => {
-  if (!telecom) return ""
-  if (typeof telecom === "string") return telecom
-  const lines = []
-  if (telecom.homePhone) lines.push(\`Home: \${telecom.homePhone} Leave msg: \${optionCode(telecom.homeMessage, "N") === "Y" ? "Yes" : "No"}\`)
-  if (telecom.workPhone) lines.push(\`Work: \${telecom.workPhone}\${telecom.workExt ? \` Ext: \${telecom.workExt}\` : ""}\`)
-  if (telecom.cellPhone) lines.push(\`Cell: \${telecom.cellPhone}\`)
-  if (telecom.homeEmail) lines.push(\`Email: \${telecom.homeEmail}\`)
-  return lines.join("\\n")
-}
-
-function LegacyPatientFileSections({
-  id = "legacyPatientFileSections",
-  serviceLocation = "FAMILY PRACTICE",
-  createdBy = "DR. PREVIEW USER",
-  dateCreated = "",
-  quickNavTarget = "clientDemographics",
-  sections = ["encounter", "document", "demographics"],
-  showSectionTitles = true,
-}) {
-  const [fd, setFd] = useActiveData()
-  const sd = useSourceData()
-
-  const patient = useMemo(() => mergeObjects(getPatientFromData(sd), getPatientFromData(fd)), [fd, sd])
-  const encounter = useMemo(() => mergeObjects(sd?.webform?.encounter, sd?.encounter, fd?.example?.encounter), [fd, sd])
-  const providerName = textValue(sd?.webform?.provider?.name || sd?.userProfile?.desktopProvider?.name || createdBy, createdBy)
-  const createdDate = dateCreated || formatDate(sd?.webform?.createdDate || sd?.webform?.documentDate || encounter?.appointmentDateTime || new Date().toISOString())
-
-  const writePatientUpdates = useCallback((updates) => {
-    setFd((draft) => {
-      draft.example = draft.example || {}
-      draft.example.demographics = { ...(draft.example.demographics || patient), ...updates }
-      draft.example.patient = { ...(draft.example.patient || patient), ...updates }
-      draft.patient = { ...(draft.patient || patient), ...updates }
-      draft.field = draft.field || { data: {}, status: {} }
-      draft.field.data = draft.field.data || {}
-      draft.field.data.__patientFile = { ...(draft.field.data.__patientFile || patient), ...updates }
-      draft.field.data.__patientFileUpdates = { ...(draft.field.data.__patientFileUpdates || {}), ...updates }
-      draft.formData = draft.formData || {}
-      draft.formData.__patientFileUpdates = { ...(draft.formData.__patientFileUpdates || {}), ...updates }
-    })
-  }, [patient, setFd])
-
-  const preferredPhoneOptions = [
-    { key: "1", text: "Home" },
-    { key: "2", text: "Work" },
-    { key: "3", text: "Cell" },
-    { key: "4", text: "Pager" },
-  ]
-
-  const healthNumber = textValue(patient.healthNumber || patient.insuranceNumber)
-  const insuranceBy = optionCode(patient.insuranceBy, patient.healthNumberBy || "BC")
-  const insuranceNumber = textValue(patient.insuranceNumber || patient.healthNumber)
-  const insuranceText = compactLines([insuranceBy && insuranceNumber ? \`\${insuranceBy}: \${insuranceNumber}\` : "", patient.insuranceDependent ? \`Dep: \${patient.insuranceDependent}\` : ""]).join("\\n")
-  const preferredCode = optionCode(patient.preferredPhone, "1")
-  const activeText = optionDisplay(patient.active, "")
-  const addressText = formatAddress(patient.address)
-  const contactText = formatContact(patient.telecom)
-
-  const visibleSections = useMemo(() => {
-    const requested = Array.isArray(sections) ? sections : [sections]
-    return new Set(requested.map((section) => String(section).toLowerCase()))
-  }, [sections])
-
-  const sectionTitleStyle = {
-    background: "#f3f2f1",
-    borderTop: "1px solid #c8c6c4",
-    borderBottom: "1px solid #c8c6c4",
-    padding: "6px 10px",
-    fontWeight: 600,
-    color: "#323130",
-  }
-  const gridStyle = {
-    display: "grid",
-    gap: "10px 16px",
-    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-    padding: "10px 0 14px",
-  }
-  const fieldWrapStyle = {
-    breakInside: "avoid",
-    margin: "0 10px",
-  }
-  const whiteTextFieldStyles = {
-    fieldGroup: {
-      backgroundColor: "#ffffff",
-      selectors: {
-        ":after": { borderColor: "#605e5c" },
-      },
-    },
-    field: {
-      backgroundColor: "#ffffff",
-    },
-  }
-  const whiteFlexTextFieldStyles = {
-    root: { flex: 1 },
-    fieldGroup: whiteTextFieldStyles.fieldGroup,
-    field: whiteTextFieldStyles.field,
-  }
-  const whiteDropdownStyles = {
-    title: { backgroundColor: "#ffffff" },
-    dropdown: { backgroundColor: "#ffffff" },
-  }
-  const editButtonStyle = { alignSelf: "flex-end", marginTop: 22 }
-
-  const updateContactText = (nextValue) => {
-    writePatientUpdates({
-      telecom: {
-        ...(patient.telecom || {}),
-        displayText: nextValue || "",
-      },
-    })
-  }
-
-  const renderTitle = (title) => {
-    if (!showSectionTitles) return null
-    return <div style={sectionTitleStyle}>{title}</div>
-  }
-
-  const renderEncounterDetails = () => (
-    <>
-      {renderTitle("Encounter Details")}
-      <div style={gridStyle}>
-        <div style={fieldWrapStyle}>
-          <TextField label="Service Location" value={textValue(encounter?.location || serviceLocation)} readOnly borderless tabIndex={-1} styles={whiteTextFieldStyles} />
-        </div>
-        <div style={fieldWrapStyle}>
-          <TextField label="Current Status" value={activeText} readOnly borderless tabIndex={-1} styles={whiteTextFieldStyles} />
-        </div>
-      </div>
-    </>
-  )
-
-  const renderDocumentDetails = () => (
-    <>
-      {renderTitle("Document Details")}
-      <div style={gridStyle}>
-        <div style={fieldWrapStyle}>
-          <TextField label="Created By" value={providerName} readOnly borderless tabIndex={-1} styles={whiteTextFieldStyles} />
-        </div>
-        <div style={fieldWrapStyle}>
-          <TextField label="Date Created" value={createdDate} readOnly borderless tabIndex={-1} styles={whiteTextFieldStyles} />
-        </div>
-      </div>
-    </>
-  )
-
-  const renderClientDemographics = () => (
-    <>
-      {renderTitle("Client Demographics")}
-      <div style={gridStyle}>
-        <div style={fieldWrapStyle}>
-          <TextField
-            label="Health number"
-            value={healthNumber}
-            styles={whiteTextFieldStyles}
-            onChange={(_, value) => writePatientUpdates({ healthNumber: value || "", insuranceNumber: value || "" })}
-          />
-        </div>
-        <div style={{ ...fieldWrapStyle, display: "flex", gap: 6 }}>
-          <TextField label="Insurance" value={insuranceText} readOnly borderless multiline rows={2} tabIndex={-1} styles={whiteFlexTextFieldStyles} />
-          <IconButton ariaLabel="Edit insurance" iconProps={{ iconName: "Edit" }} style={editButtonStyle} onClick={() => writePatientUpdates({ __lastEditRequest: "insurance" })} />
-        </div>
-        <div style={fieldWrapStyle}>
-          <TextField
-            label="Address"
-            value={addressText}
-            multiline
-            rows={5}
-            borderless
-            styles={whiteTextFieldStyles}
-            onChange={(_, value) => writePatientUpdates({ address: { ...(patient.address || {}), text: value || "" } })}
-          />
-        </div>
-        <div style={{ ...fieldWrapStyle, display: "flex", gap: 6 }}>
-          <TextField
-            label="Contact"
-            value={patient.telecom?.displayText || contactText}
-            multiline
-            rows={5}
-            borderless
-            onChange={(_, value) => updateContactText(value)}
-            styles={whiteFlexTextFieldStyles}
-          />
-          <IconButton ariaLabel="Edit contact" iconProps={{ iconName: "Edit" }} style={editButtonStyle} onClick={() => writePatientUpdates({ __lastEditRequest: "contact" })} />
-        </div>
-        <div style={fieldWrapStyle}>
-          <Dropdown
-            label="Preferred phone"
-            selectedKey={preferredCode}
-            options={preferredPhoneOptions}
-            styles={whiteDropdownStyles}
-            onChange={(_, option) => {
-              if (!option) return
-              writePatientUpdates({ preferredPhone: { code: option.key, display: option.text, system: "MOIS-PREFERREDPHONE" } })
-            }}
-          />
-        </div>
-      </div>
-    </>
-  )
-
-  return (
-    <div id={quickNavTarget} data-field-id={id} data-component="LegacyPatientFileSections">
-      {visibleSections.has("encounter") ? renderEncounterDetails() : null}
-      {visibleSections.has("document") ? renderDocumentDetails() : null}
-      {visibleSections.has("demographics") || visibleSections.has("clientdemographics") ? renderClientDemographics() : null}
-    </div>
-  )
-}
-`,
   './LongTermMedications/index.jsx': `/**
  * Display a list of long term medication orders for this patient.
  */
@@ -13309,6 +13197,235 @@ const longTermMedicationColumns: ColumnSelection = [
 ]
 
 const LongTermMedicationsFields = "longTermMedicationOrderId startDate endDate medication doseFrequency"
+`,
+  './MoCABlindAssessment/index.jsx': `const MOCA_BLIND_VERSIONS = {
+  "8.1": {
+    words: ["FACE", "VELVET", "CHURCH", "DAISY", "RED"],
+    forward: "2 1 8 5 4",
+    reverse: "7 4 2",
+    subtractFrom: 100,
+    phrase1: "I only know that John is the one to help today.",
+    phrase2: "The cat always hid under the couch when dogs were in the room.",
+    targetLetter: "F",
+    abstraction1: "train - bicycle",
+    abstraction2: "watch - ruler",
+  },
+  "8.2": {
+    words: ["HAND", "NYLON", "PARK", "CARROT", "YELLOW"],
+    forward: "8 1 5 2 4",
+    reverse: "2 4 7",
+    subtractFrom: 70,
+    phrase1: "The robber of the gray car was stopped by the police.",
+    phrase2: "The student went back to school without his books and pencils.",
+    targetLetter: "S",
+    abstraction1: "bed - table",
+    abstraction2: "letter - telephone",
+  },
+  "8.3": {
+    words: ["LEG", "COTTON", "SCHOOL", "TOMATO", "WHITE"],
+    forward: "2 4 8 1 5",
+    reverse: "4 2 7",
+    subtractFrom: 60,
+    phrase1: "The child walked his dog in the park after midnight.",
+    phrase2: "The artist finished his painting at the right moment for the exhibition.",
+    targetLetter: "B",
+    abstraction1: "hammer - screwdriver",
+    abstraction2: "matches - lamp",
+  },
+}
+
+const mocaNumber = (value, fallback = 0) => {
+  const number = Number(value?.value ?? value)
+  return Number.isFinite(number) ? number : fallback
+}
+
+const clamp = (value, min, max) => Math.max(min, Math.min(max, mocaNumber(value, min)))
+
+const MoCABlindAssessment = ({ id = "mocaBlindAssessment" }) => {
+  const [fd, setFormData] = useActiveData()
+  const data = fd?.field?.data || {}
+  const version = data.formVersion?.code ?? data.formVersion?.key ?? data.formVersion?.text ?? data.formVersion ?? "8.1"
+  const prompts = MOCA_BLIND_VERSIONS[version] || MOCA_BLIND_VERSIONS["8.1"]
+  const values = {
+    attentionScore: clamp(data.attentionScore, 0, 6),
+    languageScore: clamp(data.languageScore, 0, 3),
+    abstractionScore: clamp(data.abstractionScore, 0, 2),
+    delayedRecallScore: clamp(data.delayedRecallScore, 0, 5),
+    orientationScore: clamp(data.orientationScore, 0, 6),
+    educationAdjustment: clamp(data.educationAdjustment, 0, 1),
+    memoryIndex: clamp(data.memoryIndex, 0, 15),
+  }
+  const pointsTotal = values.attentionScore + values.languageScore + values.abstractionScore + values.delayedRecallScore + values.orientationScore + values.educationAdjustment
+  const convertedTotal = Math.round((pointsTotal / 22) * 30)
+
+  const setField = (fieldId, value) => {
+    if (typeof setFormData !== "function") return
+    setFormData((draft) => {
+      draft.field = draft.field || { data: {}, status: {} }
+      draft.field.data = {
+        ...(draft.field.data || {}),
+        [fieldId]: value,
+        pointsTotal: fieldId === "pointsTotal" ? value : pointsTotal,
+        convertedTotal,
+      }
+      draft.formData = {
+        ...(draft.formData || {}),
+        [fieldId]: value,
+        pointsTotal: fieldId === "pointsTotal" ? value : pointsTotal,
+        convertedTotal,
+      }
+    })
+  }
+
+  const scoreInput = (fieldId, label, max) => (
+    <SpinButton
+      label={label}
+      value={String(values[fieldId])}
+      min={0}
+      max={max}
+      step={1}
+      onValidate={(value) => setField(fieldId, clamp(value, 0, max))}
+      onIncrement={(value) => setField(fieldId, clamp(mocaNumber(value) + 1, 0, max))}
+      onDecrement={(value) => setField(fieldId, clamp(mocaNumber(value) - 1, 0, max))}
+      styles={{ root: { maxWidth: 320, margin: "8px 0" } }}
+    />
+  )
+
+  return (
+    <div id={id} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <SimpleCodeSelect
+        fieldId="formVersion"
+        id="formVersion"
+        label="MoCA version"
+        selectionType="single"
+        optionList={[
+          { key: "8.1", text: "8.1" },
+          { key: "8.2", text: "8.2" },
+          { key: "8.3", text: "8.3" },
+        ]}
+      />
+
+      <div style={{ border: "1px solid #8a8886", padding: 10 }}>
+        <h3 style={{ marginTop: 0 }}>Memory</h3>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          {prompts.words.map((word, index) => (
+            <span key={word} style={{ border: "1px solid #605e5c", padding: "4px 8px", fontWeight: 600 }}>{index + 1}. {word}</span>
+          ))}
+        </div>
+        <SimpleCodeChecklist
+          fieldId="memoryWordsTrial1"
+          id="memoryWordsTrial1"
+          label="First trial words recalled"
+          selectionType="multiple"
+          optionList={prompts.words.map((word) => ({ key: word, text: word }))}
+        />
+        <SimpleCodeChecklist
+          fieldId="memoryWordsTrial2"
+          id="memoryWordsTrial2"
+          label="Second trial words recalled"
+          selectionType="multiple"
+          optionList={prompts.words.map((word) => ({ key: word, text: word }))}
+        />
+      </div>
+
+      <div style={{ border: "1px solid #8a8886", padding: 10 }}>
+        <h3 style={{ marginTop: 0 }}>Attention</h3>
+        <p>Forward digits: <b>{prompts.forward}</b></p>
+        <p>Reverse digits: <b>{prompts.reverse}</b></p>
+        <p>Serial 7 subtraction starting at <b>{prompts.subtractFrom}</b></p>
+        <p>Tap for target letter: <b>{prompts.targetLetter}</b></p>
+        {scoreInput("attentionScore", "Attention score", 6)}
+      </div>
+
+      <div style={{ border: "1px solid #8a8886", padding: 10 }}>
+        <h3 style={{ marginTop: 0 }}>Language</h3>
+        <p>{prompts.phrase1}</p>
+        <p>{prompts.phrase2}</p>
+        <TextArea fieldId="languageWords" id="languageWords" label={\`Words beginning with \${prompts.targetLetter}\`} multiline rows={3} />
+        {scoreInput("languageScore", "Language score", 3)}
+      </div>
+
+      <div style={{ border: "1px solid #8a8886", padding: 10 }}>
+        <h3 style={{ marginTop: 0 }}>Abstraction</h3>
+        <p>{prompts.abstraction1}</p>
+        <p>{prompts.abstraction2}</p>
+        {scoreInput("abstractionScore", "Abstraction score", 2)}
+      </div>
+
+      <div style={{ border: "1px solid #8a8886", padding: 10 }}>
+        <h3 style={{ marginTop: 0 }}>Delayed Recall and Orientation</h3>
+        {scoreInput("delayedRecallScore", "Delayed recall score", 5)}
+        {scoreInput("orientationScore", "Orientation score", 6)}
+        {scoreInput("educationAdjustment", "Education adjustment", 1)}
+        {scoreInput("memoryIndex", "Memory Index Score", 15)}
+      </div>
+
+      <div style={{ border: "2px solid #323130", padding: 10, fontWeight: 600 }}>
+        <div>Total score out of 22: {pointsTotal}</div>
+        <div>Converted score out of 30: {convertedTotal}</div>
+      </div>
+    </div>
+  )
+}
+`,
+  './MoisModuleLinkList/index.jsx': `const normalizeItems = (items) => {
+  if (!Array.isArray(items)) return []
+  return items
+    .map((item, index) => {
+      const source = item && typeof item === "object" ? item : { label: item }
+      const label = typeof source.label === "string" && source.label.trim()
+        ? source.label.trim()
+        : \`Item \${index + 1}\`
+      const moisModule = typeof source.moisModule === "string" && source.moisModule.trim()
+        ? source.moisModule.trim()
+        : ""
+
+      return {
+        id: source.id || \`\${label.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "")}_\${index}\`,
+        label,
+        moisModule,
+        objectId: typeof source.objectId === "number" ? source.objectId : undefined,
+        title: typeof source.title === "string" && source.title.trim()
+          ? source.title.trim()
+          : \`Open \${moisModule || label} in MOIS\`,
+      }
+    })
+    .filter((item) => item.label)
+}
+
+function MoisModuleLinkList({
+  id = "legacyMoisLinkList",
+  introText,
+  items = [],
+  marginLeft = "2em",
+  paddingBottom = 20,
+  marginTop = 5,
+  itemGap = 4,
+}) {
+  const normalizedItems = normalizeItems(items)
+
+  return (
+    <div id={id} data-field-id={id}>
+      {introText ? <p style={{ marginTop: 5, marginBottom: 5 }}>{introText}</p> : null}
+      <div style={{ marginLeft }}>
+        <ul style={{ paddingBottom, marginTop }}>
+          {normalizedItems.map((item) => (
+            <li key={item.id} style={{ marginBottom: itemGap }}>
+              {item.label}
+              {item.moisModule ? (
+                <LinkToMois
+                  moisModule={item.moisModule}
+                  objectId={item.objectId}
+                  title={item.title}
+                />
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  )
+}
 `,
   './MoisPatientReviewLink/index.jsx': `/**
  * MoisPatientReviewLink
@@ -16335,6 +16452,273 @@ const PastMeasurementField = ({
         <Text variant="xSmall">Recent: {recentHistoryText}</Text>
       ) : null}
     </Stack>
+  )
+}
+`,
+  './PatientFileSections/index.jsx': `const { useCallback, useMemo } = React
+
+const textValue = (value, fallback = "") => {
+  if (value == null) return fallback
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value)
+  if (Array.isArray(value)) return value.map((item) => textValue(item)).filter(Boolean).join(", ")
+  return value.display || value.text || value.name || value.code || fallback
+}
+
+const compactLines = (lines) => lines.map((line) => textValue(line).trim()).filter(Boolean)
+
+const formatDate = (value) => {
+  const raw = textValue(value)
+  if (!raw) return ""
+  const match = raw.match(/^(\\d{4})[-.](\\d{2})[-.](\\d{2})/)
+  if (match) return \`\${match[1]}.\${match[2]}.\${match[3]}\`
+  return raw
+}
+
+const optionCode = (value, fallback = "") => {
+  if (value == null) return fallback
+  if (typeof value === "object") return value.code ?? value.key ?? fallback
+  return String(value)
+}
+
+const optionDisplay = (value, fallback = "") => {
+  if (value == null) return fallback
+  if (typeof value === "object") return value.display ?? value.text ?? value.code ?? fallback
+  return String(value)
+}
+
+const mergeObjects = (...objects) =>
+  objects.reduce((merged, value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return merged
+    return { ...merged, ...value }
+  }, {})
+
+const getPatientFromData = (data) => {
+  const queryPatient = Array.isArray(data?.queryResult?.patient) ? data.queryResult.patient[0] : null
+  return mergeObjects(
+    queryPatient,
+    data?.patient,
+    data?.example?.patient,
+    data?.example?.demographics,
+    data?.field?.data?.__patientFile
+  )
+}
+
+const formatAddress = (address) => {
+  if (!address) return ""
+  if (typeof address === "string") return address
+  if (address.text) return textValue(address.text)
+  const cityLine = compactLines([address.city, address.province]).join(", ")
+  const countryLine = compactLines([address.country, address.postalCode]).join(" ")
+  return compactLines([address.line1, address.line2, cityLine, countryLine]).join("\\n")
+}
+
+const formatContact = (telecom) => {
+  if (!telecom) return ""
+  if (typeof telecom === "string") return telecom
+  const lines = []
+  if (telecom.homePhone) lines.push(\`Home: \${telecom.homePhone} Leave msg: \${optionCode(telecom.homeMessage, "N") === "Y" ? "Yes" : "No"}\`)
+  if (telecom.workPhone) lines.push(\`Work: \${telecom.workPhone}\${telecom.workExt ? \` Ext: \${telecom.workExt}\` : ""}\`)
+  if (telecom.cellPhone) lines.push(\`Cell: \${telecom.cellPhone}\`)
+  if (telecom.homeEmail) lines.push(\`Email: \${telecom.homeEmail}\`)
+  return lines.join("\\n")
+}
+
+function PatientFileSections({
+  id = "patientFileSections",
+  serviceLocation = "FAMILY PRACTICE",
+  createdBy = "DR. PREVIEW USER",
+  dateCreated = "",
+  quickNavTarget = "clientDemographics",
+  sections = ["encounter", "document", "demographics"],
+  showSectionTitles = true,
+}) {
+  const [fd, setFd] = useActiveData()
+  const sd = useSourceData()
+
+  const patient = useMemo(() => mergeObjects(getPatientFromData(sd), getPatientFromData(fd)), [fd, sd])
+  const encounter = useMemo(() => mergeObjects(sd?.webform?.encounter, sd?.encounter, fd?.example?.encounter), [fd, sd])
+  const providerName = textValue(sd?.webform?.provider?.name || sd?.userProfile?.desktopProvider?.name || createdBy, createdBy)
+  const createdDate = dateCreated || formatDate(sd?.webform?.createdDate || sd?.webform?.documentDate || encounter?.appointmentDateTime || new Date().toISOString())
+
+  const writePatientUpdates = useCallback((updates) => {
+    setFd((draft) => {
+      draft.example = draft.example || {}
+      draft.example.demographics = { ...(draft.example.demographics || patient), ...updates }
+      draft.example.patient = { ...(draft.example.patient || patient), ...updates }
+      draft.patient = { ...(draft.patient || patient), ...updates }
+      draft.field = draft.field || { data: {}, status: {} }
+      draft.field.data = draft.field.data || {}
+      draft.field.data.__patientFile = { ...(draft.field.data.__patientFile || patient), ...updates }
+      draft.field.data.__patientFileUpdates = { ...(draft.field.data.__patientFileUpdates || {}), ...updates }
+      draft.formData = draft.formData || {}
+      draft.formData.__patientFileUpdates = { ...(draft.formData.__patientFileUpdates || {}), ...updates }
+    })
+  }, [patient, setFd])
+
+  const preferredPhoneOptions = [
+    { key: "1", text: "Home" },
+    { key: "2", text: "Work" },
+    { key: "3", text: "Cell" },
+    { key: "4", text: "Pager" },
+  ]
+
+  const healthNumber = textValue(patient.healthNumber || patient.insuranceNumber)
+  const insuranceBy = optionCode(patient.insuranceBy, patient.healthNumberBy || "BC")
+  const insuranceNumber = textValue(patient.insuranceNumber || patient.healthNumber)
+  const insuranceText = compactLines([insuranceBy && insuranceNumber ? \`\${insuranceBy}: \${insuranceNumber}\` : "", patient.insuranceDependent ? \`Dep: \${patient.insuranceDependent}\` : ""]).join("\\n")
+  const preferredCode = optionCode(patient.preferredPhone, "1")
+  const activeText = optionDisplay(patient.active, "")
+  const addressText = formatAddress(patient.address)
+  const contactText = formatContact(patient.telecom)
+
+  const visibleSections = useMemo(() => {
+    const requested = Array.isArray(sections) ? sections : [sections]
+    return new Set(requested.map((section) => String(section).toLowerCase()))
+  }, [sections])
+
+  const sectionTitleStyle = {
+    background: "#f3f2f1",
+    borderTop: "1px solid #c8c6c4",
+    borderBottom: "1px solid #c8c6c4",
+    padding: "6px 10px",
+    fontWeight: 600,
+    color: "#323130",
+  }
+  const gridStyle = {
+    display: "grid",
+    gap: "10px 16px",
+    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+    padding: "10px 0 14px",
+  }
+  const fieldWrapStyle = {
+    breakInside: "avoid",
+    margin: "0 10px",
+  }
+  const whiteTextFieldStyles = {
+    fieldGroup: {
+      backgroundColor: "#ffffff",
+      selectors: {
+        ":after": { borderColor: "#605e5c" },
+      },
+    },
+    field: {
+      backgroundColor: "#ffffff",
+    },
+  }
+  const whiteFlexTextFieldStyles = {
+    root: { flex: 1 },
+    fieldGroup: whiteTextFieldStyles.fieldGroup,
+    field: whiteTextFieldStyles.field,
+  }
+  const whiteDropdownStyles = {
+    title: { backgroundColor: "#ffffff" },
+    dropdown: { backgroundColor: "#ffffff" },
+  }
+  const editButtonStyle = { alignSelf: "flex-end", marginTop: 22 }
+
+  const updateContactText = (nextValue) => {
+    writePatientUpdates({
+      telecom: {
+        ...(patient.telecom || {}),
+        displayText: nextValue || "",
+      },
+    })
+  }
+
+  const renderTitle = (title) => {
+    if (!showSectionTitles) return null
+    return <div style={sectionTitleStyle}>{title}</div>
+  }
+
+  const renderEncounterDetails = () => (
+    <>
+      {renderTitle("Encounter Details")}
+      <div style={gridStyle}>
+        <div style={fieldWrapStyle}>
+          <TextField label="Service Location" value={textValue(encounter?.location || serviceLocation)} readOnly borderless tabIndex={-1} styles={whiteTextFieldStyles} />
+        </div>
+        <div style={fieldWrapStyle}>
+          <TextField label="Current Status" value={activeText} readOnly borderless tabIndex={-1} styles={whiteTextFieldStyles} />
+        </div>
+      </div>
+    </>
+  )
+
+  const renderDocumentDetails = () => (
+    <>
+      {renderTitle("Document Details")}
+      <div style={gridStyle}>
+        <div style={fieldWrapStyle}>
+          <TextField label="Created By" value={providerName} readOnly borderless tabIndex={-1} styles={whiteTextFieldStyles} />
+        </div>
+        <div style={fieldWrapStyle}>
+          <TextField label="Date Created" value={createdDate} readOnly borderless tabIndex={-1} styles={whiteTextFieldStyles} />
+        </div>
+      </div>
+    </>
+  )
+
+  const renderClientDemographics = () => (
+    <>
+      {renderTitle("Client Demographics")}
+      <div style={gridStyle}>
+        <div style={fieldWrapStyle}>
+          <TextField
+            label="Health number"
+            value={healthNumber}
+            styles={whiteTextFieldStyles}
+            onChange={(_, value) => writePatientUpdates({ healthNumber: value || "", insuranceNumber: value || "" })}
+          />
+        </div>
+        <div style={{ ...fieldWrapStyle, display: "flex", gap: 6 }}>
+          <TextField label="Insurance" value={insuranceText} readOnly borderless multiline rows={2} tabIndex={-1} styles={whiteFlexTextFieldStyles} />
+          <IconButton ariaLabel="Edit insurance" iconProps={{ iconName: "Edit" }} style={editButtonStyle} onClick={() => writePatientUpdates({ __lastEditRequest: "insurance" })} />
+        </div>
+        <div style={fieldWrapStyle}>
+          <TextField
+            label="Address"
+            value={addressText}
+            multiline
+            rows={5}
+            borderless
+            styles={whiteTextFieldStyles}
+            onChange={(_, value) => writePatientUpdates({ address: { ...(patient.address || {}), text: value || "" } })}
+          />
+        </div>
+        <div style={{ ...fieldWrapStyle, display: "flex", gap: 6 }}>
+          <TextField
+            label="Contact"
+            value={patient.telecom?.displayText || contactText}
+            multiline
+            rows={5}
+            borderless
+            onChange={(_, value) => updateContactText(value)}
+            styles={whiteFlexTextFieldStyles}
+          />
+          <IconButton ariaLabel="Edit contact" iconProps={{ iconName: "Edit" }} style={editButtonStyle} onClick={() => writePatientUpdates({ __lastEditRequest: "contact" })} />
+        </div>
+        <div style={fieldWrapStyle}>
+          <Dropdown
+            label="Preferred phone"
+            selectedKey={preferredCode}
+            options={preferredPhoneOptions}
+            styles={whiteDropdownStyles}
+            onChange={(_, option) => {
+              if (!option) return
+              writePatientUpdates({ preferredPhone: { code: option.key, display: option.text, system: "MOIS-PREFERREDPHONE" } })
+            }}
+          />
+        </div>
+      </div>
+    </>
+  )
+
+  return (
+    <div id={quickNavTarget} data-field-id={id} data-component="PatientFileSections">
+      {visibleSections.has("encounter") ? renderEncounterDetails() : null}
+      {visibleSections.has("document") ? renderDocumentDetails() : null}
+      {visibleSections.has("demographics") || visibleSections.has("clientdemographics") ? renderClientDemographics() : null}
+    </div>
   )
 }
 `,
@@ -22461,6 +22845,31 @@ const ValueSetObservationField = ({
  * Component Identity.json contents keyed by component name.
  */
 export const componentIdentities: Record<string, any> = {
+  'ActionButtonGroup': {
+    "name": "ActionButtonGroup",
+    "title": "Action Button Group",
+    "description": "Renders configurable action buttons that can open a dialog with configured payload metadata.",
+    "version": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "MOIS Exporter",
+    "author": "MOIS Exporter",
+    "publisher": "MOIS",
+    "globalIdentifier": "",
+    "requiredFormViewerVersion": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "requiredMoisVersion": {
+      "major": 2,
+      "minor": 28,
+      "patch": 5
+    }
+  },
   'AliasIdList': {
     "name": "AliasIdList",
     "title": "List of alias identifiers",
@@ -22509,6 +22918,31 @@ export const componentIdentities: Record<string, any> = {
       "major": 2,
       "minor": 26,
       "patch": 12
+    }
+  },
+  'AssessmentScoringTable': {
+    "name": "AssessmentScoringTable",
+    "title": "Assessment Scoring Table",
+    "description": "Renders legacy two-column assessment score tables with bound inputs and calculated totals.",
+    "version": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "MOIS Exporter",
+    "author": "MOIS Exporter",
+    "publisher": "MOIS",
+    "globalIdentifier": "",
+    "requiredFormViewerVersion": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "requiredMoisVersion": {
+      "major": 2,
+      "minor": 28,
+      "patch": 5
     }
   },
   'CommonSchemaDefn': {
@@ -22862,6 +23296,32 @@ export const componentIdentities: Record<string, any> = {
       "patch": 5
     }
   },
+  'FormContextHeader': {
+    "name": "FormContextHeader",
+    "title": "Form Context Header",
+    "description": "Read-only form date, author, provider, visit, and service-location context pulled from MOIS source data.",
+    "version": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "MOIS Exporter",
+    "author": "MOIS Exporter",
+    "publisher": "MOIS",
+    "globalIdentifier": "",
+    "requiredFormViewerVersion": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "requiredMoisVersion": {
+      "major": 2,
+      "minor": 28,
+      "patch": 5
+    },
+    "components": []
+  },
   'FormSessionRuntime': {
     "name": "FormSessionRuntime",
     "title": "Form Session Runtime",
@@ -23087,19 +23547,19 @@ export const componentIdentities: Record<string, any> = {
       "patch": 5
     }
   },
-  'LegacyAssessmentTable': {
-    "name": "LegacyAssessmentTable",
-    "title": "Legacy Assessment Table",
-    "description": "Renders legacy two-column assessment score tables with bound inputs and calculated totals.",
+  'LegacyHighRiskGuidance': {
+    "name": "LegacyHighRiskGuidance",
+    "title": "Legacy High Risk Guidance",
+    "description": "Renders the ABS high-risk ordered guidance with CHARTACTION MOIS links and intervention bullet list",
     "version": {
-      "major": 0,
-      "minor": 1,
+      "major": 1,
+      "minor": 0,
       "patch": 0
     },
     "type": "component",
-    "owner": "MOIS Exporter",
-    "author": "MOIS Exporter",
-    "publisher": "MOIS",
+    "owner": "Northern Health",
+    "author": "Northern Health",
+    "publisher": "Northern Health",
     "globalIdentifier": "",
     "requiredFormViewerVersion": {
       "major": 0,
@@ -23108,58 +23568,8 @@ export const componentIdentities: Record<string, any> = {
     },
     "requiredMoisVersion": {
       "major": 2,
-      "minor": 28,
-      "patch": 5
-    }
-  },
-  'LegacyButtonGroup': {
-    "name": "LegacyButtonGroup",
-    "title": "Legacy Button Group",
-    "description": "Renders legacy-style action buttons that can open a dialog with configured payload metadata.",
-    "version": {
-      "major": 0,
-      "minor": 1,
-      "patch": 0
-    },
-    "type": "component",
-    "owner": "MOIS Exporter",
-    "author": "MOIS Exporter",
-    "publisher": "MOIS",
-    "globalIdentifier": "",
-    "requiredFormViewerVersion": {
-      "major": 0,
-      "minor": 1,
-      "patch": 0
-    },
-    "requiredMoisVersion": {
-      "major": 2,
-      "minor": 28,
-      "patch": 5
-    }
-  },
-  'LegacyFormContextHeader': {
-    "name": "LegacyFormContextHeader",
-    "title": "Legacy Form Context Header",
-    "description": "Read-only legacy form date, author, provider, visit, and service-location context pulled from MOIS source data.",
-    "version": {
-      "major": 0,
-      "minor": 1,
-      "patch": 0
-    },
-    "type": "component",
-    "owner": "MOIS Exporter",
-    "author": "MOIS Exporter",
-    "publisher": "MOIS",
-    "globalIdentifier": "",
-    "requiredFormViewerVersion": {
-      "major": 0,
-      "minor": 1,
-      "patch": 0
-    },
-    "requiredMoisVersion": {
-      "major": 2,
-      "minor": 28,
-      "patch": 5
+      "minor": 26,
+      "patch": 12
     },
     "components": []
   },
@@ -23189,57 +23599,6 @@ export const componentIdentities: Record<string, any> = {
     },
     "components": []
   },
-  'LegacyMoisLinkList': {
-    "name": "LegacyMoisLinkList",
-    "title": "Legacy MOIS Link List",
-    "description": "Renders legacy list items with LinkToMois icon buttons for chart modules",
-    "version": {
-      "major": 1,
-      "minor": 0,
-      "patch": 0
-    },
-    "type": "component",
-    "owner": "Northern Health",
-    "author": "Northern Health",
-    "publisher": "Northern Health",
-    "globalIdentifier": "",
-    "requiredFormViewerVersion": {
-      "major": 0,
-      "minor": 1,
-      "patch": 0
-    },
-    "requiredMoisVersion": {
-      "major": 2,
-      "minor": 26,
-      "patch": 12
-    },
-    "components": []
-  },
-  'LegacyPatientFileSections': {
-    "name": "LegacyPatientFileSections",
-    "title": "Legacy Patient File Sections",
-    "description": "Renders legacy encounter, document, and client demographic sections bound to the loaded patient file.",
-    "version": {
-      "major": 0,
-      "minor": 1,
-      "patch": 0
-    },
-    "type": "component",
-    "owner": "MOIS Exporter",
-    "author": "MOIS Exporter",
-    "publisher": "MOIS",
-    "globalIdentifier": "",
-    "requiredFormViewerVersion": {
-      "major": 0,
-      "minor": 1,
-      "patch": 0
-    },
-    "requiredMoisVersion": {
-      "major": 2,
-      "minor": 28,
-      "patch": 5
-    }
-  },
   'LongTermMedications': {
     "name": "LongTermMedications",
     "title": "ListSelection for LongTermMedicationOrders",
@@ -23264,6 +23623,57 @@ export const componentIdentities: Record<string, any> = {
       "minor": 26,
       "patch": 12
     }
+  },
+  'MoCABlindAssessment': {
+    "name": "MoCABlindAssessment",
+    "title": "MoCA Blind Assessment",
+    "description": "Interactive MoCA Blind scoring module with version-specific prompts and totals",
+    "version": {
+      "major": 1,
+      "minor": 0,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "Northern Health",
+    "author": "Northern Health",
+    "publisher": "Northern Health",
+    "globalIdentifier": "",
+    "requiredFormViewerVersion": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "requiredMoisVersion": {
+      "major": 2,
+      "minor": 26,
+      "patch": 12
+    }
+  },
+  'MoisModuleLinkList': {
+    "name": "MoisModuleLinkList",
+    "title": "MOIS Module Link List",
+    "description": "Renders legacy list items with LinkToMois icon buttons for chart modules",
+    "version": {
+      "major": 1,
+      "minor": 0,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "Northern Health",
+    "author": "Northern Health",
+    "publisher": "Northern Health",
+    "globalIdentifier": "",
+    "requiredFormViewerVersion": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "requiredMoisVersion": {
+      "major": 2,
+      "minor": 26,
+      "patch": 12
+    },
+    "components": []
   },
   'MoisPatientReviewLink': {
     "name": "MoisPatientReviewLink",
@@ -23505,6 +23915,31 @@ export const componentIdentities: Record<string, any> = {
       "major": 2,
       "minor": 28,
       "patch": 10
+    }
+  },
+  'PatientFileSections': {
+    "name": "PatientFileSections",
+    "title": "Patient File Sections",
+    "description": "Renders encounter, document, and client demographic sections bound to the loaded patient file.",
+    "version": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "MOIS Exporter",
+    "author": "MOIS Exporter",
+    "publisher": "MOIS",
+    "globalIdentifier": "",
+    "requiredFormViewerVersion": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "requiredMoisVersion": {
+      "major": 2,
+      "minor": 28,
+      "patch": 5
     }
   },
   'PdfRegenerator': {

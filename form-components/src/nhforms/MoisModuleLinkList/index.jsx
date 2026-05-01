@@ -23,7 +23,7 @@ const normalizeItems = (items) => {
     .filter((item) => item.label)
 }
 
-function LegacyMoisLinkList({
+function MoisModuleLinkList({
   id = "legacyMoisLinkList",
   introText,
   items = [],

@@ -1,7 +1,7 @@
 {
-  "name": "LegacyFormContextHeader",
-  "title": "Legacy Form Context Header",
-  "description": "Read-only legacy form date, author, provider, visit, and service-location context pulled from MOIS source data.",
+  "name": "PatientFileSections",
+  "title": "Patient File Sections",
+  "description": "Renders encounter, document, and client demographic sections bound to the loaded patient file.",
   "version": {
     "major": 0,
     "minor": 1,
@@ -21,6 +21,5 @@
     "major": 2,
     "minor": 28,
     "patch": 5
-  },
-  "components": []
+  }
 }

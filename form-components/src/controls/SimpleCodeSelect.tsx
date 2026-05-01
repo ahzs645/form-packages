@@ -6,7 +6,7 @@
 import React, { useState } from 'react';
 import { Dropdown, IDropdownOption, TextField, Toggle, Stack } from '@fluentui/react';
 import { LayoutItem } from './LayoutItem';
-import { useTheme, useCodeList, useSection } from '../context/MoisContext';
+import { useTheme, useCodeList, useSection, useActiveData as useMoisActiveData } from '../context/MoisContext';
 import { useActiveDataForForms } from '../hooks/form-state';
 import {
   readSectionActiveFieldValue,
@@ -158,6 +158,7 @@ export const SimpleCodeSelect: React.FC<SimpleCodeSelectProps> = ({
   style,
 }) => {
   const [activeData, setActiveData] = useActiveDataForForms();
+  const [, setMoisActiveData] = useMoisActiveData();
   const sectionContext = useSection(section);
   const effectiveFieldId = fieldId || id || sourceId || layoutId;
   // Derive codeSystem from id if not explicitly provided
@@ -232,36 +233,44 @@ export const SimpleCodeSelect: React.FC<SimpleCodeSelectProps> = ({
 
   const options = buildOptions();
 
-  const effectiveSelectedKeys = activeValue !== undefined
+  const effectiveSelectedKeys = activeValue !== undefined && activeValue !== null
     ? getKeysFromValue(activeValue as Coding | Coding[] | string | undefined)
     : selectedKeys;
+
+  const writeSelectionValue = (draft: any, newKeys: string[], otherDisplayValue?: string) => {
+    if (!effectiveFieldId) return;
+    if (newKeys.length === 0) {
+      writeSectionActiveFieldValue(draft, sectionContext, effectiveFieldId, null, linkedFieldIds ?? []);
+      return;
+    }
+
+    const codings = newKeys.map(key => {
+      if (key === '__other__') {
+        return {
+          code: null,
+          display: (otherDisplayValue ?? otherValue) || 'Other',
+          system: derivedCodeSystem || undefined,
+        };
+      }
+      const opt = parsedOptions.find(o => o.code === key);
+      return {
+        code: key,
+        display: opt?.display || key,
+        system: derivedCodeSystem || undefined,
+      };
+    });
+
+    const storedValue = isMultiple ? codings : codings[0];
+    writeSectionActiveFieldValue(draft, sectionContext, effectiveFieldId, storedValue, linkedFieldIds ?? []);
+  };
 
   const updateActiveData = (newKeys: string[], otherDisplayValue?: string) => {
     if (!effectiveFieldId) return;
     setActiveData((draft: any) => {
-      if (newKeys.length === 0) {
-        writeSectionActiveFieldValue(draft, sectionContext, effectiveFieldId, null, linkedFieldIds ?? []);
-        return;
-      }
-
-      const codings = newKeys.map(key => {
-        if (key === '__other__') {
-          return {
-            code: null,
-            display: (otherDisplayValue ?? otherValue) || 'Other',
-            system: derivedCodeSystem || undefined,
-          };
-        }
-        const opt = parsedOptions.find(o => o.code === key);
-        return {
-          code: key,
-          display: opt?.display || key,
-          system: derivedCodeSystem || undefined,
-        };
-      });
-
-      const storedValue = isMultiple ? codings : codings[0];
-      writeSectionActiveFieldValue(draft, sectionContext, effectiveFieldId, storedValue, linkedFieldIds ?? []);
+      writeSelectionValue(draft, newKeys, otherDisplayValue);
+    });
+    setMoisActiveData((draft: any) => {
+      writeSelectionValue(draft, newKeys, otherDisplayValue);
     });
   };
 

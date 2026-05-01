@@ -66,8 +66,8 @@ const formatContact = (telecom) => {
   return lines.join("\n")
 }
 
-function LegacyPatientFileSections({
-  id = "legacyPatientFileSections",
+function PatientFileSections({
+  id = "patientFileSections",
   serviceLocation = "FAMILY PRACTICE",
   createdBy = "DR. PREVIEW USER",
   dateCreated = "",
@@ -257,7 +257,7 @@ function LegacyPatientFileSections({
   )
 
   return (
-    <div id={quickNavTarget} data-field-id={id} data-component="LegacyPatientFileSections">
+    <div id={quickNavTarget} data-field-id={id} data-component="PatientFileSections">
       {visibleSections.has("encounter") ? renderEncounterDetails() : null}
       {visibleSections.has("document") ? renderDocumentDetails() : null}
       {visibleSections.has("demographics") || visibleSections.has("clientdemographics") ? renderClientDemographics() : null}

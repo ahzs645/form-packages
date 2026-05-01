@@ -56,8 +56,8 @@ const legacyTextStyles = {
   field: { color: "#323130" },
 }
 
-function LegacyFormContextHeader({
-  id = "legacyFormContextHeader",
+function FormContextHeader({
+  id = "formContextHeader",
   formDateFieldId = "formDate",
   createdByFieldId = "createdBy",
   encounterDateFieldId = "encDate",
@@ -139,7 +139,7 @@ function LegacyFormContextHeader({
   )
 
   return (
-    <div data-field-id={id} data-component="LegacyFormContextHeader">
+    <div data-field-id={id} data-component="FormContextHeader">
       <div style={{ width: "100%" }}>
         <div style={legacySmallFieldWrap} data-field-id={formDateFieldId}>
           <Label>{formDateLabel}</Label>
@@ -170,7 +170,7 @@ function LegacyFormContextHeader({
   )
 }
 
-const LegacyFormContextHeaderSchema = {
+const FormContextHeaderSchema = {
   formDate: { type: "string" },
   createdBy: { type: "string" },
   encDate: { type: "string" },

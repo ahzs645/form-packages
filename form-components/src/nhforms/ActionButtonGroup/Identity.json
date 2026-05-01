@@ -1,7 +1,7 @@
 {
-  "name": "LegacyPatientFileSections",
-  "title": "Legacy Patient File Sections",
-  "description": "Renders legacy encounter, document, and client demographic sections bound to the loaded patient file.",
+  "name": "ActionButtonGroup",
+  "title": "Action Button Group",
+  "description": "Renders configurable action buttons that can open a dialog with configured payload metadata.",
   "version": {
     "major": 0,
     "minor": 1,

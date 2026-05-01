@@ -1,6 +1,6 @@
 const { useMemo, useState } = React
 
-function LegacyButtonGroup({
+function ActionButtonGroup({
   id = "legacyButtonGroup",
   actions = [],
   justifyContent = "space-evenly",
@@ -123,7 +123,7 @@ function LegacyButtonGroup({
   const hasFormFields = Array.isArray(activeAction?.fields) && activeAction.fields.length > 0
 
   return (
-    <div data-field-id={id} data-legacy-button-group>
+    <div data-field-id={id} data-action-button-group>
       <div
         style={{
           display: "flex",

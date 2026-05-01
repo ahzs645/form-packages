@@ -11,7 +11,7 @@ const getFieldValue = (fd, fieldId, fallback = "") => {
   return value == null ? fallback : value
 }
 
-function LegacyAssessmentTable({
+function AssessmentScoringTable({
   id = "legacyAssessmentTable",
   title = "Assessment",
   encounterDate = "2026-04-28",
@@ -111,7 +111,7 @@ function LegacyAssessmentTable({
   )
 
   return (
-    <div data-field-id={id} data-component="LegacyAssessmentTable" style={{ width: "100%" }}>
+    <div data-field-id={id} data-component="AssessmentScoringTable" style={{ width: "100%" }}>
       <div style={{ width: "100%" }}>
         <div className="ms-Stack" style={{ backgroundColor: "rgb(237, 235, 233)", padding: "2px 5px" }}>
           <Label>{title}</Label>

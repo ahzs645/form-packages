@@ -1,6 +1,6 @@
 {
-  "name": "LegacyMoisLinkList",
-  "title": "Legacy MOIS Link List",
+  "name": "MoisModuleLinkList",
+  "title": "MOIS Module Link List",
   "description": "Renders legacy list items with LinkToMois icon buttons for chart modules",
   "version": {
     "major": 1,

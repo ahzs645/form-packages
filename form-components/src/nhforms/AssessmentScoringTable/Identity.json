@@ -1,7 +1,7 @@
 {
-  "name": "LegacyButtonGroup",
-  "title": "Legacy Button Group",
-  "description": "Renders legacy-style action buttons that can open a dialog with configured payload metadata.",
+  "name": "AssessmentScoringTable",
+  "title": "Assessment Scoring Table",
+  "description": "Renders legacy two-column assessment score tables with bound inputs and calculated totals.",
   "version": {
     "major": 0,
     "minor": 1,

@@ -101,6 +101,9 @@ const LogicGateContext = createContext({
  * Normalize a value to 'yes', 'no', or null
  */
 const normalizeValue = (value) => {
+  if (value && typeof value === 'object') {
+    return normalizeValue(value.code ?? value.display ?? value.value ?? value.text ?? value.label)
+  }
   if (value === true || value === 'yes' || value === 'Y' || value === 1) {
     return 'yes'
   }
@@ -108,6 +111,21 @@ const normalizeValue = (value) => {
     return 'no'
   }
   return null
+}
+
+const readControllerValue = (data, fieldId) => {
+  if (!data || !fieldId) return undefined
+  if (Object.prototype.hasOwnProperty.call(data, fieldId)) return data[fieldId]
+  if (typeof data !== 'object') return undefined
+
+  for (const value of Object.values(data)) {
+    if (value && typeof value === 'object') {
+      const nestedValue = readControllerValue(value, fieldId)
+      if (nestedValue !== undefined) return nestedValue
+    }
+  }
+
+  return undefined
 }
 
 /**
@@ -509,7 +527,7 @@ const ConditionalField = ({
     // Always visible regardless of parent gates
     isVisible = true
   } else if (mode === 'controller' && controllerFieldId) {
-    const controllerValue = fd?.field?.data?.[controllerFieldId]
+    const controllerValue = readControllerValue(fd?.field?.data, controllerFieldId)
 
     // If optionValues is provided, use choice matching instead of boolean matching
     if (optionValues && optionValues.length > 0) {

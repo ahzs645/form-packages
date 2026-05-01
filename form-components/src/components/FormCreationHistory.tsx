@@ -44,6 +44,15 @@ const formatDateString = (date: Date): string => {
   return `${year}.${month}.${day}`;
 };
 
+const firstNonBlank = (...values: Array<unknown>): string | undefined => {
+  for (const value of values) {
+    if (typeof value !== 'string') continue;
+    const trimmed = value.trim();
+    if (trimmed.length > 0) return trimmed;
+  }
+  return undefined;
+};
+
 export const FormCreationHistory: React.FC<FormCreationHistoryProps> = ({
   createdBy: propCreatedBy,
   serviceLocation: propServiceLocation,
@@ -61,8 +70,15 @@ export const FormCreationHistory: React.FC<FormCreationHistoryProps> = ({
   const webform = (sourceData as any).webform;
   const userProfile = (sourceData as any).userProfile;
 
-  const createdBy = propCreatedBy ?? userProfile?.identity?.fullName ?? 'ADMINISTRATOR';
-  const serviceLocation = propServiceLocation ?? webform?.encounter?.location ?? 'FAMILY PRACTICE';
+  const createdBy = firstNonBlank(
+    propCreatedBy,
+    userProfile?.identity?.fullName,
+    userProfile?.desktopProvider?.name,
+    userProfile?.provider?.name,
+    webform?.provider?.name,
+    'DR. PREVIEW USER'
+  ) ?? 'DR. PREVIEW USER';
+  const serviceLocation = firstNonBlank(propServiceLocation, webform?.encounter?.location, 'FAMILY PRACTICE') ?? 'FAMILY PRACTICE';
 
   // Get date created as string in YYYY.MM.DD format
   let dateCreated: string;

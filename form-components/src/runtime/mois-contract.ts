@@ -414,9 +414,18 @@ export function writeSectionActiveFieldValue(
     resolveTarget(draft, sectionContext?.activeSelector, getActiveFallback) ?? field.data;
 
   target[fieldId] = cloneValue(value);
+  if (target !== field.data) {
+    field.data[fieldId] = cloneValue(value);
+  }
+  draft.formData = draft.formData || {};
+  draft.formData[fieldId] = cloneValue(value);
   linkedFieldIds.forEach((linkedFieldId) => {
     if (!linkedFieldId || linkedFieldId === fieldId) return;
     target[linkedFieldId] = cloneValue(value);
+    if (target !== field.data) {
+      field.data[linkedFieldId] = cloneValue(value);
+    }
+    draft.formData[linkedFieldId] = cloneValue(value);
   });
 }
 

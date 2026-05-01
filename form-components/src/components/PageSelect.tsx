@@ -5,7 +5,7 @@
  */
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { Icon, Link, Text, Breadcrumb, IBreadcrumbItem } from '@fluentui/react';
+import { Icon, Link, Text, IBreadcrumbItem } from '@fluentui/react';
 
 // Context for sharing selected page state between PageSelect and Page components
 interface PageSelectContextValue {
@@ -105,7 +105,20 @@ export const PageSelect: React.FC<PageSelectProps> = ({
     onPageChange?.(pageIndex);
   };
 
-  const breadcrumbItems: IBreadcrumbItem[] = pageNames.map((name, index) => ({
+  const childPageNames = React.Children.toArray(children)
+    .map((child) => {
+      if (!React.isValidElement(child)) return '';
+      const props = child.props as { label?: unknown };
+      return typeof props.label === 'string' ? props.label.trim() : '';
+    })
+    .filter(Boolean);
+  const resolvedPageNames = pageNames.map((name, index) => {
+    const childName = childPageNames[index];
+    if (childName && /^Page\s+\d+$/i.test(name.trim())) return childName;
+    return name;
+  });
+
+  const breadcrumbItems: IBreadcrumbItem[] = resolvedPageNames.map((name, index) => ({
     key: index.toString(),
     text: name,
     onClick: () => handlePageChange(index),
@@ -136,14 +149,18 @@ export const PageSelect: React.FC<PageSelectProps> = ({
       ];
 
   const navigation = (
-    <div id="breadcrumb" style={breadcrumbContainerStyle}>
-      <div>
-        <div style={{ position: 'relative' }}>
-          <Breadcrumb
-            items={displayItems}
-            onRenderItem={renderBreadcrumbItem}
-          />
-        </div>
+    <div id="breadcrumb" role="navigation" aria-label="Pages" style={breadcrumbContainerStyle}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '4px' }}>
+        {displayItems.map((item, index) => (
+          <React.Fragment key={item.key}>
+            {renderBreadcrumbItem(item)}
+            {index < displayItems.length - 1 ? (
+              <Text aria-hidden="true" styles={{ root: { color: 'rgb(96, 94, 92)' } }}>
+                /
+              </Text>
+            ) : null}
+          </React.Fragment>
+        ))}
       </div>
     </div>
   );
