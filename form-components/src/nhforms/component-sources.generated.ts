@@ -17833,6 +17833,7 @@ const {
  * - showLegend: boolean - Whether to show the legend row above
  * - showInlineLabels: boolean - Whether to show inline option labels beside radio controls
  * - showTooltip: boolean - Whether to show the row tooltip when descriptions exist
+ * - tooltipMode: "all" | "option" - Whether tooltips show all definitions or only the hovered option
  * - required: boolean - Whether the field is required
  * - readOnly: boolean - Whether the field is read-only
  */
@@ -17862,6 +17863,8 @@ const CHOICE_FIELD_STYLE = {
   root: {
     padding: "0px 6px 3px 6px",
     minWidth: 46,
+    flex: "1 1 0",
+    boxSizing: "border-box",
     textAlign: "center",
   },
 }
@@ -17878,41 +17881,56 @@ const choiceGroupStyles = {
 
 const _getInlineMinWidth = (optionCount) => Math.max(360, optionCount * 64 + 170)
 
+const _renderOptionTooltipContent = (description) => (
+  <div style={{ maxWidth: 320, padding: "6px 8px", lineHeight: "16px" }}>
+    {description}
+  </div>
+)
+
 // Legend component for showing option labels above the scale
 const ScaleFieldLegend = ({ options }) => {
   const inlineMinWidth = _getInlineMinWidth(options.length)
   const legendRowStyle = {
     root: {
+      display: "flex",
+      flexWrap: "nowrap",
       justifyContent: "space-between",
       width: "100%",
+      gap: "4px",
     },
   }
 
-  const legendStyle = {
+  const legendItemStyle = {
     padding: "2px 6px 0px 6px",
     minWidth: 46,
+    flex: "1 1 0",
+    boxSizing: "border-box",
     textAlign: "center",
     fontSize: "10px",
     lineHeight: "14px",
   }
 
   return (
-    <div style={{ margin: "0px 0px 8px 0px", overflowX: "auto" }}>
-      <Stack horizontal style={{ minWidth: inlineMinWidth }}>
-        <StackItem disableShrink styles={LABEL_COLUMN_STYLE}>
-          <Label styles={LABEL_STYLE}>&nbsp;</Label>
-        </StackItem>
-        <StackItem grow>
-          <Stack horizontal styles={legendRowStyle} tokens={{ padding: 5 }}>
-            {options.map((opt, i) => (
-              <Text key={i} style={legendStyle}>
-                <b>{opt.description || opt.label}</b>
-              </Text>
-            ))}
-          </Stack>
-        </StackItem>
-      </Stack>
-    </div>
+    <Stack horizontal style={{ minWidth: inlineMinWidth, margin: "0px 0px 8px 0px" }}>
+      <StackItem disableShrink styles={LABEL_COLUMN_STYLE}>
+        <Label styles={LABEL_STYLE}>&nbsp;</Label>
+      </StackItem>
+      <StackItem grow>
+        <Stack horizontal styles={legendRowStyle}>
+          {options.map((opt, i) => {
+            const label = opt.label || opt.value
+
+            return (
+              <div key={i} style={legendItemStyle}>
+                <Text style={{ fontSize: "inherit", lineHeight: "inherit" }}>
+                  <b>{label}</b>
+                </Text>
+              </div>
+            )
+          })}
+        </Stack>
+      </StackItem>
+    </Stack>
   )
 }
 
@@ -17942,6 +17960,7 @@ const ScaleField = ({
   showLegend = false,
   showInlineLabels = true,
   showTooltip = false,
+  tooltipMode = "all",
   required = false,
   readOnly = false,
 }) => {
@@ -17958,9 +17977,25 @@ const ScaleField = ({
   ]
 
   // Convert options to ChoiceGroup format
+  const normalizedTooltipMode = tooltipMode === "option" ? "option" : "all"
   const choiceOptions = scaleOptions.map(opt => ({
     key: String(opt.value),
     text: showInlineLabels ? String(opt.value) : "",
+    title: showTooltip && normalizedTooltipMode === "option" ? (opt.description || opt.label) : undefined,
+    onRenderField:
+      showTooltip && normalizedTooltipMode === "option" && (opt.description || opt.label)
+        ? (optionProps, defaultRender) => (
+            <TooltipHost
+              tooltipProps={{
+                onRenderContent: () => _renderOptionTooltipContent(opt.description || opt.label),
+              }}
+            >
+              <span title={opt.description || opt.label} style={{ cursor: "help", display: "inline-block" }}>
+                {defaultRender ? defaultRender(optionProps) : null}
+              </span>
+            </TooltipHost>
+          )
+        : undefined,
     styles: CHOICE_FIELD_STYLE,
   }))
 
@@ -18007,40 +18042,38 @@ const ScaleField = ({
   }
 
   const hasDescriptions = scaleOptions.some(opt => opt.description)
-  const shouldShowTooltip = showTooltip && hasDescriptions
+  const shouldShowAllTooltip = showTooltip && hasDescriptions && normalizedTooltipMode === "all"
   const inlineMinWidth = _getInlineMinWidth(scaleOptions.length)
   const fieldContent = (
-    <div style={{ overflowX: "auto" }}>
-      <Stack horizontal verticalAlign="center" style={{ minWidth: inlineMinWidth }}>
-        <StackItem disableShrink styles={LABEL_COLUMN_STYLE}>
-          <Label
-            styles={LABEL_STYLE}
-            required={required}
-          >
-            {label}
-          </Label>
-        </StackItem>
-        <StackItem grow>
-          <ChoiceGroup
-            key={\`scale-\${fieldId}-\${currentData.selectedKey ?? "empty"}\`}
-            options={choiceOptions}
-            selectedKey={currentData.selectedKey}
-            onChange={handleChange}
-            disabled={readOnly}
-            required={required}
-            styles={choiceGroupStyles}
-          />
-        </StackItem>
-      </Stack>
-    </div>
+    <Stack horizontal verticalAlign="center" style={{ minWidth: inlineMinWidth }}>
+      <StackItem disableShrink styles={LABEL_COLUMN_STYLE}>
+        <Label
+          styles={LABEL_STYLE}
+          required={required}
+        >
+          {label}
+        </Label>
+      </StackItem>
+      <StackItem grow>
+        <ChoiceGroup
+          key={\`scale-\${fieldId}-\${currentData.selectedKey ?? "empty"}\`}
+          options={choiceOptions}
+          selectedKey={currentData.selectedKey}
+          onChange={handleChange}
+          disabled={readOnly}
+          required={required}
+          styles={choiceGroupStyles}
+        />
+      </StackItem>
+    </Stack>
   )
 
   return (
-    <div>
+    <div style={{ overflowX: "auto" }}>
       {showLegend && <ScaleFieldLegend options={scaleOptions} />}
 
       <div style={containerStyle}>
-        {shouldShowTooltip ? (
+        {shouldShowAllTooltip ? (
           <TooltipHost
             id={\`tooltip_\${fieldId}\`}
             tooltipProps={{
