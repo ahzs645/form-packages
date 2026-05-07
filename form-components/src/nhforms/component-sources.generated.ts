@@ -2059,6 +2059,9 @@ const ConditionalGroup = ({
     borderLeft: indentChildren && !showCard ? \`3px solid \${isDarkMode ? '#0078d4' : '#0078d4'}\` : 'none',
     marginLeft: indentChildren && !showCard ? '8px' : 0,
     backgroundColor: showCard && isDarkMode ? '#1a1a1a' : 'transparent',
+    boxSizing: 'border-box',
+    maxWidth: '100%',
+    minWidth: 0,
   }
 
   const contentStyle = mergeStyles(baseContentStyle, contentStyleOverride)

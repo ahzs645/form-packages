@@ -180,6 +180,10 @@ export const Grid: React.FC<GridProps> = ({
     display: 'grid',
     gap: gap,
     gridTemplateColumns: columnTemplate,
+    boxSizing: 'border-box',
+    maxWidth: '100%',
+    minWidth: 0,
+    width: '100%',
   };
 
   // Helper to wrap content in GridItem-like container
