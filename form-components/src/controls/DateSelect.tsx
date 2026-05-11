@@ -307,10 +307,11 @@ export const DateSelect: React.FC<DateSelectProps> = ({
     parseDateValue(resolvedValue, dateFormat)
   );
   const resolvedPlaceholder = placeholder ?? DATE_PLACEHOLDER_MAP[dateFormat] ?? DATE_PLACEHOLDER_MAP[DEFAULT_DATE_FORMAT];
+  const { strings: datePickerPropsStrings, ...datePickerOverrideProps } = datePickerProps ?? {};
   const datePickerStrings = {
     ...DEFAULT_DATE_PICKER_STRINGS,
     invalidInputErrorMessage: `Enter a valid date in ${resolvedPlaceholder} format`,
-    ...(datePickerProps?.strings ?? {}),
+    ...(datePickerPropsStrings ?? {}),
   } as IDatePickerProps['strings'];
 
   useEffect(() => {
@@ -422,12 +423,12 @@ export const DateSelect: React.FC<DateSelectProps> = ({
       disableAutoFocus={true}
       parseDateFromString={(str) => parseDateValue(str, dateFormat) || null}
       tabIndex={effectiveReadOnly ? -1 : undefined}
-      strings={datePickerStrings}
       styles={{
         root: { flex: '2 2 0', minWidth: '80px', maxWidth: '160px' },
         textField: { width: '100%' },
       }}
-      {...datePickerProps}
+      {...datePickerOverrideProps}
+      strings={datePickerStrings}
     />
   );
 
@@ -458,12 +459,12 @@ export const DateSelect: React.FC<DateSelectProps> = ({
         disableAutoFocus={true}
         parseDateFromString={(str) => parseDateValue(str, dateFormat) || null}
         tabIndex={effectiveReadOnly ? -1 : undefined}
-        strings={datePickerStrings}
         styles={{
           root: { width: '100%' },
           textField: { width: '100%' },
         }}
-        {...datePickerProps}
+        {...datePickerOverrideProps}
+        strings={datePickerStrings}
       />
     );
   }

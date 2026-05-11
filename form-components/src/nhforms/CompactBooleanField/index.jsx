@@ -10,7 +10,7 @@
  * - Integration with form data via useActiveData
  */
 
-const { useMemo, useCallback } = React
+const { useMemo, useCallback, useEffect, useState } = React
 const {
   Stack,
   Label,
@@ -247,6 +247,7 @@ const CompactBooleanField = ({
   ...props
 }) => {
   const [fd] = useActiveData()
+  const setFormData = fd?.setFormData
   const theme = useTheme()
   const isDarkMode = theme?.isInverted || false
 
@@ -254,11 +255,15 @@ const CompactBooleanField = ({
 
   // Get current value from form data
   const currentValue = fd?.field?.data?.[fieldId]
-  const normalized = normalizeValue(currentValue)
+  const [optimisticValue, setOptimisticValue] = useState(currentValue)
+  useEffect(() => {
+    setOptimisticValue(currentValue)
+  }, [currentValue])
+  const normalized = normalizeValue(optimisticValue)
 
   // Handle value change
   const handleChange = useCallback((newValue) => {
-    if (!fd?.setFormData) return
+    if (!setFormData) return
 
     // Store as boolean or null (for deselected state)
     let storedValue
@@ -268,23 +273,26 @@ const CompactBooleanField = ({
       storedValue = newValue === 'yes'  // true or false
     }
 
-    fd.setFormData({
-      ...fd,
-      field: {
-        ...fd.field,
-        data: {
-          ...fd.field?.data,
-          [fieldId]: storedValue,
-          ...(sourceFieldId && sourceFieldId !== fieldId ? { [sourceFieldId]: storedValue } : {}),
-          ...Object.fromEntries(
-            (linkedFieldIds || [])
-              .filter((linkedFieldId) => linkedFieldId && linkedFieldId !== fieldId && linkedFieldId !== sourceFieldId)
-              .map((linkedFieldId) => [linkedFieldId, storedValue])
-          ),
-        },
-      },
+    setOptimisticValue(storedValue)
+    const commitValue = () => setFormData((draft) => {
+      if (!draft.field) draft.field = {}
+      if (!draft.field.data) draft.field.data = {}
+      draft.field.data[fieldId] = storedValue
+      if (sourceFieldId && sourceFieldId !== fieldId) {
+        draft.field.data[sourceFieldId] = storedValue
+      }
+      ;(linkedFieldIds || [])
+        .filter((linkedFieldId) => linkedFieldId && linkedFieldId !== fieldId && linkedFieldId !== sourceFieldId)
+        .forEach((linkedFieldId) => {
+          draft.field.data[linkedFieldId] = storedValue
+        })
     })
-  }, [fd, fieldId, sourceFieldId, linkedFieldIds])
+    if (typeof React.startTransition === 'function') {
+      React.startTransition(commitValue)
+    } else {
+      commitValue()
+    }
+  }, [setFormData, fieldId, sourceFieldId, linkedFieldIds])
 
   // Styles
   const baseContainerStyle = getFieldContainerStyles(isDarkMode, showCard)
@@ -447,11 +455,12 @@ const CompactBooleanChecklist = ({
   ...props
 }) => {
   const [fd] = useActiveData()
+  const setFormData = fd?.setFormData
   const theme = useTheme()
   const isDarkMode = theme?.isInverted || false
 
   // Get all values from form data
-  const getValues = () => {
+  const values = useMemo(() => {
     try {
       const data = fd?.field?.data?.[id]
       if (data && typeof data === 'object') {
@@ -461,15 +470,15 @@ const CompactBooleanChecklist = ({
       console.log('Error getting values:', e)
     }
     return {}
-  }
-
-  const values = getValues()
+  }, [fd?.field?.data?.[id]])
+  const [optimisticValues, setOptimisticValues] = useState(values)
+  useEffect(() => {
+    setOptimisticValues(values)
+  }, [values])
 
   // Handle value change for a field
   const handleChange = useCallback((fieldId, newValue) => {
-    if (!fd?.setFormData) return
-
-    const currentData = fd?.field?.data?.[id] || {}
+    if (!setFormData) return
 
     // Store as boolean or null (for deselected state)
     let storedValue
@@ -479,20 +488,27 @@ const CompactBooleanChecklist = ({
       storedValue = newValue === 'yes'  // true or false
     }
 
-    fd.setFormData({
-      ...fd,
-      field: {
-        ...fd.field,
-        data: {
-          ...fd.field?.data,
-          [id]: {
-            ...currentData,
-            [fieldId]: storedValue,
-          },
-        },
-      },
+    setOptimisticValues((current) => ({
+      ...(current || {}),
+      [fieldId]: storedValue,
+    }))
+    const commitValue = () => setFormData((draft) => {
+      if (!draft.field) draft.field = {}
+      if (!draft.field.data) draft.field.data = {}
+      const currentData = draft.field.data[id] && typeof draft.field.data[id] === 'object'
+        ? draft.field.data[id]
+        : {}
+      draft.field.data[id] = {
+        ...currentData,
+        [fieldId]: storedValue,
+      }
     })
-  }, [fd, id])
+    if (typeof React.startTransition === 'function') {
+      React.startTransition(commitValue)
+    } else {
+      commitValue()
+    }
+  }, [setFormData, id])
 
   const containerStyle = showCard
     ? {
@@ -545,7 +561,7 @@ const CompactBooleanChecklist = ({
             <YesNoButtons
               yesLabel={yesLabel}
               noLabel={noLabel}
-              value={normalizeValue(values[field.id])}
+              value={normalizeValue(optimisticValues?.[field.id])}
               onChange={(val) => handleChange(field.id, val)}
               size={size}
               isDarkMode={isDarkMode}
@@ -728,27 +744,33 @@ const CompactChoiceField = ({
   ...props
 }) => {
   const [fd] = useActiveData()
+  const setFormData = fd?.setFormData
   const theme = useTheme()
   const isDarkMode = theme?.isInverted || false
 
   // Get current value from form data
   const currentValue = fd?.field?.data?.[fieldId]
+  const [optimisticValue, setOptimisticValue] = useState(currentValue)
+  useEffect(() => {
+    setOptimisticValue(currentValue)
+  }, [currentValue])
 
   // Handle value change
   const handleChange = useCallback((newValue) => {
-    if (!fd?.setFormData) return
+    if (!setFormData) return
 
-    fd.setFormData({
-      ...fd,
-      field: {
-        ...fd.field,
-        data: {
-          ...fd.field?.data,
-          [fieldId]: newValue,
-        },
-      },
+    setOptimisticValue(newValue)
+    const commitValue = () => setFormData((draft) => {
+      if (!draft.field) draft.field = {}
+      if (!draft.field.data) draft.field.data = {}
+      draft.field.data[fieldId] = newValue
     })
-  }, [fd, fieldId])
+    if (typeof React.startTransition === 'function') {
+      React.startTransition(commitValue)
+    } else {
+      commitValue()
+    }
+  }, [setFormData, fieldId])
 
   // Styles
   const containerStyle = getFieldContainerStyles(isDarkMode, showCard)
@@ -786,7 +808,7 @@ const CompactChoiceField = ({
       )}
       <OptionButtons
         options={optionList}
-        value={currentValue}
+        value={optimisticValue}
         onChange={handleChange}
         selectionType={selectionType}
         size={size}

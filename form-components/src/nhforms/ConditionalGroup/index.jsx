@@ -25,7 +25,7 @@
  * </ConditionalGroup>
  */
 
-const { useMemo, useCallback, useContext, createContext } = React
+const { useMemo, useCallback, useContext, createContext, useEffect, useRef } = React
 const {
   Stack,
   Label,
@@ -248,6 +248,7 @@ const ConditionalGroup = ({
   children,
   ...props
 }) => {
+  const contentRef = useRef(null)
   const [fd] = useActiveData()
   const theme = useTheme()
   const isDarkMode = theme?.isInverted || false
@@ -355,6 +356,34 @@ const ConditionalGroup = ({
 
   const contentStyle = mergeStyles(baseContentStyle, contentStyleOverride)
 
+  useEffect(() => {
+    if (!isVisible || typeof window === 'undefined') return
+    const contentNode = contentRef.current
+    if (!contentNode || typeof contentNode.querySelectorAll !== 'function') return
+
+    const reportOverflow = () => {
+      const groupRect = contentNode.getBoundingClientRect()
+      const clippedField = Array.from(contentNode.querySelectorAll('[data-field-id]')).find((fieldNode) => {
+        const rect = fieldNode.getBoundingClientRect()
+        return rect.right > groupRect.right + 1 || rect.left < groupRect.left - 1 || fieldNode.scrollWidth > fieldNode.clientWidth + 1
+      })
+
+      if (!clippedField) return
+
+      window.dispatchEvent(new CustomEvent('mois:preview-diagnostic', {
+        detail: {
+          severity: 'warning',
+          source: 'ConditionalGroup',
+          message: `Conditional group "${id}" contains field "${clippedField.getAttribute('data-field-id') || 'unknown'}" that overflows its visible container and may render clipped.`,
+          path: `ConditionalGroup.${id}`,
+        },
+      }))
+    }
+
+    const frame = window.requestAnimationFrame(reportOverflow)
+    return () => window.cancelAnimationFrame(frame)
+  }, [id, isVisible, children])
+
   const titleStyle = {
     fontWeight: 600,
     fontSize: '14px',
@@ -406,7 +435,7 @@ const ConditionalGroup = ({
         )}
 
         {isVisible ? (
-          <div style={contentStyle} {...contentProps}>
+          <div style={contentStyle} {...contentProps} ref={contentRef}>
             {title && <div style={titleStyle}>{title}</div>}
             <Stack tokens={{ childrenGap }}>
               {children}
