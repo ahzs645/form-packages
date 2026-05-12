@@ -8,7 +8,7 @@ function ActionButtonGroup({
   gap = 10,
   buttonMaxWidth = 280,
   dialogTitle = "Action payload",
-  dialogMinWidth = 620,
+  dialogMinWidth = 760,
   okText = "Ok",
   cancelText = "Cancel",
 }) {
@@ -55,8 +55,8 @@ function ActionButtonGroup({
       ...(field.minWidth ? { minWidth: field.minWidth } : {}),
     }
     const inputStyle = {
-      width: field.width || (field.type === "date" ? 160 : 320),
-      maxWidth: field.maxWidth || (field.type === "date" ? 160 : 320),
+      width: field.width || (field.type === "date" ? 160 : "100%"),
+      maxWidth: field.maxWidth || (field.type === "date" ? 160 : "100%"),
     }
 
     let control = null
@@ -112,7 +112,7 @@ function ActionButtonGroup({
     return (
       <div key={field.id} style={commonStyle}>
         <Label>{field.label}</Label>
-        <div style={{ display: "flex", flexFlow: "column", minWidth: field.minWidth || 160, alignItems: "flex-start" }}>
+        <div style={{ display: "flex", flexFlow: "column", minWidth: field.minWidth || 160, width: "100%", alignItems: "flex-start" }}>
           {control}
         </div>
         <div style={{ clear: "both" }} />
@@ -121,6 +121,7 @@ function ActionButtonGroup({
   }
 
   const hasFormFields = Array.isArray(activeAction?.fields) && activeAction.fields.length > 0
+  const formDialogWidth = "min(760px, calc(100vw - 48px))"
 
   return (
     <div data-field-id={id} data-action-button-group>
@@ -152,11 +153,22 @@ function ActionButtonGroup({
           type: DialogType.normal,
           title: activeAction?.dialogTitle || activeAction?.label || dialogTitle,
         }}
-        modalProps={{ isBlocking: false }}
+        modalProps={{
+          isBlocking: false,
+          styles: hasFormFields
+            ? {
+                main: {
+                  width: formDialogWidth,
+                  minWidth: formDialogWidth,
+                  maxWidth: formDialogWidth,
+                },
+              }
+            : undefined,
+        }}
       >
         {hasFormFields ? (
-          <div data-component="SubForm" style={{ minWidth: 500 }}>
-            <div style={{ display: "grid", gap: 10, gridTemplateColumns: "1fr 1fr" }}>
+          <div data-component="SubForm" style={{ width: "100%", minWidth: 0, boxSizing: "border-box" }}>
+            <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>
               {activeAction.fields.map(renderField)}
             </div>
           </div>

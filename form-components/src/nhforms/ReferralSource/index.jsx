@@ -3,11 +3,12 @@ const ReferralSource = props => {
   const codeSystem = "VALUESET:REFERRAL.SOURCE"
   const sd = useSourceData()
   const optionList = sd.optionLists[codeSystem] ?? referralValueSet
+  const defaultValue = props.defaultValue ?? sd.patient?.referralSource
   return (
     <SimpleCodeSelect
       fieldId="referralSource"
       label="Referral Source/Requested By"
-      {...{optionList,codeSystem}}
+      {...{optionList,codeSystem,defaultValue}}
       {...props}
     />
   )

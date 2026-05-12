@@ -41,6 +41,27 @@ const sizeMap: Record<string, { minWidth: number | string; maxWidth?: number | s
   max: { minWidth: 480, flex: '5 5 0px' },
 };
 
+const coerceTextValue = (input: unknown): string | undefined => {
+  if (input === undefined || input === null) return undefined;
+  if (typeof input === 'string') return input;
+  if (typeof input === 'number' || typeof input === 'boolean') return String(input);
+  if (Array.isArray(input)) {
+    const values = input.map(coerceTextValue).filter((value): value is string => Boolean(value));
+    return values.length > 0 ? values.join(', ') : undefined;
+  }
+  if (typeof input === 'object') {
+    const record = input as Record<string, unknown>;
+    return (
+      coerceTextValue(record.text) ??
+      coerceTextValue(record.display) ??
+      coerceTextValue(record.name) ??
+      coerceTextValue(record.value) ??
+      coerceTextValue(record.code)
+    );
+  }
+  return String(input);
+};
+
 export const MoisTextField: React.FC<MoisTextFieldProps> = ({
   fieldId,
   sourceId,
@@ -78,9 +99,9 @@ export const MoisTextField: React.FC<MoisTextFieldProps> = ({
   const fieldStatus = readSectionFieldStatus(activeData, section, resolvedFieldId);
 
   // Get value from props or activeData
-  const value = propValue
-    ?? readSectionActiveFieldValue(activeData, section, resolvedFieldId)
-    ?? defaultValue
+  const value = coerceTextValue(propValue)
+    ?? coerceTextValue(readSectionActiveFieldValue(activeData, section, resolvedFieldId))
+    ?? coerceTextValue(defaultValue)
     ?? '';
 
   // Handle change

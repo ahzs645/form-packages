@@ -28,6 +28,32 @@ import { readSectionActiveFieldValue, writeSectionActiveFieldValue } from '../ru
 // Default filter predicate - accepts all items
 const defaultFilterPred = () => true;
 
+function formatListCellValue(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (Array.isArray(value)) {
+    return value.map(formatListCellValue).filter(Boolean).join(', ');
+  }
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    return (
+      formatListCellValue(record.display) ||
+      formatListCellValue(record.text) ||
+      formatListCellValue(record.name) ||
+      formatListCellValue(record.value) ||
+      formatListCellValue(record.code) ||
+      JSON.stringify(record)
+    );
+  }
+  return String(value);
+}
+
+function normalizeRenderedCellValue(value: unknown): React.ReactNode {
+  if (React.isValidElement(value)) return value;
+  return formatListCellValue(value);
+}
+
 // Generate a unique key for an item based on its properties
 function getItemKey(item: any): string {
   // Try common ID field patterns
@@ -206,13 +232,25 @@ export const ListSelection: React.FC<ListSelectionProps> = ({
     if (itemsProp && itemsProp.length > 0) {
       return itemsProp;
     }
-    // Try to get items from mock data based on id
     const lookupId = resolvedSourceId || resolvedFieldId;
+    const patientItems = lookupId ? (sourceData.patient as any)?.[lookupId] : undefined;
+    if (Array.isArray(patientItems) && patientItems.length > 0) {
+      return patientItems;
+    }
+    const queryPatientItems = lookupId ? (sourceData.queryResult as any)?.patient?.[0]?.[lookupId] : undefined;
+    if (Array.isArray(queryPatientItems) && queryPatientItems.length > 0) {
+      return queryPatientItems;
+    }
+    const rootItems = lookupId ? (sourceData as any)?.[lookupId] : undefined;
+    if (Array.isArray(rootItems) && rootItems.length > 0) {
+      return rootItems;
+    }
+    // Try to get items from mock data based on id
     if (lookupId && mockListData[lookupId]) {
       return mockListData[lookupId];
     }
     return [];
-  }, [itemsProp, resolvedSourceId, resolvedFieldId]);
+  }, [itemsProp, resolvedSourceId, resolvedFieldId, sourceData]);
 
   // Apply filterPred, sourceMap, and listCompare to get processed items
   const processedItems = useMemo(() => {
@@ -346,7 +384,11 @@ export const ListSelection: React.FC<ListSelectionProps> = ({
     return columns.map((col: any) => {
       // If already in IColumn format (has key and name), return as-is
       if (col.key && col.name) {
-        return col;
+        if (col.onRender) return col;
+        return {
+          ...col,
+          onRender: (item: any) => normalizeRenderedCellValue(item?.[col.fieldName ?? col.key]),
+        };
       }
 
       // Use itemId if provided, otherwise use id
@@ -388,11 +430,21 @@ export const ListSelection: React.FC<ListSelectionProps> = ({
         const computeFn = col.compute || col.onColumnMap;
         converted.onRender = (item: any) => {
           try {
-            return computeFn(item);
+            return normalizeRenderedCellValue(computeFn(item));
           } catch {
             return '';
           }
         };
+      } else if (col.onRender) {
+        converted.onRender = (item: any, index?: number, column?: IColumn) => {
+          try {
+            return normalizeRenderedCellValue(col.onRender(item, index, column));
+          } catch {
+            return '';
+          }
+        };
+      } else {
+        converted.onRender = (item: any) => normalizeRenderedCellValue(item?.[fieldId]);
       }
       return converted;
     }).filter((col: IColumn) => !col.data?.isHidden);

@@ -114,6 +114,9 @@ const getBooleanLabels = (labels) => ({
  * @returns {'yes' | 'no' | null}
  */
 const normalizeValue = (value) => {
+  if (value && typeof value === 'object') {
+    return normalizeValue(value.code ?? value.display ?? value.value ?? value.text ?? value.label)
+  }
   if (value === true || value === 'yes' || value === 'Y' || value === 1) {
     return 'yes'
   }

@@ -226,6 +226,32 @@ const parseSvgNumber = (value) => {
   return Number.isFinite(parsed) ? parsed : null
 }
 
+const parseSvgAspectRatio = (markup) => {
+  const input = typeof markup === "string" ? markup.trim() : ""
+  if (!input || !/<svg[\s>]/i.test(input)) return 1
+
+  if (typeof DOMParser === "undefined") return 1
+
+  try {
+    const parser = new DOMParser()
+    const doc = parser.parseFromString(input, "image/svg+xml")
+    const svg = doc.querySelector("svg")
+    if (!svg) return 1
+
+    const viewBoxRaw = normalizeString(svg.getAttribute("viewBox"), "")
+    const viewBoxParts = viewBoxRaw.split(/[\s,]+/).slice(0, 4).map((part) => Number(part))
+    const viewBoxWidth = Number.isFinite(viewBoxParts[2]) && viewBoxParts[2] > 0 ? viewBoxParts[2] : null
+    const viewBoxHeight = Number.isFinite(viewBoxParts[3]) && viewBoxParts[3] > 0 ? viewBoxParts[3] : null
+    if (viewBoxWidth && viewBoxHeight) return viewBoxWidth / viewBoxHeight
+
+    const width = parseSvgNumber(svg.getAttribute("width"))
+    const height = parseSvgNumber(svg.getAttribute("height"))
+    return width > 0 && height > 0 ? width / height : 1
+  } catch {
+    return 1
+  }
+}
+
 const normalizeShape = (value) => {
   const normalized = normalizeString(value, "rect").toLowerCase()
   if (normalized === "polygon") return "polygon"
@@ -934,6 +960,7 @@ const HotspotMapField = ({
   const [annotationSymbol, setAnnotationSymbol] = useState(
     resolveAnnotationSymbol(resolvedAnnotationDefaultSymbol, resolvedAnnotationDefaultSymbol, resolvedAnnotationSymbols)
   )
+  const mapFrameRef = useRef(null)
   const [draftStrokePoints, setDraftStrokePoints] = useState([])
   const drawingPointerIdRef = useRef(null)
   const drawingPointsRef = useRef([])
@@ -941,6 +968,8 @@ const HotspotMapField = ({
   const theme = useTheme()
   const isDarkMode = theme?.isInverted || false
   const hasSvgBackground = /<svg[\s>]/i.test(typeof imageSvg === "string" ? imageSvg : "")
+  const svgAspectRatio = useMemo(() => parseSvgAspectRatio(imageSvg), [imageSvg])
+  const [renderedMapAspectRatio, setRenderedMapAspectRatio] = useState(svgAspectRatio)
   const svgViewBoxMarginPercent = hasSvgBackground ? DEFAULT_SVG_VIEWBOX_MARGIN_PERCENT : 0
   const svgViewBoxRenderSize = 100 + svgViewBoxMarginPercent * 2
   const overlayViewBox =
@@ -963,6 +992,32 @@ const HotspotMapField = ({
     if (svgViewBoxMarginPercent <= 0) return clamped
     return Math.max(0, Math.min(100, (clamped * 100) / svgViewBoxRenderSize))
   }
+  const circleAspectRatio = Number.isFinite(renderedMapAspectRatio) && renderedMapAspectRatio > 0
+    ? renderedMapAspectRatio
+    : svgAspectRatio
+
+  useEffect(() => {
+    setRenderedMapAspectRatio(svgAspectRatio)
+  }, [svgAspectRatio])
+
+  useEffect(() => {
+    const element = mapFrameRef.current
+    if (!element || typeof ResizeObserver === "undefined") return undefined
+
+    const updateAspectRatio = () => {
+      const rect = element.getBoundingClientRect()
+      if (!(rect.width > 0 && rect.height > 0)) return
+      const nextAspectRatio = rect.width / rect.height
+      setRenderedMapAspectRatio((current) =>
+        Math.abs(current - nextAspectRatio) > 0.001 ? nextAspectRatio : current
+      )
+    }
+
+    updateAspectRatio()
+    const observer = new ResizeObserver(updateAspectRatio)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [])
 
   const normalizedHotspots = useMemo(
     () => normalizeHotspots(hotspots, markerSize),
@@ -1427,6 +1482,7 @@ const HotspotMapField = ({
 
   const renderMapFrame = () => (
     <div
+      ref={mapFrameRef}
       style={mapFrameStyle}
       onClick={handleAddAnnotation}
       onPointerDown={handleDrawPointerDown}
@@ -1491,10 +1547,11 @@ const HotspotMapField = ({
               >
                 <title>{hotspot.label || hotspot.id}</title>
                 {hotspot.shape === "circle" ? (
-                  <circle
+                  <ellipse
                     cx={hotspot.x}
                     cy={hotspot.y}
-                    r={Math.max(0.5, hotspot.radius)}
+                    rx={Math.max(0.5, hotspot.radius)}
+                    ry={Math.max(0.5, hotspot.radius * circleAspectRatio)}
                     fill={fill}
                     stroke={stroke}
                     strokeWidth={0.5}
@@ -1559,11 +1616,12 @@ const HotspotMapField = ({
             const half = size / 2
             if (annotation.symbol === "circle") {
               return (
-                <circle
+                <ellipse
                   key={annotation.id}
                   cx={annotation.x}
                   cy={annotation.y}
-                  r={half}
+                  rx={half}
+                  ry={half * circleAspectRatio}
                   fill="none"
                   stroke={stroke}
                   strokeWidth={strokeWidth}

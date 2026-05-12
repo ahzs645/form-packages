@@ -18,7 +18,7 @@ function ActionButtonGroup({
   gap = 10,
   buttonMaxWidth = 280,
   dialogTitle = "Action payload",
-  dialogMinWidth = 620,
+  dialogMinWidth = 760,
   okText = "Ok",
   cancelText = "Cancel",
 }) {
@@ -65,8 +65,8 @@ function ActionButtonGroup({
       ...(field.minWidth ? { minWidth: field.minWidth } : {}),
     }
     const inputStyle = {
-      width: field.width || (field.type === "date" ? 160 : 320),
-      maxWidth: field.maxWidth || (field.type === "date" ? 160 : 320),
+      width: field.width || (field.type === "date" ? 160 : "100%"),
+      maxWidth: field.maxWidth || (field.type === "date" ? 160 : "100%"),
     }
 
     let control = null
@@ -122,7 +122,7 @@ function ActionButtonGroup({
     return (
       <div key={field.id} style={commonStyle}>
         <Label>{field.label}</Label>
-        <div style={{ display: "flex", flexFlow: "column", minWidth: field.minWidth || 160, alignItems: "flex-start" }}>
+        <div style={{ display: "flex", flexFlow: "column", minWidth: field.minWidth || 160, width: "100%", alignItems: "flex-start" }}>
           {control}
         </div>
         <div style={{ clear: "both" }} />
@@ -131,6 +131,7 @@ function ActionButtonGroup({
   }
 
   const hasFormFields = Array.isArray(activeAction?.fields) && activeAction.fields.length > 0
+  const formDialogWidth = "min(760px, calc(100vw - 48px))"
 
   return (
     <div data-field-id={id} data-action-button-group>
@@ -162,11 +163,22 @@ function ActionButtonGroup({
           type: DialogType.normal,
           title: activeAction?.dialogTitle || activeAction?.label || dialogTitle,
         }}
-        modalProps={{ isBlocking: false }}
+        modalProps={{
+          isBlocking: false,
+          styles: hasFormFields
+            ? {
+                main: {
+                  width: formDialogWidth,
+                  minWidth: formDialogWidth,
+                  maxWidth: formDialogWidth,
+                },
+              }
+            : undefined,
+        }}
       >
         {hasFormFields ? (
-          <div data-component="SubForm" style={{ minWidth: 500 }}>
-            <div style={{ display: "grid", gap: 10, gridTemplateColumns: "1fr 1fr" }}>
+          <div data-component="SubForm" style={{ width: "100%", minWidth: 0, boxSizing: "border-box" }}>
+            <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>
               {activeAction.fields.map(renderField)}
             </div>
           </div>
@@ -821,6 +833,9 @@ const getBooleanLabels = (labels) => ({
  * @returns {'yes' | 'no' | null}
  */
 const normalizeValue = (value) => {
+  if (value && typeof value === 'object') {
+    return normalizeValue(value.code ?? value.display ?? value.value ?? value.text ?? value.label)
+  }
   if (value === true || value === 'yes' || value === 'Y' || value === 1) {
     return 'yes'
   }
@@ -11268,6 +11283,32 @@ const parseSvgNumber = (value) => {
   return Number.isFinite(parsed) ? parsed : null
 }
 
+const parseSvgAspectRatio = (markup) => {
+  const input = typeof markup === "string" ? markup.trim() : ""
+  if (!input || !/<svg[\\s>]/i.test(input)) return 1
+
+  if (typeof DOMParser === "undefined") return 1
+
+  try {
+    const parser = new DOMParser()
+    const doc = parser.parseFromString(input, "image/svg+xml")
+    const svg = doc.querySelector("svg")
+    if (!svg) return 1
+
+    const viewBoxRaw = normalizeString(svg.getAttribute("viewBox"), "")
+    const viewBoxParts = viewBoxRaw.split(/[\\s,]+/).slice(0, 4).map((part) => Number(part))
+    const viewBoxWidth = Number.isFinite(viewBoxParts[2]) && viewBoxParts[2] > 0 ? viewBoxParts[2] : null
+    const viewBoxHeight = Number.isFinite(viewBoxParts[3]) && viewBoxParts[3] > 0 ? viewBoxParts[3] : null
+    if (viewBoxWidth && viewBoxHeight) return viewBoxWidth / viewBoxHeight
+
+    const width = parseSvgNumber(svg.getAttribute("width"))
+    const height = parseSvgNumber(svg.getAttribute("height"))
+    return width > 0 && height > 0 ? width / height : 1
+  } catch {
+    return 1
+  }
+}
+
 const normalizeShape = (value) => {
   const normalized = normalizeString(value, "rect").toLowerCase()
   if (normalized === "polygon") return "polygon"
@@ -11976,6 +12017,7 @@ const HotspotMapField = ({
   const [annotationSymbol, setAnnotationSymbol] = useState(
     resolveAnnotationSymbol(resolvedAnnotationDefaultSymbol, resolvedAnnotationDefaultSymbol, resolvedAnnotationSymbols)
   )
+  const mapFrameRef = useRef(null)
   const [draftStrokePoints, setDraftStrokePoints] = useState([])
   const drawingPointerIdRef = useRef(null)
   const drawingPointsRef = useRef([])
@@ -11983,6 +12025,8 @@ const HotspotMapField = ({
   const theme = useTheme()
   const isDarkMode = theme?.isInverted || false
   const hasSvgBackground = /<svg[\\s>]/i.test(typeof imageSvg === "string" ? imageSvg : "")
+  const svgAspectRatio = useMemo(() => parseSvgAspectRatio(imageSvg), [imageSvg])
+  const [renderedMapAspectRatio, setRenderedMapAspectRatio] = useState(svgAspectRatio)
   const svgViewBoxMarginPercent = hasSvgBackground ? DEFAULT_SVG_VIEWBOX_MARGIN_PERCENT : 0
   const svgViewBoxRenderSize = 100 + svgViewBoxMarginPercent * 2
   const overlayViewBox =
@@ -12005,6 +12049,32 @@ const HotspotMapField = ({
     if (svgViewBoxMarginPercent <= 0) return clamped
     return Math.max(0, Math.min(100, (clamped * 100) / svgViewBoxRenderSize))
   }
+  const circleAspectRatio = Number.isFinite(renderedMapAspectRatio) && renderedMapAspectRatio > 0
+    ? renderedMapAspectRatio
+    : svgAspectRatio
+
+  useEffect(() => {
+    setRenderedMapAspectRatio(svgAspectRatio)
+  }, [svgAspectRatio])
+
+  useEffect(() => {
+    const element = mapFrameRef.current
+    if (!element || typeof ResizeObserver === "undefined") return undefined
+
+    const updateAspectRatio = () => {
+      const rect = element.getBoundingClientRect()
+      if (!(rect.width > 0 && rect.height > 0)) return
+      const nextAspectRatio = rect.width / rect.height
+      setRenderedMapAspectRatio((current) =>
+        Math.abs(current - nextAspectRatio) > 0.001 ? nextAspectRatio : current
+      )
+    }
+
+    updateAspectRatio()
+    const observer = new ResizeObserver(updateAspectRatio)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [])
 
   const normalizedHotspots = useMemo(
     () => normalizeHotspots(hotspots, markerSize),
@@ -12469,6 +12539,7 @@ const HotspotMapField = ({
 
   const renderMapFrame = () => (
     <div
+      ref={mapFrameRef}
       style={mapFrameStyle}
       onClick={handleAddAnnotation}
       onPointerDown={handleDrawPointerDown}
@@ -12533,10 +12604,11 @@ const HotspotMapField = ({
               >
                 <title>{hotspot.label || hotspot.id}</title>
                 {hotspot.shape === "circle" ? (
-                  <circle
+                  <ellipse
                     cx={hotspot.x}
                     cy={hotspot.y}
-                    r={Math.max(0.5, hotspot.radius)}
+                    rx={Math.max(0.5, hotspot.radius)}
+                    ry={Math.max(0.5, hotspot.radius * circleAspectRatio)}
                     fill={fill}
                     stroke={stroke}
                     strokeWidth={0.5}
@@ -12601,11 +12673,12 @@ const HotspotMapField = ({
             const half = size / 2
             if (annotation.symbol === "circle") {
               return (
-                <circle
+                <ellipse
                   key={annotation.id}
                   cx={annotation.x}
                   cy={annotation.y}
-                  r={half}
+                  rx={half}
+                  ry={half * circleAspectRatio}
                   fill="none"
                   stroke={stroke}
                   strokeWidth={strokeWidth}
@@ -16377,7 +16450,7 @@ const PastMeasurementField = ({
   const latestHistoryItem = historyItems[0] ?? null
   const resolvedCurrentValue = hasMeaningfulValue(storedValue)
     ? storedValue
-    : linkedObservationItem?.valueText ?? latestHistoryItem?.valueText ?? ""
+    : linkedObservationItem?.valueText ?? (autoFillFromHistory ? latestHistoryItem?.valueText : "") ?? ""
   const numericCurrentValue = Number(stringifyValue(resolvedCurrentValue))
   const hasNumericCurrentValue = Number.isFinite(numericCurrentValue)
   const abnormalLowValue = Number(abnormalLow)
@@ -16389,6 +16462,8 @@ const PastMeasurementField = ({
     (hasAbnormalHigh && numericCurrentValue > abnormalHighValue)
   )
   const shouldShowHistory = showHistory && (!showHistoryOnFocus || historyFocused)
+  const shouldReserveHistory = showHistory && showHistoryOnFocus
+  const inputSuffix = stringifyValue(saveUnits) || latestHistoryItem?.unitsText || ""
 
   useEffect(() => {
     if (persistenceMode !== "observationAndForm") {
@@ -16511,8 +16586,8 @@ const PastMeasurementField = ({
     <Stack tokens={{ childrenGap: 4 }}>
       {label ? <Label>{label}</Label> : null}
 
-      <Stack horizontal verticalAlign="end" tokens={{ childrenGap: 10 }} styles={{ root: { flexWrap: "wrap" } }}>
-        <StackItem grow styles={{ root: { minWidth: 220 } }}>
+      <Stack tokens={{ childrenGap: 4 }}>
+        <StackItem styles={{ root: { width: "100%", minWidth: 0 } }}>
           <TextField
             value={stringifyValue(resolvedCurrentValue)}
             placeholder={placeholder}
@@ -16523,11 +16598,12 @@ const PastMeasurementField = ({
             }}
             disabled={disabled}
             readOnly={readOnly}
+            suffix={inputSuffix || undefined}
           />
         </StackItem>
 
-        {shouldShowHistory ? (
-          <StackItem styles={{ root: { minWidth: 220 } }}>
+        {shouldShowHistory || shouldReserveHistory ? (
+          <StackItem styles={{ root: { width: "100%", minWidth: 0, visibility: shouldShowHistory ? "visible" : "hidden" } }}>
             <Stack horizontal verticalAlign="center" tokens={{ childrenGap: 8 }} styles={{ root: { flexWrap: "wrap" } }}>
               {isNonEmptyString(graphLinkText) ? (
                 isNonEmptyString(graphHref) ? (
@@ -17478,11 +17554,12 @@ const ReferralSource = props => {
   const codeSystem = "VALUESET:REFERRAL.SOURCE"
   const sd = useSourceData()
   const optionList = sd.optionLists[codeSystem] ?? referralValueSet
+  const defaultValue = props.defaultValue ?? sd.patient?.referralSource
   return (
     <SimpleCodeSelect
       fieldId="referralSource"
       label="Referral Source/Requested By"
-      {...{optionList,codeSystem}}
+      {...{optionList,codeSystem,defaultValue}}
       {...props}
     />
   )

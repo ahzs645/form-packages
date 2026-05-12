@@ -17,6 +17,58 @@ import themeObject from '../data/theme-object.json';
 const deepClone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
 const normalizeActiveDataState = <T,>(value: T): T => syncAuthorshipMirrors(deepClone(value as any)) as T;
 
+const createPreviewObservation = (
+  observationId: number,
+  observationCode: string,
+  description: string,
+  value: string,
+  collectedDateTime: string,
+  units = '',
+  extra: Record<string, any> = {}
+) => ({
+  observationId,
+  observationCode,
+  description,
+  value,
+  units,
+  collectedDateTime,
+  ...extra,
+});
+
+const previewObservationHistory = [
+  createPreviewObservation(600101, '22732', 'Weight', '82.4', '2026-04-21T09:00:00', 'kg'),
+  createPreviewObservation(600102, '22732', 'Weight', '82.9', '2026-01-21T09:00:00', 'kg'),
+  createPreviewObservation(600103, '22732', 'Weight', '83.7', '2025-10-16T09:00:00', 'kg'),
+  createPreviewObservation(600104, 'WEIGHT', 'Weight', '82.4', '2026-04-21T09:00:00', 'kg'),
+  createPreviewObservation(600115, '2011', 'Heart Rate', '72', '2026-04-21T09:01:00', '/min'),
+  createPreviewObservation(600116, '2011', 'Heart Rate', '74', '2026-01-21T09:01:00', '/min', { comment: 'As taken at home' }),
+  createPreviewObservation(600117, '34683', 'O2 SAT', '97', '2026-04-21T09:02:00', '%'),
+  createPreviewObservation(600118, '61824', 'Jugular Venous Pulse', '2', '2026-04-21T09:03:00', 'cm'),
+  createPreviewObservation(600119, '1984', 'Waist', '92', '2026-04-21T09:04:00', 'cm'),
+  createPreviewObservation(600120, '61826', 'Blood Pressure Sitting', '128/76', '2026-04-21T09:05:00', 'mmHg'),
+  createPreviewObservation(600121, '61826', 'Blood Pressure Sitting', '132/78', '2026-01-21T09:05:00', 'mmHg'),
+  createPreviewObservation(600122, '61826', 'Blood Pressure Sitting', '136/82', '2025-10-16T09:05:00', 'mmHg'),
+  createPreviewObservation(600123, '61828', 'Blood Pressure Lying', '126/74', '2026-04-21T09:07:00', 'mmHg'),
+  createPreviewObservation(600124, '61827', 'Blood Pressure Standing', '124/72', '2026-04-21T09:09:00', 'mmHg'),
+  createPreviewObservation(600125, '61826', 'Blood Pressure Sitting', '140/84', '2025-07-17T09:05:00', 'mmHg', { comment: 'As taken at home' }),
+  createPreviewObservation(600126, '61828', 'Blood Pressure Lying', '128/76', '2026-01-21T09:07:00', 'mmHg', { comment: 'As taken at home' }),
+  createPreviewObservation(600127, '61827', 'Blood Pressure Standing', '126/74', '2026-01-21T09:09:00', 'mmHg', { comment: 'As taken at home' }),
+  createPreviewObservation(600130, 'BP', 'Blood pressure', '128/76', '2026-04-21T09:05:00', 'mmHg'),
+  createPreviewObservation(600140, 'BMI', 'Body mass index', '24.2', '2026-04-21T09:00:00', 'kg/m2'),
+  createPreviewObservation(600150, 'WAIST', 'Waist circumference', '92', '2026-04-21T09:00:00', 'cm'),
+  createPreviewObservation(600160, '33914-3', 'GFR', '72', '2026-04-18T08:15:00', 'mL/min/1.73m2'),
+  createPreviewObservation(600161, '33914-3', 'GFR', '69', '2025-10-14T08:15:00', 'mL/min/1.73m2'),
+  createPreviewObservation(600170, '2093-3', 'Screening cholesterol', '4.6', '2025-11-06T08:20:00', 'mmol/L'),
+  createPreviewObservation(600171, 'CHOL_HDL_RATIO', 'Screening chol/HDL ratio', '3.1', '2025-11-06T08:20:00'),
+  createPreviewObservation(600180, '4548-4', 'HbA1c', '6.8', '2026-03-11T08:30:00', '%'),
+  createPreviewObservation(600181, '4548-4', 'HbA1c', '7.1', '2025-09-10T08:30:00', '%'),
+  createPreviewObservation(600190, '14959-1', 'Urine albumin / creatinine ratio', '1.6', '2026-03-11T08:35:00', 'mg/mmol'),
+  createPreviewObservation(600200, 'HIV_SCREEN', 'HIV screening', 'Non-reactive', '2024-09-19T08:40:00'),
+];
+
+const previewPdfBase64 =
+  'JVBERi0xLjcKJYGBgYEKCjEgMCBvYmoKPDwKL1R5cGUgL1BhZ2VzCi9LaWRzIFsgNCAwIFIgXQovQ291bnQgMQo+PgplbmRvYmoKCjIgMCBvYmoKPDwKL1R5cGUgL0NhdGFsb2cKL1BhZ2VzIDEgMCBSCj4+CmVuZG9iagoKMyAwIG9iago8PAovUHJvZHVjZXIgPEZFRkYwMDcwMDA2NDAwNjYwMDJEMDA2QzAwNjkwMDYyMDAyMDAwMjgwMDY4MDA3NDAwNzQwMDcwMDA3MzAwM0EwMDJGMDAyRjAwNjcwMDY5MDA3NDAwNjgwMDc1MDA2MjAwMkUwMDYzMDA2RjAwNkQwMDJGMDA0ODAwNkYwMDcwMDA2NDAwNjkwMDZFMDA2NzAwMkYwMDcwMDA2NDAwNjYwMDJEMDA2QzAwNjkwMDYyMDAyOT4KL01vZERhdGUgKEQ6MjAyNjA1MTIxNzEyMjFaKQovQ3JlYXRvciA8RkVGRjAwNzAwMDY0MDA2NjAwMkQwMDZDMDA2OTAwNjIwMDIwMDAyODAwNjgwMDc0MDA3NDAwNzAwMDczMDAzQTAwMkYwMDJGMDA2NzAwNjkwMDc0MDA2ODAwNzUwMDYyMDAyRTAwNjMwMDZGMDA2RDAwMkYwMDQ4MDA2RjAwNzAwMDY0MDA2OTAwNkUwMDY3MDAyRjAwNzAwMDY0MDA2NjAwMkQwMDZDMDA2OTAwNjIwMDI5PgovQ3JlYXRpb25EYXRlIChEOjIwMjYwNTEyMTcxMjIxWikKPj4KZW5kb2JqCgo0IDAgb2JqCjw8Ci9UeXBlIC9QYWdlCi9QYXJlbnQgMSAwIFIKL1Jlc291cmNlcyA8PAovRm9udCA8PAovSGVsdmV0aWNhLTcwOTg0ODA3ODkgNSAwIFIKPj4KL1hPYmplY3QgPDwKPj4KL0V4dEdTdGF0ZSA8PAo+Pgo+PgovTWVkaWFCb3ggWyAwIDAgMzAwIDEyMCBdCi9Bbm5vdHMgWyBdCi9Db250ZW50cyBbIDYgMCBSIF0KPj4KZW5kb2JqCgo1IDAgb2JqCjw8Ci9UeXBlIC9Gb250Ci9TdWJ0eXBlIC9UeXBlMQovQmFzZUZvbnQgL0hlbHZldGljYQovRW5jb2RpbmcgL1dpbkFuc2lFbmNvZGluZwo+PgplbmRvYmoKCjYgMCBvYmoKPDwKL0ZpbHRlciAvRmxhdGVEZWNvZGUKL0xlbmd0aCAxMTUKPj4Kc3RyZWFtCnicHYpBCsJADEX3/xRZC8VMmklmQLpoUVy4EXIBkSoWXSji+R3lw+Px+E+MAabfXles9/P9M79v51PnXIsW9lIpKcUF0nhA+l8T9ULOFA9sVC27WbbJds7NRTiztixsZtWLq7dqeaBYECtsA0d8AYvkGmEKZW5kc3RyZWFtCmVuZG9iagoKeHJlZgowIDcKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDE2IDAwMDAwIG4gCjAwMDAwMDAwNzYgMDAwMDAgbiAKMDAwMDAwMDEyNiAwMDAwMCBuIAowMDAwMDAwNTk2IDAwMDAwIG4gCjAwMDAwMDA3OTEgMDAwMDAgbiAKMDAwMDAwMDg4OSAwMDAwMCBuIAoKdHJhaWxlcgo8PAovU2l6ZSA3Ci9Sb290IDIgMCBSCi9JbmZvIDMgMCBSCj4+CgpzdGFydHhyZWYKMTA3NwolJUVPRg==';
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -59,6 +111,10 @@ export interface SourceData {
     [key: string]: any;
   };
   formParams: Record<string, any>;
+  sessionPdf?: {
+    base64?: string;
+    [key: string]: any;
+  };
   formObject?: {
     Identity: { title: string; name?: string; [key: string]: any };
     [key: string]: any;
@@ -584,16 +640,33 @@ const defaultConnection: ConnectionData = {
 export const defaultSourceData: SourceData = {
   patient: {
     patientId: 500063,
-    name: { text: 'John Smith', first: 'John', family: 'Smith' },
-    dob: '1980-01-15',
-    birthDate: '1980-01-15',
+    chartNumber: 10012,
+    name: { text: 'MOUSE, MICKEY BOB', first: 'MICKEY', middle: 'BOB', family: 'MOUSE' },
+    dob: '1928-11-17',
+    birthDate: '1928-11-17',
     gender: 'male',
     administrativeGender: { code: 'M', display: 'Male', system: 'MOIS-GENDER' },
     educationLevel: { code: 'Post-Secondary', display: 'Post-Secondary Education', system: 'MOIS-EDUCATION' },
-    telecom: { homePhone: '555-1234' },
-    address: { text: '123 Main St, Calgary, AB' },
+    maritalStatus: { code: 'M', display: 'Married', system: 'MOIS-MARITALSTATUS' },
+    referralSource: { code: 'HOME AND COMMUNITY CARE', display: 'Home and Community Care', system: 'VALUESET:REFERRAL.SOURCE' },
+    healthNumber: '9151065434',
+    telecom: { homePhone: '250-555-1234', workPhone: '250-555-5678', cellPhone: '250-555-9012' },
+    address: { text: '2251 Disney Road\nPrince George, BC\nCanada V3L 2K2' },
+    lifestyle: {
+      physicalActivity: { value: 'Walks 20 minutes most days', date: '2026-04-22' },
+      alcoholIntake: { value: 'None', date: '2026-04-22' },
+      cannabisUse: { value: 'None', date: '2026-04-22' },
+      smokingStatus: { value: 'Former smoker', date: '2026-04-22' },
+    },
+    preventiveCare: {
+      tetanus: { value: 'Td booster given', date: '2022-06-14' },
+      framinghamRisk: { value: 'Moderate risk', date: '2026-04-22' },
+      diabetesRetinopathy: { value: 'No retinopathy detected', date: '2026-01-19' },
+      diabetesFootExam: { value: 'Normal monofilament exam', date: '2026-03-11' },
+    },
     // observations on patient for components that access sd.patient.observations
     observations: [
+      ...previewObservationHistory,
       {
         observationId: 600001,
         observationCode: '2455',
@@ -610,6 +683,18 @@ export const defaultSourceData: SourceData = {
         units: '%',
         collectedDateTime: '2023-06-15T10:30:00',
       },
+    ],
+    plannedActions: [
+      { plannedActionId: 900101, startDate: '2026-04-22', endDate: '2026-07-22', action: 'Review home blood pressure log', responsibility: 'Patient, Primary Care Provider', completedDate: null, isCompleted: { code: 'N', display: 'No', system: 'MOIS-YESNO' } },
+      { plannedActionId: 900102, startDate: '2026-03-11', endDate: '2026-09-11', action: 'Repeat HbA1c and urine ACR', responsibility: 'Primary Care Provider', completedDate: null, isCompleted: { code: 'N', display: 'No', system: 'MOIS-YESNO' } },
+    ],
+    serviceEpisodes: [
+      { serviceEpisodeId: 910101, startDate: '2025-10-01', endDate: null, service: { code: 'CDM', display: 'Chronic Disease Management', system: 'MOIS-SERVICE' }, serviceMrp: { code: '500007', display: 'PRACTITIONER, GENERAL', system: 'MOIS.USER' } },
+      { serviceEpisodeId: 910102, startDate: '2024-04-15', endDate: '2025-04-15', service: { code: 'DIAB', display: 'Diabetes Education', system: 'MOIS-SERVICE' }, serviceMrp: { code: '500007', display: 'PRACTITIONER, GENERAL', system: 'MOIS.USER' } },
+    ],
+    serviceRequests: [
+      { serviceRequestId: 920101, orderDate: '2026-04-18', serviceRequestType: { code: 'LAB', display: 'Laboratory', system: 'MOIS-ORDERTYPE' }, orderedBy: 'PRACTITIONER, GENERAL', order: { code: 'A1C_ACR', display: 'HbA1c and urine ACR', system: 'MOIS-ORDER' }, status: { code: 'A', display: 'Active', system: 'MOIS-ORDERSTATUS' } },
+      { serviceRequestId: 920102, orderDate: '2026-01-19', serviceRequestType: { code: 'CONSULT', display: 'Consultation', system: 'MOIS-ORDERTYPE' }, orderedBy: 'PRACTITIONER, GENERAL', order: { code: 'EYE', display: 'Diabetic retinopathy screening', system: 'MOIS-ORDER' }, status: { code: 'SC', display: 'Scheduled', system: 'MOIS-ORDERSTATUS' } },
     ],
     // conditions on patient for components that access sd.patient.conditions
     conditions: [
@@ -706,6 +791,9 @@ export const defaultSourceData: SourceData = {
   formParams: {
     patientId: 500063,
   },
+  sessionPdf: {
+    base64: previewPdfBase64,
+  },
   formObject: {
     Identity: { title: 'Form Preview', name: 'FormPreview' },
   },
@@ -722,9 +810,11 @@ export const defaultSourceData: SourceData = {
       {
         patientId: 500063,
         chartNumber: 10012,
-        name: { text: 'John Smith', first: 'John', family: 'Smith' },
-        birthDate: '1980-01-15',
+        name: { text: 'MOUSE, MICKEY BOB', first: 'MICKEY', middle: 'BOB', family: 'MOUSE' },
+        birthDate: '1928-11-17',
         administrativeGender: { code: 'M', display: 'Male', system: 'MOIS-GENDER' },
+        maritalStatus: { code: 'M', display: 'Married', system: 'MOIS-MARITALSTATUS' },
+        referralSource: { code: 'HOME AND COMMUNITY CARE', display: 'Home and Community Care', system: 'VALUESET:REFERRAL.SOURCE' },
         conditions: [
           {
             conditionId: 500101,
@@ -744,6 +834,7 @@ export const defaultSourceData: SourceData = {
           },
         ],
         observations: [
+          ...previewObservationHistory,
           {
             observationId: 600001,
             observationCode: '2455',
@@ -760,6 +851,16 @@ export const defaultSourceData: SourceData = {
             units: '%',
             collectedDateTime: '2023-06-15T10:30:00',
           },
+        ],
+        plannedActions: [
+          { plannedActionId: 900101, startDate: '2026-04-22', endDate: '2026-07-22', action: 'Review home blood pressure log', responsibility: 'Patient, Primary Care Provider', completedDate: null, isCompleted: { code: 'N', display: 'No', system: 'MOIS-YESNO' } },
+          { plannedActionId: 900102, startDate: '2026-03-11', endDate: '2026-09-11', action: 'Repeat HbA1c and urine ACR', responsibility: 'Primary Care Provider', completedDate: null, isCompleted: { code: 'N', display: 'No', system: 'MOIS-YESNO' } },
+        ],
+        serviceEpisodes: [
+          { serviceEpisodeId: 910101, startDate: '2025-10-01', endDate: null, service: { code: 'CDM', display: 'Chronic Disease Management', system: 'MOIS-SERVICE' }, serviceMrp: { code: '500007', display: 'PRACTITIONER, GENERAL', system: 'MOIS.USER' } },
+        ],
+        serviceRequests: [
+          { serviceRequestId: 920101, orderDate: '2026-04-18', serviceRequestType: { code: 'LAB', display: 'Laboratory', system: 'MOIS-ORDERTYPE' }, orderedBy: 'PRACTITIONER, GENERAL', order: { code: 'A1C_ACR', display: 'HbA1c and urine ACR', system: 'MOIS-ORDER' }, status: { code: 'A', display: 'Active', system: 'MOIS-ORDERSTATUS' } },
         ],
         allergies: [
           {

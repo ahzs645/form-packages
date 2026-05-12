@@ -6,7 +6,7 @@
 import React, { useState } from 'react';
 import { Dropdown, IDropdownOption, TextField, Toggle, Stack } from '@fluentui/react';
 import { LayoutItem } from './LayoutItem';
-import { useTheme, useCodeList, useSection, useActiveData as useMoisActiveData } from '../context/MoisContext';
+import { useTheme, useCodeList, useSection, useActiveData as useMoisActiveData, useSourceData } from '../context/MoisContext';
 import { useActiveDataForForms } from '../hooks/form-state';
 import {
   readSectionActiveFieldValue,
@@ -159,6 +159,7 @@ export const SimpleCodeSelect: React.FC<SimpleCodeSelectProps> = ({
 }) => {
   const [activeData, setActiveData] = useActiveDataForForms();
   const [, setMoisActiveData] = useMoisActiveData();
+  const sourceData = useSourceData();
   const sectionContext = useSection(section);
   const effectiveFieldId = fieldId || id || sourceId || layoutId;
   // Derive codeSystem from id if not explicitly provided
@@ -198,6 +199,9 @@ export const SimpleCodeSelect: React.FC<SimpleCodeSelectProps> = ({
 
   const parsedOptions = parseOptions();
   const activeValue = readSectionActiveFieldValue(activeData, sectionContext, effectiveFieldId);
+  const sourceValue = sourceId
+    ? ((sourceData.patient as any)?.[sourceId] ?? (sourceData.queryResult as any)?.patient?.[0]?.[sourceId])
+    : undefined;
   const fieldStatus = readSectionFieldStatus(activeData, sectionContext, effectiveFieldId);
 
   const getKeysFromValue = (val: Coding | Coding[] | string | undefined): string[] => {
@@ -235,6 +239,8 @@ export const SimpleCodeSelect: React.FC<SimpleCodeSelectProps> = ({
 
   const effectiveSelectedKeys = activeValue !== undefined && activeValue !== null
     ? getKeysFromValue(activeValue as Coding | Coding[] | string | undefined)
+    : sourceValue !== undefined && sourceValue !== null
+    ? getKeysFromValue(sourceValue as Coding | Coding[] | string | undefined)
     : selectedKeys;
 
   const writeSelectionValue = (draft: any, newKeys: string[], otherDisplayValue?: string) => {

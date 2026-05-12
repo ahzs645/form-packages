@@ -324,7 +324,7 @@ const PastMeasurementField = ({
   const latestHistoryItem = historyItems[0] ?? null
   const resolvedCurrentValue = hasMeaningfulValue(storedValue)
     ? storedValue
-    : linkedObservationItem?.valueText ?? latestHistoryItem?.valueText ?? ""
+    : linkedObservationItem?.valueText ?? (autoFillFromHistory ? latestHistoryItem?.valueText : "") ?? ""
   const numericCurrentValue = Number(stringifyValue(resolvedCurrentValue))
   const hasNumericCurrentValue = Number.isFinite(numericCurrentValue)
   const abnormalLowValue = Number(abnormalLow)
@@ -336,6 +336,8 @@ const PastMeasurementField = ({
     (hasAbnormalHigh && numericCurrentValue > abnormalHighValue)
   )
   const shouldShowHistory = showHistory && (!showHistoryOnFocus || historyFocused)
+  const shouldReserveHistory = showHistory && showHistoryOnFocus
+  const inputSuffix = stringifyValue(saveUnits) || latestHistoryItem?.unitsText || ""
 
   useEffect(() => {
     if (persistenceMode !== "observationAndForm") {
@@ -458,8 +460,8 @@ const PastMeasurementField = ({
     <Stack tokens={{ childrenGap: 4 }}>
       {label ? <Label>{label}</Label> : null}
 
-      <Stack horizontal verticalAlign="end" tokens={{ childrenGap: 10 }} styles={{ root: { flexWrap: "wrap" } }}>
-        <StackItem grow styles={{ root: { minWidth: 220 } }}>
+      <Stack tokens={{ childrenGap: 4 }}>
+        <StackItem styles={{ root: { width: "100%", minWidth: 0 } }}>
           <TextField
             value={stringifyValue(resolvedCurrentValue)}
             placeholder={placeholder}
@@ -470,11 +472,12 @@ const PastMeasurementField = ({
             }}
             disabled={disabled}
             readOnly={readOnly}
+            suffix={inputSuffix || undefined}
           />
         </StackItem>
 
-        {shouldShowHistory ? (
-          <StackItem styles={{ root: { minWidth: 220 } }}>
+        {shouldShowHistory || shouldReserveHistory ? (
+          <StackItem styles={{ root: { width: "100%", minWidth: 0, visibility: shouldShowHistory ? "visible" : "hidden" } }}>
             <Stack horizontal verticalAlign="center" tokens={{ childrenGap: 8 }} styles={{ root: { flexWrap: "wrap" } }}>
               {isNonEmptyString(graphLinkText) ? (
                 isNonEmptyString(graphHref) ? (

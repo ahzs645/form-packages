@@ -159,7 +159,7 @@ export const TextArea: React.FC<TextAreaProps> = ({
 }) => {
   const sectionContext = useSection(section);
   const [activeData, setActiveData] = useActiveDataForForms();
-  const [internalValue, setInternalValue] = useState(value ?? defaultValue ?? '');
+  const [internalValue, setInternalValue] = useState(coerceTextAreaValue(value) ?? coerceTextAreaValue(defaultValue) ?? '');
   const sourceData = useSourceData();
   const effectiveMaxCharLimit =
     typeof maxCharLimit === 'number' && Number.isFinite(maxCharLimit) && maxCharLimit > 0
@@ -185,7 +185,8 @@ export const TextArea: React.FC<TextAreaProps> = ({
       ? statusEntry.errorMessage
       : undefined;
 
-  const displayValue = value !== undefined ? value : (persistedValue ?? sourceValue ?? internalValue);
+  const controlledValue = value !== undefined ? coerceTextAreaValue(value) : undefined;
+  const displayValue = controlledValue ?? persistedValue ?? sourceValue ?? internalValue;
 
   const handleChange = (ev: React.FormEvent<HTMLInputElement | HTMLTextAreaElement>, newValue?: string) => {
     if (effectiveReadOnly) return;
