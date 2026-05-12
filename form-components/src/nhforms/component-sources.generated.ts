@@ -4308,6 +4308,29 @@ const defaultMapCandidateSavedValue = (item, codeSystem, codeId, onRenderSelecte
   }
 }
 
+const normalizeSelectedValues = (rawValue, isMulti) => {
+  if (isMulti) {
+    if (Array.isArray(rawValue)) return rawValue.filter(Boolean)
+    if (rawValue === undefined || rawValue === null || rawValue === '') return []
+    return [rawValue]
+  }
+
+  if (Array.isArray(rawValue)) return rawValue[0] ?? null
+  return rawValue ?? null
+}
+
+const getItemKey = (item, codeId, fallback) => {
+  const rawKey = item?.[codeId] ?? item?.code ?? item?.key ?? fallback
+  return rawKey == null ? null : String(rawKey)
+}
+
+const sameSelectedItem = (left, right, codeId) => {
+  const leftKey = getItemKey(left, codeId, null)
+  const rightKey = getItemKey(right, codeId, null)
+  if (leftKey !== null || rightKey !== null) return leftKey === rightKey
+  return String(left?.display ?? left?.text ?? '') === String(right?.display ?? right?.text ?? '')
+}
+
 const resolveItems = (optionList, fallbackItems = []) => {
   if (Array.isArray(optionList)) {
     if (optionList.length > 0) {
@@ -4362,30 +4385,39 @@ const FindCodeSelectBase = ({
   required = false,
   searchPrompt = '',
   section,
+  selectionType = 'single',
   showOtherOption = false,
   size = 'medium',
   value,
   style,
   fallbackItems = [],
 }) => {
-  const [selectedValue, setSelectedValue] = useState(value ?? defaultValue ?? null)
+  const isMultiSelect = selectionType === 'multiple'
+  const [selectedValue, setSelectedValue] = useState(
+    normalizeSelectedValues(value ?? defaultValue, isMultiSelect)
+  )
   const [searchText, setSearchText] = useState('')
   const [isFocused, setIsFocused] = useState(false)
 
   useEffect(() => {
     if (value !== undefined) {
-      setSelectedValue(value ?? null)
+      setSelectedValue(normalizeSelectedValues(value, isMultiSelect))
     }
-  }, [value])
+  }, [value, isMultiSelect])
 
   const items = useMemo(() => {
     return resolveItems(optionList, fallbackItems)
   }, [optionList, fallbackItems])
 
-  const selectedCode = selectedValue?.[codeId] ?? selectedValue?.code ?? null
+  const selectedItems = isMultiSelect ? selectedValue : selectedValue ? [selectedValue] : []
+  const selectedKeys = selectedItems
+    .map((item, index) => getItemKey(item, codeId, \`__selected_\${index}\`))
+    .filter(Boolean)
+  const selectedKeySet = useMemo(() => new Set(selectedKeys), [selectedKeys.join('|')])
+  const selectedCode = !isMultiSelect ? selectedValue?.[codeId] ?? selectedValue?.code ?? null : null
   const selectedKey = selectedCode == null ? undefined : String(selectedCode)
   const hasSearchText = String(searchText || '').trim().length > 0
-  const comboSelectedKey = hasSearchText ? undefined : selectedKey
+  const comboSelectedKey = hasSearchText ? undefined : isMultiSelect ? selectedKeys : selectedKey
 
   const candidates = useMemo(
     () => getCandidates(items, searchText),
@@ -4408,15 +4440,16 @@ const FindCodeSelectBase = ({
       const rawKey = item?.[codeId] ?? item?.code ?? item?.key ?? \`__idx_\${index}\`
       const key = String(rawKey)
       const text = onRenderSelected(item) || String(item?.display ?? item?.text ?? rawKey)
-      const hidden = filteringActive && key !== selectedKey && !candidateKeys.has(key)
+      const hidden = filteringActive && !selectedKeySet.has(key) && !candidateKeys.has(key)
       return {
         key,
         text,
         data: { item, index },
         hidden,
+        selected: selectedKeySet.has(key),
       }
     })
-  }, [candidateKeys, codeId, items, onRenderSelected, searchText, selectedKey])
+  }, [candidateKeys, codeId, items, onRenderSelected, searchText, selectedKeySet])
 
   const handleInputValueChange = (rawText) => {
     const text = String(rawText ?? '')
@@ -4429,6 +4462,13 @@ const FindCodeSelectBase = ({
     const isDeleteKey = key === 'Backspace' || key === 'Delete'
     if (!isDeleteKey) return
     if (hasSearchText) return
+    if (isMultiSelect) {
+      if (!Array.isArray(selectedValue) || selectedValue.length === 0) return
+      const nextValues = selectedValue.slice(0, -1)
+      setSelectedValue(nextValues)
+      onChange?.(nextValues)
+      return
+    }
     if (!selectedValue) return
 
     setSelectedValue(null)
@@ -4449,13 +4489,23 @@ const FindCodeSelectBase = ({
     const selectedItem = option?.data?.item
 
     if (selectedItem) {
-      setSelectedValue(selectedItem)
-      setSearchText('')
-
       const mapped = mapCandidateSavedValue
         ? mapCandidateSavedValue(selectedItem, codeSystem || selectedItem?.system || '', codeId)
         : defaultMapCandidateSavedValue(selectedItem, codeSystem || selectedItem?.system || '', codeId, onRenderSelected)
 
+      if (isMultiSelect) {
+        const currentValues = Array.isArray(selectedValue) ? selectedValue : []
+        const shouldSelect = option?.selected !== false
+        const withoutItem = currentValues.filter((item) => !sameSelectedItem(item, mapped, codeId))
+        const nextValues = shouldSelect ? [...withoutItem, mapped] : withoutItem
+        setSelectedValue(nextValues)
+        setSearchText('')
+        onChange?.(nextValues)
+        return
+      }
+
+      setSelectedValue(selectedItem)
+      setSearchText('')
       onChange?.(mapped)
       return
     }
@@ -4470,21 +4520,29 @@ const FindCodeSelectBase = ({
         system: codeSystem || '',
       }
 
-      setSelectedValue(freeTextItem)
-      setSearchText('')
-
       const mapped = mapCandidateSavedValue
         ? mapCandidateSavedValue(freeTextItem, codeSystem || '', codeId)
         : defaultMapCandidateSavedValue(freeTextItem, codeSystem || '', codeId, onRenderSelected)
 
+      if (isMultiSelect) {
+        const currentValues = Array.isArray(selectedValue) ? selectedValue : []
+        const nextValues = [...currentValues, mapped]
+        setSelectedValue(nextValues)
+        setSearchText('')
+        onChange?.(nextValues)
+        return
+      }
+
+      setSelectedValue(freeTextItem)
+      setSearchText('')
       onChange?.(mapped)
       return
     }
 
     if (!option && !freeText) {
-      setSelectedValue(null)
+      setSelectedValue(isMultiSelect ? [] : null)
       setSearchText('')
-      onChange?.({
+      onChange?.(isMultiSelect ? [] : {
         code: null,
         display: null,
         system: codeSystem || '',
@@ -4500,10 +4558,12 @@ const FindCodeSelectBase = ({
     return <>{onRenderCandidate(item, idx)}</>
   }
 
-  const showChildren = selectedValue &&
+  const showChildren = !isMultiSelect && selectedValue &&
     conditionalCodes.includes(String(selectedValue?.[codeId] ?? selectedValue?.code ?? ''))
 
-  const isEmpty = !selectedValue && !searchText
+  const isEmpty = isMultiSelect
+    ? (!Array.isArray(selectedValue) || selectedValue.length === 0) && !searchText
+    : !selectedValue && !searchText
   const sectionLayout = section?.layout
 
   const effectiveLabelPosition = labelPosition ?? (
@@ -4582,6 +4642,7 @@ const FindCodeSelectBase = ({
           id={fieldId}
           label={fluentLabel}
           selectedKey={comboSelectedKey}
+          multiSelect={isMultiSelect}
           options={options}
           placeholder={placeholder}
           disabled={disabled || readOnly}
@@ -4600,7 +4661,7 @@ const FindCodeSelectBase = ({
           {...restComboBoxProps}
         />
 
-        {isFocused && !selectedValue && !searchText && searchPrompt && (
+        {isFocused && isEmpty && searchPrompt && (
           <div
             style={{
               marginTop: 4,
