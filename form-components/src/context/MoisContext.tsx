@@ -64,6 +64,11 @@ const previewObservationHistory = [
   createPreviewObservation(600181, '4548-4', 'HbA1c', '7.1', '2025-09-10T08:30:00', '%'),
   createPreviewObservation(600190, '14959-1', 'Urine albumin / creatinine ratio', '1.6', '2026-03-11T08:35:00', 'mg/mmol'),
   createPreviewObservation(600200, 'HIV_SCREEN', 'HIV screening', 'Non-reactive', '2024-09-19T08:40:00'),
+  createPreviewObservation(600210, 'MHSUX38', 'Observed Behaviours', '1', '2026-04-10T10:00:00', 'score'),
+  createPreviewObservation(600211, 'MHSUX37', 'Communication', '1', '2026-04-10T10:00:00', 'score'),
+  createPreviewObservation(600212, 'MHSUX39', 'Physical Harm', '0', '2026-04-10T10:00:00', 'score'),
+  createPreviewObservation(600213, 'MHSUX40', 'Threat of Violence', '1', '2026-04-10T10:00:00', 'score'),
+  createPreviewObservation(600214, 'MHSUX41', 'Aggressive Behaviour Scale', '3', '2026-04-10T10:00:00', 'score'),
 ];
 
 const previewPdfBase64 =

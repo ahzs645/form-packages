@@ -35,13 +35,17 @@ const HistoricalObservationTable = ({
       const date = historyDateKey(entry?.[datePath])
       if (!date) return
       const current = grouped.get(date) ?? { date }
+      let matchedColumn = false
       columns.forEach((column) => {
         if (column.type === "date") return
         if (column.observationCode && entry?.observationCode === column.observationCode) {
           current[column.id] = entry.value ?? entry.display ?? entry.report ?? ""
+          matchedColumn = true
         }
       })
-      grouped.set(date, current)
+      if (matchedColumn) {
+        grouped.set(date, current)
+      }
     })
     return Array.from(grouped.values()).sort((a, b) => String(b.date).localeCompare(String(a.date))).slice(0, maxRows)
   }, [columns, datePath, maxRows, sd, sourcePath])
