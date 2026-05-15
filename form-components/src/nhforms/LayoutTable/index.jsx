@@ -31,6 +31,9 @@ const getCellDisplayValue = (cell, data, sourceData) => {
   if (typeof value === "object") {
     return value.display ?? value.text ?? value.value ?? value.code ?? ""
   }
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}T/.test(value)) {
+    return value.split("T")[0]
+  }
   return String(value)
 }
 
@@ -41,24 +44,67 @@ const getNumericFieldValue = (data, fieldId) => {
   return Number.isFinite(value) ? value : null
 }
 
-const computeLayoutTableCellValue = (cell, data) => {
-  const formula = typeof cell.formula === "string" ? cell.formula.trim() : ""
-  const sumMatch = formula.match(/^sum\((.*)\)$/i)
-  const fieldIds = Array.isArray(cell.sourceFieldIds) && cell.sourceFieldIds.length > 0
-    ? cell.sourceFieldIds
-    : sumMatch
-      ? sumMatch[1].split(",").map((part) => part.trim()).filter(Boolean)
-      : []
-  if (fieldIds.length === 0) return cell.defaultValue ?? ""
+const extractLayoutTableFormulaRefs = (expression) => {
+  const bracketedRefs = Array.from(String(expression || "").matchAll(/\[([^\]]+)\]/g)).map((match) => match[1]).filter(Boolean)
+  const unwrappedExpression = String(expression || "").replace(/\[([^\]]+)\]/g, " ")
+  const bareRefs = Array.from(unwrappedExpression.matchAll(/\b[A-Za-z_][A-Za-z0-9_]*\b/g))
+    .map((match) => match[0])
+    .filter((token) => !["sum", "Math", "min", "max"].includes(token))
+  return Array.from(new Set([...bracketedRefs, ...bareRefs]))
+}
 
-  let hasValue = false
-  const total = fieldIds.reduce((sum, fieldId) => {
-    const value = getNumericFieldValue(data, fieldId)
-    if (value == null) return sum
-    hasValue = true
-    return sum + value
-  }, 0)
-  return hasValue ? total : ""
+const isSafeLayoutTableFormula = (expression) => {
+  const strippedExpression = String(expression || "").replace(/\[([^\]]+)\]/g, " ")
+  return /^[\d\s+\-*/().,_A-Za-z]+$/.test(strippedExpression)
+}
+
+const evaluateLayoutTableFormula = (expression, data, currentFieldId) => {
+  const formula = typeof expression === "string" ? expression.trim() : ""
+  if (!formula) return null
+
+  const sumMatch = formula.match(/^sum\((.*)\)$/i)
+  if (sumMatch) {
+    const ids = sumMatch[1].split(",").map((part) => part.trim()).filter(Boolean)
+    if (ids.length === 0) return null
+    return ids.reduce((sum, fieldId) => sum + (getNumericFieldValue(data, fieldId) ?? 0), 0)
+  }
+
+  if (!isSafeLayoutTableFormula(formula)) return null
+  const refs = extractLayoutTableFormulaRefs(formula).filter((fieldId) => fieldId !== currentFieldId)
+  const values = {}
+  refs.forEach((fieldId) => {
+    values[fieldId] = getNumericFieldValue(data, fieldId) ?? 0
+  })
+
+  const jsExpression = formula
+    .replace(/\[([^\]]+)\]/g, (_, fieldId) => `__values[${JSON.stringify(fieldId)}]`)
+    .replace(/\b[A-Za-z_][A-Za-z0-9_]*\b/g, (token) => {
+      if (["Math", "min", "max"].includes(token)) return token
+      return Object.prototype.hasOwnProperty.call(values, token) ? `__values[${JSON.stringify(token)}]` : token
+    })
+
+  try {
+    const value = Function("__values", `"use strict"; return (${jsExpression});`)(values)
+    return Number.isFinite(value) ? value : null
+  } catch (error) {
+    return null
+  }
+}
+
+const formatLayoutTableComputedValue = (value, precision, resultType) => {
+  if (value == null || value === "") return ""
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return ""
+  if (Number.isFinite(precision) && precision >= 0) {
+    const rounded = numeric.toFixed(Math.round(precision))
+    return resultType === "text" ? rounded : String(Number(rounded))
+  }
+  return String(numeric)
+}
+
+const computeLayoutTableCellValue = (cell, data) => {
+  const rawValue = evaluateLayoutTableFormula(cell.formula, data, cell.fieldId) ?? cell.defaultValue ?? ""
+  return formatLayoutTableComputedValue(rawValue, cell.precision, cell.resultType)
 }
 
 const renderLayoutTableField = (cell, readOnly, data, setFieldValue) => {
@@ -240,7 +286,8 @@ function LayoutTable({
       draft.field.data = draft.field.data || {}
       draft.formData = draft.formData || {}
       computedCells.forEach((cell) => {
-        const value = computeLayoutTableCellValue(cell, draft.field.data || {})
+        const mergedData = { ...(draft.formData || {}), ...(draft.field.data || {}) }
+        const value = computeLayoutTableCellValue(cell, mergedData)
         draft.field.data[cell.fieldId] = value
         draft.formData[cell.fieldId] = value
       })
