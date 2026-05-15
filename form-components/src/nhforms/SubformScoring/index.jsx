@@ -1432,6 +1432,36 @@ const SubformScoringInner = ({
       required,
     }
 
+    if (field.type === "conversion") {
+      const conversions = Array.isArray(field.conversions) && field.conversions.length > 0
+        ? field.conversions
+        : [{
+            fromFieldId: field.fromFieldId,
+            toFieldId: field.toFieldId,
+            fromUnit: field.fromUnit,
+            toUnit: field.toUnit,
+            factor: field.factor,
+            offset: field.offset,
+            precision: field.precision,
+          }]
+      return (
+        <ConversionField
+          key={`field-${field.id}`}
+          id={field.id}
+          label={field.label}
+          helperText={field.helpText || field.helperText || ""}
+          conversions={conversions}
+          clearText={field.clearText || "Clear"}
+          showClear={field.showClear !== false}
+          convertOnBlur={field.convertOnBlur !== false}
+          allowNegative={field.allowNegative === true}
+          required={required}
+          valueRoot={hasExternalDataEntryStore ? dataEntryValueRoot : undefined}
+          onValueChange={setDataEntryValue}
+        />
+      )
+    }
+
     if (field.type === "number") {
       const inputValue = dataEntryValues[field.id]
       return (
