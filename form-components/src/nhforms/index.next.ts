@@ -343,9 +343,6 @@ function loadComponentCode(code: string, componentName: string, additionalCompon
     // HonosQuestion exports
     'Scale5', 'Scale10', 'Scale5Legend', 'Scale10Legend', 'Scale5QuestionList', 'Scale5SubmitButton',
     'Scale5ToolTip', 'HonosFinalScore',
-    // MSE exports
-    'MseSpeech', 'MseThought', 'MseAffect', 'MsePerception', 'MseStamp',
-    'MseAbc', 'MseEr', 'MseLick',
     // List components
     'Allergies', 'Conditions', 'Goals', 'LongTermMedications',
     'ServiceEpisodes', 'ServiceRequests', 'Connections', 'Occupations',
@@ -617,15 +614,6 @@ export const {
   Scale5SubmitButton,
   Scale5ToolTip,
   HonosFinalScore,
-  // MSE components
-  MseSpeech,
-  MseThought,
-  MseAffect,
-  MsePerception,
-  MseStamp,
-  MseAbc,
-  MseEr,
-  MseLick,
   // List components
   Allergies,
   Conditions,
