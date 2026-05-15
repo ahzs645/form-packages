@@ -69,6 +69,8 @@ export interface SubTitleProps {
   text?: string;
   /** Style override */
   style?: React.CSSProperties;
+  /** Header bar style override */
+  headerStyle?: React.CSSProperties;
 }
 
 let sectionIdCounter = 0;
@@ -97,6 +99,7 @@ export const SubTitle: React.FC<SubTitleProps> = ({
   startCollapsed = false,
   text,
   style,
+  headerStyle,
 }) => {
   const labelContent = label || text;
   // Only show collapse if there are actual children (not empty/undefined)
@@ -143,8 +146,9 @@ export const SubTitle: React.FC<SubTitleProps> = ({
   };
 
   const headerStyles: React.CSSProperties = {
-    backgroundColor: background,
+    background,
     padding: '2px 5px',
+    ...headerStyle,
   };
 
   const defaultCollapseButtonStyles: IButtonStyles = {
