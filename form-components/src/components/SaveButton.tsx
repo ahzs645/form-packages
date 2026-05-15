@@ -14,6 +14,10 @@ import {
 export interface SaveButtonProps {
   /** Indicate whether the button is disabled or not */
   disabled?: boolean;
+  /** Legacy NHForms label prop alias for text */
+  label?: string;
+  /** Legacy NHForms save type hint */
+  saveType?: string;
   /** Callback to build saveData for saveSubmit or signSubmit action */
   getSaveData?: () => any;
   /** A callback when button is clicked */
@@ -37,9 +41,11 @@ const toastContainerStyle: React.CSSProperties = {
 export const SaveButton: React.FC<SaveButtonProps> = ({
   disabled,
   getSaveData,
+  label,
   onClick,
   onSave,
   size = 'small',
+  saveType,
   text = 'Save draft',
 }) => {
   const [showToast, setShowToast] = useState(false);
@@ -51,13 +57,19 @@ export const SaveButton: React.FC<SaveButtonProps> = ({
 
   const applyDefaultSave = () => {
     const payload = getSaveData?.() ?? { formData: activeData?.field?.data ?? {} };
-    applyShimmedMoisLifecyclePreviewState(sourceData, 'saveDraft', payload);
+    const buttonText = (label ?? text).toLowerCase();
+    const action = saveType === 'draft'
+      ? 'saveDraft'
+      : saveType || buttonText.includes('submit')
+        ? 'signSubmit'
+        : 'saveDraft';
+    applyShimmedMoisLifecyclePreviewState(sourceData, action, payload);
     setActiveData((draft: any) => {
       draft.field = draft.field || { data: {}, status: {}, history: [] };
       if (payload?.formData) {
         draft.field.data = { ...(draft.field?.data || {}), ...payload.formData };
       }
-      recordMoisRuntimeAction(draft, 'saveDraft', payload);
+      recordMoisRuntimeAction(draft, action, payload);
     });
     setShowToast(true);
     setTimeout(() => setShowToast(false), 3000);
@@ -77,7 +89,7 @@ export const SaveButton: React.FC<SaveButtonProps> = ({
     <>
       <DefaultButton
         data-automation-id="save"
-        text={text}
+        text={label ?? text}
         disabled={disabled}
         onClick={handleClick}
         styles={buttonStyles}
