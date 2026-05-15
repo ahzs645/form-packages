@@ -13,6 +13,54 @@ const normalizeLayoutTableOptionList = (optionList) => {
 
 const isCheckedValue = (value) => value === true || value === "true" || value === "Y" || value === "yes" || value === 1
 
+const getPathValue = (root, path) => {
+  if (!root || !path) return undefined
+  return String(path)
+    .split(".")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .reduce((current, part) => (current && typeof current === "object" ? current[part] : undefined), root)
+}
+
+const getCellDisplayValue = (cell, data, sourceData) => {
+  const sourceValue = cell.sourcePath
+    ? getPathValue({ fd: data?.__fd, field: data, formData: data?.__fd?.formData, sd: sourceData, sourceData, webform: sourceData?.webform, patient: sourceData?.patient, userProfile: sourceData?.userProfile }, cell.sourcePath)
+    : undefined
+  const value = sourceValue ?? cell.defaultValue ?? cell.text ?? ""
+  if (value == null) return ""
+  if (typeof value === "object") {
+    return value.display ?? value.text ?? value.value ?? value.code ?? ""
+  }
+  return String(value)
+}
+
+const getNumericFieldValue = (data, fieldId) => {
+  const raw = data?.[fieldId]
+  if (raw == null || raw === "") return null
+  const value = Number(raw)
+  return Number.isFinite(value) ? value : null
+}
+
+const computeLayoutTableCellValue = (cell, data) => {
+  const formula = typeof cell.formula === "string" ? cell.formula.trim() : ""
+  const sumMatch = formula.match(/^sum\((.*)\)$/i)
+  const fieldIds = Array.isArray(cell.sourceFieldIds) && cell.sourceFieldIds.length > 0
+    ? cell.sourceFieldIds
+    : sumMatch
+      ? sumMatch[1].split(",").map((part) => part.trim()).filter(Boolean)
+      : []
+  if (fieldIds.length === 0) return cell.defaultValue ?? ""
+
+  let hasValue = false
+  const total = fieldIds.reduce((sum, fieldId) => {
+    const value = getNumericFieldValue(data, fieldId)
+    if (value == null) return sum
+    hasValue = true
+    return sum + value
+  }, 0)
+  return hasValue ? total : ""
+}
+
 const renderLayoutTableField = (cell, readOnly, data, setFieldValue) => {
   const fieldId = cell.fieldId || cell.id
   const label = cell.label || ""
@@ -33,7 +81,7 @@ const renderLayoutTableField = (cell, readOnly, data, setFieldValue) => {
         />
       )
     case "number":
-      return <Numeric {...sharedProps} {...labelProp} />
+      return <Numeric {...sharedProps} {...labelProp} spinButtonProps={{ min: cell.min, max: cell.max, step: cell.step }} />
     case "date":
       return <DateSelect {...sharedProps} {...labelProp} />
     case "time":
@@ -90,11 +138,12 @@ const renderLayoutTableResources = (cell) => {
   )
 }
 
-const renderLayoutTableCellContent = (cell, readOnly, data, setFieldValue) => {
+const renderLayoutTableCellContent = (cell, readOnly, data, sourceData, setFieldValue) => {
   if (cell.kind === "field") return renderLayoutTableField(cell, readOnly, data, setFieldValue)
   if (cell.kind === "fieldList") return renderLayoutTableFieldList(cell, readOnly, data, setFieldValue)
   if (cell.kind === "resources") return renderLayoutTableResources(cell)
-  return cell.text || ""
+  if (cell.kind === "computed") return computeLayoutTableCellValue(cell, data)
+  return getCellDisplayValue(cell, data, sourceData)
 }
 
 const cellStyle = (cell, config) => ({
@@ -164,9 +213,10 @@ function LayoutTable({
   readOnly = false,
 }) {
   const [fd, setFd] = useActiveData()
+  const sd = useSourceData()
   const config = { bordered, compact, fullWidth, cellPadding, borderColor, pageBreakInsideAvoid }
   const tableRows = Array.isArray(rows) ? rows : []
-  const activeData = fd?.field?.data || fd?.formData || {}
+  const activeData = { ...(fd?.formData || {}), ...(fd?.field?.data || {}), __fd: fd }
   const visibleRows = tableRows.filter((row) => rowIsVisible(row, activeData))
   const setFieldValue = (fieldId, value) => {
     if (typeof setFd !== "function") return
@@ -178,6 +228,24 @@ function LayoutTable({
       draft.formData[fieldId] = value
     })
   }
+
+  React.useEffect(() => {
+    const computedCells = tableRows
+      .flatMap((row) => Array.isArray(row.cells) ? row.cells : [])
+      .filter((cell) => cell?.kind === "computed" && cell.fieldId)
+    if (computedCells.length === 0 || typeof setFd !== "function") return
+
+    setFd((draft) => {
+      draft.field = draft.field || { data: {}, status: {} }
+      draft.field.data = draft.field.data || {}
+      draft.formData = draft.formData || {}
+      computedCells.forEach((cell) => {
+        const value = computeLayoutTableCellValue(cell, draft.field.data || {})
+        draft.field.data[cell.fieldId] = value
+        draft.formData[cell.fieldId] = value
+      })
+    })
+  }, [setFd, tableRows, JSON.stringify(activeData)])
 
   if (visibleRows.length === 0) return null
 
@@ -203,7 +271,7 @@ function LayoutTable({
                     rowSpan={Math.max(1, Number(cell.rowSpan) || 1)}
                     style={cellStyle(cell, config)}
                   >
-                    {renderLayoutTableCellContent(cell, readOnly, activeData, setFieldValue)}
+                    {renderLayoutTableCellContent(cell, readOnly, activeData, sd, setFieldValue)}
                   </Tag>
                 )
               })}
