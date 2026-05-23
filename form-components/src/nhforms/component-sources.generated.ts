@@ -947,6 +947,7 @@ const YesNoButtons = ({
  * @param {'left' | 'top' | 'right'} [props.labelPosition="left"] - Label position
  * @param {string} [props.note] - Annotation/note text
  * @param {boolean} [props.allowDeselect=true] - Allow clicking selected option to deselect
+ * @param {boolean} [props.allowNeutral=true] - Allow an unanswered neutral state
  * @param {string} [props.sourceFieldId] - Original PDF field ID (for PDF sync highlighting when this is a controller)
  * @param {string[]} [props.linkedFieldIds] - Additional field IDs that should mirror the same boolean value
  * @param {'buttons' | 'checkbox'} [props.displayStyle='buttons'] - Display style: 'buttons' (Yes/No buttons) or 'checkbox' (single checkbox)
@@ -963,6 +964,7 @@ const CompactBooleanField = ({
   labelPosition = 'left',
   note,
   allowDeselect = true,
+  allowNeutral = true,
   sourceFieldId,
   linkedFieldIds = [],
   displayStyle = 'buttons',
@@ -981,7 +983,8 @@ const CompactBooleanField = ({
   useEffect(() => {
     setOptimisticValue(currentValue)
   }, [currentValue])
-  const normalized = normalizeValue(optimisticValue)
+  const normalizedValue = normalizeValue(optimisticValue)
+  const normalized = normalizedValue === null && !allowNeutral ? 'no' : normalizedValue
 
   // Handle value change
   const handleChange = useCallback((newValue) => {
@@ -989,7 +992,7 @@ const CompactBooleanField = ({
 
     // Store as boolean or null (for deselected state)
     let storedValue
-    if (newValue === null) {
+    if (newValue === null && allowNeutral) {
       storedValue = null  // Deselected
     } else {
       storedValue = newValue === 'yes'  // true or false
@@ -1014,7 +1017,7 @@ const CompactBooleanField = ({
     } else {
       commitValue()
     }
-  }, [setFormData, fieldId, sourceFieldId, linkedFieldIds])
+  }, [setFormData, fieldId, sourceFieldId, linkedFieldIds, allowNeutral])
 
   // Styles
   const baseContainerStyle = getFieldContainerStyles(isDarkMode, showCard)
@@ -1057,17 +1060,26 @@ const CompactBooleanField = ({
 
   const isHorizontal = labelPosition === 'left' || labelPosition === 'right'
 
+  const checkboxWrapperRef = useCallback((element) => {
+    if (element) {
+      const input = element.querySelector('input[type="checkbox"]')
+      if (input) input.indeterminate = allowNeutral && normalizedValue === null
+    }
+  }, [allowNeutral, normalizedValue])
+
   const handleCheckboxChange = useCallback((_ev, checked) => {
     handleChange(checked ? 'yes' : 'no')
   }, [handleChange])
 
   const fieldContent = displayStyle === 'checkbox' ? (
-    <Checkbox
-      label={label ? \`\${label}\${required ? ' *' : ''}\` : undefined}
-      checked={normalized === 'yes'}
-      onChange={handleCheckboxChange}
-      disabled={disabled}
-    />
+    <div ref={checkboxWrapperRef}>
+      <Checkbox
+        label={label ? \`\${label}\${required ? ' *' : ''}\` : undefined}
+        checked={normalized === 'yes'}
+        onChange={handleCheckboxChange}
+        disabled={disabled}
+      />
+    </div>
   ) : (
     <>
       {label && labelPosition !== 'right' && (
