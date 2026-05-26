@@ -192,15 +192,18 @@ const BaseFormStateProvider = ({
     isRenderingRef.current = false;
   });
 
+  // Apply any updates that were deferred because they were dispatched during a
+  // render phase. Composes them onto the latest state in one setState.
+  const flushPendingUpdates = useCallback(() => {
+    if (pendingUpdatesRef.current.length === 0) return;
+    const updates = pendingUpdatesRef.current;
+    pendingUpdatesRef.current = [];
+    setFormDataState(prev => updates.reduce((state, update) => applyFormDataUpdate(state, update), prev));
+  }, []);
+
   // Process any pending updates that were queued during render.
   React.useEffect(() => {
-    if (pendingUpdatesRef.current.length > 0) {
-      const updates = [...pendingUpdatesRef.current];
-      pendingUpdatesRef.current = [];
-      updates.forEach(update => {
-        setFormDataState(prev => applyFormDataUpdate(prev, update));
-      });
-    }
+    flushPendingUpdates();
   });
 
   // Mark that we're rendering (this runs on every render)
@@ -209,14 +212,19 @@ const BaseFormStateProvider = ({
   // Create setFormData function that handles various input types
   // Defers updates that happen during render to avoid React warnings
   const setFormData = useCallback((updater: any) => {
-    // If called during render, defer the update to after render
+    // If called during render, defer the update to after render.
     if (isRenderingRef.current) {
       pendingUpdatesRef.current.push(updater);
+      // Flush on a microtask (after the current render task) so the update is
+      // never lost: under React 19, isRenderingRef can stay true when a render
+      // is discarded before its layout effect runs, and the provider may not
+      // re-render on its own to drain the queue via the effect above.
+      queueMicrotask(flushPendingUpdates);
       return;
     }
 
     setFormDataState(prev => applyFormDataUpdate(prev, updater));
-  }, []);
+  }, [flushPendingUpdates]);
 
   React.useEffect(() => {
     if (!initialFormData) return;
