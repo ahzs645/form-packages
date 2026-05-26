@@ -232,6 +232,14 @@ export const ListSelection: React.FC<ListSelectionProps> = ({
 
   const [isSelecting, setIsSelecting] = useState(initialSelecting);
 
+  // Bumped on every Selection change. Used to re-key (remount) the selecting
+  // DetailsList so rows re-read their selected state on click. Fluent v8's
+  // per-row selection subscription does not repaint under React 19, but a fresh
+  // mount reads the current selection correctly, so this keeps the visual in
+  // sync. This is preview-only churn; the value is committed to form state on
+  // Done, not here.
+  const [selectionVersion, setSelectionVersion] = useState(0);
+
   // Get items from props, source data, or mock data
   const sourceItems = useMemo(() => {
     if (itemsProp && itemsProp.length > 0) {
@@ -303,6 +311,8 @@ export const ListSelection: React.FC<ListSelectionProps> = ({
     return new Selection({
       getKey: getItemKey,
       selectionMode: getSelectionModeForType(selectionType),
+      // Force the selecting list to repaint selected rows (see selectionVersion).
+      onSelectionChanged: () => setSelectionVersion((v) => v + 1),
     });
   // Only recreate Selection when selectionType changes
   }, [selectionType]);
@@ -524,6 +534,7 @@ export const ListSelection: React.FC<ListSelectionProps> = ({
         <div style={listContainerStyle}>
           {children}
           <DetailsList
+            key={`selecting-${selectionVersion}`}
             columns={convertedColumns}
             items={processedItems}
             onRenderDetailsHeader={onRenderDetailsHeader}
