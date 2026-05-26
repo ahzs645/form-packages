@@ -8,7 +8,7 @@
  * - filterPred, listCompare, detailsListProps support
  */
 
-import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   DetailsList,
   DetailsListLayoutMode,
@@ -295,100 +295,36 @@ export const ListSelection: React.FC<ListSelectionProps> = ({
     }
   };
 
-  // Use refs to avoid recreating Selection on every render
-  const isSelectingRef = useRef(isSelecting);
-  const resolvedFieldIdRef = useRef(resolvedFieldId);
-  // True while we are programmatically syncing the Fluent Selection object from
-  // form state, so onSelectionChanged can ignore those echoed change events.
-  const isSyncingSelectionRef = useRef(false);
-  const setActiveDataRef = useRef(setActiveData);
-  const setMoisActiveDataRef = useRef(setMoisActiveData);
-  const sectionRef = useRef(section);
-
-  // Keep refs up to date
-  useEffect(() => {
-    isSelectingRef.current = isSelecting;
-  }, [isSelecting]);
-
-  useEffect(() => {
-    resolvedFieldIdRef.current = resolvedFieldId;
-  }, [resolvedFieldId]);
-
-  useEffect(() => {
-    setActiveDataRef.current = setActiveData;
-  }, [setActiveData]);
-
-  useEffect(() => {
-    setMoisActiveDataRef.current = setMoisActiveData;
-  }, [setMoisActiveData]);
-
-  useEffect(() => {
-    sectionRef.current = section;
-  }, [section]);
-
-  // Create selection object once - use refs for callbacks to avoid recreation
+  // Create the Fluent Selection object once per selection type. The selection
+  // is committed to form state on "Done" (see handleButtonClick), not on every
+  // change. That keeps this component from re-rendering mid-selection, which
+  // would desync the DetailsList's native (imperative) selection rendering.
   const selection = useMemo(() => {
-    const mode = getSelectionModeForType(selectionType);
-    const sel = new Selection({
+    return new Selection({
       getKey: getItemKey,
-      selectionMode: mode,
-      onSelectionChanged: () => {
-        // Ignore change events emitted while we are re-applying the selection
-        // from form state, otherwise we would loop write -> render -> sync.
-        if (isSyncingSelectionRef.current) return;
-        // Real-time selection sync to form state when selecting
-        if (isSelectingRef.current) {
-          const selected = sel.getSelection();
-          const fieldId = resolvedFieldIdRef.current;
-          if (fieldId) {
-            // Sync to both the forms state store (read source) and the legacy
-            // MoisProvider store so the selection persists in either provider.
-            const writeSelection = (draft: any) => {
-              writeSectionActiveFieldValue(draft, sectionRef.current, fieldId, selected);
-            };
-            setActiveDataRef.current(writeSelection);
-            setMoisActiveDataRef.current(writeSelection);
-          } else {
-            // Sync to local state
-            setLocalSelectedItems(selected as any[]);
-          }
-        }
-      },
+      selectionMode: getSelectionModeForType(selectionType),
     });
-    return sel;
   // Only recreate Selection when selectionType changes
   }, [selectionType]);
 
-  // Set items on selection when processedItems changes
+  // Tell the Selection about the current items so keys/getSelection() resolve.
   useEffect(() => {
     selection.setItems(processedItems, false);
   }, [processedItems, selection]);
 
-  // Stable signature of the selected keys so the sync effect below only re-runs
-  // when the selection set actually changes (not on every render).
-  const selectedKeySignature = useMemo(
-    () => (selectedItems ?? []).map((item) => getItemKey(item)).sort().join('|'),
-    [selectedItems]
-  );
-
-  // Keep the Fluent Selection object in sync with the selected items held in
-  // form state. Persisting a selection triggers a re-render, which can desync
-  // the imperative Selection object, so re-apply it whenever the selected set
-  // or the underlying item list changes while in selecting mode. Change events
-  // are suppressed (and guarded) so this re-apply never writes back.
+  // When entering selecting mode, seed the Selection from the value committed in
+  // form state so previously-selected rows show as checked. Selection is read
+  // back from the live Selection object on "Done", so seeding does not need to
+  // write anything here.
   useEffect(() => {
     if (!isSelecting) return;
-    isSyncingSelectionRef.current = true;
-    selection.setChangeEvents(false);
     selection.setAllSelected(false);
     for (const item of selectedItems ?? []) {
       selection.setKeySelected(getItemKey(item), true, false);
     }
-    selection.setChangeEvents(true);
-    isSyncingSelectionRef.current = false;
-  // selectedKeySignature stands in for selectedItems to avoid identity churn.
+  // Seed only when entering selecting mode, using the value committed at that point.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isSelecting, selectedKeySignature, processedItems, selection]);
+  }, [isSelecting]);
 
   // Items to display - all items when selecting or when selectionType is 'none', only selected items otherwise
   const displayItems = useMemo(() => {
@@ -496,7 +432,28 @@ export const ListSelection: React.FC<ListSelectionProps> = ({
     }
   };
 
+  // Commit the current Selection to form state. Called when leaving selecting
+  // mode so the write happens once, avoiding write/re-render races mid-select.
+  const commitSelection = () => {
+    const selected = selection.getSelection();
+    if (resolvedFieldId) {
+      // Write to both the forms state store (read source) and the legacy
+      // MoisProvider store so the selection persists in either provider.
+      const writeSelection = (draft: any) => {
+        writeSectionActiveFieldValue(draft, section, resolvedFieldId, selected);
+      };
+      setActiveData(writeSelection);
+      setMoisActiveData(writeSelection);
+    } else {
+      setLocalSelectedItems(selected as any[]);
+    }
+  };
+
   const handleButtonClick = () => {
+    if (isSelecting) {
+      // Leaving selecting mode ("Done"): commit the current selection.
+      commitSelection();
+    }
     setIsSelecting(!isSelecting);
   };
 
@@ -512,13 +469,13 @@ export const ListSelection: React.FC<ListSelectionProps> = ({
       },
     };
 
-    // data-selection-toggle enables click-to-select in FluentUI
+    // data-selection-toggle enables click-to-select in FluentUI. Use Fluent's
+    // defaultRender so the row keeps its built-in selection-change subscription
+    // (a hand-built DetailsRow does not repaint when the Selection changes).
+    const rowProps = { ...props, styles: customStyles } as IDetailsRowProps;
     return (
       <div data-selection-toggle="true">
-        <DetailsRow
-          {...props}
-          styles={customStyles}
-        />
+        {defaultRender ? defaultRender(rowProps) : <DetailsRow {...rowProps} />}
       </div>
     );
   }, [theme.mois.zebraContrastBackground, isSelecting]);
