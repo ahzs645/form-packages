@@ -22,7 +22,8 @@ import {
   ConstrainMode,
 } from '@fluentui/react';
 import { LayoutItem } from './LayoutItem';
-import { useTheme, useSourceData, useActiveData, useSection, produce } from '../context/MoisContext';
+import { useTheme, useSourceData, useActiveData as useMoisActiveData, useSection } from '../context/MoisContext';
+import { useActiveDataForForms } from '../hooks/form-state';
 import { readSectionActiveFieldValue, writeSectionActiveFieldValue } from '../runtime/mois-contract';
 
 // Default filter predicate - accepts all items
@@ -57,7 +58,7 @@ function normalizeRenderedCellValue(value: unknown): React.ReactNode {
 // Generate a unique key for an item based on its properties
 function getItemKey(item: any): string {
   // Try common ID field patterns
-  const idFields = ['id', 'key', 'longTermMedicationId', 'serviceRequestId', 'observationId', 'encounterId', 'plannedActionId', 'code'];
+  const idFields = ['id', 'key', 'longTermMedicationId', 'serviceRequestId', 'serviceEpisodeId', 'observationId', 'encounterId', 'plannedActionId', 'code'];
   for (const field of idFields) {
     if (item[field] !== undefined) {
       return String(item[field]);
@@ -205,8 +206,12 @@ export const ListSelection: React.FC<ListSelectionProps> = ({
   // Get source data for lifecycle state (isPrinting)
   const sourceData = useSourceData();
 
-  // Get active data and setter for real-time selection sync
-  const [activeData, setActiveData] = useActiveData();
+  // Get active data and setter for real-time selection sync.
+  // Read from the forms state store (FormStateProvider) that the form renderers
+  // actually provide, and mirror writes to the legacy MoisProvider store so the
+  // selection persists regardless of which provider hosts the control.
+  const [activeData, setActiveData] = useActiveDataForForms();
+  const [, setMoisActiveData] = useMoisActiveData();
 
   // Get section context
   const section = useSection(sectionProp);
@@ -293,7 +298,11 @@ export const ListSelection: React.FC<ListSelectionProps> = ({
   // Use refs to avoid recreating Selection on every render
   const isSelectingRef = useRef(isSelecting);
   const resolvedFieldIdRef = useRef(resolvedFieldId);
+  // True while we are programmatically syncing the Fluent Selection object from
+  // form state, so onSelectionChanged can ignore those echoed change events.
+  const isSyncingSelectionRef = useRef(false);
   const setActiveDataRef = useRef(setActiveData);
+  const setMoisActiveDataRef = useRef(setMoisActiveData);
   const sectionRef = useRef(section);
 
   // Keep refs up to date
@@ -310,6 +319,10 @@ export const ListSelection: React.FC<ListSelectionProps> = ({
   }, [setActiveData]);
 
   useEffect(() => {
+    setMoisActiveDataRef.current = setMoisActiveData;
+  }, [setMoisActiveData]);
+
+  useEffect(() => {
     sectionRef.current = section;
   }, [section]);
 
@@ -320,15 +333,21 @@ export const ListSelection: React.FC<ListSelectionProps> = ({
       getKey: getItemKey,
       selectionMode: mode,
       onSelectionChanged: () => {
+        // Ignore change events emitted while we are re-applying the selection
+        // from form state, otherwise we would loop write -> render -> sync.
+        if (isSyncingSelectionRef.current) return;
         // Real-time selection sync to form state when selecting
         if (isSelectingRef.current) {
           const selected = sel.getSelection();
           const fieldId = resolvedFieldIdRef.current;
           if (fieldId) {
-            // Sync to active data
-            setActiveDataRef.current(produce((draft: any) => {
+            // Sync to both the forms state store (read source) and the legacy
+            // MoisProvider store so the selection persists in either provider.
+            const writeSelection = (draft: any) => {
               writeSectionActiveFieldValue(draft, sectionRef.current, fieldId, selected);
-            }));
+            };
+            setActiveDataRef.current(writeSelection);
+            setMoisActiveDataRef.current(writeSelection);
           } else {
             // Sync to local state
             setLocalSelectedItems(selected as any[]);
@@ -345,18 +364,31 @@ export const ListSelection: React.FC<ListSelectionProps> = ({
     selection.setItems(processedItems, false);
   }, [processedItems, selection]);
 
-  // Sync selection state when entering selecting mode
+  // Stable signature of the selected keys so the sync effect below only re-runs
+  // when the selection set actually changes (not on every render).
+  const selectedKeySignature = useMemo(
+    () => (selectedItems ?? []).map((item) => getItemKey(item)).sort().join('|'),
+    [selectedItems]
+  );
+
+  // Keep the Fluent Selection object in sync with the selected items held in
+  // form state. Persisting a selection triggers a re-render, which can desync
+  // the imperative Selection object, so re-apply it whenever the selected set
+  // or the underlying item list changes while in selecting mode. Change events
+  // are suppressed (and guarded) so this re-apply never writes back.
   useEffect(() => {
-    if (isSelecting && selectedItems) {
-      selection.setAllSelected(false);
-      for (const item of selectedItems) {
-        const key = getItemKey(item);
-        selection.setKeySelected(key, true, false);
-      }
+    if (!isSelecting) return;
+    isSyncingSelectionRef.current = true;
+    selection.setChangeEvents(false);
+    selection.setAllSelected(false);
+    for (const item of selectedItems ?? []) {
+      selection.setKeySelected(getItemKey(item), true, false);
     }
-  // Only run when isSelecting changes, not when selection or selectedItems change
+    selection.setChangeEvents(true);
+    isSyncingSelectionRef.current = false;
+  // selectedKeySignature stands in for selectedItems to avoid identity churn.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isSelecting]);
+  }, [isSelecting, selectedKeySignature, processedItems, selection]);
 
   // Items to display - all items when selecting or when selectionType is 'none', only selected items otherwise
   const displayItems = useMemo(() => {
