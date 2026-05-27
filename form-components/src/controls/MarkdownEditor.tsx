@@ -72,6 +72,8 @@ export interface MarkdownEditorProps {
   liveUpdates?: boolean;
   /** Receives a function that serializes and returns the current editor Markdown. */
   onFlushReady?: (flush: (() => string | null) | null) => void;
+  /** Called after editor document changes without forcing Markdown serialization. */
+  onEdit?: () => void;
 }
 
 export type MarkdownEditorTooltipRenderer = (label: string, trigger: React.ReactElement) => React.ReactNode;
@@ -150,6 +152,7 @@ interface InnerProps {
   onCommandReady?: (runner: CommandRunner | null) => void;
   liveUpdates: boolean;
   onFlushReady?: (flush: (() => string | null) | null) => void;
+  onEdit?: () => void;
 }
 
 type MilkdownAction = (ctx: Ctx) => unknown;
@@ -203,8 +206,10 @@ function MarkdownEditorInner({
   onCommandReady,
   liveUpdates,
   onFlushReady,
+  onEdit,
 }: InnerProps) {
   const onChangeRef = useRef(onChange);
+  const onEditRef = useRef(onEdit);
   const disabledRef = useRef(Boolean(disabled));
   // Tracks the last Markdown we surfaced to the parent so external `value`
   // updates can be told apart from our own edits (prevents a feedback loop).
@@ -213,6 +218,10 @@ function MarkdownEditorInner({
   useEffect(() => {
     onChangeRef.current = onChange;
   }, [onChange]);
+
+  useEffect(() => {
+    onEditRef.current = onEdit;
+  }, [onEdit]);
 
   useEffect(() => {
     disabledRef.current = Boolean(disabled);
@@ -234,6 +243,10 @@ function MarkdownEditorInner({
             const clean = sanitizeMoisMarkdown(markdown);
             lastEmittedRef.current = clean;
             onChangeRef.current?.(clean);
+          });
+        } else {
+          ctx.get(listenerCtx).updated(() => {
+            onEditRef.current?.();
           });
         }
       })
@@ -297,10 +310,12 @@ export function MarkdownEditor({
   renderTooltip,
   liveUpdates = true,
   onFlushReady,
+  onEdit,
 }: MarkdownEditorProps) {
   const [mode, setMode] = useState<"wysiwyg" | "source">(startInSource ? "source" : "wysiwyg");
   const [commandRunner, setCommandRunner] = useState<CommandRunner | null>(null);
   const [moduleMenuOpen, setModuleMenuOpen] = useState(false);
+  const flushRef = useRef<(() => string | null) | null>(null);
   // Milkdown initialises against the DOM in an effect, so defer rendering it
   // until mounted to keep SSR output to an empty shell.
   const [mounted, setMounted] = useState(false);
@@ -335,14 +350,25 @@ export function MarkdownEditor({
   const handleCommandReady = useCallback((runner: CommandRunner | null) => {
     setCommandRunner(() => runner);
   }, []);
+  const handleFlushReady = useCallback(
+    (flush: (() => string | null) | null) => {
+      flushRef.current = flush;
+      onFlushReady?.(flush);
+    },
+    [onFlushReady]
+  );
   const insertMoisModuleLink = useCallback(
     (module: string) => {
-      const insertion = `[](mois:${module})`;
-      const next = value.trim() ? `${value.replace(/\s*$/, "")} ${insertion}` : insertion;
+      const label = MOIS_MODULE_LABELS[module] ?? module.replace(/_/g, " ");
+      const insertion = `[${label}](mois:${module})`;
+      const current = flushRef.current?.() ?? value;
+      const next = current.trim() ? `${current.replace(/\s*$/, "")} ${insertion}` : insertion;
+      commandRunner?.(replaceAll(next));
       onChange(next);
+      onEdit?.();
       setModuleMenuOpen(false);
     },
-    [onChange, value]
+    [commandRunner, onChange, onEdit, value]
   );
 
   return (
@@ -460,7 +486,8 @@ export function MarkdownEditor({
               ariaLabel={ariaLabel ?? placeholder}
               onCommandReady={handleCommandReady}
               liveUpdates={liveUpdates}
-              onFlushReady={onFlushReady}
+              onFlushReady={handleFlushReady}
+              onEdit={onEdit}
             />
           </MilkdownProvider>
         </div>

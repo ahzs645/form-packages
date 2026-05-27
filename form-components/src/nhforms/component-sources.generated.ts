@@ -13668,10 +13668,30 @@ const parseMoisHref = (href) => {
   return { moisModule, objectId: Number.isFinite(parsedId) ? parsedId : undefined }
 }
 
+const urlTransform = (value) => {
+  if (typeof value === "string" && /^mois:/i.test(value)) return value
+  if (typeof value !== "string") return ""
+  const colon = value.indexOf(":")
+  const questionMark = value.indexOf("?")
+  const numberSign = value.indexOf("#")
+  const slash = value.indexOf("/")
+  const hasAllowedProtocol = /^(https?|ircs?|mailto|xmpp)$/i.test(value.slice(0, colon))
+  if (
+    colon === -1 ||
+    (slash !== -1 && colon > slash) ||
+    (questionMark !== -1 && colon > questionMark) ||
+    (numberSign !== -1 && colon > numberSign) ||
+    hasAllowedProtocol
+  ) {
+    return value
+  }
+  return ""
+}
+
 const baseComponents = {
-  p: ({ children, ...props }) => <p style={fullWidthStyle} {...props}>{children}</p>,
-  div: ({ children, ...props }) => <div style={fullWidthStyle} {...props}>{children}</div>,
-  ul: ({ children, ...props }) => (
+  p: ({ children, node, ...props }) => <p style={fullWidthStyle} {...props}>{children}</p>,
+  div: ({ children, node, ...props }) => <div style={fullWidthStyle} {...props}>{children}</div>,
+  ul: ({ children, node, ...props }) => (
     <ul
       style={{
         ...fullWidthStyle,
@@ -13684,7 +13704,7 @@ const baseComponents = {
       {children}
     </ul>
   ),
-  ol: ({ children, ...props }) => (
+  ol: ({ children, node, ...props }) => (
     <ol
       style={{
         ...fullWidthStyle,
@@ -13697,10 +13717,10 @@ const baseComponents = {
       {children}
     </ol>
   ),
-  li: ({ children, ...props }) => <li style={{ marginTop: 0, marginBottom: 2 }} {...props}>{children}</li>,
-  blockquote: ({ children, ...props }) => <blockquote style={fullWidthStyle} {...props}>{children}</blockquote>,
-  pre: ({ children, ...props }) => <pre style={{ ...fullWidthStyle, overflow: "auto" }} {...props}>{children}</pre>,
-  a: ({ children, href, ...props }) => {
+  li: ({ children, node, ...props }) => <li style={{ marginTop: 0, marginBottom: 2 }} {...props}>{children}</li>,
+  blockquote: ({ children, node, ...props }) => <blockquote style={fullWidthStyle} {...props}>{children}</blockquote>,
+  pre: ({ children, node, ...props }) => <pre style={{ ...fullWidthStyle, overflow: "auto" }} {...props}>{children}</pre>,
+  a: ({ children, href, node, ...props }) => {
     const mois = parseMoisHref(href)
     if (mois) {
       const hasLabel = React.Children.toArray(children).some(
@@ -13732,7 +13752,7 @@ const baseComponents = {
       </a>
     )
   },
-  table: ({ children, ...props }) => (
+  table: ({ children, node, ...props }) => (
     <div style={{ overflowX: "auto", width: "100%", maxWidth: "none" }}>
       <table
         style={{
@@ -13747,10 +13767,10 @@ const baseComponents = {
       </table>
     </div>
   ),
-  thead: ({ children, ...props }) => <thead style={{ backgroundColor: "#f3f2f1" }} {...props}>{children}</thead>,
-  tbody: ({ children, ...props }) => <tbody {...props}>{children}</tbody>,
-  tr: ({ children, ...props }) => <tr style={{ verticalAlign: "top" }} {...props}>{children}</tr>,
-  th: ({ children, ...props }) => (
+  thead: ({ children, node, ...props }) => <thead style={{ backgroundColor: "#f3f2f1" }} {...props}>{children}</thead>,
+  tbody: ({ children, node, ...props }) => <tbody {...props}>{children}</tbody>,
+  tr: ({ children, node, ...props }) => <tr style={{ verticalAlign: "top" }} {...props}>{children}</tr>,
+  th: ({ children, node, ...props }) => (
     <th
       style={{
         border: "1px solid black",
@@ -13764,7 +13784,7 @@ const baseComponents = {
       {children}
     </th>
   ),
-  td: ({ children, ...props }) => (
+  td: ({ children, node, ...props }) => (
     <td
       style={{
         border: "1px solid black",
@@ -13809,6 +13829,7 @@ const MoisMarkdownBlock = ({
     const extraPlugins = Array.isArray(extra.remarkPlugins) ? extra.remarkPlugins : []
     return {
       ...extra,
+      urlTransform: extra.urlTransform || urlTransform,
       remarkPlugins: [remarkGfm, ...extraPlugins],
       rehypePlugins: [rehypeRaw, ...(Array.isArray(extra.rehypePlugins) ? extra.rehypePlugins : [])],
       components: {
