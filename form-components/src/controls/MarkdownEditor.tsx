@@ -18,7 +18,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Milkdown, MilkdownProvider, useEditor, useInstance } from "@milkdown/react";
-import { Editor, rootCtx, defaultValueCtx, editorViewOptionsCtx } from "@milkdown/kit/core";
+import { Editor, rootCtx, defaultValueCtx, editorViewCtx, editorViewOptionsCtx, serializerCtx } from "@milkdown/kit/core";
 import type { Ctx } from "@milkdown/kit/ctx";
 import {
   createCodeBlockCommand,
@@ -68,6 +68,10 @@ export interface MarkdownEditorProps {
   allowMoisLinks?: boolean;
   /** Optional host-app tooltip renderer for toolbar controls. */
   renderTooltip?: MarkdownEditorTooltipRenderer;
+  /** Emit Markdown on every editor change. Disable for large documents and flush manually. Default true. */
+  liveUpdates?: boolean;
+  /** Receives a function that serializes and returns the current editor Markdown. */
+  onFlushReady?: (flush: (() => string | null) | null) => void;
 }
 
 export type MarkdownEditorTooltipRenderer = (label: string, trigger: React.ReactElement) => React.ReactNode;
@@ -144,6 +148,8 @@ interface InnerProps {
   gfm: boolean;
   ariaLabel?: string;
   onCommandReady?: (runner: CommandRunner | null) => void;
+  liveUpdates: boolean;
+  onFlushReady?: (flush: (() => string | null) | null) => void;
 }
 
 type MilkdownAction = (ctx: Ctx) => unknown;
@@ -188,7 +194,16 @@ function ToolbarButton({ label, children, onClick, disabled, pressed, className,
 }
 
 /** The actual Milkdown instance — must render inside a <MilkdownProvider>. */
-function MarkdownEditorInner({ value, onChange, disabled, gfm: gfmEnabled, ariaLabel, onCommandReady }: InnerProps) {
+function MarkdownEditorInner({
+  value,
+  onChange,
+  disabled,
+  gfm: gfmEnabled,
+  ariaLabel,
+  onCommandReady,
+  liveUpdates,
+  onFlushReady,
+}: InnerProps) {
   const onChangeRef = useRef(onChange);
   const disabledRef = useRef(Boolean(disabled));
   // Tracks the last Markdown we surfaced to the parent so external `value`
@@ -213,12 +228,14 @@ function MarkdownEditorInner({ value, onChange, disabled, gfm: gfmEnabled, ariaL
           editable: () => !disabledRef.current,
           attributes: { class: "milkdown-prose", "aria-label": ariaLabel ?? "Markdown editor" },
         }));
-        ctx.get(listenerCtx).markdownUpdated((_ctx, markdown, prevMarkdown) => {
-          if (markdown === prevMarkdown) return;
-          const clean = sanitizeMoisMarkdown(markdown);
-          lastEmittedRef.current = clean;
-          onChangeRef.current?.(clean);
-        });
+        if (liveUpdates) {
+          ctx.get(listenerCtx).markdownUpdated((_ctx, markdown, prevMarkdown) => {
+            if (markdown === prevMarkdown) return;
+            const clean = sanitizeMoisMarkdown(markdown);
+            lastEmittedRef.current = clean;
+            onChangeRef.current?.(clean);
+          });
+        }
       })
       .use(commonmark)
       .use(listener)
@@ -235,8 +252,20 @@ function MarkdownEditorInner({ value, onChange, disabled, gfm: gfmEnabled, ariaL
     const editor = getInstance();
     if (!editor) return;
     onCommandReady?.((action) => editor.action(action));
-    return () => onCommandReady?.(null);
-  }, [getInstance, loading, onCommandReady]);
+    onFlushReady?.(() =>
+      editor.action((ctx) => {
+        const view = ctx.get(editorViewCtx);
+        const serializer = ctx.get(serializerCtx);
+        const clean = sanitizeMoisMarkdown(serializer(view.state.doc));
+        lastEmittedRef.current = clean;
+        return clean;
+      })
+    );
+    return () => {
+      onCommandReady?.(null);
+      onFlushReady?.(null);
+    };
+  }, [getInstance, loading, onCommandReady, onFlushReady]);
 
   useEffect(() => {
     if (loading) return;
@@ -266,6 +295,8 @@ export function MarkdownEditor({
   className,
   allowMoisLinks = false,
   renderTooltip,
+  liveUpdates = true,
+  onFlushReady,
 }: MarkdownEditorProps) {
   const [mode, setMode] = useState<"wysiwyg" | "source">(startInSource ? "source" : "wysiwyg");
   const [commandRunner, setCommandRunner] = useState<CommandRunner | null>(null);
@@ -428,6 +459,8 @@ export function MarkdownEditor({
               gfm={gfm}
               ariaLabel={ariaLabel ?? placeholder}
               onCommandReady={handleCommandReady}
+              liveUpdates={liveUpdates}
+              onFlushReady={onFlushReady}
             />
           </MilkdownProvider>
         </div>
