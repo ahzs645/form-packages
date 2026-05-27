@@ -10,6 +10,7 @@ import { useTheme, useSourceData, useSection } from '../context/MoisContext';
 import { useActiveDataForForms } from '../hooks/form-state';
 import { getAuthorshipLockInfo, registerAuthorshipFieldTarget } from '../authorship';
 import {
+  getSectionActiveTarget,
   getSectionSourceTarget,
   readSectionActiveFieldValue,
   readSectionFieldStatus,
@@ -144,6 +145,14 @@ export const Numeric: React.FC<NumericProps> = ({
   const activeValue = effectiveFieldId
     ? readSectionActiveFieldValue(activeData, sectionContext, effectiveFieldId)
     : undefined;
+  const activeTarget = effectiveFieldId
+    ? getSectionActiveTarget(activeData, sectionContext)
+    : undefined;
+  const hasActiveValue = !!(
+    effectiveFieldId &&
+    activeTarget &&
+    Object.prototype.hasOwnProperty.call(activeTarget, effectiveFieldId)
+  );
   const statusEntry = effectiveFieldId
     ? readSectionFieldStatus(activeData, sectionContext, effectiveFieldId)
     : undefined;
@@ -168,16 +177,19 @@ export const Numeric: React.FC<NumericProps> = ({
   // Determine initial value: value prop > sourceValue > defaultValue > ''
   const initialValue = useMemo(() => {
     if (value !== undefined) return String(value);
+    if (hasActiveValue) return activeValue !== undefined && activeValue !== null ? String(activeValue) : '';
     if (activeValue !== undefined && activeValue !== null) return String(activeValue);
     if (sourceValue !== undefined) return String(sourceValue);
     if (defaultValue !== undefined) return String(defaultValue);
     return '';
-  }, [value, activeValue, sourceValue, defaultValue]);
+  }, [value, hasActiveValue, activeValue, sourceValue, defaultValue]);
 
   const [localValue, setLocalValue] = useState<string>(initialValue);
   const displayValue = value !== undefined
     ? String(value)
-    : activeValue !== undefined && activeValue !== null
+    : hasActiveValue
+      ? (activeValue !== undefined && activeValue !== null ? String(activeValue) : '')
+      : activeValue !== undefined && activeValue !== null
       ? String(activeValue)
       : (sourceValue !== undefined && localValue === '' ? String(sourceValue) : localValue);
 
