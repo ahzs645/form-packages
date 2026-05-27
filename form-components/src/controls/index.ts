@@ -67,6 +67,9 @@ export { ListSelection, ListSelectionDemo1, ListSelectionDemo2, ListSelectionDem
 
 // Markdown
 export { Markdown } from './Markdown';
+export { MarkdownEditor } from './MarkdownEditor';
+export type { MarkdownEditorProps } from './MarkdownEditor';
+export { sanitizeMoisMarkdown } from './markdown-sanitize';
 
 // Numeric
 export { Numeric } from './Numeric';

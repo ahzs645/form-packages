@@ -4,7 +4,7 @@
  */
 
 import React, { useState } from 'react';
-import { Pivot, PivotItem, TextField } from '@fluentui/react';
+import { Pivot, PivotItem } from '@fluentui/react';
 import ReactMarkdown from 'react-markdown';
 import { useTheme, useSection, useActiveData, useSourceData, SectionContextValue } from '../context/MoisContext';
 import { LayoutItem, LayoutItemProps } from './LayoutItem';
@@ -14,6 +14,10 @@ import {
   readSectionActiveFieldValue,
   readSectionSourceFieldValue,
 } from '../runtime/mois-contract';
+
+// Lazy-loaded so Milkdown (ProseMirror) only ships when an editable Markdown
+// field is actually rendered; read-only forms never pull it in.
+const MarkdownEditor = React.lazy(() => import('./MarkdownEditor'));
 
 export interface SectionInfo {
   name?: string;
@@ -248,11 +252,6 @@ export const Markdown: React.FC<MarkdownProps> = (props) => {
     ? { color: theme.semanticColors.disabledText }
     : {};
 
-  // Calculate rows for textarea
-  const textareaRows = height
-    ? Math.floor(height / theme.mois.textFieldRowHeight)
-    : theme.mois.largeTextEditRowDefault;
-
   // Markdown content font styling (Times/serif as per MOIS reference)
   // Also ensure content fills full width with no max-width constraints
   const markdownFontStyles: React.CSSProperties = {
@@ -296,24 +295,19 @@ export const Markdown: React.FC<MarkdownProps> = (props) => {
           </PivotItem>
           <PivotItem headerText="Edit" itemKey="edit">
             <div style={{ width: '100%', margin: '15px 0px' }}>
-              <TextField
-                multiline
-                rows={textareaRows}
-                resizable={!height}
-                value={content}
-                onChange={handleChange}
-                disabled={disabled}
-                placeholder={placeholder}
-                styles={{
-                  root: {
-                    width: '100%',
-                    ...theme.mois.monospace,
-                  },
-                  fieldGroup: required && !content
-                    ? { background: theme.mois.requiredBackground }
-                    : undefined,
-                }}
-              />
+              <React.Suspense
+                fallback={<div style={{ padding: '8px', fontSize: '13px', color: '#64748b' }}>Loading editor…</div>}
+              >
+                <MarkdownEditor
+                  value={content}
+                  onChange={(markdown) => handleChange(undefined, markdown)}
+                  disabled={disabled}
+                  placeholder={placeholder}
+                  height={height}
+                  gfm={false}
+                  borderless
+                />
+              </React.Suspense>
             </div>
           </PivotItem>
         </Pivot>

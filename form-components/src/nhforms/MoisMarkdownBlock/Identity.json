@@ -1,0 +1,7 @@
+{
+  "name": "MoisMarkdownBlock",
+  "title": "MOIS Markdown Block",
+  "description": "Read-only markdown display that renders inline MOIS chart links (mois: scheme) as LinkToMois buttons; behaves like RichMarkdownBlock when no MOIS links are present",
+  "category": "Display",
+  "version": "1.0.0"
+}
