@@ -59,8 +59,15 @@ const PREVIEW_ONLY_MODULES = new Set([
   'WEBFORM_TEST',
 ]);
 
+function objectTypeToLabel(value: string): string {
+  return value.replace(/([a-z0-9])([A-Z])/g, '$1 $2');
+}
+
 // Available chart link modules
 export const MOIS_MODULES = Object.keys(MODULE_TO_OBJECT_TYPE) as readonly string[];
+export const MOIS_MODULE_LABELS = Object.fromEntries(
+  Object.entries(MODULE_TO_OBJECT_TYPE).map(([moduleName, objectType]) => [moduleName, objectTypeToLabel(objectType)])
+) as Record<string, string>;
 
 export type MoisModule = keyof typeof MODULE_TO_OBJECT_TYPE;
 

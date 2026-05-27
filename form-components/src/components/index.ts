@@ -21,7 +21,7 @@ export { FormCreationHistory } from './FormCreationHistory';
 export { FormImage } from './FormImage';
 export { FormVersion } from './FormVersion';
 export { HouseholdOccupant, Occupant } from './HouseholdOccupant';
-export { LinkToMois, MOIS_MODULES } from './LinkToMois';
+export { LinkToMois, MOIS_MODULES, MOIS_MODULE_LABELS } from './LinkToMois';
 export { MoisDialog } from './MoisDialog';
 export { MoisDropdown } from './MoisDropdown';
 export { MoisTextField } from './MoisTextField';
