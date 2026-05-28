@@ -219,6 +219,7 @@ const LogicGateProvider = ({ children }) => {
  * @param {string} [props.contentPadding] - Padding for content area
  * @param {boolean} [props.indentChildren=false] - Add left border indent for hierarchy
  * @param {boolean} [props.showHiddenIndicator=true] - Show indicator when content is hidden
+ * @param {string} [props.controllerFieldId] - Existing field ID to use as the controller instead of `${id}_controller`
  * @param {string} [props.sourceFieldId] - Original PDF field ID for PDF sync highlighting
  * @param {'buttons' | 'checkbox'} [props.displayStyle] - Display style for the controller field
  * @param {React.ReactNode} props.children - Child content (shown when condition is met)
@@ -243,6 +244,7 @@ const ConditionalGroup = ({
   contentPadding,
   indentChildren = false,
   showHiddenIndicator = false,
+  controllerFieldId: controllerFieldIdProp,
   sourceFieldId,
   displayStyle,
   children,
@@ -273,7 +275,7 @@ const ConditionalGroup = ({
   }
 
   // Controller field ID
-  const controllerFieldId = `${id}_controller`
+  const controllerFieldId = controllerFieldIdProp || `${id}_controller`
 
   // Get current controller value
   const controllerValue = fd?.field?.data?.[controllerFieldId]

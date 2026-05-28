@@ -284,6 +284,14 @@ const _resolvePathValue = (source, path) => {
 const _normalizeChartPreferenceValue = (value) => {
   if (value === undefined || value === null || value === "") return undefined
   if (typeof value === "object") {
+    if (
+      value.code !== undefined ||
+      value.display !== undefined ||
+      value.system !== undefined
+    ) {
+      return value
+    }
+    if (value.value && typeof value.value === "object") return value.value
     return value.code ?? value.key ?? value.value ?? value.text ?? value.label ?? value.display
   }
   return value
@@ -612,6 +620,7 @@ const _normalizeSelectableOptions = (field, fallbackOptions = []) => {
           text,
           value: rawValue,
           description,
+          system: option.system,
         }
       }
 
@@ -622,6 +631,7 @@ const _normalizeSelectableOptions = (field, fallbackOptions = []) => {
         text,
         value: text,
         description: undefined,
+        system: field?.codeSystem,
       }
     })
     .filter(Boolean)
@@ -692,6 +702,14 @@ const _resolveFieldDefaultValue = (field) => {
 
   const explicitDefault = field.defaultValue ?? field.default_value
   if (explicitDefault === undefined) return undefined
+
+  if (explicitDefault === "__today") {
+    const today = new Date()
+    const year = today.getFullYear()
+    const month = String(today.getMonth() + 1).padStart(2, "0")
+    const day = String(today.getDate()).padStart(2, "0")
+    return `${year}-${month}-${day}`
+  }
 
   if (field.type === "choice" || field.type === "booleanYesNo") {
     const fallbackOptions = field.type === "booleanYesNo" ? ["Yes", "No"] : []
@@ -1610,6 +1628,23 @@ const SubformScoringInner = ({
     }
 
     if (field.type === "choice") {
+      if (field.codeSystem && typeof FindCodeSelect !== "undefined") {
+        return (
+          <FindCodeSelect
+            key={`field-${field.id}`}
+            fieldId={`subform_${id}_${field.id}`}
+            label={field.label}
+            codeSystem={field.codeSystem}
+            value={dataEntryValues[field.id] ?? null}
+            defaultValue={_resolveFieldDefaultValue(field)}
+            placeholder={field.placeholder || "Please search"}
+            required={required}
+            openOnFocus
+            showOtherOption={Boolean(field.showOtherOption || field.show_other_option)}
+            onChange={(nextValue) => setDataEntryValue(field.id, nextValue)}
+          />
+        )
+      }
       const optionList = _normalizeSelectableOptions(field)
       const useRadio = field.choiceStyle === "radio"
       const selectedOption = optionList.find((option) => _isSelectableOptionSelected(dataEntryValues[field.id], option)) || null
