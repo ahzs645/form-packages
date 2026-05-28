@@ -338,6 +338,10 @@ const resolveChecklistOptions = (question, sharedOptions) => {
   return { checkedOption, uncheckedOption }
 }
 
+const normalizeQuestionIds = (questionIds) => (
+  Array.isArray(questionIds) ? questionIds : []
+)
+
 const _safeSerialize = (value) => {
   if (value === undefined) return "__undefined__"
   try {
@@ -779,7 +783,7 @@ const GroupedChecklistSection = ({
   sharedOptions,
   isDarkMode,
 }) => {
-  const sectionQuestions = (group.questionIds || [])
+  const sectionQuestions = normalizeQuestionIds(group?.questionIds)
     .map((questionId) => questionsById.get(questionId))
     .filter(Boolean)
 
@@ -1138,7 +1142,7 @@ const ScoringModule = ({
     if (!shouldRenderGroupedChecklist) return new Set()
     const ids = new Set()
     ;(questionGroups || []).forEach((group) => {
-      ;(group.questionIds || []).forEach((questionId) => ids.add(questionId))
+      normalizeQuestionIds(group?.questionIds).forEach((questionId) => ids.add(questionId))
     })
     return ids
   }, [questionGroups, shouldRenderGroupedChecklist])
@@ -1325,7 +1329,7 @@ const createScoringTotal = (def) => ({
   id: def.id,
   label: def.label,
   targetFieldId: def.targetFieldId,
-  terms: (def.terms || def.questionIds || []).map(t =>
+  terms: (Array.isArray(def.terms) ? def.terms : normalizeQuestionIds(def.questionIds)).map(t =>
     typeof t === "string" ? { questionId: t, weight: 1 } : t
   ),
   ranges: (def.ranges || []).map(r => ({
@@ -1369,7 +1373,7 @@ const createScoringConfig = (def) => ({
     id: group.id || `group_${index + 1}`,
     title: group.title,
     prompt: group.prompt,
-    questionIds: Array.isArray(group.questionIds) ? group.questionIds : [],
+    questionIds: normalizeQuestionIds(group.questionIds),
   })),
   questions: (def.questions || []).map(createScoringQuestion),
   totals: (def.totals || []).map(createScoringTotal),
