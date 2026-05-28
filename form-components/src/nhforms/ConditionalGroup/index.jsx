@@ -164,7 +164,8 @@ const LogicGateProvider = ({ children }) => {
 
   // Get controller value for a group from form data
   const getControllerValue = useCallback((groupId) => {
-    return fd?.field?.data?.[`${groupId}_controller`]
+    const rule = fd?.field?.data?._logicGateRules?.[groupId]
+    return fd?.field?.data?.[rule?.controllerFieldId || `${groupId}_controller`]
   }, [fd])
 
   // Rules are stored in form data under _logicGateRules
