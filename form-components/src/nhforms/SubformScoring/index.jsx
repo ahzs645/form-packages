@@ -270,6 +270,59 @@ const _getScoreFromValue = (value, optionScoreMap) => {
   return null
 }
 
+const _resolvePathValue = (source, path) => {
+  if (!path) return undefined
+  const segments = String(path).split(".").map((segment) => segment.trim()).filter(Boolean)
+  let current = source
+  for (const segment of segments) {
+    if (current === undefined || current === null) return undefined
+    current = current[segment]
+  }
+  return current
+}
+
+const _normalizeChartPreferenceValue = (value) => {
+  if (value === undefined || value === null || value === "") return undefined
+  if (typeof value === "object") {
+    return value.code ?? value.key ?? value.value ?? value.text ?? value.label ?? value.display
+  }
+  return value
+}
+
+const _buildMappedPayload = (values, action) => {
+  const payload = { ...(action?.payloadDefaults || action?.payload_defaults || {}) }
+  const payloadMap = action?.payloadMap || action?.payload_map || {}
+  Object.entries(payloadMap).forEach(([targetKey, sourceKey]) => {
+    const value = _normalizeChartPreferenceValue(values?.[sourceKey])
+    if (value !== undefined) payload[targetKey] = value
+  })
+  return payload
+}
+
+const _recordSubformActionPayload = (setFormData, componentId, payload) => {
+  if (!setFormData) return
+  setFormData((draft) => {
+    if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
+    if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
+    const container = draft.field.data.__componentPayloads ?? {}
+    const nextGroup = container.moisActionsByComponent ?? {}
+    const history = Array.isArray(nextGroup[componentId]) ? nextGroup[componentId] : []
+    nextGroup[componentId] = [...history, payload].slice(-10)
+    container.moisActionsByComponent = nextGroup
+    draft.field.data.__componentPayloads = container
+    draft.tempArea = draft.tempArea || {}
+    const runtime = draft.tempArea.__moisRuntime || { lastAction: null, actionHistory: [] }
+    const entry = {
+      action: "moisMutation",
+      payload,
+      timestamp: new Date().toISOString(),
+    }
+    runtime.lastAction = entry
+    runtime.actionHistory = [...(runtime.actionHistory || []), entry].slice(-10)
+    draft.tempArea.__moisRuntime = runtime
+  })
+}
+
 const _isInRange = (score, range) => {
   if (score === null || score === undefined) return false
   const min = range.min
@@ -999,6 +1052,7 @@ const SubformScoringInner = ({
   mode,
   title,
   buttonText = "Complete Assessment",
+  buttonIconName,
   config = { questions: [], totals: [] },
   dataEntryConfig = { fields: [], calculations: [] },
   summaryConfig = {},
@@ -1019,6 +1073,14 @@ const SubformScoringInner = ({
 }) => {
   const [internalIsOpen, setInternalIsOpen] = useState(false)
   const [fd] = useFormSessionData()
+  const sd = useSourceData()
+  const [changeChartPreference] = useMutation(
+    `mutation changeChartPreference($patientId: Int!, $chartPreference: ChartPreferenceInput!) {
+      changeChartPreference(patientId: $patientId, chartPreference: $chartPreference) {
+        patientId
+      }
+    }`
+  )
   const theme = useTheme()
   const isDarkMode = theme?.isInverted || false
   const isDialogOpen = typeof controlledIsOpen === "boolean" ? controlledIsOpen : internalIsOpen
@@ -1112,6 +1174,13 @@ const SubformScoringInner = ({
   // Data-entry-mode values and calculations
   const dataEntryFields = useMemo(() => {
     return Array.isArray(dataEntryConfig?.fields) ? dataEntryConfig.fields : []
+  }, [dataEntryConfig])
+  const dataEntryAction = useMemo(() => {
+    const action = dataEntryConfig?.action
+    if (!action || typeof action !== "object") return null
+    if (action.kind !== "moisMutation") return null
+    if (action.resource !== "chartPreference" || action.mutation !== "changeChartPreference") return null
+    return action
   }, [dataEntryConfig])
 
   const dataEntryFieldById = useMemo(() => {
@@ -2248,6 +2317,12 @@ const SubformScoringInner = ({
   const modalProps = {
     isBlocking: false,
   }
+  const normalizedButtonIconName = String(buttonIconName ?? "").trim()
+  const shouldUseDefaultButtonIcon = normalizedButtonIconName.length === 0
+  const shouldHideButtonIcon = normalizedButtonIconName.toLowerCase() === "none"
+  const triggerButtonIconProps = shouldHideButtonIcon
+    ? undefined
+    : { iconName: shouldUseDefaultButtonIcon ? (hasAnyAnswers ? "EditNote" : "ClipboardList") : normalizedButtonIconName }
 
   return (
     <div style={containerStyle}>
@@ -2256,7 +2331,7 @@ const SubformScoringInner = ({
           <PrimaryButton
             text={buttonText}
             onClick={() => setDialogOpen(true)}
-            iconProps={{ iconName: hasAnyAnswers ? "EditNote" : "ClipboardList" }}
+            iconProps={triggerButtonIconProps}
           />
         )}
         {!hideTriggerButton && !hideTitle && title && (
@@ -2390,7 +2465,7 @@ const SubformScoringInner = ({
         <Stack horizontal horizontalAlign="end" tokens={{ childrenGap: 8 }}>
           <PrimaryButton
             text={completeButtonText}
-            onClick={() => {
+            onClick={async () => {
               const shouldClose = onComplete?.({
                 mode: isDataEntryMode ? "data-entry" : "scoring",
                 dataEntryValues,
@@ -2400,6 +2475,32 @@ const SubformScoringInner = ({
                 calculatedTotals,
               })
               if (shouldClose !== false) {
+                if (isDataEntryMode && dataEntryAction) {
+                  const patientId =
+                    _resolvePathValue({ sd, fd, sourceData: sd, formData: fd?.field?.data }, dataEntryAction.patientIdPath || "sd.formParams.patientId") ??
+                    sd?.formParams?.patientId ??
+                    sd?.patient?.patientId
+                  const chartPreference = _buildMappedPayload(dataEntryValues, dataEntryAction)
+                  const actionPayload = {
+                    kind: "moisMutation",
+                    resource: "chartPreference",
+                    mutation: "changeChartPreference",
+                    patientId,
+                    chartPreference,
+                  }
+                  _recordSubformActionPayload(fd?.setFormData, id, actionPayload)
+                  if (patientId && Object.keys(chartPreference).length > 0) {
+                    try {
+                      await changeChartPreference({ patientId, chartPreference })
+                    } catch (error) {
+                      _recordSubformActionPayload(fd?.setFormData, id, {
+                        ...actionPayload,
+                        error: error?.message || String(error),
+                      })
+                      return
+                    }
+                  }
+                }
                 onCommitToParent?.(fd)
                 setDialogOpen(false)
               }

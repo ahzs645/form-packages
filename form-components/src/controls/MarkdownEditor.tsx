@@ -79,6 +79,9 @@ export interface MarkdownEditorProps {
 export type MarkdownEditorTooltipRenderer = (label: string, trigger: React.ReactElement) => React.ReactNode;
 
 const STYLE_ELEMENT_ID = "mois-md-editor-styles";
+const EMPTY_MOIS_LINK_PATTERN = /\[\]\((mois:[^)]+)\)/gi;
+const PLACEHOLDER_MOIS_LINK_PATTERN = /\[\u200B\]\((mois:[^)]+)\)/gi;
+const DISPLAY_MOIS_LINK_PATTERN = /\[MOIS: [^\]]+\]\((mois:[^)]+)\)/gi;
 
 const EDITOR_STYLES = `
 .mois-md-editor{border:1px solid rgb(226 232 240);border-radius:0.75rem;background:#fff;overflow:visible}
@@ -99,6 +102,7 @@ const EDITOR_STYLES = `
 .mois-md-editor__tool.is-wide{min-width:auto;padding:0 0.45rem;font-size:11px;text-transform:uppercase;letter-spacing:0.03em}
 .mois-md-editor__mois-icon{width:16px;height:16px;display:block}
 .mois-md-editor__module-menu{position:absolute;right:0;top:calc(100% + 0.35rem);z-index:60;width:15rem;max-height:18rem;overflow:auto;border:1px solid rgb(226 232 240);border-radius:0.5rem;background:white;padding:0.25rem;box-shadow:0 16px 36px rgba(15,23,42,0.18)}
+.mois-md-editor__module-menu.is-context{position:fixed;right:auto;top:auto;z-index:80}
 .dark .mois-md-editor__module-menu{border-color:rgb(51 65 85);background:rgb(15 23 42)}
 .mois-md-editor__module-option{display:flex;width:100%;align-items:center;gap:0.5rem;border:0;border-radius:0.375rem;background:transparent;padding:0.45rem 0.55rem;text-align:left;color:rgb(51 65 85);font-size:12px;font-weight:600;cursor:pointer}
 .mois-md-editor__module-option:hover{background:rgb(241 245 249);color:rgb(15 23 42)}
@@ -122,6 +126,8 @@ const EDITOR_STYLES = `
 .mois-md-editor .ProseMirror ul{list-style:disc;padding-left:1.4em}
 .mois-md-editor .ProseMirror ol{list-style:decimal;padding-left:1.4em}
 .mois-md-editor .ProseMirror a{color:rgb(37 99 235);text-decoration:underline}
+.mois-md-editor .ProseMirror a[href^="mois:"]{display:inline-flex;align-items:center;min-height:18px;margin:0 0.125rem;padding-left:20px;vertical-align:middle;background:url("/img/GotoRecord.png") left center/16px 16px no-repeat;color:rgb(37 99 235);text-decoration:underline}
+.mois-md-editor .ProseMirror a[href^="mois:"]::selection{background:rgba(37,99,235,0.25);color:rgb(30 64 175)}
 .mois-md-editor .ProseMirror blockquote{border-left:3px solid rgb(203 213 225);padding-left:0.75em;color:rgb(71 85 105)}
 .mois-md-editor .ProseMirror code{font-family:ui-monospace,Menlo,monospace;font-size:0.9em;background:rgb(241 245 249);padding:0.1em 0.3em;border-radius:0.25rem}
 .dark .mois-md-editor .ProseMirror code{background:rgb(30 41 59)}
@@ -143,6 +149,26 @@ function ensureStyles(): void {
   document.head.appendChild(style);
 }
 
+function toEditorMarkdown(markdown: string): string {
+  if (!markdown) return markdown;
+  return markdown.replace(EMPTY_MOIS_LINK_PATTERN, (_match, href: string) => {
+    const moduleName = href.replace(/^mois:/i, "");
+    return `[${getMoisEditorLabel(moduleName)}](${href})`;
+  });
+}
+
+function fromEditorMarkdown(markdown: string): string {
+  if (!markdown) return markdown;
+  return sanitizeMoisMarkdown(markdown)
+    .replace(PLACEHOLDER_MOIS_LINK_PATTERN, "[]($1)")
+    .replace(DISPLAY_MOIS_LINK_PATTERN, "[]($1)");
+}
+
+function getMoisEditorLabel(module: string): string {
+  const normalized = module.trim().toUpperCase();
+  return `MOIS: ${MOIS_MODULE_LABELS[normalized] ?? normalized.replace(/_/g, " ")}`;
+}
+
 interface InnerProps {
   value: string;
   onChange: (markdown: string) => void;
@@ -153,10 +179,80 @@ interface InnerProps {
   liveUpdates: boolean;
   onFlushReady?: (flush: (() => string | null) | null) => void;
   onEdit?: () => void;
+  onMoisLinkContextMenu?: (event: { x: number; y: number; module: string; from: number; to: number }) => void;
 }
 
 type MilkdownAction = (ctx: Ctx) => unknown;
 type CommandRunner = (action: MilkdownAction) => void;
+
+function updateMoisLinkAtSelection(ctx: Ctx, module: string): boolean {
+  const view = ctx.get(editorViewCtx);
+  const { state } = view;
+  const linkType = state.schema.marks.link;
+  if (!linkType) return false;
+
+  const href = `mois:${module}`;
+  const label = getMoisEditorLabel(module);
+  const { from, to, empty, $from } = state.selection;
+
+  if (!empty) {
+    const tr = state.tr.insertText(label, from, to);
+    tr.addMark(from, from + label.length, linkType.create({ href }));
+    view.dispatch(tr.scrollIntoView());
+    view.focus();
+    return true;
+  }
+
+  const parent = $from.parent;
+  let index = $from.index();
+  let current = parent.childAfter($from.parentOffset);
+  if (!current.node && $from.parentOffset > 0) {
+    current = parent.childBefore($from.parentOffset);
+    index -= 1;
+  }
+  const mark = current.node?.marks.find(
+    (candidate: { type: unknown; attrs?: { href?: string } }) =>
+      candidate.type === linkType && /^mois:/i.test(candidate.attrs?.href ?? "")
+  );
+  if (!current.node || !mark) return false;
+
+  let start = $from.start() + current.offset;
+  let end = start + current.node.nodeSize;
+
+  while (index > 0 && mark.isInSet(parent.child(index - 1).marks)) {
+    index -= 1;
+    start -= parent.child(index).nodeSize;
+  }
+  while (index + 1 < parent.childCount && mark.isInSet(parent.child(index + 1).marks)) {
+    index += 1;
+    end += parent.child(index).nodeSize;
+  }
+
+  const tr = state.tr.insertText(label, start, end);
+  tr.addMark(start, start + label.length, linkType.create({ href }));
+  view.dispatch(tr.scrollIntoView());
+  view.focus();
+  return true;
+}
+
+function updateMoisLinkAtRange(ctx: Ctx, module: string, from: number, to: number): boolean {
+  const view = ctx.get(editorViewCtx);
+  const linkType = view.state.schema.marks.link;
+  if (!linkType || from >= to) return false;
+
+  const label = getMoisEditorLabel(module);
+  const tr = view.state.tr.insertText(label, from, to);
+  tr.addMark(from, from + label.length, linkType.create({ href: `mois:${module}` }));
+  view.dispatch(tr.scrollIntoView());
+  view.focus();
+  return true;
+}
+
+function findMoisAnchor(target: EventTarget | null): HTMLAnchorElement | null {
+  if (!(target instanceof Element)) return null;
+  const anchor = target.closest("a[href^='mois:']");
+  return anchor instanceof HTMLAnchorElement ? anchor : null;
+}
 
 interface ToolbarButtonProps {
   label: string;
@@ -207,10 +303,13 @@ function MarkdownEditorInner({
   liveUpdates,
   onFlushReady,
   onEdit,
+  onMoisLinkContextMenu,
 }: InnerProps) {
   const onChangeRef = useRef(onChange);
   const onEditRef = useRef(onEdit);
+  const onMoisLinkContextMenuRef = useRef(onMoisLinkContextMenu);
   const disabledRef = useRef(Boolean(disabled));
+  const editorValue = toEditorMarkdown(value ?? "");
   // Tracks the last Markdown we surfaced to the parent so external `value`
   // updates can be told apart from our own edits (prevents a feedback loop).
   const lastEmittedRef = useRef<string>(value ?? "");
@@ -224,6 +323,10 @@ function MarkdownEditorInner({
   }, [onEdit]);
 
   useEffect(() => {
+    onMoisLinkContextMenuRef.current = onMoisLinkContextMenu;
+  }, [onMoisLinkContextMenu]);
+
+  useEffect(() => {
     disabledRef.current = Boolean(disabled);
   }, [disabled]);
 
@@ -231,16 +334,38 @@ function MarkdownEditorInner({
     const editor = Editor.make()
       .config((ctx) => {
         ctx.set(rootCtx, root);
-        ctx.set(defaultValueCtx, value ?? "");
+        ctx.set(defaultValueCtx, editorValue);
         ctx.update(editorViewOptionsCtx, (prev) => ({
           ...prev,
           editable: () => !disabledRef.current,
           attributes: { class: "milkdown-prose", "aria-label": ariaLabel ?? "Markdown editor" },
+          handleDOMEvents: {
+            ...prev.handleDOMEvents,
+            contextmenu: (view, event) => {
+              const anchor = findMoisAnchor(event.target);
+              const callback = onMoisLinkContextMenuRef.current;
+              if (!anchor || !callback || disabledRef.current) return false;
+
+              event.preventDefault();
+              const href = anchor.getAttribute("href") ?? "";
+              const moduleName = href.replace(/^mois:/i, "");
+              const text = anchor.textContent ?? "";
+              const textNode = anchor.firstChild;
+              let from = 0;
+              let to = 0;
+              if (textNode) {
+                from = view.posAtDOM(textNode, 0);
+                to = view.posAtDOM(textNode, text.length);
+              }
+              callback({ x: event.clientX, y: event.clientY, module: moduleName, from, to });
+              return true;
+            },
+          },
         }));
         if (liveUpdates) {
           ctx.get(listenerCtx).markdownUpdated((_ctx, markdown, prevMarkdown) => {
             if (markdown === prevMarkdown) return;
-            const clean = sanitizeMoisMarkdown(markdown);
+            const clean = fromEditorMarkdown(markdown);
             lastEmittedRef.current = clean;
             onChangeRef.current?.(clean);
           });
@@ -269,7 +394,7 @@ function MarkdownEditorInner({
       editor.action((ctx) => {
         const view = ctx.get(editorViewCtx);
         const serializer = ctx.get(serializerCtx);
-        const clean = sanitizeMoisMarkdown(serializer(view.state.doc));
+        const clean = fromEditorMarkdown(serializer(view.state.doc));
         lastEmittedRef.current = clean;
         return clean;
       })
@@ -289,7 +414,7 @@ function MarkdownEditorInner({
     // Set before replaceAll so the markdownUpdated listener can refine it to the
     // canonical/sanitised form; guards against re-running on no-op replacements.
     lastEmittedRef.current = next;
-    editor.action(replaceAll(next));
+    editor.action(replaceAll(toEditorMarkdown(next)));
   }, [value, loading, getInstance]);
 
   return <Milkdown />;
@@ -315,6 +440,13 @@ export function MarkdownEditor({
   const [mode, setMode] = useState<"wysiwyg" | "source">(startInSource ? "source" : "wysiwyg");
   const [commandRunner, setCommandRunner] = useState<CommandRunner | null>(null);
   const [moduleMenuOpen, setModuleMenuOpen] = useState(false);
+  const [moduleContextMenu, setModuleContextMenu] = useState<{
+    x: number;
+    y: number;
+    module: string;
+    from: number;
+    to: number;
+  } | null>(null);
   const flushRef = useRef<(() => string | null) | null>(null);
   // Milkdown initialises against the DOM in an effect, so defer rendering it
   // until mounted to keep SSR output to an empty shell.
@@ -324,6 +456,22 @@ export function MarkdownEditor({
     const frame = window.requestAnimationFrame(() => setMounted(true));
     return () => window.cancelAnimationFrame(frame);
   }, []);
+  useEffect(() => {
+    if (!moduleMenuOpen && !moduleContextMenu) return;
+    const closeMenus = () => {
+      setModuleMenuOpen(false);
+      setModuleContextMenu(null);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeMenus();
+    };
+    window.addEventListener("click", closeMenus);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("click", closeMenus);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [moduleMenuOpen, moduleContextMenu]);
 
   const wrapperClass = ["mois-md-editor", borderless ? "is-borderless" : "", className ?? ""]
     .filter(Boolean)
@@ -359,17 +507,39 @@ export function MarkdownEditor({
   );
   const insertMoisModuleLink = useCallback(
     (module: string) => {
-      const label = MOIS_MODULE_LABELS[module] ?? module.replace(/_/g, " ");
+      let updatedExistingLink = false;
+      if (moduleContextMenu) {
+        commandRunner?.((ctx) => {
+          updatedExistingLink = updateMoisLinkAtRange(ctx, module, moduleContextMenu.from, moduleContextMenu.to);
+        });
+      } else {
+        commandRunner?.((ctx) => {
+          updatedExistingLink = updateMoisLinkAtSelection(ctx, module);
+        });
+      }
+      if (updatedExistingLink) {
+        onEdit?.();
+        setModuleMenuOpen(false);
+        setModuleContextMenu(null);
+        return;
+      }
+
+      const label = getMoisEditorLabel(module);
       const insertion = `[${label}](mois:${module})`;
       const current = flushRef.current?.() ?? value;
       const next = current.trim() ? `${current.replace(/\s*$/, "")} ${insertion}` : insertion;
-      commandRunner?.(replaceAll(next));
-      onChange(next);
+      commandRunner?.(replaceAll(toEditorMarkdown(next)));
+      onChange(fromEditorMarkdown(next));
       onEdit?.();
       setModuleMenuOpen(false);
+      setModuleContextMenu(null);
     },
-    [commandRunner, onChange, onEdit, value]
+    [commandRunner, moduleContextMenu, onChange, onEdit, value]
   );
+  const openMoisLinkContextMenu = useCallback((event: { x: number; y: number; module: string; from: number; to: number }) => {
+    setModuleMenuOpen(false);
+    setModuleContextMenu(event);
+  }, []);
 
   return (
     <div className={wrapperClass}>
@@ -434,7 +604,11 @@ export function MarkdownEditor({
                   </>
                 )}
                 {moduleMenuOpen ? (
-                  <div className="mois-md-editor__module-menu" role="menu">
+                  <div
+                    className="mois-md-editor__module-menu"
+                    role="menu"
+                    onClick={(event) => event.stopPropagation()}
+                  >
                     {MOIS_MODULES.map((module) => (
                       <button
                         key={module}
@@ -464,6 +638,29 @@ export function MarkdownEditor({
           {"</>"}
         </ToolbarButton>
       </div>
+      {moduleContextMenu ? (
+        <div
+          className="mois-md-editor__module-menu is-context"
+          role="menu"
+          aria-label={`Change MOIS module from ${moduleContextMenu.module}`}
+          style={{ left: moduleContextMenu.x, top: moduleContextMenu.y }}
+          onClick={(event) => event.stopPropagation()}
+          onContextMenu={(event) => event.preventDefault()}
+        >
+          {MOIS_MODULES.map((module) => (
+            <button
+              key={module}
+              type="button"
+              className="mois-md-editor__module-option"
+              role="menuitem"
+              onClick={() => insertMoisModuleLink(module)}
+            >
+              <img className="mois-md-editor__mois-icon" src="/img/GotoRecord.png" alt="" />
+              {MOIS_MODULE_LABELS[module] ?? module.replace(/_/g, " ")}
+            </button>
+          ))}
+        </div>
+      ) : null}
 
       {mode === "source" ? (
         <textarea
@@ -488,6 +685,7 @@ export function MarkdownEditor({
               liveUpdates={liveUpdates}
               onFlushReady={handleFlushReady}
               onEdit={onEdit}
+              onMoisLinkContextMenu={allowMoisLinks ? openMoisLinkContextMenu : undefined}
             />
           </MilkdownProvider>
         </div>
