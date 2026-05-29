@@ -3244,6 +3244,26 @@ const _normalizeTableColumns = (columns = []) => {
   })
 }
 
+const _normalizeNumberConfig = (column = {}) => ({
+  typeNumber: column.numberConfig?.typeNumber || column.typeNumber || "number",
+  suffix: column.numberConfig?.suffix ?? column.suffix,
+  buttonControls: column.numberConfig?.buttonControls ?? column.buttonControls ?? false,
+  storeAsNumber: column.numberConfig?.storeAsNumber ?? column.storeAsNumber ?? true,
+  spinButtonProps: {
+    min: column.numberConfig?.spinButtonProps?.min ?? column.min,
+    max: column.numberConfig?.spinButtonProps?.max ?? column.max,
+    step: column.numberConfig?.spinButtonProps?.step ?? column.step,
+  },
+})
+
+const _coerceNumberCellValue = (value, column = {}) => {
+  const numberConfig = _normalizeNumberConfig(column)
+  if (value === "") return ""
+  if (numberConfig.storeAsNumber === false) return value
+  const numericValue = Number(value)
+  return Number.isNaN(numericValue) ? "" : numericValue
+}
+
 const _normalizeInitialRowCount = (initialRows) => {
   if (Array.isArray(initialRows)) return Math.max(initialRows.length, 1)
   const count = Number(initialRows)
@@ -3603,13 +3623,18 @@ const _buildSubformFieldFromColumn = (column) => {
 
   switch (column.type) {
     case "number":
+      const numberConfig = _normalizeNumberConfig(column)
       return {
         id: fieldId,
         label,
         type: "number",
-        min: column.min,
-        max: column.max,
-        step: column.step,
+        min: numberConfig.spinButtonProps.min,
+        max: numberConfig.spinButtonProps.max,
+        step: numberConfig.spinButtonProps.step,
+        typeNumber: numberConfig.typeNumber,
+        suffix: numberConfig.suffix,
+        buttonControls: numberConfig.buttonControls,
+        storeAsNumber: numberConfig.storeAsNumber,
         required: column.required === true,
       }
     case "date":
@@ -4091,17 +4116,21 @@ EditableTable = ({
 
     switch (column.type) {
       case "number":
+        const numberConfig = _normalizeNumberConfig(column)
+        const spinButtonProps = {}
+        if (numberConfig.spinButtonProps.min !== undefined) spinButtonProps.min = numberConfig.spinButtonProps.min
+        if (numberConfig.spinButtonProps.max !== undefined) spinButtonProps.max = numberConfig.spinButtonProps.max
+        if (numberConfig.spinButtonProps.step !== undefined) spinButtonProps.step = numberConfig.spinButtonProps.step
         return (
           <Numeric
             inline={inline}
-            buttonControls
+            typeNumber={numberConfig.typeNumber}
+            buttonControls={numberConfig.buttonControls}
             value={value?.toString() || ""}
-            onChange={(newValue) => onValueChange(rowIndex, column.id, newValue === "" ? "" : Number(newValue))}
-            spinButtonProps={{
-              min: column.min ?? 0,
-              max: column.max ?? 999999,
-              step: column.step ?? 1,
-            }}
+            onChange={(newValue) => onValueChange(rowIndex, column.id, _coerceNumberCellValue(newValue, column))}
+            spinButtonProps={spinButtonProps}
+            textFieldProps={numberConfig.suffix ? { suffix: numberConfig.suffix } : undefined}
+            storeAsNumber={numberConfig.storeAsNumber !== false}
           />
         )
 
