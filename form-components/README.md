@@ -1,104 +1,92 @@
 # @mois/form-components
 
-Complete MOIS UI components library for rendering web forms. This package bundles all the controls, components, hooks, and NHForms components needed to render MOIS forms.
+MOIS UI component library used by the Webform app. It provides the controls, archetypes, dialogs, hooks, runtime scope helpers, and NHForms component loaders used by preview and export flows.
 
-## Installation
+## Used by this app
 
-When using within the monorepo, the package is available through npm workspaces.
+The root app consumes this package through pnpm workspace aliases:
 
-When copying to another project, you'll need to:
+```typescript
+import { buildScope } from "@mois/form-components/scope";
+import { FormStateProvider } from "@mois/form-components";
+import { nhformsComponents } from "@mois/form-components/nhforms";
+```
 
-1. Copy the entire `packages/` directory
-2. Configure your bundler (Vite, webpack, etc.) to resolve the `@styleguide` alias to the styleguide `src/` folder
-3. Install peer dependencies
+Root `tsconfig.json` maps `@mois/form-components` and subpaths to `packages/form-components/src`, so app code imports source directly during development.
 
-## Peer Dependencies
+Run package validation from the repo root:
+
+```bash
+pnpm typecheck:packages
+```
+
+Or from this package:
+
+```bash
+pnpm typecheck
+```
+
+## NHForms loaders
+
+NHForms supports both Next and Vite contexts.
+
+| Export | Purpose |
+| --- | --- |
+| `@mois/form-components/nhforms` | Default NHForms entrypoint used by package consumers. |
+| `@mois/form-components/nhforms/next` | Next-compatible loader backed by generated component source snapshots. |
+| `@mois/form-components/nhforms/vite` | Vite-compatible loader using Vite source discovery conventions. |
+| `@mois/form-components/nhforms/component-sources.generated` | Generated source snapshot used by Next/runtime packaging paths. |
+| `@mois/form-components/nhforms/metadata` | Component metadata entrypoint. |
+
+After changing NHForms component folders, exports, or generated source inputs, run:
+
+```bash
+pnpm generate:nhforms
+pnpm test
+```
+
+Preview success in one loader path does not prove the other path is correct. Keep Next and Vite entrypoints aligned.
+
+## `@styleguide` alias
+
+This package still has an `@styleguide/*` TypeScript alias that points to the app/styleguide source location:
+
+```json
+"@styleguide/*": ["../../src/*"]
+```
+
+When embedding this package outside the monorepo, either provide the same alias in your bundler/TypeScript config or remove the dependency from the component code you are using. In this repo, the alias is part of the workspace integration contract.
+
+## Standalone usage
+
+When copying this package to another project:
+
+1. Copy all internal MOIS packages under `packages/`, not just this package.
+2. Configure aliases for `@mois/form-components`, `@mois/form-engine-core`, and `@styleguide/*`.
+3. Install peer dependencies.
+4. Choose the appropriate NHForms loader for your bundler.
+
+## Peer dependencies
 
 ```json
 {
-  "react": "^18.0.0",
-  "react-dom": "^18.0.0",
+  "react": "^18.0.0 || ^19.0.0",
+  "react-dom": "^18.0.0 || ^19.0.0",
   "@fluentui/react": "^8.0.0",
   "@babel/standalone": "^7.0.0",
-  "immer": "^9.0.0 || ^10.0.0 || ^11.0.0"
+  "@milkdown/kit": "^7.0.0",
+  "@milkdown/react": "^7.0.0",
+  "immer": "^9.0.0 || ^10.0.0 || ^11.0.0",
+  "react-markdown": "^9.0.0 || ^10.0.0"
 }
 ```
 
-## Usage
+## Main exports
 
-### Basic Form Rendering
-
-```typescript
-import React from 'react';
-import * as Babel from '@babel/standalone';
-import { createComponentFromCode } from '@mois/form-engine-core';
-import { buildScope, FormStateProvider } from '@mois/form-components';
-
-function FormRenderer({ formCode }) {
-  // Build the complete scope with all MOIS components
-  const scope = buildScope();
-
-  // Create a form component from JSX code
-  const FormComponent = createComponentFromCode(formCode, {
-    babel: Babel,
-    scope,
-  });
-
-  // Render with state management
-  return (
-    <FormStateProvider>
-      <FormComponent />
-    </FormStateProvider>
-  );
-}
-```
-
-### Importing Specific Components
-
-```typescript
-// Import specific controls
-import { Section, TextArea, DateSelect } from '@mois/form-components/controls';
-
-// Import specific components
-import { Form, NameBlock, Page } from '@mois/form-components/components';
-
-// Import hooks
-import { useSourceData, useActiveData, useCodeList } from '@mois/form-components/hooks';
-
-// Import scope utilities
-import { buildScope, FluentNamespace, MoisFunction } from '@mois/form-components/scope';
-
-// Import NHForms components
-import { nhformsComponents, Allergies, Conditions } from '@mois/form-components/nhforms';
-```
-
-## Vite Configuration
-
-When using in a Vite project, configure the aliases in `vite.config.ts`:
-
-```typescript
-import { defineConfig } from 'vite';
-import path from 'path';
-
-export default defineConfig({
-  resolve: {
-    alias: {
-      '@mois/form-components': path.resolve(__dirname, 'packages/form-components/src'),
-      '@mois/form-engine-core': path.resolve(__dirname, 'packages/form-engine-core/src'),
-      '@styleguide': path.resolve(__dirname, 'src'),  // Points to styleguide src/
-    },
-  },
-});
-```
-
-## Package Exports
-
-- **`/controls`** - All MOIS controls (Section, TextArea, DateSelect, etc.)
-- **`/components`** - All MOIS components (Form, NameBlock, Page, archetypes, etc.)
-- **`/hooks`** - All hooks (useSourceData, useActiveData, useCodeList, etc.)
-- **`/scope`** - Scope building utilities (buildScope, FluentNamespace, etc.)
-- **`/nhforms`** - NHForms components (dynamically loaded at build time)
-
-## Note on NHForms Components
-
-The NHForms components use Vite's `import.meta.glob` for dynamic loading at build time. They require a Vite build environment to function properly. The raw JSX files are located in `src/nhforms-components/` and are compiled during the build process.
+- `/controls`: MOIS controls such as sections, text areas, and date controls.
+- `/components`: MOIS components such as form/page structures and archetypes.
+- `/archetypes`: Higher-level MOIS archetype components.
+- `/dialogs`: Dialog components.
+- `/hooks`: Runtime hooks such as source data and active data access.
+- `/scope`: Scope-building utilities and MOIS namespace shims.
+- `/nhforms`: NHForms component entrypoints.

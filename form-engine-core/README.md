@@ -1,144 +1,100 @@
 # @mois/form-engine-core
 
-Generic form rendering engine with JSX transformation and state management.
+Generic runtime engine for transforming JSX/TSX strings into React components and executing them with an injected scope.
 
-## Installation
+## Used by this app
 
-```bash
-npm install @mois/form-engine-core
+The Webform app uses this package indirectly through MOIS preview, NHForms loading, and export simulation paths. It is the lowest-level package in the runtime stack:
+
+```text
+app preview/export
+  -> @mois/form-components
+  -> @mois/form-engine-mois
+  -> @mois/form-engine-nhforms
+  -> @mois/form-engine-core
 ```
 
-## Peer Dependencies
+Root `tsconfig.json` maps `@mois/form-engine-core` to `packages/form-engine-core/src`, so app and package code import source directly during development.
 
-- `react` ^18.0.0
-- `@babel/standalone` ^7.0.0
-- `immer` ^9.0.0 || ^10.0.0 || ^11.0.0
+Validate from the repo root:
 
-## Usage
+```bash
+pnpm typecheck:packages
+```
 
-### Basic Usage with Custom Scope
+Or from this package:
+
+```bash
+pnpm typecheck
+```
+
+## Core responsibilities
+
+- Transform runtime JSX with Babel standalone.
+- Build and extend execution scopes.
+- Provide form-state primitives.
+- Provide preview/error-boundary runtime helpers.
+
+## Basic usage
 
 ```typescript
-import { createComponentFromCode, BaseScopeBuilder } from '@mois/form-engine-core';
-import * as Babel from '@babel/standalone';
+import * as Babel from "@babel/standalone";
+import { BaseScopeBuilder, createComponentFromCode } from "@mois/form-engine-core";
 
-// Create a scope builder with your components
 const scopeBuilder = new BaseScopeBuilder({
   components: {
-    MyButton: (props) => <button {...props} />,
     MyInput: (props) => <input {...props} />,
   },
   hooks: {
-    useMyData: () => ({ data: 'example' }),
+    useMyData: () => ({ value: "example" }),
   },
 });
 
-// Transform JSX code to a React component
-const code = `<MyButton onClick={() => alert('Hello!')}>Click me</MyButton>`;
-
-const Component = createComponentFromCode(code, {
+const Component = createComponentFromCode("<MyInput />", {
   babel: Babel,
   scopeBuilder,
 });
-
-// Render the component
-function App() {
-  return <Component />;
-}
 ```
 
-### With Form State Management
+## Form state
 
 ```typescript
 import {
-  createComponentFromCode,
   BaseScopeBuilder,
-  useActiveDataForForms,
+  createComponentFromCode,
   initFormData,
-} from '@mois/form-engine-core';
+  useActiveDataForForms,
+} from "@mois/form-engine-core";
 
-// Add form hooks to your scope
+initFormData();
+
 const scopeBuilder = new BaseScopeBuilder({
   hooks: {
     useActiveData: useActiveDataForForms,
   },
 });
 
-// Reset form state before loading new form
-initFormData();
-
-const formCode = `
-const [fd, setFd] = useActiveData();
-<div>
+const Component = createComponentFromCode(
+  `
+  const [fd, setFd] = useActiveData();
   <input
-    value={fd.field.data.name || ''}
-    onChange={(e) => setFd({ field: { data: { name: e.target.value } } })}
+    value={fd.field.data.name || ""}
+    onChange={(event) => setFd({ field: { data: { name: event.target.value } } })}
   />
-</div>
-`;
-
-const FormComponent = createComponentFromCode(formCode, {
-  babel: Babel,
-  scopeBuilder,
-});
+  `,
+  { babel: Babel, scopeBuilder }
+);
 ```
 
-### Extending the Scope Builder
+## Public API highlights
 
-```typescript
-import { BaseScopeBuilder } from '@mois/form-engine-core';
+- `createComponentFromCode(code, options)`: Transform JSX/TSX source into a React component.
+- `BaseScopeBuilder`: Compose components, hooks, namespaces, and values into an execution scope.
+- `useActiveDataForForms(selector?)`: Access runtime form data.
+- `initFormData()`: Reset runtime form data.
+- `ErrorBoundary`: React error boundary for runtime rendering.
+- `LivePreview`: Preview component for compiled JSX.
 
-class MyAppScopeBuilder extends BaseScopeBuilder {
-  constructor() {
-    super({
-      components: {
-        // Your app's components
-      },
-      hooks: {
-        // Your app's hooks
-      },
-      namespaces: {
-        // Your app's namespaces
-      },
-    });
-  }
-}
-```
+## Notes for contributors
 
-## API Reference
-
-### `createComponentFromCode(code, options)`
-
-Transforms JSX/TSX code into a React component.
-
-- `code`: string - The JSX/TSX code to transform
-- `options.babel`: any - Babel standalone instance
-- `options.scopeBuilder`: ScopeBuilder - Scope builder for execution context
-- `options.onInitialData?`: (data) => void - Callback when InitialData is extracted
-
-### `BaseScopeBuilder`
-
-Extensible scope builder class.
-
-- `constructor(config?)` - Create with optional configuration
-- `buildScope()` - Build the complete scope object
-- `extend(config)` - Create extended builder with additional config
-- `getConfig()` - Get current configuration
-
-### `useActiveDataForForms(selector?)`
-
-Hook for form state management.
-
-Returns `[formData, setFormData]` tuple.
-
-### `initFormData()`
-
-Reset form data to initial state.
-
-### `ErrorBoundary`
-
-React error boundary component.
-
-### `LivePreview`
-
-Component for rendering compiled JSX with error handling.
+Runtime JSX is not normal ESM. Code executed through this package must rely on injected scope symbols. When adding behavior, verify both preview and exported package paths.

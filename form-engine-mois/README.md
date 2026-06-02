@@ -1,145 +1,75 @@
 # @mois/form-engine-mois
 
-MOIS-specific form components, hooks, and scope builder for rendering MOIS web forms.
+MOIS-specific runtime integration built on `@mois/form-engine-core`.
 
-## Installation
+## Used by this app
+
+The Webform app uses this package to construct MOIS-aware runtime scopes for preview, export simulation, and NHForms component loading.
+
+Root `tsconfig.json` maps `@mois/form-engine-mois` to `packages/form-engine-mois/src`, so app and package code import source directly during development.
+
+Validate from the repo root:
 
 ```bash
-npm install @mois/form-engine-mois @mois/form-engine-core
+pnpm typecheck:packages
 ```
 
-## Peer Dependencies
+Or from this package:
 
-- `react` ^18.0.0
-- `@fluentui/react` ^8.0.0
-- `@mois/form-engine-core` ^1.0.0
-- `immer` ^9.0.0 || ^10.0.0 || ^11.0.0
+```bash
+pnpm typecheck
+```
 
-## Usage
+## Responsibilities
 
-### Basic Form Rendering
+- Extend the core scope builder with MOIS hooks, namespaces, and components.
+- Provide MOIS context types for source data, active data, option lists, user profile data, and form metadata.
+- Bridge NHForms-loaded components into the MOIS runtime scope.
+
+## Basic usage
 
 ```typescript
-import { MoisScopeBuilder, createComponentFromCode } from '@mois/form-engine-mois';
-import * as Babel from '@babel/standalone';
+import * as Babel from "@babel/standalone";
+import { createComponentFromCode } from "@mois/form-engine-core";
+import { MoisScopeBuilder } from "@mois/form-engine-mois";
 
-// Create MOIS scope builder
 const scopeBuilder = new MoisScopeBuilder();
 
-// Load your form code (from file or API)
-const formCode = `
-const FormComponent = () => {
+const Component = createComponentFromCode(
+  `
   const [fd] = useActiveData();
-  return (
-    <Form>
-      <Header title="My Form" />
-      <TextArea label="Notes" fieldId="notes" />
-      <Footer>
-        <SubmitButton />
-      </Footer>
-    </Form>
-  );
-};
-`;
+  <Form>
+    <TextArea label="Notes" fieldId="notes" />
+  </Form>
+  `,
+  { babel: Babel, scopeBuilder }
+);
+```
 
-// Transform to React component
-const FormComponent = createComponentFromCode(formCode, {
+## With NHForms components
+
+```typescript
+import { MoisScopeBuilder } from "@mois/form-engine-mois";
+import { loadNHFormsComponents } from "@mois/form-engine-nhforms";
+
+const scopeBuilder = new MoisScopeBuilder();
+const { components } = loadNHFormsComponents(nhformsSources, {
   babel: Babel,
   scopeBuilder,
 });
 
-// Render with your provider
-function App() {
-  return (
-    <YourMoisProvider sourceData={patientData}>
-      <FormComponent />
-    </YourMoisProvider>
-  );
-}
+const extendedScopeBuilder = scopeBuilder.withNHFormsComponents(components);
 ```
 
-### Configuring with MOIS Hooks and Components
+## API highlights
 
-The `MoisScopeBuilder` provides a fluent API to configure your scope:
+- `MoisScopeBuilder`: MOIS-specific scope builder extending the core builder.
+- `withHooks(hooks)`: Add MOIS/runtime hooks.
+- `withNamespaces(namespaces)`: Add MOIS namespace shims such as functions and patient/entity helpers.
+- `withComponents(components)`: Add MOIS components.
+- `withNHFormsComponents(components)`: Add loaded NHForms components.
+- `buildScope()`: Build the complete execution scope.
 
-```typescript
-import { MoisScopeBuilder } from '@mois/form-engine-mois';
+## Contributor notes
 
-// Import your MOIS hooks and components
-import { useSourceData, useActiveData, useCodeList } from './your-mois-context';
-import { Header, Footer, TextArea, SimpleCodeSelect } from './your-controls';
-import { MoisFunction, Pe } from './your-namespaces';
-
-const scopeBuilder = new MoisScopeBuilder()
-  .withHooks({
-    useSourceData,
-    useActiveData,
-    useCodeList,
-    useSection: () => ({ sectionNum: 0, layout: 'flex' }),
-    useTheme: () => ({ tokens: {} }),
-  })
-  .withNamespaces({
-    MoisFunction,
-    Pe,
-  })
-  .withComponents({
-    Header,
-    Footer,
-    TextArea,
-    SimpleCodeSelect,
-    // ... other components
-  });
-```
-
-### With NHForms Components
-
-```typescript
-import { MoisScopeBuilder } from '@mois/form-engine-mois';
-import { loadNHFormsComponents } from '@mois/form-engine-nhforms';
-
-// Load NHForms components
-const { components } = loadNHFormsComponents(nhformsSources, {
-  babel: Babel,
-  scopeBuilder: new MoisScopeBuilder(),
-});
-
-// Add to scope
-const scopeBuilder = new MoisScopeBuilder()
-  .withNHFormsComponents(components);
-```
-
-## API Reference
-
-### `MoisScopeBuilder`
-
-MOIS-specific scope builder extending `BaseScopeBuilder`.
-
-```typescript
-new MoisScopeBuilder(options?)
-```
-
-Options:
-- `additionalComponents?`: Record<string, any> - Extra components
-- `nhformsComponents?`: Record<string, any> - NHForms components
-- `identity?`: { title, name, ... } - Form identity metadata
-
-Methods:
-- `withHooks(hooks)` - Configure MOIS hooks
-- `withNamespaces(namespaces)` - Configure MOIS namespaces
-- `withComponents(components)` - Add MOIS components
-- `withNHFormsComponents(components)` - Add NHForms components
-- `buildScope()` - Build complete scope object
-
-### Types
-
-```typescript
-interface MoisSourceData {
-  patient?: PatientData;
-  encounter?: EncounterData;
-  webform?: WebformData;
-  formParams?: Record<string, any>;
-  optionLists?: Record<string, CodeListItem[]>;
-  userProfile?: UserProfileData;
-  // ...
-}
-```
+Some MOIS functions are simulated for preview. Keep simulation behavior clearly documented and verify exported package behavior separately from browser preview.
