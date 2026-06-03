@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { buildScope } from "./build-scope";
 
 describe("buildScope", () => {
@@ -25,6 +25,7 @@ describe("buildScope", () => {
   });
 
   it("mutates preview lifecycle state using Shimmed save and sign semantics", () => {
+    const consoleLog = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const scope = buildScope();
     const sourceData: any = {
       lifecycleState: { isLoading: true, isMutating: true, isPrinting: false },
@@ -36,19 +37,23 @@ describe("buildScope", () => {
       setFormData: (updater: (draft: any) => void) => updater(activeDraft),
     };
 
-    expect(scope.saveDraft(sourceData, formData, { formData: { score: 4 } })).toBe(true);
-    expect(sourceData.webform).toMatchObject({ isDraft: "Y", recordState: "UNSIGNED" });
-    expect(activeDraft.field.data).toMatchObject({ score: 4 });
-    expect(activeDraft.tempArea.__moisRuntime.lastAction.action).toBe("saveDraft");
+    try {
+      expect(scope.saveDraft(sourceData, formData, { formData: { score: 4 } })).toBe(true);
+      expect(sourceData.webform).toMatchObject({ isDraft: "Y", recordState: "UNSIGNED" });
+      expect(activeDraft.field.data).toMatchObject({ score: 4 });
+      expect(activeDraft.tempArea.__moisRuntime.lastAction.action).toBe("saveDraft");
 
-    expect(scope.signSubmit(sourceData, formData, { formData: { score: 5 } })).toBe(true);
-    expect(sourceData.webform).toMatchObject({ isDraft: "N", recordState: "SIGNED", isLockedToUser: "Y" });
-    expect(activeDraft.field.data).toMatchObject({ score: 5 });
-    expect(activeDraft.tempArea.__moisRuntime.lastAction.action).toBe("signSubmit");
+      expect(scope.signSubmit(sourceData, formData, { formData: { score: 5 } })).toBe(true);
+      expect(sourceData.webform).toMatchObject({ isDraft: "N", recordState: "SIGNED", isLockedToUser: "Y" });
+      expect(activeDraft.field.data).toMatchObject({ score: 5 });
+      expect(activeDraft.tempArea.__moisRuntime.lastAction.action).toBe("signSubmit");
 
-    expect(scope.unsign("needs revision", sourceData, formData)).toBe(true);
-    expect(sourceData.webform).toMatchObject({ isDraft: "N", recordState: "UNSIGNED", isLockedToUser: "N" });
-    expect(activeDraft.uiState.sections[0].isComplete).toBe(false);
-    expect(activeDraft.tempArea.__moisRuntime.lastAction.action).toBe("unsign");
+      expect(scope.unsign("needs revision", sourceData, formData)).toBe(true);
+      expect(sourceData.webform).toMatchObject({ isDraft: "N", recordState: "UNSIGNED", isLockedToUser: "N" });
+      expect(activeDraft.uiState.sections[0].isComplete).toBe(false);
+      expect(activeDraft.tempArea.__moisRuntime.lastAction.action).toBe("unsign");
+    } finally {
+      consoleLog.mockRestore();
+    }
   });
 });
