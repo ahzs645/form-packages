@@ -3693,6 +3693,7 @@ EditableTable = ({
   initialRows: initialRowsProp = 1,
   label = "",
   mode = "inline",
+  orientation = "horizontal",
   modalTitle,
   addButtonText = "+ Add Row",
   emptyStateText = "No rows added yet",
@@ -3721,6 +3722,7 @@ EditableTable = ({
   const [draftRow, setDraftRow] = useState(null)
   const [errorMessage, setErrorMessage] = useState("")
   const isModalMode = mode === "modal"
+  const isVertical = orientation === "vertical"
   const isLocked = disabled || readOnly
   const modalEditorConfig = props.modalEditorConfig || null
   const processingConfig = props.processingConfig || modalEditorConfig?.processingConfig || null
@@ -4240,6 +4242,56 @@ EditableTable = ({
     verticalAlign: "middle",
   }
 
+  const verticalLabelCellStyle = {
+    ...headerCellStyle,
+    width: "180px",
+    minWidth: "180px",
+    borderRight: \`1px solid \${isDarkMode ? "#404040" : "#e0e0e0"}\`,
+    borderBottom: \`1px solid \${isDarkMode ? "#404040" : "#e0e0e0"}\`,
+  }
+
+  const verticalBodyCellStyle = {
+    ...bodyCellStyle,
+    minWidth: "120px",
+    borderRight: \`1px solid \${isDarkMode ? "#404040" : "#e0e0e0"}\`,
+  }
+
+  const renderVerticalTable = () => {
+    const rowsForVerticalLayout = displayRows.length === 0 && isModalMode
+      ? [{ row: null, rowIndex: 0, isEmptyPlaceholder: true }]
+      : displayRows
+
+    return (
+      <table style={tableStyle}>
+        <tbody>
+          {tableColumns.map((col) => (
+            <tr key={col.id}>
+              <th
+                style={verticalLabelCellStyle}
+                data-source-field-id={sourceFieldIds[col.id] || undefined}
+              >
+                {col.title || col.id}
+              </th>
+              {rowsForVerticalLayout.map(({ row, rowIndex, isEmptyPlaceholder }, displayIndex) => (
+                <td
+                  key={\`\${col.id}-\${rowIndex}-\${displayIndex}\`}
+                  style={verticalBodyCellStyle}
+                  data-source-field-id={isEmptyPlaceholder ? undefined : getSourceFieldId(rowIndex, col.id)}
+                >
+                  {isEmptyPlaceholder
+                    ? emptyStateText
+                    : isModalMode
+                      ? <div>{_formatCellValue(row, col)}</div>
+                      : renderEditorInput(row, rowIndex, col, updateCell, true)}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    )
+  }
+
   return (
     <div style={containerStyle}>
       {label && (
@@ -4251,6 +4303,7 @@ EditableTable = ({
       )}
 
       <div style={tableContainerStyle}>
+        {isVertical ? renderVerticalTable() : (
         <table style={tableStyle}>
           <thead>
             <tr style={headerRowStyle}>
@@ -4356,6 +4409,7 @@ EditableTable = ({
             )}
           </tbody>
         </table>
+        )}
       </div>
 
       {allowAddRows && !isLocked && remaining > 0 && (
