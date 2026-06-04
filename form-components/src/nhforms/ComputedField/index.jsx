@@ -71,9 +71,40 @@ const _extractComputedReferences = (expression) => {
   const bracketedRefs = Array.from(expression.matchAll(/\[([^\]]+)\]/g))
     .map((match) => match[1]?.trim() ?? "")
     .filter(Boolean)
-  const unwrappedExpression = expression.replace(/\[([^\]]+)\]/g, " ")
+  const unwrappedExpression = _stripQuotedStrings(expression.replace(/\[([^\]]+)\]/g, " "))
   const bareRefs = unwrappedExpression.match(/[A-Za-z_][A-Za-z0-9_]*/g) || []
   return Array.from(new Set([...bracketedRefs, ...bareRefs]))
+}
+
+const _stripQuotedStrings = (expression) =>
+  String(expression).replace(/"([^"\\]|\\.)*"|'([^'\\]|\\.)*'/g, " ")
+
+const _replaceBareReferencesOutsideQuotes = (expression, refs, valuesByFieldId) => {
+  let prepared = ""
+  let cursor = 0
+  const stringPattern = /"([^"\\]|\\.)*"|'([^'\\]|\\.)*'/g
+  const replaceInSegment = (segment) => {
+    let nextSegment = segment
+    for (const ref of refs) {
+      if (["iif", "score", "contains", "hasValue", "null", "true", "false"].includes(ref)) continue
+      const numeric = _toNumericValue(valuesByFieldId?.[ref])
+      if (!Number.isFinite(numeric)) return null
+      nextSegment = nextSegment.replace(new RegExp(`\\b${_escapeRegExp(ref)}\\b`, "g"), String(numeric))
+    }
+    return nextSegment
+  }
+
+  for (const match of expression.matchAll(stringPattern)) {
+    const start = match.index ?? 0
+    const replaced = replaceInSegment(expression.slice(cursor, start))
+    if (replaced === null) return null
+    prepared += replaced + match[0]
+    cursor = start + match[0].length
+  }
+
+  const tail = replaceInSegment(expression.slice(cursor))
+  if (tail === null) return null
+  return prepared + tail
 }
 
 const _isSafeComputedExpression = (expression) => {
@@ -109,14 +140,10 @@ const _evaluateComputedExpression = (expression, valuesByFieldId, currentFieldId
     prepared = prepared.replace(new RegExp(`\\[${_escapeRegExp(ref)}\\]`, "g"), JSON.stringify(_toComparableValue(valuesByFieldId?.[ref])))
   }
 
-  const bareRefs = prepared.match(/[A-Za-z_][A-Za-z0-9_]*/g) || []
+  const bareRefs = _stripQuotedStrings(prepared).match(/[A-Za-z_][A-Za-z0-9_]*/g) || []
   const uniqueBareRefs = Array.from(new Set(bareRefs)).sort((a, b) => b.length - a.length)
-  for (const ref of uniqueBareRefs) {
-    if (["iif", "score", "contains", "hasValue", "null", "true", "false"].includes(ref)) continue
-    const numeric = _toNumericValue(valuesByFieldId?.[ref])
-    if (!Number.isFinite(numeric)) return null
-    prepared = prepared.replace(new RegExp(`\\b${_escapeRegExp(ref)}\\b`, "g"), String(numeric))
-  }
+  prepared = _replaceBareReferencesOutsideQuotes(prepared, uniqueBareRefs, valuesByFieldId)
+  if (prepared === null) return null
 
   try {
     const result = Function("iif", "score", "contains", "hasValue", `"use strict"; return (${prepared});`)(

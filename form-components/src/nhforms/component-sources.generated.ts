@@ -1624,6 +1624,44 @@ const _toNumericValue = (value) => {
   return null
 }
 
+const _toComparableValue = (value) => {
+  if (value === undefined || value === null) return ""
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "string") return value
+  if (Array.isArray(value)) return value.map(_toComparableValue)
+  if (typeof value === "object") {
+    return value.value ?? value.selectedKey ?? value.display ?? value.text ?? value.code ?? value.key ?? value.response ?? ""
+  }
+  return String(value)
+}
+
+const _score = (value, scoreMap) => {
+  const candidate = _toComparableValue(value)
+  if (Array.isArray(candidate)) {
+    return candidate.reduce((sum, entry) => sum + _score(entry, scoreMap), 0)
+  }
+  const direct = scoreMap?.[String(candidate)]
+  if (Number.isFinite(direct)) return Number(direct)
+  const numeric = _toNumericValue(value)
+  return Number.isFinite(numeric) ? numeric : 0
+}
+
+const _contains = (values, value) => {
+  if (!Array.isArray(values)) return false
+  const candidate = _toComparableValue(value)
+  if (Array.isArray(candidate)) {
+    return candidate.some((entry) => _contains(values, entry))
+  }
+  return values.map(String).includes(String(candidate))
+}
+
+const _hasValue = (value) => {
+  if (value === undefined || value === null || value === "") return false
+  if (Array.isArray(value)) return value.length > 0
+  return true
+}
+
+const _iif = (condition, whenTrue, whenFalse) => (condition ? whenTrue : whenFalse)
+
 const _extractComputedReferences = (expression) => {
   const bracketedRefs = Array.from(expression.matchAll(/\\[([^\\]]+)\\]/g))
     .map((match) => match[1]?.trim() ?? "")
@@ -1635,10 +1673,11 @@ const _extractComputedReferences = (expression) => {
 
 const _isSafeComputedExpression = (expression) => {
   const strippedExpression = expression.replace(/\\[([^\\]]+)\\]/g, " ")
-  return /^[0-9+\\-*/().,\\s_a-zA-Z]+$/.test(strippedExpression)
+  return /^[0-9+\\-*/().,?:<>=!&|{}\\[\\]'"":\\s_a-zA-Z]+$/.test(strippedExpression)
 }
 
 const _roundComputedValue = (value, precision) => {
+  if (typeof value === "string" || typeof value === "boolean") return value
   if (!Number.isFinite(value)) return null
   if (!Number.isFinite(precision) || precision < 0) return value
   return Number(value.toFixed(Math.round(precision)))
@@ -1662,28 +1701,36 @@ const _evaluateComputedExpression = (expression, valuesByFieldId, currentFieldId
     .filter(Boolean)
   const uniqueBracketedRefs = Array.from(new Set(bracketedRefs)).sort((a, b) => b.length - a.length)
   for (const ref of uniqueBracketedRefs) {
-    const numeric = _toNumericValue(valuesByFieldId?.[ref])
-    if (!Number.isFinite(numeric)) return null
-    prepared = prepared.replace(new RegExp(\`\\\\[\${_escapeRegExp(ref)}\\\\]\`, "g"), String(numeric))
+    prepared = prepared.replace(new RegExp(\`\\\\[\${_escapeRegExp(ref)}\\\\]\`, "g"), JSON.stringify(_toComparableValue(valuesByFieldId?.[ref])))
   }
 
   const bareRefs = prepared.match(/[A-Za-z_][A-Za-z0-9_]*/g) || []
   const uniqueBareRefs = Array.from(new Set(bareRefs)).sort((a, b) => b.length - a.length)
   for (const ref of uniqueBareRefs) {
+    if (["iif", "score", "contains", "hasValue", "null", "true", "false"].includes(ref)) continue
     const numeric = _toNumericValue(valuesByFieldId?.[ref])
     if (!Number.isFinite(numeric)) return null
     prepared = prepared.replace(new RegExp(\`\\\\b\${_escapeRegExp(ref)}\\\\b\`, "g"), String(numeric))
   }
 
   try {
-    const result = Function(\`"use strict"; return (\${prepared});\`)()
-    return typeof result === "number" && Number.isFinite(result) ? result : null
+    const result = Function("iif", "score", "contains", "hasValue", \`"use strict"; return (\${prepared});\`)(
+      _iif,
+      _score,
+      _contains,
+      _hasValue
+    )
+    if (typeof result === "number") return Number.isFinite(result) ? result : null
+    if (typeof result === "string" || typeof result === "boolean") return result
+    return null
   } catch (error) {
     return null
   }
 }
 
 const _toDisplayValue = (value, precision, resultType) => {
+  if (typeof value === "string") return value
+  if (typeof value === "boolean") return value ? "Yes" : "No"
   if (!Number.isFinite(value)) return ""
   if (Number.isFinite(precision) && precision >= 0) {
     const rounded = value.toFixed(Math.round(precision))
@@ -1718,6 +1765,7 @@ const ComputedField = ({
   )
 
   const storedValue = useMemo(() => {
+    if (typeof roundedValue === "string" || typeof roundedValue === "boolean") return roundedValue
     if (!Number.isFinite(roundedValue)) return null
     if (resultType === "text") {
       return _toDisplayValue(roundedValue, precision, "text")
