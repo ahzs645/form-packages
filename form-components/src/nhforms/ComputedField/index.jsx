@@ -108,7 +108,7 @@ const _replaceBareReferencesOutsideQuotes = (expression, refs, valuesByFieldId) 
 }
 
 const _isSafeComputedExpression = (expression) => {
-  const strippedExpression = expression.replace(/\[([^\]]+)\]/g, " ")
+  const strippedExpression = _stripQuotedStrings(expression).replace(/\[([^\]]+)\]/g, " ")
   return /^[0-9+\-*/().,?:<>=!&|{}\[\]'"":\s_a-zA-Z]+$/.test(strippedExpression)
 }
 
@@ -171,6 +171,25 @@ const _toDisplayValue = (value, precision, resultType) => {
   return String(value)
 }
 
+const _getInterpretationRange = (value, interpretation) => {
+  if (!Number.isFinite(value) || !Array.isArray(interpretation?.ranges)) return null
+  return interpretation.ranges.find((range) => {
+    const min = Number(range?.min)
+    const max = Number(range?.max)
+    const passesMin = !Number.isFinite(min) || value >= min
+    const passesMax = !Number.isFinite(max) || value <= max
+    return passesMin && passesMax
+  }) ?? null
+}
+
+const _hasAllReferencedValues = (expression, valuesByFieldId) => {
+  const refs = Array.from(String(expression || "").matchAll(/\[([^\]]+)\]/g))
+    .map((match) => match[1]?.trim() ?? "")
+    .filter(Boolean)
+  if (refs.length === 0) return true
+  return Array.from(new Set(refs)).every((ref) => _hasValue(valuesByFieldId?.[ref]))
+}
+
 const ComputedField = ({
   fieldId,
   label,
@@ -182,6 +201,8 @@ const ComputedField = ({
   size,
   required = false,
   readOnly = true,
+  showInterpretation = false,
+  interpretation,
 }) => {
   const [fd, setFd] = useActiveData()
   const valuesByFieldId = fd?.field?.data || {}
@@ -210,6 +231,16 @@ const ComputedField = ({
     return _toDisplayValue(roundedValue, precision, resultType)
   }, [precision, resultType, roundedValue])
 
+  const canShowInterpretation = useMemo(
+    () => Boolean(showInterpretation && _hasAllReferencedValues(expression, valuesByFieldId)),
+    [expression, showInterpretation, valuesByFieldId]
+  )
+
+  const interpretationRange = useMemo(
+    () => canShowInterpretation ? _getInterpretationRange(roundedValue, interpretation) : null,
+    [canShowInterpretation, interpretation, roundedValue]
+  )
+
   useEffect(() => {
     if (!fieldId) return
     setFd((draft) => {
@@ -225,15 +256,23 @@ const ComputedField = ({
   }, [fieldId, setFd, storedValue])
 
   return (
-    <TextArea
-      fieldId={fieldId}
-      label={label}
-      value={displayValue}
-      labelPosition={labelPosition}
-      placeholder={placeholder}
-      readOnly={readOnly !== false}
-      required={required}
-      size={size}
-    />
+    <div>
+      <TextArea
+        fieldId={fieldId}
+        label={label}
+        value={displayValue}
+        labelPosition={labelPosition}
+        placeholder={placeholder}
+        readOnly={readOnly !== false}
+        required={required}
+        size={size}
+      />
+      {interpretationRange ? (
+        <div style={{ marginTop: 4, marginLeft: labelPosition === "left" ? 160 : 0, fontSize: 12, color: "#475569" }}>
+          <strong>{interpretation?.label || "Interpretation"}:</strong> {interpretationRange.label}
+          {interpretationRange.description ? <span> - {interpretationRange.description}</span> : null}
+        </div>
+      ) : null}
+    </div>
   )
 }

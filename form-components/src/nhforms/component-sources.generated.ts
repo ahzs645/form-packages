@@ -1703,7 +1703,7 @@ const _replaceBareReferencesOutsideQuotes = (expression, refs, valuesByFieldId) 
 }
 
 const _isSafeComputedExpression = (expression) => {
-  const strippedExpression = expression.replace(/\\[([^\\]]+)\\]/g, " ")
+  const strippedExpression = _stripQuotedStrings(expression).replace(/\\[([^\\]]+)\\]/g, " ")
   return /^[0-9+\\-*/().,?:<>=!&|{}\\[\\]'"":\\s_a-zA-Z]+$/.test(strippedExpression)
 }
 
