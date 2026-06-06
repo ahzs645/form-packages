@@ -1,0 +1,25 @@
+{
+  "name": "AttestationSignOff",
+  "title": "Attestation Sign-Off",
+  "description": "Captures a clinician sign-off with name, role, derived initials, timestamp, and signature, with optional initials mirroring into visit fields.",
+  "version": {
+    "major": 1,
+    "minor": 0,
+    "patch": 0
+  },
+  "type": "component",
+  "owner": "MOIS Exporter",
+  "author": "MOIS Exporter",
+  "publisher": "MOIS Exporter",
+  "globalIdentifier": "",
+  "requiredFormViewerVersion": {
+    "major": 0,
+    "minor": 1,
+    "patch": 0
+  },
+  "requiredMoisVersion": {
+    "major": 2,
+    "minor": 26,
+    "patch": 18
+  }
+}

@@ -1023,20 +1023,24 @@ const ScoringModule = ({
   const calculatedTotals = useMemo(() => {
     const results = {}
     const questionsById = new Map((config.questions || []).map((question) => [question.id, question]))
+    const totals = Array.isArray(config.calculatedValues) && config.calculatedValues.length > 0
+      ? config.calculatedValues
+      : config.totals || []
 
-    for (const total of config.totals || []) {
+    for (const total of totals) {
       let score = 0
       let isComplete = true
 
       for (const term of total.terms || []) {
-        const answer = answers[term.questionId]
-        const optionScoreMap = scoreMap.get(term.questionId)
+        const termQuestionId = term.questionId || term.answerFieldId
+        const answer = answers[termQuestionId]
+        const optionScoreMap = scoreMap.get(termQuestionId)
         const answerScore = getScoreFromValue(answer, optionScoreMap)
 
         if (answerScore !== null) {
           score += answerScore * (term.weight || 1)
         } else if (config.layout === "grouped-checklist") {
-          const question = questionsById.get(term.questionId)
+          const question = questionsById.get(termQuestionId)
           const { uncheckedOption } = resolveChecklistOptions(question, sharedOptions)
           if (uncheckedOption) {
             score += (uncheckedOption.score ?? 0) * (term.weight || 1)
@@ -1055,7 +1059,7 @@ const ScoringModule = ({
     }
 
     return results
-  }, [answers, config.layout, config.questions, config.totals, scoreMap, sharedOptions])
+  }, [answers, config.calculatedValues, config.layout, config.questions, config.totals, scoreMap, sharedOptions])
 
   useEffect(() => {
     if (!setFd) return
@@ -1072,7 +1076,10 @@ const ScoringModule = ({
     }
 
     const totalMirrorEntries = []
-    for (const total of config.totals || []) {
+    const totals = Array.isArray(config.calculatedValues) && config.calculatedValues.length > 0
+      ? config.calculatedValues
+      : config.totals || []
+    for (const total of totals) {
       const scoreValue = calculatedTotals[total.id]?.isComplete ? calculatedTotals[total.id]?.score : null
       const targetIds = [
         total.targetFieldId,
@@ -1102,7 +1109,7 @@ const ScoringModule = ({
         draft.field.data[fieldId] = _cloneMirrorValue(nextValue)
       })
     })
-  }, [fd, setFd, config.questions, config.totals, calculatedTotals])
+  }, [fd, setFd, config.calculatedValues, config.questions, config.totals, calculatedTotals])
 
   // Calculate progress
   const progress = useMemo(() => {
@@ -1254,7 +1261,7 @@ const ScoringModule = ({
       )}
 
       {/* Totals */}
-      {(config.totals || []).map((total) => (
+      {((Array.isArray(config.calculatedValues) && config.calculatedValues.length > 0 ? config.calculatedValues : config.totals) || []).map((total) => (
         <ScoringTotal
           key={total.id}
           total={total}

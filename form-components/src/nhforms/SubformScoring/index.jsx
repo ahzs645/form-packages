@@ -1163,17 +1163,21 @@ const SubformScoringInner = ({
     if (isDataEntryMode) return {}
     const results = {}
     const questionsById = new Map((config.questions || []).map((question) => [question.id, question]))
-    for (const total of config.totals || []) {
+    const totals = Array.isArray(config.calculatedValues) && config.calculatedValues.length > 0
+      ? config.calculatedValues
+      : config.totals || []
+    for (const total of totals) {
       let score = 0
       let isComplete = true
       for (const term of total.terms || []) {
-        const answer = answers[term.questionId]
-        const optionScoreMap = scoreMap.get(term.questionId)
+        const termQuestionId = term.questionId || term.answerFieldId
+        const answer = answers[termQuestionId]
+        const optionScoreMap = scoreMap.get(termQuestionId)
         const answerScore = _getScoreFromValue(answer, optionScoreMap)
         if (answerScore !== null) {
           score += answerScore * (term.weight || 1)
         } else if (config.layout === "grouped-checklist") {
-          const question = questionsById.get(term.questionId)
+          const question = questionsById.get(termQuestionId)
           const { uncheckedOption } = _resolveChecklistOptions(question, config.sharedOptions)
           if (uncheckedOption) {
             score += (uncheckedOption.score ?? 0) * (term.weight || 1)
@@ -1187,7 +1191,7 @@ const SubformScoringInner = ({
       results[total.id] = { score: isComplete ? score : null, isComplete }
     }
     return results
-  }, [isDataEntryMode, answers, config.layout, config.questions, config.sharedOptions, config.totals, scoreMap])
+  }, [isDataEntryMode, answers, config.calculatedValues, config.layout, config.questions, config.sharedOptions, config.totals, scoreMap])
 
   // Data-entry-mode values and calculations
   const dataEntryFields = useMemo(() => {
@@ -1361,6 +1365,9 @@ const SubformScoringInner = ({
   }, [isDataEntryMode, isDialogOpen, dataEntryFields, dataEntryValues, fd, onDataEntryValueChange])
 
   const dataEntryCalculations = useMemo(() => {
+    if (Array.isArray(dataEntryConfig?.calculatedValues) && dataEntryConfig.calculatedValues.length > 0) {
+      return dataEntryConfig.calculatedValues
+    }
     return Array.isArray(dataEntryConfig?.calculations) ? dataEntryConfig.calculations : []
   }, [dataEntryConfig])
 
@@ -1473,8 +1480,11 @@ const SubformScoringInner = ({
   const summaryLayout = summaryConfig.layout || "stacked"
 
   const getTotalConfig = useCallback((totalId) => {
-    return (config.totals || []).find((total) => total.id === totalId)
-  }, [config.totals])
+    const totals = Array.isArray(config.calculatedValues) && config.calculatedValues.length > 0
+      ? config.calculatedValues
+      : config.totals || []
+    return totals.find((total) => total.id === totalId)
+  }, [config.calculatedValues, config.totals])
 
   const getQuestionConfig = useCallback((questionId) => {
     return (config.questions || []).find((question) => question.id === questionId)

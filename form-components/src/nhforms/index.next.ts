@@ -383,6 +383,8 @@ function loadComponentCode(code: string, componentName: string, additionalCompon
     'SaveOnClose', 'useSaveOnClose',
     // SignaturePad exports
     'SignaturePad',
+    // Attestation sign-off exports
+    'AttestationSignOff',
     // Utility functions from CommonSchemaDefn
     'makeValueSetOptions', 'makeTextObsUpdates', 'makeCodedObsUpdates', 'makeObsUpdatesFromVs',
     'ynuaOptions',
@@ -686,6 +688,8 @@ export const {
   // SaveOnClose
   SaveOnClose,
   useSaveOnClose,
+  // Attestation sign-off
+  AttestationSignOff,
   // Utility functions from CommonSchemaDefn
   makeValueSetOptions,
   makeTextObsUpdates,

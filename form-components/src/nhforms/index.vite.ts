@@ -373,6 +373,8 @@ function loadComponentCode(code: string, componentName: string, additionalCompon
     'MAX_SUBGROUP_DEPTH',
     // SignaturePad exports
     'SignaturePad',
+    // Attestation sign-off exports
+    'AttestationSignOff',
     // Utility functions from CommonSchemaDefn
     'makeValueSetOptions', 'makeTextObsUpdates', 'makeCodedObsUpdates', 'makeObsUpdatesFromVs',
     'ynuaOptions',
@@ -670,6 +672,8 @@ export const {
   generateConditionalGroupJSX,
   ControllerLabelPresets,
   MAX_SUBGROUP_DEPTH,
+  // Attestation sign-off
+  AttestationSignOff,
   // Utility functions from CommonSchemaDefn
   makeValueSetOptions,
   makeTextObsUpdates,
