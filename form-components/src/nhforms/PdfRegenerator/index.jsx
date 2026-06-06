@@ -190,12 +190,6 @@ const _normalizeFieldMap = (fieldMap, formData) => {
   return mapped
 }
 
-const _stripTrailingFieldNumber = (fieldName) => {
-  const match = String(fieldName || "").trim().match(/^(.*?)(\d+)$/)
-  const base = match && match[1] ? match[1].trim() : ""
-  return base || null
-}
-
 const _base64ToBytes = (value) => {
   const trimmed = String(value || "").trim()
   const payload = trimmed.includes("base64,") ? trimmed.slice(trimmed.indexOf("base64,") + 7) : trimmed
@@ -472,13 +466,7 @@ const PdfRegenerator = ({
           return
         }
 
-        let rawValue = formData[sourceFieldId]
-        if ((rawValue === undefined || rawValue === null || rawValue === "") && !map.has(pdfFieldName)) {
-          const baseFieldId = _stripTrailingFieldNumber(pdfFieldName)
-          if (baseFieldId && Object.prototype.hasOwnProperty.call(formData, baseFieldId)) {
-            rawValue = formData[baseFieldId]
-          }
-        }
+        const rawValue = formData[sourceFieldId]
         if (rawValue === undefined || rawValue === null || rawValue === "") {
           skippedFieldCount += 1
           return
