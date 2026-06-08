@@ -1823,8 +1823,14 @@ const _hasValue = (value) => {
 
 const _iif = (condition, whenTrue, whenFalse) => (condition ? whenTrue : whenFalse)
 
+// A field reference is \`[field-id]\`, and ids are slugified to id-safe
+// characters. Restricting the class (rather than \`[^\\]]+\`) keeps JSON array
+// literals like \`["often","very-often"]\` — which appear as arguments to
+// \`contains(...)\` — from being mistaken for field references.
+const _COMPUTED_REF_PATTERN = /\\[([A-Za-z0-9_.-]+)\\]/g
+
 const _extractComputedReferences = (expression) => {
-  const bracketedRefs = Array.from(expression.matchAll(/\\[([^\\]]+)\\]/g))
+  const bracketedRefs = Array.from(expression.matchAll(_COMPUTED_REF_PATTERN))
     .map((match) => match[1]?.trim() ?? "")
     .filter(Boolean)
   const unwrappedExpression = _stripQuotedStrings(expression.replace(/\\[([^\\]]+)\\]/g, " "))
@@ -1888,7 +1894,7 @@ const _evaluateComputedExpression = (expression, valuesByFieldId, currentFieldId
 
   let prepared = trimmed
 
-  const bracketedRefs = Array.from(trimmed.matchAll(/\\[([^\\]]+)\\]/g))
+  const bracketedRefs = Array.from(trimmed.matchAll(_COMPUTED_REF_PATTERN))
     .map((match) => match[1]?.trim() ?? "")
     .filter(Boolean)
   const uniqueBracketedRefs = Array.from(new Set(bracketedRefs)).sort((a, b) => b.length - a.length)
@@ -1939,7 +1945,7 @@ const _getInterpretationRange = (value, interpretation) => {
 }
 
 const _hasAllReferencedValues = (expression, valuesByFieldId) => {
-  const refs = Array.from(String(expression || "").matchAll(/\\[([^\\]]+)\\]/g))
+  const refs = Array.from(String(expression || "").matchAll(_COMPUTED_REF_PATTERN))
     .map((match) => match[1]?.trim() ?? "")
     .filter(Boolean)
   if (refs.length === 0) return true
