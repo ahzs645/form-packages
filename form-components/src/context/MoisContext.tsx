@@ -4,7 +4,7 @@
  */
 
 import React, { createContext, useContext, useState, useCallback, useMemo, useEffect, ReactNode } from 'react';
-import { produce, Draft } from 'immer';
+import { produce, setAutoFreeze, Draft } from 'immer';
 import { mockCodeLists, previewOptionListsRaw } from './mockCodeLists';
 import { getInitialData } from '../hooks/form-state';
 import { DEFAULT_AUTHORSHIP_POLICY, AuthorshipPolicy, syncAuthorshipMirrors } from '../authorship';
@@ -14,8 +14,15 @@ import selectedActiveData from '../data/selected-active.json';
 import selectedSourceData from '../data/selected-source.json';
 import themeObject from '../data/theme-object.json';
 
-const deepClone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
-const normalizeActiveDataState = <T,>(value: T): T => syncAuthorshipMirrors(deepClone(value as any)) as T;
+// Legacy NHForms components mutate nested state values in place before
+// committing them back through setFormData, so produced state must stay
+// unfrozen. Previously this was guaranteed by deep-cloning the whole state on
+// every update; the clone is gone (it cost a JSON round-trip of the entire
+// state — including `example` and `uiState` — per keystroke), so freezing has
+// to be disabled explicitly.
+setAutoFreeze(false);
+
+const normalizeActiveDataState = <T,>(value: T): T => syncAuthorshipMirrors(value as any) as T;
 
 const createPreviewObservation = (
   observationId: number,
@@ -1346,19 +1353,10 @@ export function MoisProvider({ children, sourceData: customSourceData }: MoisPro
         }
         return current;
       }
-      // Check if updater is a curried producer (created by calling produce(fn) with just a function)
-      // A curried producer returns a new state when called with a base state
-      // A recipe function mutates a draft and returns undefined
-      try {
-        const result = updater(current as any);
-        if (result !== undefined && typeof result === 'object') {
-          // It's a curried producer - use the result directly
-          return normalizeActiveDataState(result as ActiveData);
-        }
-      } catch {
-        // Not a curried producer, fall through to recipe handling
-      }
-      // It's a recipe function - wrap with produce
+      // produce() accepts both recipe functions (mutate the draft) and
+      // functions that return a replacement state (curried producers /
+      // base => next updaters), so a single call covers every callable form
+      // without ever invoking the updater against live state.
       return normalizeActiveDataState(produce(current, updater as any));
     });
   }, []);

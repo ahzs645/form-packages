@@ -6,7 +6,7 @@
  */
 
 import React, { createContext, useContext, useState, useCallback, useMemo } from 'react';
-import { produce } from 'immer';
+import { produce, setAutoFreeze } from 'immer';
 import { normalizeAuthorshipStore, syncAuthorshipMirrors } from '../authorship';
 
 // ============================================================================
@@ -43,6 +43,13 @@ let currentFormData: FormDataState = {
 
 // Global setter reference (set by FormStateProvider)
 let globalSetFormData: ((updater: any) => void) | null = null;
+
+// Some legacy NHForms components still mutate nested values in place before
+// committing them back through setFormData, so produced state must stay
+// unfrozen. This used to be a side effect of deep-cloning every update in
+// applyFormDataUpdate; the clone is gone for performance, so freezing has to
+// be disabled explicitly.
+setAutoFreeze(false);
 
 const deepClone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
 
@@ -165,9 +172,11 @@ const applyFormDataUpdate = (prevState: FormDataState, updater: any): FormDataSt
     return prevState;
   }
 
-  // Keep state unfrozen because some legacy NHForms components still mutate
-  // nested values before committing them back through setFormData.
-  return syncAuthorshipMirrors(deepClone(newState));
+  // syncAuthorshipMirrors deep-clones field.data and formData (the slices
+  // legacy components mutate in place), so the whole-state deepClone that used
+  // to live here was redundant work proportional to the entire form state on
+  // every update. State stays unfrozen via setAutoFreeze(false) above.
+  return syncAuthorshipMirrors(newState);
 };
 
 /**
