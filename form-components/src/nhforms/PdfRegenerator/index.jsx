@@ -206,6 +206,16 @@ const _buildTableReverseIndex = (tableSourceMaps) => {
     const tableId = tableMap.tableId
     if (!_isNonEmptyString(tableId)) return
 
+    // The value for a column lives at its dataPath within the row object,
+    // falling back to the column id (matching EditableTable's storage).
+    const pathByColumnId = {}
+    ;(Array.isArray(tableMap.columns) ? tableMap.columns : []).forEach((column) => {
+      if (column && _isNonEmptyString(column.id)) {
+        pathByColumnId[column.id] = _isNonEmptyString(column.dataPath) ? column.dataPath : column.id
+      }
+    })
+    const resolvePath = (columnId) => pathByColumnId[columnId] || columnId
+
     const byRow = tableMap.sourceFieldIdsByRow || {}
     Object.keys(byRow).forEach((rowKey) => {
       const rowIndex = Number(rowKey)
@@ -215,7 +225,7 @@ const _buildTableReverseIndex = (tableSourceMaps) => {
         const pdfFieldId = rowMapping[columnId]
         if (!_isNonEmptyString(pdfFieldId)) return
         if (!index.has(pdfFieldId)) {
-          index.set(pdfFieldId, { tableId, rowIndex, columnId })
+          index.set(pdfFieldId, { tableId, rowIndex, path: resolvePath(columnId) })
         }
       })
     })
@@ -226,7 +236,7 @@ const _buildTableReverseIndex = (tableSourceMaps) => {
       const pdfFieldId = baseMap[columnId]
       if (!_isNonEmptyString(pdfFieldId)) return
       if (!index.has(pdfFieldId)) {
-        index.set(pdfFieldId, { tableId, rowIndex: 0, columnId })
+        index.set(pdfFieldId, { tableId, rowIndex: 0, path: resolvePath(columnId) })
       }
     })
   })
@@ -240,7 +250,7 @@ const _resolveTableCellValue = (formData, entry) => {
   if (!Array.isArray(rows)) return undefined
   const row = rows[entry.rowIndex]
   if (!row || typeof row !== "object") return undefined
-  return _resolveValueByPath(row, entry.columnId)
+  return _resolveValueByPath(row, entry.path)
 }
 
 const _base64ToBytes = (value) => {
