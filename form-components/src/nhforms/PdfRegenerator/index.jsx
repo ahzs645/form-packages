@@ -190,6 +190,59 @@ const _normalizeFieldMap = (fieldMap, formData) => {
   return mapped
 }
 
+/**
+ * Build a reverse index from PDF AcroForm field name -> table cell location,
+ * so table values can be filled straight from the row array
+ * (formData[tableId][rowIndex][columnId]). This makes table fill independent
+ * of whether the live EditableTable mirrored each cell into a flat form-data
+ * key — which only happens on edit/seed, not for already-populated rows.
+ */
+const _buildTableReverseIndex = (tableSourceMaps) => {
+  const index = new Map()
+  if (!Array.isArray(tableSourceMaps)) return index
+
+  tableSourceMaps.forEach((tableMap) => {
+    if (!tableMap || typeof tableMap !== "object") return
+    const tableId = tableMap.tableId
+    if (!_isNonEmptyString(tableId)) return
+
+    const byRow = tableMap.sourceFieldIdsByRow || {}
+    Object.keys(byRow).forEach((rowKey) => {
+      const rowIndex = Number(rowKey)
+      if (!Number.isFinite(rowIndex)) return
+      const rowMapping = byRow[rowKey] || {}
+      Object.keys(rowMapping).forEach((columnId) => {
+        const pdfFieldId = rowMapping[columnId]
+        if (!_isNonEmptyString(pdfFieldId)) return
+        if (!index.has(pdfFieldId)) {
+          index.set(pdfFieldId, { tableId, rowIndex, columnId })
+        }
+      })
+    })
+
+    // Fallback: base/sample field ids resolve to the first row.
+    const baseMap = tableMap.sourceFieldIds || {}
+    Object.keys(baseMap).forEach((columnId) => {
+      const pdfFieldId = baseMap[columnId]
+      if (!_isNonEmptyString(pdfFieldId)) return
+      if (!index.has(pdfFieldId)) {
+        index.set(pdfFieldId, { tableId, rowIndex: 0, columnId })
+      }
+    })
+  })
+
+  return index
+}
+
+const _resolveTableCellValue = (formData, entry) => {
+  if (!entry) return undefined
+  const rows = formData?.[entry.tableId]
+  if (!Array.isArray(rows)) return undefined
+  const row = rows[entry.rowIndex]
+  if (!row || typeof row !== "object") return undefined
+  return _resolveValueByPath(row, entry.columnId)
+}
+
 const _base64ToBytes = (value) => {
   const trimmed = String(value || "").trim()
   const payload = trimmed.includes("base64,") ? trimmed.slice(trimmed.indexOf("base64,") + 7) : trimmed
@@ -313,7 +366,7 @@ const _setCheckboxByState = (field, requestedState, PDFLib) => {
   return true
 }
 
-const _fillField = (field, rawValue, sourceFieldId, warnings, PDFLib) => {
+const _fillField = (field, rawValue, sourceFieldId, warnings, PDFLib, booleanStates) => {
   try {
     if (field instanceof PDFLib.PDFTextField) {
       const text = _toText(rawValue)
@@ -365,6 +418,21 @@ const _fillField = (field, rawValue, sourceFieldId, warnings, PDFLib) => {
       }
 
       const boolValue = _toBooleanLike(rawValue)
+
+      // Two-state (yes/no) checkbox bound to a boolean field: the stored value
+      // is a bare boolean, so map it to the correct named widget on-state via
+      // the field's on/off labels. A blind check() would otherwise activate the
+      // first widget regardless of which state the boolean meant, so the "on"
+      // state (e.g. "Non Immune") never fills.
+      if (booleanStates && boolValue !== undefined) {
+        const targetState = boolValue ? booleanStates.on : booleanStates.off
+        const hasMatchingState = _isNonEmptyString(targetState)
+          && states.some((state) => _normalizeToken(state) === _normalizeToken(targetState))
+        if (hasMatchingState && _setCheckboxByState(field, targetState, PDFLib)) {
+          return true
+        }
+      }
+
       if (boolValue === undefined) {
         warnings.push(`Field \"${field.getName()}\" (${sourceFieldId}): value is not boolean-like.`)
         return false
@@ -396,6 +464,8 @@ const PdfRegenerator = ({
   sourcePdfPath = "sessionPdf.base64",
   sourcePdfFieldId,
   fieldMap,
+  tableSourceMaps,
+  booleanFieldStates,
   includeOnlyFieldIds,
   flatten = false,
   disabled = false,
@@ -443,6 +513,7 @@ const PdfRegenerator = ({
       const bytes = _base64ToBytes(resolvedPdfSource)
       const formData = fd?.field?.data || {}
       const map = _normalizeFieldMap(fieldMap, formData)
+      const tableIndex = _buildTableReverseIndex(tableSourceMaps)
       const includeSet = Array.isArray(includeOnlyFieldIds)
         ? new Set(includeOnlyFieldIds.map((id) => String(id || "").trim()).filter(Boolean))
         : null
@@ -466,13 +537,24 @@ const PdfRegenerator = ({
           return
         }
 
-        const rawValue = formData[sourceFieldId]
+        let rawValue = formData[sourceFieldId]
+        if (rawValue === undefined || rawValue === null || rawValue === "") {
+          // Table-aware fallback: resolve the cell straight from the row array
+          // when no flat mirrored key exists for this PDF field.
+          const tableEntry = tableIndex.get(pdfFieldName) || tableIndex.get(sourceFieldId)
+          if (tableEntry) {
+            rawValue = _resolveTableCellValue(formData, tableEntry)
+          }
+        }
         if (rawValue === undefined || rawValue === null || rawValue === "") {
           skippedFieldCount += 1
           return
         }
 
-        const didFill = _fillField(field, rawValue, sourceFieldId, warnings, PDFLib)
+        const booleanStates = booleanFieldStates
+          ? (booleanFieldStates[sourceFieldId] || booleanFieldStates[pdfFieldName])
+          : undefined
+        const didFill = _fillField(field, rawValue, sourceFieldId, warnings, PDFLib, booleanStates)
         if (didFill) filledFieldCount += 1
         else skippedFieldCount += 1
       })
@@ -508,7 +590,7 @@ const PdfRegenerator = ({
     } finally {
       setIsBusy(false)
     }
-  }, [resolvedPdfSource, fd, fieldMap, includeOnlyFieldIds, flatten, fileName, onComplete])
+  }, [resolvedPdfSource, fd, fieldMap, tableSourceMaps, booleanFieldStates, includeOnlyFieldIds, flatten, fileName, onComplete])
 
   const diagnosticsText = useMemo(() => {
     if (!showDiagnostics) return null
