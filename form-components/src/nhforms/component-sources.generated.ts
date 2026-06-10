@@ -16890,6 +16890,19 @@ const _getCheckboxOnStates = (field) => {
   return Array.from(states)
 }
 
+const _inferBooleanState = (states, boolValue) => {
+  if (!Array.isArray(states) || states.length === 0 || boolValue === undefined) return null
+
+  // Use the source PDF widget order as a final fallback only when the exporter
+  // did not pass booleanFieldStates. The parser stores the second state as
+  // true for two-widget checkbox fields and the first state as false.
+  if (states.length === 2) {
+    return boolValue ? states[1] : states[0]
+  }
+
+  return null
+}
+
 const _setCheckboxByState = (field, requestedState, PDFLib) => {
   const acro = field?.acroField
   const widgets = acro?.getWidgets?.() || []
@@ -16897,6 +16910,7 @@ const _setCheckboxByState = (field, requestedState, PDFLib) => {
 
   const normalizedRequested = _normalizeToken(requestedState)
   let targetStateName = null
+  let targetWidget = null
 
   for (const widget of widgets) {
     const onValue = widget?.getOnValue?.()
@@ -16904,6 +16918,7 @@ const _setCheckboxByState = (field, requestedState, PDFLib) => {
     if (!onText) continue
     if (_normalizeToken(onText) !== normalizedRequested) continue
     targetStateName = onValue instanceof PDFLib.PDFName ? onValue : PDFLib.PDFName.of(onText)
+    targetWidget = widget
     break
   }
 
@@ -16914,7 +16929,12 @@ const _setCheckboxByState = (field, requestedState, PDFLib) => {
   try {
     acro.setValue?.(targetStateName)
   } catch (error) {
-    return false
+    if (!targetWidget || !acro?.dict?.set) return false
+    try {
+      acro.dict.set(PDFLib.PDFName.of("V"), targetStateName)
+    } catch (rawError) {
+      return false
+    }
   }
 
   const offState = PDFLib.PDFName.of("Off")
@@ -16994,6 +17014,11 @@ const _fillField = (field, rawValue, sourceFieldId, warnings, PDFLib, booleanSta
         if (hasMatchingState && _setCheckboxByState(field, targetState, PDFLib)) {
           return true
         }
+      }
+
+      const inferredState = _inferBooleanState(states, boolValue)
+      if (inferredState && _setCheckboxByState(field, inferredState, PDFLib)) {
+        return true
       }
 
       if (boolValue === undefined) {
