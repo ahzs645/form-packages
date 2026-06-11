@@ -20142,6 +20142,30 @@ const _buildMappedPayload = (values, action) => {
   return payload
 }
 
+// MOIS write actions supported at runtime, keyed by \`\${resource}.\${mutation}\`
+// to match lib/mois-write-action-registry.ts ids — every key here must be
+// runtimeStatus "supported" there, and vice versa. Each mutation document is
+// verified against the real engine; note the operation name can differ from
+// the GraphQL field it invokes (changeTelecom -> changePatientContact).
+const MOIS_WRITE_MUTATIONS = {
+  "chartPreference.changeChartPreference": {
+    document: \`mutation changeChartPreference($patientId: Int!, $chartPreference: ChartPreferenceInput!) {
+      changeChartPreference(patientId: $patientId, chartPreference: $chartPreference) {
+        patientId
+      }
+    }\`,
+    buildVariables: (patientId, payload) => ({ patientId, chartPreference: payload }),
+  },
+  "patient.changeTelecom": {
+    document: \`mutation changeTelecom($patientId: Int!, $newContact: ContactPointInput!) {
+      changePatientContact(patientId: $patientId, newContact: $newContact) {
+        patientId
+      }
+    }\`,
+    buildVariables: (patientId, payload) => ({ patientId, newContact: payload }),
+  },
+}
+
 // setFormData must receive a produce()-wrapped recipe: the real MOIS runtime
 // hands back the raw React state setter, so a bare mutator would replace the
 // active form data with undefined.
@@ -20930,13 +20954,18 @@ const SubformScoringInner = ({
   const [internalIsOpen, setInternalIsOpen] = useState(false)
   const [fd] = useFormSessionData()
   const sd = useSourceData()
+  // One useMutation per supported write action, called unconditionally in a
+  // fixed order (hooks rules); the executor picks the runner by action key.
   const [changeChartPreference] = useMutation(
-    \`mutation changeChartPreference($patientId: Int!, $chartPreference: ChartPreferenceInput!) {
-      changeChartPreference(patientId: $patientId, chartPreference: $chartPreference) {
-        patientId
-      }
-    }\`
+    MOIS_WRITE_MUTATIONS["chartPreference.changeChartPreference"].document
   )
+  const [changeTelecom] = useMutation(
+    MOIS_WRITE_MUTATIONS["patient.changeTelecom"].document
+  )
+  const writeMutationRunners = {
+    "chartPreference.changeChartPreference": changeChartPreference,
+    "patient.changeTelecom": changeTelecom,
+  }
   const theme = useTheme()
   const isDarkMode = theme?.isInverted || false
   const isDialogOpen = typeof controlledIsOpen === "boolean" ? controlledIsOpen : internalIsOpen
@@ -21039,8 +21068,9 @@ const SubformScoringInner = ({
     const action = dataEntryConfig?.action
     if (!action || typeof action !== "object") return null
     if (action.kind !== "moisMutation") return null
-    if (action.resource !== "chartPreference" || action.mutation !== "changeChartPreference") return null
-    return action
+    const writeKey = \`\${action.resource}.\${action.mutation}\`
+    if (!MOIS_WRITE_MUTATIONS[writeKey]) return null
+    return { ...action, writeKey }
   }, [dataEntryConfig])
 
   const dataEntryFieldById = useMemo(() => {
@@ -22363,18 +22393,20 @@ const SubformScoringInner = ({
                     _resolvePathValue({ sd, fd, sourceData: sd, formData: fd?.field?.data }, dataEntryAction.patientIdPath || "sd.formParams.patientId") ??
                     sd?.formParams?.patientId ??
                     sd?.patient?.patientId
-                  const chartPreference = _buildMappedPayload(dataEntryValues, dataEntryAction)
+                  const payload = _buildMappedPayload(dataEntryValues, dataEntryAction)
+                  const writeDefinition = MOIS_WRITE_MUTATIONS[dataEntryAction.writeKey]
+                  const runMutation = writeMutationRunners[dataEntryAction.writeKey]
+                  const variables = writeDefinition.buildVariables(patientId, payload)
                   const actionPayload = {
                     kind: "moisMutation",
-                    resource: "chartPreference",
-                    mutation: "changeChartPreference",
-                    patientId,
-                    chartPreference,
+                    resource: dataEntryAction.resource,
+                    mutation: dataEntryAction.mutation,
+                    ...variables,
                   }
                   _recordSubformActionPayload(fd?.setFormData, id, actionPayload)
-                  if (patientId && Object.keys(chartPreference).length > 0) {
+                  if (runMutation && patientId && Object.keys(payload).length > 0) {
                     try {
-                      await changeChartPreference({ patientId, chartPreference })
+                      await runMutation(variables)
                     } catch (error) {
                       _recordSubformActionPayload(fd?.setFormData, id, {
                         ...actionPayload,
