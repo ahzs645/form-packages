@@ -370,6 +370,17 @@ const PastMeasurementField = ({
     const createdBy = fieldData.createdBy ?? sd?.userProfile?.identity?.fullName
     const resolvedUnits = stringifyValue(saveUnits) || linkedObservationItem?.unitsText || latestHistoryItem?.unitsText || ""
 
+    // Persist the abnormal classification on the observation itself (legacy
+    // makeUpdateObs parity); MOIS codes the flag with MOIS-ABNORMALFLAG.
+    const numericExplicitValue = Number(explicitValue)
+    const abnormalFlag = Number.isFinite(numericExplicitValue)
+      ? (hasAbnormalHigh && numericExplicitValue > abnormalHighValue
+          ? { code: "H", display: "High", system: "MOIS-ABNORMALFLAG" }
+          : hasAbnormalLow && numericExplicitValue < abnormalLowValue
+            ? { code: "L", display: "Low", system: "MOIS-ABNORMALFLAG" }
+            : null)
+      : null
+
     setNestedPayload(setFormData, componentId, "dco", [{
       observationId: oldId,
       observationCode,
@@ -383,6 +394,7 @@ const PastMeasurementField = ({
       collectedBy: createdBy,
       collectedDateTime: getDateTimeString(new Date()),
       ...(commentFilter ? { comment: commentFilter } : {}),
+      ...(abnormalFlag ? { abnormalFlag } : {}),
     }])
   }, [
     componentId,
@@ -401,6 +413,8 @@ const PastMeasurementField = ({
     storedValue,
     valueType,
     commentFilter,
+    abnormalLow,
+    abnormalHigh,
   ])
 
   useEffect(() => {

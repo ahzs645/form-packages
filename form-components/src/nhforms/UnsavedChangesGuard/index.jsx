@@ -83,10 +83,17 @@ const collectComponentPayloads = (fd) => {
   return { DCOUpdates, webformUpdate, panels, linkedPanels, narratives: narratives.length ? narratives : undefined }
 }
 
+// __componentPayloads is runtime staging; never serialize it into formdata.
+const stripComponentPayloads = (data) => {
+  if (!data || typeof data !== "object") return data || {}
+  const { __componentPayloads, ...rest } = data
+  return rest
+}
+
 const buildDefaultSavePayload = (fd, formDataOverride) => {
   const componentPayload = collectComponentPayloads(fd)
   return {
-    formData: formDataOverride ?? fd?.field?.data,
+    formData: stripComponentPayloads(formDataOverride ?? fd?.field?.data),
     webformUpdate: componentPayload.webformUpdate,
     panels: componentPayload.panels,
     linkedPanels: componentPayload.linkedPanels,
