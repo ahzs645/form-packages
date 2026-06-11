@@ -37,8 +37,11 @@ const getCurrentActorName = (sd, fd) => (
   || sd?.webform?.provider?.name
   || ""
 )
+// setFormData must receive a produce()-wrapped recipe: the real MOIS runtime
+// hands back the raw React state setter, so a bare mutator would replace the
+// active form data with undefined.
 const setPanelPayload = (setFormData, componentId, payloadType, payload) => {
-  setFormData((draft) => {
+  setFormData(produce((draft) => {
     if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
     if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
     const container = draft.field.data.__componentPayloads ?? {}
@@ -55,7 +58,7 @@ const setPanelPayload = (setFormData, componentId, payloadType, payload) => {
     }
     container[key] = nextGroup
     draft.field.data.__componentPayloads = container
-  })
+  }))
 }
 
 const ObservationPanelEditor = ({
@@ -86,14 +89,14 @@ const ObservationPanelEditor = ({
     if (!authorshipPolicy?.enabled || authorshipPolicy?.granularity !== "row") return
     const rowIds = rowDefs.map((row) => row.id).filter(Boolean)
     if (rowIds.length === 0) return
-    setFormData((draft) => {
+    setFormData(produce((draft) => {
       registerAuthorshipRowTarget(draft, {
         componentId,
         fieldId: effectiveFieldId,
         rowIds,
         policy: authorshipPolicy,
       })
-    })
+    }))
   }, [authorshipPolicy, componentId, effectiveFieldId, rowDefs, setFormData])
 
   const computedTotals = useMemo(() => {
@@ -170,7 +173,7 @@ const ObservationPanelEditor = ({
   }, [history, maxHistory, rowDefs, sd, totalDefs])
 
   const setRowValue = (rowId, nextValue) => {
-    setFormData((draft) => {
+    setFormData(produce((draft) => {
       if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
       if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
       const current = draft.field.data[effectiveFieldId] && typeof draft.field.data[effectiveFieldId] === "object"
@@ -178,7 +181,7 @@ const ObservationPanelEditor = ({
         : {}
       const { __authorship, ...rowValues } = current
       draft.field.data[effectiveFieldId] = { ...rowValues, [rowId]: nextValue }
-    })
+    }))
   }
 
   return (

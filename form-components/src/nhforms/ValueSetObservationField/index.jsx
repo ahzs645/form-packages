@@ -46,8 +46,11 @@ const payloadsEqual = (left, right) => (
   JSON.stringify(stripVolatilePayloadFields(right ?? null))
 )
 
+// setFormData must receive a produce()-wrapped recipe: the real MOIS runtime
+// hands back the raw React state setter, so a bare mutator would replace the
+// active form data with undefined.
 const setNestedPayload = (setFormData, componentId, payloadType, payload) => {
-  setFormData((draft) => {
+  setFormData(produce((draft) => {
     if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
     if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
     const container = draft.field.data.__componentPayloads ?? {}
@@ -64,7 +67,7 @@ const setNestedPayload = (setFormData, componentId, payloadType, payload) => {
     }
     container[key] = nextGroup
     draft.field.data.__componentPayloads = container
-  })
+  }))
 }
 
 const ValueSetObservationField = ({
@@ -125,11 +128,11 @@ const ValueSetObservationField = ({
   }, [commentValue, componentId, createdBy, description, label, observationCode, reportTemplate, sd, selectedValue, setFormData, valueType])
 
   const handleChange = (nextValue) => {
-    setFormData((draft) => {
+    setFormData(produce((draft) => {
       if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
       if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
       draft.field.data[effectiveFieldId] = nextValue
-    })
+    }))
   }
 
   const checklistOptions = options.map((item) => ({ key: item.code || item.key, text: item.display || item.text }))
@@ -168,11 +171,11 @@ const ValueSetObservationField = ({
           label="Comment"
           value={commentValue ?? ""}
           onChange={(_event, nextValue) => {
-            setFormData((draft) => {
+            setFormData(produce((draft) => {
               if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
               if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
               draft.field.data[commentFieldId] = nextValue ?? ""
-            })
+            }))
           }}
         />
       ) : null}

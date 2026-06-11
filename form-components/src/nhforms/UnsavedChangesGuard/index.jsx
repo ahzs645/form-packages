@@ -196,7 +196,8 @@ const UnsavedChangesGuard = ({
       : buildDefaultSavePayload(fd, prepared?.formData)
 
     if (actionId === "sign" && typeof signSubmit === "function") {
-      const success = await signSubmit(sd, fd, payload)
+      // Real MOIS signSubmit is (note, sd, fd, options)
+      const success = await signSubmit("", sd, fd, payload)
       if (success !== false && typeof commitPreparedAuthorshipPersist === "function") {
         commitPreparedAuthorshipPersist(fd, prepared)
       }

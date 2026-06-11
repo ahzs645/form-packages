@@ -1,8 +1,11 @@
 const { useEffect, useMemo, useState } = React
 const { Stack, Label, DefaultButton, TextField } = Fluent
 
+// setFormData must receive a produce()-wrapped recipe: the real MOIS runtime
+// hands back the raw React state setter, so a bare mutator would replace the
+// active form data with undefined.
 const setNarrativePayload = (setFormData, componentId, payload) => {
-  setFormData((draft) => {
+  setFormData(produce((draft) => {
     if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
     if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
     const container = draft.field.data.__componentPayloads ?? {}
@@ -18,7 +21,7 @@ const setNarrativePayload = (setFormData, componentId, payload) => {
     }
     container.webformUpdatesByComponent = nextGroup
     draft.field.data.__componentPayloads = container
-  })
+  }))
 }
 
 const normalizeTemplateRows = (template) => Array.isArray(template) ? template.filter((item) => item && typeof item === "object") : []
@@ -69,19 +72,19 @@ const NarrativeReportBuilder = ({
     setPreview(generatedText)
     setNarrativePayload(setFormData, componentId, generatedText ? { narratives: [{ id: componentId, text: generatedText }] } : null)
     if (generateOn !== "change") return
-    setFormData((draft) => {
+    setFormData(produce((draft) => {
       if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
       if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
       draft.field.data[outputFieldId] = generatedText
-    })
+    }))
   }, [componentId, generateOn, generatedText, outputFieldId, setFormData])
 
   const applyNarrative = () => {
-    setFormData((draft) => {
+    setFormData(produce((draft) => {
       if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
       if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
       draft.field.data[outputFieldId] = generatedText
-    })
+    }))
   }
 
   return (

@@ -529,11 +529,21 @@ export const AihsFunctions = {
   },
 
   // Misc utilities
-  produce: (base: any, recipe: (draft: any) => void) => {
-    // Simplified produce - in real app would use immer
+  produce: (base: any, recipe?: (draft: any) => void) => {
+    // Simplified produce - in real app would use immer. Supports both the
+    // two-arg form produce(base, recipe) and the curried form produce(recipe)
+    // used when passing recipes to MOIS's raw setFormData setter.
+    if (typeof base === 'function' && recipe === undefined) {
+      const curriedRecipe = base;
+      return (curriedBase: any) => {
+        const draft = JSON.parse(JSON.stringify(curriedBase ?? {}));
+        const result = curriedRecipe(draft);
+        return result === undefined ? draft : result;
+      };
+    }
     const draft = JSON.parse(JSON.stringify(base));
-    recipe(draft);
-    return draft;
+    const result = recipe ? recipe(draft) : undefined;
+    return result === undefined ? draft : result;
   },
   makeIndex: (arr: any[], key: string) => {
     return (arr || []).reduce((acc: any, item: any) => {

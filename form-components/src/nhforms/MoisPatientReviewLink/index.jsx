@@ -133,12 +133,12 @@ const MoisPatientReviewLink = ({
     const nextValue = !!isChecked
 
     if (fd?.setFormData) {
-      fd.setFormData((draft) => {
+      fd.setFormData(produce((draft) => {
         const draftActive = section.activeSelector(draft)
         if (draftActive) {
           draftActive[targetFieldId] = nextValue
         }
-      })
+      }))
     }
 
     if (typeof onChange === 'function') {

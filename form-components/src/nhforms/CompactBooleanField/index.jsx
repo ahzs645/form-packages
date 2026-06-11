@@ -280,7 +280,7 @@ const CompactBooleanField = ({
     }
 
     setOptimisticValue(storedValue)
-    const commitValue = () => setFormData((draft) => {
+    const commitValue = () => setFormData(produce((draft) => {
       if (!draft.field) draft.field = {}
       if (!draft.field.data) draft.field.data = {}
       draft.field.data[fieldId] = storedValue
@@ -292,7 +292,7 @@ const CompactBooleanField = ({
         .forEach((linkedFieldId) => {
           draft.field.data[linkedFieldId] = storedValue
         })
-    })
+    }))
     if (typeof React.startTransition === 'function') {
       React.startTransition(commitValue)
     } else {
@@ -507,7 +507,7 @@ const CompactBooleanChecklist = ({
       ...(current || {}),
       [fieldId]: storedValue,
     }))
-    const commitValue = () => setFormData((draft) => {
+    const commitValue = () => setFormData(produce((draft) => {
       if (!draft.field) draft.field = {}
       if (!draft.field.data) draft.field.data = {}
       const currentData = draft.field.data[id] && typeof draft.field.data[id] === 'object'
@@ -517,7 +517,7 @@ const CompactBooleanChecklist = ({
         ...currentData,
         [fieldId]: storedValue,
       }
-    })
+    }))
     if (typeof React.startTransition === 'function') {
       React.startTransition(commitValue)
     } else {
@@ -775,11 +775,11 @@ const CompactChoiceField = ({
     if (!setFormData) return
 
     setOptimisticValue(newValue)
-    const commitValue = () => setFormData((draft) => {
+    const commitValue = () => setFormData(produce((draft) => {
       if (!draft.field) draft.field = {}
       if (!draft.field.data) draft.field.data = {}
       draft.field.data[fieldId] = newValue
-    })
+    }))
     if (typeof React.startTransition === 'function') {
       React.startTransition(commitValue)
     } else {

@@ -148,8 +148,11 @@ const payloadsEqual = (left, right) => (
   JSON.stringify(stripVolatilePayloadFields(right ?? null))
 )
 
+// setFormData must receive a produce()-wrapped recipe: the real MOIS runtime
+// hands back the raw React state setter, so a bare mutator would replace the
+// active form data with undefined.
 const setNestedPayload = (setFormData, componentId, payloadType, payload) => {
-  setFormData((draft) => {
+  setFormData(produce((draft) => {
     if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
     if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
     const container = draft.field.data.__componentPayloads ?? {}
@@ -166,7 +169,7 @@ const setNestedPayload = (setFormData, componentId, payloadType, payload) => {
     }
     container[key] = nextGroup
     draft.field.data.__componentPayloads = container
-  })
+  }))
 }
 
 const toObservationList = (source) => (
@@ -406,7 +409,7 @@ const PastMeasurementField = ({
     if (hasMeaningfulValue(storedValue)) return
     if (linkedObservationItem?.valueText) return
 
-    setFormData((draft) => {
+    setFormData(produce((draft) => {
       if (!draft.field) {
         draft.field = { data: {}, status: {}, history: [] }
       }
@@ -415,7 +418,7 @@ const PastMeasurementField = ({
       }
       if (hasMeaningfulValue(draft.field.data[effectiveFieldId])) return
       draft.field.data[effectiveFieldId] = latestHistoryItem.valueText
-    })
+    }))
   }, [autoFillFromHistory, effectiveFieldId, latestHistoryItem, linkedObservationItem, setFormData, storedValue])
 
   const handleValueChange = (event, nextValue) => {
@@ -423,7 +426,7 @@ const PastMeasurementField = ({
     if (readOnly || disabled) return
 
     const updatedValue = nextValue ?? ""
-    setFormData((draft) => {
+    setFormData(produce((draft) => {
       if (!draft.field) {
         draft.field = { data: {}, status: {}, history: [] }
       }
@@ -431,7 +434,7 @@ const PastMeasurementField = ({
         draft.field.data = {}
       }
       draft.field.data[effectiveFieldId] = updatedValue
-    })
+    }))
 
     if (typeof onChange === "function") {
       onChange(event, updatedValue)

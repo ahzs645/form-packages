@@ -831,7 +831,13 @@ export const buildScope = (): Record<string, any> => ({
     }
     return true;
   },
-  signSubmit: (sd: any, fd: any, data: any) => {
+  // Real MOIS signature is signSubmit(note, sd, fd, options); the legacy
+  // 3-arg (sd, fd, data) form is still accepted for older saved forms.
+  signSubmit: (noteOrSd: any, sdOrFd: any, fdOrData: any, maybeData?: any) => {
+    const hasNote = typeof noteOrSd === 'string';
+    const sd = hasNote ? sdOrFd : noteOrSd;
+    const fd = hasNote ? fdOrData : sdOrFd;
+    const data = hasNote ? maybeData : fdOrData;
     console.log('signSubmit called', { sd, fd, data });
     applyShimmedMoisLifecyclePreviewState(sd, 'signSubmit', data);
     if (data?.formData && typeof fd?.setFormData === 'function') {

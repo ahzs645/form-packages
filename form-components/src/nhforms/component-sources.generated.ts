@@ -1160,7 +1160,7 @@ const CompactBooleanField = ({
     }
 
     setOptimisticValue(storedValue)
-    const commitValue = () => setFormData((draft) => {
+    const commitValue = () => setFormData(produce((draft) => {
       if (!draft.field) draft.field = {}
       if (!draft.field.data) draft.field.data = {}
       draft.field.data[fieldId] = storedValue
@@ -1172,7 +1172,7 @@ const CompactBooleanField = ({
         .forEach((linkedFieldId) => {
           draft.field.data[linkedFieldId] = storedValue
         })
-    })
+    }))
     if (typeof React.startTransition === 'function') {
       React.startTransition(commitValue)
     } else {
@@ -1387,7 +1387,7 @@ const CompactBooleanChecklist = ({
       ...(current || {}),
       [fieldId]: storedValue,
     }))
-    const commitValue = () => setFormData((draft) => {
+    const commitValue = () => setFormData(produce((draft) => {
       if (!draft.field) draft.field = {}
       if (!draft.field.data) draft.field.data = {}
       const currentData = draft.field.data[id] && typeof draft.field.data[id] === 'object'
@@ -1397,7 +1397,7 @@ const CompactBooleanChecklist = ({
         ...currentData,
         [fieldId]: storedValue,
       }
-    })
+    }))
     if (typeof React.startTransition === 'function') {
       React.startTransition(commitValue)
     } else {
@@ -1655,11 +1655,11 @@ const CompactChoiceField = ({
     if (!setFormData) return
 
     setOptimisticValue(newValue)
-    const commitValue = () => setFormData((draft) => {
+    const commitValue = () => setFormData(produce((draft) => {
       if (!draft.field) draft.field = {}
       if (!draft.field.data) draft.field.data = {}
       draft.field.data[fieldId] = newValue
-    })
+    }))
     if (typeof React.startTransition === 'function') {
       React.startTransition(commitValue)
     } else {
@@ -14441,12 +14441,12 @@ const MoisPatientReviewLink = ({
     const nextValue = !!isChecked
 
     if (fd?.setFormData) {
-      fd.setFormData((draft) => {
+      fd.setFormData(produce((draft) => {
         const draftActive = section.activeSelector(draft)
         if (draftActive) {
           draftActive[targetFieldId] = nextValue
         }
-      })
+      }))
     }
 
     if (typeof onChange === 'function') {
@@ -14571,8 +14571,11 @@ const MoisPatientReviewLink = ({
   './NarrativeReportBuilder/index.jsx': `const { useEffect, useMemo, useState } = React
 const { Stack, Label, DefaultButton, TextField } = Fluent
 
+// setFormData must receive a produce()-wrapped recipe: the real MOIS runtime
+// hands back the raw React state setter, so a bare mutator would replace the
+// active form data with undefined.
 const setNarrativePayload = (setFormData, componentId, payload) => {
-  setFormData((draft) => {
+  setFormData(produce((draft) => {
     if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
     if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
     const container = draft.field.data.__componentPayloads ?? {}
@@ -14588,7 +14591,7 @@ const setNarrativePayload = (setFormData, componentId, payload) => {
     }
     container.webformUpdatesByComponent = nextGroup
     draft.field.data.__componentPayloads = container
-  })
+  }))
 }
 
 const normalizeTemplateRows = (template) => Array.isArray(template) ? template.filter((item) => item && typeof item === "object") : []
@@ -14639,19 +14642,19 @@ const NarrativeReportBuilder = ({
     setPreview(generatedText)
     setNarrativePayload(setFormData, componentId, generatedText ? { narratives: [{ id: componentId, text: generatedText }] } : null)
     if (generateOn !== "change") return
-    setFormData((draft) => {
+    setFormData(produce((draft) => {
       if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
       if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
       draft.field.data[outputFieldId] = generatedText
-    })
+    }))
   }, [componentId, generateOn, generatedText, outputFieldId, setFormData])
 
   const applyNarrative = () => {
-    setFormData((draft) => {
+    setFormData(produce((draft) => {
       if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
       if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
       draft.field.data[outputFieldId] = generatedText
-    })
+    }))
   }
 
   return (
@@ -15488,8 +15491,11 @@ const getCurrentActorName = (sd, fd) => (
   || sd?.webform?.provider?.name
   || ""
 )
+// setFormData must receive a produce()-wrapped recipe: the real MOIS runtime
+// hands back the raw React state setter, so a bare mutator would replace the
+// active form data with undefined.
 const setPanelPayload = (setFormData, componentId, payloadType, payload) => {
-  setFormData((draft) => {
+  setFormData(produce((draft) => {
     if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
     if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
     const container = draft.field.data.__componentPayloads ?? {}
@@ -15506,7 +15512,7 @@ const setPanelPayload = (setFormData, componentId, payloadType, payload) => {
     }
     container[key] = nextGroup
     draft.field.data.__componentPayloads = container
-  })
+  }))
 }
 
 const ObservationPanelEditor = ({
@@ -15537,14 +15543,14 @@ const ObservationPanelEditor = ({
     if (!authorshipPolicy?.enabled || authorshipPolicy?.granularity !== "row") return
     const rowIds = rowDefs.map((row) => row.id).filter(Boolean)
     if (rowIds.length === 0) return
-    setFormData((draft) => {
+    setFormData(produce((draft) => {
       registerAuthorshipRowTarget(draft, {
         componentId,
         fieldId: effectiveFieldId,
         rowIds,
         policy: authorshipPolicy,
       })
-    })
+    }))
   }, [authorshipPolicy, componentId, effectiveFieldId, rowDefs, setFormData])
 
   const computedTotals = useMemo(() => {
@@ -15621,7 +15627,7 @@ const ObservationPanelEditor = ({
   }, [history, maxHistory, rowDefs, sd, totalDefs])
 
   const setRowValue = (rowId, nextValue) => {
-    setFormData((draft) => {
+    setFormData(produce((draft) => {
       if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
       if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
       const current = draft.field.data[effectiveFieldId] && typeof draft.field.data[effectiveFieldId] === "object"
@@ -15629,7 +15635,7 @@ const ObservationPanelEditor = ({
         : {}
       const { __authorship, ...rowValues } = current
       draft.field.data[effectiveFieldId] = { ...rowValues, [rowId]: nextValue }
-    })
+    }))
   }
 
   return (
@@ -15912,8 +15918,11 @@ const payloadsEqual = (left, right) => (
   JSON.stringify(stripVolatilePayloadFields(right ?? null))
 )
 
+// setFormData must receive a produce()-wrapped recipe: the real MOIS runtime
+// hands back the raw React state setter, so a bare mutator would replace the
+// active form data with undefined.
 const setNestedPayload = (setFormData, componentId, payloadType, payload) => {
-  setFormData((draft) => {
+  setFormData(produce((draft) => {
     if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
     if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
     const container = draft.field.data.__componentPayloads ?? {}
@@ -15930,7 +15939,7 @@ const setNestedPayload = (setFormData, componentId, payloadType, payload) => {
     }
     container[key] = nextGroup
     draft.field.data.__componentPayloads = container
-  })
+  }))
 }
 
 const toObservationList = (source) => (
@@ -16170,7 +16179,7 @@ const PastMeasurementField = ({
     if (hasMeaningfulValue(storedValue)) return
     if (linkedObservationItem?.valueText) return
 
-    setFormData((draft) => {
+    setFormData(produce((draft) => {
       if (!draft.field) {
         draft.field = { data: {}, status: {}, history: [] }
       }
@@ -16179,7 +16188,7 @@ const PastMeasurementField = ({
       }
       if (hasMeaningfulValue(draft.field.data[effectiveFieldId])) return
       draft.field.data[effectiveFieldId] = latestHistoryItem.valueText
-    })
+    }))
   }, [autoFillFromHistory, effectiveFieldId, latestHistoryItem, linkedObservationItem, setFormData, storedValue])
 
   const handleValueChange = (event, nextValue) => {
@@ -16187,7 +16196,7 @@ const PastMeasurementField = ({
     if (readOnly || disabled) return
 
     const updatedValue = nextValue ?? ""
-    setFormData((draft) => {
+    setFormData(produce((draft) => {
       if (!draft.field) {
         draft.field = { data: {}, status: {}, history: [] }
       }
@@ -16195,7 +16204,7 @@ const PastMeasurementField = ({
         draft.field.data = {}
       }
       draft.field.data[effectiveFieldId] = updatedValue
-    })
+    }))
 
     if (typeof onChange === "function") {
       onChange(event, updatedValue)
@@ -20133,9 +20142,12 @@ const _buildMappedPayload = (values, action) => {
   return payload
 }
 
+// setFormData must receive a produce()-wrapped recipe: the real MOIS runtime
+// hands back the raw React state setter, so a bare mutator would replace the
+// active form data with undefined.
 const _recordSubformActionPayload = (setFormData, componentId, payload) => {
   if (!setFormData) return
-  setFormData((draft) => {
+  setFormData(produce((draft) => {
     if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
     if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
     const container = draft.field.data.__componentPayloads ?? {}
@@ -20154,7 +20166,7 @@ const _recordSubformActionPayload = (setFormData, componentId, payload) => {
     runtime.lastAction = entry
     runtime.actionHistory = [...(runtime.actionHistory || []), entry].slice(-10)
     draft.tempArea.__moisRuntime = runtime
-  })
+  }))
 }
 
 const _isInRange = (score, range) => {
@@ -20952,7 +20964,7 @@ const SubformScoringInner = ({
       return
     }
     if (!fd?.setFormData) return
-    fd.setFormData((draft) => {
+    fd.setFormData(produce((draft) => {
       if (!draft.field) {
         draft.field = { data: {}, status: {}, history: [] }
       }
@@ -20964,7 +20976,7 @@ const SubformScoringInner = ({
       } else {
         draft.field.data[fieldId] = nextValue
       }
-    })
+    }))
   }, [fd, onDataEntryValueChange])
 
   // Scoring-mode answer and score calculations
@@ -21177,7 +21189,7 @@ const SubformScoringInner = ({
 
     if (!fd?.setFormData) return
 
-    fd.setFormData((draft) => {
+    fd.setFormData(produce((draft) => {
       if (!draft.field) {
         draft.field = { data: {}, status: {}, history: [] }
       }
@@ -21187,7 +21199,7 @@ const SubformScoringInner = ({
       pendingDefaults.forEach(([fieldId, defaultValue]) => {
         draft.field.data[fieldId] = defaultValue
       })
-    })
+    }))
   }, [isDataEntryMode, isDialogOpen, dataEntryFields, dataEntryValues, fd, onDataEntryValueChange])
 
   const dataEntryCalculations = useMemo(() => {
@@ -22630,7 +22642,8 @@ const UnsavedChangesGuard = ({
       : buildDefaultSavePayload(fd, prepared?.formData)
 
     if (actionId === "sign" && typeof signSubmit === "function") {
-      const success = await signSubmit(sd, fd, payload)
+      // Real MOIS signSubmit is (note, sd, fd, options)
+      const success = await signSubmit("", sd, fd, payload)
       if (success !== false && typeof commitPreparedAuthorshipPersist === "function") {
         commitPreparedAuthorshipPersist(fd, prepared)
       }
@@ -22872,8 +22885,11 @@ const payloadsEqual = (left, right) => (
   JSON.stringify(stripVolatilePayloadFields(right ?? null))
 )
 
+// setFormData must receive a produce()-wrapped recipe: the real MOIS runtime
+// hands back the raw React state setter, so a bare mutator would replace the
+// active form data with undefined.
 const setNestedPayload = (setFormData, componentId, payloadType, payload) => {
-  setFormData((draft) => {
+  setFormData(produce((draft) => {
     if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
     if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
     const container = draft.field.data.__componentPayloads ?? {}
@@ -22890,7 +22906,7 @@ const setNestedPayload = (setFormData, componentId, payloadType, payload) => {
     }
     container[key] = nextGroup
     draft.field.data.__componentPayloads = container
-  })
+  }))
 }
 
 const ValueSetObservationField = ({
@@ -22951,11 +22967,11 @@ const ValueSetObservationField = ({
   }, [commentValue, componentId, createdBy, description, label, observationCode, reportTemplate, sd, selectedValue, setFormData, valueType])
 
   const handleChange = (nextValue) => {
-    setFormData((draft) => {
+    setFormData(produce((draft) => {
       if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
       if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
       draft.field.data[effectiveFieldId] = nextValue
-    })
+    }))
   }
 
   const checklistOptions = options.map((item) => ({ key: item.code || item.key, text: item.display || item.text }))
@@ -22994,11 +23010,11 @@ const ValueSetObservationField = ({
           label="Comment"
           value={commentValue ?? ""}
           onChange={(_event, nextValue) => {
-            setFormData((draft) => {
+            setFormData(produce((draft) => {
               if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
               if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
               draft.field.data[commentFieldId] = nextValue ?? ""
-            })
+            }))
           }}
         />
       ) : null}

@@ -307,9 +307,12 @@ const _buildMappedPayload = (values, action) => {
   return payload
 }
 
+// setFormData must receive a produce()-wrapped recipe: the real MOIS runtime
+// hands back the raw React state setter, so a bare mutator would replace the
+// active form data with undefined.
 const _recordSubformActionPayload = (setFormData, componentId, payload) => {
   if (!setFormData) return
-  setFormData((draft) => {
+  setFormData(produce((draft) => {
     if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
     if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
     const container = draft.field.data.__componentPayloads ?? {}
@@ -328,7 +331,7 @@ const _recordSubformActionPayload = (setFormData, componentId, payload) => {
     runtime.lastAction = entry
     runtime.actionHistory = [...(runtime.actionHistory || []), entry].slice(-10)
     draft.tempArea.__moisRuntime = runtime
-  })
+  }))
 }
 
 const _isInRange = (score, range) => {
@@ -1126,7 +1129,7 @@ const SubformScoringInner = ({
       return
     }
     if (!fd?.setFormData) return
-    fd.setFormData((draft) => {
+    fd.setFormData(produce((draft) => {
       if (!draft.field) {
         draft.field = { data: {}, status: {}, history: [] }
       }
@@ -1138,7 +1141,7 @@ const SubformScoringInner = ({
       } else {
         draft.field.data[fieldId] = nextValue
       }
-    })
+    }))
   }, [fd, onDataEntryValueChange])
 
   // Scoring-mode answer and score calculations
@@ -1351,7 +1354,7 @@ const SubformScoringInner = ({
 
     if (!fd?.setFormData) return
 
-    fd.setFormData((draft) => {
+    fd.setFormData(produce((draft) => {
       if (!draft.field) {
         draft.field = { data: {}, status: {}, history: [] }
       }
@@ -1361,7 +1364,7 @@ const SubformScoringInner = ({
       pendingDefaults.forEach(([fieldId, defaultValue]) => {
         draft.field.data[fieldId] = defaultValue
       })
-    })
+    }))
   }, [isDataEntryMode, isDialogOpen, dataEntryFields, dataEntryValues, fd, onDataEntryValueChange])
 
   const dataEntryCalculations = useMemo(() => {
