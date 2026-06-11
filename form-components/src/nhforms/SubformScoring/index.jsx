@@ -309,9 +309,13 @@ const _buildMappedPayload = (values, action) => {
 
 // MOIS write actions supported at runtime, keyed by `${resource}.${mutation}`
 // to match lib/mois-write-action-registry.ts ids — every key here must be
-// runtimeStatus "supported" there, and vice versa. Each mutation document is
-// verified against the real engine; note the operation name can differ from
-// the GraphQL field it invokes (changeTelecom -> changePatientContact).
+// runtimeStatus "supported" there, and vice versa. Every mutation document is
+// a verbatim engine-verified document: the operation name often differs from
+// the GraphQL field it invokes (changeTelecom -> changePatientContact), and
+// field argument names can differ from the variable names (changePatientName
+// passes $patientUpdate as newPatient). Do not "normalize" these.
+// idVariable declares which context id the action needs; buildVariables maps
+// the resolved id + mapped payload onto the document's variables.
 const MOIS_WRITE_MUTATIONS = {
   "chartPreference.changeChartPreference": {
     document: `mutation changeChartPreference($patientId: Int!, $chartPreference: ChartPreferenceInput!) {
@@ -319,6 +323,7 @@ const MOIS_WRITE_MUTATIONS = {
         patientId
       }
     }`,
+    idVariable: "patientId",
     buildVariables: (patientId, payload) => ({ patientId, chartPreference: payload }),
   },
   "patient.changeTelecom": {
@@ -327,8 +332,143 @@ const MOIS_WRITE_MUTATIONS = {
         patientId
       }
     }`,
+    idVariable: "patientId",
     buildVariables: (patientId, payload) => ({ patientId, newContact: payload }),
   },
+  "patient.changeOfAddress": {
+    document: `mutation changeOfAddress($patientId: Int!, $newAddress: AddressInput!) {
+      changePatientAddress(patientId: $patientId, newAddress: $newAddress) {
+        patientId
+      }
+    }`,
+    idVariable: "patientId",
+    buildVariables: (patientId, payload) => ({ patientId, newAddress: payload }),
+  },
+  "patient.changePatientName": {
+    document: `mutation changePatientName($patientId: Int!, $patientUpdate: PatientInput!) {
+      changePatient(patientId: $patientId, newPatient: $patientUpdate) {
+        patientId
+      }
+    }`,
+    idVariable: "patientId",
+    buildVariables: (patientId, payload) => ({ patientId, patientUpdate: payload }),
+  },
+  "patient.changeInsurance": {
+    document: `mutation changeInsurance($patientId: Int!, $newInsurance: InsuranceInput!) {
+      changePatientInsurance(patientId: $patientId, newInsurance: $newInsurance) {
+        patientId
+      }
+    }`,
+    idVariable: "patientId",
+    buildVariables: (patientId, payload) => ({ patientId, newInsurance: payload }),
+  },
+  "patient.changePatientRace": {
+    document: `mutation changePatientRace($patientId: Int!, $newPatient: PatientInput!) {
+      changePatient(patientId: $patientId, newPatient: $newPatient) {
+        patientId
+      }
+    }`,
+    idVariable: "patientId",
+    buildVariables: (patientId, payload) => ({ patientId, newPatient: payload }),
+  },
+  "connection.changeConnection": {
+    document: `mutation changeConnection($patientId: Int!, $connection: ConnectionInput!) {
+      changeConnection(patientId: $patientId, connection: $connection) {
+        patientId
+      }
+    }`,
+    idVariable: "patientId",
+    buildVariables: (patientId, payload) => ({ patientId, connection: payload }),
+  },
+  "task.createTask": {
+    document: `mutation createTask($encounterId: Int!, $newTask: MoisTaskInput!) {
+      createEncounterTask(encounterId: $encounterId, newTask: $newTask) {
+        encounterId
+      }
+    }`,
+    idVariable: "encounterId",
+    // The registry exposes encounterId as a mappable payload key; a mapped
+    // value wins over the resolved context id and is lifted out of the task.
+    buildVariables: (encounterId, payload) => {
+      const { encounterId: mappedEncounterId, ...newTask } = payload
+      const resolved = mappedEncounterId ?? encounterId
+      return { encounterId: typeof resolved === "string" ? Number(resolved) : resolved, newTask }
+    },
+  },
+  "correspondence.createCorrespondence": {
+    document: `mutation createCorrespondence($encounterId: Int!, $newCorrespondence: CorrespondenceInput!) {
+      createEncounterCorrespondence(encounterId: $encounterId, correspondence: $newCorrespondence) {
+        encounterId
+      }
+    }`,
+    idVariable: "encounterId",
+    buildVariables: (encounterId, payload) => {
+      const { encounterId: mappedEncounterId, ...newCorrespondence } = payload
+      const resolved = mappedEncounterId ?? encounterId
+      return { encounterId: typeof resolved === "string" ? Number(resolved) : resolved, newCorrespondence }
+    },
+  },
+  "prescription.updatePrescription": {
+    document: `mutation updatePrescription($patientId: Int!, $prescription: PrescriptionInput!) {
+      changePrescription(patientId: $patientId, prescription: $prescription) {
+        patientId
+      }
+    }`,
+    idVariable: "patientId",
+    buildVariables: (patientId, payload) => ({ patientId, prescription: payload }),
+  },
+  "prescription.updateLongTermMedication": {
+    document: `mutation updateLongTermMedication($patientId: Int!, $longTermMedication: LongTermMedicationInput!) {
+      changeLongTermMedication(patientId: $patientId, longTermMedication: $longTermMedication) {
+        patientId
+      }
+    }`,
+    idVariable: "patientId",
+    buildVariables: (patientId, payload) => ({ patientId, longTermMedication: payload }),
+  },
+  "prescription.updateFavouriteMedication": {
+    document: `mutation updateFavouriteMedication($userId: Int, $favouriteMedication: FavouriteMedicationInput!) {
+      changeFavouriteMedication(userId: $userId, favouriteMedication: $favouriteMedication) {
+        userProfileId
+      }
+    }`,
+    idVariable: "userId",
+    // $userId is nullable in the engine schema; the server falls back to the
+    // authenticated user when it is omitted.
+    requiresId: false,
+    buildVariables: (userId, payload) => ({ userId: userId ?? null, favouriteMedication: payload }),
+  },
+  "prescription.logPrescriptionSave": {
+    document: `mutation logPrescriptionSave($patientId: Int!, $prescriptionLog: PrescriptionLogInput!) {
+      changePrescriptionLog(patientId: $patientId, prescriptionLog: $prescriptionLog) {
+        patientId
+      }
+    }`,
+    idVariable: "patientId",
+    buildVariables: (patientId, payload) => ({ patientId, prescriptionLog: payload }),
+  },
+}
+
+const MOIS_WRITE_MUTATION_KEYS = Object.keys(MOIS_WRITE_MUTATIONS)
+
+// Fallback context paths per id kind, used when the action does not name an
+// explicit id path (or it resolves empty).
+const MOIS_WRITE_ID_FALLBACK_PATHS = {
+  patientId: ["sd.formParams.patientId", "patient.patientId"],
+  encounterId: ["sd.formParams.encounterId", "sd.webform.encounterId", "sd.webform.encounter.encounterId"],
+  userId: ["sd.auth.userProfileId", "sd.userProfile.userProfileId"],
+}
+
+const _resolveWriteActionId = (idVariable, action, root) => {
+  const candidatePaths = [
+    action?.patientIdPath,
+    ...(MOIS_WRITE_ID_FALLBACK_PATHS[idVariable] || []),
+  ].filter(Boolean)
+  for (const path of candidatePaths) {
+    const value = _resolvePathValue(root, path)
+    if (value !== undefined && value !== null && value !== "") return value
+  }
+  return undefined
 }
 
 // setFormData must receive a produce()-wrapped recipe: the real MOIS runtime
@@ -1119,17 +1259,13 @@ const SubformScoringInner = ({
   const [internalIsOpen, setInternalIsOpen] = useState(false)
   const [fd] = useFormSessionData()
   const sd = useSourceData()
-  // One useMutation per supported write action, called unconditionally in a
-  // fixed order (hooks rules); the executor picks the runner by action key.
-  const [changeChartPreference] = useMutation(
-    MOIS_WRITE_MUTATIONS["chartPreference.changeChartPreference"].document
-  )
-  const [changeTelecom] = useMutation(
-    MOIS_WRITE_MUTATIONS["patient.changeTelecom"].document
-  )
-  const writeMutationRunners = {
-    "chartPreference.changeChartPreference": changeChartPreference,
-    "patient.changeTelecom": changeTelecom,
+  // One useMutation per supported write action. Iterating a module-constant
+  // key array keeps the hook count and order deterministic across renders
+  // (rules-of-hooks safe); the executor picks the runner by action key.
+  const writeMutationRunners = {}
+  for (const writeKey of MOIS_WRITE_MUTATION_KEYS) {
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    writeMutationRunners[writeKey] = useMutation(MOIS_WRITE_MUTATIONS[writeKey].document)[0]
   }
   const theme = useTheme()
   const isDarkMode = theme?.isInverted || false
@@ -2554,14 +2690,15 @@ const SubformScoringInner = ({
               })
               if (shouldClose !== false) {
                 if (isDataEntryMode && dataEntryAction) {
-                  const patientId =
-                    _resolvePathValue({ sd, fd, sourceData: sd, formData: fd?.field?.data }, dataEntryAction.patientIdPath || "sd.formParams.patientId") ??
-                    sd?.formParams?.patientId ??
-                    sd?.patient?.patientId
-                  const payload = _buildMappedPayload(dataEntryValues, dataEntryAction)
                   const writeDefinition = MOIS_WRITE_MUTATIONS[dataEntryAction.writeKey]
                   const runMutation = writeMutationRunners[dataEntryAction.writeKey]
-                  const variables = writeDefinition.buildVariables(patientId, payload)
+                  const resolvedId = _resolveWriteActionId(
+                    writeDefinition.idVariable,
+                    dataEntryAction,
+                    { sd, fd, sourceData: sd, formData: fd?.field?.data, patient: sd?.patient }
+                  )
+                  const payload = _buildMappedPayload(dataEntryValues, dataEntryAction)
+                  const variables = writeDefinition.buildVariables(resolvedId, payload)
                   const actionPayload = {
                     kind: "moisMutation",
                     resource: dataEntryAction.resource,
@@ -2569,7 +2706,10 @@ const SubformScoringInner = ({
                     ...variables,
                   }
                   _recordSubformActionPayload(fd?.setFormData, id, actionPayload)
-                  if (runMutation && patientId && Object.keys(payload).length > 0) {
+                  const hasRequiredId =
+                    writeDefinition.requiresId === false ||
+                    Boolean(variables[writeDefinition.idVariable])
+                  if (runMutation && hasRequiredId && Object.keys(payload).length > 0) {
                     try {
                       await runMutation(variables)
                     } catch (error) {
