@@ -221,6 +221,15 @@ const buildDateFromComponents = (
     if (rawValue === undefined || rawValue === null) return;
     const value = String(rawValue).trim();
     if (!value) return;
+
+    const parsed = parseDateValue(value);
+    if (parsed) {
+      byRole.set("year", String(parsed.getFullYear()).padStart(4, "0"));
+      byRole.set("month", String(parsed.getMonth() + 1).padStart(2, "0"));
+      byRole.set("day", String(parsed.getDate()).padStart(2, "0"));
+      return;
+    }
+
     byRole.set(component.role, value);
   });
 

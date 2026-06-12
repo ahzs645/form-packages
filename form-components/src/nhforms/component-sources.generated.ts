@@ -16812,6 +16812,58 @@ const _resolveTableCellValue = (formData, entry) => {
   return _resolveValueByPath(row, entry.path)
 }
 
+const _splitCanonicalDateParts = (rawValue) => {
+  const text = _toText(rawValue)
+  if (!_isNonEmptyString(text)) return null
+  const parts = text.replace(/[/.]/g, "-").split("-").map((part) => part.trim()).filter(Boolean)
+  if (parts.length < 3) return null
+  const [year, month, day] = parts
+  if (!/^\\d{1,4}$/.test(year) || !/^\\d{1,2}$/.test(month) || !/^\\d{1,2}$/.test(day)) return null
+  return {
+    year: year.padStart(4, "0"),
+    month: month.padStart(2, "0"),
+    day: day.padStart(2, "0"),
+  }
+}
+
+const _buildDateComponentIndex = (dateComponentMaps) => {
+  const index = new Map()
+  if (!Array.isArray(dateComponentMaps)) return index
+
+  dateComponentMaps.forEach((dateMap) => {
+    if (!dateMap || typeof dateMap !== "object" || !_isNonEmptyString(dateMap.sourceFieldId)) return
+    const components = Array.isArray(dateMap.components) ? dateMap.components : []
+    components.forEach((component) => {
+      if (!component || !_isNonEmptyString(component.fieldId) || !_isNonEmptyString(component.role)) return
+      index.set(component.fieldId, {
+        sourceFieldId: dateMap.sourceFieldId,
+        role: component.role,
+        components,
+      })
+    })
+  })
+
+  return index
+}
+
+const _resolveDateComponentValue = (formData, dateEntry, rawValue) => {
+  if (!dateEntry) return undefined
+  const sourceValues = [
+    rawValue,
+    formData?.[dateEntry.sourceFieldId],
+    ...(Array.isArray(dateEntry.components)
+      ? dateEntry.components.map((component) => formData?.[component.fieldId])
+      : []),
+  ]
+  let parts = null
+  for (const sourceValue of sourceValues) {
+    parts = _splitCanonicalDateParts(sourceValue)
+    if (parts) break
+  }
+  if (!parts) return undefined
+  return parts[dateEntry.role]
+}
+
 const _base64ToBytes = (value) => {
   const trimmed = String(value || "").trim()
   const payload = trimmed.includes("base64,") ? trimmed.slice(trimmed.indexOf("base64,") + 7) : trimmed
@@ -17060,6 +17112,7 @@ const PdfRegenerator = ({
   fieldMap,
   tableSourceMaps,
   booleanFieldStates,
+  dateComponentMaps,
   includeOnlyFieldIds,
   flatten = false,
   disabled = false,
@@ -17108,6 +17161,7 @@ const PdfRegenerator = ({
       const formData = fd?.field?.data || {}
       const map = _normalizeFieldMap(fieldMap, formData)
       const tableIndex = _buildTableReverseIndex(tableSourceMaps)
+      const dateComponentIndex = _buildDateComponentIndex(dateComponentMaps)
       const includeSet = Array.isArray(includeOnlyFieldIds)
         ? new Set(includeOnlyFieldIds.map((id) => String(id || "").trim()).filter(Boolean))
         : null
@@ -17132,6 +17186,13 @@ const PdfRegenerator = ({
         }
 
         let rawValue = formData[sourceFieldId]
+        const dateEntry = dateComponentIndex.get(pdfFieldName) || dateComponentIndex.get(sourceFieldId)
+        const dateComponentValue = dateEntry
+          ? _resolveDateComponentValue(formData, dateEntry, rawValue)
+          : undefined
+        if (dateComponentValue !== undefined && dateComponentValue !== null && dateComponentValue !== "") {
+          rawValue = dateComponentValue
+        }
         if (rawValue === undefined || rawValue === null || rawValue === "") {
           // Table-aware fallback: resolve the cell straight from the row array
           // when no flat mirrored key exists for this PDF field.
@@ -17184,7 +17245,7 @@ const PdfRegenerator = ({
     } finally {
       setIsBusy(false)
     }
-  }, [resolvedPdfSource, fd, fieldMap, tableSourceMaps, booleanFieldStates, includeOnlyFieldIds, flatten, fileName, onComplete])
+  }, [resolvedPdfSource, fd, fieldMap, tableSourceMaps, booleanFieldStates, dateComponentMaps, includeOnlyFieldIds, flatten, fileName, onComplete])
 
   const diagnosticsText = useMemo(() => {
     if (!showDiagnostics) return null
