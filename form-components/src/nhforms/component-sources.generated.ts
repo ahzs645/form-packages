@@ -3997,7 +3997,6 @@ EditableTable = ({
   const columns = useMemo(() => _normalizeTableColumns(columnsProp), [columnsProp])
   const initialRowCount = _normalizeInitialRowCount(initialRowsProp)
   const initialSeedRows = useMemo(() => _normalizeInitialRows(initialRowsProp, columns), [initialRowsProp, columns])
-  const [visibleRows, setVisibleRows] = useState(initialRowCount)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [editingRowIndex, setEditingRowIndex] = useState(null)
   const [draftRow, setDraftRow] = useState(null)
@@ -4110,13 +4109,6 @@ EditableTable = ({
   }, [rows, isModalMode, initialSeedRows, initialRowCount, id, columns])
 
   useEffect(() => {
-    const rowCount = Array.isArray(rows) ? rows.length : 0
-    if (rowCount > visibleRows) {
-      setVisibleRows(rowCount)
-    }
-  }, [rows, visibleRows])
-
-  useEffect(() => {
     if (sourceSeedRows.length === 0) return
 
     const existingRows = Array.isArray(rows) ? rows : []
@@ -4215,26 +4207,6 @@ EditableTable = ({
     setDraftRow(nextDraft)
   }, [draftRow, columns, currentRows.length])
 
-  const removeInlineRow = () => {
-    if (isLocked || !allowDeleteRows || currentRows.length <= 1) return
-    const lastRow = currentRows[currentRows.length - 1]
-    if (!allowDeleteNonEmpty && !_isRowEmpty(lastRow, columns)) return
-    const nextRows = currentRows.slice(0, -1)
-    commitRows(nextRows, {
-      reason: "delete",
-      rowIndex: currentRows.length - 1,
-      row: lastRow,
-      previousRows: currentRows,
-    })
-    onRowDeleted?.(lastRow, buildRowContext(lastRow, {
-      rowIndex: currentRows.length - 1,
-      reason: "delete",
-      previousRows: currentRows,
-      nextRows,
-    }))
-    setVisibleRows(Math.max(1, nextRows.length))
-  }
-
   const removeRowAt = (rowIndex) => {
     if (isLocked || !allowDeleteRows) return
     const deletedRow = currentRows[rowIndex]
@@ -4252,9 +4224,6 @@ EditableTable = ({
         previousRows: currentRows,
         nextRows,
       }))
-    }
-    if (!isModalMode) {
-      setVisibleRows(Math.max(1, nextRows.length))
     }
   }
 
@@ -4354,9 +4323,6 @@ EditableTable = ({
       previousRows: currentRows,
       nextRows: sortedRows,
     }))
-    if (!isModalMode) {
-      setVisibleRows(sortedRows.length)
-    }
     closeDialog()
   }
 
@@ -4369,7 +4335,6 @@ EditableTable = ({
       row: nextRows[nextRows.length - 1],
       previousRows: currentRows,
     })
-    setVisibleRows(nextRows.length)
   }
 
   const displayRows = (() => {
@@ -4379,15 +4344,20 @@ EditableTable = ({
         .filter(({ row }) => !_isRowEmpty(row, columns))
     }
 
-    const paddedRows = []
-    const rowCount = Math.max(visibleRows, initialRowCount)
-    for (let index = 0; index < rowCount; index += 1) {
-      paddedRows.push({
-        row: currentRows[index] || _makeEmptyRow(columns, index),
+    // Until the seeding effect writes the initial rows into form data, render
+    // placeholder rows so the table doesn't flash empty on first paint.
+    if (!rows) {
+      return Array.from({ length: initialRowCount }, (_, index) => ({
+        row: _makeEmptyRow(columns, index),
         rowIndex: index,
-      })
+      }))
     }
-    return paddedRows
+
+    // Inline rows mirror the saved data exactly: initialRows seeds the data
+    // once, "+ Add Row" appends, and deleting a row visibly removes it.
+    // Padding the display back up to initialRows here made deletes look like
+    // no-ops — the row stayed on screen and only the icon moved up.
+    return currentRows.map((row, rowIndex) => ({ row, rowIndex }))
   })()
 
   const currentRowCount = isModalMode ? displayRows.length : currentRows.length
@@ -4628,8 +4598,14 @@ EditableTable = ({
             ) : (
               displayRows.map(({ row, rowIndex }, displayIndex) => {
                 const isEmpty = _isRowEmpty(row, columns)
-                const canDeleteInline = currentRows.length > 1 && allowDeleteRows && (allowDeleteNonEmpty || isEmpty)
-                const isLastInlineRow = rowIndex === currentRows.length - 1
+                // Any row can be removed (not just the last): removal shifts
+                // later rows up a slot, which the per-row source mapping
+                // handles. Rows with values still need allowDeleteNonEmpty.
+                const canDeleteInline =
+                  currentRows.length > 1 &&
+                  rowIndex < currentRows.length &&
+                  allowDeleteRows &&
+                  (allowDeleteNonEmpty || isEmpty)
 
                 return (
                   <tr key={row?._rowId || \`row_\${rowIndex}\`}>
@@ -4640,11 +4616,11 @@ EditableTable = ({
                         ) : (
                           <Stack horizontal verticalAlign="center" horizontalAlign="center" tokens={{ childrenGap: 4 }}>
                             <Text>{displayIndex + 1}</Text>
-                            {isLastInlineRow && canDeleteInline && !isLocked && (
+                            {canDeleteInline && !isLocked && (
                               <IconButton
                                 iconProps={{ iconName: "Delete" }}
                                 title="Remove row"
-                                onClick={removeInlineRow}
+                                onClick={() => removeRowAt(rowIndex)}
                                 styles={{
                                   root: {
                                     width: 24,
