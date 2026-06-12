@@ -4429,13 +4429,20 @@ EditableTable = ({
 
       case "dropdown":
         const dropdownOptions = _normalizeChoiceOptions(column.options)
+        const selectionType =
+          column.choiceStyle === "multiselect" || column.choiceStyle === "checkbox"
+            ? "multiple"
+            : "single"
         return (
           <SimpleCodeSelect
             inline={inline}
-            optionList={dropdownOptions}
+            optionList={column.codeSystem ? undefined : dropdownOptions}
+            codeSystem={column.codeSystem || undefined}
+            selectionType={selectionType}
             value={value ? { code: value, display: value } : undefined}
             onChange={(coding) => onValueChange(rowIndex, column.id, coding?.code || "")}
             placeholder={column.placeholder || "Select..."}
+            showOther={column.showOtherOption === true}
           />
         )
 
