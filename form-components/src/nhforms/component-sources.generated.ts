@@ -16013,6 +16013,8 @@ const PastMeasurementField = ({
   openGraphInNewTab = true,
   abnormalLow,
   abnormalHigh,
+  criticalLow,
+  criticalHigh,
   abnormalMessage = "Abnormal",
   normalMessage = "",
   readOnly = false,
@@ -16124,14 +16126,31 @@ const PastMeasurementField = ({
     const resolvedUnits = stringifyValue(saveUnits) || linkedObservationItem?.unitsText || latestHistoryItem?.unitsText || ""
 
     // Persist the abnormal classification on the observation itself (legacy
-    // makeUpdateObs parity); MOIS codes the flag with MOIS-ABNORMALFLAG.
+    // makeUpdateObs/getFlagLevel parity); MOIS codes the flag with
+    // MOIS-ABNORMALFLAG. Four bands: criticalLow/High -> LL/HH outrank
+    // abnormalLow/High -> L/H. Display resolves from the host's option list
+    // when available, matching the HFC source.
     const numericExplicitValue = Number(explicitValue)
-    const abnormalFlag = Number.isFinite(numericExplicitValue)
-      ? (hasAbnormalHigh && numericExplicitValue > abnormalHighValue
-          ? { code: "H", display: "High", system: "MOIS-ABNORMALFLAG" }
+    const criticalLowValue = Number(criticalLow)
+    const criticalHighValue = Number(criticalHigh)
+    const flagCode = !Number.isFinite(numericExplicitValue)
+      ? null
+      : Number.isFinite(criticalLowValue) && numericExplicitValue < criticalLowValue
+        ? "LL"
+        : Number.isFinite(criticalHighValue) && numericExplicitValue > criticalHighValue
+          ? "HH"
           : hasAbnormalLow && numericExplicitValue < abnormalLowValue
-            ? { code: "L", display: "Low", system: "MOIS-ABNORMALFLAG" }
-            : null)
+            ? "L"
+            : hasAbnormalHigh && numericExplicitValue > abnormalHighValue
+              ? "H"
+              : null
+    const flagDisplays = { LL: "Critical low", L: "Low", H: "High", HH: "Critical high" }
+    const abnormalFlag = flagCode
+      ? {
+          code: flagCode,
+          display: sd?.optionLists?.["MOIS-ABNORMALFLAG"]?.[flagCode] ?? flagDisplays[flagCode],
+          system: "MOIS-ABNORMALFLAG",
+        }
       : null
 
     setNestedPayload(setFormData, componentId, "dco", [{
@@ -16168,6 +16187,8 @@ const PastMeasurementField = ({
     commentFilter,
     abnormalLow,
     abnormalHigh,
+    criticalLow,
+    criticalHigh,
   ])
 
   useEffect(() => {
