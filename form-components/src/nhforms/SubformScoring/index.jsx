@@ -556,6 +556,23 @@ const _isMeaningfulValue = (value) => {
   return true
 }
 
+const _evaluateDataEntryVisibility = (field, values = {}) => {
+  const rule = field?.visibility
+  if (!rule || typeof rule !== "object" || rule.type === "always") return true
+  const controllerId = rule.controllerId
+  if (!controllerId) return true
+  const value = values[controllerId]
+  if (rule.type === "filled") return _isMeaningfulValue(value)
+  if (rule.type === "equals") return String(value ?? "") === String(rule.value ?? "")
+  if (rule.type === "gt" || rule.type === "lt") {
+    const left = Number(value)
+    const right = Number(rule.value ?? 0)
+    if (!Number.isFinite(left) || !Number.isFinite(right)) return false
+    return rule.type === "gt" ? left > right : left < right
+  }
+  return true
+}
+
 const _toPathSegments = (path) =>
   String(path || "")
     .split(".")
@@ -2596,6 +2613,7 @@ const SubformScoringInner = ({
                   }
 
                   const field = entry.field
+                  if (!_evaluateDataEntryVisibility(field, dataEntryValues)) return null
                   const isHeading = _isHeadingField(field)
                   const basis = _resolveFieldWidthBasis(field)
                   let showLegendForScale = undefined
