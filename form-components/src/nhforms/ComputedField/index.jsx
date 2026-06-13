@@ -66,6 +66,7 @@ const _hasValue = (value) => {
 }
 
 const _iif = (condition, whenTrue, whenFalse) => (condition ? whenTrue : whenFalse)
+const _countTrue = (...values) => values.flat().filter((value) => value === true || value === "true" || value === "Y" || value === "Yes" || value === 1).length
 
 // A field reference is `[field-id]`, and ids are slugified to id-safe
 // characters. Restricting the class (rather than `[^\]]+`) keeps JSON array
@@ -92,7 +93,7 @@ const _replaceBareReferencesOutsideQuotes = (expression, refs, valuesByFieldId) 
   const replaceInSegment = (segment) => {
     let nextSegment = segment
     for (const ref of refs) {
-      if (["iif", "score", "contains", "hasValue", "null", "true", "false"].includes(ref)) continue
+      if (["iif", "score", "contains", "hasValue", "countTrue", "null", "true", "false"].includes(ref)) continue
       const numeric = _toNumericValue(valuesByFieldId?.[ref])
       if (!Number.isFinite(numeric)) return null
       nextSegment = nextSegment.replace(new RegExp(`\\b${_escapeRegExp(ref)}\\b`, "g"), String(numeric))
@@ -152,11 +153,12 @@ const _evaluateComputedExpression = (expression, valuesByFieldId, currentFieldId
   if (prepared === null) return null
 
   try {
-    const result = Function("iif", "score", "contains", "hasValue", `"use strict"; return (${prepared});`)(
+    const result = Function("iif", "score", "contains", "hasValue", "countTrue", `"use strict"; return (${prepared});`)(
       _iif,
       _score,
       _contains,
-      _hasValue
+      _hasValue,
+      _countTrue
     )
     if (typeof result === "number") return Number.isFinite(result) ? result : null
     if (typeof result === "string" || typeof result === "boolean") return result

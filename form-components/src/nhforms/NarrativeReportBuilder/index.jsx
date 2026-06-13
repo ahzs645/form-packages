@@ -35,7 +35,42 @@ const getFieldValue = (root, fieldId) => {
   return ""
 }
 
+const getPathValue = (root, path) => {
+  if (!path) return ""
+  return String(path).split(".").filter(Boolean).reduce((current, key) => {
+    if (current == null) return undefined
+    if (Array.isArray(current) && /^\d+$/.test(key)) return current[Number(key)]
+    return current[key]
+  }, root)
+}
+
+const normalizeTextValue = (value) => {
+  if (value === undefined || value === null) return ""
+  if (Array.isArray(value)) return value.map(normalizeTextValue).filter(Boolean).join(", ")
+  if (typeof value === "object") return String(value.display ?? value.text ?? value.value ?? value.code ?? JSON.stringify(value))
+  return String(value)
+}
+
+const renderTextTemplate = (template, data, context = {}) =>
+  String(template || "")
+    .replace(/\{\{#each\s+([^}]+)\}\}([\s\S]*?)\{\{\/each\}\}/g, (_, path, body) => {
+      const rows = getPathValue(data, String(path).trim())
+      if (!Array.isArray(rows)) return ""
+      return rows
+        .map((item, index) => renderTextTemplate(body, data, { ...context, this: item, index: index + 1 }))
+        .join("")
+    })
+    .replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_, rawKey) => {
+      const key = String(rawKey).trim()
+      if (key === "index") return String(context.index ?? "")
+      if (key === "this") return normalizeTextValue(context.this)
+      if (key.startsWith("this.")) return normalizeTextValue(getPathValue(context.this, key.slice(5)))
+      return normalizeTextValue(getPathValue(data, key))
+    })
+    .replace(/\{([^{}]+)\}/g, (_, rawKey) => normalizeTextValue(getPathValue(data, String(rawKey).trim())))
+
 const buildNarrative = (template, data) => {
+  if (typeof template === "string") return renderTextTemplate(template, data)
   const sections = []
   template.forEach((entry) => {
     if (entry.kind === "labelValue") {

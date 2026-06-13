@@ -1822,6 +1822,7 @@ const _hasValue = (value) => {
 }
 
 const _iif = (condition, whenTrue, whenFalse) => (condition ? whenTrue : whenFalse)
+const _countTrue = (...values) => values.flat().filter((value) => value === true || value === "true" || value === "Y" || value === "Yes" || value === 1).length
 
 // A field reference is \`[field-id]\`, and ids are slugified to id-safe
 // characters. Restricting the class (rather than \`[^\\]]+\`) keeps JSON array
@@ -1848,7 +1849,7 @@ const _replaceBareReferencesOutsideQuotes = (expression, refs, valuesByFieldId) 
   const replaceInSegment = (segment) => {
     let nextSegment = segment
     for (const ref of refs) {
-      if (["iif", "score", "contains", "hasValue", "null", "true", "false"].includes(ref)) continue
+      if (["iif", "score", "contains", "hasValue", "countTrue", "null", "true", "false"].includes(ref)) continue
       const numeric = _toNumericValue(valuesByFieldId?.[ref])
       if (!Number.isFinite(numeric)) return null
       nextSegment = nextSegment.replace(new RegExp(\`\\\\b\${_escapeRegExp(ref)}\\\\b\`, "g"), String(numeric))
@@ -1908,11 +1909,12 @@ const _evaluateComputedExpression = (expression, valuesByFieldId, currentFieldId
   if (prepared === null) return null
 
   try {
-    const result = Function("iif", "score", "contains", "hasValue", \`"use strict"; return (\${prepared});\`)(
+    const result = Function("iif", "score", "contains", "hasValue", "countTrue", \`"use strict"; return (\${prepared});\`)(
       _iif,
       _score,
       _contains,
-      _hasValue
+      _hasValue,
+      _countTrue
     )
     if (typeof result === "number") return Number.isFinite(result) ? result : null
     if (typeof result === "string" || typeof result === "boolean") return result
@@ -14588,7 +14590,42 @@ const getFieldValue = (root, fieldId) => {
   return ""
 }
 
+const getPathValue = (root, path) => {
+  if (!path) return ""
+  return String(path).split(".").filter(Boolean).reduce((current, key) => {
+    if (current == null) return undefined
+    if (Array.isArray(current) && /^\\d+$/.test(key)) return current[Number(key)]
+    return current[key]
+  }, root)
+}
+
+const normalizeTextValue = (value) => {
+  if (value === undefined || value === null) return ""
+  if (Array.isArray(value)) return value.map(normalizeTextValue).filter(Boolean).join(", ")
+  if (typeof value === "object") return String(value.display ?? value.text ?? value.value ?? value.code ?? JSON.stringify(value))
+  return String(value)
+}
+
+const renderTextTemplate = (template, data, context = {}) =>
+  String(template || "")
+    .replace(/\\{\\{#each\\s+([^}]+)\\}\\}([\\s\\S]*?)\\{\\{\\/each\\}\\}/g, (_, path, body) => {
+      const rows = getPathValue(data, String(path).trim())
+      if (!Array.isArray(rows)) return ""
+      return rows
+        .map((item, index) => renderTextTemplate(body, data, { ...context, this: item, index: index + 1 }))
+        .join("")
+    })
+    .replace(/\\{\\{\\s*([^}]+?)\\s*\\}\\}/g, (_, rawKey) => {
+      const key = String(rawKey).trim()
+      if (key === "index") return String(context.index ?? "")
+      if (key === "this") return normalizeTextValue(context.this)
+      if (key.startsWith("this.")) return normalizeTextValue(getPathValue(context.this, key.slice(5)))
+      return normalizeTextValue(getPathValue(data, key))
+    })
+    .replace(/\\{([^{}]+)\\}/g, (_, rawKey) => normalizeTextValue(getPathValue(data, String(rawKey).trim())))
+
 const buildNarrative = (template, data) => {
+  if (typeof template === "string") return renderTextTemplate(template, data)
   const sections = []
   template.forEach((entry) => {
     if (entry.kind === "labelValue") {
