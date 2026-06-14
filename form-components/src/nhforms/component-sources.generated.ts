@@ -3589,6 +3589,10 @@ const _stringifyValue = (value) => {
 }
 
 const _formatCellValue = (row, column) => {
+  if (column?.computedValue?.mode === "template") {
+    const computed = _computeTemplateColumnValue(row, column)
+    if (_isMeaningfulValue(computed)) return computed
+  }
   const value = _getValueAtPath(row, column.dataPath || column.id)
   if (column.type === "checkbox") {
     if (!_isMeaningfulValue(value)) return ""
@@ -3596,6 +3600,31 @@ const _formatCellValue = (row, column) => {
     return column.booleanLabels?.off || "No"
   }
   return _stringifyValue(value)
+}
+
+const _computeTemplateColumnValue = (row, column) => {
+  const config = column?.computedValue
+  if (!config || config.mode !== "template" || typeof config.template !== "string") return ""
+  const omitEmptyLines = config.emptyBehavior !== "blank"
+  const rendered = config.template.replace(/\\{([^{}]+)\\}/g, (_match, path) => {
+    return _stringifyValue(_getValueAtPath(row, String(path || "").trim()))
+  })
+  return omitEmptyLines
+    ? rendered
+      .split(/\\r?\\n/)
+      .map((line) => line.trimEnd())
+      .filter((line) => line.trim().length > 0)
+      .join("\\n")
+    : rendered
+}
+
+const _applyComputedColumns = (row, columns = []) => {
+  const nextRow = _cloneRow(row, columns)
+  columns.forEach((column) => {
+    if (column?.computedValue?.mode !== "template") return
+    _setValueAtPath(nextRow, column.dataPath || column.id, _computeTemplateColumnValue(nextRow, column))
+  })
+  return nextRow
 }
 
 const _normalizeMirroredCellValue = (value, column) => {
@@ -3903,11 +3932,18 @@ const _applyRowProcessingConfig = (row, processingConfig, columns = []) => {
 const _buildSubformFieldFromColumn = (column) => {
   const fieldId = column.dataPath || column.id
   const label = column.title || column.label || column.id
+  const visibility = column.visibility && typeof column.visibility === "object"
+    ? column.visibility
+    : null
+  const withCommon = (field) => ({
+    ...field,
+    visibility: visibility || undefined,
+  })
 
   switch (column.type) {
     case "number":
       const numberConfig = _normalizeNumberConfig(column)
-      return {
+      return withCommon({
         id: fieldId,
         label,
         type: "number",
@@ -3919,34 +3955,34 @@ const _buildSubformFieldFromColumn = (column) => {
         buttonControls: numberConfig.buttonControls,
         storeAsNumber: numberConfig.storeAsNumber,
         required: column.required === true,
-      }
+      })
     case "date":
-      return {
+      return withCommon({
         id: fieldId,
         label,
         type: "date",
         placeholder: column.placeholder,
         required: column.required === true,
-      }
+      })
     case "time":
-      return {
+      return withCommon({
         id: fieldId,
         label,
         type: "time",
         placeholder: column.placeholder,
         required: column.required === true,
-      }
+      })
     case "dropdown":
-      return {
+      return withCommon({
         id: fieldId,
         label,
         type: "choice",
         choiceStyle: "dropdown",
         options: _normalizeChoiceOptions(column.options),
         required: column.required === true,
-      }
+      })
     case "checkbox":
-      return {
+      return withCommon({
         id: fieldId,
         label,
         type: "booleanYesNo",
@@ -3955,18 +3991,35 @@ const _buildSubformFieldFromColumn = (column) => {
           column.booleanLabels?.off || "No",
         ],
         required: column.required === true,
-      }
+      })
     case "text":
     default:
-      return {
+      return withCommon({
         id: fieldId,
         label,
         type: "textarea",
         rows: column.rows || 3,
         placeholder: column.placeholder,
         required: column.required === true,
-      }
+      })
   }
+}
+
+const _evaluateColumnVisibility = (column, row = {}) => {
+  const rule = column?.visibility
+  if (!rule || typeof rule !== "object" || rule.type === "always") return true
+  const controllerId = rule.controllerId
+  if (!controllerId) return true
+  const value = _getValueAtPath(row, controllerId)
+  if (rule.type === "filled") return _isMeaningfulValue(value)
+  if (rule.type === "equals") return String(value ?? "") === String(rule.value ?? "")
+  if (rule.type === "gt" || rule.type === "lt") {
+    const left = Number(value)
+    const right = Number(rule.value ?? 0)
+    if (!Number.isFinite(left) || !Number.isFinite(right)) return false
+    return rule.type === "gt" ? left > right : left < right
+  }
+  return true
 }
 
 EditableTable = ({
@@ -4264,7 +4317,7 @@ EditableTable = ({
   const saveDraftRow = () => {
     if (!draftRow) return
 
-    let resolvedRow = _cloneRow(draftRow, columns)
+    let resolvedRow = _applyComputedColumns(_cloneRow(draftRow, columns), columns)
     if (processingConfig) {
       resolvedRow = _applyRowProcessingConfig(resolvedRow, processingConfig, columns)
     }
@@ -4740,7 +4793,7 @@ EditableTable = ({
           onDismiss={closeDialog}
         >
           <Stack tokens={{ childrenGap: 12 }}>
-            {modalColumns.map((column) => (
+            {modalColumns.filter((column) => _evaluateColumnVisibility(column, draftRow)).map((column) => (
               <div key={column.id}>
                 <Label>{column.title || column.id}</Label>
                 {renderEditorInput(
@@ -4787,6 +4840,7 @@ const createTableColumns = (columnDefs) => {
     dataPath: def.dataPath,
     showInTable: def.showInTable,
     showInModal: def.showInModal,
+    visibility: def.visibility,
     width: def.width,
     placeholder: def.placeholder,
     options: def.options,
@@ -20514,6 +20568,23 @@ const _isMeaningfulValue = (value) => {
   return true
 }
 
+const _evaluateDataEntryVisibility = (field, values = {}) => {
+  const rule = field?.visibility
+  if (!rule || typeof rule !== "object" || rule.type === "always") return true
+  const controllerId = rule.controllerId
+  if (!controllerId) return true
+  const value = values[controllerId]
+  if (rule.type === "filled") return _isMeaningfulValue(value)
+  if (rule.type === "equals") return String(value ?? "") === String(rule.value ?? "")
+  if (rule.type === "gt" || rule.type === "lt") {
+    const left = Number(value)
+    const right = Number(rule.value ?? 0)
+    if (!Number.isFinite(left) || !Number.isFinite(right)) return false
+    return rule.type === "gt" ? left > right : left < right
+  }
+  return true
+}
+
 const _toPathSegments = (path) =>
   String(path || "")
     .split(".")
@@ -22554,6 +22625,7 @@ const SubformScoringInner = ({
                   }
 
                   const field = entry.field
+                  if (!_evaluateDataEntryVisibility(field, dataEntryValues)) return null
                   const isHeading = _isHeadingField(field)
                   const basis = _resolveFieldWidthBasis(field)
                   let showLegendForScale = undefined

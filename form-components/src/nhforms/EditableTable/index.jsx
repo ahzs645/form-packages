@@ -165,6 +165,10 @@ const _stringifyValue = (value) => {
 }
 
 const _formatCellValue = (row, column) => {
+  if (column?.computedValue?.mode === "template") {
+    const computed = _computeTemplateColumnValue(row, column)
+    if (_isMeaningfulValue(computed)) return computed
+  }
   const value = _getValueAtPath(row, column.dataPath || column.id)
   if (column.type === "checkbox") {
     if (!_isMeaningfulValue(value)) return ""
@@ -172,6 +176,31 @@ const _formatCellValue = (row, column) => {
     return column.booleanLabels?.off || "No"
   }
   return _stringifyValue(value)
+}
+
+const _computeTemplateColumnValue = (row, column) => {
+  const config = column?.computedValue
+  if (!config || config.mode !== "template" || typeof config.template !== "string") return ""
+  const omitEmptyLines = config.emptyBehavior !== "blank"
+  const rendered = config.template.replace(/\{([^{}]+)\}/g, (_match, path) => {
+    return _stringifyValue(_getValueAtPath(row, String(path || "").trim()))
+  })
+  return omitEmptyLines
+    ? rendered
+      .split(/\r?\n/)
+      .map((line) => line.trimEnd())
+      .filter((line) => line.trim().length > 0)
+      .join("\n")
+    : rendered
+}
+
+const _applyComputedColumns = (row, columns = []) => {
+  const nextRow = _cloneRow(row, columns)
+  columns.forEach((column) => {
+    if (column?.computedValue?.mode !== "template") return
+    _setValueAtPath(nextRow, column.dataPath || column.id, _computeTemplateColumnValue(nextRow, column))
+  })
+  return nextRow
 }
 
 const _normalizeMirroredCellValue = (value, column) => {
@@ -864,7 +893,7 @@ EditableTable = ({
   const saveDraftRow = () => {
     if (!draftRow) return
 
-    let resolvedRow = _cloneRow(draftRow, columns)
+    let resolvedRow = _applyComputedColumns(_cloneRow(draftRow, columns), columns)
     if (processingConfig) {
       resolvedRow = _applyRowProcessingConfig(resolvedRow, processingConfig, columns)
     }
