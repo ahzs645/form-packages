@@ -23,6 +23,11 @@ describe("sanitizeMoisMarkdown", () => {
     expect(sanitizeMoisMarkdown(md)).toBe(md);
   });
 
+  it("preserves constrained raw HTML used by rich text formatting", () => {
+    const md = '<span style="color:#d13438">important</span>';
+    expect(sanitizeMoisMarkdown(md)).toBe(md);
+  });
+
   it("leaves unpaired tildes untouched", () => {
     expect(sanitizeMoisMarkdown("a ~~ b")).toBe("a ~~ b");
     expect(sanitizeMoisMarkdown("approx ~5 items")).toBe("approx ~5 items");

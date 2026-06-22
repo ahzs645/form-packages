@@ -1902,6 +1902,7 @@ const SubformScoringInner = ({
         const { checkedOption, uncheckedOption } = _resolveSelectableBinaryOptions(field, ["Yes", "No"])
         const checked = checkedOption ? _isSelectableOptionSelected(dataEntryValues[field.id], checkedOption) : false
         const controlLabel = checkedOption?.text || "Yes"
+        const useToggleSwitch = field.useToggleSwitch === true || field.use_toggle_switch === true
         return (
           <div key={`field-${field.id}`}>
             <div
@@ -1926,6 +1927,7 @@ const SubformScoringInner = ({
               >
                 <input
                   type="checkbox"
+                  role={useToggleSwitch ? "switch" : undefined}
                   checked={Boolean(checked)}
                   onChange={(event) => {
                     if (event?.target?.checked) {
@@ -1938,6 +1940,17 @@ const SubformScoringInner = ({
                     }
                     setDataEntryValue(field.id, uncheckedOption ? _serializeSelectableValue(field, uncheckedOption) : null)
                   }}
+                  style={useToggleSwitch ? {
+                    appearance: "none",
+                    WebkitAppearance: "none",
+                    width: "34px",
+                    height: "18px",
+                    borderRadius: "999px",
+                    border: `1px solid ${checked ? "#2563eb" : "#94a3b8"}`,
+                    background: checked ? "#2563eb" : "#e2e8f0",
+                    boxShadow: `inset ${checked ? "16px" : "2px"} 0 0 2px #ffffff`,
+                    transition: "background 120ms ease, box-shadow 120ms ease, border-color 120ms ease",
+                  } : undefined}
                 />
                 <span>{controlLabel}</span>
               </label>

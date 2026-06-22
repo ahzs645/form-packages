@@ -25,11 +25,16 @@ if (typeof EditableTable === "undefined") {
   window.EditableTable = null
 }
 
+const _getDefaultCellValue = (column = {}) => {
+  if (column.type === "checkbox") return column.prefill === true ? true : false
+  return ""
+}
+
 const _makeEmptyRow = (columns = [], rowIndex = 0) => {
   const row = { _rowId: `row_${rowIndex}_${Date.now()}` }
   columns.forEach((col) => {
     const path = col.dataPath || col.id
-    _setValueAtPath(row, path, col.type === "checkbox" ? false : "")
+    _setValueAtPath(row, path, _getDefaultCellValue(col))
   })
   return row
 }
@@ -82,7 +87,7 @@ const _cloneRow = (row = {}, columns = []) => {
     const path = col.dataPath || col.id
     const currentValue = _getValueAtPath(copy, path)
     if (typeof currentValue === "undefined") {
-      _setValueAtPath(copy, path, col.type === "checkbox" ? false : "")
+      _setValueAtPath(copy, path, _getDefaultCellValue(col))
     }
   })
   return copy
@@ -172,8 +177,8 @@ const _formatCellValue = (row, column) => {
   const value = _getValueAtPath(row, column.dataPath || column.id)
   if (column.type === "checkbox") {
     if (!_isMeaningfulValue(value)) return ""
-    if (value) return column.booleanLabels?.on || "Yes"
-    return column.booleanLabels?.off || "No"
+    if (value) return column.booleanLabels?.on || "Checked"
+    return column.booleanLabels?.off || "Unchecked"
   }
   return _stringifyValue(value)
 }
@@ -562,9 +567,12 @@ const _buildSubformFieldFromColumn = (column) => {
         id: fieldId,
         label,
         type: "booleanYesNo",
+        renderStyle: "checkbox",
+        useToggleSwitch: column.useToggleSwitch === true,
+        defaultValue: column.prefill === true ? column.booleanLabels?.on || "Checked" : undefined,
         options: [
-          column.booleanLabels?.on || "Yes",
-          column.booleanLabels?.off || "No",
+          column.booleanLabels?.on || "Checked",
+          column.booleanLabels?.off || "Unchecked",
         ],
         required: column.required === true,
       })
@@ -1424,5 +1432,7 @@ const createTableColumns = (columnDefs) => {
     max: def.max,
     step: def.step,
     booleanLabels: def.booleanLabels,
+    prefill: def.prefill,
+    useToggleSwitch: def.useToggleSwitch,
   }))
 }

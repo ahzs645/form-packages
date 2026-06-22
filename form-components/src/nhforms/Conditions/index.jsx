@@ -18,7 +18,7 @@ Conditions = ({
 
   return (
     <ListSelection
-      {...{id, selectionType, columns: conditionsColumns, selectText}}
+      {...{id, selectionType, columns: conditionsColumns, selectText, filterPred}}
       {...props}
     />
   )

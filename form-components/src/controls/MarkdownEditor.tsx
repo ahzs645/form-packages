@@ -82,6 +82,15 @@ const STYLE_ELEMENT_ID = "mois-md-editor-styles";
 const EMPTY_MOIS_LINK_PATTERN = /\[\]\((mois:[^)]+)\)/gi;
 const PLACEHOLDER_MOIS_LINK_PATTERN = /\[\u200B\]\((mois:[^)]+)\)/gi;
 const DISPLAY_MOIS_LINK_PATTERN = /\[MOIS: [^\]]+\]\((mois:[^)]+)\)/gi;
+const COLOR_HEX_PATTERN = /^#[0-9a-f]{6}$/i;
+const TEXT_COLOR_OPTIONS = [
+  { label: "Red", value: "#d13438" },
+  { label: "Amber", value: "#986f0b" },
+  { label: "Green", value: "#107c10" },
+  { label: "Blue", value: "#0078d4" },
+  { label: "Purple", value: "#5c2d91" },
+  { label: "Black", value: "#323130" },
+] as const;
 
 const EDITOR_STYLES = `
 .mois-md-editor{border:1px solid rgb(226 232 240);border-radius:0.75rem;background:#fff;overflow:visible}
@@ -100,6 +109,17 @@ const EDITOR_STYLES = `
 .dark .mois-md-editor__tool:hover:not(:disabled){background:rgb(30 41 59);color:rgb(248 250 252)}
 .dark .mois-md-editor__tool[aria-pressed="true"]{background:rgb(30 58 138);color:rgb(219 234 254)}
 .mois-md-editor__tool.is-wide{min-width:auto;padding:0 0.45rem;font-size:11px;text-transform:uppercase;letter-spacing:0.03em}
+.mois-md-editor__color-group{display:inline-flex;align-items:center;gap:0.125rem}
+.mois-md-editor__color-swatch{display:inline-flex;align-items:center;justify-content:center;width:1.85rem;height:1.85rem;border:0;border-radius:0.375rem;background:transparent;cursor:pointer}
+.mois-md-editor__color-swatch:hover:not(:disabled){background:rgb(226 232 240)}
+.dark .mois-md-editor__color-swatch:hover:not(:disabled){background:rgb(30 41 59)}
+.mois-md-editor__color-swatch:disabled{opacity:0.35;cursor:not-allowed}
+.mois-md-editor__color-dot{width:0.95rem;height:0.95rem;border-radius:999px;border:1px solid rgba(15,23,42,0.22);box-shadow:inset 0 0 0 1px rgba(255,255,255,0.5)}
+.dark .mois-md-editor__color-dot{border-color:rgba(226,232,240,0.35)}
+.mois-md-editor__color-input{width:1.85rem;height:1.85rem;border:0;border-radius:0.375rem;background:transparent;padding:0.35rem;cursor:pointer}
+.mois-md-editor__color-input:hover:not(:disabled){background:rgb(226 232 240)}
+.dark .mois-md-editor__color-input:hover:not(:disabled){background:rgb(30 41 59)}
+.mois-md-editor__color-input:disabled{opacity:0.35;cursor:not-allowed}
 .mois-md-editor__mois-icon{width:16px;height:16px;display:block}
 .mois-md-editor__module-menu{position:absolute;right:0;top:calc(100% + 0.35rem);z-index:60;width:15rem;max-height:18rem;overflow:auto;border:1px solid rgb(226 232 240);border-radius:0.5rem;background:white;padding:0.25rem;box-shadow:0 16px 36px rgba(15,23,42,0.18)}
 .mois-md-editor__module-menu.is-context{position:fixed;right:auto;top:auto;z-index:80}
@@ -167,6 +187,18 @@ function fromEditorMarkdown(markdown: string): string {
 function getMoisEditorLabel(module: string): string {
   const normalized = module.trim().toUpperCase();
   return `MOIS: ${MOIS_MODULE_LABELS[normalized] ?? normalized.replace(/_/g, " ")}`;
+}
+
+function escapeHtmlText(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function normalizeTextColor(value: string): string | null {
+  const trimmed = value.trim();
+  return COLOR_HEX_PATTERN.test(trimmed) ? trimmed.toLowerCase() : null;
 }
 
 interface InnerProps {
@@ -243,6 +275,23 @@ function updateMoisLinkAtRange(ctx: Ctx, module: string, from: number, to: numbe
   const label = getMoisEditorLabel(module);
   const tr = view.state.tr.insertText(label, from, to);
   tr.addMark(from, from + label.length, linkType.create({ href: `mois:${module}` }));
+  view.dispatch(tr.scrollIntoView());
+  view.focus();
+  return true;
+}
+
+function applyTextColorAtSelection(ctx: Ctx, color: string): boolean {
+  const safeColor = normalizeTextColor(color);
+  if (!safeColor) return false;
+
+  const view = ctx.get(editorViewCtx);
+  const htmlType = view.state.schema.nodes.html;
+  if (!htmlType) return false;
+
+  const { from, to, empty } = view.state.selection;
+  const selectedText = empty ? "colored text" : view.state.doc.textBetween(from, to, "\n");
+  const html = `<span style="color:${safeColor}">${escapeHtmlText(selectedText || "colored text")}</span>`;
+  const tr = view.state.tr.replaceWith(from, to, htmlType.create({ value: html }));
   view.dispatch(tr.scrollIntoView());
   view.focus();
   return true;
@@ -494,6 +543,15 @@ export function MarkdownEditor({
     const alt = window.prompt("Image alt text") ?? "";
     runCommand(insertImageCommand, { src, alt });
   }, [runCommand]);
+  const applyTextColor = useCallback(
+    (color: string) => {
+      commandRunner?.((ctx) => {
+        applyTextColorAtSelection(ctx, color);
+      });
+      onEdit?.();
+    },
+    [commandRunner, onEdit]
+  );
   const toolbarDisabled = disabled || !commandRunner;
   const handleCommandReady = useCallback((runner: CommandRunner | null) => {
     setCommandRunner(() => runner);
@@ -554,6 +612,35 @@ export function MarkdownEditor({
           <ToolbarButton label="Paragraph" className="is-wide" disabled={toolbarDisabled} renderTooltip={renderTooltip} onClick={() => runCommand(turnIntoTextCommand)}>P</ToolbarButton>
           <ToolbarButton label="Heading 2" className="is-wide" disabled={toolbarDisabled} renderTooltip={renderTooltip} onClick={() => runCommand(wrapInHeadingCommand, 2)}>H2</ToolbarButton>
           <ToolbarButton label="Inline code" disabled={toolbarDisabled} renderTooltip={renderTooltip} onClick={() => runCommand(toggleInlineCodeCommand)}>{"<>"}</ToolbarButton>
+          <span className="mois-md-editor__separator" />
+          <span className="mois-md-editor__color-group" aria-label="Text color">
+            {TEXT_COLOR_OPTIONS.map((option) => (
+              <span key={option.value} className="mois-md-editor__tool-wrap">
+                <button
+                  type="button"
+                  className="mois-md-editor__color-swatch"
+                  aria-label={`Text color ${option.label}`}
+                  disabled={toolbarDisabled}
+                  onClick={() => applyTextColor(option.value)}
+                >
+                  <span className="mois-md-editor__color-dot" style={{ backgroundColor: option.value }} />
+                </button>
+                <span role="tooltip" className="mois-md-editor__tooltip">
+                  {option.label}
+                </span>
+              </span>
+            ))}
+            <input
+              type="color"
+              className="mois-md-editor__color-input"
+              aria-label="Custom text color"
+              title="Custom text color"
+              disabled={toolbarDisabled}
+              defaultValue="#d13438"
+              onMouseDown={(event) => event.stopPropagation()}
+              onChange={(event) => applyTextColor(event.target.value)}
+            />
+          </span>
           <span className="mois-md-editor__separator" />
           <ToolbarButton label="Bullet list" disabled={toolbarDisabled} renderTooltip={renderTooltip} onClick={() => runCommand(wrapInBulletListCommand)}>•</ToolbarButton>
           <ToolbarButton label="Numbered list" disabled={toolbarDisabled} renderTooltip={renderTooltip} onClick={() => runCommand(wrapInOrderedListCommand)}>1.</ToolbarButton>

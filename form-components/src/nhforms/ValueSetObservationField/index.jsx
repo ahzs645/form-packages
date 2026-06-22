@@ -83,6 +83,7 @@ const ValueSetObservationField = ({
   reportTemplate = "{display}",
   commentFieldId = "",
   placeholder = "Select an option",
+  autoHotKey = false,
 }) => {
   const [fd, setFormData] = useActiveData()
   const sd = useSourceData()
@@ -146,6 +147,7 @@ const ValueSetObservationField = ({
           selectionType="single"
           optionList={checklistOptions}
           multiline
+          autoHotKey={autoHotKey}
         />
       ) : renderAs === "findCode" ? (
         <FindCodeSelect
@@ -164,6 +166,7 @@ const ValueSetObservationField = ({
           label={label}
           selectionType="single"
           optionList={checklistOptions}
+          autoHotKey={autoHotKey}
         />
       )}
       {commentFieldId ? (

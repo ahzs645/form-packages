@@ -1,0 +1,7 @@
+{
+  "name": "CodedObservationChoiceField",
+  "title": "Coded Observation Choice Field",
+  "description": "Coded choice field with optional observation update output",
+  "category": "Clinical",
+  "version": "1.0.0"
+}
