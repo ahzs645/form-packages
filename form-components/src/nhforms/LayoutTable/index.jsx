@@ -138,6 +138,13 @@ const renderLayoutTableField = (cell, readOnly, data, setFieldValue) => {
       return optionList.length > 0
         ? <SimpleCodeSelect {...sharedProps} {...labelProp} optionList={optionList} />
         : <SimpleCodeSelect {...sharedProps} {...labelProp} codeSystem={cell.codeSystem} />
+    case "choiceMulti": {
+      const checklistOptions = optionList.map((option) => ({ key: option.code, text: option.display }))
+      const multiline = cell.multiline !== false
+      return checklistOptions.length > 0
+        ? <SimpleCodeChecklist {...sharedProps} {...labelProp} selectionType="multiple" optionList={checklistOptions} codeSystem={cell.codeSystem} multiline={multiline} />
+        : <SimpleCodeChecklist {...sharedProps} {...labelProp} selectionType="multiple" codeSystem={cell.codeSystem} multiline={multiline} />
+    }
     case "textarea":
       return <TextArea {...sharedProps} {...labelProp} multiline textFieldProps={{ autoAdjustHeight: true, resizable: false }} />
     case "text":

@@ -27,6 +27,17 @@ export interface CodeOption {
   hotKey?: string;
 }
 
+/**
+ * MOIS option ordering: sort by `order` when present, else display, else code.
+ * Mirrors the real MOIS code-select comparator (`order ?? display ?? code`,
+ * numeric when `order` is set, alphabetical otherwise).
+ */
+function compareCodeOptions(a: CodeOption, b: CodeOption): number {
+  const ak = a.order ?? a.display ?? a.code ?? 0;
+  const bk = b.order ?? b.display ?? b.code ?? 0;
+  return ak < bk ? -1 : ak > bk ? 1 : 0;
+}
+
 export interface SimpleCodeSelectProps {
   /** Props for the attached action bar (eg: onEdit, onDelete, etc) */
   actions?: any;
@@ -156,6 +167,8 @@ export const SimpleCodeSelect: React.FC<SimpleCodeSelectProps> = ({
   value,
   onChange,
   style,
+  autoHotKey = false,
+  noAutoSkip,
 }) => {
   const [activeData, setActiveData] = useActiveDataForForms();
   const [, setMoisActiveData] = useMoisActiveData();
@@ -197,7 +210,7 @@ export const SimpleCodeSelect: React.FC<SimpleCodeSelectProps> = ({
     }));
   };
 
-  const parsedOptions = parseOptions();
+  const parsedOptions = [...parseOptions()].sort(compareCodeOptions);
   const activeValue = readSectionActiveFieldValue(activeData, sectionContext, effectiveFieldId);
   const sourceValue = sourceId
     ? ((sourceData.patient as any)?.[sourceId] ?? (sourceData.queryResult as any)?.patient?.[0]?.[sourceId])
@@ -320,6 +333,59 @@ export const SimpleCodeSelect: React.FC<SimpleCodeSelectProps> = ({
         }
       }
     }
+  };
+
+  // Resolve an option's accelerator key — explicit hotKey wins, else the first
+  // char of the code (uppercased) when autoHotKey is on. Matches real MOIS.
+  const resolveHotKey = (opt: CodeOption): string | undefined =>
+    opt.hotKey
+      ? opt.hotKey.toUpperCase()
+      : autoHotKey && opt.code
+        ? opt.code[0].toUpperCase()
+        : undefined;
+
+  // After a hotkey selection, advance focus to the next focusable element
+  // (MOIS "auto-skip"), unless noAutoSkip is set.
+  const advanceFocusAfter = (container: HTMLElement | null) => {
+    if (!container || typeof document === 'undefined') return;
+    const focusables = Array.from(
+      document.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      )
+    ).filter((el) => el.offsetParent !== null);
+    const next = focusables.find((el) =>
+      Boolean(container.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING)
+    );
+    next?.focus();
+  };
+
+  // Keyboard accelerators: pressing an option's hotkey selects it (MOIS onKeyUp).
+  const handleHotKeyUp = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (readOnly || disabled) return;
+    const pressed = (event.key || '').toUpperCase();
+    if (pressed.length !== 1) return; // single-char accelerators only (skip Enter/Tab/Arrows)
+    const match = parsedOptions.find((opt) => resolveHotKey(opt) === pressed);
+    if (!match) return;
+    const wasSelected = effectiveSelectedKeys.includes(match.code);
+    const newKeys = isMultiple
+      ? wasSelected
+        ? effectiveSelectedKeys.filter((k) => k !== match.code)
+        : [...effectiveSelectedKeys, match.code]
+      : [match.code];
+    setSelectedKeys(newKeys);
+    updateActiveData(newKeys);
+    if (onChange) {
+      const codings = newKeys.map((key) => {
+        const opt = parsedOptions.find((o) => o.code === key);
+        return { code: key, display: opt?.display || key };
+      });
+      if (isMultiple) {
+        onChange({ code: match.code, display: match.display }, codings, !wasSelected);
+      } else {
+        onChange({ code: match.code, display: match.display });
+      }
+    }
+    if (!noAutoSkip && !isMultiple) advanceFocusAfter(event.currentTarget);
   };
 
   // Check if children should be shown
@@ -468,7 +534,7 @@ export const SimpleCodeSelect: React.FC<SimpleCodeSelectProps> = ({
       size={size}
       layoutStyle={typeof style === 'object' ? style : undefined}
     >
-      <div style={dropdownWrapperStyles}>
+      <div style={dropdownWrapperStyles} onKeyUp={handleHotKeyUp}>
         <Dropdown
           id={fieldId}
           label={fluentLabel}

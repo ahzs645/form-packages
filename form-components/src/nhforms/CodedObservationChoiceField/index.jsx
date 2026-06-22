@@ -12,6 +12,8 @@ const normalizeCodedChoiceOptions = (optionList, codeSystem, sd) => {
         code: String(item.code ?? item.key ?? ""),
         display: String(item.display ?? item.text ?? item.label ?? item.code ?? item.key ?? ""),
         system: String(item.system ?? codeSystem ?? ""),
+        order: typeof item.order === "number" ? item.order : undefined,
+        hotKey: item.hotKey ? String(item.hotKey) : undefined,
       }
     })
   }
@@ -144,6 +146,7 @@ const CodedObservationChoiceField = ({
   commentFieldId = "",
   placeholder = "Select an option",
   autoHotKey = false,
+  noAutoSkip = false,
   showOtherOption = false,
   labelPosition,
   readOnly = false,
@@ -203,11 +206,13 @@ const CodedObservationChoiceField = ({
     effectiveRenderAs === "checkbox" ||
     effectiveRenderAs === "multiselect"
   const effectiveSelectionType = isMultiple ? "multiple" : "single"
-  const checklistOptions = options.map((item) => ({ key: item.code || item.key, text: item.display || item.text }))
+  const checklistOptions = options.map((item) => ({ key: item.code || item.key, text: item.display || item.text, order: item.order, hotKey: item.hotKey }))
   const selectOptions = options.map((item) => ({
     code: item.code || item.key,
     display: item.display || item.text,
     system: item.system || codeSystem || "",
+    order: item.order,
+    hotKey: item.hotKey,
   }))
 
   const handleFindCodeChange = (nextValue) => {
@@ -225,6 +230,7 @@ const CodedObservationChoiceField = ({
           codeSystem={codeSystem}
           multiline={multiline}
           autoHotKey={autoHotKey}
+          noAutoSkip={noAutoSkip}
           showOtherOption={showOtherOption}
           labelPosition={labelPosition}
           readOnly={readOnly}
@@ -258,6 +264,7 @@ const CodedObservationChoiceField = ({
           placeholder={placeholder}
           showOtherOption={showOtherOption}
           autoHotKey={autoHotKey}
+          noAutoSkip={noAutoSkip}
           labelPosition={labelPosition}
           readOnly={readOnly}
           required={required}
