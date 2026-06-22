@@ -1,0 +1,9 @@
+{
+  "name": "MultiTargetChoiceField",
+  "title": "Multi-Target Choice Field",
+  "description": "Checkboxes two-way bound to other fields: each option reads/writes a target field (scalar or array member) and can force a sibling field as a side effect.",
+  "version": { "major": 1, "minor": 0, "patch": 0 },
+  "type": "component",
+  "owner": "MOIS Styleguide",
+  "components": []
+}
