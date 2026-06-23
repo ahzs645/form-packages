@@ -7,9 +7,24 @@
 //
 // option = {
 //   code, display,
-//   target: { fieldId, mode: "scalar" | "arrayMember", value?, system? },
+//   target: { fieldId, mode: "scalar" | "arrayMember" | "flag", value?, system? },
 //   force?: { fieldId, value, whenAnyOf?: string[] }   // value may be a coding or a code string
 // }
+//
+// target.mode:
+//   "scalar"      — field holds a coding; checked ⇔ code === value (or, if no
+//                   value, the field is non-empty). Toggle on → set; off → clear.
+//   "arrayMember" — field holds an array of codings; checked ⇔ value is a member.
+//                   Toggle on → add the member; off → remove it.
+//   "flag"        — field is a boolean envelope { checked }; checked ⇔ field.checked.
+//                   Toggle on → { checked: true }; off → { checked: undefined }. Use
+//                   for yes/no fields shared with other checkboxes (e.g. genC19contact).
+//
+// option.visibleWhen (optional) — gate a single option's visibility with the SAME
+// condition vocabulary the builder's fieldLinkRules use:
+//   visibleWhen: { controllerFieldId, condition: { type, value?, optionValues? } }
+// e.g. HOS shows only for non-male patients via the mirrored __patientGender field:
+//   { controllerFieldId: "__patientGender", condition: { type: "not-equals", value: "M" } }
 
 const codeOf = (value) => {
   if (value == null) return ""
@@ -35,11 +50,85 @@ const toCoding = (value, fallbackDisplay, system) => {
   return { code: String(value ?? ""), display: fallbackDisplay ?? String(value ?? ""), ...(system ? { system } : {}) }
 }
 
+// Per-option visibility — reuses the builder's fieldLinkRules condition vocabulary
+// so it stays consistent with field-level rules and is configurable the same way.
+// Mirrors lib/preview-utils/visibility.ts `checkFieldLinkCondition` for the
+// option-gating subset (equals / not-equals / choice-selected / filled / empty).
+const normalizeComparable = (candidate) => {
+  if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) {
+    return candidate.code ?? candidate.display ?? candidate.value ?? candidate.text ?? ""
+  }
+  return candidate
+}
+
+const normalizeChoiceValues = (candidate) => {
+  if (Array.isArray(candidate)) return candidate.flatMap(normalizeChoiceValues)
+  if (candidate && typeof candidate === "object") {
+    return [candidate.code, candidate.display, candidate.value, candidate.text]
+      .filter((entry) => entry != null)
+      .map((entry) => String(entry))
+  }
+  if (candidate == null) return []
+  return [String(candidate)]
+}
+
+const isEmptyValue = (value) =>
+  value == null ||
+  (typeof value === "string" && value.trim() === "") ||
+  (Array.isArray(value) && value.length === 0)
+
+const evalCondition = (controllerValue, condition) => {
+  if (!condition || !condition.type) return true
+  const { type, optionValues, value } = condition
+  switch (type) {
+    case "choice-selected":
+      return Array.isArray(optionValues) && optionValues.length > 0 &&
+        optionValues.some((opt) => normalizeChoiceValues(controllerValue).includes(opt))
+    case "choice-not-selected":
+      return !Array.isArray(optionValues) || optionValues.length === 0 ||
+        !optionValues.some((opt) => normalizeChoiceValues(controllerValue).includes(opt))
+    case "equals":
+      return String(normalizeComparable(controllerValue) ?? "") === String(value ?? "")
+    case "not-equals":
+      return String(normalizeComparable(controllerValue) ?? "") !== String(value ?? "")
+    case "filled":
+      return !isEmptyValue(controllerValue)
+    case "empty":
+      return isEmptyValue(controllerValue)
+    case "number-gt":
+    case "number-gte":
+    case "number-lt":
+    case "number-lte":
+    case "number-equals": {
+      const left = Number(normalizeComparable(controllerValue))
+      const right = Number(value)
+      if (!Number.isFinite(left) || !Number.isFinite(right)) return false
+      if (type === "number-gt") return left > right
+      if (type === "number-gte") return left >= right
+      if (type === "number-lt") return left < right
+      if (type === "number-lte") return left <= right
+      return left === right
+    }
+    default:
+      return true // types we don't gate on per-option fail open (visible)
+  }
+}
+
+// An option renders only when its optional `visibleWhen` rule passes.
+const optionVisible = (data, option) => {
+  const rule = option.visibleWhen
+  if (!rule || !rule.controllerFieldId) return true
+  return evalCondition(data ? data[rule.controllerFieldId] : undefined, rule.condition)
+}
+
 const optionChecked = (data, option) => {
   const target = option.target || {}
   const current = data ? data[target.fieldId] : undefined
   if (target.mode === "arrayMember") {
     return asArray(current).map(codeOf).includes(target.value)
+  }
+  if (target.mode === "flag") {
+    return Boolean(current && current.checked)
   }
   return target.value != null && target.value !== "" ? codeOf(current) === target.value : hasValue(current)
 }
@@ -75,6 +164,8 @@ const computeToggledData = (prevData, option, next, options, aggregateFieldId) =
     } else if (!next && has) {
       data[target.fieldId] = currentArr.filter((entry) => codeOf(entry) !== target.value)
     }
+  } else if (target.mode === "flag") {
+    data[target.fieldId] = next ? { checked: true } : { checked: undefined }
   } else {
     data[target.fieldId] = next ? toCoding(target.value, option.display, target.system) : null
   }
@@ -114,7 +205,7 @@ const MultiTargetChoiceField = ({
   return (
     <LayoutItem fieldId={effectiveFieldId} label={label} readOnly={readOnly}>
       <div style={gridStyle}>
-        {options.map((option) => (
+        {options.filter((option) => optionVisible(data, option)).map((option) => (
           <Fluent.Checkbox
             key={option.code}
             label={option.display || option.code}
