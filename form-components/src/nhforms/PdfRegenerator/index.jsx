@@ -337,20 +337,31 @@ const _downloadBytes = (bytes, fileName) => {
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
-const _loadPdfLib = () => {
-  if (typeof window === "undefined" || typeof document === "undefined") {
-    return Promise.reject(new Error("PDF regeneration is only available in browser runtime."))
+// Evaluate an embedded pdf-lib UMD bundle and install window.PDFLib without a
+// network fetch (the "inline" strategy). pdf-lib's UMD assigns the library to
+// the call-site global when no CommonJS/AMD loader is present, so we run the
+// bundle with `this` bound to window and module/exports/define shadowed to
+// undefined to force that browser-global branch. We use Function (not the
+// Babel + with-scope path the form runs through) so the ~515KB bundle is
+// parsed once by the engine rather than re-transpiled on every form load.
+const _installPdfLibFromSource = (source) => {
+  if (window.PDFLib) return window.PDFLib
+  if (!_isNonEmptyString(source)) {
+    throw new Error("Inline pdf-lib source is missing.")
   }
-
-  if (window.PDFLib) {
-    return Promise.resolve(window.PDFLib)
+  // eslint-disable-next-line no-new-func
+  const runner = new Function("self", "module", "exports", "define", `${source}\n;return this.PDFLib;`)
+  const installed = runner.call(window, window, undefined, undefined, undefined)
+  const lib = window.PDFLib || installed
+  if (!lib) {
+    throw new Error("Embedded pdf-lib bundle did not expose PDFLib.")
   }
+  if (!window.PDFLib) window.PDFLib = lib
+  return lib
+}
 
-  if (_pdfLibPromise) {
-    return _pdfLibPromise
-  }
-
-  _pdfLibPromise = new Promise((resolve, reject) => {
+const _loadPdfLibFromCdn = () =>
+  new Promise((resolve, reject) => {
     const existing = document.querySelector(`script[data-pdf-lib=\"${PDF_LIB_URL}\"]`)
     if (existing) {
       existing.addEventListener("load", () => {
@@ -373,6 +384,51 @@ const _loadPdfLib = () => {
     document.head.appendChild(script)
   })
 
+// Resolve pdf-lib according to the configured strategy:
+// - always reuse window.PDFLib if the host already provides it;
+// - "host": never fetch or embed (offline/strict-CSP safe), error if absent;
+// - "inline": evaluate the embedded bundle, falling back to the CDN only when
+//   no source was embedded (e.g. builder preview, which injects no bundle);
+// - "cdn" (default): inject the jsDelivr <script>.
+const _loadPdfLib = (options) => {
+  const strategy = options && _isNonEmptyString(options.strategy) ? options.strategy : "cdn"
+  const inlineSource = options ? options.source : null
+
+  if (typeof window === "undefined" || typeof document === "undefined") {
+    return Promise.reject(new Error("PDF regeneration is only available in browser runtime."))
+  }
+
+  if (window.PDFLib) {
+    return Promise.resolve(window.PDFLib)
+  }
+
+  if (strategy === "host") {
+    // The host is responsible for preloading window.PDFLib; do not cache this
+    // rejection so a later injection can still succeed on retry.
+    return Promise.reject(
+      new Error("pdf-lib is not available. This form expects the MOIS host to provide window.PDFLib.")
+    )
+  }
+
+  if (_pdfLibPromise) {
+    return _pdfLibPromise
+  }
+
+  if (strategy === "inline" && _isNonEmptyString(inlineSource)) {
+    _pdfLibPromise = new Promise((resolve, reject) => {
+      try {
+        resolve(_installPdfLibFromSource(inlineSource))
+      } catch (error) {
+        // Reset so a retry (or CDN fallback elsewhere) is still possible.
+        _pdfLibPromise = null
+        reject(error instanceof Error ? error : new Error(String(error)))
+      }
+    })
+    return _pdfLibPromise
+  }
+
+  // "cdn", or "inline" with no embedded source (e.g. builder preview).
+  _pdfLibPromise = _loadPdfLibFromCdn()
   return _pdfLibPromise
 }
 
@@ -550,6 +606,8 @@ const PdfRegenerator = ({
   sourcePdfBase64,
   sourcePdfPath = "sessionPdf.base64",
   sourcePdfFieldId,
+  pdfLibStrategy = "cdn",
+  pdfLibSource,
   fieldMap,
   tableSourceMaps,
   booleanFieldStates,
@@ -597,7 +655,7 @@ const PdfRegenerator = ({
     setStatus({ kind: "info", message: "Generating PDF..." })
 
     try {
-      const PDFLib = await _loadPdfLib()
+      const PDFLib = await _loadPdfLib({ strategy: pdfLibStrategy, source: pdfLibSource })
       const bytes = _base64ToBytes(resolvedPdfSource)
       const formData = fd?.field?.data || {}
       const map = _normalizeFieldMap(fieldMap, formData)
@@ -686,7 +744,7 @@ const PdfRegenerator = ({
     } finally {
       setIsBusy(false)
     }
-  }, [resolvedPdfSource, fd, fieldMap, tableSourceMaps, booleanFieldStates, dateComponentMaps, includeOnlyFieldIds, flatten, fileName, onComplete])
+  }, [resolvedPdfSource, fd, fieldMap, tableSourceMaps, booleanFieldStates, dateComponentMaps, includeOnlyFieldIds, flatten, fileName, onComplete, pdfLibStrategy, pdfLibSource])
 
   const diagnosticsText = useMemo(() => {
     if (!showDiagnostics) return null
