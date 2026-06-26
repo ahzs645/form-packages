@@ -337,6 +337,50 @@ const _downloadBytes = (bytes, fileName) => {
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
+const _printBytes = (bytes, fileName) => {
+  if (typeof document === "undefined" || typeof window === "undefined") {
+    throw new Error("PDF printing is only available in browser runtime.")
+  }
+
+  const blob = new Blob([bytes], { type: "application/pdf" })
+  const url = URL.createObjectURL(blob)
+  const iframe = document.createElement("iframe")
+  let cleaned = false
+  const cleanup = () => {
+    if (cleaned) return
+    cleaned = true
+    try {
+      if (iframe.parentNode) iframe.parentNode.removeChild(iframe)
+    } catch (error) {
+      // Ignore cleanup failures in locked-down host shells.
+    }
+    URL.revokeObjectURL(url)
+  }
+
+  iframe.style.position = "fixed"
+  iframe.style.right = "0"
+  iframe.style.bottom = "0"
+  iframe.style.width = "0"
+  iframe.style.height = "0"
+  iframe.style.border = "0"
+  iframe.setAttribute("aria-hidden", "true")
+  iframe.title = fileName || "Filled PDF"
+  iframe.onload = () => {
+    window.setTimeout(() => {
+      const printWindow = iframe.contentWindow
+      if (!printWindow || typeof printWindow.print !== "function") {
+        cleanup()
+        return
+      }
+      printWindow.focus()
+      printWindow.print()
+      window.setTimeout(cleanup, 60000)
+    }, 150)
+  }
+  iframe.src = url
+  document.body.appendChild(iframe)
+}
+
 // Evaluate an embedded pdf-lib UMD bundle and install window.PDFLib without a
 // network fetch (the "inline" strategy). pdf-lib's UMD assigns the library to
 // the call-site global when no CommonJS/AMD loader is present, so we run the
@@ -600,9 +644,11 @@ const _statusColor = (kind) => {
 
 const PdfRegenerator = ({
   label,
-  buttonText = "Download Filled PDF",
+  buttonText = "Save Filled PDF",
+  printButtonText = "Print Filled PDF",
   fileName = "filled-form.pdf",
-  iconName = "Print",
+  iconName = "Save",
+  action = "print",
   sourcePdfBase64,
   sourcePdfPath = "sessionPdf.base64",
   sourcePdfFieldId,
@@ -623,6 +669,7 @@ const PdfRegenerator = ({
   const sd = useSourceData()
   const [isBusy, setIsBusy] = useState(false)
   const [status, setStatus] = useState(null)
+  const normalizedAction = action === "save" || action === "download" || action === "both" ? action : "print"
 
   const resolvedPdfSource = useMemo(() => {
     if (_isNonEmptyString(sourcePdfBase64)) {
@@ -645,12 +692,13 @@ const PdfRegenerator = ({
     return null
   }, [sourcePdfBase64, sourcePdfFieldId, sourcePdfPath, fd, sd])
 
-  const handleGeneratePdf = useCallback(async () => {
+  const handleGeneratePdf = useCallback(async (requestedAction) => {
     if (!_isNonEmptyString(resolvedPdfSource)) {
       setStatus({ kind: "error", message: "No source PDF found." })
       return
     }
 
+    const targetAction = requestedAction === "print" ? "print" : "save"
     setIsBusy(true)
     setStatus({ kind: "info", message: "Generating PDF..." })
 
@@ -719,12 +767,16 @@ const PdfRegenerator = ({
 
       const outputBytes = await doc.save()
       const nextFileName = _isNonEmptyString(fileName) ? fileName.trim() : "filled-form.pdf"
-      _downloadBytes(outputBytes, nextFileName)
+      if (targetAction === "print") {
+        _printBytes(outputBytes, nextFileName)
+      } else {
+        _downloadBytes(outputBytes, nextFileName)
+      }
 
       const warningCount = warnings.length
       setStatus({
         kind: "success",
-        message: `PDF generated. Filled ${filledFieldCount} field${filledFieldCount === 1 ? "" : "s"}${warningCount ? ` with ${warningCount} warning${warningCount === 1 ? "" : "s"}` : ""}.`,
+        message: `PDF ${targetAction === "print" ? "ready to print" : "saved"}. Filled ${filledFieldCount} field${filledFieldCount === 1 ? "" : "s"}${warningCount ? ` with ${warningCount} warning${warningCount === 1 ? "" : "s"}` : ""}.`,
         warnings,
       })
 
@@ -752,13 +804,25 @@ const PdfRegenerator = ({
     return "Source PDF detected."
   }, [showDiagnostics, resolvedPdfSource])
 
-  const renderButton = (
+  const buttonDisabled = disabled || isBusy || !_isNonEmptyString(resolvedPdfSource)
+  const renderActionButton = (targetAction, text, fallbackIconName) => (
     <DefaultButton
-      text={isBusy ? "Generating..." : buttonText}
-      iconProps={iconName ? { iconName } : undefined}
-      onClick={handleGeneratePdf}
-      disabled={disabled || isBusy || !_isNonEmptyString(resolvedPdfSource)}
+      text={isBusy ? "Generating..." : text}
+      iconProps={(targetAction === "save" && iconName) ? { iconName } : { iconName: fallbackIconName }}
+      onClick={() => handleGeneratePdf(targetAction)}
+      disabled={buttonDisabled}
     />
+  )
+
+  const renderButton = normalizedAction === "both" ? (
+    <Stack horizontal tokens={{ childrenGap: 8 }} wrap>
+      {renderActionButton("save", buttonText, "Save")}
+      {renderActionButton("print", printButtonText, "Print")}
+    </Stack>
+  ) : normalizedAction === "print" ? (
+    renderActionButton("print", printButtonText, "Print")
+  ) : (
+    renderActionButton("save", buttonText, iconName || "Save")
   )
 
   if (!label && !showStatus && !showDiagnostics) {
