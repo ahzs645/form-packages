@@ -129,6 +129,19 @@ const cloneValue = <T,>(value: T): T => {
   }
 };
 
+function rememberPreviewSourceFormData(formData: unknown) {
+  if (!formData || typeof formData !== "object") return;
+  if (typeof globalThis === "undefined") return;
+  (globalThis as any).__MOIS_PREVIEW_SOURCE_FORM_DATA__ = cloneValue(formData);
+}
+
+export function getRememberedPreviewSourceFormData(): Record<string, unknown> | null {
+  if (typeof globalThis === "undefined") return null;
+  const value = (globalThis as any).__MOIS_PREVIEW_SOURCE_FORM_DATA__;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
 function stableStringify(value: unknown): string {
   if (value === null || value === undefined) return String(value);
   if (typeof value !== "object") return String(value);
@@ -369,7 +382,13 @@ export function getSectionSourceTarget(
   state: any,
   sectionContext?: Pick<SectionContextValue, "sourceSelector">
 ) {
-  return resolveTarget(state, sectionContext?.sourceSelector, getSourceFallback);
+  const target = resolveTarget(state, sectionContext?.sourceSelector, getSourceFallback);
+  const previewSavedSourceFormData = getRememberedPreviewSourceFormData();
+  if (!previewSavedSourceFormData) return target;
+  return {
+    ...(target || {}),
+    ...previewSavedSourceFormData,
+  };
 }
 
 export function readSectionActiveFieldValue(
@@ -549,6 +568,7 @@ export function applyShimmedMoisLifecyclePreviewState(
       webform.isDraft = "Y";
       webform.recordState = webform.recordState === "SIGNED" ? "SIGNED" : "UNSIGNED";
       sourceData.sourceFormData = cloneValue(payload?.formData ?? sourceData.sourceFormData ?? {});
+      rememberPreviewSourceFormData(sourceData.sourceFormData);
       break;
     case "saveSubmit":
       lifecycleState.isLoading = false;
@@ -556,6 +576,7 @@ export function applyShimmedMoisLifecyclePreviewState(
       webform.isDraft = "N";
       webform.recordState = webform.recordState === "SIGNED" ? "SIGNED" : "UNSIGNED";
       sourceData.sourceFormData = cloneValue(payload?.formData ?? sourceData.sourceFormData ?? {});
+      rememberPreviewSourceFormData(sourceData.sourceFormData);
       break;
     case "sign":
       lifecycleState.isLoading = false;
@@ -565,6 +586,7 @@ export function applyShimmedMoisLifecyclePreviewState(
       webform.isLockedToUser = "Y";
       if (payload?.formData) {
         sourceData.sourceFormData = cloneValue(payload.formData);
+        rememberPreviewSourceFormData(sourceData.sourceFormData);
       }
       break;
     case "unsign":
@@ -586,6 +608,7 @@ export function applyShimmedMoisLifecyclePreviewState(
       webform.recordState = "SIGNED";
       webform.isLockedToUser = "Y";
       sourceData.sourceFormData = cloneValue(payload?.formData ?? sourceData.sourceFormData ?? {});
+      rememberPreviewSourceFormData(sourceData.sourceFormData);
       break;
     case "closeForm":
       lifecycleState.closeRequested = true;

@@ -6,6 +6,7 @@ export interface AuthorshipPolicy {
   enabled?: boolean;
   granularity?: AuthorshipScope;
   lockOn?: AuthorshipLockOn;
+  editableWindowHours?: number;
 }
 
 export interface AuthorshipClaim {
@@ -17,6 +18,9 @@ export interface AuthorshipClaim {
   ownerName?: string;
   ownerId?: string | number;
   timestamp?: string;
+  claimedAt?: string;
+  lastSavedAt?: string;
+  editableUntil?: string;
   status: AuthorshipState;
   lockOn: AuthorshipLockOn;
   releasedAt?: string;
@@ -36,6 +40,9 @@ export interface AuthorshipLockInfo {
   note?: string;
   ownerName?: string;
   timestamp?: string;
+  editableUntil?: string;
+  isOwner?: boolean;
+  expired?: boolean;
 }
 
 export interface AuthorshipFieldTarget {
@@ -59,17 +66,29 @@ export interface AuthorshipTargetRegistry {
 export type AuthorshipPersistAction = 'save' | 'submit' | 'sign';
 
 const deepClone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
+const DEFAULT_EDITABLE_WINDOW_HOURS = 72;
+
+const getRememberedPreviewAuthorshipStore = () => {
+  if (typeof globalThis === 'undefined') return undefined;
+  const value = (globalThis as any).__MOIS_PREVIEW_SOURCE_FORM_DATA__;
+  return value && typeof value === 'object' ? (value as any).__authorship : undefined;
+};
 
 export const DEFAULT_AUTHORSHIP_POLICY: Required<AuthorshipPolicy> = {
   enabled: false,
   granularity: 'field',
   lockOn: 'save',
+  editableWindowHours: DEFAULT_EDITABLE_WINDOW_HOURS,
 };
 
 export const normalizeAuthorshipPolicy = (policy?: AuthorshipPolicy): Required<AuthorshipPolicy> => ({
   enabled: policy?.enabled === true,
   granularity: policy?.granularity === 'row' ? 'row' : 'field',
   lockOn: policy?.lockOn === 'sign' || policy?.lockOn === 'submit' ? policy.lockOn : 'save',
+  editableWindowHours:
+    typeof policy?.editableWindowHours === 'number' && Number.isFinite(policy.editableWindowHours) && policy.editableWindowHours > 0
+      ? policy.editableWindowHours
+      : DEFAULT_EDITABLE_WINDOW_HOURS,
 });
 
 export const formatAuthorshipTimestamp = (timestamp?: string) => {
@@ -85,10 +104,42 @@ export const formatAuthorshipTimestamp = (timestamp?: string) => {
 };
 
 export const normalizeAuthorshipStore = (input?: any): AuthorshipStore => {
+  const normalizeClaim = (key: string, value: any): AuthorshipClaim | null => {
+    if (!value || typeof value !== 'object') return null;
+    const claimKey = String(value.claimKey || value.key || key || value.fieldId || value.rowKey || '');
+    if (!claimKey) return null;
+    const timestamp = value.timestamp;
+    const claimedAt = value.claimedAt || timestamp;
+    return {
+      claimKey,
+      scope: value.scope === 'row' ? 'row' : 'field',
+      fieldId: value.fieldId,
+      rowKey: value.rowKey,
+      componentId: value.componentId,
+      ownerName: value.ownerName,
+      ownerId: value.ownerId,
+      timestamp,
+      claimedAt,
+      lastSavedAt: value.lastSavedAt || timestamp,
+      editableUntil: value.editableUntil,
+      status: value.status === 'signed' || value.status === 'unlocked' ? value.status : 'locked',
+      lockOn: value.lockOn === 'sign' || value.lockOn === 'submit' ? value.lockOn : 'save',
+      releasedAt: value.releasedAt,
+      releasedBy: value.releasedBy,
+      sourceValue: value.sourceValue,
+      currentValue: value.currentValue,
+    };
+  };
+
   if (input && typeof input === 'object' && input.version === 1 && input.claims && typeof input.claims === 'object') {
+    const claims: Record<string, AuthorshipClaim> = {};
+    Object.entries(input.claims as Record<string, any>).forEach(([key, value]) => {
+      const claim = normalizeClaim(key, value);
+      if (claim) claims[claim.claimKey] = claim;
+    });
     return {
       version: 1,
-      claims: deepClone(input.claims),
+      claims,
     };
   }
 
@@ -96,46 +147,13 @@ export const normalizeAuthorshipStore = (input?: any): AuthorshipStore => {
 
   if (Array.isArray(input?.claims)) {
     input.claims.forEach((claim: any) => {
-      if (!claim || typeof claim !== 'object') return;
-      const claimKey = String(claim.claimKey || claim.key || claim.fieldId || claim.rowKey || '');
-      if (!claimKey) return;
-      claims[claimKey] = {
-        claimKey,
-        scope: claim.scope === 'row' ? 'row' : 'field',
-        fieldId: claim.fieldId,
-        rowKey: claim.rowKey,
-        componentId: claim.componentId,
-        ownerName: claim.ownerName,
-        ownerId: claim.ownerId,
-        timestamp: claim.timestamp,
-        status: claim.status === 'signed' || claim.status === 'unlocked' ? claim.status : 'locked',
-        lockOn: claim.lockOn === 'sign' || claim.lockOn === 'submit' ? claim.lockOn : 'save',
-        releasedAt: claim.releasedAt,
-        releasedBy: claim.releasedBy,
-        sourceValue: claim.sourceValue,
-        currentValue: claim.currentValue,
-      };
+      const normalized = normalizeClaim('', claim);
+      if (normalized) claims[normalized.claimKey] = normalized;
     });
   } else if (input && typeof input === 'object') {
     Object.entries(input as Record<string, any>).forEach(([key, value]) => {
-      if (!value || typeof value !== 'object') return;
-      const claimValue = value as Record<string, any>;
-      claims[key] = {
-        claimKey: key,
-        scope: claimValue.scope === 'row' ? 'row' : 'field',
-        fieldId: claimValue.fieldId,
-        rowKey: claimValue.rowKey,
-        componentId: claimValue.componentId,
-        ownerName: claimValue.ownerName,
-        ownerId: claimValue.ownerId,
-        timestamp: claimValue.timestamp,
-        status: claimValue.status === 'signed' || claimValue.status === 'unlocked' ? claimValue.status : 'locked',
-        lockOn: claimValue.lockOn === 'sign' || claimValue.lockOn === 'submit' ? claimValue.lockOn : 'save',
-        releasedAt: claimValue.releasedAt,
-        releasedBy: claimValue.releasedBy,
-        sourceValue: claimValue.sourceValue,
-        currentValue: claimValue.currentValue,
-      };
+      const normalized = normalizeClaim(key, value);
+      if (normalized) claims[normalized.claimKey] = normalized;
     });
   }
 
@@ -203,7 +221,13 @@ export const getAuthorshipOwnerName = (sourceData?: any, activeData?: any, fallb
 };
 
 export const getAuthorshipStore = (state?: any): AuthorshipStore => {
-  const store = normalizeAuthorshipStore(state?.field?.data?.__authorship ?? state?.formData?.__authorship);
+  const store = normalizeAuthorshipStore(
+    state?.field?.data?.__authorship
+    ?? state?.formData?.__authorship
+  );
+  if (Object.keys(store.claims).length > 0) return store;
+  const rememberedPreviewStore = normalizeAuthorshipStore(getRememberedPreviewAuthorshipStore());
+  if (Object.keys(rememberedPreviewStore.claims).length > 0) return rememberedPreviewStore;
   return store;
 };
 
@@ -220,21 +244,70 @@ export const isClaimLocked = (claim?: AuthorshipClaim) => {
   return !!claim && claim.status !== 'unlocked';
 };
 
+const addHoursIso = (timestamp: string | undefined, hours: number) => {
+  const date = timestamp ? new Date(timestamp) : new Date();
+  if (Number.isNaN(date.getTime())) return undefined;
+  return new Date(date.getTime() + hours * 60 * 60 * 1000).toISOString();
+};
+
+const isSameAuthorshipActor = (
+  claim?: AuthorshipClaim,
+  actor?: string | { ownerName?: string; ownerId?: string | number }
+) => {
+  if (!claim || !actor) return false;
+  if (typeof actor === 'string') {
+    return !!claim.ownerName && claim.ownerName === actor;
+  }
+  if (actor.ownerId !== undefined && claim.ownerId !== undefined) {
+    return String(actor.ownerId) === String(claim.ownerId);
+  }
+  return !!actor.ownerName && !!claim.ownerName && actor.ownerName === claim.ownerName;
+};
+
 export const getAuthorshipLockInfo = (
   state: any,
   query: { scope: AuthorshipScope; fieldId?: string; rowKey?: string; componentId?: string },
-  currentUserName?: string
+  currentUser?: string | { ownerName?: string; ownerId?: string | number; now?: Date | string | number },
+  options?: { now?: Date | string | number }
 ): AuthorshipLockInfo => {
   const claim = getAuthorshipClaim(state, query);
   if (!isClaimLocked(claim)) return { locked: false };
   const ownerName = claim?.ownerName || 'Unknown';
   const timestamp = formatAuthorshipTimestamp(claim?.timestamp);
-  const actionLabel = claim?.status === 'signed' ? 'Signed by' : 'Locked by';
+  const isOwner = isSameAuthorshipActor(claim, currentUser);
+  const editableUntil = claim?.editableUntil || addHoursIso(claim?.claimedAt || claim?.timestamp, DEFAULT_EDITABLE_WINDOW_HOURS);
+  const editableUntilDate = editableUntil ? new Date(editableUntil) : null;
+  const currentUserNow = typeof currentUser === 'object' ? currentUser.now : undefined;
+  const now = options?.now ? new Date(options.now) : currentUserNow ? new Date(currentUserNow) : new Date();
+  const expired = !!editableUntilDate && !Number.isNaN(editableUntilDate.getTime()) && now.getTime() > editableUntilDate.getTime();
+
+  if (claim?.status !== 'signed' && isOwner && !expired) {
+    const until = formatAuthorshipTimestamp(editableUntil);
+    return {
+      locked: false,
+      claim,
+      ownerName,
+      timestamp,
+      editableUntil: until,
+      isOwner,
+      expired,
+      note: until ? `Locked to you until ${until}` : `Locked to you`,
+    };
+  }
+
+  const actionLabel = claim?.status === 'signed'
+    ? 'Signed by'
+    : expired
+      ? 'Editing window expired for'
+      : 'Locked by';
   return {
     locked: true,
     claim,
     ownerName,
     timestamp,
+    editableUntil: formatAuthorshipTimestamp(editableUntil),
+    isOwner,
+    expired,
     note: timestamp ? `${actionLabel} ${ownerName} at ${timestamp}` : `${actionLabel} ${ownerName}`,
   };
 };
@@ -289,6 +362,7 @@ const policiesMatch = (left?: AuthorshipPolicy, right?: AuthorshipPolicy) => {
     normalizedLeft.enabled === normalizedRight.enabled
     && normalizedLeft.granularity === normalizedRight.granularity
     && normalizedLeft.lockOn === normalizedRight.lockOn
+    && normalizedLeft.editableWindowHours === normalizedRight.editableWindowHours
   );
 };
 
@@ -440,6 +514,7 @@ export const createAuthorshipClaim = ({
   ownerName,
   ownerId,
   timestamp,
+  editableWindowHours,
   currentValue,
   sourceValue,
   status,
@@ -452,12 +527,18 @@ export const createAuthorshipClaim = ({
   ownerName?: string;
   ownerId?: string | number;
   timestamp?: string;
+  editableWindowHours?: number;
   currentValue?: any;
   sourceValue?: any;
   status?: AuthorshipState;
 }): AuthorshipClaim => {
   const resolvedLockOn = lockOn ?? 'save';
   const claimKey = buildAuthorshipClaimKey({ scope, fieldId, rowKey, componentId });
+  const claimedAt = timestamp ?? new Date().toISOString();
+  const windowHours =
+    typeof editableWindowHours === 'number' && Number.isFinite(editableWindowHours) && editableWindowHours > 0
+      ? editableWindowHours
+      : DEFAULT_EDITABLE_WINDOW_HOURS;
   return {
     claimKey,
     scope,
@@ -466,7 +547,10 @@ export const createAuthorshipClaim = ({
     componentId,
     ownerName,
     ownerId,
-    timestamp: timestamp ?? new Date().toISOString(),
+    timestamp: claimedAt,
+    claimedAt,
+    lastSavedAt: claimedAt,
+    editableUntil: addHoursIso(claimedAt, windowHours),
     status: status ?? (resolvedLockOn === 'save' ? 'locked' : 'signed'),
     lockOn: resolvedLockOn,
     currentValue,
@@ -562,7 +646,7 @@ export const prepareAuthorshipPersist = (
   sourceData: any,
   activeData: any,
   action: AuthorshipPersistAction,
-  overrides?: { ownerName?: string; ownerId?: string | number }
+  overrides?: { ownerName?: string; ownerId?: string | number; now?: Date | string | number }
 ) => {
   const nextState = ensurePersistableState(activeData);
   const registry = normalizeAuthorshipTargetRegistry(nextState.uiState?.__authorshipTargets);
@@ -574,7 +658,34 @@ export const prepareAuthorshipPersist = (
       : {};
   const ownerName = getAuthorshipOwnerName(sourceData, nextState, overrides?.ownerName);
   const ownerId = overrides?.ownerId ?? sourceData?.userProfile?.userProfileId;
+  const previewNow = sourceData?.previewOptions?.authorshipNow;
+  const now = overrides?.now ? new Date(overrides.now) : previewNow ? new Date(previewNow) : new Date();
+  const nowIso = now.toISOString();
   let changed = false;
+
+  const canUpdateClaim = (existingClaim?: AuthorshipClaim) => {
+    if (!existingClaim || existingClaim.status === 'unlocked') return true;
+    if (existingClaim.status === 'signed') return false;
+    const editableUntil = existingClaim.editableUntil || addHoursIso(existingClaim.claimedAt || existingClaim.timestamp, DEFAULT_EDITABLE_WINDOW_HOURS);
+    const editableUntilDate = editableUntil ? new Date(editableUntil) : null;
+    const expired = !!editableUntilDate && !Number.isNaN(editableUntilDate.getTime()) && now.getTime() > editableUntilDate.getTime();
+    if (expired) return false;
+    return isSameAuthorshipActor(existingClaim, { ownerName, ownerId });
+  };
+
+  const updateExistingClaim = (
+    existingClaim: AuthorshipClaim,
+    currentValue: any,
+    sourceValue: any,
+    nextStatus: AuthorshipState
+  ): AuthorshipClaim => ({
+    ...existingClaim,
+    status: nextStatus,
+    timestamp: nowIso,
+    lastSavedAt: nowIso,
+    currentValue,
+    sourceValue,
+  });
 
   Object.values(registry.fields).forEach((target) => {
     const policy = normalizeAuthorshipPolicy(target.policy);
@@ -590,16 +701,23 @@ export const prepareAuthorshipPersist = (
       if (action === 'sign' && existingClaim && existingClaim.lockOn === 'save' && existingClaim.status !== 'unlocked') {
         const nextStatus = nextClaimStatusForAction(action, existingClaim);
         if (existingClaim.status !== nextStatus) {
-          store.claims[claimKey] = {
-            ...existingClaim,
-            status: nextStatus,
-            timestamp: new Date().toISOString(),
-            currentValue,
-            sourceValue,
-          };
+          store.claims[claimKey] = updateExistingClaim(existingClaim, currentValue, sourceValue, nextStatus);
           changed = true;
         }
       }
+      return;
+    }
+
+    if (!canUpdateClaim(existingClaim)) return;
+
+    if (existingClaim && existingClaim.status !== 'unlocked') {
+      store.claims[claimKey] = updateExistingClaim(
+        existingClaim,
+        currentValue,
+        sourceValue,
+        nextClaimStatusForAction(action, existingClaim)
+      );
+      changed = true;
       return;
     }
 
@@ -609,6 +727,8 @@ export const prepareAuthorshipPersist = (
       lockOn: policy.lockOn,
       ownerName,
       ownerId,
+      timestamp: nowIso,
+      editableWindowHours: policy.editableWindowHours,
       currentValue,
       sourceValue,
       status: nextClaimStatusForAction(action, existingClaim),
@@ -640,16 +760,23 @@ export const prepareAuthorshipPersist = (
         if (action === 'sign' && existingClaim && existingClaim.lockOn === 'save' && existingClaim.status !== 'unlocked') {
           const nextStatus = nextClaimStatusForAction(action, existingClaim);
           if (existingClaim.status !== nextStatus) {
-            store.claims[claimKey] = {
-              ...existingClaim,
-              status: nextStatus,
-              timestamp: new Date().toISOString(),
-              currentValue,
-              sourceValue,
-            };
-            changed = true;
+              store.claims[claimKey] = updateExistingClaim(existingClaim, currentValue, sourceValue, nextStatus);
+              changed = true;
+            }
           }
-        }
+        return;
+      }
+
+      if (!canUpdateClaim(existingClaim)) return;
+
+      if (existingClaim && existingClaim.status !== 'unlocked') {
+        store.claims[claimKey] = updateExistingClaim(
+          existingClaim,
+          currentValue,
+          sourceValue,
+          nextClaimStatusForAction(action, existingClaim)
+        );
+        changed = true;
         return;
       }
 
@@ -660,6 +787,8 @@ export const prepareAuthorshipPersist = (
         lockOn: policy.lockOn,
         ownerName,
         ownerId,
+        timestamp: nowIso,
+        editableWindowHours: policy.editableWindowHours,
         currentValue,
         sourceValue,
         status: nextClaimStatusForAction(action, existingClaim),

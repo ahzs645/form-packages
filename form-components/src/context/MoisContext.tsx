@@ -148,6 +148,7 @@ export interface SourceData {
   };
   previewOptions?: {
     strictMemoryCode?: boolean;
+    authorshipNow?: string;
   };
   userProfile?: {
     userProfileId: number;
@@ -1390,8 +1391,8 @@ export function MoisProvider({ children, sourceData: customSourceData }: MoisPro
       // Merge InitialData from form code into sourceFormData
       sourceFormData: {
         ...(baseSourceData as any)?.sourceFormData,
-        ...customSourceData?.sourceFormData,
         ...initialData,
+        ...customSourceData?.sourceFormData,
       },
     };
   }, [customSourceData, profileSourceData]);

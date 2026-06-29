@@ -1,0 +1,26 @@
+{
+  "name": "FieldStampButton",
+  "title": "Field Stamp Button",
+  "description": "Button-triggered field stamping from MOIS source data, active form data, or literal values.",
+  "version": {
+    "major": 1,
+    "minor": 0,
+    "patch": 0
+  },
+  "type": "component",
+  "owner": "MOIS Exporter",
+  "author": "MOIS Exporter",
+  "publisher": "MOIS Exporter",
+  "globalIdentifier": "",
+  "requiredFormViewerVersion": {
+    "major": 0,
+    "minor": 1,
+    "patch": 0
+  },
+  "requiredMoisVersion": {
+    "major": 2,
+    "minor": 26,
+    "patch": 18
+  },
+  "components": []
+}

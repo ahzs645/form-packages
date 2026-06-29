@@ -134,9 +134,11 @@ export const LayoutItem: React.FC<LayoutItemProps> = ({
 
   // Determine readOnly and isComplete from section context
   const isComplete = isCompleteProp ?? false;
-  const authorshipLockInfo = sectionContext.authorshipPolicy?.enabled && sectionContext.authorshipPolicy.granularity !== 'row'
-    ? getAuthorshipLockInfo(activeData, { scope: 'field', fieldId: computedLayoutId }, sourceData?.userProfile?.identity?.fullName)
-    : { locked: false };
+  const authorshipLockInfo = getAuthorshipLockInfo(activeData, { scope: 'field', fieldId: computedLayoutId }, {
+      ownerName: sourceData?.userProfile?.identity?.fullName,
+      ownerId: sourceData?.userProfile?.userProfileId,
+      now: sourceData?.previewOptions?.authorshipNow,
+    });
   const readOnly = (readOnlyProp ?? false) || !!authorshipLockInfo.locked || isComplete;
   let hidden = hiddenProp;
   let label = labelProp;

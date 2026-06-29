@@ -245,9 +245,11 @@ export const TextArea: React.FC<TextAreaProps> = ({
       registerAuthorshipFieldTarget(draft, effectiveFieldId, sectionContext.authorshipPolicy);
     });
   }, [effectiveFieldId, sectionContext.authorshipPolicy, setActiveData]);
-  const authorshipLockInfo = sectionContext.authorshipPolicy?.enabled
-    ? getAuthorshipLockInfo(activeData, { scope: 'field', fieldId: effectiveFieldId }, sourceData?.userProfile?.identity?.fullName)
-    : { locked: false };
+  const authorshipLockInfo = getAuthorshipLockInfo(activeData, { scope: 'field', fieldId: effectiveFieldId }, {
+      ownerName: sourceData?.userProfile?.identity?.fullName,
+      ownerId: sourceData?.userProfile?.userProfileId,
+      now: sourceData?.previewOptions?.authorshipNow,
+    });
   const effectiveReadOnly = !!readOnly || !!authorshipLockInfo.locked;
   const effectiveLabelPosition = labelPosition ?? (
     sectionContext.layout === 'flex' ? 'top' :

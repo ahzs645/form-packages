@@ -191,10 +191,34 @@ const renderLayoutTableResources = (cell) => {
   )
 }
 
+const renderLayoutTableStampButton = (cell, readOnly) => {
+  const id = cell.stampFieldId || cell.fieldId || cell.id
+  const label = cell.label || cell.text || "Sign"
+  const targets = Array.isArray(cell.targets) ? cell.targets : []
+
+  return (
+    <FieldStampButton
+      id={id}
+      stampFieldId={cell.stampFieldId}
+      label={label}
+      signedLabel={cell.signedLabel || "Signed"}
+      clearLabel={cell.clearLabel || "Clear"}
+      buttonType={cell.buttonType || "primary"}
+      targets={targets}
+      allowResign={cell.allowResign !== false}
+      showClear={cell.showClear === true}
+      showStatus={cell.showStatus !== false}
+      statusTemplate={cell.statusTemplate || "{signedLabel} {signedAt}"}
+      readOnly={readOnly}
+    />
+  )
+}
+
 const renderLayoutTableCellContent = (cell, readOnly, data, sourceData, setFieldValue) => {
   if (cell.kind === "field") return renderLayoutTableField(cell, readOnly, data, setFieldValue)
   if (cell.kind === "fieldList") return renderLayoutTableFieldList(cell, readOnly, data, setFieldValue)
   if (cell.kind === "resources") return renderLayoutTableResources(cell)
+  if (cell.kind === "stampButton") return renderLayoutTableStampButton(cell, readOnly)
   if (cell.kind === "computed") return computeLayoutTableCellValue(cell, data)
   return getCellDisplayValue(cell, data, sourceData)
 }

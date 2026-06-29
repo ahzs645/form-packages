@@ -76,9 +76,11 @@ export const MoisDropdown: React.FC<MoisDropdownProps> = ({
       registerAuthorshipFieldTarget(draft, resolvedFieldId, section.authorshipPolicy);
     });
   }, [resolvedFieldId, section.authorshipPolicy, setActiveData]);
-  const authorshipLockInfo = section.authorshipPolicy?.enabled
-    ? getAuthorshipLockInfo(activeData, { scope: 'field', fieldId: resolvedFieldId }, sourceData?.userProfile?.identity?.fullName)
-    : { locked: false };
+  const authorshipLockInfo = getAuthorshipLockInfo(activeData, { scope: 'field', fieldId: resolvedFieldId }, {
+      ownerName: sourceData?.userProfile?.identity?.fullName,
+      ownerId: sourceData?.userProfile?.userProfileId,
+      now: sourceData?.previewOptions?.authorshipNow,
+    });
   const effectiveReadOnly = readOnly || !!authorshipLockInfo.locked;
   const fieldStatus = readSectionFieldStatus(activeData, section, resolvedFieldId);
 

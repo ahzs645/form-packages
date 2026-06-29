@@ -395,9 +395,11 @@ export const LayoutItem: React.FC<LayoutItemProps> = ({
 
   // Determine read-only state
   const isComplete = section.sectionComplete(sourceData, activeData, section.sectionNum);
-  const authorshipLockInfo = section.authorshipPolicy?.enabled && section.authorshipPolicy.granularity !== 'row'
-    ? getAuthorshipLockInfo(activeData, { scope: 'field', fieldId: mId ?? undefined }, sourceData?.userProfile?.identity?.fullName)
-    : { locked: false };
+  const authorshipLockInfo = getAuthorshipLockInfo(activeData, { scope: 'field', fieldId: mId ?? undefined }, {
+      ownerName: sourceData?.userProfile?.identity?.fullName,
+      ownerId: sourceData?.userProfile?.userProfileId,
+      now: sourceData?.previewOptions?.authorshipNow,
+    });
   const readOnly = propReadOnly || !!authorshipLockInfo.locked || isComplete || sourceData.lifecycleState.isPrinting;
 
   // Handle hidden items

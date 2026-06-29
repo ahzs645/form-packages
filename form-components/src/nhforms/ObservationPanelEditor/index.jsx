@@ -190,7 +190,11 @@ const ObservationPanelEditor = ({
       {rowDefs.map((row) => {
         const value = getPanelValue(rootValue, row.id)
         const rowLockInfo = authorshipPolicy?.enabled
-          ? getAuthorshipLockInfo(fd, { scope: "row", componentId, rowKey: row.id }, currentActorName)
+          ? getAuthorshipLockInfo(fd, { scope: "row", componentId, rowKey: row.id }, {
+            ownerName: currentActorName,
+            ownerId: sd?.userProfile?.userProfileId,
+            now: sd?.previewOptions?.authorshipNow,
+          })
           : { locked: false }
         const rowReadOnly = !!rowLockInfo.locked
         if (row.type === "coded") {
