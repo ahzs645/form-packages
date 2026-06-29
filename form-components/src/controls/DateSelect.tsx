@@ -4,13 +4,14 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { DatePicker, DefaultButton, IDatePickerProps, Stack, Toggle } from '@fluentui/react';
+import { DefaultButton, IDatePickerProps, Stack, Toggle } from '@fluentui/react';
 import { LayoutItem } from '../controls/LayoutItem';
 import { useActiveDataForForms } from '../hooks/form-state';
 import { useSourceData, useSection } from '../context/MoisContext';
 import { getAuthorshipLockInfo, registerAuthorshipFieldTarget } from '../authorship';
 import {
   getSectionActiveTarget,
+  getSectionSourceTarget,
   readSectionActiveFieldValue,
   writeSectionActiveFieldValue,
 } from '../runtime/mois-contract';
@@ -305,7 +306,10 @@ export const DateSelect: React.FC<DateSelectProps> = ({
       now: sourceData?.previewOptions?.authorshipNow,
     });
   const effectiveReadOnly = !!readOnly || !!authorshipLockInfo.locked;
+  const effectiveSourceId = sourceId || id || fieldId || layoutId;
   const activeValue = readSectionActiveFieldValue(activeData, sectionContext, effectiveFieldId);
+  const sourceTarget = getSectionSourceTarget(sourceData, sectionContext);
+  const sourceValue = effectiveSourceId ? sourceTarget?.[effectiveSourceId] : undefined;
   const compositeValue = buildDateFromComponents(
     componentFields,
     getSectionActiveTarget(activeData, sectionContext) as Record<string, any> | undefined
@@ -313,20 +317,22 @@ export const DateSelect: React.FC<DateSelectProps> = ({
   const resolvedValue =
     value !== undefined
       ? value
-      : (typeof activeValue === 'string' ? activeValue : '') || compositeValue || defaultValue || '';
+      : (typeof activeValue === 'string' ? activeValue : '') ||
+        compositeValue ||
+        (typeof sourceValue === 'string' ? sourceValue : '') ||
+        defaultValue ||
+        '';
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(
     parseDateValue(resolvedValue, dateFormat)
   );
+  const [inputText, setInputText] = useState(() => formatDisplayDate(parseDateValue(resolvedValue, dateFormat), dateFormat));
   const resolvedPlaceholder = placeholder ?? DATE_PLACEHOLDER_MAP[dateFormat] ?? DATE_PLACEHOLDER_MAP[DEFAULT_DATE_FORMAT];
-  const { strings: datePickerPropsStrings, ...datePickerOverrideProps } = datePickerProps ?? {};
-  const datePickerStrings = {
-    ...DEFAULT_DATE_PICKER_STRINGS,
-    invalidInputErrorMessage: `Enter a valid date in ${resolvedPlaceholder} format`,
-    ...(datePickerPropsStrings ?? {}),
-  } as IDatePickerProps['strings'];
+  const { textField: datePickerTextFieldProps } = datePickerProps ?? {};
 
   useEffect(() => {
-    setSelectedDate(parseDateValue(resolvedValue, dateFormat));
+    const parsed = parseDateValue(resolvedValue, dateFormat);
+    setSelectedDate(parsed);
+    setInputText(formatDisplayDate(parsed, dateFormat));
   }, [dateFormat, resolvedValue]);
 
   useEffect(() => {
@@ -386,11 +392,10 @@ export const DateSelect: React.FC<DateSelectProps> = ({
     value,
   ]);
 
-  if (hidden) return null;
-
-  const handleDateChange = (date: Date | null | undefined) => {
+  const commitDateValue = (date: Date | null | undefined) => {
     if (effectiveReadOnly) return;
     setSelectedDate(date || undefined);
+    setInputText(date ? formatDisplayDate(date, dateFormat) : '');
     const formatted = date ? formatCanonicalDate(date) : '';
 
     if (effectiveFieldId) {
@@ -422,26 +427,95 @@ export const DateSelect: React.FC<DateSelectProps> = ({
     }
   };
 
-  const datePickerInput = (
-    <DatePicker
-      value={selectedDate}
-      onSelectDate={handleDateChange}
-      placeholder={resolvedPlaceholder}
-      disabled={disabled || effectiveReadOnly}
-      borderless={borderless || effectiveReadOnly}
-      formatDate={(date) => formatDisplayDate(date, dateFormat)}
-      allowTextInput={true}
-      disableAutoFocus={true}
-      parseDateFromString={(str) => parseDateValue(str, dateFormat) || null}
-      tabIndex={effectiveReadOnly ? -1 : undefined}
-      styles={{
-        root: { flex: '2 2 0', minWidth: '80px', maxWidth: '160px' },
-        textField: { width: '100%' },
-      }}
-      {...datePickerOverrideProps}
-      strings={datePickerStrings}
-    />
+  const handleDateChange = (date: Date | null | undefined) => {
+    commitDateValue(date);
+  };
+
+  const commitTextInputValue = (rawValue: string | undefined) => {
+    if (effectiveReadOnly) return;
+    const trimmed = (rawValue ?? '').trim();
+    setInputText(rawValue ?? '');
+    if (!trimmed) {
+      commitDateValue(null);
+      return;
+    }
+
+    if (effectiveFieldId) {
+      setActiveData((draft: any) => {
+        writeSectionActiveFieldValue(draft, sectionContext, effectiveFieldId, trimmed, linkedFieldIds ?? []);
+      });
+    }
+
+    if (onChange) {
+      onChange(trimmed);
+    }
+
+    const parsed = parseDateValue(trimmed, dateFormat);
+    if (parsed) {
+      commitDateValue(parsed);
+    }
+  };
+
+  if (hidden) return null;
+
+  const renderDatePickerInput = (rootStyle: React.CSSProperties) => (
+    <div style={rootStyle}>
+      <div className="ms-TextField" style={{ width: '100%' }}>
+        <div className="ms-TextField-wrapper">
+          <div
+            className="ms-TextField-fieldGroup"
+            style={{
+              alignItems: 'center',
+              border: borderless || effectiveReadOnly ? 'none' : undefined,
+              display: 'flex',
+              width: '100%',
+            }}
+          >
+            <input
+              aria-invalid="false"
+              className="ms-TextField-field"
+              disabled={disabled || effectiveReadOnly}
+              onBlur={(event) => {
+                datePickerTextFieldProps?.onBlur?.(event);
+                commitTextInputValue(event.currentTarget.value);
+              }}
+              onChange={(event) => {
+                datePickerTextFieldProps?.onChange?.(event, event.currentTarget.value);
+                commitTextInputValue(event.currentTarget.value);
+              }}
+              onInput={(event) => {
+                commitTextInputValue(event.currentTarget.value);
+              }}
+              onKeyUp={(event) => {
+                commitTextInputValue(event.currentTarget.value);
+              }}
+              placeholder={resolvedPlaceholder}
+              readOnly={effectiveReadOnly}
+              tabIndex={effectiveReadOnly ? -1 : undefined}
+              type="text"
+              value={inputText}
+              style={{
+                border: 0,
+                flex: '1 1 auto',
+                minWidth: 0,
+                outline: 0,
+              }}
+            />
+            <i
+              aria-hidden="true"
+              className="ms-DatePicker-event--without-label"
+              data-icon-name={datePickerTextFieldProps?.iconProps?.iconName ?? 'Calendar'}
+              style={{ flex: '0 0 auto', fontFamily: 'FabricMDL2Icons' }}
+            >
+              {"\uE787"}
+            </i>
+          </div>
+        </div>
+      </div>
+    </div>
   );
+
+  const datePickerInput = renderDatePickerInput({ flex: '2 2 0', minWidth: '80px', maxWidth: '160px' });
 
   const datePickerElement = buttonControls && !inline ? (
     <div>
@@ -458,26 +532,7 @@ export const DateSelect: React.FC<DateSelectProps> = ({
   );
 
   if (inline) {
-    return (
-      <DatePicker
-        value={selectedDate}
-        onSelectDate={handleDateChange}
-        placeholder={resolvedPlaceholder}
-        disabled={disabled || effectiveReadOnly}
-        borderless={borderless || effectiveReadOnly}
-        formatDate={(date) => formatDisplayDate(date, dateFormat)}
-        allowTextInput={true}
-        disableAutoFocus={true}
-        parseDateFromString={(str) => parseDateValue(str, dateFormat) || null}
-        tabIndex={effectiveReadOnly ? -1 : undefined}
-        styles={{
-          root: { width: '100%' },
-          textField: { width: '100%' },
-        }}
-        {...datePickerOverrideProps}
-        strings={datePickerStrings}
-      />
-    );
+    return renderDatePickerInput({ width: '100%' });
   }
 
   const resolvedLabel = showAge && label

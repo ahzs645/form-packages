@@ -23876,6 +23876,44 @@ const buildDefaultSavePayload = (fd, formDataOverride) => {
   }
 }
 
+const collectDomFieldValues = () => {
+  if (typeof document === "undefined") return null
+  const values = {}
+  document.querySelectorAll("[data-field-id] input, [data-field-id] textarea").forEach((element) => {
+    const host = element.closest("[data-field-id]")
+    const fieldId = host?.getAttribute("data-field-id")
+    if (!fieldId || element.disabled || element.readOnly) return
+    const tagName = element.tagName
+    const inputType = tagName === "INPUT" ? (element.getAttribute("type") || "text").toLowerCase() : ""
+    if (tagName === "INPUT" && !["", "text", "date", "search", "email", "number", "tel", "url"].includes(inputType)) {
+      return
+    }
+    values[fieldId] = element.value
+  })
+  return Object.keys(values).length > 0 ? values : null
+}
+
+const mergeFieldValuesIntoState = (fd, values) => {
+  if (!values || !fd || typeof fd !== "object") return fd
+  const field = fd.field && typeof fd.field === "object" ? fd.field : {}
+  const fieldData = field.data && typeof field.data === "object" ? field.data : {}
+  const formData = fd.formData && typeof fd.formData === "object" ? fd.formData : {}
+  return {
+    ...fd,
+    field: {
+      ...field,
+      data: {
+        ...fieldData,
+        ...values,
+      },
+    },
+    formData: {
+      ...formData,
+      ...values,
+    },
+  }
+}
+
 const UnsavedChangesGuard = ({
   watchedValue,
   dialogLibraryId = "save_sign_discard_cancel",
@@ -23901,7 +23939,7 @@ const UnsavedChangesGuard = ({
   getSubmitData,
 }) => {
   const sd = useSourceData()
-  const [fd] = useActiveData()
+  const [fd, setFormData] = useActiveData()
   const trackedValue = typeof watchedValue === "undefined" ? fd?.field?.data : watchedValue
   const trackedSnapshot = serializeGuardValue(trackedValue)
   const baselineRef = useRef(trackedSnapshot)
@@ -24025,9 +24063,21 @@ const UnsavedChangesGuard = ({
       return
     }
 
+    const domFieldValues = collectDomFieldValues()
+    const persistFd = mergeFieldValuesIntoState(fd, domFieldValues)
+    if (domFieldValues && typeof setFormData === "function") {
+      setFormData((draft) => {
+        draft.field = draft.field || {}
+        draft.field.data = draft.field.data || {}
+        draft.formData = draft.formData || {}
+        Object.assign(draft.field.data, domFieldValues)
+        Object.assign(draft.formData, domFieldValues)
+      })
+    }
+
     const persistAction = actionId === "sign" ? "sign" : "save"
     const prepared = typeof prepareAuthorshipPersist === "function"
-      ? prepareAuthorshipPersist(sd, fd, persistAction)
+      ? prepareAuthorshipPersist(sd, persistFd, persistAction)
       : null
     // Sign-and-submit should persist the full submit payload (mapped
     // observation updates, document comment) when the form provides it.
@@ -24035,11 +24085,11 @@ const UnsavedChangesGuard = ({
       ? getSubmitData(prepared)
       : typeof getSaveData === "function"
         ? getSaveData(prepared)
-        : buildDefaultSavePayload(fd, prepared?.formData)
+        : buildDefaultSavePayload(persistFd, prepared?.formData)
 
     if (actionId === "sign" && typeof signSubmit === "function") {
       // Real MOIS signSubmit is (note, sd, fd, options)
-      const success = await signSubmit("", sd, fd, payload)
+      const success = await signSubmit("", sd, persistFd, payload)
       if (success !== false && typeof commitPreparedAuthorshipPersist === "function") {
         commitPreparedAuthorshipPersist(fd, prepared)
       }
@@ -24050,7 +24100,7 @@ const UnsavedChangesGuard = ({
     }
 
     if (actionId === "sign" && typeof saveSubmit === "function") {
-      const success = await saveSubmit(sd, fd, payload)
+      const success = await saveSubmit(sd, persistFd, payload)
       if (success !== false && typeof commitPreparedAuthorshipPersist === "function") {
         commitPreparedAuthorshipPersist(fd, prepared)
       }
@@ -24061,7 +24111,7 @@ const UnsavedChangesGuard = ({
     }
 
     if (typeof saveDraft === "function") {
-      const success = await saveDraft(sd, fd, payload)
+      const success = await saveDraft(sd, persistFd, payload)
       if (success !== false && typeof commitPreparedAuthorshipPersist === "function") {
         commitPreparedAuthorshipPersist(fd, prepared)
       }
