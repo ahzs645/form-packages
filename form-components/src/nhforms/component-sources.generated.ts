@@ -4660,6 +4660,46 @@ const _setValueAtPath = (root, path, value) => {
   return root
 }
 
+const _resolvePathValue = (root, path) => {
+  if (!root || !path) return undefined
+  return String(path)
+    .split(".")
+    .map((segment) => segment.trim())
+    .filter(Boolean)
+    .reduce((current, segment) => {
+      if (current == null) return undefined
+      if (Array.isArray(current) && /^\\d+$/.test(segment)) return current[Number(segment)]
+      return typeof current === "object" ? current[segment] : undefined
+    }, root)
+}
+
+const _resolveLiteralValue = (value, context) => {
+  if (value === "$now") return new Date().toISOString()
+  if (value === "$today") return new Date().toISOString().slice(0, 10)
+  if (value === "$userInitials") return _resolvePathValue(context, "userProfile.identity.initials")
+  if (value === "$userFullName") return _resolvePathValue(context, "userProfile.identity.fullName")
+  if (value === "$userLoginName") return _resolvePathValue(context, "userProfile.loginName")
+  return value
+}
+
+const _normalizeStampCellValue = (value) => {
+  if (value == null) return ""
+  if (typeof value === "object") {
+    return String(value.display ?? value.text ?? value.name ?? value.value ?? value.code ?? "")
+  }
+  return String(value)
+}
+
+const _resolveStampCellValue = (column = {}, context = {}) => {
+  const config = column.stampConfig || {}
+  const sourcePath = String(config.sourcePath || "userProfile.identity.initials").trim()
+  const raw = sourcePath
+    ? _resolvePathValue(context, sourcePath)
+    : _resolveLiteralValue(config.value ?? "$userInitials", context)
+  const fallback = _resolveLiteralValue(config.fallback ?? "", context)
+  return _normalizeStampCellValue(raw ?? fallback)
+}
+
 const _normalizeRows = (value) => {
   if (Array.isArray(value)) return value
   if (Array.isArray(value?.rows)) return value.rows
@@ -5162,6 +5202,14 @@ const _buildSubformFieldFromColumn = (column) => {
         ],
         required: column.required === true,
       })
+    case "stampButton":
+      return withCommon({
+        id: fieldId,
+        label,
+        type: "text",
+        placeholder: column.placeholder,
+        required: column.required === true,
+      })
     case "text":
     default:
       return withCommon({
@@ -5455,10 +5503,69 @@ EditableTable = ({
     }, { rowId: nextRow._rowId, value })
   }
 
+  const stampCell = (rowIndex, column) => {
+    if (isLocked) return
+    if (authorshipEnabled && getRowLock(currentRows[rowIndex]).locked) return
+    const nextRows = [...currentRows]
+    if (!nextRows[rowIndex]) {
+      nextRows[rowIndex] = _makeEmptyRow(columns, rowIndex)
+    }
+    const nextRow = _cloneRow(nextRows[rowIndex], columns)
+    const signedAt = new Date().toISOString()
+    const value = _resolveStampCellValue(column, {
+      sd,
+      sourceData: sd,
+      userProfile: sd?.userProfile,
+      webform: sd?.webform,
+      patient: sd?.patient,
+      formParams: sd?.formParams,
+      fd,
+      field: fd?.field?.data || {},
+      formData: fd?.formData || {},
+      tableId: id,
+      row: nextRow,
+    })
+    _setValueAtPath(nextRow, column.dataPath || column.id, value)
+    if (column.stampConfig?.signedAtPath) {
+      _setValueAtPath(nextRow, column.stampConfig.signedAtPath, signedAt)
+    }
+    nextRows[rowIndex] = nextRow
+    commitRows(nextRows, {
+      reason: "stamp",
+      rowIndex,
+      row: nextRow,
+      previousRows: currentRows,
+    }, { rowId: nextRow._rowId, value })
+  }
+
   const updateDraftCell = (columnId, value) => {
     const nextDraft = _cloneRow(draftRow || _makeEmptyRow(columns, currentRows.length), columns)
     const column = columns.find((item) => item.id === columnId) || { id: columnId, dataPath: columnId }
     _setValueAtPath(nextDraft, column.dataPath || column.id, value)
+    setDraftRow(nextDraft)
+  }
+
+  const stampDraftCell = (column) => {
+    if (isLocked) return
+    const nextDraft = _cloneRow(draftRow || _makeEmptyRow(columns, currentRows.length), columns)
+    const signedAt = new Date().toISOString()
+    const value = _resolveStampCellValue(column, {
+      sd,
+      sourceData: sd,
+      userProfile: sd?.userProfile,
+      webform: sd?.webform,
+      patient: sd?.patient,
+      formParams: sd?.formParams,
+      fd,
+      field: fd?.field?.data || {},
+      formData: fd?.formData || {},
+      tableId: id,
+      row: nextDraft,
+    })
+    _setValueAtPath(nextDraft, column.dataPath || column.id, value)
+    if (column.stampConfig?.signedAtPath) {
+      _setValueAtPath(nextDraft, column.stampConfig.signedAtPath, signedAt)
+    }
     setDraftRow(nextDraft)
   }
 
@@ -5625,7 +5732,7 @@ EditableTable = ({
   const remaining = Math.max(0, maxRows - currentRowCount)
   const shouldShowActions = !isLocked && (allowEditRows || allowDeleteRows)
 
-  const renderEditorInput = (row, rowIndex, column, onValueChange, inline, rowReadOnly = false) => {
+  const renderEditorInput = (row, rowIndex, column, onValueChange, inline, rowReadOnly = false, onStampColumn = null) => {
     const value = _getValueAtPath(row, column.dataPath || column.id)
     // When the row is authorship-locked, neutralize edits at the input level so
     // even controls that ignore a readOnly prop cannot write.
@@ -5698,6 +5805,47 @@ EditableTable = ({
             value={value}
             onChange={(event, checked) => onValueChange(rowIndex, column.id, !!checked)}
           />
+        )
+
+      case "stampButton":
+        const stampConfig = column.stampConfig || {}
+        const stampedValue = _stringifyValue(value)
+        const hasStampedValue = stampedValue.length > 0
+        const canResign = stampConfig.allowResign !== false
+        const disabledStamp = isLocked || rowReadOnly || (hasStampedValue && !canResign)
+        const ButtonComponent = column.buttonType === "default" ? DefaultButton : PrimaryButton
+        return (
+          <Stack horizontal verticalAlign="center" tokens={{ childrenGap: 8 }} wrap>
+            <ButtonComponent
+              text={hasStampedValue ? (stampConfig.signedLabel || "Initialed") : (stampConfig.buttonLabel || "Initial")}
+              disabled={disabledStamp}
+              onClick={() => {
+                if (disabledStamp) return
+                if (typeof onStampColumn === "function") {
+                  onStampColumn(rowIndex, column, row)
+                } else {
+                  onValueChange(rowIndex, column.id, _resolveStampCellValue(column, {
+                    sd,
+                    sourceData: sd,
+                    userProfile: sd?.userProfile,
+                    webform: sd?.webform,
+                    patient: sd?.patient,
+                    formParams: sd?.formParams,
+                    fd,
+                    field: fd?.field?.data || {},
+                    formData: fd?.formData || {},
+                    tableId: id,
+                    row,
+                  }))
+                }
+              }}
+            />
+            {stampConfig.showStatus !== false && hasStampedValue ? (
+              <Text variant="small" styles={{ root: { color: isDarkMode ? "#c8c8c8" : "#605e5c" } }}>
+                {stampedValue}
+              </Text>
+            ) : null}
+          </Stack>
         )
 
       case "text":
@@ -5803,8 +5951,10 @@ EditableTable = ({
                   {isEmptyPlaceholder
                     ? emptyStateText
                     : isModalMode
-                      ? <div>{_formatCellValue(row, col)}</div>
-                      : renderEditorInput(row, rowIndex, col, updateCell, true, getRowLock(row).locked)}
+                      ? col.type === "stampButton"
+                        ? renderEditorInput(row, rowIndex, col, updateCell, true, getRowLock(row).locked, stampCell)
+                        : <div>{_formatCellValue(row, col)}</div>
+                      : renderEditorInput(row, rowIndex, col, updateCell, true, getRowLock(row).locked, stampCell)}
                 </td>
               ))}
             </tr>
@@ -5909,8 +6059,10 @@ EditableTable = ({
                     {tableColumns.map((col) => (
                       <td key={col.id} style={bodyCellStyle} data-source-field-id={getSourceFieldId(rowIndex, col.id)}>
                         {isModalMode
-                          ? <div>{_formatCellValue(row, col)}</div>
-                          : renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly)}
+                          ? col.type === "stampButton"
+                            ? renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell)
+                            : <div>{_formatCellValue(row, col)}</div>
+                          : renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell)}
                       </td>
                     ))}
                     {(isModalMode && shouldShowActions) && (
@@ -6019,7 +6171,9 @@ EditableTable = ({
                   editingRowIndex ?? currentRows.length,
                   column,
                   (rowIndex, columnId, value) => updateDraftCell(columnId, value),
-                  false
+                  false,
+                  false,
+                  (_rowIndex, stampColumn) => stampDraftCell(stampColumn)
                 )}
               </div>
             ))}
@@ -6068,6 +6222,7 @@ const createTableColumns = (columnDefs) => {
     booleanLabels: def.booleanLabels,
     prefill: def.prefill,
     useToggleSwitch: def.useToggleSwitch,
+    stampConfig: def.stampConfig,
   }))
 }
 `,
