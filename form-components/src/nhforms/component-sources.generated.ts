@@ -23960,7 +23960,7 @@ const UnsavedChangesGuard = ({
         ? prepareAuthorshipPersist(sd, fd, "save")
         : null
       const payload = typeof getSaveData === "function"
-        ? getSaveData()
+        ? getSaveData(prepared)
         : buildDefaultSavePayload(fd, prepared?.formData)
       // Best-effort only (legacy SaveOnClose semantics): the async save may
       // not complete if the host tears the window down immediately. Never
