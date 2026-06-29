@@ -626,13 +626,32 @@ EditableTable = ({
   showBackground = false,
   readOnly = false,
   disabled = false,
+  authorshipPolicy: authorshipPolicyProp,
   sourceFieldIds = {},
   sourceFieldIdsByRow = {},
   ...props
 }) => {
   const [fd] = useActiveData()
+  const sd = typeof useSourceData === "function" ? useSourceData() : null
+  const section = typeof useSection === "function" ? useSection() : null
   const theme = useTheme()
   const isDarkMode = theme?.isInverted || false
+
+  // Per-row authorship: each row the table renders can be locked to the author
+  // who entered it. Uses the shared __nhAuth engine (inlined by the nhforms
+  // generator / Vite loader) so it runs in real MOIS, not just preview.
+  const nhAuth = (typeof window !== "undefined" && window.__nhAuth) || null
+  const authorshipPolicy = authorshipPolicyProp || section?.authorshipPolicy || { enabled: false }
+  const authorshipEnabled = !!(nhAuth && authorshipPolicy && authorshipPolicy.enabled)
+  const getRowLock = (row) => {
+    if (!authorshipEnabled || !row?._rowId) return { locked: false }
+    const actor = nhAuth.actor(sd, fd)
+    return nhAuth.lockInfo(fd, sd, { scope: "row", componentId: id, rowKey: row._rowId }, {
+      ownerName: actor.ownerName,
+      ownerId: actor.ownerId,
+      now: sd?.previewOptions?.authorshipNow,
+    })
+  }
   const columns = useMemo(() => _normalizeTableColumns(columnsProp), [columnsProp])
   const initialRowCount = _normalizeInitialRowCount(initialRowsProp)
   const initialSeedRows = useMemo(() => _normalizeInitialRows(initialRowsProp, columns), [initialRowsProp, columns])
@@ -685,7 +704,7 @@ EditableTable = ({
     }
   }
 
-  const setRows = (nextRows) => {
+  const setRows = (nextRows, authorshipClaim = null) => {
     if (!fd?.setFormData) return
 
     const mirroredFieldIds = new Set()
@@ -715,6 +734,20 @@ EditableTable = ({
         nextFieldData[sourceFieldId] = _normalizeMirroredCellValue(rawValue, column)
       })
     })
+
+    // Lock-on-edit: stamp the editing author's claim onto field.data.__authorship
+    // for this row, carried inside the same write. nhAuth.claim mutates the
+    // object we pass; nextFieldData is spread into the committed state below.
+    if (authorshipClaim && authorshipEnabled && authorshipClaim.rowId) {
+      nhAuth.claim(
+        { field: { data: nextFieldData } },
+        sd,
+        { scope: "row", componentId: id, rowKey: authorshipClaim.rowId },
+        authorshipClaim.value,
+        authorshipPolicy,
+        { now: sd?.previewOptions?.authorshipNow }
+      )
+    }
 
     fd.setFormData({
       ...fd,
@@ -778,8 +811,8 @@ EditableTable = ({
     ...extra,
   }), [id, columns, currentRows, editingRowIndex, isModalMode])
 
-  const commitRows = useCallback((nextRows, meta = {}) => {
-    setRows(nextRows)
+  const commitRows = useCallback((nextRows, meta = {}, authorshipClaim = null) => {
+    setRows(nextRows, authorshipClaim)
     if (typeof onRowsChange === "function") {
       onRowsChange({
         tableId: id,
@@ -817,6 +850,9 @@ EditableTable = ({
   }
 
   const updateCell = (rowIndex, columnId, value) => {
+    // Defense in depth: a locked row cannot be edited even if an input slips
+    // through (read-only enforcement also gates onChange at the input level).
+    if (authorshipEnabled && getRowLock(currentRows[rowIndex]).locked) return
     const nextRows = [...currentRows]
     if (!nextRows[rowIndex]) {
       nextRows[rowIndex] = _makeEmptyRow(columns, rowIndex)
@@ -830,7 +866,7 @@ EditableTable = ({
       rowIndex,
       row: nextRow,
       previousRows: currentRows,
-    })
+    }, { rowId: nextRow._rowId, value })
   }
 
   const updateDraftCell = (columnId, value) => {
@@ -1003,8 +1039,11 @@ EditableTable = ({
   const remaining = Math.max(0, maxRows - currentRowCount)
   const shouldShowActions = !isLocked && (allowEditRows || allowDeleteRows)
 
-  const renderEditorInput = (row, rowIndex, column, onValueChange, inline) => {
+  const renderEditorInput = (row, rowIndex, column, onValueChange, inline, rowReadOnly = false) => {
     const value = _getValueAtPath(row, column.dataPath || column.id)
+    // When the row is authorship-locked, neutralize edits at the input level so
+    // even controls that ignore a readOnly prop cannot write.
+    if (rowReadOnly) onValueChange = () => {}
 
     switch (column.type) {
       case "number":
@@ -1179,7 +1218,7 @@ EditableTable = ({
                     ? emptyStateText
                     : isModalMode
                       ? <div>{_formatCellValue(row, col)}</div>
-                      : renderEditorInput(row, rowIndex, col, updateCell, true)}
+                      : renderEditorInput(row, rowIndex, col, updateCell, true, getRowLock(row).locked)}
                 </td>
               ))}
             </tr>
@@ -1237,17 +1276,21 @@ EditableTable = ({
             ) : (
               displayRows.map(({ row, rowIndex }, displayIndex) => {
                 const isEmpty = _isRowEmpty(row, columns)
+                const rowLock = getRowLock(row)
+                const rowReadOnly = !!rowLock.locked
                 // Any row can be removed (not just the last): removal shifts
                 // later rows up a slot, which the per-row source mapping
                 // handles. Rows with values still need allowDeleteNonEmpty.
+                // An authorship-locked row cannot be deleted by another user.
                 const canDeleteInline =
                   currentRows.length > 1 &&
                   rowIndex < currentRows.length &&
                   allowDeleteRows &&
+                  !rowReadOnly &&
                   (allowDeleteNonEmpty || isEmpty)
 
                 return (
-                  <tr key={row?._rowId || `row_${rowIndex}`}>
+                  <tr key={row?._rowId || `row_${rowIndex}`} title={rowReadOnly ? rowLock.note : undefined}>
                     {showRowNumbers && (
                       <td key="row-number" style={rowNumberCellStyle}>
                         {isModalMode ? (
@@ -1281,13 +1324,13 @@ EditableTable = ({
                       <td key={col.id} style={bodyCellStyle} data-source-field-id={getSourceFieldId(rowIndex, col.id)}>
                         {isModalMode
                           ? <div>{_formatCellValue(row, col)}</div>
-                          : renderEditorInput(row, rowIndex, col, updateCell, true)}
+                          : renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly)}
                       </td>
                     ))}
                     {(isModalMode && shouldShowActions) && (
                       <td key="actions" className="hideonprint" style={bodyCellStyle}>
                         <div style={{ display: "flex", gap: "4px", justifyContent: "flex-end" }}>
-                          {allowDeleteRows && (
+                          {allowDeleteRows && !rowReadOnly && (
                             <IconButton
                               iconProps={{ iconName: "Delete" }}
                               title="Delete"
@@ -1295,13 +1338,18 @@ EditableTable = ({
                               onClick={() => removeRowAt(rowIndex)}
                             />
                           )}
-                          {allowEditRows && (
+                          {allowEditRows && !rowReadOnly && (
                             <IconButton
                               iconProps={{ iconName: "Edit" }}
                               title="Edit"
                               ariaLabel="Edit"
                               onClick={() => openEditDialog(rowIndex)}
                             />
+                          )}
+                          {rowReadOnly && (
+                            <Text variant="small" styles={{ root: { color: "#a4262c", alignSelf: "center" } }}>
+                              {rowLock.note}
+                            </Text>
                           )}
                         </div>
                       </td>

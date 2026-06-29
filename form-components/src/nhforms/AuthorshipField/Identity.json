@@ -1,0 +1,7 @@
+{
+  "name": "AuthorshipField",
+  "title": "Authorship Field",
+  "description": "Single clinical value with a per-author lock (field-level authorship); read-only to other users once claimed",
+  "category": "Clinical",
+  "version": "1.0.0"
+}

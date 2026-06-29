@@ -37,6 +37,10 @@ const getCurrentActorName = (sd, fd) => (
   || sd?.webform?.provider?.name
   || ""
 )
+// Shared authorship engine (inlined as window.__nhAuth by the nhforms generator /
+// Vite loader). Replaces the preview-only getAuthorshipLockInfo/registerAuthorshipRowTarget
+// globals so row locking actually runs in real MOIS instead of ReferenceError-ing.
+const getNhAuth = () => (typeof window !== "undefined" && window.__nhAuth) || null
 // setFormData must receive a produce()-wrapped recipe: the real MOIS runtime
 // hands back the raw React state setter, so a bare mutator would replace the
 // active form data with undefined.
@@ -83,21 +87,12 @@ const ObservationPanelEditor = ({
   const maxHistory = Number(historyConfig?.maxRows) > 0 ? Number(historyConfig.maxRows) : 5
   const createdBy = fd?.field?.data?.createdBy ?? sd?.userProfile?.identity?.fullName
   const currentActorName = getCurrentActorName(sd, fd)
-  const authorshipPolicy = section?.authorshipPolicy || { enabled: false, granularity: "row", lockOn: "save" }
-
-  useEffect(() => {
-    if (!authorshipPolicy?.enabled || authorshipPolicy?.granularity !== "row") return
-    const rowIds = rowDefs.map((row) => row.id).filter(Boolean)
-    if (rowIds.length === 0) return
-    setFormData(produce((draft) => {
-      registerAuthorshipRowTarget(draft, {
-        componentId,
-        fieldId: effectiveFieldId,
-        rowIds,
-        policy: authorshipPolicy,
-      })
-    }))
-  }, [authorshipPolicy, componentId, effectiveFieldId, rowDefs, setFormData])
+  const authorshipPolicy = section?.authorshipPolicy || { enabled: false, granularity: "row", lockOn: "edit" }
+  const nhAuth = getNhAuth()
+  const actor = nhAuth ? nhAuth.actor(sd, fd) : { ownerName: currentActorName }
+  // No target registry needed: with the inlined __nhAuth engine, each row claims
+  // its own ownership directly on edit (setRowValue below) and lockInfo reads it
+  // back from field.data.__authorship.
 
   const computedTotals = useMemo(() => {
     const next = {}
@@ -181,6 +176,12 @@ const ObservationPanelEditor = ({
         : {}
       const { __authorship, ...rowValues } = current
       draft.field.data[effectiveFieldId] = { ...rowValues, [rowId]: nextValue }
+      // Lock-on-edit: claim this row for the current author in the same write.
+      if (nhAuth && authorshipPolicy?.enabled) {
+        nhAuth.claim(draft, sd, { scope: "row", componentId, rowKey: rowId }, nextValue, authorshipPolicy, {
+          now: sd?.previewOptions?.authorshipNow,
+        })
+      }
     }))
   }
 
@@ -189,10 +190,10 @@ const ObservationPanelEditor = ({
       <Label>{title}</Label>
       {rowDefs.map((row) => {
         const value = getPanelValue(rootValue, row.id)
-        const rowLockInfo = authorshipPolicy?.enabled
-          ? getAuthorshipLockInfo(fd, { scope: "row", componentId, rowKey: row.id }, {
-            ownerName: currentActorName,
-            ownerId: sd?.userProfile?.userProfileId,
+        const rowLockInfo = nhAuth && authorshipPolicy?.enabled
+          ? nhAuth.lockInfo(fd, sd, { scope: "row", componentId, rowKey: row.id }, {
+            ownerName: actor.ownerName,
+            ownerId: actor.ownerId,
             now: sd?.previewOptions?.authorshipNow,
           })
           : { locked: false }

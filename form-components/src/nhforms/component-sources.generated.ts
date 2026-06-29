@@ -652,6 +652,446 @@ const AttestationSignOff = ({
   )
 }
 `,
+  './AuthorshipField/index.jsx': `/**
+ * __nhAuth — self-contained field/row authorship runtime for NHForms components.
+ *
+ * WHY THIS EXISTS
+ * Real MOIS runs every form by concatenating all component sources + the form
+ * into ONE string, transpiling once, and executing it inside a fixed-arg
+ * Function(React, Fabric, Fluent, MoisControl, MoisFunction, MoisActions,
+ * MoisHooks, Mois) wrapper. It does NOT inject the webforms authorship engine
+ * (prepareAuthorshipPersist / getAuthorshipLockInfo are undefined there), so the
+ * preview-only engine is dormant on export. This runtime is INLINED into each
+ * authorship-aware component's source (prepended by the nhforms generator and
+ * the Vite loader for any component that references \`__nhAuth\`) so the logic
+ * actually executes inside real MOIS.
+ *
+ * COLLISION SAFETY
+ * Everything lives inside a single anonymous IIFE that assigns \`window.__nhAuth\`
+ * exactly once (idempotent). There are NO top-level declarations, so prepending
+ * this snippet to several components — all concatenated into one scope by real
+ * MOIS — can never produce a duplicate-declaration SyntaxError.
+ *
+ * SCOPE / LIMITS (see docs runtime/mois-locking-signing-audit.md)
+ * - Advisory, client-side only: MOIS stores \`field.data.__authorship\` as an
+ *   opaque blob and enforces nothing server-side. Not a security boundary.
+ * - A component can only enforce read-only on inputs IT renders. Authored values
+ *   must live inside an authorship-aware component, not as loose native fields.
+ * - Claims persist in \`field.data.__authorship\` (that is what MOIS saves).
+ *
+ * Mirror of packages/form-components/src/authorship.ts — keep in rough sync.
+ */
+;(function () {
+  if (typeof window === "undefined" || !window || window.__nhAuth) return;
+
+  var DEFAULT_WINDOW_HOURS = 72;
+
+  function isNonEmpty(v) {
+    if (v === null || v === undefined) return false;
+    if (typeof v === "string") return v.trim().length > 0;
+    if (Array.isArray(v)) return v.length > 0;
+    if (typeof v === "object") return Object.keys(v).length > 0;
+    return true;
+  }
+
+  function buildKey(q) {
+    q = q || {};
+    if (q.scope === "row") {
+      return "row:" + (q.componentId || "component") + ":" + (q.rowKey || q.fieldId || "");
+    }
+    return "field:" + (q.fieldId || q.rowKey || q.componentId || "");
+  }
+
+  function normalizeStore(input) {
+    var claims = {};
+    if (input && typeof input === "object" && input.claims && typeof input.claims === "object") {
+      Object.keys(input.claims).forEach(function (k) {
+        var c = input.claims[k];
+        if (c && typeof c === "object") {
+          var ck = c.claimKey || k;
+          if (ck) claims[ck] = c;
+        }
+      });
+    }
+    return { version: 1, claims: claims };
+  }
+
+  function readStore(state) {
+    var data =
+      state && state.field && state.field.data
+        ? state.field.data
+        : state && state.formData
+          ? state.formData
+          : null;
+    return normalizeStore(data && data.__authorship);
+  }
+
+  function addHoursIso(ts, hours) {
+    var d = ts ? new Date(ts) : new Date();
+    if (isNaN(d.getTime())) return undefined;
+    return new Date(d.getTime() + hours * 3600000).toISOString();
+  }
+
+  function pad2(n) {
+    return String(n).length < 2 ? "0" + n : String(n);
+  }
+
+  function formatTimestamp(ts) {
+    if (!ts) return "";
+    var d = new Date(ts);
+    if (isNaN(d.getTime())) return String(ts);
+    return (
+      d.getFullYear() +
+      "." + pad2(d.getMonth() + 1) +
+      "." + pad2(d.getDate()) +
+      " - " + pad2(d.getHours()) +
+      ":" + pad2(d.getMinutes())
+    );
+  }
+
+  function sameActor(claim, actor) {
+    if (!claim || !actor) return false;
+    if (
+      actor.ownerId !== undefined && actor.ownerId !== null &&
+      claim.ownerId !== undefined && claim.ownerId !== null
+    ) {
+      return String(actor.ownerId) === String(claim.ownerId);
+    }
+    return !!actor.ownerName && !!claim.ownerName && actor.ownerName === claim.ownerName;
+  }
+
+  // Identity is read from the genuine MOIS session: sd.auth.userProfileId is the
+  // id populated at save time; sd.userProfile may be {} until auth resolves.
+  function actorFrom(sd, state) {
+    var ownerId =
+      sd && sd.auth && sd.auth.userProfileId !== undefined && sd.auth.userProfileId !== null
+        ? sd.auth.userProfileId
+        : sd && sd.userProfile && sd.userProfile.userProfileId !== undefined && sd.userProfile.userProfileId !== null
+          ? sd.userProfile.userProfileId
+          : undefined;
+    var ownerName =
+      (state && state.field && state.field.data && state.field.data.createdBy) ||
+      (sd && sd.userProfile && sd.userProfile.identity && sd.userProfile.identity.fullName) ||
+      (sd && sd.webform && sd.webform.provider && sd.webform.provider.name) ||
+      "";
+    return { ownerId: ownerId, ownerName: ownerName };
+  }
+
+  function resolveNow(sd, opts) {
+    var raw =
+      opts && opts.now !== undefined && opts.now !== null
+        ? opts.now
+        : sd && sd.previewOptions
+          ? sd.previewOptions.authorshipNow
+          : undefined;
+    return raw ? new Date(raw) : new Date();
+  }
+
+  // Read: compute lock state for a target. \`opts\` carries the current actor
+  // (ownerId/ownerName) and an optional \`now\` override (preview clock).
+  function lockInfo(state, sd, query, opts) {
+    opts = opts || {};
+    var store = readStore(state);
+    var claim = store.claims[buildKey(query)];
+    if (!claim || claim.status === "unlocked") return { locked: false };
+
+    var ownerName = claim.ownerName || "Unknown";
+    var ts = formatTimestamp(claim.timestamp);
+    var actor = { ownerId: opts.ownerId, ownerName: opts.ownerName };
+    var isOwner = sameActor(claim, actor);
+    var editableUntil = claim.editableUntil || addHoursIso(claim.claimedAt || claim.timestamp, DEFAULT_WINDOW_HOURS);
+    var now = resolveNow(sd, opts);
+    var euDate = editableUntil ? new Date(editableUntil) : null;
+    var expired = !!euDate && !isNaN(euDate.getTime()) && now.getTime() > euDate.getTime();
+
+    if (claim.status !== "signed" && isOwner && !expired) {
+      var untilSelf = formatTimestamp(editableUntil);
+      return {
+        locked: false,
+        claim: claim,
+        isOwner: true,
+        expired: false,
+        ownerName: ownerName,
+        note: untilSelf ? "Locked to you until " + untilSelf : "Locked to you",
+      };
+    }
+
+    var label = claim.status === "signed"
+      ? "Signed by"
+      : expired
+        ? "Editing window expired for"
+        : "Locked by";
+    return {
+      locked: true,
+      claim: claim,
+      isOwner: isOwner,
+      expired: expired,
+      ownerName: ownerName,
+      note: ts ? label + " " + ownerName + " at " + ts : label + " " + ownerName,
+    };
+  }
+
+  // Write: mutate a produce() draft to upsert/refresh the current actor's claim
+  // for a target. Returns true when the claim store changed. Call inside the
+  // component's own setFormData(produce(draft => ...)) on value change.
+  function claim(draft, sd, query, value, policy, opts) {
+    opts = opts || {};
+    policy = policy || {};
+    if (policy.enabled === false) return false;
+    if (!draft || typeof draft !== "object") return false;
+    if (!draft.field) draft.field = { data: {}, status: {}, history: [] };
+    if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {};
+
+    var store = normalizeStore(draft.field.data.__authorship);
+    var key = buildKey(query);
+    var existing = store.claims[key];
+    var actor = actorFrom(sd, draft);
+    var now = resolveNow(sd, opts);
+    var nowIso = now.toISOString();
+    var windowHours =
+      typeof policy.editableWindowHours === "number" && policy.editableWindowHours > 0
+        ? policy.editableWindowHours
+        : DEFAULT_WINDOW_HOURS;
+
+    // A signed claim is terminal; a claim owned by someone else is untouchable.
+    if (existing && existing.status === "signed") return false;
+    if (existing && existing.status !== "unlocked" && !sameActor(existing, actor)) return false;
+
+    if (existing && existing.status !== "unlocked") {
+      // Owner edit inside the window: refresh value/timestamp but keep the
+      // original claimedAt / editableUntil (the window does not extend).
+      store.claims[key] = Object.assign({}, existing, {
+        timestamp: nowIso,
+        lastSavedAt: nowIso,
+        currentValue: value,
+        ownerName: actor.ownerName || existing.ownerName,
+        ownerId: actor.ownerId !== undefined && actor.ownerId !== null ? actor.ownerId : existing.ownerId,
+      });
+    } else {
+      // New (or previously released) claim: only claim a meaningful value.
+      if (!isNonEmpty(value)) return false;
+      store.claims[key] = {
+        claimKey: key,
+        scope: query.scope === "row" ? "row" : "field",
+        fieldId: query.fieldId,
+        rowKey: query.rowKey,
+        componentId: query.componentId,
+        ownerName: actor.ownerName,
+        ownerId: actor.ownerId,
+        timestamp: nowIso,
+        claimedAt: nowIso,
+        lastSavedAt: nowIso,
+        editableUntil: addHoursIso(nowIso, windowHours),
+        status: policy.lockOn === "sign" ? "signed" : "locked",
+        lockOn: policy.lockOn || "edit",
+        currentValue: value,
+      };
+    }
+
+    draft.field.data.__authorship = store;
+    return true;
+  }
+
+  // Release (unlock) a claim on a produce() draft. Returns true if it changed.
+  function release(draft, query) {
+    if (!draft || !draft.field || !draft.field.data) return false;
+    var store = normalizeStore(draft.field.data.__authorship);
+    var key = buildKey(query);
+    var current = store.claims[key];
+    if (!current || current.status === "unlocked") return false;
+    store.claims[key] = Object.assign({}, current, {
+      status: "unlocked",
+      releasedAt: new Date().toISOString(),
+    });
+    draft.field.data.__authorship = store;
+    return true;
+  }
+
+  window.__nhAuth = {
+    version: 1,
+    buildKey: buildKey,
+    lockInfo: lockInfo,
+    claim: claim,
+    release: release,
+    actor: actorFrom,
+    formatTimestamp: formatTimestamp,
+  };
+})();
+
+/**
+ * AuthorshipField — a single clinical value that carries a per-author lock.
+ *
+ * Drop one of these in place of a standard field when a datum has clinical
+ * ownership (a medication instruction, an allergy confirmation, a risk-score
+ * interpretation, a consent acknowledgement). The field renders its OWN input,
+ * which is the only way per-field locking can be enforced inside real MOIS —
+ * native MOIS controls have no per-field read-only flag, so authored values
+ * must live inside an authorship-aware component like this one.
+ *
+ * Authorship runtime: this component uses window.__nhAuth, the shared engine the
+ * nhforms generator / Vite loader inlines into its source (see
+ * _shared/authorship-runtime.js). Claims are stored in field.data.__authorship
+ * and round-trip through save. The lock is advisory collaboration UX, not a
+ * server-enforced security boundary.
+ */
+const { useMemo } = React
+const { Stack, Label, Text, TextField, ChoiceGroup, Checkbox } = Fluent
+
+const _nhAuth = () => (typeof window !== "undefined" && window.__nhAuth) || null
+
+const _defaultPolicy = { enabled: true, granularity: "field", lockOn: "edit", editableWindowHours: 72 }
+
+const _normalizeFieldOptions = (options) =>
+  Array.isArray(options)
+    ? options
+        .map((option) => {
+          if (typeof option === "string") {
+            const trimmed = option.trim()
+            return trimmed ? { key: trimmed, text: trimmed } : null
+          }
+          if (option && typeof option === "object") {
+            const key = option.key ?? option.value ?? option.code ?? option.text
+            const text = option.text ?? option.label ?? option.display ?? String(key ?? "")
+            return key == null ? null : { key: String(key), text: String(text) }
+          }
+          return null
+        })
+        .filter(Boolean)
+    : []
+
+const AuthorshipField = ({
+  fieldId,
+  id,
+  label = "",
+  kind = "text",
+  options = [],
+  placeholder = "",
+  rows = 3,
+  booleanLabel,
+  policy: policyProp,
+  lockOn,
+  editableWindowHours,
+}) => {
+  const [fd, setFormData] = useActiveData()
+  const sd = useSourceData()
+  const section = typeof useSection === "function" ? useSection() : null
+
+  const componentId = id || fieldId || "AuthorshipField"
+  const effectiveFieldId = fieldId || componentId
+  const value = fd?.field?.data?.[effectiveFieldId]
+
+  // Policy resolution order: explicit prop > section policy > sensible default,
+  // with lockOn / editableWindowHours overrides for convenience.
+  const policy = useMemo(() => {
+    const base = policyProp || section?.authorshipPolicy || _defaultPolicy
+    return {
+      enabled: base.enabled !== false,
+      granularity: "field",
+      lockOn: lockOn || base.lockOn || "edit",
+      editableWindowHours:
+        typeof editableWindowHours === "number"
+          ? editableWindowHours
+          : typeof base.editableWindowHours === "number"
+            ? base.editableWindowHours
+            : 72,
+    }
+  }, [policyProp, section, lockOn, editableWindowHours])
+
+  const nhAuth = _nhAuth()
+  const query = { scope: "field", fieldId: effectiveFieldId, componentId }
+  const actor = nhAuth ? nhAuth.actor(sd, fd) : {}
+  const lockInfo = nhAuth && policy.enabled
+    ? nhAuth.lockInfo(fd, sd, query, {
+        ownerId: actor.ownerId,
+        ownerName: actor.ownerName,
+        now: sd?.previewOptions?.authorshipNow,
+      })
+    : { locked: false }
+  const readOnly = !!lockInfo.locked
+
+  const commitValue = (nextValue) => {
+    setFormData(produce((draft) => {
+      if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
+      if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
+      draft.field.data[effectiveFieldId] = nextValue
+      // Lock-on-edit: claim/refresh this author's ownership in the same write,
+      // so the read and write halves share one field.data.__authorship surface.
+      if (nhAuth && policy.enabled) {
+        nhAuth.claim(draft, sd, query, nextValue, policy, {
+          now: sd?.previewOptions?.authorshipNow,
+        })
+      }
+    }))
+  }
+
+  const renderInput = () => {
+    if (kind === "boolean") {
+      return (
+        <Checkbox
+          label={booleanLabel || label}
+          checked={value === true}
+          disabled={readOnly}
+          onChange={readOnly ? undefined : (_event, checked) => commitValue(!!checked)}
+        />
+      )
+    }
+
+    if (kind === "choice") {
+      const optionList = _normalizeFieldOptions(options)
+      return (
+        <ChoiceGroup
+          label={label}
+          options={optionList}
+          selectedKey={value == null ? undefined : String(value)}
+          disabled={readOnly}
+          onChange={readOnly ? undefined : (_event, option) => commitValue(option?.key ?? "")}
+        />
+      )
+    }
+
+    if (kind === "numeric") {
+      return (
+        <TextField
+          label={label}
+          type="number"
+          value={value == null ? "" : String(value)}
+          placeholder={placeholder}
+          readOnly={readOnly}
+          onChange={readOnly ? undefined : (_event, nextValue) => {
+            if (nextValue == null || nextValue === "") return commitValue("")
+            const numeric = Number(nextValue)
+            commitValue(Number.isNaN(numeric) ? nextValue : numeric)
+          }}
+        />
+      )
+    }
+
+    // text / textarea
+    return (
+      <TextField
+        label={label}
+        value={value ?? ""}
+        placeholder={placeholder}
+        multiline={kind === "textarea"}
+        rows={kind === "textarea" ? rows : undefined}
+        readOnly={readOnly}
+        onChange={readOnly ? undefined : (_event, nextValue) => commitValue(nextValue ?? "")}
+      />
+    )
+  }
+
+  return (
+    <Stack tokens={{ childrenGap: 4 }}>
+      {renderInput()}
+      {lockInfo.note ? (
+        <Text variant="small" styles={{ root: { color: lockInfo.locked ? "#a4262c" : "#605e5c" } }}>
+          {lockInfo.note}
+        </Text>
+      ) : null}
+    </Stack>
+  )
+}
+`,
   './CodedObservationChoiceField/index.jsx': `const { useEffect, useMemo } = React
 
 const normalizeCodedChoiceOptions = (optionList, codeSystem, sd) => {
@@ -3707,6 +4147,272 @@ const DentalWeightConverterSchema = {
 }
 `,
   './EditableTable/index.jsx': `/**
+ * __nhAuth — self-contained field/row authorship runtime for NHForms components.
+ *
+ * WHY THIS EXISTS
+ * Real MOIS runs every form by concatenating all component sources + the form
+ * into ONE string, transpiling once, and executing it inside a fixed-arg
+ * Function(React, Fabric, Fluent, MoisControl, MoisFunction, MoisActions,
+ * MoisHooks, Mois) wrapper. It does NOT inject the webforms authorship engine
+ * (prepareAuthorshipPersist / getAuthorshipLockInfo are undefined there), so the
+ * preview-only engine is dormant on export. This runtime is INLINED into each
+ * authorship-aware component's source (prepended by the nhforms generator and
+ * the Vite loader for any component that references \`__nhAuth\`) so the logic
+ * actually executes inside real MOIS.
+ *
+ * COLLISION SAFETY
+ * Everything lives inside a single anonymous IIFE that assigns \`window.__nhAuth\`
+ * exactly once (idempotent). There are NO top-level declarations, so prepending
+ * this snippet to several components — all concatenated into one scope by real
+ * MOIS — can never produce a duplicate-declaration SyntaxError.
+ *
+ * SCOPE / LIMITS (see docs runtime/mois-locking-signing-audit.md)
+ * - Advisory, client-side only: MOIS stores \`field.data.__authorship\` as an
+ *   opaque blob and enforces nothing server-side. Not a security boundary.
+ * - A component can only enforce read-only on inputs IT renders. Authored values
+ *   must live inside an authorship-aware component, not as loose native fields.
+ * - Claims persist in \`field.data.__authorship\` (that is what MOIS saves).
+ *
+ * Mirror of packages/form-components/src/authorship.ts — keep in rough sync.
+ */
+;(function () {
+  if (typeof window === "undefined" || !window || window.__nhAuth) return;
+
+  var DEFAULT_WINDOW_HOURS = 72;
+
+  function isNonEmpty(v) {
+    if (v === null || v === undefined) return false;
+    if (typeof v === "string") return v.trim().length > 0;
+    if (Array.isArray(v)) return v.length > 0;
+    if (typeof v === "object") return Object.keys(v).length > 0;
+    return true;
+  }
+
+  function buildKey(q) {
+    q = q || {};
+    if (q.scope === "row") {
+      return "row:" + (q.componentId || "component") + ":" + (q.rowKey || q.fieldId || "");
+    }
+    return "field:" + (q.fieldId || q.rowKey || q.componentId || "");
+  }
+
+  function normalizeStore(input) {
+    var claims = {};
+    if (input && typeof input === "object" && input.claims && typeof input.claims === "object") {
+      Object.keys(input.claims).forEach(function (k) {
+        var c = input.claims[k];
+        if (c && typeof c === "object") {
+          var ck = c.claimKey || k;
+          if (ck) claims[ck] = c;
+        }
+      });
+    }
+    return { version: 1, claims: claims };
+  }
+
+  function readStore(state) {
+    var data =
+      state && state.field && state.field.data
+        ? state.field.data
+        : state && state.formData
+          ? state.formData
+          : null;
+    return normalizeStore(data && data.__authorship);
+  }
+
+  function addHoursIso(ts, hours) {
+    var d = ts ? new Date(ts) : new Date();
+    if (isNaN(d.getTime())) return undefined;
+    return new Date(d.getTime() + hours * 3600000).toISOString();
+  }
+
+  function pad2(n) {
+    return String(n).length < 2 ? "0" + n : String(n);
+  }
+
+  function formatTimestamp(ts) {
+    if (!ts) return "";
+    var d = new Date(ts);
+    if (isNaN(d.getTime())) return String(ts);
+    return (
+      d.getFullYear() +
+      "." + pad2(d.getMonth() + 1) +
+      "." + pad2(d.getDate()) +
+      " - " + pad2(d.getHours()) +
+      ":" + pad2(d.getMinutes())
+    );
+  }
+
+  function sameActor(claim, actor) {
+    if (!claim || !actor) return false;
+    if (
+      actor.ownerId !== undefined && actor.ownerId !== null &&
+      claim.ownerId !== undefined && claim.ownerId !== null
+    ) {
+      return String(actor.ownerId) === String(claim.ownerId);
+    }
+    return !!actor.ownerName && !!claim.ownerName && actor.ownerName === claim.ownerName;
+  }
+
+  // Identity is read from the genuine MOIS session: sd.auth.userProfileId is the
+  // id populated at save time; sd.userProfile may be {} until auth resolves.
+  function actorFrom(sd, state) {
+    var ownerId =
+      sd && sd.auth && sd.auth.userProfileId !== undefined && sd.auth.userProfileId !== null
+        ? sd.auth.userProfileId
+        : sd && sd.userProfile && sd.userProfile.userProfileId !== undefined && sd.userProfile.userProfileId !== null
+          ? sd.userProfile.userProfileId
+          : undefined;
+    var ownerName =
+      (state && state.field && state.field.data && state.field.data.createdBy) ||
+      (sd && sd.userProfile && sd.userProfile.identity && sd.userProfile.identity.fullName) ||
+      (sd && sd.webform && sd.webform.provider && sd.webform.provider.name) ||
+      "";
+    return { ownerId: ownerId, ownerName: ownerName };
+  }
+
+  function resolveNow(sd, opts) {
+    var raw =
+      opts && opts.now !== undefined && opts.now !== null
+        ? opts.now
+        : sd && sd.previewOptions
+          ? sd.previewOptions.authorshipNow
+          : undefined;
+    return raw ? new Date(raw) : new Date();
+  }
+
+  // Read: compute lock state for a target. \`opts\` carries the current actor
+  // (ownerId/ownerName) and an optional \`now\` override (preview clock).
+  function lockInfo(state, sd, query, opts) {
+    opts = opts || {};
+    var store = readStore(state);
+    var claim = store.claims[buildKey(query)];
+    if (!claim || claim.status === "unlocked") return { locked: false };
+
+    var ownerName = claim.ownerName || "Unknown";
+    var ts = formatTimestamp(claim.timestamp);
+    var actor = { ownerId: opts.ownerId, ownerName: opts.ownerName };
+    var isOwner = sameActor(claim, actor);
+    var editableUntil = claim.editableUntil || addHoursIso(claim.claimedAt || claim.timestamp, DEFAULT_WINDOW_HOURS);
+    var now = resolveNow(sd, opts);
+    var euDate = editableUntil ? new Date(editableUntil) : null;
+    var expired = !!euDate && !isNaN(euDate.getTime()) && now.getTime() > euDate.getTime();
+
+    if (claim.status !== "signed" && isOwner && !expired) {
+      var untilSelf = formatTimestamp(editableUntil);
+      return {
+        locked: false,
+        claim: claim,
+        isOwner: true,
+        expired: false,
+        ownerName: ownerName,
+        note: untilSelf ? "Locked to you until " + untilSelf : "Locked to you",
+      };
+    }
+
+    var label = claim.status === "signed"
+      ? "Signed by"
+      : expired
+        ? "Editing window expired for"
+        : "Locked by";
+    return {
+      locked: true,
+      claim: claim,
+      isOwner: isOwner,
+      expired: expired,
+      ownerName: ownerName,
+      note: ts ? label + " " + ownerName + " at " + ts : label + " " + ownerName,
+    };
+  }
+
+  // Write: mutate a produce() draft to upsert/refresh the current actor's claim
+  // for a target. Returns true when the claim store changed. Call inside the
+  // component's own setFormData(produce(draft => ...)) on value change.
+  function claim(draft, sd, query, value, policy, opts) {
+    opts = opts || {};
+    policy = policy || {};
+    if (policy.enabled === false) return false;
+    if (!draft || typeof draft !== "object") return false;
+    if (!draft.field) draft.field = { data: {}, status: {}, history: [] };
+    if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {};
+
+    var store = normalizeStore(draft.field.data.__authorship);
+    var key = buildKey(query);
+    var existing = store.claims[key];
+    var actor = actorFrom(sd, draft);
+    var now = resolveNow(sd, opts);
+    var nowIso = now.toISOString();
+    var windowHours =
+      typeof policy.editableWindowHours === "number" && policy.editableWindowHours > 0
+        ? policy.editableWindowHours
+        : DEFAULT_WINDOW_HOURS;
+
+    // A signed claim is terminal; a claim owned by someone else is untouchable.
+    if (existing && existing.status === "signed") return false;
+    if (existing && existing.status !== "unlocked" && !sameActor(existing, actor)) return false;
+
+    if (existing && existing.status !== "unlocked") {
+      // Owner edit inside the window: refresh value/timestamp but keep the
+      // original claimedAt / editableUntil (the window does not extend).
+      store.claims[key] = Object.assign({}, existing, {
+        timestamp: nowIso,
+        lastSavedAt: nowIso,
+        currentValue: value,
+        ownerName: actor.ownerName || existing.ownerName,
+        ownerId: actor.ownerId !== undefined && actor.ownerId !== null ? actor.ownerId : existing.ownerId,
+      });
+    } else {
+      // New (or previously released) claim: only claim a meaningful value.
+      if (!isNonEmpty(value)) return false;
+      store.claims[key] = {
+        claimKey: key,
+        scope: query.scope === "row" ? "row" : "field",
+        fieldId: query.fieldId,
+        rowKey: query.rowKey,
+        componentId: query.componentId,
+        ownerName: actor.ownerName,
+        ownerId: actor.ownerId,
+        timestamp: nowIso,
+        claimedAt: nowIso,
+        lastSavedAt: nowIso,
+        editableUntil: addHoursIso(nowIso, windowHours),
+        status: policy.lockOn === "sign" ? "signed" : "locked",
+        lockOn: policy.lockOn || "edit",
+        currentValue: value,
+      };
+    }
+
+    draft.field.data.__authorship = store;
+    return true;
+  }
+
+  // Release (unlock) a claim on a produce() draft. Returns true if it changed.
+  function release(draft, query) {
+    if (!draft || !draft.field || !draft.field.data) return false;
+    var store = normalizeStore(draft.field.data.__authorship);
+    var key = buildKey(query);
+    var current = store.claims[key];
+    if (!current || current.status === "unlocked") return false;
+    store.claims[key] = Object.assign({}, current, {
+      status: "unlocked",
+      releasedAt: new Date().toISOString(),
+    });
+    draft.field.data.__authorship = store;
+    return true;
+  }
+
+  window.__nhAuth = {
+    version: 1,
+    buildKey: buildKey,
+    lockInfo: lockInfo,
+    claim: claim,
+    release: release,
+    actor: actorFrom,
+    formatTimestamp: formatTimestamp,
+  };
+})();
+
+/**
  * EditableTable - Repeating row table with inline and modal editing modes.
  *
  * Features:
@@ -4334,13 +5040,32 @@ EditableTable = ({
   showBackground = false,
   readOnly = false,
   disabled = false,
+  authorshipPolicy: authorshipPolicyProp,
   sourceFieldIds = {},
   sourceFieldIdsByRow = {},
   ...props
 }) => {
   const [fd] = useActiveData()
+  const sd = typeof useSourceData === "function" ? useSourceData() : null
+  const section = typeof useSection === "function" ? useSection() : null
   const theme = useTheme()
   const isDarkMode = theme?.isInverted || false
+
+  // Per-row authorship: each row the table renders can be locked to the author
+  // who entered it. Uses the shared __nhAuth engine (inlined by the nhforms
+  // generator / Vite loader) so it runs in real MOIS, not just preview.
+  const nhAuth = (typeof window !== "undefined" && window.__nhAuth) || null
+  const authorshipPolicy = authorshipPolicyProp || section?.authorshipPolicy || { enabled: false }
+  const authorshipEnabled = !!(nhAuth && authorshipPolicy && authorshipPolicy.enabled)
+  const getRowLock = (row) => {
+    if (!authorshipEnabled || !row?._rowId) return { locked: false }
+    const actor = nhAuth.actor(sd, fd)
+    return nhAuth.lockInfo(fd, sd, { scope: "row", componentId: id, rowKey: row._rowId }, {
+      ownerName: actor.ownerName,
+      ownerId: actor.ownerId,
+      now: sd?.previewOptions?.authorshipNow,
+    })
+  }
   const columns = useMemo(() => _normalizeTableColumns(columnsProp), [columnsProp])
   const initialRowCount = _normalizeInitialRowCount(initialRowsProp)
   const initialSeedRows = useMemo(() => _normalizeInitialRows(initialRowsProp, columns), [initialRowsProp, columns])
@@ -4393,7 +5118,7 @@ EditableTable = ({
     }
   }
 
-  const setRows = (nextRows) => {
+  const setRows = (nextRows, authorshipClaim = null) => {
     if (!fd?.setFormData) return
 
     const mirroredFieldIds = new Set()
@@ -4423,6 +5148,20 @@ EditableTable = ({
         nextFieldData[sourceFieldId] = _normalizeMirroredCellValue(rawValue, column)
       })
     })
+
+    // Lock-on-edit: stamp the editing author's claim onto field.data.__authorship
+    // for this row, carried inside the same write. nhAuth.claim mutates the
+    // object we pass; nextFieldData is spread into the committed state below.
+    if (authorshipClaim && authorshipEnabled && authorshipClaim.rowId) {
+      nhAuth.claim(
+        { field: { data: nextFieldData } },
+        sd,
+        { scope: "row", componentId: id, rowKey: authorshipClaim.rowId },
+        authorshipClaim.value,
+        authorshipPolicy,
+        { now: sd?.previewOptions?.authorshipNow }
+      )
+    }
 
     fd.setFormData({
       ...fd,
@@ -4486,8 +5225,8 @@ EditableTable = ({
     ...extra,
   }), [id, columns, currentRows, editingRowIndex, isModalMode])
 
-  const commitRows = useCallback((nextRows, meta = {}) => {
-    setRows(nextRows)
+  const commitRows = useCallback((nextRows, meta = {}, authorshipClaim = null) => {
+    setRows(nextRows, authorshipClaim)
     if (typeof onRowsChange === "function") {
       onRowsChange({
         tableId: id,
@@ -4525,6 +5264,9 @@ EditableTable = ({
   }
 
   const updateCell = (rowIndex, columnId, value) => {
+    // Defense in depth: a locked row cannot be edited even if an input slips
+    // through (read-only enforcement also gates onChange at the input level).
+    if (authorshipEnabled && getRowLock(currentRows[rowIndex]).locked) return
     const nextRows = [...currentRows]
     if (!nextRows[rowIndex]) {
       nextRows[rowIndex] = _makeEmptyRow(columns, rowIndex)
@@ -4538,7 +5280,7 @@ EditableTable = ({
       rowIndex,
       row: nextRow,
       previousRows: currentRows,
-    })
+    }, { rowId: nextRow._rowId, value })
   }
 
   const updateDraftCell = (columnId, value) => {
@@ -4711,8 +5453,11 @@ EditableTable = ({
   const remaining = Math.max(0, maxRows - currentRowCount)
   const shouldShowActions = !isLocked && (allowEditRows || allowDeleteRows)
 
-  const renderEditorInput = (row, rowIndex, column, onValueChange, inline) => {
+  const renderEditorInput = (row, rowIndex, column, onValueChange, inline, rowReadOnly = false) => {
     const value = _getValueAtPath(row, column.dataPath || column.id)
+    // When the row is authorship-locked, neutralize edits at the input level so
+    // even controls that ignore a readOnly prop cannot write.
+    if (rowReadOnly) onValueChange = () => {}
 
     switch (column.type) {
       case "number":
@@ -4887,7 +5632,7 @@ EditableTable = ({
                     ? emptyStateText
                     : isModalMode
                       ? <div>{_formatCellValue(row, col)}</div>
-                      : renderEditorInput(row, rowIndex, col, updateCell, true)}
+                      : renderEditorInput(row, rowIndex, col, updateCell, true, getRowLock(row).locked)}
                 </td>
               ))}
             </tr>
@@ -4945,17 +5690,21 @@ EditableTable = ({
             ) : (
               displayRows.map(({ row, rowIndex }, displayIndex) => {
                 const isEmpty = _isRowEmpty(row, columns)
+                const rowLock = getRowLock(row)
+                const rowReadOnly = !!rowLock.locked
                 // Any row can be removed (not just the last): removal shifts
                 // later rows up a slot, which the per-row source mapping
                 // handles. Rows with values still need allowDeleteNonEmpty.
+                // An authorship-locked row cannot be deleted by another user.
                 const canDeleteInline =
                   currentRows.length > 1 &&
                   rowIndex < currentRows.length &&
                   allowDeleteRows &&
+                  !rowReadOnly &&
                   (allowDeleteNonEmpty || isEmpty)
 
                 return (
-                  <tr key={row?._rowId || \`row_\${rowIndex}\`}>
+                  <tr key={row?._rowId || \`row_\${rowIndex}\`} title={rowReadOnly ? rowLock.note : undefined}>
                     {showRowNumbers && (
                       <td key="row-number" style={rowNumberCellStyle}>
                         {isModalMode ? (
@@ -4989,13 +5738,13 @@ EditableTable = ({
                       <td key={col.id} style={bodyCellStyle} data-source-field-id={getSourceFieldId(rowIndex, col.id)}>
                         {isModalMode
                           ? <div>{_formatCellValue(row, col)}</div>
-                          : renderEditorInput(row, rowIndex, col, updateCell, true)}
+                          : renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly)}
                       </td>
                     ))}
                     {(isModalMode && shouldShowActions) && (
                       <td key="actions" className="hideonprint" style={bodyCellStyle}>
                         <div style={{ display: "flex", gap: "4px", justifyContent: "flex-end" }}>
-                          {allowDeleteRows && (
+                          {allowDeleteRows && !rowReadOnly && (
                             <IconButton
                               iconProps={{ iconName: "Delete" }}
                               title="Delete"
@@ -5003,13 +5752,18 @@ EditableTable = ({
                               onClick={() => removeRowAt(rowIndex)}
                             />
                           )}
-                          {allowEditRows && (
+                          {allowEditRows && !rowReadOnly && (
                             <IconButton
                               iconProps={{ iconName: "Edit" }}
                               title="Edit"
                               ariaLabel="Edit"
                               onClick={() => openEditDialog(rowIndex)}
                             />
+                          )}
+                          {rowReadOnly && (
+                            <Text variant="small" styles={{ root: { color: "#a4262c", alignSelf: "center" } }}>
+                              {rowLock.note}
+                            </Text>
                           )}
                         </div>
                       </td>
@@ -16235,7 +16989,273 @@ const ObservationChart = ({
   )
 }
 `,
-  './ObservationPanelEditor/index.jsx': `const { useEffect, useMemo } = React
+  './ObservationPanelEditor/index.jsx': `/**
+ * __nhAuth — self-contained field/row authorship runtime for NHForms components.
+ *
+ * WHY THIS EXISTS
+ * Real MOIS runs every form by concatenating all component sources + the form
+ * into ONE string, transpiling once, and executing it inside a fixed-arg
+ * Function(React, Fabric, Fluent, MoisControl, MoisFunction, MoisActions,
+ * MoisHooks, Mois) wrapper. It does NOT inject the webforms authorship engine
+ * (prepareAuthorshipPersist / getAuthorshipLockInfo are undefined there), so the
+ * preview-only engine is dormant on export. This runtime is INLINED into each
+ * authorship-aware component's source (prepended by the nhforms generator and
+ * the Vite loader for any component that references \`__nhAuth\`) so the logic
+ * actually executes inside real MOIS.
+ *
+ * COLLISION SAFETY
+ * Everything lives inside a single anonymous IIFE that assigns \`window.__nhAuth\`
+ * exactly once (idempotent). There are NO top-level declarations, so prepending
+ * this snippet to several components — all concatenated into one scope by real
+ * MOIS — can never produce a duplicate-declaration SyntaxError.
+ *
+ * SCOPE / LIMITS (see docs runtime/mois-locking-signing-audit.md)
+ * - Advisory, client-side only: MOIS stores \`field.data.__authorship\` as an
+ *   opaque blob and enforces nothing server-side. Not a security boundary.
+ * - A component can only enforce read-only on inputs IT renders. Authored values
+ *   must live inside an authorship-aware component, not as loose native fields.
+ * - Claims persist in \`field.data.__authorship\` (that is what MOIS saves).
+ *
+ * Mirror of packages/form-components/src/authorship.ts — keep in rough sync.
+ */
+;(function () {
+  if (typeof window === "undefined" || !window || window.__nhAuth) return;
+
+  var DEFAULT_WINDOW_HOURS = 72;
+
+  function isNonEmpty(v) {
+    if (v === null || v === undefined) return false;
+    if (typeof v === "string") return v.trim().length > 0;
+    if (Array.isArray(v)) return v.length > 0;
+    if (typeof v === "object") return Object.keys(v).length > 0;
+    return true;
+  }
+
+  function buildKey(q) {
+    q = q || {};
+    if (q.scope === "row") {
+      return "row:" + (q.componentId || "component") + ":" + (q.rowKey || q.fieldId || "");
+    }
+    return "field:" + (q.fieldId || q.rowKey || q.componentId || "");
+  }
+
+  function normalizeStore(input) {
+    var claims = {};
+    if (input && typeof input === "object" && input.claims && typeof input.claims === "object") {
+      Object.keys(input.claims).forEach(function (k) {
+        var c = input.claims[k];
+        if (c && typeof c === "object") {
+          var ck = c.claimKey || k;
+          if (ck) claims[ck] = c;
+        }
+      });
+    }
+    return { version: 1, claims: claims };
+  }
+
+  function readStore(state) {
+    var data =
+      state && state.field && state.field.data
+        ? state.field.data
+        : state && state.formData
+          ? state.formData
+          : null;
+    return normalizeStore(data && data.__authorship);
+  }
+
+  function addHoursIso(ts, hours) {
+    var d = ts ? new Date(ts) : new Date();
+    if (isNaN(d.getTime())) return undefined;
+    return new Date(d.getTime() + hours * 3600000).toISOString();
+  }
+
+  function pad2(n) {
+    return String(n).length < 2 ? "0" + n : String(n);
+  }
+
+  function formatTimestamp(ts) {
+    if (!ts) return "";
+    var d = new Date(ts);
+    if (isNaN(d.getTime())) return String(ts);
+    return (
+      d.getFullYear() +
+      "." + pad2(d.getMonth() + 1) +
+      "." + pad2(d.getDate()) +
+      " - " + pad2(d.getHours()) +
+      ":" + pad2(d.getMinutes())
+    );
+  }
+
+  function sameActor(claim, actor) {
+    if (!claim || !actor) return false;
+    if (
+      actor.ownerId !== undefined && actor.ownerId !== null &&
+      claim.ownerId !== undefined && claim.ownerId !== null
+    ) {
+      return String(actor.ownerId) === String(claim.ownerId);
+    }
+    return !!actor.ownerName && !!claim.ownerName && actor.ownerName === claim.ownerName;
+  }
+
+  // Identity is read from the genuine MOIS session: sd.auth.userProfileId is the
+  // id populated at save time; sd.userProfile may be {} until auth resolves.
+  function actorFrom(sd, state) {
+    var ownerId =
+      sd && sd.auth && sd.auth.userProfileId !== undefined && sd.auth.userProfileId !== null
+        ? sd.auth.userProfileId
+        : sd && sd.userProfile && sd.userProfile.userProfileId !== undefined && sd.userProfile.userProfileId !== null
+          ? sd.userProfile.userProfileId
+          : undefined;
+    var ownerName =
+      (state && state.field && state.field.data && state.field.data.createdBy) ||
+      (sd && sd.userProfile && sd.userProfile.identity && sd.userProfile.identity.fullName) ||
+      (sd && sd.webform && sd.webform.provider && sd.webform.provider.name) ||
+      "";
+    return { ownerId: ownerId, ownerName: ownerName };
+  }
+
+  function resolveNow(sd, opts) {
+    var raw =
+      opts && opts.now !== undefined && opts.now !== null
+        ? opts.now
+        : sd && sd.previewOptions
+          ? sd.previewOptions.authorshipNow
+          : undefined;
+    return raw ? new Date(raw) : new Date();
+  }
+
+  // Read: compute lock state for a target. \`opts\` carries the current actor
+  // (ownerId/ownerName) and an optional \`now\` override (preview clock).
+  function lockInfo(state, sd, query, opts) {
+    opts = opts || {};
+    var store = readStore(state);
+    var claim = store.claims[buildKey(query)];
+    if (!claim || claim.status === "unlocked") return { locked: false };
+
+    var ownerName = claim.ownerName || "Unknown";
+    var ts = formatTimestamp(claim.timestamp);
+    var actor = { ownerId: opts.ownerId, ownerName: opts.ownerName };
+    var isOwner = sameActor(claim, actor);
+    var editableUntil = claim.editableUntil || addHoursIso(claim.claimedAt || claim.timestamp, DEFAULT_WINDOW_HOURS);
+    var now = resolveNow(sd, opts);
+    var euDate = editableUntil ? new Date(editableUntil) : null;
+    var expired = !!euDate && !isNaN(euDate.getTime()) && now.getTime() > euDate.getTime();
+
+    if (claim.status !== "signed" && isOwner && !expired) {
+      var untilSelf = formatTimestamp(editableUntil);
+      return {
+        locked: false,
+        claim: claim,
+        isOwner: true,
+        expired: false,
+        ownerName: ownerName,
+        note: untilSelf ? "Locked to you until " + untilSelf : "Locked to you",
+      };
+    }
+
+    var label = claim.status === "signed"
+      ? "Signed by"
+      : expired
+        ? "Editing window expired for"
+        : "Locked by";
+    return {
+      locked: true,
+      claim: claim,
+      isOwner: isOwner,
+      expired: expired,
+      ownerName: ownerName,
+      note: ts ? label + " " + ownerName + " at " + ts : label + " " + ownerName,
+    };
+  }
+
+  // Write: mutate a produce() draft to upsert/refresh the current actor's claim
+  // for a target. Returns true when the claim store changed. Call inside the
+  // component's own setFormData(produce(draft => ...)) on value change.
+  function claim(draft, sd, query, value, policy, opts) {
+    opts = opts || {};
+    policy = policy || {};
+    if (policy.enabled === false) return false;
+    if (!draft || typeof draft !== "object") return false;
+    if (!draft.field) draft.field = { data: {}, status: {}, history: [] };
+    if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {};
+
+    var store = normalizeStore(draft.field.data.__authorship);
+    var key = buildKey(query);
+    var existing = store.claims[key];
+    var actor = actorFrom(sd, draft);
+    var now = resolveNow(sd, opts);
+    var nowIso = now.toISOString();
+    var windowHours =
+      typeof policy.editableWindowHours === "number" && policy.editableWindowHours > 0
+        ? policy.editableWindowHours
+        : DEFAULT_WINDOW_HOURS;
+
+    // A signed claim is terminal; a claim owned by someone else is untouchable.
+    if (existing && existing.status === "signed") return false;
+    if (existing && existing.status !== "unlocked" && !sameActor(existing, actor)) return false;
+
+    if (existing && existing.status !== "unlocked") {
+      // Owner edit inside the window: refresh value/timestamp but keep the
+      // original claimedAt / editableUntil (the window does not extend).
+      store.claims[key] = Object.assign({}, existing, {
+        timestamp: nowIso,
+        lastSavedAt: nowIso,
+        currentValue: value,
+        ownerName: actor.ownerName || existing.ownerName,
+        ownerId: actor.ownerId !== undefined && actor.ownerId !== null ? actor.ownerId : existing.ownerId,
+      });
+    } else {
+      // New (or previously released) claim: only claim a meaningful value.
+      if (!isNonEmpty(value)) return false;
+      store.claims[key] = {
+        claimKey: key,
+        scope: query.scope === "row" ? "row" : "field",
+        fieldId: query.fieldId,
+        rowKey: query.rowKey,
+        componentId: query.componentId,
+        ownerName: actor.ownerName,
+        ownerId: actor.ownerId,
+        timestamp: nowIso,
+        claimedAt: nowIso,
+        lastSavedAt: nowIso,
+        editableUntil: addHoursIso(nowIso, windowHours),
+        status: policy.lockOn === "sign" ? "signed" : "locked",
+        lockOn: policy.lockOn || "edit",
+        currentValue: value,
+      };
+    }
+
+    draft.field.data.__authorship = store;
+    return true;
+  }
+
+  // Release (unlock) a claim on a produce() draft. Returns true if it changed.
+  function release(draft, query) {
+    if (!draft || !draft.field || !draft.field.data) return false;
+    var store = normalizeStore(draft.field.data.__authorship);
+    var key = buildKey(query);
+    var current = store.claims[key];
+    if (!current || current.status === "unlocked") return false;
+    store.claims[key] = Object.assign({}, current, {
+      status: "unlocked",
+      releasedAt: new Date().toISOString(),
+    });
+    draft.field.data.__authorship = store;
+    return true;
+  }
+
+  window.__nhAuth = {
+    version: 1,
+    buildKey: buildKey,
+    lockInfo: lockInfo,
+    claim: claim,
+    release: release,
+    actor: actorFrom,
+    formatTimestamp: formatTimestamp,
+  };
+})();
+
+const { useEffect, useMemo } = React
 const { Stack, Text, TextField, Label, Separator, ChoiceGroup } = Fluent
 
 const normalizePanelRows = (rows) => Array.isArray(rows) ? rows.filter((row) => row && typeof row === "object" && typeof row.id === "string") : []
@@ -16274,6 +17294,10 @@ const getCurrentActorName = (sd, fd) => (
   || sd?.webform?.provider?.name
   || ""
 )
+// Shared authorship engine (inlined as window.__nhAuth by the nhforms generator /
+// Vite loader). Replaces the preview-only getAuthorshipLockInfo/registerAuthorshipRowTarget
+// globals so row locking actually runs in real MOIS instead of ReferenceError-ing.
+const getNhAuth = () => (typeof window !== "undefined" && window.__nhAuth) || null
 // setFormData must receive a produce()-wrapped recipe: the real MOIS runtime
 // hands back the raw React state setter, so a bare mutator would replace the
 // active form data with undefined.
@@ -16320,21 +17344,12 @@ const ObservationPanelEditor = ({
   const maxHistory = Number(historyConfig?.maxRows) > 0 ? Number(historyConfig.maxRows) : 5
   const createdBy = fd?.field?.data?.createdBy ?? sd?.userProfile?.identity?.fullName
   const currentActorName = getCurrentActorName(sd, fd)
-  const authorshipPolicy = section?.authorshipPolicy || { enabled: false, granularity: "row", lockOn: "save" }
-
-  useEffect(() => {
-    if (!authorshipPolicy?.enabled || authorshipPolicy?.granularity !== "row") return
-    const rowIds = rowDefs.map((row) => row.id).filter(Boolean)
-    if (rowIds.length === 0) return
-    setFormData(produce((draft) => {
-      registerAuthorshipRowTarget(draft, {
-        componentId,
-        fieldId: effectiveFieldId,
-        rowIds,
-        policy: authorshipPolicy,
-      })
-    }))
-  }, [authorshipPolicy, componentId, effectiveFieldId, rowDefs, setFormData])
+  const authorshipPolicy = section?.authorshipPolicy || { enabled: false, granularity: "row", lockOn: "edit" }
+  const nhAuth = getNhAuth()
+  const actor = nhAuth ? nhAuth.actor(sd, fd) : { ownerName: currentActorName }
+  // No target registry needed: with the inlined __nhAuth engine, each row claims
+  // its own ownership directly on edit (setRowValue below) and lockInfo reads it
+  // back from field.data.__authorship.
 
   const computedTotals = useMemo(() => {
     const next = {}
@@ -16418,6 +17433,12 @@ const ObservationPanelEditor = ({
         : {}
       const { __authorship, ...rowValues } = current
       draft.field.data[effectiveFieldId] = { ...rowValues, [rowId]: nextValue }
+      // Lock-on-edit: claim this row for the current author in the same write.
+      if (nhAuth && authorshipPolicy?.enabled) {
+        nhAuth.claim(draft, sd, { scope: "row", componentId, rowKey: rowId }, nextValue, authorshipPolicy, {
+          now: sd?.previewOptions?.authorshipNow,
+        })
+      }
     }))
   }
 
@@ -16426,10 +17447,10 @@ const ObservationPanelEditor = ({
       <Label>{title}</Label>
       {rowDefs.map((row) => {
         const value = getPanelValue(rootValue, row.id)
-        const rowLockInfo = authorshipPolicy?.enabled
-          ? getAuthorshipLockInfo(fd, { scope: "row", componentId, rowKey: row.id }, {
-            ownerName: currentActorName,
-            ownerId: sd?.userProfile?.userProfileId,
+        const rowLockInfo = nhAuth && authorshipPolicy?.enabled
+          ? nhAuth.lockInfo(fd, sd, { scope: "row", componentId, rowKey: row.id }, {
+            ownerName: actor.ownerName,
+            ownerId: actor.ownerId,
             now: sd?.previewOptions?.authorshipNow,
           })
           : { locked: false }
@@ -24601,6 +25622,13 @@ export const componentIdentities: Record<string, any> = {
       "minor": 26,
       "patch": 18
     }
+  },
+  'AuthorshipField': {
+    "name": "AuthorshipField",
+    "title": "Authorship Field",
+    "description": "Single clinical value with a per-author lock (field-level authorship); read-only to other users once claimed",
+    "category": "Clinical",
+    "version": "1.0.0"
   },
   'CodedObservationChoiceField': {
     "name": "CodedObservationChoiceField",

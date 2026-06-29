@@ -70,6 +70,22 @@ const componentModules = import.meta.glob('./**/index.jsx', {
   import: 'default'
 }) as Record<string, string>;
 
+// Shared authorship runtime (idempotent window.__nhAuth installer). Prepended to
+// any component whose source references `__nhAuth` so the engine runs in the
+// preview the same way the nhforms generator inlines it for Next.js/real MOIS.
+// Loaded via the same ?raw glob pattern as the components above.
+const sharedModules = import.meta.glob('./_shared/*.js', {
+  eager: true,
+  query: '?raw',
+  import: 'default'
+}) as Record<string, string>;
+const authorshipRuntimeSource: string = sharedModules['./_shared/authorship-runtime.js'] || '';
+const AUTHORSHIP_MARKER = '__nhAuth';
+const withAuthorshipRuntime = (code: string): string =>
+  authorshipRuntimeSource && code.includes(AUTHORSHIP_MARKER)
+    ? `${authorshipRuntimeSource}\n${code}`
+    : code;
+
 // Shared utility functions used across NHForms components (from CommonSchemaDefn)
 const selectAll = () => true;
 const startDateDesc = (a: any, b: any) => -a.startDate?.localeCompare(b.startDate || '') || 0;
@@ -336,6 +352,7 @@ const buildNHFormsScope = (additionalComponents: Record<string, any> = {}) => {
  * @param additionalComponents - Components already loaded that can be referenced
  */
 function loadComponentCode(code: string, componentName: string, additionalComponents: Record<string, any> = {}): Record<string, any> {
+  code = withAuthorshipRuntime(code);
   const scope = buildNHFormsScope(additionalComponents);
 
   // Components to extract from the executed code
