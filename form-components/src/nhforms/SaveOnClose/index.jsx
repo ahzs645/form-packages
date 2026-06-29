@@ -38,6 +38,13 @@ const _stripComponentPayloads = (data) => {
   return rest
 }
 
+// Lock-on-save authorship: promote the current author's pending claims into the
+// saved payload via the shared __nhAuth engine (runs in real MOIS). Replaces the
+// preview-only prepareAuthorshipPersist path. (No in-memory commit here — the
+// onbeforeunload save is best-effort while the window is tearing down.)
+const _nhAuthPrepareSave = (fd, sd) =>
+  (typeof window !== "undefined" && window.__nhAuth) ? window.__nhAuth.prepareSave(fd, sd, "save") : null
+
 const _buildDefaultSavePayload = (fd, formDataOverride) => {
   const componentPayload = _collectComponentPayloads(fd)
   return {
@@ -137,9 +144,7 @@ const SaveOnClose = ({
       if (sd?.webform?.isDraft === "N") return
       if (onlyWhenChanged && !hasChanged) return
 
-      const prepared = typeof prepareAuthorshipPersist === "function"
-        ? prepareAuthorshipPersist(sd, fd, "save")
-        : null
+      const prepared = _nhAuthPrepareSave(fd, sd)
       const saveData = getSaveData
         ? getSaveData()
         : _buildDefaultSavePayload(fd, prepared?.formData)
@@ -186,9 +191,7 @@ const useSaveOnClose = (getSaveData, options = {}) => {
       if (sd?.webform?.isDraft === "N") return
       if ((normalizedOptions.onlyWhenChanged ?? true) && !hasChanged) return
 
-      const prepared = typeof prepareAuthorshipPersist === "function"
-        ? prepareAuthorshipPersist(sd, fd, "save")
-        : null
+      const prepared = _nhAuthPrepareSave(fd, sd)
       const saveData = getSaveData
         ? getSaveData()
         : _buildDefaultSavePayload(fd, prepared?.formData)

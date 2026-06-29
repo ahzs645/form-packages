@@ -194,6 +194,14 @@ const UnsavedChangesGuard = ({
 }) => {
   const sd = useSourceData()
   const [fd, setFormData] = useActiveData()
+  // Lock-on-save authorship: at save/sign time, promote the current author's
+  // pending claims to locked/signed via the shared __nhAuth engine (runs in real
+  // MOIS). Replaces the preview-only prepareAuthorshipPersist path.
+  const nhAuthPrepareSave = (state, action) =>
+    (typeof window !== "undefined" && window.__nhAuth) ? window.__nhAuth.prepareSave(state, sd, action) : null
+  const nhAuthCommitSave = (prepared) => {
+    if (prepared && prepared.changed && typeof setFormData === "function") setFormData(prepared.nextState)
+  }
   const trackedValue = typeof watchedValue === "undefined" ? fd?.field?.data : watchedValue
   const trackedSnapshot = serializeGuardValue(trackedValue)
   const baselineRef = useRef(trackedSnapshot)
@@ -248,9 +256,7 @@ const UnsavedChangesGuard = ({
       if (skipWhenSigned && sd?.webform?.isDraft === "N") return
       if (onlyWhenChanged && !isDirty) return
       if (typeof saveDraft !== "function") return
-      const prepared = typeof prepareAuthorshipPersist === "function"
-        ? prepareAuthorshipPersist(sd, fd, "save")
-        : null
+      const prepared = nhAuthPrepareSave(fd, "save")
       const payload = typeof getSaveData === "function"
         ? getSaveData(prepared)
         : buildDefaultSavePayload(fd, prepared?.formData)
@@ -330,9 +336,7 @@ const UnsavedChangesGuard = ({
     }
 
     const persistAction = actionId === "sign" ? "sign" : "save"
-    const prepared = typeof prepareAuthorshipPersist === "function"
-      ? prepareAuthorshipPersist(sd, persistFd, persistAction)
-      : null
+    const prepared = nhAuthPrepareSave(persistFd, persistAction)
     // Sign-and-submit should persist the full submit payload (mapped
     // observation updates, document comment) when the form provides it.
     const payload = actionId === "sign" && typeof getSubmitData === "function"
@@ -344,9 +348,7 @@ const UnsavedChangesGuard = ({
     if (actionId === "sign" && typeof signSubmit === "function") {
       // Real MOIS signSubmit is (note, sd, fd, options)
       const success = await signSubmit("", sd, persistFd, payload)
-      if (success !== false && typeof commitPreparedAuthorshipPersist === "function") {
-        commitPreparedAuthorshipPersist(fd, prepared)
-      }
+      if (success !== false) nhAuthCommitSave(prepared)
       markSaved(prepared?.nextState?.field?.data ?? prepared?.formData ?? payload?.formData)
       setIsOpen(false)
       if (success !== false) closeWindow()
@@ -355,9 +357,7 @@ const UnsavedChangesGuard = ({
 
     if (actionId === "sign" && typeof saveSubmit === "function") {
       const success = await saveSubmit(sd, persistFd, payload)
-      if (success !== false && typeof commitPreparedAuthorshipPersist === "function") {
-        commitPreparedAuthorshipPersist(fd, prepared)
-      }
+      if (success !== false) nhAuthCommitSave(prepared)
       markSaved(prepared?.nextState?.field?.data ?? prepared?.formData ?? payload?.formData)
       setIsOpen(false)
       if (success !== false) closeWindow()
@@ -366,9 +366,7 @@ const UnsavedChangesGuard = ({
 
     if (typeof saveDraft === "function") {
       const success = await saveDraft(sd, persistFd, payload)
-      if (success !== false && typeof commitPreparedAuthorshipPersist === "function") {
-        commitPreparedAuthorshipPersist(fd, prepared)
-      }
+      if (success !== false) nhAuthCommitSave(prepared)
       markSaved(prepared?.nextState?.field?.data ?? prepared?.formData ?? payload?.formData)
     }
     setIsOpen(false)

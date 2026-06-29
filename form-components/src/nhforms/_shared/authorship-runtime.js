@@ -135,11 +135,12 @@
 
   // Read: compute lock state for a target. `opts` carries the current actor
   // (ownerId/ownerName) and an optional `now` override (preview clock).
+  // A "pending" claim (lock-on-save, not yet saved) is NOT enforced.
   function lockInfo(state, sd, query, opts) {
     opts = opts || {};
     var store = readStore(state);
     var claim = store.claims[buildKey(query)];
-    if (!claim || claim.status === "unlocked") return { locked: false };
+    if (!claim || claim.status === "unlocked" || claim.status === "pending") return { locked: false };
 
     var ownerName = claim.ownerName || "Unknown";
     var ts = formatTimestamp(claim.timestamp);
@@ -199,14 +200,31 @@
         ? policy.editableWindowHours
         : DEFAULT_WINDOW_HOURS;
 
-    // A signed claim is terminal; a claim owned by someone else is untouchable.
-    if (existing && existing.status === "signed") return false;
-    if (existing && existing.status !== "unlocked" && !sameActor(existing, actor)) return false;
+    var lockOn = policy.lockOn || "edit";
+    // lock-on-edit enforces immediately; lock-on-save/submit/sign records a
+    // non-enforced "pending" claim that a later save promotes to "locked".
+    var pending = lockOn !== "edit";
 
-    if (existing && existing.status !== "unlocked") {
-      // Owner edit inside the window: refresh value/timestamp but keep the
-      // original claimedAt / editableUntil (the window does not extend).
+    // Enforcement: a signed claim is terminal; a LOCKED claim owned by someone
+    // else blocks until its window expires; a PENDING claim is not yet enforced
+    // so anyone may take it over.
+    if (existing && existing.status === "signed") return false;
+    if (existing && existing.status === "locked" && !sameActor(existing, actor)) {
+      var lockedUntil = existing.editableUntil || addHoursIso(existing.claimedAt || existing.timestamp, DEFAULT_WINDOW_HOURS);
+      var lockedUntilDate = lockedUntil ? new Date(lockedUntil) : null;
+      var lockExpired = !!lockedUntilDate && !isNaN(lockedUntilDate.getTime()) && now.getTime() > lockedUntilDate.getTime();
+      if (!lockExpired) return false;
+    }
+
+    var ownerRefresh = existing && existing.status !== "unlocked" && sameActor(existing, actor);
+    if (ownerRefresh) {
+      // Owner edit: refresh value/timestamp, keep the original window. A claim
+      // already promoted to locked/signed stays so; a pending one stays pending.
+      var keepStatus = (existing.status === "locked" || existing.status === "signed")
+        ? existing.status
+        : (pending ? "pending" : "locked");
       store.claims[key] = Object.assign({}, existing, {
+        status: keepStatus,
         timestamp: nowIso,
         lastSavedAt: nowIso,
         currentValue: value,
@@ -214,7 +232,7 @@
         ownerId: actor.ownerId !== undefined && actor.ownerId !== null ? actor.ownerId : existing.ownerId,
       });
     } else {
-      // New (or previously released) claim: only claim a meaningful value.
+      // New / taken-over / released claim: only claim a meaningful value.
       if (!isNonEmpty(value)) return false;
       store.claims[key] = {
         claimKey: key,
@@ -228,14 +246,79 @@
         claimedAt: nowIso,
         lastSavedAt: nowIso,
         editableUntil: addHoursIso(nowIso, windowHours),
-        status: policy.lockOn === "sign" ? "signed" : "locked",
-        lockOn: policy.lockOn || "edit",
+        status: pending ? "pending" : "locked",
+        lockOn: lockOn,
+        editableWindowHours: windowHours,
         currentValue: value,
       };
     }
 
     draft.field.data.__authorship = store;
     return true;
+  }
+
+  function policyAppliesToAction(lockOn, action) {
+    lockOn = lockOn || "save";
+    if (action === "save") return lockOn === "save";
+    if (action === "submit") return lockOn === "save" || lockOn === "submit";
+    if (action === "sign") return true; // a sign finalizes everything pending
+    return false;
+  }
+
+  // Lock-on-save: promote the current actor's PENDING claims to locked/signed.
+  // Pure — returns { changed, formData, nextState }; commitSave persists it.
+  // Called by save components (UnsavedChangesGuard / SaveOnClose) at save time.
+  function prepareSave(state, sd, action) {
+    action = action || "save";
+    var fieldData = state && state.field && state.field.data ? state.field.data : {};
+    var nextFieldData;
+    try {
+      nextFieldData = JSON.parse(JSON.stringify(fieldData));
+    } catch (e) {
+      nextFieldData = Object.assign({}, fieldData);
+    }
+    var store = normalizeStore(nextFieldData.__authorship);
+    var actor = actorFrom(sd, state);
+    var nowIso = new Date().toISOString();
+    var changed = false;
+
+    Object.keys(store.claims).forEach(function (k) {
+      var c = store.claims[k];
+      if (!c || c.status !== "pending") return;
+      if (!sameActor(c, actor)) return;
+      if (!policyAppliesToAction(c.lockOn || "save", action)) return;
+      var windowHours =
+        typeof c.editableWindowHours === "number" && c.editableWindowHours > 0
+          ? c.editableWindowHours
+          : DEFAULT_WINDOW_HOURS;
+      var nextStatus = action === "sign" || c.lockOn === "sign" ? "signed" : "locked";
+      // The owner-editable window starts when the claim actually locks (now).
+      store.claims[k] = Object.assign({}, c, {
+        status: nextStatus,
+        timestamp: nowIso,
+        lastSavedAt: nowIso,
+        claimedAt: nowIso,
+        editableUntil: addHoursIso(nowIso, windowHours),
+      });
+      changed = true;
+    });
+
+    if (changed) nextFieldData.__authorship = store;
+    return {
+      changed: changed,
+      formData: nextFieldData,
+      nextState: Object.assign({}, state, {
+        field: Object.assign({}, state && state.field ? state.field : { status: {}, history: [] }, { data: nextFieldData }),
+      }),
+    };
+  }
+
+  function commitSave(state, prepared) {
+    if (!prepared || !prepared.changed) return prepared ? prepared.nextState : undefined;
+    if (state && typeof state.setFormData === "function") {
+      state.setFormData(prepared.nextState);
+    }
+    return prepared.nextState;
   }
 
   // Release (unlock) a claim on a produce() draft. Returns true if it changed.
@@ -261,5 +344,8 @@
     release: release,
     actor: actorFrom,
     formatTimestamp: formatTimestamp,
+    // lock-on-save
+    prepareSave: prepareSave,
+    commitSave: commitSave,
   };
 })();
