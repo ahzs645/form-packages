@@ -90,6 +90,33 @@ const stripComponentPayloads = (data) => {
   return rest
 }
 
+const normalizeGuardValue = (value, seen = new WeakSet()) => {
+  if (!value || typeof value !== "object") return value
+  if (seen.has(value)) return "[Circular]"
+  seen.add(value)
+
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeGuardValue(item, seen))
+  }
+
+  return Object.keys(value)
+    .sort()
+    .reduce((result, key) => {
+      if (key === "__componentPayloads") return result
+      const nextValue = normalizeGuardValue(value[key], seen)
+      if (typeof nextValue !== "undefined") result[key] = nextValue
+      return result
+    }, {})
+}
+
+const serializeGuardValue = (value) => {
+  try {
+    return JSON.stringify(normalizeGuardValue(value))
+  } catch {
+    return String(value)
+  }
+}
+
 const buildDefaultSavePayload = (fd, formDataOverride) => {
   const componentPayload = collectComponentPayloads(fd)
   return {
@@ -130,8 +157,10 @@ const UnsavedChangesGuard = ({
   const sd = useSourceData()
   const [fd] = useActiveData()
   const trackedValue = typeof watchedValue === "undefined" ? fd?.field?.data : watchedValue
-  const baselineRef = useRef(trackedValue)
+  const trackedSnapshot = serializeGuardValue(trackedValue)
+  const baselineRef = useRef(trackedSnapshot)
   const warmupRef = useRef(3)
+  const saveSettleRef = useRef(0)
   const [isDirty, setIsDirty] = useState(false)
   const [isOpen, setIsOpen] = useState(false)
   const actionItems = useMemo(() => normalizeGuardActions(actions), [actions])
@@ -155,16 +184,19 @@ const UnsavedChangesGuard = ({
     : warmupRef.current > 0
 
   useEffect(() => {
-    if (isSettling) {
+    if (isSettling || saveSettleRef.current > 0) {
       if (!hasLifecycleSignals && warmupRef.current > 0) {
         warmupRef.current -= 1
       }
-      baselineRef.current = trackedValue
+      if (saveSettleRef.current > 0) {
+        saveSettleRef.current -= 1
+      }
+      baselineRef.current = trackedSnapshot
       setIsDirty(false)
       return
     }
-    setIsDirty(trackedValue !== baselineRef.current)
-  }, [trackedValue, isSettling, hasLifecycleSignals])
+    setIsDirty(trackedSnapshot !== baselineRef.current)
+  }, [trackedSnapshot, isSettling, hasLifecycleSignals])
 
   const guardSkipsWhenSigned = skipWhenSigned && sd?.webform?.isDraft === "N"
   const confirmUnloadActive = Boolean(
@@ -193,8 +225,9 @@ const UnsavedChangesGuard = ({
     return () => window.removeEventListener("beforeunload", handler)
   }, [autoSaveOnUnload, fd, getSaveData, interceptUnload, isDirty, onlyWhenChanged, sd, skipWhenSigned])
 
-  const markSaved = () => {
-    baselineRef.current = trackedValue
+  const markSaved = (nextValue) => {
+    baselineRef.current = serializeGuardValue(typeof nextValue === "undefined" ? trackedValue : nextValue)
+    saveSettleRef.current = 2
     warmupRef.current = 1
     setIsDirty(false)
   }
@@ -253,9 +286,9 @@ const UnsavedChangesGuard = ({
     // Sign-and-submit should persist the full submit payload (mapped
     // observation updates, document comment) when the form provides it.
     const payload = actionId === "sign" && typeof getSubmitData === "function"
-      ? getSubmitData()
+      ? getSubmitData(prepared)
       : typeof getSaveData === "function"
-        ? getSaveData()
+        ? getSaveData(prepared)
         : buildDefaultSavePayload(fd, prepared?.formData)
 
     if (actionId === "sign" && typeof signSubmit === "function") {
@@ -264,7 +297,7 @@ const UnsavedChangesGuard = ({
       if (success !== false && typeof commitPreparedAuthorshipPersist === "function") {
         commitPreparedAuthorshipPersist(fd, prepared)
       }
-      markSaved()
+      markSaved(prepared?.nextState?.field?.data ?? prepared?.formData ?? payload?.formData)
       setIsOpen(false)
       if (success !== false) closeWindow()
       return
@@ -275,7 +308,7 @@ const UnsavedChangesGuard = ({
       if (success !== false && typeof commitPreparedAuthorshipPersist === "function") {
         commitPreparedAuthorshipPersist(fd, prepared)
       }
-      markSaved()
+      markSaved(prepared?.nextState?.field?.data ?? prepared?.formData ?? payload?.formData)
       setIsOpen(false)
       if (success !== false) closeWindow()
       return
@@ -286,7 +319,7 @@ const UnsavedChangesGuard = ({
       if (success !== false && typeof commitPreparedAuthorshipPersist === "function") {
         commitPreparedAuthorshipPersist(fd, prepared)
       }
-      markSaved()
+      markSaved(prepared?.nextState?.field?.data ?? prepared?.formData ?? payload?.formData)
     }
     setIsOpen(false)
     closeWindow()
