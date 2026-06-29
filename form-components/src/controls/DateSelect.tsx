@@ -326,13 +326,26 @@ export const DateSelect: React.FC<DateSelectProps> = ({
     parseDateValue(resolvedValue, dateFormat)
   );
   const [inputText, setInputText] = useState(() => formatDisplayDate(parseDateValue(resolvedValue, dateFormat), dateFormat));
+  // True while the text input has focus. The typed value round-trips through
+  // active form data on every keystroke, so without this guard the sync effect
+  // below would reformat/clear the in-progress text and make the field
+  // impossible to fill in character by character (e.g. day "1" pads to "01",
+  // and a partial like "2026-0" clears to "").
+  const isEditingRef = React.useRef(false);
   const resolvedPlaceholder = placeholder ?? DATE_PLACEHOLDER_MAP[dateFormat] ?? DATE_PLACEHOLDER_MAP[DEFAULT_DATE_FORMAT];
   const { textField: datePickerTextFieldProps } = datePickerProps ?? {};
 
   useEffect(() => {
+    if (isEditingRef.current) return; // never fight the user mid-type
     const parsed = parseDateValue(resolvedValue, dateFormat);
     setSelectedDate(parsed);
-    setInputText(formatDisplayDate(parsed, dateFormat));
+    // Reformat to the display format only for a complete date, or clear on an
+    // explicit empty value; leave any other (partial) stored text untouched.
+    if (parsed) {
+      setInputText(formatDisplayDate(parsed, dateFormat));
+    } else if (!resolvedValue) {
+      setInputText('');
+    }
   }, [dateFormat, resolvedValue]);
 
   useEffect(() => {
@@ -431,25 +444,37 @@ export const DateSelect: React.FC<DateSelectProps> = ({
     commitDateValue(date);
   };
 
-  const commitTextInputValue = (rawValue: string | undefined) => {
+  // While typing: keep the raw text and persist it, but do NOT reformat — that
+  // is what fought the user before (auto-padding parseable partials, clearing
+  // unparseable ones). Reconciliation to the canonical display value happens on
+  // blur.
+  const handleTextTyping = (rawValue: string | undefined) => {
     if (effectiveReadOnly) return;
-    const trimmed = (rawValue ?? '').trim();
-    setInputText(rawValue ?? '');
-    if (!trimmed) {
-      commitDateValue(null);
-      return;
-    }
+    const raw = rawValue ?? '';
+    setInputText(raw);
+    const trimmed = raw.trim();
+    setSelectedDate(parseDateValue(trimmed, dateFormat));
 
     if (effectiveFieldId) {
       setActiveData((draft: any) => {
-        writeSectionActiveFieldValue(draft, sectionContext, effectiveFieldId, trimmed, linkedFieldIds ?? []);
+        writeSectionActiveFieldValue(draft, sectionContext, effectiveFieldId, trimmed || null, linkedFieldIds ?? []);
       });
     }
 
     if (onChange) {
       onChange(trimmed);
     }
+  };
 
+  // On blur: format a complete date to canonical form, clear on empty, and leave
+  // any other partial/invalid text exactly as the user left it.
+  const reconcileTextInput = (rawValue: string | undefined) => {
+    if (effectiveReadOnly) return;
+    const trimmed = (rawValue ?? '').trim();
+    if (!trimmed) {
+      commitDateValue(null);
+      return;
+    }
     const parsed = parseDateValue(trimmed, dateFormat);
     if (parsed) {
       commitDateValue(parsed);
@@ -475,19 +500,17 @@ export const DateSelect: React.FC<DateSelectProps> = ({
               aria-invalid="false"
               className="ms-TextField-field"
               disabled={disabled || effectiveReadOnly}
+              onFocus={() => {
+                isEditingRef.current = true;
+              }}
               onBlur={(event) => {
+                isEditingRef.current = false;
                 datePickerTextFieldProps?.onBlur?.(event);
-                commitTextInputValue(event.currentTarget.value);
+                reconcileTextInput(event.currentTarget.value);
               }}
               onChange={(event) => {
                 datePickerTextFieldProps?.onChange?.(event, event.currentTarget.value);
-                commitTextInputValue(event.currentTarget.value);
-              }}
-              onInput={(event) => {
-                commitTextInputValue(event.currentTarget.value);
-              }}
-              onKeyUp={(event) => {
-                commitTextInputValue(event.currentTarget.value);
+                handleTextTyping(event.currentTarget.value);
               }}
               placeholder={resolvedPlaceholder}
               readOnly={effectiveReadOnly}
