@@ -224,6 +224,7 @@ const YesNoButtons = ({
  * @param {'full' | '1/2' | '1/3' | '2/3' | '1/4' | '3/4'} [props.size] - Field width for grid layout
  * @param {boolean} [props.showCard=false] - Show card container
  * @param {boolean} [props.disabled] - Disable field
+ * @param {boolean} [props.readOnly] - Make field view-only
  * @param {boolean} [props.required] - Mark as required
  * @param {'left' | 'top' | 'right'} [props.labelPosition="left"] - Label position
  * @param {string} [props.note] - Annotation/note text
@@ -241,6 +242,7 @@ const CompactBooleanField = ({
   size,
   showCard = false,
   disabled = false,
+  readOnly = false,
   required = false,
   labelPosition = 'left',
   note,
@@ -257,6 +259,7 @@ const CompactBooleanField = ({
   const isDarkMode = theme?.isInverted || false
 
   const { yesLabel, noLabel } = getBooleanLabels(booleanLabels)
+  const isDisabled = disabled || readOnly
 
   // Get current value from form data
   const currentValue = fd?.field?.data?.[fieldId]
@@ -269,6 +272,7 @@ const CompactBooleanField = ({
 
   // Handle value change
   const handleChange = useCallback((newValue) => {
+    if (isDisabled) return
     if (!setFormData) return
 
     // Store as boolean or null (for deselected state)
@@ -298,7 +302,7 @@ const CompactBooleanField = ({
     } else {
       commitValue()
     }
-  }, [setFormData, fieldId, sourceFieldId, linkedFieldIds, allowNeutral])
+  }, [setFormData, fieldId, sourceFieldId, linkedFieldIds, allowNeutral, isDisabled])
 
   // Styles
   const baseContainerStyle = getFieldContainerStyles(isDarkMode, showCard)
@@ -358,7 +362,7 @@ const CompactBooleanField = ({
         label={label ? `${label}${required ? ' *' : ''}` : undefined}
         checked={normalized === 'yes'}
         onChange={handleCheckboxChange}
-        disabled={disabled}
+        disabled={isDisabled}
       />
     </div>
   ) : (
@@ -375,7 +379,7 @@ const CompactBooleanField = ({
         value={normalized}
         onChange={handleChange}
         size={buttonSize}
-        disabled={disabled}
+        disabled={isDisabled}
         isDarkMode={isDarkMode}
         allowDeselect={allowDeselect}
       />

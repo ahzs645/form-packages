@@ -1,22 +1,84 @@
 /**
  * DateTimeSelect Component
  * The DateTimeSelect control is used to display and edit date-time elements. *EXPERIMENTAL
- * Composes DateSelect and TimeSelect components.
  */
 
 import React, { useEffect, useState } from 'react';
-import { IDatePickerProps } from '@fluentui/react';
-import { DateSelect, formatCanonicalDate, parseDateValue } from './DateSelect';
-import { TimeSelect } from '../controls/TimeSelect';
+import { DatePicker, IDatePickerProps, MaskedTextField } from '@fluentui/react';
+import { formatCanonicalDate, parseDateValue } from './DateSelect';
 import { LayoutItem } from '../controls/LayoutItem';
+import { useSourceData, useSection, useTheme } from '../context/MoisContext';
 import { useActiveDataForForms } from '../hooks/form-state';
-import { useSection } from '../context/MoisContext';
 import {
+  getSectionSourceTarget,
   readSectionActiveFieldValue,
   writeSectionActiveFieldValue,
 } from '../runtime/mois-contract';
 
 type SupportedDateFormat = 'yyyy.MM.dd' | 'dd/MM/yyyy' | 'MM-dd-yyyy' | 'yyyy-MM-dd';
+
+const MIN_DATE = new Date(1900, 0, 1);
+const MAX_DATE = new Date(2099, 11, 31);
+
+const formatDisplayDate = (date: Date | undefined): string => {
+  if (!date) return '';
+  return formatCanonicalDate(date);
+};
+
+const normalizeTimeText = (value: string | undefined): string => {
+  const raw = String(value ?? '').replace(/\s/g, '');
+  const match = raw.match(/^(\d{1,2}):?(\d{2})$/);
+  if (!match) return '00:00';
+  const hours = Math.min(Math.max(Number(match[1]), 0), 23);
+  const minutes = Math.min(Math.max(Number(match[2]), 0), 59);
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+};
+
+const formatMaskedTime = (value: string | undefined): string => {
+  const normalized = normalizeTimeText(value);
+  const [hours, minutes] = normalized.split(':');
+  return `${hours} : ${minutes}`;
+};
+
+const timeFromDate = (date: Date | undefined, fallback = '00:00'): string => {
+  if (!date || Number.isNaN(date.getTime())) return normalizeTimeText(fallback);
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+};
+
+const combineDateTime = (date: Date | undefined, timeText: string): string | null => {
+  if (!date || Number.isNaN(date.getTime())) return null;
+  const [hours, minutes] = normalizeTimeText(timeText).split(':').map(Number);
+  const next = new Date(date);
+  next.setHours(hours, minutes, 0, 0);
+  return next.toISOString();
+};
+
+const readDatePart = (
+  value: unknown,
+  dateFormat: SupportedDateFormat | undefined,
+  defaultValue: string | undefined
+): Date | undefined => {
+  if (value && typeof value === 'object' && typeof (value as { date?: unknown }).date === 'string') {
+    return parseDateValue((value as { date: string }).date, dateFormat);
+  }
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+    return parseDateValue(value, dateFormat);
+  }
+  return parseDateValue(defaultValue ?? '', dateFormat);
+};
+
+const readTimePart = (value: unknown, defaultTime: string): string => {
+  if (value && typeof value === 'object' && typeof (value as { time?: unknown }).time === 'string') {
+    return normalizeTimeText((value as { time: string }).time);
+  }
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) return timeFromDate(parsed, defaultTime);
+  }
+  return normalizeTimeText(defaultTime);
+};
 
 export interface DateTimeSelectProps {
   /** Props for the attached action bar (eg: onEdit, onDelete, etc) */
@@ -69,6 +131,8 @@ export interface DateTimeSelectProps {
   section?: any;
   /** Size indicator */
   size?: 'small' | 'medium' | 'large' | React.CSSProperties;
+  /** Source field name */
+  sourceId?: string;
   /** Always place date over time (vertical layout) */
   vertical?: boolean;
 }
@@ -93,142 +157,140 @@ export const DateTimeSelect: React.FC<DateTimeSelectProps> = ({
   moisModule,
   note,
   onChange,
-  placeholder,
+  placeholder = 'YYYY.MM.DD',
   placement,
   readOnly,
   required,
   section,
   size = 'medium',
+  sourceId,
   vertical,
 }) => {
+  const effectiveFieldId = fieldId || id || sourceId || layoutId;
   const [activeData, setActiveData] = useActiveDataForForms();
+  const sourceData = useSourceData();
   const sectionContext = useSection(section);
-  const effectiveFieldId = fieldId || id || layoutId;
+  const effectiveReadOnly = !!readOnly;
+  const theme = useTheme();
   const activeValue = readSectionActiveFieldValue(activeData, sectionContext, effectiveFieldId);
-  const persistedDate = activeValue && typeof activeValue === 'object' && typeof activeValue.date === 'string'
-    ? activeValue.date
-    : undefined;
-  const persistedTime = activeValue && typeof activeValue === 'object' && typeof activeValue.time === 'string'
-    ? activeValue.time
-    : undefined;
-  const [dateValue, setDateValue] = useState<string | undefined>(persistedDate ?? defaultValue);
-  const [timeValue, setTimeValue] = useState<string>(persistedTime ?? defaultTime);
+  const sourceTarget = getSectionSourceTarget(sourceData, sectionContext);
+  const sourceValue = sourceId || id ? sourceTarget?.[sourceId || id || ''] : undefined;
+  const resolvedValue = activeValue ?? sourceValue;
+  const resolvedDate = readDatePart(resolvedValue, dateFormat, defaultValue);
+  const resolvedTime = readTimePart(resolvedValue, defaultTime);
+  const [dateValue, setDateValue] = useState<Date | undefined>(resolvedDate);
+  const [timeValue, setTimeValue] = useState<string>(resolvedTime);
 
   useEffect(() => {
-    setDateValue(persistedDate ?? defaultValue);
-  }, [defaultValue, persistedDate]);
+    setDateValue(readDatePart(resolvedValue, dateFormat, defaultValue));
+  }, [dateFormat, defaultValue, resolvedValue]);
 
   useEffect(() => {
-    setTimeValue(persistedTime ?? defaultTime);
-  }, [defaultTime, persistedTime]);
+    setTimeValue(readTimePart(resolvedValue, defaultTime));
+  }, [defaultTime, resolvedValue]);
 
   useEffect(() => {
-    if (!effectiveFieldId || !defaultValue) return;
-    if (
-      activeValue
-      && typeof activeValue === 'object'
-      && (
-        typeof (activeValue as { date?: string }).date === 'string'
-        || typeof (activeValue as { time?: string }).time === 'string'
-      )
-    ) {
-      return;
-    }
-
+    if (!effectiveFieldId || !defaultValue || activeValue !== undefined || effectiveReadOnly) return;
     const parsedDefault = parseDateValue(defaultValue, dateFormat);
     if (!parsedDefault) return;
-    const formattedDate = formatCanonicalDate(parsedDefault);
+    const formatted = combineDateTime(parsedDefault, defaultTime);
+    if (!formatted) return;
 
     setActiveData((draft: any) => {
       const currentValue = readSectionActiveFieldValue(draft, sectionContext, effectiveFieldId);
-      if (
-        currentValue
-        && typeof currentValue === 'object'
-        && (
-          typeof currentValue.date === 'string'
-          || typeof currentValue.time === 'string'
-        )
-      ) {
-        return;
-      }
-
-      const nextValue = {
-        date: formattedDate,
-        time: defaultTime,
-      };
-      writeSectionActiveFieldValue(draft, sectionContext, effectiveFieldId, nextValue, linkedFieldIds ?? []);
+      if (currentValue !== undefined && currentValue !== null) return;
+      writeSectionActiveFieldValue(draft, sectionContext, effectiveFieldId, formatted, linkedFieldIds ?? []);
     });
-  }, [activeValue, dateFormat, defaultTime, defaultValue, effectiveFieldId, linkedFieldIds, sectionContext, setActiveData]);
+  }, [
+    activeValue,
+    dateFormat,
+    defaultTime,
+    defaultValue,
+    effectiveFieldId,
+    effectiveReadOnly,
+    linkedFieldIds,
+    sectionContext,
+    setActiveData,
+  ]);
 
   if (hidden) return null;
 
-  const updateActiveData = (nextDate?: string, nextTime?: string) => {
-    if (!effectiveFieldId) return;
-    setActiveData((draft: any) => {
-      if (!nextDate && !nextTime) {
-        writeSectionActiveFieldValue(draft, sectionContext, effectiveFieldId, null, linkedFieldIds ?? []);
-        return;
-      }
-      const nextValue = {
-        date: nextDate,
-        time: nextTime,
-      };
-      writeSectionActiveFieldValue(draft, sectionContext, effectiveFieldId, nextValue, linkedFieldIds ?? []);
+  const commitValue = (nextDate: Date | undefined, nextTime: string) => {
+    if (effectiveReadOnly) return;
+    const normalizedTime = normalizeTimeText(nextTime);
+    const formatted = combineDateTime(nextDate, normalizedTime);
+    setDateValue(nextDate);
+    setTimeValue(normalizedTime);
+
+    if (effectiveFieldId) {
+      setActiveData((draft: any) => {
+        writeSectionActiveFieldValue(draft, sectionContext, effectiveFieldId, formatted, linkedFieldIds ?? []);
+      });
+    }
+
+    onChange?.({
+      date: nextDate ? formatCanonicalDate(nextDate) : undefined,
+      time: normalizedTime,
     });
   };
 
-  const handleDateChange = (value: string) => {
-    setDateValue(value);
-    updateActiveData(value, timeValue);
-    onChange?.({ date: value, time: timeValue });
-  };
-
-  const handleTimeChange = (_: any, value: string) => {
-    setTimeValue(value);
-    updateActiveData(dateValue, value);
-    onChange?.({ date: dateValue, time: value });
-  };
-
-  // The inner date/time fields container
   const dateTimeContainerStyle: React.CSSProperties = {
     display: 'flex',
     flexFlow: vertical ? 'column nowrap' : 'row wrap',
     gap: '0px 10px',
   };
 
-  // The composite date-time input element
   const dateTimeElement = (
     <div style={dateTimeContainerStyle}>
-      <div style={{ flex: '2 2 0', minWidth: '120px' }}>
-        <DateSelect
-          inline
-          placeholder={placeholder}
-          dateFormat={dateFormat}
-          defaultValue={defaultValue}
-          value={dateValue}
-          disabled={disabled}
-          readOnly={readOnly}
-          borderless={borderless}
-          required={required}
-          onChange={handleDateChange}
-          datePickerProps={datePickerProps}
-        />
-      </div>
-      <div style={{ flex: '1 1 0', minWidth: '60px' }}>
-        <TimeSelect
-          inline
-          defaultValue={defaultTime}
-          value={timeValue}
-          disabled={disabled}
-          readOnly={readOnly}
-          borderless={borderless}
-          onChange={handleTimeChange}
-        />
-      </div>
+      <DatePicker
+        disabled={disabled}
+        styles={{ root: { flex: '2 2 0', minWidth: '120px' } }}
+        disableAutoFocus
+        placeholder={placeholder}
+        allowTextInput
+        formatDate={formatDisplayDate}
+        parseDateFromString={(value) => parseDateValue(value, dateFormat) || null}
+        minDate={MIN_DATE}
+        maxDate={MAX_DATE}
+        tabIndex={effectiveReadOnly ? -1 : undefined}
+        value={dateValue}
+        borderless={borderless ?? effectiveReadOnly}
+        onSelectDate={(date) => commitValue(date || undefined, timeValue)}
+        textField={{
+          iconProps: effectiveReadOnly ? { iconName: '' } : undefined,
+          readOnly: effectiveReadOnly,
+          styles: {
+            fieldGroup: {
+              background: required && !dateValue ? theme.mois.requiredBackground : undefined,
+            },
+          },
+        }}
+        {...datePickerProps}
+      />
+      <MaskedTextField
+        styles={{ root: { minWidth: '60px', flex: '1 1 0' } }}
+        mask="** : **"
+        maskChar="0"
+        disabled={disabled}
+        borderless={borderless ?? effectiveReadOnly}
+        readOnly={effectiveReadOnly}
+        tabIndex={effectiveReadOnly ? -1 : undefined}
+        maskFormat={{ '*': /[0-9]/ }}
+        validateOnFocusOut
+        value={formatMaskedTime(timeValue)}
+        onChange={(_, value) => {
+          const nextTime = normalizeTimeText(value);
+          commitValue(dateValue, nextTime);
+        }}
+        onGetErrorMessage={(value) => (
+          /^(2[0-3]|[01]?[0-9])\s:\s([0-5]?[0-9])$/.test(value.trim())
+            ? undefined
+            : 'Not a valid hour'
+        )}
+      />
     </div>
   );
 
-  // Use LayoutItem for consistent layout handling
   return (
     <LayoutItem
       actions={actions}
@@ -244,7 +306,7 @@ export const DateTimeSelect: React.FC<DateTimeSelectProps> = ({
       moisModule={moisModule}
       note={note}
       placement={placement}
-      readOnly={readOnly}
+      readOnly={effectiveReadOnly}
       required={required}
       section={section}
       size={size}
@@ -254,7 +316,6 @@ export const DateTimeSelect: React.FC<DateTimeSelectProps> = ({
   );
 };
 
-// Demo component for the example
 export const DateTimeSelectDemo: React.FC = () => {
   return <DateTimeSelect label="this is for hours and minutes" />;
 };

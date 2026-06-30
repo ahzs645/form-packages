@@ -44,6 +44,56 @@ const getNumericFieldValue = (data, fieldId) => {
   return Number.isFinite(value) ? value : null
 }
 
+const getLayoutTableFieldRawValue = (cell, data) => {
+  const fieldId = cell.fieldId || cell.id
+  return data?.[fieldId] ?? cell.defaultValue ?? ""
+}
+
+const formatLayoutTableFieldDisplayValue = (cell, data) => {
+  const value = getLayoutTableFieldRawValue(cell, data)
+  if (value == null || value === "") return ""
+
+  if (cell.inputType === "booleanSingle" || cell.inputType === "booleanYesNo") {
+    return isCheckedValue(value) ? "Yes" : "No"
+  }
+
+  const optionList = normalizeLayoutTableOptionList(cell.optionList ?? cell.options)
+  const formatOne = (candidate) => {
+    if (candidate == null || candidate === "") return ""
+    if (typeof candidate === "object") {
+      return String(candidate.display ?? candidate.text ?? candidate.label ?? candidate.value ?? candidate.code ?? "")
+    }
+    const matched = optionList.find((option) => String(option.code) === String(candidate) || String(option.display) === String(candidate))
+    return matched ? matched.display : String(candidate)
+  }
+
+  if (Array.isArray(value)) return value.map(formatOne).filter(Boolean).join(", ")
+  return formatOne(value)
+}
+
+const renderLayoutTableReadOnlyField = (cell, data) => {
+  const label = cell.label || ""
+  const displayValue = formatLayoutTableFieldDisplayValue(cell, data)
+
+  return (
+    <div
+      data-field-id={cell.fieldId || cell.id}
+      style={{
+        minHeight: "20px",
+        whiteSpace: cell.inputType === "textarea" ? "pre-wrap" : "normal",
+        overflowWrap: "anywhere",
+      }}
+    >
+      {label ? (
+        <div style={{ fontSize: "12px", fontWeight: 600, marginBottom: displayValue ? 2 : 0 }}>
+          {label}
+        </div>
+      ) : null}
+      <div>{displayValue}</div>
+    </div>
+  )
+}
+
 const extractLayoutTableFormulaRefs = (expression) => {
   const bracketedRefs = Array.from(String(expression || "").matchAll(/\[([^\]]+)\]/g)).map((match) => match[1]).filter(Boolean)
   const unwrappedExpression = String(expression || "").replace(/\[([^\]]+)\]/g, " ")
@@ -113,6 +163,8 @@ const renderLayoutTableField = (cell, readOnly, data, setFieldValue) => {
   const labelProp = label ? { label } : {}
   const sharedProps = { fieldId, labelPosition: label ? "top" : "none", readOnly }
   const optionList = normalizeLayoutTableOptionList(cell.optionList ?? cell.options)
+
+  if (readOnly) return renderLayoutTableReadOnlyField(cell, data)
 
   switch (cell.inputType) {
     case "booleanSingle":

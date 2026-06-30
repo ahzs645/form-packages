@@ -4,11 +4,10 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { Calendar, Callout, DefaultButton, DirectionalHint, IDatePickerProps, Stack, Toggle } from '@fluentui/react';
+import { DatePicker, DefaultButton, IDatePickerProps, Stack, Toggle } from '@fluentui/react';
 import { LayoutItem } from '../controls/LayoutItem';
 import { useActiveDataForForms } from '../hooks/form-state';
 import { useSourceData, useSection } from '../context/MoisContext';
-import { getAuthorshipLockInfo, registerAuthorshipFieldTarget } from '../authorship';
 import {
   getSectionActiveTarget,
   getSectionSourceTarget,
@@ -24,6 +23,8 @@ const DATE_PLACEHOLDER_MAP: Record<SupportedDateFormat, string> = {
   'MM-dd-yyyy': 'MM-DD-YYYY',
   'yyyy-MM-dd': 'YYYY-MM-DD',
 };
+const MIN_DATE = new Date(1900, 0, 1);
+const MAX_DATE = new Date(2099, 11, 31);
 const DEFAULT_DATE_PICKER_STRINGS: NonNullable<IDatePickerProps['strings']> = {
   months: [
     'January',
@@ -289,22 +290,11 @@ export const DateSelect: React.FC<DateSelectProps> = ({
   sourceId,
   value,
 }) => {
+  const effectiveFieldId = fieldId || id || sourceId || layoutId;
   const [activeData, setActiveData] = useActiveDataForForms();
   const sourceData = useSourceData();
   const sectionContext = useSection(section);
-  const effectiveFieldId = fieldId || id || sourceId || layoutId;
-  useEffect(() => {
-    if (!effectiveFieldId) return;
-    setActiveData((draft: any) => {
-      registerAuthorshipFieldTarget(draft, effectiveFieldId, sectionContext.authorshipPolicy);
-    });
-  }, [effectiveFieldId, sectionContext.authorshipPolicy, setActiveData]);
-  const authorshipLockInfo = getAuthorshipLockInfo(activeData, { scope: 'field', fieldId: effectiveFieldId }, {
-      ownerName: sourceData?.userProfile?.identity?.fullName,
-      ownerId: sourceData?.userProfile?.userProfileId,
-      now: sourceData?.previewOptions?.authorshipNow,
-    });
-  const effectiveReadOnly = !!readOnly || !!authorshipLockInfo.locked;
+  const effectiveReadOnly = !!readOnly;
   const effectiveSourceId = sourceId || id || fieldId || layoutId;
   const activeValue = readSectionActiveFieldValue(activeData, sectionContext, effectiveFieldId);
   const sourceTarget = getSectionSourceTarget(sourceData, sectionContext);
@@ -324,31 +314,15 @@ export const DateSelect: React.FC<DateSelectProps> = ({
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(
     parseDateValue(resolvedValue, dateFormat)
   );
-  const [inputText, setInputText] = useState(() => formatDisplayDate(parseDateValue(resolvedValue, dateFormat), dateFormat));
-  // True while the text input has focus. The typed value round-trips through
-  // active form data on every keystroke, so without this guard the sync effect
-  // below would reformat/clear the in-progress text and make the field
-  // impossible to fill in character by character (e.g. day "1" pads to "01",
-  // and a partial like "2026-0" clears to "").
-  const isEditingRef = React.useRef(false);
-  // Calendar chooser popup state. The calendar icon toggles a Fluent <Calendar>
-  // in a <Callout> anchored to the icon, so a date can be picked as well as typed.
-  const [isCalendarOpen, setIsCalendarOpen] = useState(false);
-  const calendarButtonRef = React.useRef<HTMLButtonElement>(null);
   const resolvedPlaceholder = placeholder ?? DATE_PLACEHOLDER_MAP[dateFormat] ?? DATE_PLACEHOLDER_MAP[DEFAULT_DATE_FORMAT];
-  const { textField: datePickerTextFieldProps } = datePickerProps ?? {};
+  const datePickerStrings = {
+    ...DEFAULT_DATE_PICKER_STRINGS,
+    invalidInputErrorMessage: `Enter a valid date in ${resolvedPlaceholder} format`,
+    ...(datePickerProps?.strings ?? {}),
+  } as IDatePickerProps['strings'];
 
   useEffect(() => {
-    if (isEditingRef.current) return; // never fight the user mid-type
-    const parsed = parseDateValue(resolvedValue, dateFormat);
-    setSelectedDate(parsed);
-    // Reformat to the display format only for a complete date, or clear on an
-    // explicit empty value; leave any other (partial) stored text untouched.
-    if (parsed) {
-      setInputText(formatDisplayDate(parsed, dateFormat));
-    } else if (!resolvedValue) {
-      setInputText('');
-    }
+    setSelectedDate(parseDateValue(resolvedValue, dateFormat));
   }, [dateFormat, resolvedValue]);
 
   useEffect(() => {
@@ -411,7 +385,6 @@ export const DateSelect: React.FC<DateSelectProps> = ({
   const commitDateValue = (date: Date | null | undefined) => {
     if (effectiveReadOnly) return;
     setSelectedDate(date || undefined);
-    setInputText(date ? formatDisplayDate(date, dateFormat) : '');
     const formatted = date ? formatCanonicalDate(date) : '';
 
     if (effectiveFieldId) {
@@ -447,133 +420,34 @@ export const DateSelect: React.FC<DateSelectProps> = ({
     commitDateValue(date);
   };
 
-  // While typing: keep the raw text and persist it, but do NOT reformat — that
-  // is what fought the user before (auto-padding parseable partials, clearing
-  // unparseable ones). Reconciliation to the canonical display value happens on
-  // blur.
-  const handleTextTyping = (rawValue: string | undefined) => {
-    if (effectiveReadOnly) return;
-    const raw = rawValue ?? '';
-    setInputText(raw);
-    const trimmed = raw.trim();
-    setSelectedDate(parseDateValue(trimmed, dateFormat));
-
-    if (effectiveFieldId) {
-      setActiveData((draft: any) => {
-        writeSectionActiveFieldValue(draft, sectionContext, effectiveFieldId, trimmed || null, linkedFieldIds ?? []);
-      });
-    }
-
-    if (onChange) {
-      onChange(trimmed);
-    }
-  };
-
-  // On blur: format a complete date to canonical form, clear on empty, and leave
-  // any other partial/invalid text exactly as the user left it.
-  const reconcileTextInput = (rawValue: string | undefined) => {
-    if (effectiveReadOnly) return;
-    const trimmed = (rawValue ?? '').trim();
-    if (!trimmed) {
-      commitDateValue(null);
-      return;
-    }
-    const parsed = parseDateValue(trimmed, dateFormat);
-    if (parsed) {
-      commitDateValue(parsed);
-    }
-  };
-
   if (hidden) return null;
 
   const renderDatePickerInput = (rootStyle: React.CSSProperties) => (
-    <div style={rootStyle}>
-      <div className="ms-TextField" style={{ width: '100%' }}>
-        <div className="ms-TextField-wrapper">
-          <div
-            className="ms-TextField-fieldGroup"
-            style={{
-              alignItems: 'center',
-              border: borderless || effectiveReadOnly ? 'none' : undefined,
-              display: 'flex',
-              width: '100%',
-            }}
-          >
-            <input
-              aria-invalid="false"
-              className="ms-TextField-field"
-              disabled={disabled || effectiveReadOnly}
-              onFocus={() => {
-                isEditingRef.current = true;
-              }}
-              onBlur={(event) => {
-                isEditingRef.current = false;
-                datePickerTextFieldProps?.onBlur?.(event);
-                reconcileTextInput(event.currentTarget.value);
-              }}
-              onChange={(event) => {
-                datePickerTextFieldProps?.onChange?.(event, event.currentTarget.value);
-                handleTextTyping(event.currentTarget.value);
-              }}
-              placeholder={resolvedPlaceholder}
-              readOnly={effectiveReadOnly}
-              tabIndex={effectiveReadOnly ? -1 : undefined}
-              type="text"
-              value={inputText}
-              style={{
-                border: 0,
-                flex: '1 1 auto',
-                minWidth: 0,
-                outline: 0,
-              }}
-            />
-            <button
-              type="button"
-              ref={calendarButtonRef}
-              aria-label="Open date picker"
-              className="ms-DatePicker-event--without-label"
-              data-icon-name={datePickerTextFieldProps?.iconProps?.iconName ?? 'Calendar'}
-              disabled={disabled || effectiveReadOnly}
-              onClick={() => {
-                if (disabled || effectiveReadOnly) return;
-                setIsCalendarOpen((open) => !open);
-              }}
-              style={{
-                flex: '0 0 auto',
-                fontFamily: 'FabricMDL2Icons',
-                background: 'transparent',
-                border: 'none',
-                padding: 0,
-                cursor: disabled || effectiveReadOnly ? 'default' : 'pointer',
-                color: 'inherit',
-              }}
-            >
-              {"\uE787"}
-            </button>
-            {isCalendarOpen && !effectiveReadOnly && (
-              <Callout
-                target={calendarButtonRef}
-                onDismiss={() => setIsCalendarOpen(false)}
-                isBeakVisible={false}
-                directionalHint={DirectionalHint.bottomRightEdge}
-                setInitialFocus
-              >
-                <Calendar
-                  onSelectDate={(date) => {
-                    handleDateChange(date);
-                    setIsCalendarOpen(false);
-                  }}
-                  value={selectedDate}
-                  strings={DEFAULT_DATE_PICKER_STRINGS}
-                  showGoToToday
-                  highlightCurrentMonth
-                />
-              </Callout>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
+    <DatePicker
+      value={selectedDate}
+      onSelectDate={handleDateChange}
+      placeholder={resolvedPlaceholder}
+      disabled={disabled}
+      borderless={borderless ?? effectiveReadOnly}
+      formatDate={(date) => formatDisplayDate(date, dateFormat)}
+      allowTextInput
+      disableAutoFocus
+      parseDateFromString={(str) => parseDateValue(str, dateFormat) || null}
+      minDate={MIN_DATE}
+      maxDate={MAX_DATE}
+      tabIndex={effectiveReadOnly ? -1 : undefined}
+      strings={datePickerStrings}
+      styles={{
+        root: rootStyle as any,
+        textField: { width: '100%' },
+      }}
+      textField={{
+        iconProps: effectiveReadOnly ? { iconName: '' } : undefined,
+        readOnly: effectiveReadOnly,
+      }}
+      {...({ showButtonPanel: true } as any)}
+      {...datePickerProps}
+    />
   );
 
   const datePickerInput = renderDatePickerInput({ flex: '2 2 0', minWidth: '80px', maxWidth: '160px' });

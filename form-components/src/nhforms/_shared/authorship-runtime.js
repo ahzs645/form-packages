@@ -106,15 +106,16 @@
     return !!actor.ownerName && !!claim.ownerName && actor.ownerName === claim.ownerName;
   }
 
-  // Identity is read from the genuine MOIS session: sd.auth.userProfileId is the
-  // id populated at save time; sd.userProfile may be {} until auth resolves.
+  // Identity is read from the genuine MOIS session. Prefer sd.userProfile so the
+  // live actor matches the visible logged-in profile; fall back to sd.auth for
+  // runtimes that only expose the auth id.
   function actorFrom(sd, state) {
     var ownerId =
-      sd && sd.auth && sd.auth.userProfileId !== undefined && sd.auth.userProfileId !== null
-        ? sd.auth.userProfileId
-        : sd && sd.userProfile && sd.userProfile.userProfileId !== undefined && sd.userProfile.userProfileId !== null
+      sd && sd.userProfile && sd.userProfile.userProfileId !== undefined && sd.userProfile.userProfileId !== null
           ? sd.userProfile.userProfileId
-          : undefined;
+          : sd && sd.auth && sd.auth.userProfileId !== undefined && sd.auth.userProfileId !== null
+            ? sd.auth.userProfileId
+            : undefined;
     var ownerName =
       (state && state.field && state.field.data && state.field.data.createdBy) ||
       (sd && sd.userProfile && sd.userProfile.identity && sd.userProfile.identity.fullName) ||

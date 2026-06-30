@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useCallback, useEffect } from 'react';
-import { MaskedTextField, Label, ITextFieldProps } from '@fluentui/react';
+import { MaskedTextField, ITextFieldProps } from '@fluentui/react';
 import { LayoutItem } from './LayoutItem';
 import { useTheme, useSection, useSourceData } from '../context/MoisContext';
 import { useActiveDataForForms } from '../hooks/form-state';
@@ -111,10 +111,11 @@ export const TimeSelect: React.FC<TimeSelectProps> = ({
   validateOnKeyStroke,
   value: controlledValue,
 }) => {
+  const effectiveFieldId = fieldId || id || sourceId;
   const sectionContext = useSection(section);
   const [activeData, setActiveData] = useActiveDataForForms();
   const sourceData = useSourceData();
-  const effectiveFieldId = fieldId || id || sourceId;
+  const effectiveReadOnly = !!readOnly;
   const effectiveSourceId = sourceId || id || fieldId;
   const activeValue = effectiveFieldId
     ? readSectionActiveFieldValue(activeData, sectionContext, effectiveFieldId)
@@ -170,7 +171,7 @@ export const TimeSelect: React.FC<TimeSelectProps> = ({
     event: React.FormEvent<HTMLInputElement | HTMLTextAreaElement>,
     newValue?: string
   ) => {
-    if (readOnly) return;
+    if (effectiveReadOnly) return;
     const val = newValue || '';
 
     if (controlledValue === undefined) {
@@ -192,9 +193,10 @@ export const TimeSelect: React.FC<TimeSelectProps> = ({
     }
 
     onChange?.(event, val);
-  }, [controlledValue, effectiveFieldId, linkedFieldIds, onChange, sectionContext, setActiveData, validateOnKeyStroke, validateTime]);
+  }, [controlledValue, effectiveFieldId, effectiveReadOnly, linkedFieldIds, onChange, sectionContext, setActiveData, validateOnKeyStroke, validateTime]);
 
   const handleBlur = useCallback(() => {
+    if (effectiveReadOnly) return;
     if (!validateOnKeyStroke) {
       if (effectiveFieldId) {
         setActiveData((draft: any) => {
@@ -202,7 +204,7 @@ export const TimeSelect: React.FC<TimeSelectProps> = ({
         });
       }
     }
-  }, [effectiveFieldId, sectionContext, setActiveData, validateOnKeyStroke, validateTime, value]);
+  }, [effectiveFieldId, effectiveReadOnly, sectionContext, setActiveData, validateOnKeyStroke, validateTime, value]);
 
   if (hidden) {
     return null;
@@ -217,12 +219,12 @@ export const TimeSelect: React.FC<TimeSelectProps> = ({
       value={value}
       onChange={handleChange}
       onBlur={handleBlur}
-      disabled={disabled || readOnly}
-      readOnly={readOnly}
-      borderless={borderless || readOnly}
+      disabled={disabled}
+      readOnly={effectiveReadOnly}
+      borderless={borderless || effectiveReadOnly}
       errorMessage={error}
       required={required}
-      tabIndex={readOnly ? -1 : undefined}
+      tabIndex={effectiveReadOnly ? -1 : undefined}
       styles={{ root: getSizeStyles() as any }}
       onGetErrorMessage={(val) => {
         return /^(2[0-3]|[01]?[0-9]):([0-5]?[0-9])$/.test(val.trim())
@@ -255,7 +257,7 @@ export const TimeSelect: React.FC<TimeSelectProps> = ({
       moisModule={moisModule}
       note={note}
       placement={placement}
-      readOnly={readOnly}
+      readOnly={effectiveReadOnly}
       required={required}
       section={section}
       size={size}

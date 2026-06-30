@@ -122,7 +122,7 @@ const _normalizeRows = (value) => {
 
 const _cloneRow = (row = {}, columns = []) => {
   const copy = JSON.parse(JSON.stringify(row || {}))
-  copy._rowId = row?._rowId ?? copy._rowId ?? null
+  copy._rowId = row?._rowId || copy._rowId || `row_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
   columns.forEach((col) => {
     const path = col.dataPath || col.id
     const currentValue = _getValueAtPath(copy, path)
@@ -216,7 +216,7 @@ const _formatCellValue = (row, column) => {
   }
   const value = _getValueAtPath(row, column.dataPath || column.id)
   if (column.type === "checkbox") {
-    if (!_isMeaningfulValue(value)) return ""
+    if (value === undefined || value === null || value === "") return ""
     if (value) return column.booleanLabels?.on || "Checked"
     return column.booleanLabels?.off || "Unchecked"
   }
@@ -675,6 +675,8 @@ EditableTable = ({
   readOnly = false,
   disabled = false,
   authorshipPolicy: authorshipPolicyProp,
+  showAuthorshipColumn = false,
+  authorshipColumnLabel = "Lock",
   sourceFieldIds = {},
   sourceFieldIdsByRow = {},
   ...props
@@ -691,6 +693,11 @@ EditableTable = ({
   const nhAuth = (typeof window !== "undefined" && window.__nhAuth) || null
   const authorshipPolicy = authorshipPolicyProp || section?.authorshipPolicy || { enabled: false }
   const authorshipEnabled = !!(nhAuth && authorshipPolicy && authorshipPolicy.enabled)
+  const showRowAuthorshipColumn = !!(
+    authorshipEnabled &&
+    authorshipPolicy?.granularity === "row" &&
+    (showAuthorshipColumn || authorshipPolicy?.showStatusColumn)
+  )
   const getRowLock = (row) => {
     if (!authorshipEnabled || !row?._rowId) return { locked: false }
     const actor = nhAuth.actor(sd, fd)
@@ -699,6 +706,24 @@ EditableTable = ({
       ownerId: actor.ownerId,
       now: sd?.previewOptions?.authorshipNow,
     })
+  }
+  const renderRowAuthorshipStatus = (rowLock) => {
+    const claim = rowLock?.claim
+    if (!claim) return <Text variant="small" styles={{ root: { color: isDarkMode ? "#9ca3af" : "#666666" } }}>Open</Text>
+    const owner = claim.ownerName || claim.ownerId || "Unknown"
+    const savedAt = nhAuth?.formatTimestamp ? nhAuth.formatTimestamp(claim.lastSavedAt || claim.timestamp || claim.claimedAt) : ""
+    return (
+      <Stack tokens={{ childrenGap: 2 }}>
+        <Text variant="small" styles={{ root: { fontWeight: 600, color: isDarkMode ? "#f3f4f6" : "#323130" } }}>
+          {owner}
+        </Text>
+        {savedAt ? (
+          <Text variant="small" styles={{ root: { color: isDarkMode ? "#9ca3af" : "#605e5c" } }}>
+            {savedAt}
+          </Text>
+        ) : null}
+      </Stack>
+    )
   }
   const columns = useMemo(() => _normalizeTableColumns(columnsProp), [columnsProp])
   const initialRowCount = _normalizeInitialRowCount(initialRowsProp)
@@ -900,7 +925,7 @@ EditableTable = ({
   const updateCell = (rowIndex, columnId, value) => {
     // Defense in depth: a locked row cannot be edited even if an input slips
     // through (read-only enforcement also gates onChange at the input level).
-    if (authorshipEnabled && getRowLock(currentRows[rowIndex]).locked) return
+    if (isLocked || (authorshipEnabled && getRowLock(currentRows[rowIndex]).locked)) return
     const nextRows = [...currentRows]
     if (!nextRows[rowIndex]) {
       nextRows[rowIndex] = _makeEmptyRow(columns, rowIndex)
@@ -1148,9 +1173,25 @@ EditableTable = ({
 
   const renderEditorInput = (row, rowIndex, column, onValueChange, inline, rowReadOnly = false, onStampColumn = null) => {
     const value = _getValueAtPath(row, column.dataPath || column.id)
-    // When the row is authorship-locked, neutralize edits at the input level so
-    // even controls that ignore a readOnly prop cannot write.
-    if (rowReadOnly) onValueChange = () => {}
+    const effectiveReadOnly = isLocked || rowReadOnly
+    // When the table/row is locked, neutralize edits at the input level so even
+    // controls that ignore a readOnly prop cannot write.
+    if (effectiveReadOnly) onValueChange = () => {}
+    if (effectiveReadOnly) {
+      const displayValue = _formatCellValue(row, column)
+      return (
+        <Text
+          styles={{
+            root: {
+              color: isDarkMode ? "#f3f4f6" : "#323130",
+              whiteSpace: "pre-wrap",
+            },
+          }}
+        >
+          {displayValue || " "}
+        </Text>
+      )
+    }
 
     switch (column.type) {
       case "number":
@@ -1169,6 +1210,8 @@ EditableTable = ({
             spinButtonProps={spinButtonProps}
             textFieldProps={numberConfig.suffix ? { suffix: numberConfig.suffix } : undefined}
             storeAsNumber={numberConfig.storeAsNumber !== false}
+            readOnly={effectiveReadOnly}
+            disabled={effectiveReadOnly}
           />
         )
 
@@ -1179,6 +1222,8 @@ EditableTable = ({
             value={value || ""}
             onChange={(newValue) => onValueChange(rowIndex, column.id, newValue || "")}
             placeholder={column.placeholder || "Select date"}
+            readOnly={effectiveReadOnly}
+            disabled={effectiveReadOnly}
           />
         )
 
@@ -1198,6 +1243,8 @@ EditableTable = ({
             onChange={(coding) => onValueChange(rowIndex, column.id, coding?.code || "")}
             placeholder={column.placeholder || "Select..."}
             showOther={column.showOtherOption === true}
+            readOnly={effectiveReadOnly}
+            disabled={effectiveReadOnly}
           />
         )
 
@@ -1208,6 +1255,8 @@ EditableTable = ({
             value={value || ""}
             onChange={(event, newValue) => onValueChange(rowIndex, column.id, newValue || "")}
             placeholder={column.placeholder || "HH:mm"}
+            readOnly={effectiveReadOnly}
+            disabled={effectiveReadOnly}
           />
         )
 
@@ -1218,6 +1267,8 @@ EditableTable = ({
             displayStyle="checkmark"
             value={value}
             onChange={(event, checked) => onValueChange(rowIndex, column.id, !!checked)}
+            readOnly={effectiveReadOnly}
+            disabled={effectiveReadOnly}
           />
         )
 
@@ -1270,6 +1321,8 @@ EditableTable = ({
             value={value || ""}
             onChange={(event, newValue) => onValueChange(rowIndex, column.id, newValue || "")}
             placeholder={column.placeholder || ""}
+            readOnly={effectiveReadOnly}
+            disabled={effectiveReadOnly}
           />
         )
     }
@@ -1311,6 +1364,12 @@ EditableTable = ({
     textAlign: "center",
   }
 
+  const authorshipHeaderCellStyle = {
+    ...headerCellStyle,
+    width: "150px",
+    minWidth: "130px",
+  }
+
   const bodyCellStyle = {
     padding: "8px",
     borderBottom: `1px solid ${isDarkMode ? "#404040" : "#e0e0e0"}`,
@@ -1348,6 +1407,23 @@ EditableTable = ({
     return (
       <table style={tableStyle}>
         <tbody>
+          {showRowAuthorshipColumn ? (
+            <tr key="__authorship">
+              <th style={verticalLabelCellStyle}>{authorshipColumnLabel}</th>
+              {rowsForVerticalLayout.map(({ row, rowIndex, isEmptyPlaceholder }, displayIndex) => {
+                const rowLock = isEmptyPlaceholder ? null : getRowLock(row)
+                return (
+                  <td
+                    key={`__authorship-${rowIndex}-${displayIndex}`}
+                    style={verticalBodyCellStyle}
+                    title={rowLock?.note || undefined}
+                  >
+                    {isEmptyPlaceholder ? "" : renderRowAuthorshipStatus(rowLock)}
+                  </td>
+                )
+              })}
+            </tr>
+          ) : null}
           {tableColumns.map((col) => (
             <tr key={col.id}>
               <th
@@ -1408,6 +1484,11 @@ EditableTable = ({
                   {col.title || col.id}
                 </th>
               ))}
+              {showRowAuthorshipColumn && (
+                <th key="authorship" style={authorshipHeaderCellStyle}>
+                  {authorshipColumnLabel}
+                </th>
+              )}
               {(isModalMode && shouldShowActions) && (
                 <th key="actions" className="hideonprint" style={{ ...headerCellStyle, width: "96px" }} />
               )}
@@ -1417,7 +1498,7 @@ EditableTable = ({
             {displayRows.length === 0 && isModalMode ? (
               <tr key="empty">
                 <td
-                  colSpan={tableColumns.length + (showRowNumbers ? 1 : 0) + (shouldShowActions ? 1 : 0)}
+                  colSpan={tableColumns.length + (showRowNumbers ? 1 : 0) + (showRowAuthorshipColumn ? 1 : 0) + (shouldShowActions ? 1 : 0)}
                   style={{ ...bodyCellStyle, textAlign: "center", color: isDarkMode ? "#bdbdbd" : "#666666" }}
                 >
                   {emptyStateText}
@@ -1479,6 +1560,11 @@ EditableTable = ({
                           : renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell)}
                       </td>
                     ))}
+                    {showRowAuthorshipColumn && (
+                      <td key="authorship" style={bodyCellStyle} title={rowLock.note || undefined}>
+                        {renderRowAuthorshipStatus(rowLock)}
+                      </td>
+                    )}
                     {(isModalMode && shouldShowActions) && (
                       <td key="actions" className="hideonprint" style={bodyCellStyle}>
                         <div style={{ display: "flex", gap: "4px", justifyContent: "flex-end" }}>

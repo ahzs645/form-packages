@@ -7,6 +7,7 @@ export interface AuthorshipPolicy {
   granularity?: AuthorshipScope;
   lockOn?: AuthorshipLockOn;
   editableWindowHours?: number;
+  showStatusColumn?: boolean;
 }
 
 export interface AuthorshipClaim {
@@ -79,6 +80,7 @@ export const DEFAULT_AUTHORSHIP_POLICY: Required<AuthorshipPolicy> = {
   granularity: 'field',
   lockOn: 'save',
   editableWindowHours: DEFAULT_EDITABLE_WINDOW_HOURS,
+  showStatusColumn: false,
 };
 
 export const normalizeAuthorshipPolicy = (policy?: AuthorshipPolicy): Required<AuthorshipPolicy> => ({
@@ -89,6 +91,7 @@ export const normalizeAuthorshipPolicy = (policy?: AuthorshipPolicy): Required<A
     typeof policy?.editableWindowHours === 'number' && Number.isFinite(policy.editableWindowHours) && policy.editableWindowHours > 0
       ? policy.editableWindowHours
       : DEFAULT_EDITABLE_WINDOW_HOURS,
+  showStatusColumn: policy?.showStatusColumn === true,
 });
 
 export const formatAuthorshipTimestamp = (timestamp?: string) => {
