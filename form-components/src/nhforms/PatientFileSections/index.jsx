@@ -76,49 +76,31 @@ function PatientFileSections({
   sections = ["encounter", "document", "demographics"],
   showSectionTitles = true,
 }) {
-  const [fd, setFd] = useActiveData()
+  const section = typeof useSection === "function" ? useSection() : null
+  const [fieldData, setFieldData] = useActiveData(section?.activeSelector)
   const sd = useSourceData()
 
-  const patient = useMemo(() => mergeObjects(getPatientFromData(sd), getPatientFromData(fd)), [fd, sd])
-  const encounter = useMemo(() => mergeObjects(sd?.webform?.encounter, sd?.encounter, fd?.example?.encounter), [fd, sd])
+  const patient = useMemo(
+    () => mergeObjects(getPatientFromData(sd), fieldData?.__patientFile),
+    [fieldData, sd]
+  )
+  const encounter = useMemo(() => mergeObjects(sd?.webform?.encounter, sd?.encounter), [sd])
   const providerName = textValue(sd?.webform?.provider?.name || sd?.userProfile?.desktopProvider?.name || createdBy, createdBy)
   const createdDate = dateCreated || formatDate(sd?.webform?.createdDate || sd?.webform?.documentDate || encounter?.appointmentDateTime || new Date().toISOString())
 
   const writePatientUpdates = useCallback((updates) => {
-    setFd((draft) => {
+    setFieldData((draft) => {
       if (!draft) {
         const nextPatient = { ...(patient || {}), ...updates }
         return {
-          example: {
-            demographics: nextPatient,
-            patient: nextPatient,
-          },
-          patient: nextPatient,
-          field: {
-            data: {
-              __patientFile: nextPatient,
-              __patientFileUpdates: { ...updates },
-            },
-            status: {},
-          },
-          formData: {
-            __patientFileUpdates: { ...updates },
-          },
-          uiState: { sections: {}, editing: false },
+          __patientFile: nextPatient,
+          __patientFileUpdates: { ...updates },
         }
       }
-      draft.example = draft.example || {}
-      draft.example.demographics = { ...(draft.example.demographics || patient), ...updates }
-      draft.example.patient = { ...(draft.example.patient || patient), ...updates }
-      draft.patient = { ...(draft.patient || patient), ...updates }
-      draft.field = draft.field || { data: {}, status: {} }
-      draft.field.data = draft.field.data || {}
-      draft.field.data.__patientFile = { ...(draft.field.data.__patientFile || patient), ...updates }
-      draft.field.data.__patientFileUpdates = { ...(draft.field.data.__patientFileUpdates || {}), ...updates }
-      draft.formData = draft.formData || {}
-      draft.formData.__patientFileUpdates = { ...(draft.formData.__patientFileUpdates || {}), ...updates }
+      draft.__patientFile = { ...(draft.__patientFile || patient), ...updates }
+      draft.__patientFileUpdates = { ...(draft.__patientFileUpdates || {}), ...updates }
     })
-  }, [patient, setFd])
+  }, [patient, setFieldData])
 
   const preferredPhoneOptions = [
     { key: "1", text: "Home" },

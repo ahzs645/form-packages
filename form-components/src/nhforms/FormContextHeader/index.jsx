@@ -73,10 +73,11 @@ function FormContextHeader({
   createdByLabel = "Form Created by:",
 }) {
   const sd = useSourceData()
-  const [fd, setFd] = useActiveData()
+  const section = typeof useSection === "function" ? useSection() : null
+  const [data, setData] = useActiveData(section?.activeSelector)
 
   const values = useMemo(() => {
-    const encounter = sd?.webform?.encounter || sd?.encounter || fd?.example?.encounter || {}
+    const encounter = sd?.webform?.encounter || sd?.encounter || data?.example?.encounter || {}
     const providerName = legacyContextText(
       sd?.webform?.provider?.name ||
         sd?.userProfile?.desktopProvider?.name ||
@@ -100,7 +101,7 @@ function FormContextHeader({
     createdByFallback,
     createdByFieldId,
     encounterDateFieldId,
-    fd,
+    data,
     formDateFieldId,
     providerFieldId,
     sd,
@@ -111,21 +112,13 @@ function FormContextHeader({
   ])
 
   useEffect(() => {
-    setFd((draft) => {
+    setData((draft) => {
       if (!draft) {
-        return {
-          field: { data: { ...values }, status: {} },
-          formData: { ...values },
-          uiState: { sections: {}, editing: false },
-        }
+        return { ...values }
       }
-      draft.field = draft.field || { data: {}, status: {} }
-      draft.field.data = draft.field.data || {}
-      draft.formData = draft.formData || {}
-      Object.assign(draft.field.data, values)
-      Object.assign(draft.formData, values)
+      Object.assign(draft, values)
     })
-  }, [setFd, values])
+  }, [setData, values])
 
   const renderReadOnlyField = (fieldId, label, value) => (
     <div data-field-id={fieldId} style={legacyFieldWrap}>

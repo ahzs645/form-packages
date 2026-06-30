@@ -341,20 +341,18 @@ function LayoutTable({
   pageBreakInsideAvoid = true,
   readOnly = false,
 }) {
-  const [fd, setFd] = useActiveData()
+  const section = typeof useSection === "function" ? useSection() : null
+  const [activeData = {}, setActiveData] = useActiveData(section?.activeSelector)
   const sd = useSourceData()
   const config = { bordered, compact, fullWidth, cellPadding, borderColor, pageBreakInsideAvoid }
   const tableRows = Array.isArray(rows) ? rows : []
-  const activeData = { ...(fd?.formData || {}), ...(fd?.field?.data || {}), __fd: fd }
+  const tableData = { ...(activeData || {}) }
   const visibleRows = tableRows.filter((row) => rowIsVisible(row, activeData))
   const setFieldValue = (fieldId, value) => {
-    if (typeof setFd !== "function") return
-    setFd((draft) => {
-      draft.field = draft.field || { data: {}, status: {} }
-      draft.field.data = draft.field.data || {}
-      draft.formData = draft.formData || {}
-      draft.field.data[fieldId] = value
-      draft.formData[fieldId] = value
+    if (typeof setActiveData !== "function") return
+    setActiveData((draft) => {
+      if (!draft) return { [fieldId]: value }
+      draft[fieldId] = value
     })
   }
 
@@ -362,20 +360,21 @@ function LayoutTable({
     const computedCells = tableRows
       .flatMap((row) => Array.isArray(row.cells) ? row.cells : [])
       .filter((cell) => cell?.kind === "computed" && cell.fieldId)
-    if (computedCells.length === 0 || typeof setFd !== "function") return
+    if (computedCells.length === 0 || typeof setActiveData !== "function") return
 
-    setFd((draft) => {
-      draft.field = draft.field || { data: {}, status: {} }
-      draft.field.data = draft.field.data || {}
-      draft.formData = draft.formData || {}
+    setActiveData((draft) => {
+      if (!draft) {
+        const nextData = {}
+        computedCells.forEach((cell) => {
+          nextData[cell.fieldId] = computeLayoutTableCellValue(cell, {})
+        })
+        return nextData
+      }
       computedCells.forEach((cell) => {
-        const mergedData = { ...(draft.formData || {}), ...(draft.field.data || {}) }
-        const value = computeLayoutTableCellValue(cell, mergedData)
-        draft.field.data[cell.fieldId] = value
-        draft.formData[cell.fieldId] = value
+        draft[cell.fieldId] = computeLayoutTableCellValue(cell, draft)
       })
     })
-  }, [setFd, tableRows, JSON.stringify(activeData)])
+  }, [setActiveData, tableRows, JSON.stringify(activeData)])
 
   if (visibleRows.length === 0) return null
 
@@ -401,7 +400,7 @@ function LayoutTable({
                     rowSpan={Math.max(1, Number(cell.rowSpan) || 1)}
                     style={cellStyle(cell, config)}
                   >
-                    {renderLayoutTableCellContent(cell, readOnly, activeData, sd, setFieldValue)}
+                    {renderLayoutTableCellContent(cell, readOnly, tableData, sd, setFieldValue)}
                   </Tag>
                 )
               })}

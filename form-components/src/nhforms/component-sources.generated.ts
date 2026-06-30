@@ -7412,10 +7412,11 @@ function FormContextHeader({
   createdByLabel = "Form Created by:",
 }) {
   const sd = useSourceData()
-  const [fd, setFd] = useActiveData()
+  const section = typeof useSection === "function" ? useSection() : null
+  const [data, setData] = useActiveData(section?.activeSelector)
 
   const values = useMemo(() => {
-    const encounter = sd?.webform?.encounter || sd?.encounter || fd?.example?.encounter || {}
+    const encounter = sd?.webform?.encounter || sd?.encounter || data?.example?.encounter || {}
     const providerName = legacyContextText(
       sd?.webform?.provider?.name ||
         sd?.userProfile?.desktopProvider?.name ||
@@ -7439,7 +7440,7 @@ function FormContextHeader({
     createdByFallback,
     createdByFieldId,
     encounterDateFieldId,
-    fd,
+    data,
     formDateFieldId,
     providerFieldId,
     sd,
@@ -7450,21 +7451,13 @@ function FormContextHeader({
   ])
 
   useEffect(() => {
-    setFd((draft) => {
+    setData((draft) => {
       if (!draft) {
-        return {
-          field: { data: { ...values }, status: {} },
-          formData: { ...values },
-          uiState: { sections: {}, editing: false },
-        }
+        return { ...values }
       }
-      draft.field = draft.field || { data: {}, status: {} }
-      draft.field.data = draft.field.data || {}
-      draft.formData = draft.formData || {}
-      Object.assign(draft.field.data, values)
-      Object.assign(draft.formData, values)
+      Object.assign(draft, values)
     })
-  }, [setFd, values])
+  }, [setData, values])
 
   const renderReadOnlyField = (fieldId, label, value) => (
     <div data-field-id={fieldId} style={legacyFieldWrap}>
@@ -15644,20 +15637,18 @@ function LayoutTable({
   pageBreakInsideAvoid = true,
   readOnly = false,
 }) {
-  const [fd, setFd] = useActiveData()
+  const section = typeof useSection === "function" ? useSection() : null
+  const [activeData = {}, setActiveData] = useActiveData(section?.activeSelector)
   const sd = useSourceData()
   const config = { bordered, compact, fullWidth, cellPadding, borderColor, pageBreakInsideAvoid }
   const tableRows = Array.isArray(rows) ? rows : []
-  const activeData = { ...(fd?.formData || {}), ...(fd?.field?.data || {}), __fd: fd }
+  const tableData = { ...(activeData || {}) }
   const visibleRows = tableRows.filter((row) => rowIsVisible(row, activeData))
   const setFieldValue = (fieldId, value) => {
-    if (typeof setFd !== "function") return
-    setFd((draft) => {
-      draft.field = draft.field || { data: {}, status: {} }
-      draft.field.data = draft.field.data || {}
-      draft.formData = draft.formData || {}
-      draft.field.data[fieldId] = value
-      draft.formData[fieldId] = value
+    if (typeof setActiveData !== "function") return
+    setActiveData((draft) => {
+      if (!draft) return { [fieldId]: value }
+      draft[fieldId] = value
     })
   }
 
@@ -15665,20 +15656,21 @@ function LayoutTable({
     const computedCells = tableRows
       .flatMap((row) => Array.isArray(row.cells) ? row.cells : [])
       .filter((cell) => cell?.kind === "computed" && cell.fieldId)
-    if (computedCells.length === 0 || typeof setFd !== "function") return
+    if (computedCells.length === 0 || typeof setActiveData !== "function") return
 
-    setFd((draft) => {
-      draft.field = draft.field || { data: {}, status: {} }
-      draft.field.data = draft.field.data || {}
-      draft.formData = draft.formData || {}
+    setActiveData((draft) => {
+      if (!draft) {
+        const nextData = {}
+        computedCells.forEach((cell) => {
+          nextData[cell.fieldId] = computeLayoutTableCellValue(cell, {})
+        })
+        return nextData
+      }
       computedCells.forEach((cell) => {
-        const mergedData = { ...(draft.formData || {}), ...(draft.field.data || {}) }
-        const value = computeLayoutTableCellValue(cell, mergedData)
-        draft.field.data[cell.fieldId] = value
-        draft.formData[cell.fieldId] = value
+        draft[cell.fieldId] = computeLayoutTableCellValue(cell, draft)
       })
     })
-  }, [setFd, tableRows, JSON.stringify(activeData)])
+  }, [setActiveData, tableRows, JSON.stringify(activeData)])
 
   if (visibleRows.length === 0) return null
 
@@ -15704,7 +15696,7 @@ function LayoutTable({
                     rowSpan={Math.max(1, Number(cell.rowSpan) || 1)}
                     style={cellStyle(cell, config)}
                   >
-                    {renderLayoutTableCellContent(cell, readOnly, activeData, sd, setFieldValue)}
+                    {renderLayoutTableCellContent(cell, readOnly, tableData, sd, setFieldValue)}
                   </Tag>
                 )
               })}
@@ -18794,49 +18786,31 @@ function PatientFileSections({
   sections = ["encounter", "document", "demographics"],
   showSectionTitles = true,
 }) {
-  const [fd, setFd] = useActiveData()
+  const section = typeof useSection === "function" ? useSection() : null
+  const [fieldData, setFieldData] = useActiveData(section?.activeSelector)
   const sd = useSourceData()
 
-  const patient = useMemo(() => mergeObjects(getPatientFromData(sd), getPatientFromData(fd)), [fd, sd])
-  const encounter = useMemo(() => mergeObjects(sd?.webform?.encounter, sd?.encounter, fd?.example?.encounter), [fd, sd])
+  const patient = useMemo(
+    () => mergeObjects(getPatientFromData(sd), fieldData?.__patientFile),
+    [fieldData, sd]
+  )
+  const encounter = useMemo(() => mergeObjects(sd?.webform?.encounter, sd?.encounter), [sd])
   const providerName = textValue(sd?.webform?.provider?.name || sd?.userProfile?.desktopProvider?.name || createdBy, createdBy)
   const createdDate = dateCreated || formatDate(sd?.webform?.createdDate || sd?.webform?.documentDate || encounter?.appointmentDateTime || new Date().toISOString())
 
   const writePatientUpdates = useCallback((updates) => {
-    setFd((draft) => {
+    setFieldData((draft) => {
       if (!draft) {
         const nextPatient = { ...(patient || {}), ...updates }
         return {
-          example: {
-            demographics: nextPatient,
-            patient: nextPatient,
-          },
-          patient: nextPatient,
-          field: {
-            data: {
-              __patientFile: nextPatient,
-              __patientFileUpdates: { ...updates },
-            },
-            status: {},
-          },
-          formData: {
-            __patientFileUpdates: { ...updates },
-          },
-          uiState: { sections: {}, editing: false },
+          __patientFile: nextPatient,
+          __patientFileUpdates: { ...updates },
         }
       }
-      draft.example = draft.example || {}
-      draft.example.demographics = { ...(draft.example.demographics || patient), ...updates }
-      draft.example.patient = { ...(draft.example.patient || patient), ...updates }
-      draft.patient = { ...(draft.patient || patient), ...updates }
-      draft.field = draft.field || { data: {}, status: {} }
-      draft.field.data = draft.field.data || {}
-      draft.field.data.__patientFile = { ...(draft.field.data.__patientFile || patient), ...updates }
-      draft.field.data.__patientFileUpdates = { ...(draft.field.data.__patientFileUpdates || {}), ...updates }
-      draft.formData = draft.formData || {}
-      draft.formData.__patientFileUpdates = { ...(draft.formData.__patientFileUpdates || {}), ...updates }
+      draft.__patientFile = { ...(draft.__patientFile || patient), ...updates }
+      draft.__patientFileUpdates = { ...(draft.__patientFileUpdates || {}), ...updates }
     })
-  }, [patient, setFd])
+  }, [patient, setFieldData])
 
   const preferredPhoneOptions = [
     { key: "1", text: "Home" },
