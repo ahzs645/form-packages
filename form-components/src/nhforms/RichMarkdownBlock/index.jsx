@@ -1,5 +1,11 @@
 const { useMemo } = React
 
+const defaultRemarkPlugins = typeof remarkGfm === "undefined" ? [] : [remarkGfm]
+const defaultRehypePlugins = typeof rehypeRaw === "undefined" ? [] : [rehypeRaw]
+const MarkdownRenderer = typeof ReactMarkdown === "undefined"
+  ? ({ children }) => <div style={{ whiteSpace: "pre-wrap" }}>{children}</div>
+  : ReactMarkdown
+
 const fullWidthStyle = {
   maxWidth: "none",
   width: "100%",
@@ -127,8 +133,8 @@ const RichMarkdownBlock = ({
     const extraPlugins = Array.isArray(extra.remarkPlugins) ? extra.remarkPlugins : []
     return {
       ...extra,
-      remarkPlugins: [remarkGfm, ...extraPlugins],
-      rehypePlugins: [rehypeRaw, ...(Array.isArray(extra.rehypePlugins) ? extra.rehypePlugins : [])],
+      remarkPlugins: [...defaultRemarkPlugins, ...extraPlugins],
+      rehypePlugins: [...defaultRehypePlugins, ...(Array.isArray(extra.rehypePlugins) ? extra.rehypePlugins : [])],
       components: {
         ...baseComponents,
         ...(extra.components && typeof extra.components === "object" ? extra.components : {}),
@@ -169,9 +175,9 @@ const RichMarkdownBlock = ({
             : {}),
         }}
       >
-        <ReactMarkdown {...mergedMarkdownProps}>
+        <MarkdownRenderer {...mergedMarkdownProps}>
           {content}
-        </ReactMarkdown>
+        </MarkdownRenderer>
       </div>
     </LayoutItem>
   )

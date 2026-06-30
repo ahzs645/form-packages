@@ -7338,6 +7338,7 @@ function FocusedObservationHistory({
 
 `,
   './FormContextHeader/index.jsx': `const { useEffect, useMemo } = React
+const { DatePicker, Label, TextField } = Fluent
 
 const legacyContextText = (value, fallback = "") => {
   if (value == null) return fallback
@@ -15759,6 +15760,12 @@ const LongTermMedicationsFields = "longTermMedicationOrderId startDate endDate m
 `,
   './MoisMarkdownBlock/index.jsx': `const { useMemo } = React
 
+const defaultRemarkPlugins = typeof remarkGfm === "undefined" ? [] : [remarkGfm]
+const defaultRehypePlugins = typeof rehypeRaw === "undefined" ? [] : [rehypeRaw]
+const MarkdownRenderer = typeof ReactMarkdown === "undefined"
+  ? ({ children }) => <div style={{ whiteSpace: "pre-wrap" }}>{children}</div>
+  : ReactMarkdown
+
 /**
  * MoisMarkdownBlock
  *
@@ -15957,8 +15964,8 @@ const MoisMarkdownBlock = ({
     return {
       ...extra,
       urlTransform: extra.urlTransform || urlTransform,
-      remarkPlugins: [remarkGfm, ...extraPlugins],
-      rehypePlugins: [rehypeRaw, ...(Array.isArray(extra.rehypePlugins) ? extra.rehypePlugins : [])],
+      remarkPlugins: [...defaultRemarkPlugins, ...extraPlugins],
+      rehypePlugins: [...defaultRehypePlugins, ...(Array.isArray(extra.rehypePlugins) ? extra.rehypePlugins : [])],
       components: {
         ...baseComponents,
         ...(extra.components && typeof extra.components === "object" ? extra.components : {}),
@@ -15999,9 +16006,9 @@ const MoisMarkdownBlock = ({
             : {}),
         }}
       >
-        <ReactMarkdown {...mergedMarkdownProps}>
+        <MarkdownRenderer {...mergedMarkdownProps}>
           {content}
-        </ReactMarkdown>
+        </MarkdownRenderer>
       </div>
     </LayoutItem>
   )
@@ -18703,6 +18710,7 @@ const PastMeasurementField = ({
 }
 `,
   './PatientFileSections/index.jsx': `const { useCallback, useMemo } = React
+const { Dropdown, IconButton } = Fluent
 
 const textValue = (value, fallback = "") => {
   if (value == null) return fallback
@@ -20064,6 +20072,12 @@ const RelationshipStatus = ({
 `,
   './RichMarkdownBlock/index.jsx': `const { useMemo } = React
 
+const defaultRemarkPlugins = typeof remarkGfm === "undefined" ? [] : [remarkGfm]
+const defaultRehypePlugins = typeof rehypeRaw === "undefined" ? [] : [rehypeRaw]
+const MarkdownRenderer = typeof ReactMarkdown === "undefined"
+  ? ({ children }) => <div style={{ whiteSpace: "pre-wrap" }}>{children}</div>
+  : ReactMarkdown
+
 const fullWidthStyle = {
   maxWidth: "none",
   width: "100%",
@@ -20191,8 +20205,8 @@ const RichMarkdownBlock = ({
     const extraPlugins = Array.isArray(extra.remarkPlugins) ? extra.remarkPlugins : []
     return {
       ...extra,
-      remarkPlugins: [remarkGfm, ...extraPlugins],
-      rehypePlugins: [rehypeRaw, ...(Array.isArray(extra.rehypePlugins) ? extra.rehypePlugins : [])],
+      remarkPlugins: [...defaultRemarkPlugins, ...extraPlugins],
+      rehypePlugins: [...defaultRehypePlugins, ...(Array.isArray(extra.rehypePlugins) ? extra.rehypePlugins : [])],
       components: {
         ...baseComponents,
         ...(extra.components && typeof extra.components === "object" ? extra.components : {}),
@@ -20233,9 +20247,9 @@ const RichMarkdownBlock = ({
             : {}),
         }}
       >
-        <ReactMarkdown {...mergedMarkdownProps}>
+        <MarkdownRenderer {...mergedMarkdownProps}>
           {content}
-        </ReactMarkdown>
+        </MarkdownRenderer>
       </div>
     </LayoutItem>
   )

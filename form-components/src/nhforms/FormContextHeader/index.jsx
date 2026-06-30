@@ -1,4 +1,5 @@
 const { useEffect, useMemo } = React
+const { DatePicker, Label, TextField } = Fluent
 
 const legacyContextText = (value, fallback = "") => {
   if (value == null) return fallback

@@ -1,5 +1,11 @@
 const { useMemo } = React
 
+const defaultRemarkPlugins = typeof remarkGfm === "undefined" ? [] : [remarkGfm]
+const defaultRehypePlugins = typeof rehypeRaw === "undefined" ? [] : [rehypeRaw]
+const MarkdownRenderer = typeof ReactMarkdown === "undefined"
+  ? ({ children }) => <div style={{ whiteSpace: "pre-wrap" }}>{children}</div>
+  : ReactMarkdown
+
 /**
  * MoisMarkdownBlock
  *
@@ -198,8 +204,8 @@ const MoisMarkdownBlock = ({
     return {
       ...extra,
       urlTransform: extra.urlTransform || urlTransform,
-      remarkPlugins: [remarkGfm, ...extraPlugins],
-      rehypePlugins: [rehypeRaw, ...(Array.isArray(extra.rehypePlugins) ? extra.rehypePlugins : [])],
+      remarkPlugins: [...defaultRemarkPlugins, ...extraPlugins],
+      rehypePlugins: [...defaultRehypePlugins, ...(Array.isArray(extra.rehypePlugins) ? extra.rehypePlugins : [])],
       components: {
         ...baseComponents,
         ...(extra.components && typeof extra.components === "object" ? extra.components : {}),
@@ -240,9 +246,9 @@ const MoisMarkdownBlock = ({
             : {}),
         }}
       >
-        <ReactMarkdown {...mergedMarkdownProps}>
+        <MarkdownRenderer {...mergedMarkdownProps}>
           {content}
-        </ReactMarkdown>
+        </MarkdownRenderer>
       </div>
     </LayoutItem>
   )
