@@ -7451,6 +7451,13 @@ function FormContextHeader({
 
   useEffect(() => {
     setFd((draft) => {
+      if (!draft) {
+        return {
+          field: { data: { ...values }, status: {} },
+          formData: { ...values },
+          uiState: { sections: {}, editing: false },
+        }
+      }
       draft.field = draft.field || { data: {}, status: {} }
       draft.field.data = draft.field.data || {}
       draft.formData = draft.formData || {}
@@ -18797,6 +18804,27 @@ function PatientFileSections({
 
   const writePatientUpdates = useCallback((updates) => {
     setFd((draft) => {
+      if (!draft) {
+        const nextPatient = { ...(patient || {}), ...updates }
+        return {
+          example: {
+            demographics: nextPatient,
+            patient: nextPatient,
+          },
+          patient: nextPatient,
+          field: {
+            data: {
+              __patientFile: nextPatient,
+              __patientFileUpdates: { ...updates },
+            },
+            status: {},
+          },
+          formData: {
+            __patientFileUpdates: { ...updates },
+          },
+          uiState: { sections: {}, editing: false },
+        }
+      }
       draft.example = draft.example || {}
       draft.example.demographics = { ...(draft.example.demographics || patient), ...updates }
       draft.example.patient = { ...(draft.example.patient || patient), ...updates }

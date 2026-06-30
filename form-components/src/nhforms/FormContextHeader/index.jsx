@@ -112,6 +112,13 @@ function FormContextHeader({
 
   useEffect(() => {
     setFd((draft) => {
+      if (!draft) {
+        return {
+          field: { data: { ...values }, status: {} },
+          formData: { ...values },
+          uiState: { sections: {}, editing: false },
+        }
+      }
       draft.field = draft.field || { data: {}, status: {} }
       draft.field.data = draft.field.data || {}
       draft.formData = draft.formData || {}
