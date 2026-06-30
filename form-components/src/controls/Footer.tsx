@@ -18,7 +18,7 @@ export interface FooterProps {
 export const Footer: React.FC<FooterProps> = ({
   children,
   bottom = 0,
-  background = '#00008b',
+  background,
 }) => {
   const footerStyle: React.CSSProperties = {
     position: 'sticky',
@@ -26,18 +26,11 @@ export const Footer: React.FC<FooterProps> = ({
     zIndex: 950,
   };
 
-  const innerStyle: React.CSSProperties = {
-    background: background,
-    padding: '10px',
-  };
-
   return (
     <div id="footerBlock" style={footerStyle}>
-      <div style={innerStyle}>
-        <Stack horizontal tokens={{ childrenGap: 8 }}>
-          {children}
-        </Stack>
-      </div>
+      <Stack horizontal tokens={{ childrenGap: 8 }} styles={{ root: { background } }}>
+        {children}
+      </Stack>
     </div>
   );
 };

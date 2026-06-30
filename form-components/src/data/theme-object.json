@@ -236,8 +236,8 @@
     "nameBlockStyle": {
       "border": "1px solid #edebe9",
       "padding": "5px 10px 5px 10px",
-      "background": "#00bcf2",
-      "borderBottom": "2px solid #0078d4"
+      "background": "#a5cbee50",
+      "borderBottom": "2px solid #f3911f"
     },
     "pageBottomMargin": 0,
     "pageTopMargin": 0,
@@ -455,8 +455,8 @@
     "nameBlockStyle": {
       "border": "1px solid #edebe9",
       "padding": "5px 10px 5px 10px",
-      "background": "#00bcf2",
-      "borderBottom": "2px solid #0078d4"
+      "background": "#a5cbee50",
+      "borderBottom": "2px solid #f3911f"
     },
     "pageBottomMargin": 0,
     "pageTopMargin": 0,

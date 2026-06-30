@@ -227,13 +227,14 @@ export const NameBlock: React.FC<NameBlockProps> = ({
     patient.insuranceBy
   );
 
-  // Banner styling
+  // SMOIS Bright Health theme nameBlockStyle:
+  // background palette.blueLight (#a5cbee50), bottom border palette.themePrimary (#f3911f).
   const bannerStyle: React.CSSProperties = {
     borderWidth: '1px 1px 2px',
     borderStyle: 'solid',
-    borderColor: '#edebe9 #edebe9 #0078d4',
+    borderColor: '#edebe9 #edebe9 #f3911f',
     padding: '5px 10px',
-    background: '#00bcf2',
+    background: '#a5cbee50',
   };
 
   const tokenGap = { childrenGap: 10 };
