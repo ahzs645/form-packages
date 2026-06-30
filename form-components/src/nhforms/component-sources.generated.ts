@@ -5501,6 +5501,7 @@ EditableTable = ({
     if (isLocked || !allowEditRows) return
     const row = currentRows[rowIndex]
     if (!row) return
+    if (authorshipEnabled && getRowLock(row).locked) return
     setEditingRowIndex(rowIndex)
     setDraftRow(_cloneRow(row, columns))
     setErrorMessage("")
@@ -5609,6 +5610,7 @@ EditableTable = ({
   const removeRowAt = (rowIndex) => {
     if (isLocked || !allowDeleteRows) return
     const deletedRow = currentRows[rowIndex]
+    if (authorshipEnabled && getRowLock(deletedRow).locked) return
     const nextRows = currentRows.filter((_, index) => index !== rowIndex)
     commitRows(nextRows, {
       reason: "delete",
@@ -5660,6 +5662,12 @@ EditableTable = ({
 
   const saveDraftRow = () => {
     if (!draftRow) return
+    if (isLocked) return
+    if (
+      authorshipEnabled &&
+      editingRowIndex !== null &&
+      getRowLock(currentRows[editingRowIndex]).locked
+    ) return
 
     let resolvedRow = _applyComputedColumns(_cloneRow(draftRow, columns), columns)
     if (processingConfig) {
@@ -5715,7 +5723,7 @@ EditableTable = ({
       rowIndex: savedRowIndex,
       row: normalizedRow,
       previousRows: currentRows,
-    })
+    }, { rowId: normalizedRow._rowId, value: normalizedRow })
     onRowSaved?.(normalizedRow, buildRowContext(normalizedRow, {
       rowIndex: savedRowIndex,
       reason: editingRowIndex === null ? "create" : "edit",
