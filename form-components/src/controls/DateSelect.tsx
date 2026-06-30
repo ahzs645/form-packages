@@ -4,7 +4,7 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { DefaultButton, IDatePickerProps, Stack, Toggle } from '@fluentui/react';
+import { Calendar, Callout, DefaultButton, DirectionalHint, IDatePickerProps, Stack, Toggle } from '@fluentui/react';
 import { LayoutItem } from '../controls/LayoutItem';
 import { useActiveDataForForms } from '../hooks/form-state';
 import { useSourceData, useSection } from '../context/MoisContext';
@@ -282,7 +282,6 @@ export const DateSelect: React.FC<DateSelectProps> = ({
   placeholder,
   placement,
   readOnly,
-  refresh,
   required,
   section,
   showAge,
@@ -332,6 +331,10 @@ export const DateSelect: React.FC<DateSelectProps> = ({
   // impossible to fill in character by character (e.g. day "1" pads to "01",
   // and a partial like "2026-0" clears to "").
   const isEditingRef = React.useRef(false);
+  // Calendar chooser popup state. The calendar icon toggles a Fluent <Calendar>
+  // in a <Callout> anchored to the icon, so a date can be picked as well as typed.
+  const [isCalendarOpen, setIsCalendarOpen] = useState(false);
+  const calendarButtonRef = React.useRef<HTMLButtonElement>(null);
   const resolvedPlaceholder = placeholder ?? DATE_PLACEHOLDER_MAP[dateFormat] ?? DATE_PLACEHOLDER_MAP[DEFAULT_DATE_FORMAT];
   const { textField: datePickerTextFieldProps } = datePickerProps ?? {};
 
@@ -524,14 +527,49 @@ export const DateSelect: React.FC<DateSelectProps> = ({
                 outline: 0,
               }}
             />
-            <i
-              aria-hidden="true"
+            <button
+              type="button"
+              ref={calendarButtonRef}
+              aria-label="Open date picker"
               className="ms-DatePicker-event--without-label"
               data-icon-name={datePickerTextFieldProps?.iconProps?.iconName ?? 'Calendar'}
-              style={{ flex: '0 0 auto', fontFamily: 'FabricMDL2Icons' }}
+              disabled={disabled || effectiveReadOnly}
+              onClick={() => {
+                if (disabled || effectiveReadOnly) return;
+                setIsCalendarOpen((open) => !open);
+              }}
+              style={{
+                flex: '0 0 auto',
+                fontFamily: 'FabricMDL2Icons',
+                background: 'transparent',
+                border: 'none',
+                padding: 0,
+                cursor: disabled || effectiveReadOnly ? 'default' : 'pointer',
+                color: 'inherit',
+              }}
             >
               {"\uE787"}
-            </i>
+            </button>
+            {isCalendarOpen && !effectiveReadOnly && (
+              <Callout
+                target={calendarButtonRef}
+                onDismiss={() => setIsCalendarOpen(false)}
+                isBeakVisible={false}
+                directionalHint={DirectionalHint.bottomRightEdge}
+                setInitialFocus
+              >
+                <Calendar
+                  onSelectDate={(date) => {
+                    handleDateChange(date);
+                    setIsCalendarOpen(false);
+                  }}
+                  value={selectedDate}
+                  strings={DEFAULT_DATE_PICKER_STRINGS}
+                  showGoToToday
+                  highlightCurrentMonth
+                />
+              </Callout>
+            )}
           </div>
         </div>
       </div>
