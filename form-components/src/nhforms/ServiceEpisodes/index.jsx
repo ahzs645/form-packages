@@ -21,6 +21,8 @@ const ServiceEpisodes = ({
 
 const activeServiceEpisodes = se => (!se.endDate)
 
+const startDateDesc = (a,b) => -(a.startDate?.localeCompare(b.startDate) ?? 0)
+
 const serviceEpisodeColumns: ColumnSelection = [
   {
     id: "serviceEpisodeId",

@@ -22580,6 +22580,8 @@ const ServiceEpisodes = ({
 
 const activeServiceEpisodes = se => (!se.endDate)
 
+const startDateDesc = (a,b) => -(a.startDate?.localeCompare(b.startDate) ?? 0)
+
 const serviceEpisodeColumns: ColumnSelection = [
   {
     id: "serviceEpisodeId",
@@ -27302,7 +27304,10 @@ export const componentIdentities: Record<string, any> = {
       "major": 2,
       "minor": 26,
       "patch": 12
-    }
+    },
+    "components": [
+      "Ethnicity"
+    ]
   },
   'FocusedObservationHistory': {
     "name": "FocusedObservationHistory",
