@@ -8,6 +8,7 @@ import React, { useState, useCallback, useRef } from 'react';
 import { TextField, Callout, DirectionalHint, FocusZone } from '@fluentui/react';
 import { useCodeList, useTheme } from '../context/MoisContext';
 import { LayoutItem } from './LayoutItem';
+import { resolveMoisSizeStyles } from './size';
 
 /** Coding type with extended properties */
 export interface CodingExtended {
@@ -354,8 +355,7 @@ export const FindCode: React.FC<FindCodeProps> = ({
 
   // Get size styles from theme
   const getSizeStyles = (): React.CSSProperties => {
-    if (typeof size === 'object') return size;
-    return theme.mois.sizes[size] ?? theme.mois.sizes.medium;
+    return resolveMoisSizeStyles(theme, size, 'medium');
   };
 
   // Display value

@@ -9,6 +9,7 @@ import { LayoutItem } from './LayoutItem';
 import { useTheme, useSection, useSourceData } from '../context/MoisContext';
 import { useActiveDataForForms } from '../hooks/form-state';
 import { getAuthorshipLockInfo, registerAuthorshipFieldTarget } from '../authorship';
+import { resolveMoisSizeStyles } from './size';
 import {
   getSectionSourceTarget,
   readSectionActiveFieldValue,
@@ -261,9 +262,8 @@ export const TextArea: React.FC<TextAreaProps> = ({
 
   // Get size styles from theme
   const getSizeStyles = (): React.CSSProperties => {
-    if (typeof size === 'object') return size;
     const effectiveSizeKey = size ?? (multiline ? 'max' : 'medium');
-    return theme.mois.sizes[effectiveSizeKey] ?? theme.mois.sizes.medium;
+    return resolveMoisSizeStyles(theme, effectiveSizeKey, 'medium');
   };
 
   // Determine field background color

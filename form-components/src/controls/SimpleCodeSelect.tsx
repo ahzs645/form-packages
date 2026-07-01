@@ -13,6 +13,7 @@ import {
   readSectionFieldStatus,
   writeSectionActiveFieldValue,
 } from '../runtime/mois-contract';
+import { resolveMoisSizeStyles } from './size';
 
 export interface Coding {
   code: string | null;
@@ -413,8 +414,7 @@ export const SimpleCodeSelect: React.FC<SimpleCodeSelectProps> = ({
 
   // Get size styles from theme
   const getSizeStyles = (): React.CSSProperties => {
-    if (typeof size === 'object') return size;
-    return theme.mois.sizes[size] ?? theme.mois.sizes.medium;
+    return resolveMoisSizeStyles(theme, size, 'medium');
   };
 
   const sizeStyles = getSizeStyles();

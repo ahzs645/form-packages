@@ -15,6 +15,7 @@ import {
   writeSectionActiveFieldValue,
   writeSectionFieldError,
 } from '../runtime/mois-contract';
+import { resolveMoisSizeStyles } from './size';
 
 export interface TimeSelectProps {
   /** Props for the attached action bar (eg: onEdit, onDelete, etc) */
@@ -149,8 +150,7 @@ export const TimeSelect: React.FC<TimeSelectProps> = ({
 
   // Get size styles from theme (applied directly to MaskedTextField)
   const getSizeStyles = (): React.CSSProperties => {
-    if (typeof size === 'object') return size;
-    return theme.mois.sizes[size] ?? theme.mois.sizes.small;
+    return resolveMoisSizeStyles(theme, size, 'small');
   };
 
   // Validate time format (HH:mm)

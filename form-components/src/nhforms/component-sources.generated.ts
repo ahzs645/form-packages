@@ -4911,9 +4911,11 @@ const _buildRowsFromSourceFields = ({
   for (let rowIndex = 0; rowIndex < inferredRowCount; rowIndex += 1) {
     const row = _makeEmptyRow(columns, rowIndex)
     let hasMeaningfulValue = false
+    const explicitRowMapping = sourceFieldIdsByRow?.[rowIndex] || null
+    const hasExplicitRowMapping = explicitRowMapping && Object.keys(explicitRowMapping).length > 0
 
     columns.forEach((column) => {
-      const sourceFieldId = sourceFieldIdsByRow?.[rowIndex]?.[column.id]
+      const sourceFieldId = explicitRowMapping?.[column.id]
         || sourceFieldIds?.[column.id]
         || null
       if (!sourceFieldId) return
@@ -4927,7 +4929,7 @@ const _buildRowsFromSourceFields = ({
       }
     })
 
-    if (hasMeaningfulValue) {
+    if (hasMeaningfulValue || hasExplicitRowMapping) {
       rows.push(row)
     }
   }

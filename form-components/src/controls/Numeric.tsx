@@ -9,6 +9,7 @@ import { LayoutItem } from './LayoutItem';
 import { useTheme, useSourceData, useSection } from '../context/MoisContext';
 import { useActiveDataForForms } from '../hooks/form-state';
 import { getAuthorshipLockInfo, registerAuthorshipFieldTarget } from '../authorship';
+import { resolveMoisSizeStyles } from './size';
 import {
   getSectionActiveTarget,
   getSectionSourceTarget,
@@ -214,8 +215,7 @@ export const Numeric: React.FC<NumericProps> = ({
 
   // Get size styles from theme
   const getSizeStyles = (): React.CSSProperties => {
-    if (typeof size === 'object') return size;
-    return theme.mois.sizes[size] ?? theme.mois.sizes.small;
+    return resolveMoisSizeStyles(theme, size, 'small');
   };
 
   // Validation function

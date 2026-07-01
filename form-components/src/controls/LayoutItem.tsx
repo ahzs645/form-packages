@@ -11,6 +11,7 @@ import { useSection, useTheme, useActiveData, useSourceData } from '../context/M
 import { Linear } from './Linear';
 import { Action, ActionBarProps } from './Action';
 import { getAuthorshipLockInfo, registerAuthorshipFieldTarget } from '../authorship';
+import { resolveMoisSizeStyles } from './size';
 
 export interface LayoutItemChildProps {
   disabled?: boolean;
@@ -155,8 +156,7 @@ export const LayoutItem: React.FC<LayoutItemProps> = ({
 
   // Get size styles from theme
   const getSizeStyles = (): React.CSSProperties => {
-    if (typeof size === 'object') return size;
-    return theme.mois.sizes[size] ?? theme.mois.sizes.medium;
+    return resolveMoisSizeStyles(theme, size, 'medium');
   };
 
   const sizeStyles = getSizeStyles();
