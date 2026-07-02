@@ -7,8 +7,8 @@ import React, { useState, useCallback, useMemo } from 'react';
 import { TextField, SpinButton, ISpinButtonProps, ITextFieldProps } from '@fluentui/react';
 import { LayoutItem } from './LayoutItem';
 import { useTheme, useSourceData, useSection } from '../context/MoisContext';
-import { useActiveDataForForms } from '../hooks/form-state';
-import { getAuthorshipLockInfo, registerAuthorshipFieldTarget } from '../authorship';
+import { useActiveDataSlice } from '../hooks/form-state';
+import { getAuthorshipClaim, getAuthorshipLockInfoForClaim, registerAuthorshipFieldTarget } from '../authorship';
 import { resolveMoisSizeStyles } from './size';
 import {
   getSectionActiveTarget,
@@ -129,36 +129,43 @@ export const Numeric: React.FC<NumericProps> = ({
   const theme = useTheme();
   const sourceData = useSourceData();
   const sectionContext = useSection(section);
-  const [activeData, setActiveData] = useActiveDataForForms();
   const effectiveFieldId = fieldId || id || sourceId;
   const effectiveSourceId = sourceId || id || fieldId;
+  // Narrow subscription: re-renders only when this field's value, presence,
+  // status, or authorship claim changes.
+  const [activeSlice, setActiveData] = useActiveDataSlice((data) => {
+    const activeTarget = effectiveFieldId ? getSectionActiveTarget(data, sectionContext) : undefined;
+    return {
+      activeValue: effectiveFieldId
+        ? readSectionActiveFieldValue(data, sectionContext, effectiveFieldId)
+        : undefined,
+      hasActiveValue: !!(
+        effectiveFieldId &&
+        activeTarget &&
+        Object.prototype.hasOwnProperty.call(activeTarget, effectiveFieldId)
+      ),
+      statusEntry: effectiveFieldId
+        ? readSectionFieldStatus(data, sectionContext, effectiveFieldId)
+        : undefined,
+      authorshipClaim: effectiveFieldId
+        ? getAuthorshipClaim(data, { scope: 'field', fieldId: effectiveFieldId })
+        : undefined,
+    };
+  });
+  const { activeValue, hasActiveValue, statusEntry, authorshipClaim } = activeSlice;
   React.useEffect(() => {
     if (!effectiveFieldId) return;
     setActiveData((draft: any) => {
       registerAuthorshipFieldTarget(draft, effectiveFieldId, sectionContext.authorshipPolicy);
     });
   }, [effectiveFieldId, sectionContext.authorshipPolicy, setActiveData]);
-  const authorshipLockInfo = getAuthorshipLockInfo(activeData, { scope: 'field', fieldId: effectiveFieldId }, {
+  const authorshipLockInfo = getAuthorshipLockInfoForClaim(authorshipClaim, {
       ownerName: sourceData?.userProfile?.identity?.fullName,
       ownerId: sourceData?.userProfile?.userProfileId,
       now: sourceData?.previewOptions?.authorshipNow,
     });
   const effectiveReadOnly = !!readOnly || !!authorshipLockInfo.locked;
 
-  const activeValue = effectiveFieldId
-    ? readSectionActiveFieldValue(activeData, sectionContext, effectiveFieldId)
-    : undefined;
-  const activeTarget = effectiveFieldId
-    ? getSectionActiveTarget(activeData, sectionContext)
-    : undefined;
-  const hasActiveValue = !!(
-    effectiveFieldId &&
-    activeTarget &&
-    Object.prototype.hasOwnProperty.call(activeTarget, effectiveFieldId)
-  );
-  const statusEntry = effectiveFieldId
-    ? readSectionFieldStatus(activeData, sectionContext, effectiveFieldId)
-    : undefined;
   const statusErrorMessage =
     statusEntry && typeof statusEntry === 'object' && typeof statusEntry.errorMessage === 'string'
       ? statusEntry.errorMessage

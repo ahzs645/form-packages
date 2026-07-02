@@ -7,8 +7,8 @@ import React, { useEffect, useState } from 'react';
 import { TextField, Stack, Toggle, ITextFieldProps } from '@fluentui/react';
 import { LayoutItem } from './LayoutItem';
 import { useTheme, useSection, useSourceData } from '../context/MoisContext';
-import { useActiveDataForForms } from '../hooks/form-state';
-import { getAuthorshipLockInfo, registerAuthorshipFieldTarget } from '../authorship';
+import { useActiveDataSlice } from '../hooks/form-state';
+import { getAuthorshipClaim, getAuthorshipLockInfoForClaim, registerAuthorshipFieldTarget } from '../authorship';
 import { resolveMoisSizeStyles } from './size';
 import {
   getSectionSourceTarget,
@@ -159,18 +159,28 @@ export const TextArea: React.FC<TextAreaProps> = ({
   value,
 }) => {
   const sectionContext = useSection(section);
-  const [activeData, setActiveData] = useActiveDataForForms();
+  const effectiveFieldId = fieldId || id || sourceId;
+  const effectiveSourceId = sourceId || id || fieldId;
+  // Narrow subscription: re-renders only when this field's value, status, or
+  // authorship claim changes — not on every form-state update.
+  const [activeSlice, setActiveData] = useActiveDataSlice((data) => ({
+    activeValue: effectiveFieldId
+      ? readSectionActiveFieldValue(data, sectionContext, effectiveFieldId)
+      : undefined,
+    statusEntry: effectiveFieldId
+      ? readSectionFieldStatus(data, sectionContext, effectiveFieldId)
+      : undefined,
+    authorshipClaim: effectiveFieldId
+      ? getAuthorshipClaim(data, { scope: 'field', fieldId: effectiveFieldId })
+      : undefined,
+  }));
+  const { activeValue, statusEntry, authorshipClaim } = activeSlice;
   const [internalValue, setInternalValue] = useState(coerceTextAreaValue(value) ?? coerceTextAreaValue(defaultValue) ?? '');
   const sourceData = useSourceData();
   const effectiveMaxCharLimit =
     typeof maxCharLimit === 'number' && Number.isFinite(maxCharLimit) && maxCharLimit > 0
       ? Math.round(maxCharLimit)
       : undefined;
-  const effectiveFieldId = fieldId || id || sourceId;
-  const effectiveSourceId = sourceId || id || fieldId;
-  const activeValue = effectiveFieldId
-    ? readSectionActiveFieldValue(activeData, sectionContext, effectiveFieldId)
-    : undefined;
   const persistedValue = coerceTextAreaValue(activeValue);
   const sourceValue = (() => {
     if (!effectiveSourceId) return undefined;
@@ -178,9 +188,6 @@ export const TextArea: React.FC<TextAreaProps> = ({
     const value = sourceTarget?.[effectiveSourceId];
     return coerceTextAreaValue(value);
   })();
-  const statusEntry = effectiveFieldId
-    ? readSectionFieldStatus(activeData, sectionContext, effectiveFieldId)
-    : undefined;
   const errorMessage =
     statusEntry && typeof statusEntry === 'object' && typeof statusEntry.errorMessage === 'string'
       ? statusEntry.errorMessage
@@ -246,7 +253,7 @@ export const TextArea: React.FC<TextAreaProps> = ({
       registerAuthorshipFieldTarget(draft, effectiveFieldId, sectionContext.authorshipPolicy);
     });
   }, [effectiveFieldId, sectionContext.authorshipPolicy, setActiveData]);
-  const authorshipLockInfo = getAuthorshipLockInfo(activeData, { scope: 'field', fieldId: effectiveFieldId }, {
+  const authorshipLockInfo = getAuthorshipLockInfoForClaim(authorshipClaim, {
       ownerName: sourceData?.userProfile?.identity?.fullName,
       ownerId: sourceData?.userProfile?.userProfileId,
       now: sourceData?.previewOptions?.authorshipNow,

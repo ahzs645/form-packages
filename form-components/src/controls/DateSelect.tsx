@@ -6,7 +6,7 @@
 import React, { useEffect, useState } from 'react';
 import { DatePicker, DefaultButton, IDatePickerProps, Stack, Toggle } from '@fluentui/react';
 import { LayoutItem } from '../controls/LayoutItem';
-import { useActiveDataForForms } from '../hooks/form-state';
+import { useActiveDataSlice } from '../hooks/form-state';
 import { useSourceData, useSection } from '../context/MoisContext';
 import {
   getSectionActiveTarget,
@@ -291,18 +291,22 @@ export const DateSelect: React.FC<DateSelectProps> = ({
   value,
 }) => {
   const effectiveFieldId = fieldId || id || sourceId || layoutId;
-  const [activeData, setActiveData] = useActiveDataForForms();
-  const sourceData = useSourceData();
   const sectionContext = useSection(section);
+  // Narrow subscription: re-renders only when this field's value or the
+  // composite date built from its component fields changes.
+  const [activeSlice, setActiveData] = useActiveDataSlice((data) => ({
+    activeValue: readSectionActiveFieldValue(data, sectionContext, effectiveFieldId),
+    compositeValue: buildDateFromComponents(
+      componentFields,
+      getSectionActiveTarget(data, sectionContext) as Record<string, any> | undefined
+    ),
+  }));
+  const { activeValue, compositeValue } = activeSlice;
+  const sourceData = useSourceData();
   const effectiveReadOnly = !!readOnly;
   const effectiveSourceId = sourceId || id || fieldId || layoutId;
-  const activeValue = readSectionActiveFieldValue(activeData, sectionContext, effectiveFieldId);
   const sourceTarget = getSectionSourceTarget(sourceData, sectionContext);
   const sourceValue = effectiveSourceId ? sourceTarget?.[effectiveSourceId] : undefined;
-  const compositeValue = buildDateFromComponents(
-    componentFields,
-    getSectionActiveTarget(activeData, sectionContext) as Record<string, any> | undefined
-  );
   const resolvedValue =
     value !== undefined
       ? value

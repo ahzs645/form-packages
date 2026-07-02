@@ -7,7 +7,7 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { MaskedTextField, ITextFieldProps } from '@fluentui/react';
 import { LayoutItem } from './LayoutItem';
 import { useTheme, useSection, useSourceData } from '../context/MoisContext';
-import { useActiveDataForForms } from '../hooks/form-state';
+import { useActiveDataSlice } from '../hooks/form-state';
 import {
   getSectionSourceTarget,
   readSectionActiveFieldValue,
@@ -114,13 +114,19 @@ export const TimeSelect: React.FC<TimeSelectProps> = ({
 }) => {
   const effectiveFieldId = fieldId || id || sourceId;
   const sectionContext = useSection(section);
-  const [activeData, setActiveData] = useActiveDataForForms();
+  // Narrow subscription: re-renders only when this field's value or status changes.
+  const [activeSlice, setActiveData] = useActiveDataSlice((data) => ({
+    activeValue: effectiveFieldId
+      ? readSectionActiveFieldValue(data, sectionContext, effectiveFieldId)
+      : undefined,
+    statusEntry: effectiveFieldId
+      ? readSectionFieldStatus(data, sectionContext, effectiveFieldId)
+      : undefined,
+  }));
+  const { activeValue, statusEntry } = activeSlice;
   const sourceData = useSourceData();
   const effectiveReadOnly = !!readOnly;
   const effectiveSourceId = sourceId || id || fieldId;
-  const activeValue = effectiveFieldId
-    ? readSectionActiveFieldValue(activeData, sectionContext, effectiveFieldId)
-    : undefined;
   const sourceValue = (() => {
     if (!effectiveSourceId) return undefined;
     const sourceTarget = getSectionSourceTarget(sourceData, sectionContext);
@@ -131,9 +137,6 @@ export const TimeSelect: React.FC<TimeSelectProps> = ({
     ? controlledValue
     : (typeof activeValue === 'string' ? activeValue : (sourceValue ?? defaultValue));
   const [internalValue, setInternalValue] = useState(resolvedValue);
-  const statusEntry = effectiveFieldId
-    ? readSectionFieldStatus(activeData, sectionContext, effectiveFieldId)
-    : undefined;
   const error =
     statusEntry && typeof statusEntry === 'object' && typeof statusEntry.errorMessage === 'string'
       ? statusEntry.errorMessage

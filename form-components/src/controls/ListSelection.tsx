@@ -23,11 +23,15 @@ import {
 } from '@fluentui/react';
 import { LayoutItem } from './LayoutItem';
 import { useTheme, useSourceData, useActiveData as useMoisActiveData, useSection } from '../context/MoisContext';
-import { useActiveDataForForms } from '../hooks/form-state';
+import { useActiveDataSlice } from '../hooks/form-state';
 import { readSectionActiveFieldValue, writeSectionActiveFieldValue } from '../runtime/mois-contract';
 
 // Default filter predicate - accepts all items
 const defaultFilterPred = () => true;
+
+// Stable empty selection so the subscription slice compares equal when the
+// field has no stored rows (a fresh [] per snapshot would force re-renders).
+const EMPTY_SELECTED_ROWS: any[] = [];
 
 function formatListCellValue(value: unknown): string {
   if (value === null || value === undefined) return '';
@@ -206,13 +210,6 @@ export const ListSelection: React.FC<ListSelectionProps> = ({
   // Get source data for lifecycle state (isPrinting)
   const sourceData = useSourceData();
 
-  // Get active data and setter for real-time selection sync.
-  // Read from the forms state store (FormStateProvider) that the form renderers
-  // actually provide, and mirror writes to the legacy MoisProvider store so the
-  // selection persists regardless of which provider hosts the control.
-  const [activeData, setActiveData] = useActiveDataForForms();
-  const [, setMoisActiveData] = useMoisActiveData();
-
   // Get section context
   const section = useSection(sectionProp);
 
@@ -221,8 +218,21 @@ export const ListSelection: React.FC<ListSelectionProps> = ({
   const resolvedSourceId = sourceId ?? id ?? null;
   const resolvedLayoutId = layoutId ?? resolvedFieldId ?? resolvedSourceId;
 
+  // Narrow subscription for real-time selection sync: re-renders only when this
+  // field's selected rows or the section-complete flag change. Reads from the
+  // forms state store (FormStateProvider) that the form renderers actually
+  // provide; writes are mirrored to the legacy MoisProvider store below so the
+  // selection persists regardless of which provider hosts the control.
+  const [activeSlice, setActiveData] = useActiveDataSlice((data) => ({
+    sectionComplete: section.sectionComplete(sourceData, data, section.sectionNum),
+    selectedRows: resolvedFieldId
+      ? ((readSectionActiveFieldValue(data, section, resolvedFieldId) as any[]) ?? EMPTY_SELECTED_ROWS)
+      : EMPTY_SELECTED_ROWS,
+  }));
+  const [, setMoisActiveData] = useMoisActiveData();
+
   // Determine if section is complete
-  const isComplete = isCompleteProp ?? section.sectionComplete(sourceData, activeData, section.sectionNum);
+  const isComplete = isCompleteProp ?? activeSlice.sectionComplete;
 
   // Should refresh (sync source to active)
   const shouldRefresh = refresh ?? !isComplete;
@@ -282,11 +292,8 @@ export const ListSelection: React.FC<ListSelectionProps> = ({
     return items;
   }, [sourceItems, filterPred, sourceMap, listCompare]);
 
-  // Get selected items from active data (for real-time sync)
-  const selectedFromActiveData = useMemo(() => {
-    if (!resolvedFieldId) return [];
-    return (readSectionActiveFieldValue(activeData, section, resolvedFieldId) as any[]) ?? [];
-  }, [resolvedFieldId, activeData, section]);
+  // Selected items from active data (for real-time sync) — see slice above
+  const selectedFromActiveData = activeSlice.selectedRows;
 
   // Local state for selected items (fallback when not using active data)
   const [localSelectedItems, setLocalSelectedItems] = useState<any[]>([]);

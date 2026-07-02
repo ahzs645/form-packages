@@ -1068,35 +1068,56 @@ export interface SourceDataWithHooks extends SourceData {
   useAppSettings: () => AppSettings;
 }
 
+// Merged source data cached by (sourceData, initialData) identity. Every
+// control calls useSourceData, and the per-consumer useMemo this replaces
+// re-spread potentially large sourceFormData objects on every mount (heavy
+// under virtualized lists, which remount rows while scrolling). One merged
+// object per input pair is shared by all consumers.
+const sourceDataMergeCache = new WeakMap<
+  object,
+  { initialData: Record<string, any>; merged: SourceDataWithHooks }
+>();
+
 export function useSourceData(): SourceDataWithHooks {
   const context = useContext(SourceDataContext);
   const sourceData = context || defaultSourceData;
   const initialData = getInitialData();
 
-  return useMemo(() => ({
+  const cached = sourceDataMergeCache.get(sourceData);
+  if (cached && cached.initialData === initialData) return cached.merged;
+
+  const merged: SourceDataWithHooks = {
     ...sourceData,
     sourceFormData: {
       ...sourceData.sourceFormData,
       ...initialData,
     },
     useAppSettings: getDefaultAppSettings,
-  }), [initialData, sourceData]);
+  };
+  sourceDataMergeCache.set(sourceData, { initialData, merged });
+  return merged;
 }
 
-export function useActiveData<T = ActiveData>(selector?: (data: ActiveData) => T): [T & { setFormData: (updater: (draft: any) => void) => void }, (updater: (draft: any) => void) => void] {
-  const context = useContext(ActiveDataContext);
+// Stable fallback for when useActiveData is used outside MoisProvider (like in
+// form tester). Module-level so the normalize cache below gets a stable key
+// (a per-render object would defeat it and recompute every render).
+const EMPTY_ACTIVE_DATA = {
+  field: { data: {}, status: {}, history: [] },
+  uiState: { sections: {} },
+  formData: {},
+  tempArea: {},
+  setFormData: () => {}
+};
 
-  // Provide a fallback context for when used outside MoisProvider (like in form tester)
-  const emptyData = {
-    field: { data: {}, status: {}, history: [] },
-    uiState: { sections: {} },
-    formData: {},
-    tempArea: {},
-    setFormData: () => {}
-  };
+// Normalized active-data view cached by context-object identity so all
+// consumers share one normalized object per state change (same pattern as
+// useActiveDataForForms in hooks/form-state.ts).
+const normalizedActiveDataCache = new WeakMap<object, ActiveData>();
 
-  const activeContext = context || emptyData as ActiveData;
-  const normalizedActiveContext = useMemo(() => ({
+const getNormalizedActiveData = (activeContext: ActiveData): ActiveData => {
+  const cached = normalizedActiveDataCache.get(activeContext);
+  if (cached) return cached;
+  const normalized = {
     ...activeContext,
     field: activeContext.field || { data: {}, status: {}, history: [] },
     formData: activeContext.formData || {},
@@ -1105,7 +1126,16 @@ export function useActiveData<T = ActiveData>(selector?: (data: ActiveData) => T
       sections: activeContext.uiState?.sections ?? {},
     },
     tempArea: activeContext.tempArea || {},
-  }), [activeContext]);
+  };
+  normalizedActiveDataCache.set(activeContext, normalized);
+  return normalized;
+};
+
+export function useActiveData<T = ActiveData>(selector?: (data: ActiveData) => T): [T & { setFormData: (updater: (draft: any) => void) => void }, (updater: (draft: any) => void) => void] {
+  const context = useContext(ActiveDataContext);
+
+  const activeContext = context || EMPTY_ACTIVE_DATA as ActiveData;
+  const normalizedActiveContext = getNormalizedActiveData(activeContext);
   const setFormData = activeContext.setFormData;
   const scopedSetFormData = useCallback((updates: any) => {
     if (!selector) {

@@ -5,7 +5,7 @@
  * This matches the mois-form-tester pattern for form state management.
  */
 
-import React, { createContext, useContext, useState, useCallback, useMemo } from 'react';
+import React, { createContext, useContext, useState, useCallback, useMemo, useRef, useSyncExternalStore } from 'react';
 import { produce, setAutoFreeze } from 'immer';
 import { normalizeAuthorshipStore, syncAuthorshipMirrors } from '../authorship';
 
@@ -13,16 +13,29 @@ import { normalizeAuthorshipStore, syncAuthorshipMirrors } from '../authorship';
 // Types
 // ============================================================================
 
-interface FormDataState {
+export interface FormDataState {
   field: { data: Record<string, any>; status: Record<string, any> };
   uiState: { sections: Record<string, any> | Array<any>; [key: string]: any };
   tempArea?: Record<string, any>;
   formData: Record<string, any>;
 }
 
-interface FormStateContextValue {
-  formData: FormDataState;
+interface FormStateStore {
+  getFormData: () => FormDataState;
+  subscribe: (listener: () => void) => () => void;
   setFormData: (updater: any) => void;
+}
+
+// Our provider publishes a STABLE store object so consumers subscribe to state
+// changes via useSyncExternalStore instead of context-value identity. This lets
+// selector-based consumers skip re-renders when their slice didn't change.
+// External override contexts (e.g. the eval'd FormSessionRuntime component)
+// still provide the legacy changing {formData, setFormData} value — the hooks
+// below handle both shapes.
+interface FormStateContextValue {
+  formData?: FormDataState;
+  setFormData: (updater: any) => void;
+  store?: FormStateStore;
 }
 
 // ============================================================================
@@ -80,6 +93,60 @@ const normalizeFormData = (input?: Partial<FormDataState> | null): FormDataState
     tempArea: deepClone(input?.tempArea || {}),
     formData: mergedFormData,
   };
+};
+
+// Derived (normalized) view of the form state, cached by state-object identity.
+// Every mounted control calls useActiveDataForForms, so without the cache this
+// merge (spreads + authorship normalization) re-ran N-consumers × every update —
+// it was the single hottest function in production traces. The WeakMap keys on
+// the immutable state object from the provider, so one normalized view is built
+// per state change and shared by all consumers, including external override
+// contexts (e.g. SMOIS) whose providers we don't control.
+const normalizedFormDataCache = new WeakMap<object, FormDataState>();
+
+// normalizeAuthorshipStore rebuilds every claim object on each call; caching by
+// input identity keeps the derived __authorship reference stable across state
+// updates that didn't touch it (immer structural sharing preserves the input
+// object), so subscription slices that select authorship claims stay equal.
+const EMPTY_AUTHORSHIP_STORE = normalizeAuthorshipStore(undefined);
+const authorshipStoreCache = new WeakMap<object, ReturnType<typeof normalizeAuthorshipStore>>();
+
+const getNormalizedAuthorshipStore = (input: any) => {
+  if (!input || typeof input !== 'object') return EMPTY_AUTHORSHIP_STORE;
+  const cached = authorshipStoreCache.get(input);
+  if (cached) return cached;
+  const normalized = normalizeAuthorshipStore(input);
+  authorshipStoreCache.set(input, normalized);
+  return normalized;
+};
+
+const getNormalizedFormData = (formData: FormDataState): FormDataState => {
+  const cacheable = typeof formData === 'object' && formData !== null;
+  if (cacheable) {
+    const cached = normalizedFormDataCache.get(formData);
+    if (cached) return cached;
+  }
+
+  const normalized: FormDataState = {
+    ...formData,
+    field: formData.field || { data: {}, status: {} },
+    uiState: {
+      ...(formData.uiState || {}),
+      sections: formData.uiState?.sections ?? {},
+    },
+    formData: {
+      ...(formData.formData || {}),
+      ...(formData.field?.data || {}),
+      __authorship: getNormalizedAuthorshipStore(
+        formData.formData?.__authorship ?? formData.field?.data?.__authorship
+      ),
+    },
+  };
+
+  if (cacheable) {
+    normalizedFormDataCache.set(formData, normalized);
+  }
+  return normalized;
 };
 
 const getOverrideFormStateContext = () => {
@@ -250,10 +317,33 @@ const BaseFormStateProvider = ({
     };
   }, [formData, registerGlobally, setFormData]);
 
-  const contextValue = useMemo(() => ({
-    formData,
+  // Store bridge: consumers read state via getFormData/subscribe
+  // (useSyncExternalStore) rather than a changing context value, so components
+  // that select a slice only re-render when that slice changes.
+  const formDataRef = React.useRef(formData);
+  const listenersRef = React.useRef(new Set<() => void>());
+  React.useLayoutEffect(() => {
+    formDataRef.current = formData;
+    listenersRef.current.forEach((listener) => listener());
+  }, [formData]);
+
+  const store = useMemo<FormStateStore>(() => ({
+    getFormData: () => formDataRef.current,
+    subscribe: (listener: () => void) => {
+      listenersRef.current.add(listener);
+      return () => {
+        listenersRef.current.delete(listener);
+      };
+    },
     setFormData,
-  }), [formData, setFormData]);
+  }), [setFormData]);
+
+  // Deliberately stable across state updates — subscription happens through the
+  // store, not context identity.
+  const contextValue = useMemo(() => ({
+    setFormData,
+    store,
+  }), [setFormData, store]);
 
   return React.createElement(
     FormStateContext.Provider,
@@ -282,57 +372,118 @@ export const LocalFormStateProvider = ({
   { registerGlobally: false, initialFormData, children }
 );
 
+const noopSubscribe = () => () => {};
+const noopSetFormData = () => {};
+
+const EMPTY_ACTIVE_FORM_DATA: FormDataState = {
+  field: { data: {}, status: {} },
+  uiState: { sections: {} },
+  formData: {},
+};
+
+const shallowEqual = (a: any, b: any): boolean => {
+  if (Object.is(a, b)) return true;
+  if (typeof a !== 'object' || a === null || typeof b !== 'object' || b === null) return false;
+  const keysA = Object.keys(a);
+  const keysB = Object.keys(b);
+  if (keysA.length !== keysB.length) return false;
+  for (const key of keysA) {
+    if (!Object.is(a[key], b[key])) return false;
+  }
+  return true;
+};
+
+/**
+ * Internal: resolve the form-state source and subscribe to it.
+ *
+ * With our provider (store present), subscription goes through
+ * useSyncExternalStore against a stable store, so a `select`-ing consumer only
+ * re-renders when its selected slice changes (compared with Object.is, then
+ * shallow equality). Without a store (external override contexts like the
+ * eval'd FormSessionRuntime provider), the changing context value drives
+ * re-renders exactly as before.
+ */
+const useFormStateSelection = (select?: (data: FormDataState) => any): {
+  context: FormStateContextValue | null;
+  selection: any;
+  setFormData: (updater: any) => void;
+} => {
+  const overrideContextObject = getOverrideFormStateContext();
+  const overrideContextValue = useContext(overrideContextObject || FormStateContext);
+  const defaultContextValue = useContext(FormStateContext);
+  const context = overrideContextObject ? (overrideContextValue || defaultContextValue) : defaultContextValue;
+
+  const store = context?.store ?? null;
+
+  // Latest-ref pattern so inline selector lambdas don't destabilize the snapshot
+  const selectRef = useRef(select);
+  selectRef.current = select;
+  const lastSelectionRef = useRef<{ value: any } | null>(null);
+
+  const getStoreSelection = () => {
+    const normalized = getNormalizedFormData(store!.getFormData());
+    const sel = selectRef.current;
+    if (!sel) return normalized;
+    const next = sel(normalized);
+    const prev = lastSelectionRef.current;
+    if (prev && (Object.is(prev.value, next) || shallowEqual(prev.value, next))) {
+      return prev.value;
+    }
+    lastSelectionRef.current = { value: next };
+    return next;
+  };
+  const getEmptySelection = () => null;
+
+  const storeSelection = useSyncExternalStore(
+    store ? store.subscribe : noopSubscribe,
+    store ? getStoreSelection : getEmptySelection,
+    store ? getStoreSelection : getEmptySelection,
+  );
+
+  if (!context) {
+    return { context: null, selection: undefined, setFormData: noopSetFormData };
+  }
+
+  if (store) {
+    return { context, selection: storeSelection, setFormData: store.setFormData };
+  }
+
+  // Legacy path: changing context value (external override providers)
+  const normalized = getNormalizedFormData(context.formData as FormDataState);
+  return {
+    context,
+    selection: select ? select(normalized) : normalized,
+    setFormData: context.setFormData,
+  };
+};
+
 /**
  * Custom useActiveData that matches mois-form-tester pattern exactly.
  *
  * Returns [formDataWithSetter, setFormData] where:
  * - formDataWithSetter has setFormData attached so forms can use fd.setFormData(...)
  * - setFormData accepts either an immer updater function or a partial object
+ *
+ * With a selector, the component only re-renders when the selected slice
+ * changes, and the returned setter writes into the selected slice.
  */
 export const useActiveDataForForms = (selector?: (data: any) => any): [any, (updater: any) => void] => {
-  const overrideContextObject = getOverrideFormStateContext();
-  const overrideContextValue = useContext(overrideContextObject || FormStateContext);
-  const defaultContextValue = useContext(FormStateContext);
-  const context = overrideContextObject ? (overrideContextValue || defaultContextValue) : defaultContextValue;
+  const { context, selection, setFormData } = useFormStateSelection(selector);
+
+  // Attach setFormData to formData so forms can use fd.setFormData
+  const formDataWithSetter = useMemo(() => (
+    selector ? selection : { ...(selection || {}), setFormData }
+  ), [selector, selection, setFormData]);
 
   // Fallback for when used outside of FormStateProvider
   if (!context) {
     console.warn('useActiveDataForForms: No FormStateProvider found, state updates will not work');
-    const emptyData = {
-      field: { data: {}, status: {} },
-      uiState: { sections: {} },
-      formData: {},
-      setFormData: () => {},
-    };
-    return [emptyData, () => {}];
+    return [{ ...EMPTY_ACTIVE_FORM_DATA, setFormData: noopSetFormData }, noopSetFormData];
   }
-
-  const { formData, setFormData } = context;
-  const normalizedFormData = useMemo(() => ({
-    ...formData,
-    field: formData.field || { data: {}, status: {} },
-    uiState: {
-      ...(formData.uiState || {}),
-      sections: formData.uiState?.sections ?? {},
-    },
-    formData: {
-      ...(formData.formData || {}),
-      ...(formData.field?.data || {}),
-      __authorship: normalizeAuthorshipStore(
-        formData.formData?.__authorship ?? formData.field?.data?.__authorship
-      ),
-    },
-  }), [formData]);
-
-  // Attach setFormData to formData so forms can use fd.setFormData
-  const formDataWithSetter = useMemo(() => ({
-    ...normalizedFormData,
-    setFormData,
-  }), [normalizedFormData, setFormData]);
 
   if (selector) {
     return [
-      selector(normalizedFormData),
+      selection,
       (updates: any) => {
         setFormData(produce((draft: any) => {
           const target = selector(draft);
@@ -343,6 +494,25 @@ export const useActiveDataForForms = (selector?: (data: any) => any): [any, (upd
   }
 
   return [formDataWithSetter, setFormData];
+};
+
+/**
+ * Subscribe to a slice of the form state. The component re-renders only when
+ * the selected slice changes (Object.is, then shallow equality on the result).
+ * Unlike useActiveDataForForms(selector), the returned setter is the plain
+ * whole-state setFormData, so existing draft-updater write patterns
+ * (`setFormData(draft => writeSectionActiveFieldValue(draft, ...))`) work
+ * unchanged.
+ */
+export const useActiveDataSlice = <T,>(select: (data: FormDataState) => T): [T, (updater: any) => void] => {
+  const { context, selection, setFormData } = useFormStateSelection(select);
+
+  if (!context) {
+    console.warn('useActiveDataSlice: No FormStateProvider found, state updates will not work');
+    return [select(EMPTY_ACTIVE_FORM_DATA), noopSetFormData];
+  }
+
+  return [selection as T, setFormData];
 };
 
 /**

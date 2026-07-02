@@ -106,7 +106,28 @@ export const formatAuthorshipTimestamp = (timestamp?: string) => {
   return `${yyyy}.${mm}.${dd} - ${hh}:${min}`;
 };
 
+// Normalization is a pure function of its input, and read paths call it on
+// every access (getAuthorshipStore runs per claim lookup). Caching by input
+// identity keeps claim-object identity stable across reads of unchanged state,
+// which subscription slices rely on for equality. The cached store must be
+// treated as immutable — writers go through setFormData drafts, never by
+// mutating a normalized store in place.
+const normalizedAuthorshipStoreCache = new WeakMap<object, AuthorshipStore>();
+
 export const normalizeAuthorshipStore = (input?: any): AuthorshipStore => {
+  const cacheable = !!input && typeof input === 'object';
+  if (cacheable) {
+    const cached = normalizedAuthorshipStoreCache.get(input);
+    if (cached) return cached;
+  }
+  const normalized = buildNormalizedAuthorshipStore(input);
+  if (cacheable) {
+    normalizedAuthorshipStoreCache.set(input, normalized);
+  }
+  return normalized;
+};
+
+const buildNormalizedAuthorshipStore = (input?: any): AuthorshipStore => {
   const normalizeClaim = (key: string, value: any): AuthorshipClaim | null => {
     if (!value || typeof value !== 'object') return null;
     const claimKey = String(value.claimKey || value.key || key || value.fieldId || value.rowKey || '');
@@ -274,6 +295,19 @@ export const getAuthorshipLockInfo = (
   options?: { now?: Date | string | number }
 ): AuthorshipLockInfo => {
   const claim = getAuthorshipClaim(state, query);
+  return getAuthorshipLockInfoForClaim(claim, currentUser, options);
+};
+
+/**
+ * Lock info computed from an already-resolved claim. Lets subscription-slice
+ * consumers select the (identity-stable) claim and derive lock info at render
+ * time without needing the whole form state.
+ */
+export const getAuthorshipLockInfoForClaim = (
+  claim: AuthorshipClaim | undefined,
+  currentUser?: string | { ownerName?: string; ownerId?: string | number; now?: Date | string | number },
+  options?: { now?: Date | string | number }
+): AuthorshipLockInfo => {
   if (!isClaimLocked(claim)) return { locked: false };
   const ownerName = claim?.ownerName || 'Unknown';
   const timestamp = formatAuthorshipTimestamp(claim?.timestamp);

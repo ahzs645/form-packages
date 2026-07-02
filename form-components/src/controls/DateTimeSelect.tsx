@@ -8,7 +8,7 @@ import { DatePicker, IDatePickerProps, MaskedTextField } from '@fluentui/react';
 import { formatCanonicalDate, parseDateValue } from './DateSelect';
 import { LayoutItem } from '../controls/LayoutItem';
 import { useSourceData, useSection, useTheme } from '../context/MoisContext';
-import { useActiveDataForForms } from '../hooks/form-state';
+import { useActiveDataSlice } from '../hooks/form-state';
 import {
   getSectionSourceTarget,
   readSectionActiveFieldValue,
@@ -167,12 +167,15 @@ export const DateTimeSelect: React.FC<DateTimeSelectProps> = ({
   vertical,
 }) => {
   const effectiveFieldId = fieldId || id || sourceId || layoutId;
-  const [activeData, setActiveData] = useActiveDataForForms();
-  const sourceData = useSourceData();
   const sectionContext = useSection(section);
+  // Narrow subscription: re-renders only when this field's value changes.
+  const [activeSlice, setActiveData] = useActiveDataSlice((data) => ({
+    activeValue: readSectionActiveFieldValue(data, sectionContext, effectiveFieldId),
+  }));
+  const { activeValue } = activeSlice;
+  const sourceData = useSourceData();
   const effectiveReadOnly = !!readOnly;
   const theme = useTheme();
-  const activeValue = readSectionActiveFieldValue(activeData, sectionContext, effectiveFieldId);
   const sourceTarget = getSectionSourceTarget(sourceData, sectionContext);
   const sourceValue = sourceId || id ? sourceTarget?.[sourceId || id || ''] : undefined;
   const resolvedValue = activeValue ?? sourceValue;

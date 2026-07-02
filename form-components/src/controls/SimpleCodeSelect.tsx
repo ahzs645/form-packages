@@ -7,7 +7,7 @@ import React, { useState } from 'react';
 import { Dropdown, IDropdownOption, TextField, Toggle, Stack } from '@fluentui/react';
 import { LayoutItem } from './LayoutItem';
 import { useTheme, useCodeList, useSection, useActiveData as useMoisActiveData, useSourceData } from '../context/MoisContext';
-import { useActiveDataForForms } from '../hooks/form-state';
+import { useActiveDataSlice } from '../hooks/form-state';
 import {
   readSectionActiveFieldValue,
   readSectionFieldStatus,
@@ -171,11 +171,15 @@ export const SimpleCodeSelect: React.FC<SimpleCodeSelectProps> = ({
   autoHotKey = false,
   noAutoSkip,
 }) => {
-  const [activeData, setActiveData] = useActiveDataForForms();
-  const [, setMoisActiveData] = useMoisActiveData();
-  const sourceData = useSourceData();
   const sectionContext = useSection(section);
   const effectiveFieldId = fieldId || id || sourceId || layoutId;
+  // Narrow subscription: re-renders only when this field's value or status changes.
+  const [activeSlice, setActiveData] = useActiveDataSlice((data) => ({
+    activeValue: readSectionActiveFieldValue(data, sectionContext, effectiveFieldId),
+    fieldStatus: readSectionFieldStatus(data, sectionContext, effectiveFieldId),
+  }));
+  const [, setMoisActiveData] = useMoisActiveData();
+  const sourceData = useSourceData();
   // Derive codeSystem from id if not explicitly provided
   // e.g., id="maritalStatus" → codeSystem="MOIS-MARITALSTATUS"
   const derivedCodeSystem = codeSystem || (id ? `MOIS-${id.replace(/([a-z])([A-Z])/g, '$1$2').toUpperCase()}` : '');
@@ -212,11 +216,10 @@ export const SimpleCodeSelect: React.FC<SimpleCodeSelectProps> = ({
   };
 
   const parsedOptions = [...parseOptions()].sort(compareCodeOptions);
-  const activeValue = readSectionActiveFieldValue(activeData, sectionContext, effectiveFieldId);
+  const { activeValue, fieldStatus } = activeSlice;
   const sourceValue = sourceId
     ? ((sourceData.patient as any)?.[sourceId] ?? (sourceData.queryResult as any)?.patient?.[0]?.[sourceId])
     : undefined;
-  const fieldStatus = readSectionFieldStatus(activeData, sectionContext, effectiveFieldId);
 
   const getKeysFromValue = (val: Coding | Coding[] | string | undefined): string[] => {
     if (!val) return [];

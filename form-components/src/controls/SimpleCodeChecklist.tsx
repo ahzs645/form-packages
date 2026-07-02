@@ -13,7 +13,7 @@ import {
 import { LayoutItem } from './LayoutItem';
 import { OptionChoice } from './OptionChoice';
 import { useCodeList, useSection } from '../context/MoisContext';
-import { useActiveDataForForms } from '../hooks/form-state';
+import { useActiveDataSlice } from '../hooks/form-state';
 import { readSectionActiveFieldValue, writeSectionActiveFieldValue } from '../runtime/mois-contract';
 
 export interface Coding {
@@ -160,21 +160,17 @@ export const SimpleCodeChecklist: React.FC<SimpleCodeChecklistProps> = ({
 }) => {
   // Get code list from codeSystem if provided and optionList is not
   const codeListItems = useCodeList(codeSystem || '');
-  const [activeData, setActiveData] = useActiveDataForForms();
   const sectionContext = useSection(section);
   const effectiveFieldId = fieldId || id || sourceId || layoutId;
+  // Narrow subscription: re-renders only when this field's value changes.
+  const [activeSlice, setActiveData] = useActiveDataSlice((data) => ({
+    activeValue: effectiveFieldId
+      ? ((readSectionActiveFieldValue(data, sectionContext, effectiveFieldId) as any) ?? null)
+      : null,
+  }));
+  const activeValue = activeSlice.activeValue as Coding | Coding[] | string | string[] | null;
   const effectiveReadOnly = Boolean(readOnly || isComplete);
   const controlsDisabled = disabled || effectiveReadOnly;
-
-  // Helper to get value from activeData
-  const getValueFromActiveData = (): Coding | Coding[] | string | string[] | null => {
-    if (effectiveFieldId) {
-      return (readSectionActiveFieldValue(activeData, sectionContext, effectiveFieldId) as any) ?? null;
-    }
-    return null;
-  };
-
-  const activeValue = getValueFromActiveData();
 
   const [selectedKey, setSelectedKey] = useState<string | undefined>(() => {
     return normalizeSingleSelectionKey(activeValue) ?? normalizeSingleSelectionKey(defaultValue as Coding | Coding[] | undefined);
