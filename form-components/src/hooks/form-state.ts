@@ -260,16 +260,9 @@ const BaseFormStateProvider = ({
 }) => {
   const [formData, setFormDataState] = useState<FormDataState>(() => normalizeFormData(initialFormData));
 
-  // Track if we're currently in a render phase to defer setState calls during render
-  const isRenderingRef = React.useRef(false);
   const pendingUpdatesRef = React.useRef<any[]>([]);
 
-  React.useLayoutEffect(() => {
-    isRenderingRef.current = false;
-  });
-
-  // Apply any updates that were deferred because they were dispatched during a
-  // render phase. Composes them onto the latest state in one setState.
+  // Compose all queued updates onto the latest state in one setState.
   const flushPendingUpdates = useCallback(() => {
     if (pendingUpdatesRef.current.length === 0) return;
     const updates = pendingUpdatesRef.current;
@@ -277,29 +270,25 @@ const BaseFormStateProvider = ({
     setFormDataState(prev => updates.reduce((state, update) => applyFormDataUpdate(state, update), prev));
   }, []);
 
-  // Process any pending updates that were queued during render.
+  // Safety net: drain any pending updates whenever the provider commits.
   React.useEffect(() => {
     flushPendingUpdates();
   });
 
-  // Mark that we're rendering (this runs on every render)
-  isRenderingRef.current = true;
-
-  // Create setFormData function that handles various input types
-  // Defers updates that happen during render to avoid React warnings
+  // Create setFormData function that handles various input types.
+  //
+  // Every update is deferred to a microtask, never applied synchronously.
+  // Consumers re-render via the store subscription (useSyncExternalStore), NOT
+  // as part of the provider's render pass, so a render-phase detection flag on
+  // this component cannot see their renders: legacy/eval'd components that call
+  // setFormData during render would hit setState-during-render of a foreign
+  // component and loop (React #185). Unconditional deferral makes every call
+  // safe regardless of caller context; composed no-op updates still bail in
+  // applyFormDataUpdate (result === prev), so write-on-render components reach
+  // a fixed point. React 18+ batches the microtask flush like any other update.
   const setFormData = useCallback((updater: any) => {
-    // If called during render, defer the update to after render.
-    if (isRenderingRef.current) {
-      pendingUpdatesRef.current.push(updater);
-      // Flush on a microtask (after the current render task) so the update is
-      // never lost: under React 19, isRenderingRef can stay true when a render
-      // is discarded before its layout effect runs, and the provider may not
-      // re-render on its own to drain the queue via the effect above.
-      queueMicrotask(flushPendingUpdates);
-      return;
-    }
-
-    setFormDataState(prev => applyFormDataUpdate(prev, updater));
+    pendingUpdatesRef.current.push(updater);
+    queueMicrotask(flushPendingUpdates);
   }, [flushPendingUpdates]);
 
   React.useEffect(() => {

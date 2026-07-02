@@ -81,6 +81,56 @@ describe('form-state subscription store', () => {
     expect(renderCounts.b).toBe(before.b);
   });
 
+  // Legacy/eval'd MOIS components call setFormData during render. Consumers
+  // re-render via the store subscription rather than the provider's render
+  // pass, so these writes MUST be deferred unconditionally — a synchronous
+  // setState here is setState-during-render of a foreign component and loops
+  // (React #185, seen in production 2026-07-02).
+  it('tolerates conditional render-phase writes and converges', async () => {
+    const RenderPhaseWriter: React.FC = () => {
+      const [fd, setFormData] = useActiveDataForForms();
+      if (!fd.field?.data?.initialized) {
+        setFormData((draft: any) => {
+          draft.field.data.initialized = true;
+        });
+      }
+      return React.createElement('span', { 'data-id': 'writer' }, String(fd.field?.data?.initialized ?? false));
+    };
+
+    await act(async () => {
+      root.render(
+        React.createElement(LocalFormStateProvider, null, React.createElement(RenderPhaseWriter, null))
+      );
+    });
+    // Drain the deferred microtask flush + resulting re-render
+    await act(async () => {});
+
+    expect(container.querySelector('[data-id="writer"]')!.textContent).toBe('true');
+  });
+
+  it('reaches a fixed point for unconditional idempotent render-phase writes', async () => {
+    let renders = 0;
+    const UnconditionalWriter: React.FC = () => {
+      renders += 1;
+      const [fd, setFormData] = useActiveDataForForms();
+      setFormData((draft: any) => {
+        draft.field.data.always = 'same';
+      });
+      return React.createElement('span', { 'data-id': 'always' }, String(fd.field?.data?.always ?? ''));
+    };
+
+    await act(async () => {
+      root.render(
+        React.createElement(LocalFormStateProvider, null, React.createElement(UnconditionalWriter, null))
+      );
+    });
+    await act(async () => {});
+
+    expect(container.querySelector('[data-id="always"]')!.textContent).toBe('same');
+    // The idempotent re-write must no-op (immer bails) instead of looping.
+    expect(renders).toBeLessThan(10);
+  });
+
   it('keeps whole-state consumers re-rendering on every update', async () => {
     await mount();
     const before = renderCounts.broad;
