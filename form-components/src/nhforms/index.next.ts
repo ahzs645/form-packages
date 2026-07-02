@@ -13,7 +13,6 @@
 import React from 'react';
 import { produce } from 'immer';
 import * as FluentUI from '@fluentui/react';
-import * as Babel from '@babel/standalone';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
@@ -69,9 +68,10 @@ import {
 } from '../authorship';
 import { recordMoisRuntimeAction } from '../runtime/mois-contract';
 
-// Import pre-generated component sources (Next.js doesn't support Vite's import.meta.glob)
-// Regenerate with: node scripts/generate-nhforms-sources.js
-import { componentModules } from './component-sources.generated';
+// Import pre-transpiled component sources (Next.js doesn't support Vite's import.meta.glob).
+// Transpilation happens at generation time so @babel/standalone stays out of this
+// bundle and off the main thread. Regenerate with: node scripts/generate-nhforms-sources.js
+import { compiledComponentModules, componentDefinedNames } from './component-compiled.generated';
 
 // Shared utility functions used across NHForms components (from CommonSchemaDefn)
 const selectAll = () => true;
@@ -338,10 +338,18 @@ const buildNHFormsScope = (additionalComponents: Record<string, any> = {}) => {
 };
 
 /**
- * Execute component code with the NHForms scope and extract defined components
+ * Execute pre-transpiled component code with the NHForms scope and extract
+ * defined components
+ * @param compiledCode - Babel output from component-compiled.generated.ts
  * @param additionalComponents - Components already loaded that can be referenced
+ * @param definedNames - Identifiers the component's own source declares
  */
-function loadComponentCode(code: string, componentName: string, additionalComponents: Record<string, any> = {}): Record<string, any> {
+function loadComponentCode(
+  compiledCode: string,
+  componentName: string,
+  additionalComponents: Record<string, any> = {},
+  definedNames: ReadonlySet<string> = new Set(),
+): Record<string, any> {
   const scope = buildNHFormsScope(additionalComponents);
 
   // Components to extract from the executed code
@@ -405,17 +413,6 @@ function loadComponentCode(code: string, componentName: string, additionalCompon
   ];
 
   try {
-    // Transform JSX/TSX to JavaScript using Babel
-    const transformed = Babel.transform(code, {
-      presets: ['react', 'typescript'],
-      filename: `${componentName}.tsx`
-    }).code;
-
-    if (!transformed) {
-      console.warn(`Failed to transform NHForms component ${componentName}: empty result`);
-      return {};
-    }
-
     // Create a proxy that returns placeholders for undefined properties
     const createPlaceholder = (name: string): any => {
       const PlaceholderComponent: React.FC<{ children?: React.ReactNode }> = ({ children }) =>
@@ -444,29 +441,13 @@ function loadComponentCode(code: string, componentName: string, additionalCompon
       `try { if (typeof ${name} !== 'undefined') __exports__.${name} = ${name}; } catch(e) {}`
     ).join('\n');
 
-    // Build injection code for additional components (cross-references)
-    // Only inject components that are NOT defined in this file to avoid duplicate declarations
-    // Check if the component is defined in the source code
-    const isDefinedInCode = (name: string) => {
-      // Check for various declaration patterns
-      const patterns = [
-        new RegExp(`const\\s+${name}\\s*=`),
-        new RegExp(`function\\s+${name}\\s*\\(`),
-        new RegExp(`let\\s+${name}\\s*=`),
-        new RegExp(`var\\s+${name}\\s*=`),
-        // Also detect direct assignment pattern used by some NHForms components:
-        // e.g., "Allergies = ({...}) => {...}" at start of line or after newline
-        new RegExp(`(?:^|\\n)\\s*${name}\\s*=\\s*\\(`),
-      ];
-      return patterns.some(p => p.test(code));
-    };
-
-    const injectionCode = Object.keys(additionalComponents).length > 0
-      ? Object.keys(additionalComponents)
-          .filter(name => !isDefinedInCode(name))  // Only inject if not defined in this file
-          .map(name => `let ${name} = __scope__.${name};`)  // Use 'let' to allow reassignment by component code
-          .join('\n')
-      : '';
+    // Build injection code for additional components (cross-references).
+    // Only inject components the file doesn't declare itself, to avoid duplicate
+    // declarations; definedNames is precomputed at generation time.
+    const injectionCode = Object.keys(additionalComponents)
+      .filter(name => !definedNames.has(name))
+      .map(name => `let ${name} = __scope__.${name};`)  // Use 'let' to allow reassignment by component code
+      .join('\n');
 
     // Use 'with' statement to inject scope (like form tester does)
     // Injected components become closure variables available at render time
@@ -475,7 +456,7 @@ function loadComponentCode(code: string, componentName: string, additionalCompon
       with (__scope__) {
         ${injectionCode}
         const __exports__ = {};
-        ${transformed}
+        ${compiledCode}
         ${extractCode}
         return __exports__;
       }
@@ -523,8 +504,9 @@ if (typeof window !== 'undefined') {
  * Map from component folder name to the exports it provides.
  * e.g., { "HonosQuestion": { Scale5: ..., Scale5Legend: ..., ... } }
  * This allows the component gallery to look up exports by folder name.
+ * Filled by loadAllComponents(); exported below via a lazy proxy.
  */
-export const nhformsComponentGroups: Record<string, Record<string, any>> = {};
+const nhformsComponentGroupsInternal: Record<string, Record<string, any>> = {};
 
 function createRegistryModuleAlias(displayName: string, exports: Record<string, any>): Record<string, any> {
   const RegistryModulePreview: React.FC = () => React.createElement(
@@ -576,28 +558,32 @@ function applyRegistryModuleAliases(registry: Record<string, any>): void {
  * Pass 2: Re-load components with registry available for cross-references
  */
 function loadAllComponents(): Record<string, any> {
-  const componentSources: Array<{ name: string; code: string }> = [];
+  const componentSources: Array<{ name: string; code: string; definedNames: ReadonlySet<string> }> = [];
 
-  // Collect all component sources from generated file
-  for (const [path, code] of Object.entries(componentModules)) {
+  // Collect all pre-transpiled component sources from generated file
+  for (const [path, code] of Object.entries(compiledComponentModules)) {
     const match = path.match(/\.\/([^/]+)\/index\.jsx$/);
     if (match) {
-      componentSources.push({ name: match[1], code: code as string });
+      componentSources.push({
+        name: match[1],
+        code: code as string,
+        definedNames: new Set(componentDefinedNames[path] ?? []),
+      });
     }
   }
 
   // Pass 1: Load all components without cross-references
   // Record each component's own exports (before cross-references pollute the scope)
-  for (const { name, code } of componentSources) {
-    const components = loadComponentCode(code, name, {});
+  for (const { name, code, definedNames } of componentSources) {
+    const components = loadComponentCode(code, name, {}, definedNames);
     Object.assign(nhformsRegistry, components);
-    nhformsComponentGroups[name] = { ...components };
+    nhformsComponentGroupsInternal[name] = { ...components };
   }
 
   // Pass 2: Re-load all components with registry available
   // Components can now reference each other via the registry
-  for (const { name, code } of componentSources) {
-    const components = loadComponentCode(code, name, nhformsRegistry);
+  for (const { name, code, definedNames } of componentSources) {
+    const components = loadComponentCode(code, name, nhformsRegistry, definedNames);
     Object.assign(nhformsRegistry, components);
   }
 
@@ -608,126 +594,41 @@ function loadAllComponents(): Record<string, any> {
   return { ...nhformsRegistry };
 }
 
-// Load all components once at module initialization
-export const nhformsComponents = loadAllComponents();
+// Lazy loading: executing all 62 components (twice, for cross-references) is
+// expensive enough to jank the main thread, so it is deferred from module
+// initialization to the first property access on nhformsComponents /
+// nhformsComponentGroups. Callers that control timing (e.g. a route that knows
+// it will render NHForms content) can call ensureNhformsComponentsLoaded()
+// explicitly to choose when the cost is paid.
+let loadedNhformsComponents: Record<string, any> | null = null;
 
-// Also export individual component groups for convenience
-export const {
-  // HonosQuestion components
-  Scale5,
-  Scale10,
-  Scale5Legend,
-  Scale10Legend,
-  Scale5QuestionList,
-  Scale5SubmitButton,
-  Scale5ToolTip,
-  HonosFinalScore,
-  // List components
-  Allergies,
-  Conditions,
-  Goals,
-  LongTermMedications,
-  ServiceEpisodes,
-  ServiceRequests,
-  Connections,
-  Occupations,
-  EducationHistory,
-  PlannedActions,
-  ReferralSource,
-  Occupant,
-  // Other components
-  AliasIdList,
-  Ethnicity,
-  RelationshipStatus,
-  FirstNationsStatus,
-  FindCodeSelect,
-  HealthMaintenanceReview,
-  ObservationChart,
-  // HFC components
-  HFC_PT_ASMT_PatientAssessment,
-  HFC_PT_ASMT_PatientSummary,
-  HFC_PT_ASMT_SnapShot,
-  // Utility components
-  NewTextArea,
-  MoisPatientReviewLink,
-  PastMeasurementField,
-  useChangeWatch,
-  // ScaleField
-  ScaleField,
-  // EditableTable
-  EditableTable,
-  EditableTableSchema,
-  createTableColumns,
-  // ScoringModule
-  ScoringModule,
-  ScoringModuleSchema,
-  createScoringQuestion,
-  createScoringTotal,
-  createScoringConfig,
-  // FormSessionRuntime
-  FormSessionProvider,
-  cloneFormSessionState,
-  mergeFormSessionState,
-  useFormSessionData,
-  // SubformScoring
-  SubformScoring,
-  // PDF regeneration
-  PdfRegenerator,
-  // CompactBooleanField
-  CompactBooleanField,
-  CompactBooleanGroup,
-  CompactBooleanChecklist,
-  YesNoButtons,
-  BooleanLabelPresets,
-  ControllerLabelPresets,
-  CompactBooleanFieldSchema,
-  CompactBooleanChecklistSchema,
-  // CompactChoiceField (multi-option button selection)
-  CompactChoiceField,
-  OptionButtons,
-  CompactChoiceFieldSchema,
-  CompactChoiceFieldMultiSchema,
-  ConditionalGroup,
-  ConditionalField,
-  LogicGateProvider,
-  useConditionalVisibility,
-  // SaveOnClose
-  SaveOnClose,
-  useSaveOnClose,
-  // Attestation sign-off
-  AttestationSignOff,
-  // Utility functions from CommonSchemaDefn
-  makeValueSetOptions,
-  makeTextObsUpdates,
-  makeCodedObsUpdates,
-  makeObsUpdatesFromVs,
-  ynuaOptions,
-  CommonSchemaDefn,
-  FormSessionRuntime,
-  UseChangeWatch,
-  commonSchemaDefn,
-  nameBlockSchema,
-  NameBlockFields,
-  formHistorySchema,
-  // Filter functions from ServiceEpisodes and ServiceRequests
-  activeServiceEpisodes,
-  activeServiceRequests,
-  orderDateDesc,
-  // GraphQL Fields definitions from list components
-  firstNationsStatusPatientFields,
-  firstNationsStatusSchema,
-  PlannedActionsFields,
-  AliasIdListFields,
-  AllergiesFields,
-  ConditionsFields,
-  ConnectionsFields,
-  GoalsFields,
-  LongTermMedicationsFields,
-  ServiceEpisodesFields,
-  ServiceRequestsFields,
-  OccupationsFields,
-  EducationHistoryFields,
-  ReferralSourceFields,
-} = nhformsComponents;
+export function ensureNhformsComponentsLoaded(): Record<string, any> {
+  if (!loadedNhformsComponents) {
+    loadedNhformsComponents = loadAllComponents();
+  }
+  return loadedNhformsComponents;
+}
+
+// Proxy that behaves like the loaded record but triggers the load on first use.
+// ownKeys/getOwnPropertyDescriptor are implemented so spreads and Object.keys
+// (e.g. buildScope's `...nhformsComponents`) see the real entries.
+function lazyRecord<T extends Record<string, any>>(load: () => T): T {
+  return new Proxy({} as T, {
+    get: (_target, prop) => Reflect.get(load(), prop),
+    has: (_target, prop) => Reflect.has(load(), prop),
+    ownKeys: () => Reflect.ownKeys(load()),
+    getOwnPropertyDescriptor: (_target, prop) => {
+      const desc = Object.getOwnPropertyDescriptor(load(), prop);
+      return desc ? { ...desc, configurable: true } : undefined;
+    },
+  });
+}
+
+export const nhformsComponents: Record<string, any> = lazyRecord(ensureNhformsComponentsLoaded);
+
+export const nhformsComponentGroups: Record<string, Record<string, any>> = lazyRecord(() => {
+  ensureNhformsComponentsLoaded();
+  return nhformsComponentGroupsInternal;
+});
 
 export default nhformsComponents;

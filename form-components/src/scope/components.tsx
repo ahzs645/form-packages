@@ -5,7 +5,6 @@
  */
 
 import React from 'react';
-import * as Babel from '@babel/standalone';
 import { MoisProvider } from '../context/MoisContext';
 import { Linear } from '../index';
 import { createComponentFromCode } from './code-transformer';
@@ -67,14 +66,29 @@ export const LivePreview: React.FC<LivePreviewProps> = ({ code, linearLayout = t
     resetPageSelection();
     initFormData();
 
-    try {
-      const comp = createComponentFromCode(code, Babel);
-      setComponent(() => comp);
-      setError(null);
-    } catch (e: any) {
-      setError(e.message);
-      setComponent(null);
-    }
+    // Babel is loaded on demand so the (large) @babel/standalone chunk is only
+    // fetched when a live preview actually renders.
+    let cancelled = false;
+    import('@babel/standalone')
+      .then((Babel) => {
+        if (cancelled) return;
+        try {
+          const comp = createComponentFromCode(code, Babel);
+          setComponent(() => comp);
+          setError(null);
+        } catch (e: any) {
+          setError(e.message);
+          setComponent(null);
+        }
+      })
+      .catch((e: any) => {
+        if (cancelled) return;
+        setError(e?.message || 'Failed to load code transformer');
+        setComponent(null);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [code]);
 
   if (error) {
