@@ -274,22 +274,7 @@ const BaseFormStateProvider = ({
     if (pendingUpdatesRef.current.length === 0) return;
     const updates = pendingUpdatesRef.current;
     pendingUpdatesRef.current = [];
-    setFormDataState(prev => {
-      const result = updates.reduce((state, update) => applyFormDataUpdate(state, update), prev);
-      // TEMP DEBUG: log which keys changed per update cycle
-      if (process.env.NODE_ENV !== 'production' && result !== prev) {
-        const changed: string[] = [];
-        const a: any = prev.field?.data || {}; const b: any = result.field?.data || {};
-        for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) {
-          if (a[k] !== b[k]) changed.push(`field.data.${k}`);
-        }
-        if (prev.uiState !== result.uiState) changed.push('uiState');
-        if ((prev as any).tempArea !== (result as any).tempArea) changed.push('tempArea');
-        const updaterSigs = updates.map((u) => typeof u === 'function' ? String(u).replace(/\s+/g, ' ').slice(0, 160) : `object:${Object.keys(u || {}).slice(0, 5).join('|')}`);
-        console.debug(`[form-state DEBUG] changed: ${changed.slice(0, 12).join(',')}${changed.length > 12 ? ` (+${changed.length - 12})` : ''} :: updaters(${updates.length}): ${updaterSigs.slice(0, 3).join(' ;; ')}`);
-      }
-      return result;
-    });
+    setFormDataState(prev => updates.reduce((state, update) => applyFormDataUpdate(state, update), prev));
   }, []);
 
   // Safety net: drain any pending updates whenever the provider commits.

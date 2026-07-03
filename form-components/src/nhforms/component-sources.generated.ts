@@ -5438,7 +5438,6 @@ EditableTable = ({
       : initialSeedRows.length > 0
         ? initialSeedRows
         : Array.from({ length: initialRowCount }, (_, index) => _makeEmptyRow(columns, index))
-    console.debug(\`[EditableTable DEBUG] \${id} initial-seed firing\`)
     setRows(seededRows)
   }, [rows, isModalMode, initialSeedRows, initialRowCount, id, columns])
 
@@ -5448,11 +5447,18 @@ EditableTable = ({
     const existingRows = Array.isArray(rows) ? rows : []
     const hasMeaningfulRows = existingRows.some((row) => !_isRowEmpty(row, columns))
     if (hasMeaningfulRows) return
-    // Convergence guard: without it, content-identical reseeds (fresh array
-    // identity each time) rewrite state on every render and loop.
-    if (JSON.stringify(existingRows) === JSON.stringify(sourceSeedRows)) return
+    // Convergence guard: compare row CONTENT with the volatile _rowId stripped.
+    // Seed builders stamp Date.now()-based _rowIds, so raw JSON never matches
+    // and the reseed would rewrite state on every render — this exact table
+    // seeding sustained a React #185 update loop (two seeded tables, 2026-07-02).
+    const _rowContentSignature = (rowList) => JSON.stringify(
+      rowList.map((row) => {
+        const { _rowId, ...rest } = row || {}
+        return rest
+      })
+    )
+    if (_rowContentSignature(existingRows) === _rowContentSignature(sourceSeedRows)) return
 
-    console.debug(\`[EditableTable DEBUG] \${id} source-seed firing; existing=\${JSON.stringify(existingRows).slice(0, 120)} source=\${JSON.stringify(sourceSeedRows).slice(0, 120)}\`)
     setRows(sourceSeedRows)
   }, [rows, columns, setRows, sourceSeedRows])
 
