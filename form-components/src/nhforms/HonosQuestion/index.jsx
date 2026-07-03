@@ -557,16 +557,14 @@ const fillAllUnfilledQuestions = (fd: ActiveDataType) => {
     }
   }
 
-  fd.setFormData({
-    ...fd,
-    field: {
-      ...fd.field,
-      data: {
-        ...fd.field.data,
-        ...forms,
-      },
-    },
-  })
+  // Produce recipe writing only the filled question keys — never spread the fd
+  // snapshot into setFormData (whole-state object payloads clobber concurrent
+  // writes from other components).
+  fd.setFormData(produce((draft) => {
+    if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
+    if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
+    Object.assign(draft.field.data, forms)
+  }))
 
 }
 
@@ -679,14 +677,11 @@ const handleChoiceChanged = (
 }
 
 const UpdateContext = (fd, id, values) => {
-  fd.setFormData({
-    ...fd,
-    field: {
-      ...fd.field,
-      data: {
-        ...fd.field.data,
-        [id]: values,
-      },
-    },
-  })
+  // Produce recipe writing only this question's key — never spread the fd
+  // snapshot into setFormData.
+  fd.setFormData(produce((draft) => {
+    if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
+    if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
+    draft.field.data[id] = values
+  }))
 }

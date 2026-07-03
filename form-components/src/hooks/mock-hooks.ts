@@ -37,6 +37,9 @@ export const useOnLoad = (callback?: (sourceData: any, formData: any) => void) =
   }, [formData]);
 
   React.useEffect(() => {
+    if (process.env.NODE_ENV !== 'production') {
+      console.debug('[useOnLoad DEBUG] effect firing');
+    }
     if (typeof callbackRef.current === 'function') {
       callbackRef.current(sourceData, { ...formDataRef.current, setFormData });
     }

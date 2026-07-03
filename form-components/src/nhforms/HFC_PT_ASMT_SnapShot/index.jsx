@@ -41,12 +41,14 @@ const HFC_PT_ASMT_SnapShot = (props) => {
     }
 
     const handleStateChange = (fieldData) =>{
-       fd.setFormData({
-       ...fd,
-          field: {
-        ...fd.field,
-        data: fieldData,
-      }})
+       // Produce recipe merging the changed keys — never spread the fd
+       // snapshot into setFormData (whole-state object payloads clobber
+       // concurrent writes from other components).
+       fd.setFormData(produce((draft) => {
+         if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
+         if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
+         Object.assign(draft.field.data, fieldData)
+       }))
     }
     
     function _onChoiceChange(opt,choice){

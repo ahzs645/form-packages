@@ -292,16 +292,13 @@ const ConditionalGroup = ({
   const handleControllerChange = useCallback((newValue) => {
     if (!fd?.setFormData) return
 
-    fd.setFormData({
-      ...fd,
-      field: {
-        ...fd.field,
-        data: {
-          ...fd.field?.data,
-          [controllerFieldId]: newValue,
-        },
-      },
-    })
+    // Produce recipe writing only this field — never spread the fd snapshot
+    // into setFormData (whole-state object payloads clobber concurrent writes).
+    fd.setFormData(produce((draft) => {
+      if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
+      if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
+      draft.field.data[controllerFieldId] = newValue
+    }))
   }, [fd, controllerFieldId])
 
   // Create child context

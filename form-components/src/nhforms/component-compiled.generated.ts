@@ -3081,16 +3081,18 @@ const ConditionalGroup = ({
   // Handle controller change
   const handleControllerChange = useCallback(newValue => {
     if (!fd?.setFormData) return;
-    fd.setFormData({
-      ...fd,
-      field: {
-        ...fd.field,
-        data: {
-          ...fd.field?.data,
-          [controllerFieldId]: newValue
-        }
-      }
-    });
+
+    // Produce recipe writing only this field — never spread the fd snapshot
+    // into setFormData (whole-state object payloads clobber concurrent writes).
+    fd.setFormData(produce(draft => {
+      if (!draft.field) draft.field = {
+        data: {},
+        status: {},
+        history: []
+      };
+      if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {};
+      draft.field.data[controllerFieldId] = newValue;
+    }));
   }, [fd, controllerFieldId]);
 
   // Create child context
@@ -5138,47 +5140,50 @@ EditableTable = ({
         if (fieldId) mirroredFieldIds.add(fieldId);
       });
     });
-    const nextFieldData = {
-      ...fd.field?.data,
-      [id]: nextRows
-    };
-    mirroredFieldIds.forEach(fieldId => {
-      nextFieldData[fieldId] = null;
-    });
-    (Array.isArray(nextRows) ? nextRows : []).forEach((row, rowIndex) => {
-      columns.forEach(column => {
-        const sourceFieldId = getSourceFieldId(rowIndex, column.id);
-        if (!sourceFieldId) return;
-        const rawValue = _getValueAtPath(row, column.dataPath || column.id);
-        nextFieldData[sourceFieldId] = _normalizeMirroredCellValue(rawValue, column);
-      });
-    });
 
-    // Lock-on-edit: stamp the editing author's claim onto field.data.__authorship
-    // for this row, carried inside the same write. nhAuth.claim mutates the
-    // object we pass; nextFieldData is spread into the committed state below.
-    if (authorshipClaim && authorshipEnabled && authorshipClaim.rowId) {
-      nhAuth.claim({
-        field: {
-          data: nextFieldData
-        }
-      }, sd, {
-        scope: "row",
-        componentId: id,
-        rowKey: authorshipClaim.rowId
-      }, authorshipClaim.value, authorshipPolicy, {
-        now: sd?.previewOptions?.authorshipNow
+    // Commit ONLY this table's keys through a produce recipe. Never spread the
+    // captured fd snapshot into setFormData: object payloads replace state
+    // wholesale, clobber concurrent writes from sibling components (two tables
+    // seeding on mount ping-ponged into a React #185 update loop), and bypass
+    // the no-op bailout that recipe writes get from immer.
+    fd.setFormData(produce(draft => {
+      if (!draft.field) draft.field = {
+        data: {},
+        status: {},
+        history: []
+      };
+      if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {};
+      const data = draft.field.data;
+      data[id] = nextRows;
+      mirroredFieldIds.forEach(fieldId => {
+        data[fieldId] = null;
       });
-    }
-    fd.setFormData({
-      ...fd,
-      field: {
-        ...fd.field,
-        data: {
-          ...nextFieldData
-        }
+      (Array.isArray(nextRows) ? nextRows : []).forEach((row, rowIndex) => {
+        columns.forEach(column => {
+          const sourceFieldId = getSourceFieldId(rowIndex, column.id);
+          if (!sourceFieldId) return;
+          const rawValue = _getValueAtPath(row, column.dataPath || column.id);
+          data[sourceFieldId] = _normalizeMirroredCellValue(rawValue, column);
+        });
+      });
+
+      // Lock-on-edit: stamp the editing author's claim onto field.data.__authorship
+      // for this row, carried inside the same write. nhAuth.claim mutates the
+      // draft's data object in place.
+      if (authorshipClaim && authorshipEnabled && authorshipClaim.rowId) {
+        nhAuth.claim({
+          field: {
+            data
+          }
+        }, sd, {
+          scope: "row",
+          componentId: id,
+          rowKey: authorshipClaim.rowId
+        }, authorshipClaim.value, authorshipPolicy, {
+          now: sd?.previewOptions?.authorshipNow
+        });
       }
-    });
+    }));
   };
   const rows = getRows();
   const sourceSeedRows = useMemo(() => _buildRowsFromSourceFields({
@@ -5193,6 +5198,7 @@ EditableTable = ({
     const seededRows = isModalMode ? [] : initialSeedRows.length > 0 ? initialSeedRows : Array.from({
       length: initialRowCount
     }, (_, index) => _makeEmptyRow(columns, index));
+    console.debug(\`[EditableTable DEBUG] \${id} initial-seed firing\`);
     setRows(seededRows);
   }, [rows, isModalMode, initialSeedRows, initialRowCount, id, columns]);
   useEffect(() => {
@@ -5200,6 +5206,10 @@ EditableTable = ({
     const existingRows = Array.isArray(rows) ? rows : [];
     const hasMeaningfulRows = existingRows.some(row => !_isRowEmpty(row, columns));
     if (hasMeaningfulRows) return;
+    // Convergence guard: without it, content-identical reseeds (fresh array
+    // identity each time) rewrite state on every render and loop.
+    if (JSON.stringify(existingRows) === JSON.stringify(sourceSeedRows)) return;
+    console.debug(\`[EditableTable DEBUG] \${id} source-seed firing; existing=\${JSON.stringify(existingRows).slice(0, 120)} source=\${JSON.stringify(sourceSeedRows).slice(0, 120)}\`);
     setRows(sourceSeedRows);
   }, [rows, columns, setRows, sourceSeedRows]);
   const currentRows = Array.isArray(rows) ? rows : [];
@@ -10258,13 +10268,18 @@ const HFC_PT_ASMT_SnapShot = props => {
     }) : null);
   };
   const handleStateChange = fieldData => {
-    fd.setFormData({
-      ...fd,
-      field: {
-        ...fd.field,
-        data: fieldData
-      }
-    });
+    // Produce recipe merging the changed keys — never spread the fd
+    // snapshot into setFormData (whole-state object payloads clobber
+    // concurrent writes from other components).
+    fd.setFormData(produce(draft => {
+      if (!draft.field) draft.field = {
+        data: {},
+        status: {},
+        history: []
+      };
+      if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {};
+      Object.assign(draft.field.data, fieldData);
+    }));
   };
   function _onChoiceChange(opt, choice) {
     var fieldData = opt.target.type != "checkbox" ? {
@@ -12842,16 +12857,19 @@ const fillAllUnfilledQuestions = fd => {
       }
     }
   }
-  fd.setFormData({
-    ...fd,
-    field: {
-      ...fd.field,
-      data: {
-        ...fd.field.data,
-        ...forms
-      }
-    }
-  });
+
+  // Produce recipe writing only the filled question keys — never spread the fd
+  // snapshot into setFormData (whole-state object payloads clobber concurrent
+  // writes from other components).
+  fd.setFormData(produce(draft => {
+    if (!draft.field) draft.field = {
+      data: {},
+      status: {},
+      history: []
+    };
+    if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {};
+    Object.assign(draft.field.data, forms);
+  }));
 };
 const buildTooltipLookup = (tooltip, fallbackLookup = {}) => {
   const lookup = {
@@ -12912,16 +12930,17 @@ const handleChoiceChanged = (id, option, question, fd, hasDropdown, disableCount
   UpdateContext(fd, id, updatedValue);
 };
 const UpdateContext = (fd, id, values) => {
-  fd.setFormData({
-    ...fd,
-    field: {
-      ...fd.field,
-      data: {
-        ...fd.field.data,
-        [id]: values
-      }
-    }
-  });
+  // Produce recipe writing only this question's key — never spread the fd
+  // snapshot into setFormData.
+  fd.setFormData(produce(draft => {
+    if (!draft.field) draft.field = {
+      data: {},
+      status: {},
+      history: []
+    };
+    if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {};
+    draft.field.data[id] = values;
+  }));
 };`,
   './HotspotMapField/index.jsx': `/**
  * HotspotMapField
@@ -28555,7 +28574,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './ConversionField/index.jsx': ["ConversionField","ConversionFieldSchema","_asPositiveNumber","_asPrecision","_conversionPathSegments","_normalizeConversionRows","_readConversionPath","_readConversionValue","_sanitizeConversionNumber","activeFrom","activeTo","canUseFrom","canUseTo","char","clearValues","convertRow","current","fromValue","hasAnyValue","hasDecimal","index","lastEdited","lastEditedRef","next","nextValue","normalizedFromFieldId","normalizedToFieldId","parsed","parsedFrom","parsedTo","pathValue","rows","segments","setConversionValues","source","sourceFieldId","text","toValue","updateValue","updates"],
   './CustomJsxBlock/index.jsx': ["CustomJsxBlock","displaySource","raw"],
   './DentalWeightConverter/index.jsx': ["DentalWeightConverter","DentalWeightConverterSchema","_positiveNumber","_readDentalField","_sanitizeDentalWeight","cellStyle","clearWeights","convertWeights","data","disabled","factor","fieldWrapperStyle","fixedPrecision","kgValue","kilograms","lastEdited","lastEditedRef","lbValue","nextValue","numeric","parsed","parts","pounds","setDentalValues","text","updateWeight"],
-  './EditableTable/index.jsx': ["ButtonComponent","DEFAULT_WINDOW_HOURS","EditableTable","EditableTableSchema","_applyComputedColumns","_applyRowProcessingConfig","_buildRowsFromSourceFields","_buildSubformFieldFromColumn","_cloneRow","_coerceNumberCellValue","_computeTemplateColumnValue","_evaluateColumnVisibility","_formatCellValue","_formatProcessedNumber","_getDefaultCellValue","_getValueAtPath","_isMeaningfulValue","_isRowEmpty","_makeEmptyRow","_normalizeChoiceOptions","_normalizeInitialRowCount","_normalizeInitialRows","_normalizeMirroredCellValue","_normalizeNumberConfig","_normalizeRows","_normalizeSourceCellValue","_normalizeStampCellValue","_normalizeTableColumns","_normalizeUniqueToken","_normalizeValidationMessage","_normalizeZeroLikeValue","_resolveLiteralValue","_resolvePathValue","_resolveStampCellValue","_setValueAtPath","_sortRowsByPath","_stringifyValue","_toFiniteNumber","_toPathSegments","_validateRowWithConfig","actor","actorFrom","addHoursIso","addInlineRow","authorshipEnabled","authorshipHeaderCellStyle","authorshipPolicy","bodyCellStyle","buildKey","buildRowContext","c","cadNumber","cadPath","cadPrecision","canDeleteInline","canResign","candidate","changed","ck","claim","claims","closeDialog","column","columns","commitRows","commitSave","computed","config","configMessage","containerStyle","controllerId","copy","count","createTableColumns","current","currentRowCount","currentRows","currentValue","customMessage","customResult","d","data","defaultSubformDataEntryConfig","deletedRow","disabledStamp","displayRows","displayValue","dropdownOptions","duplicateIndex","editableUntil","effectiveReadOnly","euDate","existing","existingRows","expired","explicitRowIndexes","explicitRowMapping","factor","fallback","fieldData","fieldId","first","formatTimestamp","getRowLock","getRows","getSourceFieldId","hasExplicitRowMapping","hasMeaningfulRows","hasMeaningfulValue","hasStampedValue","hasValue","headerCellStyle","headerRowStyle","id","index","inferredRowCount","initialRowCount","initialSeedRows","isDarkMode","isEmpty","isLocked","isModalMode","isNonEmpty","isOwner","isVertical","keepStatus","key","label","left","leftDate","leftValue","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","message","mirroredFieldIds","modalColumns","modalEditorConfig","modalEditorType","nextDraft","nextFieldData","nextRow","nextRows","nextStatus","nextValue","nhAuth","normalizeStore","normalizedConfig","normalizedRow","normalizedValue","now","nowIso","numberConfig","numericValue","omitEmptyLines","onBeforeSaveRow","onRowDeleted","onRowSaved","onRowsChange","openCreateDialog","openEditDialog","owner","ownerId","ownerName","ownerRefresh","pad2","pairCadPrecision","pairFactor","pairPrefer","pairUsPrecision","pairs","parsed","path","paths","pending","policyAppliesToAction","prefer","prepareSave","processingConfig","raw","rawCad","rawKey","rawUs","rawValue","readStore","release","remaining","removeRowAt","renderEditorInput","renderRowAuthorshipStatus","renderVerticalTable","rendered","requireAnyGroups","requiredPaths","resolveNow","resolvedFactor","resolvedRow","right","rightDate","rightValue","row","rowIndex","rowLock","rowNumberCellStyle","rowNumberHeaderStyle","rowReadOnly","rows","rowsForVerticalLayout","rule","safeFactor","safePrecision","sameActor","saveDraftRow","savedAt","savedRowIndex","sd","section","seededRows","segments","selectionType","setRows","shouldShowActions","showRowAuthorshipColumn","sign","signedAt","sortedRows","sourceFieldId","sourcePath","sourceSeedRows","spinButtonProps","stampCell","stampConfig","stampDraftCell","stampedValue","store","subformModalConfig","tableColumns","tableContainerStyle","tableStyle","text","theme","transformedRow","trimTrailingZero","trimmed","ts","untilSelf","updateCell","updateDraftCell","updateDraftValueAtPath","usNumber","usPath","usPrecision","usesSubformEditor","validateResolvedRow","validateRow","validationConfig","validationError","value","verticalBodyCellStyle","verticalLabelCellStyle","visibility","windowHours","withCommon","zeroIsEmpty"],
+  './EditableTable/index.jsx': ["ButtonComponent","DEFAULT_WINDOW_HOURS","EditableTable","EditableTableSchema","_applyComputedColumns","_applyRowProcessingConfig","_buildRowsFromSourceFields","_buildSubformFieldFromColumn","_cloneRow","_coerceNumberCellValue","_computeTemplateColumnValue","_evaluateColumnVisibility","_formatCellValue","_formatProcessedNumber","_getDefaultCellValue","_getValueAtPath","_isMeaningfulValue","_isRowEmpty","_makeEmptyRow","_normalizeChoiceOptions","_normalizeInitialRowCount","_normalizeInitialRows","_normalizeMirroredCellValue","_normalizeNumberConfig","_normalizeRows","_normalizeSourceCellValue","_normalizeStampCellValue","_normalizeTableColumns","_normalizeUniqueToken","_normalizeValidationMessage","_normalizeZeroLikeValue","_resolveLiteralValue","_resolvePathValue","_resolveStampCellValue","_setValueAtPath","_sortRowsByPath","_stringifyValue","_toFiniteNumber","_toPathSegments","_validateRowWithConfig","actor","actorFrom","addHoursIso","addInlineRow","authorshipEnabled","authorshipHeaderCellStyle","authorshipPolicy","bodyCellStyle","buildKey","buildRowContext","c","cadNumber","cadPath","cadPrecision","canDeleteInline","canResign","candidate","changed","ck","claim","claims","closeDialog","column","columns","commitRows","commitSave","computed","config","configMessage","containerStyle","controllerId","copy","count","createTableColumns","current","currentRowCount","currentRows","currentValue","customMessage","customResult","d","data","defaultSubformDataEntryConfig","deletedRow","disabledStamp","displayRows","displayValue","dropdownOptions","duplicateIndex","editableUntil","effectiveReadOnly","euDate","existing","existingRows","expired","explicitRowIndexes","explicitRowMapping","factor","fallback","fieldData","fieldId","first","formatTimestamp","getRowLock","getRows","getSourceFieldId","hasExplicitRowMapping","hasMeaningfulRows","hasMeaningfulValue","hasStampedValue","hasValue","headerCellStyle","headerRowStyle","id","index","inferredRowCount","initialRowCount","initialSeedRows","isDarkMode","isEmpty","isLocked","isModalMode","isNonEmpty","isOwner","isVertical","keepStatus","key","label","left","leftDate","leftValue","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","message","mirroredFieldIds","modalColumns","modalEditorConfig","modalEditorType","nextDraft","nextRow","nextRows","nextStatus","nextValue","nhAuth","normalizeStore","normalizedConfig","normalizedRow","normalizedValue","now","nowIso","numberConfig","numericValue","omitEmptyLines","onBeforeSaveRow","onRowDeleted","onRowSaved","onRowsChange","openCreateDialog","openEditDialog","owner","ownerId","ownerName","ownerRefresh","pad2","pairCadPrecision","pairFactor","pairPrefer","pairUsPrecision","pairs","parsed","path","paths","pending","policyAppliesToAction","prefer","prepareSave","processingConfig","raw","rawCad","rawKey","rawUs","rawValue","readStore","release","remaining","removeRowAt","renderEditorInput","renderRowAuthorshipStatus","renderVerticalTable","rendered","requireAnyGroups","requiredPaths","resolveNow","resolvedFactor","resolvedRow","right","rightDate","rightValue","row","rowIndex","rowLock","rowNumberCellStyle","rowNumberHeaderStyle","rowReadOnly","rows","rowsForVerticalLayout","rule","safeFactor","safePrecision","sameActor","saveDraftRow","savedAt","savedRowIndex","sd","section","seededRows","segments","selectionType","setRows","shouldShowActions","showRowAuthorshipColumn","sign","signedAt","sortedRows","sourceFieldId","sourcePath","sourceSeedRows","spinButtonProps","stampCell","stampConfig","stampDraftCell","stampedValue","store","subformModalConfig","tableColumns","tableContainerStyle","tableStyle","text","theme","transformedRow","trimTrailingZero","trimmed","ts","untilSelf","updateCell","updateDraftCell","updateDraftValueAtPath","usNumber","usPath","usPrecision","usesSubformEditor","validateResolvedRow","validateRow","validationConfig","validationError","value","verticalBodyCellStyle","verticalLabelCellStyle","visibility","windowHours","withCommon","zeroIsEmpty"],
   './EducationHistory/index.jsx': ["EducationHistory","EducationHistoryFields"],
   './Ethnicity/index.jsx': ["Ethnicity","firstNationEthnicityCodes","firstNationsEthnicityReferenceSet"],
   './FieldStampButton/index.jsx': ["ButtonComponent","FieldStampButton","buildContext","clearStamp","context","effectiveStampFieldId","fallback","fieldData","fieldId","isDisabled","isSigned","normalizeStampTargets","normalizeStampValue","normalizedTargets","raw","resolveLiteralValue","resolvePathValue","sd","signedAt","signedAtText","sourcePath","stamp","stampRecord","statusText","value","written"],

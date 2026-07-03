@@ -792,47 +792,44 @@ EditableTable = ({
       })
     })
 
-    const nextFieldData = {
-      ...fd.field?.data,
-      [id]: nextRows,
-    }
+    // Commit ONLY this table's keys through a produce recipe. Never spread the
+    // captured fd snapshot into setFormData: object payloads replace state
+    // wholesale, clobber concurrent writes from sibling components (two tables
+    // seeding on mount ping-ponged into a React #185 update loop), and bypass
+    // the no-op bailout that recipe writes get from immer.
+    fd.setFormData(produce((draft) => {
+      if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
+      if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
+      const data = draft.field.data
+      data[id] = nextRows
 
-    mirroredFieldIds.forEach((fieldId) => {
-      nextFieldData[fieldId] = null
-    })
-
-    ;(Array.isArray(nextRows) ? nextRows : []).forEach((row, rowIndex) => {
-      columns.forEach((column) => {
-        const sourceFieldId = getSourceFieldId(rowIndex, column.id)
-        if (!sourceFieldId) return
-        const rawValue = _getValueAtPath(row, column.dataPath || column.id)
-        nextFieldData[sourceFieldId] = _normalizeMirroredCellValue(rawValue, column)
+      mirroredFieldIds.forEach((fieldId) => {
+        data[fieldId] = null
       })
-    })
 
-    // Lock-on-edit: stamp the editing author's claim onto field.data.__authorship
-    // for this row, carried inside the same write. nhAuth.claim mutates the
-    // object we pass; nextFieldData is spread into the committed state below.
-    if (authorshipClaim && authorshipEnabled && authorshipClaim.rowId) {
-      nhAuth.claim(
-        { field: { data: nextFieldData } },
-        sd,
-        { scope: "row", componentId: id, rowKey: authorshipClaim.rowId },
-        authorshipClaim.value,
-        authorshipPolicy,
-        { now: sd?.previewOptions?.authorshipNow }
-      )
-    }
+      ;(Array.isArray(nextRows) ? nextRows : []).forEach((row, rowIndex) => {
+        columns.forEach((column) => {
+          const sourceFieldId = getSourceFieldId(rowIndex, column.id)
+          if (!sourceFieldId) return
+          const rawValue = _getValueAtPath(row, column.dataPath || column.id)
+          data[sourceFieldId] = _normalizeMirroredCellValue(rawValue, column)
+        })
+      })
 
-    fd.setFormData({
-      ...fd,
-      field: {
-        ...fd.field,
-        data: {
-          ...nextFieldData,
-        },
-      },
-    })
+      // Lock-on-edit: stamp the editing author's claim onto field.data.__authorship
+      // for this row, carried inside the same write. nhAuth.claim mutates the
+      // draft's data object in place.
+      if (authorshipClaim && authorshipEnabled && authorshipClaim.rowId) {
+        nhAuth.claim(
+          { field: { data } },
+          sd,
+          { scope: "row", componentId: id, rowKey: authorshipClaim.rowId },
+          authorshipClaim.value,
+          authorshipPolicy,
+          { now: sd?.previewOptions?.authorshipNow }
+        )
+      }
+    }))
   }
 
   const rows = getRows()
@@ -861,6 +858,17 @@ EditableTable = ({
     const existingRows = Array.isArray(rows) ? rows : []
     const hasMeaningfulRows = existingRows.some((row) => !_isRowEmpty(row, columns))
     if (hasMeaningfulRows) return
+    // Convergence guard: compare row CONTENT with the volatile _rowId stripped.
+    // Seed builders stamp Date.now()-based _rowIds, so raw JSON never matches
+    // and the reseed would rewrite state on every render — this exact table
+    // seeding sustained a React #185 update loop (two seeded tables, 2026-07-02).
+    const _rowContentSignature = (rowList) => JSON.stringify(
+      rowList.map((row) => {
+        const { _rowId, ...rest } = row || {}
+        return rest
+      })
+    )
+    if (_rowContentSignature(existingRows) === _rowContentSignature(sourceSeedRows)) return
 
     setRows(sourceSeedRows)
   }, [rows, columns, setRows, sourceSeedRows])

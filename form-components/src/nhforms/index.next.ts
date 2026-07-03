@@ -67,6 +67,10 @@ import {
   releasePreparedAuthorshipClaim,
 } from '../authorship';
 import { recordMoisRuntimeAction } from '../runtime/mois-contract';
+import { wrapSandboxComponent } from '../runtime/render-write-tripwire';
+
+// Wrap eval'd components with the render-write tripwire outside production.
+const WRAP_SANDBOX_COMPONENTS = process.env.NODE_ENV !== 'production';
 
 // Import pre-transpiled component sources (Next.js doesn't support Vite's import.meta.glob).
 // Transpilation happens at generation time so @babel/standalone stays out of this
@@ -475,7 +479,11 @@ function loadComponentCode(
         if (value.name === 'PlaceholderComponent') continue;
         // Skip placeholder functions returned by proxy
         if ((value as any).displayName?.startsWith('Placeholder_')) continue;
-        result[key] = value;
+        // Dev-only: wrap component functions (uppercase, not classes) so
+        // render-phase setFormData calls can be attributed and warned about.
+        result[key] = WRAP_SANDBOX_COMPONENTS && /^[A-Z]/.test(key) && !value.prototype?.isReactComponent
+          ? wrapSandboxComponent(key, value as (...args: any[]) => any)
+          : value;
       }
       // Also include arrays and objects (shared data like firstNationEthnicityCodes)
       else if (Array.isArray(value) || (typeof value === 'object' && value !== null)) {

@@ -8,6 +8,7 @@
 import React, { createContext, useContext, useState, useCallback, useMemo, useRef, useSyncExternalStore } from 'react';
 import { produce, setAutoFreeze } from 'immer';
 import { normalizeAuthorshipStore, syncAuthorshipMirrors } from '../authorship';
+import { warnIfRenderPhaseWrite } from '../runtime/render-write-tripwire';
 
 // ============================================================================
 // Types
@@ -228,8 +229,14 @@ const applyFormDataUpdate = (prevState: FormDataState, updater: any): FormDataSt
       return prevState;
     }
   } else if (updater && typeof updater === 'object') {
-    // Plain object - shallow merge
-    newState = { ...prevState, ...updater };
+    // Plain object - shallow merge. Strip function-valued keys: callers that
+    // spread a normalized fd snapshot (`setFormData({...fd, ...})`) would
+    // otherwise persist the attached setFormData into state.
+    const sanitized: Record<string, any> = {};
+    for (const [key, value] of Object.entries(updater)) {
+      if (typeof value !== 'function') sanitized[key] = value;
+    }
+    newState = { ...prevState, ...sanitized };
   } else {
     return prevState;
   }
@@ -267,7 +274,22 @@ const BaseFormStateProvider = ({
     if (pendingUpdatesRef.current.length === 0) return;
     const updates = pendingUpdatesRef.current;
     pendingUpdatesRef.current = [];
-    setFormDataState(prev => updates.reduce((state, update) => applyFormDataUpdate(state, update), prev));
+    setFormDataState(prev => {
+      const result = updates.reduce((state, update) => applyFormDataUpdate(state, update), prev);
+      // TEMP DEBUG: log which keys changed per update cycle
+      if (process.env.NODE_ENV !== 'production' && result !== prev) {
+        const changed: string[] = [];
+        const a: any = prev.field?.data || {}; const b: any = result.field?.data || {};
+        for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) {
+          if (a[k] !== b[k]) changed.push(`field.data.${k}`);
+        }
+        if (prev.uiState !== result.uiState) changed.push('uiState');
+        if ((prev as any).tempArea !== (result as any).tempArea) changed.push('tempArea');
+        const updaterSigs = updates.map((u) => typeof u === 'function' ? String(u).replace(/\s+/g, ' ').slice(0, 160) : `object:${Object.keys(u || {}).slice(0, 5).join('|')}`);
+        console.debug(`[form-state DEBUG] changed: ${changed.slice(0, 12).join(',')}${changed.length > 12 ? ` (+${changed.length - 12})` : ''} :: updaters(${updates.length}): ${updaterSigs.slice(0, 3).join(' ;; ')}`);
+      }
+      return result;
+    });
   }, []);
 
   // Safety net: drain any pending updates whenever the provider commits.
@@ -287,6 +309,9 @@ const BaseFormStateProvider = ({
   // applyFormDataUpdate (result === prev), so write-on-render components reach
   // a fixed point. React 18+ batches the microtask flush like any other update.
   const setFormData = useCallback((updater: any) => {
+    if (process.env.NODE_ENV !== 'production') {
+      warnIfRenderPhaseWrite();
+    }
     pendingUpdatesRef.current.push(updater);
     queueMicrotask(flushPendingUpdates);
   }, [flushPendingUpdates]);

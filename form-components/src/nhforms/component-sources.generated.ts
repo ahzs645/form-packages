@@ -3150,16 +3150,13 @@ const ConditionalGroup = ({
   const handleControllerChange = useCallback((newValue) => {
     if (!fd?.setFormData) return
 
-    fd.setFormData({
-      ...fd,
-      field: {
-        ...fd.field,
-        data: {
-          ...fd.field?.data,
-          [controllerFieldId]: newValue,
-        },
-      },
-    })
+    // Produce recipe writing only this field — never spread the fd snapshot
+    // into setFormData (whole-state object payloads clobber concurrent writes).
+    fd.setFormData(produce((draft) => {
+      if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
+      if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
+      draft.field.data[controllerFieldId] = newValue
+    }))
   }, [fd, controllerFieldId])
 
   // Create child context
@@ -5384,47 +5381,44 @@ EditableTable = ({
       })
     })
 
-    const nextFieldData = {
-      ...fd.field?.data,
-      [id]: nextRows,
-    }
+    // Commit ONLY this table's keys through a produce recipe. Never spread the
+    // captured fd snapshot into setFormData: object payloads replace state
+    // wholesale, clobber concurrent writes from sibling components (two tables
+    // seeding on mount ping-ponged into a React #185 update loop), and bypass
+    // the no-op bailout that recipe writes get from immer.
+    fd.setFormData(produce((draft) => {
+      if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
+      if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
+      const data = draft.field.data
+      data[id] = nextRows
 
-    mirroredFieldIds.forEach((fieldId) => {
-      nextFieldData[fieldId] = null
-    })
-
-    ;(Array.isArray(nextRows) ? nextRows : []).forEach((row, rowIndex) => {
-      columns.forEach((column) => {
-        const sourceFieldId = getSourceFieldId(rowIndex, column.id)
-        if (!sourceFieldId) return
-        const rawValue = _getValueAtPath(row, column.dataPath || column.id)
-        nextFieldData[sourceFieldId] = _normalizeMirroredCellValue(rawValue, column)
+      mirroredFieldIds.forEach((fieldId) => {
+        data[fieldId] = null
       })
-    })
 
-    // Lock-on-edit: stamp the editing author's claim onto field.data.__authorship
-    // for this row, carried inside the same write. nhAuth.claim mutates the
-    // object we pass; nextFieldData is spread into the committed state below.
-    if (authorshipClaim && authorshipEnabled && authorshipClaim.rowId) {
-      nhAuth.claim(
-        { field: { data: nextFieldData } },
-        sd,
-        { scope: "row", componentId: id, rowKey: authorshipClaim.rowId },
-        authorshipClaim.value,
-        authorshipPolicy,
-        { now: sd?.previewOptions?.authorshipNow }
-      )
-    }
+      ;(Array.isArray(nextRows) ? nextRows : []).forEach((row, rowIndex) => {
+        columns.forEach((column) => {
+          const sourceFieldId = getSourceFieldId(rowIndex, column.id)
+          if (!sourceFieldId) return
+          const rawValue = _getValueAtPath(row, column.dataPath || column.id)
+          data[sourceFieldId] = _normalizeMirroredCellValue(rawValue, column)
+        })
+      })
 
-    fd.setFormData({
-      ...fd,
-      field: {
-        ...fd.field,
-        data: {
-          ...nextFieldData,
-        },
-      },
-    })
+      // Lock-on-edit: stamp the editing author's claim onto field.data.__authorship
+      // for this row, carried inside the same write. nhAuth.claim mutates the
+      // draft's data object in place.
+      if (authorshipClaim && authorshipEnabled && authorshipClaim.rowId) {
+        nhAuth.claim(
+          { field: { data } },
+          sd,
+          { scope: "row", componentId: id, rowKey: authorshipClaim.rowId },
+          authorshipClaim.value,
+          authorshipPolicy,
+          { now: sd?.previewOptions?.authorshipNow }
+        )
+      }
+    }))
   }
 
   const rows = getRows()
@@ -5444,6 +5438,7 @@ EditableTable = ({
       : initialSeedRows.length > 0
         ? initialSeedRows
         : Array.from({ length: initialRowCount }, (_, index) => _makeEmptyRow(columns, index))
+    console.debug(\`[EditableTable DEBUG] \${id} initial-seed firing\`)
     setRows(seededRows)
   }, [rows, isModalMode, initialSeedRows, initialRowCount, id, columns])
 
@@ -5453,7 +5448,11 @@ EditableTable = ({
     const existingRows = Array.isArray(rows) ? rows : []
     const hasMeaningfulRows = existingRows.some((row) => !_isRowEmpty(row, columns))
     if (hasMeaningfulRows) return
+    // Convergence guard: without it, content-identical reseeds (fresh array
+    // identity each time) rewrite state on every render and loop.
+    if (JSON.stringify(existingRows) === JSON.stringify(sourceSeedRows)) return
 
+    console.debug(\`[EditableTable DEBUG] \${id} source-seed firing; existing=\${JSON.stringify(existingRows).slice(0, 120)} source=\${JSON.stringify(sourceSeedRows).slice(0, 120)}\`)
     setRows(sourceSeedRows)
   }, [rows, columns, setRows, sourceSeedRows])
 
@@ -10469,12 +10468,14 @@ const HFC_PT_ASMT_SnapShot = (props) => {
     }
 
     const handleStateChange = (fieldData) =>{
-       fd.setFormData({
-       ...fd,
-          field: {
-        ...fd.field,
-        data: fieldData,
-      }})
+       // Produce recipe merging the changed keys — never spread the fd
+       // snapshot into setFormData (whole-state object payloads clobber
+       // concurrent writes from other components).
+       fd.setFormData(produce((draft) => {
+         if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
+         if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
+         Object.assign(draft.field.data, fieldData)
+       }))
     }
     
     function _onChoiceChange(opt,choice){
@@ -13253,16 +13254,14 @@ const fillAllUnfilledQuestions = (fd: ActiveDataType) => {
     }
   }
 
-  fd.setFormData({
-    ...fd,
-    field: {
-      ...fd.field,
-      data: {
-        ...fd.field.data,
-        ...forms,
-      },
-    },
-  })
+  // Produce recipe writing only the filled question keys — never spread the fd
+  // snapshot into setFormData (whole-state object payloads clobber concurrent
+  // writes from other components).
+  fd.setFormData(produce((draft) => {
+    if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
+    if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
+    Object.assign(draft.field.data, forms)
+  }))
 
 }
 
@@ -13375,16 +13374,13 @@ const handleChoiceChanged = (
 }
 
 const UpdateContext = (fd, id, values) => {
-  fd.setFormData({
-    ...fd,
-    field: {
-      ...fd.field,
-      data: {
-        ...fd.field.data,
-        [id]: values,
-      },
-    },
-  })
+  // Produce recipe writing only this question's key — never spread the fd
+  // snapshot into setFormData.
+  fd.setFormData(produce((draft) => {
+    if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
+    if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
+    draft.field.data[id] = values
+  }))
 }
 `,
   './HotspotMapField/index.jsx': `/**

@@ -5,10 +5,11 @@
  * while whole-state consumers (useActiveDataForForms) re-render on every
  * update as before.
  */
-import { describe, expect, it, beforeEach } from 'vitest';
+import { describe, expect, it, beforeEach, vi } from 'vitest';
 import React, { act } from 'react';
 import { createRoot, Root } from 'react-dom/client';
 import { LocalFormStateProvider, useActiveDataSlice, useActiveDataForForms } from '../form-state';
+import { wrapSandboxComponent } from '../../runtime/render-write-tripwire';
 
 const renderCounts: Record<string, number> = {};
 let capturedSetter: ((updater: any) => void) | null = null;
@@ -129,6 +130,37 @@ describe('form-state subscription store', () => {
     expect(container.querySelector('[data-id="always"]')!.textContent).toBe('same');
     // The idempotent re-write must no-op (immer bails) instead of looping.
     expect(renders).toBeLessThan(10);
+  });
+
+  it('warns (once) when a wrapped sandbox component writes during render', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const SandboxWriter = wrapSandboxComponent('SandboxWriter', () => {
+        const [fd, setFormData] = useActiveDataForForms();
+        if (!fd.field?.data?.sandboxInit) {
+          setFormData((draft: any) => {
+            draft.field.data.sandboxInit = true;
+          });
+        }
+        return React.createElement('span', { 'data-id': 'sandbox' }, String(fd.field?.data?.sandboxInit ?? false));
+      });
+
+      await act(async () => {
+        root.render(
+          React.createElement(LocalFormStateProvider, null, React.createElement(SandboxWriter, null))
+        );
+      });
+      await act(async () => {});
+
+      // Write still lands (deferred), and the tripwire warned exactly once
+      expect(container.querySelector('[data-id="sandbox"]')!.textContent).toBe('true');
+      const tripwireWarnings = warnSpy.mock.calls.filter(
+        (call) => typeof call[0] === 'string' && call[0].includes('SandboxWriter')
+      );
+      expect(tripwireWarnings.length).toBe(1);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it('keeps whole-state consumers re-rendering on every update', async () => {
