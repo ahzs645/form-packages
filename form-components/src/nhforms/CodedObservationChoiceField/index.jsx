@@ -140,6 +140,7 @@ const CodedObservationChoiceField = ({
   codeSystem = "",
   optionList = [],
   observationCode = "",
+  loincCode = "",
   valueType = "TEXT",
   description,
   reportTemplate = "{display}",
@@ -187,6 +188,7 @@ const CodedObservationChoiceField = ({
     setCodedChoicePayload(setFormData, componentId, [{
       observationId: oldId,
       observationCode,
+      ...(loincCode ? { loincCode } : {}),
       observationClass: "DCOBS",
       value: String(value ?? ""),
       valueType,
@@ -198,7 +200,7 @@ const CodedObservationChoiceField = ({
       collectedBy: createdBy,
       collectedDateTime: getDateTimeString(new Date()),
     }])
-  }, [codings, commentValue, componentId, createdBy, description, label, multiSaveMode, observationCode, reportTemplate, sd, setFormData, valueType])
+  }, [codings, commentValue, componentId, createdBy, description, label, loincCode, multiSaveMode, observationCode, reportTemplate, sd, setFormData, valueType])
 
   const effectiveRenderAs = renderAs || choiceStyle || "dropdown"
   const isMultiple =
