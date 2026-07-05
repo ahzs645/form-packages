@@ -13207,7 +13207,7 @@ const Scale5ToolTip = props => {
 }
 
 const HonosFinalScore = props => {
-  const [fd] = useActiveData()
+  const [fd, setFd] = useActiveData()
   const questionIds = Array.isArray(props.questionIds) ? props.questionIds : []
   const scoredQuestionIds = Array.isArray(props.scoredQuestionIds) ? props.scoredQuestionIds : questionIds
   const calculatedTotal = scoredQuestionIds.reduce((total, questionId) => {
@@ -13216,6 +13216,20 @@ const HonosFinalScore = props => {
     return Number.isFinite(numericValue) ? total + numericValue : total
   }, 0)
   const totalScore = typeof props.totalScore === "number" ? props.totalScore : calculatedTotal
+
+  // Persist the total under this field's id so submit payloads (calculatedUpdate
+  // and observation mappings reading the field) carry the score — display alone
+  // left the persisted value permanently empty.
+  const targetFieldId = props.fieldId ?? props.id
+  useEffect(() => {
+    if (!targetFieldId || typeof setFd !== "function") return
+    setFd((draft) => {
+      if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
+      if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
+      if (draft.field.data[targetFieldId] === totalScore) return
+      draft.field.data[targetFieldId] = totalScore
+    })
+  }, [targetFieldId, setFd, totalScore])
   const finalScoreStyle = {
     margin: "0px 0px 15px 0px",
   }
