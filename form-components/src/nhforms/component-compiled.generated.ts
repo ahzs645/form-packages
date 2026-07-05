@@ -3338,6 +3338,29 @@ const checkComparisonMatch = (fieldValue, operator, expectedValue) => {
 };
 
 /**
+ * Evaluate one multi-condition entry ({controllerFieldId, type, optionValues?, value?})
+ * against a field-value getter. Mirrors the builder's FieldLinkCondition types;
+ * kept module-level (pure) so the node test harness can execute it directly.
+ */
+const evaluateConditionEntry = (entry, getFieldValue) => {
+  if (!entry || !entry.controllerFieldId || !entry.type) return false;
+  const fieldValue = getFieldValue(entry.controllerFieldId);
+  const type = entry.type;
+  if (type === 'choice-selected') return checkChoiceMatch(fieldValue, entry.optionValues ?? [], false);
+  if (type === 'choice-not-selected') return checkChoiceMatch(fieldValue, entry.optionValues ?? [], true);
+  if (type === 'boolean-yes') return checkControllerMatch(fieldValue, 'yes');
+  if (type === 'boolean-no') return checkControllerMatch(fieldValue, 'no');
+  // equals / not-equals / filled / empty / number-* share the comparison matcher.
+  return checkComparisonMatch(fieldValue, type, entry.value);
+};
+
+/** Combine entries with match='all' (default) or 'any'. Empty entries = no match. */
+const evaluateConditionEntries = (entries, match, getFieldValue) => {
+  if (!Array.isArray(entries) || entries.length === 0) return false;
+  return match === 'any' ? entries.some(entry => evaluateConditionEntry(entry, getFieldValue)) : entries.every(entry => evaluateConditionEntry(entry, getFieldValue));
+};
+
+/**
  * ConditionalField - A field wrapper with visibility rules
  *
  * @param {Object} props
@@ -3360,6 +3383,8 @@ const ConditionalField = ({
   optionValues,
   operator,
   compareValue,
+  conditions,
+  match = 'all',
   invertMatch = false,
   showWhenNull = false,
   containerStyle,
@@ -3375,6 +3400,10 @@ const ConditionalField = ({
   if (mode === 'always') {
     // Always visible regardless of parent gates
     isVisible = true;
+  } else if (mode === 'controller' && Array.isArray(conditions) && conditions.length > 0) {
+    // Multi-condition rules (any/all over several controllers).
+    const matches = evaluateConditionEntries(conditions, match, id => readControllerValue(fd?.field?.data, id));
+    isVisible = invertMatch ? !matches : matches;
   } else if (mode === 'controller' && controllerFieldId) {
     const controllerValue = readControllerValue(fd?.field?.data, controllerFieldId);
 
@@ -28660,7 +28689,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './CommonSchemaDefn/index.jsx': ["NameBlockFields","active","commonSchemaDefn","formHistorySchema","makeCodedObsUpdates","makeObsUpdatesFromVs","makeTextObsUpdates","makeValueSetOptions","nameBlockSchema","newDco","oldObs","oldObsId","options","selectAll","startDateDesc","valueSet","vso","ynuaOptions"],
   './CompactBooleanField/index.jsx': ["BooleanLabelPresets","CompactBooleanChecklist","CompactBooleanChecklistSchema","CompactBooleanField","CompactBooleanFieldSchema","CompactBooleanGroup","CompactChoiceField","CompactChoiceFieldMultiSchema","CompactChoiceFieldSchema","OptionButtons","YesNoButtons","baseContainerStyle","buttonStyle","checkboxWrapperRef","choiceContent","commitValue","containerStyle","currentData","currentValue","data","decodePDFHex","decoded","fieldContent","getBooleanLabels","getButtonStyles","getCardContainerStyles","getFieldContainerStyles","getWidthStyle","handleChange","handleCheckboxChange","handleClick","handleNoClick","handleYesClick","input","isDarkMode","isDisabled","isHorizontal","isLast","isLeftLabel","isMultiple","isSelected","labelStyle","lastRowStyle","newValues","noButtonStyle","normalizeValue","normalized","normalizedValue","noteStyle","prevDecoded","rowStyle","selected","selectedValues","setFormData","sizeStyles","theme","themeLabelMaxWidth","themeLabelMinWidth","titleStyle","values","widthMap","yesButtonStyle"],
   './ComputedField/index.jsx': ["ComputedField","_COMPUTED_REF_PATTERN","_MS_PER_DAY","_contains","_countTrue","_daysSince","_escapeRegExp","_evaluateComputedExpression","_extractComputedReferences","_getInterpretationRange","_hasAllReferencedValues","_hasValue","_iif","_isSafeComputedExpression","_monthsSince","_replaceBareReferencesOutsideQuotes","_roundComputedValue","_score","_stripQuotedStrings","_toComparableValue","_toDateValue","_toDisplayValue","_toNumericValue","bareRefs","bracketedRefs","canShowInterpretation","candidate","computedValue","cursor","date","dateOnly","direct","displayValue","interpretationRange","max","min","months","nextSegment","numeric","parsed","passesMax","passesMin","prepared","reference","refs","replaceInSegment","replaced","result","rounded","roundedValue","start","storedValue","stringPattern","strippedExpression","tail","trimmed","uniqueBareRefs","uniqueBracketedRefs","unwrappedExpression","valuesByFieldId"],
-  './ConditionalGroup/index.jsx': ["ConditionalField","ConditionalGroup","ConditionalGroupSchema","ControllerLabelPresets","LogicGateContext","LogicGateProvider","MAX_SUBGROUP_DEPTH","allParentsVisible","baseContainerStyle","baseContentStyle","checkChoiceMatch","checkComparisonMatch","checkControllerMatch","childContext","clippedField","containerStyle","contentNode","contentRef","contentStyle","context","contextValue","controllerFieldId","controllerValue","controllerWrapperStyle","createBranchingRule","currentDepth","defaultPadding","depthIndicatorStyle","effectiveValue","fieldValues","frame","generateConditionalGroupJSX","generateGroup","getControllerValue","groupRect","handleControllerChange","hasMatch","hiddenIndicatorStyle","indent","isDarkMode","isGroupVisible","isVisible","jsx","left","matches","mergeStyles","nestedValue","normalizeComparableValue","normalizeComparableValues","normalizeValue","normalized","normalizedOptionValues","parentChain","parentContext","props","readControllerValue","rect","reportOverflow","result","right","rule","rules","theme","titleStyle","useConditionalVisibility","useIsVisible","useLogicGate"],
+  './ConditionalGroup/index.jsx': ["ConditionalField","ConditionalGroup","ConditionalGroupSchema","ControllerLabelPresets","LogicGateContext","LogicGateProvider","MAX_SUBGROUP_DEPTH","allParentsVisible","baseContainerStyle","baseContentStyle","checkChoiceMatch","checkComparisonMatch","checkControllerMatch","childContext","clippedField","containerStyle","contentNode","contentRef","contentStyle","context","contextValue","controllerFieldId","controllerValue","controllerWrapperStyle","createBranchingRule","currentDepth","defaultPadding","depthIndicatorStyle","effectiveValue","evaluateConditionEntries","evaluateConditionEntry","fieldValue","fieldValues","frame","generateConditionalGroupJSX","generateGroup","getControllerValue","groupRect","handleControllerChange","hasMatch","hiddenIndicatorStyle","indent","isDarkMode","isGroupVisible","isVisible","jsx","left","matches","mergeStyles","nestedValue","normalizeComparableValue","normalizeComparableValues","normalizeValue","normalized","normalizedOptionValues","parentChain","parentContext","props","readControllerValue","rect","reportOverflow","result","right","rule","rules","theme","titleStyle","type","useConditionalVisibility","useIsVisible","useLogicGate"],
   './Conditions/index.jsx': ["Conditions","ConditionsFields"],
   './Connections/index.jsx': ["Connections","ConnectionsFields","SelectActiveConnections"],
   './ConversionField/index.jsx': ["ConversionField","ConversionFieldSchema","_asPositiveNumber","_asPrecision","_conversionPathSegments","_normalizeConversionRows","_readConversionPath","_readConversionValue","_sanitizeConversionNumber","activeFrom","activeTo","canUseFrom","canUseTo","char","clearValues","convertRow","current","fromValue","hasAnyValue","hasDecimal","index","lastEdited","lastEditedRef","next","nextValue","normalizedFromFieldId","normalizedToFieldId","parsed","parsedFrom","parsedTo","pathValue","rows","segments","setConversionValues","source","sourceFieldId","text","toValue","updateValue","updates"],

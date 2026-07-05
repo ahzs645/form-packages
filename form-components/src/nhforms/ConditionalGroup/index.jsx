@@ -520,6 +520,31 @@ const checkComparisonMatch = (fieldValue, operator, expectedValue) => {
 }
 
 /**
+ * Evaluate one multi-condition entry ({controllerFieldId, type, optionValues?, value?})
+ * against a field-value getter. Mirrors the builder's FieldLinkCondition types;
+ * kept module-level (pure) so the node test harness can execute it directly.
+ */
+const evaluateConditionEntry = (entry, getFieldValue) => {
+  if (!entry || !entry.controllerFieldId || !entry.type) return false
+  const fieldValue = getFieldValue(entry.controllerFieldId)
+  const type = entry.type
+  if (type === 'choice-selected') return checkChoiceMatch(fieldValue, entry.optionValues ?? [], false)
+  if (type === 'choice-not-selected') return checkChoiceMatch(fieldValue, entry.optionValues ?? [], true)
+  if (type === 'boolean-yes') return checkControllerMatch(fieldValue, 'yes')
+  if (type === 'boolean-no') return checkControllerMatch(fieldValue, 'no')
+  // equals / not-equals / filled / empty / number-* share the comparison matcher.
+  return checkComparisonMatch(fieldValue, type, entry.value)
+}
+
+/** Combine entries with match='all' (default) or 'any'. Empty entries = no match. */
+const evaluateConditionEntries = (entries, match, getFieldValue) => {
+  if (!Array.isArray(entries) || entries.length === 0) return false
+  return match === 'any'
+    ? entries.some((entry) => evaluateConditionEntry(entry, getFieldValue))
+    : entries.every((entry) => evaluateConditionEntry(entry, getFieldValue))
+}
+
+/**
  * ConditionalField - A field wrapper with visibility rules
  *
  * @param {Object} props
@@ -542,6 +567,8 @@ const ConditionalField = ({
   optionValues,
   operator,
   compareValue,
+  conditions,
+  match = 'all',
   invertMatch = false,
   showWhenNull = false,
   containerStyle,
@@ -558,6 +585,10 @@ const ConditionalField = ({
   if (mode === 'always') {
     // Always visible regardless of parent gates
     isVisible = true
+  } else if (mode === 'controller' && Array.isArray(conditions) && conditions.length > 0) {
+    // Multi-condition rules (any/all over several controllers).
+    const matches = evaluateConditionEntries(conditions, match, (id) => readControllerValue(fd?.field?.data, id))
+    isVisible = invertMatch ? !matches : matches
   } else if (mode === 'controller' && controllerFieldId) {
     const controllerValue = readControllerValue(fd?.field?.data, controllerFieldId)
 
