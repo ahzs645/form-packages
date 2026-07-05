@@ -51,6 +51,6 @@ export const warnIfRenderPhaseWrite = (): void => {
   console.warn(
     `[form-state] setFormData called during render of NHForms component "${name}". ` +
     'The write is deferred and safe, but it causes extra state churn — move it to ' +
-    'useOnLoad/useEffect or an event handler. See docs/nhforms-performance-architecture.md.'
+    'useOnLoad/useEffect or an event handler. See docs/starlight/src/content/docs/developers/nhforms-performance-architecture.md.'
   );
 };
