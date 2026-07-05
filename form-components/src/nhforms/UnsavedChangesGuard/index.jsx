@@ -336,6 +336,22 @@ const UnsavedChangesGuard = ({
     }
 
     const persistAction = actionId === "sign" ? "sign" : actionId === "submit" ? "submit" : "save"
+    // Encounter-note writes: the generated form registers a direct-mutation
+    // flush (window.__builderEncounterNoteFlush — same handshake pattern as
+    // window.__nhAuth) because the engine's save payload does not consume
+    // encounter notes. Flush before submit-like persists so the note lands
+    // with the signed/submitted document.
+    if (
+      (actionId === "sign" || actionId === "submit") &&
+      typeof window !== "undefined" &&
+      typeof window.__builderEncounterNoteFlush === "function"
+    ) {
+      try {
+        await window.__builderEncounterNoteFlush()
+      } catch (error) {
+        // best-effort: note failures surface via the form's errorDispatch
+      }
+    }
     const prepared = nhAuthPrepareSave(persistFd, persistAction)
     // Sign/submit should persist the full submit payload (mapped
     // observation updates, document comment) when the form provides it.
