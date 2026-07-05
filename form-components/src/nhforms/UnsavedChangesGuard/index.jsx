@@ -49,7 +49,7 @@ const normalizeFooterActions = (actions, dialogLibraryId, showPrintButton) => {
         id: action.id,
         label: typeof action.label === "string" && action.label.trim() ? action.label.trim() : action.id,
         primary: action.primary === true,
-        disabledWhenSigned: action.disabledWhenSigned === true,
+        disabledWhenSigned: action.disabledWhenSigned === true || action.id === "submit",
         hiddenWhenSigned: action.hiddenWhenSigned === true,
       }))
   }
@@ -335,11 +335,12 @@ const UnsavedChangesGuard = ({
       })
     }
 
-    const persistAction = actionId === "sign" ? "sign" : "save"
+    const persistAction = actionId === "sign" ? "sign" : actionId === "submit" ? "submit" : "save"
     const prepared = nhAuthPrepareSave(persistFd, persistAction)
-    // Sign-and-submit should persist the full submit payload (mapped
+    // Sign/submit should persist the full submit payload (mapped
     // observation updates, document comment) when the form provides it.
-    const payload = actionId === "sign" && typeof getSubmitData === "function"
+    const isSubmitAction = actionId === "sign" || actionId === "submit"
+    const payload = isSubmitAction && typeof getSubmitData === "function"
       ? getSubmitData(prepared)
       : typeof getSaveData === "function"
         ? getSaveData(prepared)
@@ -355,12 +356,18 @@ const UnsavedChangesGuard = ({
       return
     }
 
-    if (actionId === "sign" && typeof saveSubmit === "function") {
+    if (isSubmitAction && typeof saveSubmit === "function") {
+      // Real MOIS saveSubmit is (sd, fd, options); it has no note argument.
       const success = await saveSubmit(sd, persistFd, payload)
       if (success !== false) nhAuthCommitSave(prepared)
       markSaved(prepared?.nextState?.field?.data ?? prepared?.formData ?? payload?.formData)
       setIsOpen(false)
       if (success !== false) closeWindow()
+      return
+    }
+
+    if (actionId === "submit") {
+      setIsOpen(false)
       return
     }
 

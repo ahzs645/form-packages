@@ -2590,10 +2590,42 @@ const _toComparableValue = value => {
   if (value === undefined || value === null) return "";
   if (typeof value === "number" || typeof value === "boolean" || typeof value === "string") return value;
   if (Array.isArray(value)) return value.map(_toComparableValue);
+  if (value instanceof Date) return Number.isFinite(value.getTime()) ? value.toISOString() : "";
   if (typeof value === "object") {
-    return value.value ?? value.selectedKey ?? value.display ?? value.text ?? value.code ?? value.key ?? value.response ?? "";
+    return value.value ?? value.selectedKey ?? value.date ?? value.display ?? value.text ?? value.code ?? value.key ?? value.response ?? "";
   }
   return String(value);
+};
+const _toDateValue = value => {
+  if (value === undefined || value === null || value === "") return null;
+  if (value instanceof Date) {
+    return Number.isFinite(value.getTime()) ? value : null;
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return null;
+    const date = new Date(value);
+    return Number.isFinite(date.getTime()) ? date : null;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    // ISO date-only strings parse as UTC midnight; local getters then read the
+    // previous day in negative-offset timezones. Parse them as calendar dates.
+    const dateOnly = /^(\\d{4})-(\\d{2})-(\\d{2})$/.exec(trimmed);
+    if (dateOnly) {
+      const date = new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]));
+      return Number.isFinite(date.getTime()) ? date : null;
+    }
+    const date = new Date(trimmed);
+    return Number.isFinite(date.getTime()) ? date : null;
+  }
+  if (typeof value === "object") {
+    for (const key of ["value", "date", "text", "display"]) {
+      const date = _toDateValue(value[key]);
+      if (date) return date;
+    }
+  }
+  return null;
 };
 const _score = (value, scoreMap) => {
   const candidate = _toComparableValue(value);
@@ -2620,6 +2652,23 @@ const _hasValue = value => {
 };
 const _iif = (condition, whenTrue, whenFalse) => condition ? whenTrue : whenFalse;
 const _countTrue = (...values) => values.flat().filter(value => value === true || value === "true" || value === "Y" || value === "Yes" || value === 1).length;
+const _MS_PER_DAY = 24 * 60 * 60 * 1000;
+const _daysSince = (value, ref) => {
+  const date = _toDateValue(value);
+  if (!date) return null;
+  const reference = ref === undefined ? new Date() : _toDateValue(ref);
+  if (!reference) return null;
+  return Math.floor((reference.getTime() - date.getTime()) / _MS_PER_DAY);
+};
+const _monthsSince = (value, ref) => {
+  const date = _toDateValue(value);
+  if (!date) return null;
+  const reference = ref === undefined ? new Date() : _toDateValue(ref);
+  if (!reference) return null;
+  let months = (reference.getFullYear() - date.getFullYear()) * 12 + (reference.getMonth() - date.getMonth());
+  if (reference.getDate() < date.getDate()) months -= 1;
+  return months;
+};
 
 // A field reference is \`[field-id]\`, and ids are slugified to id-safe
 // characters. Restricting the class (rather than \`[^\\]]+\`) keeps JSON array
@@ -2640,7 +2689,7 @@ const _replaceBareReferencesOutsideQuotes = (expression, refs, valuesByFieldId) 
   const replaceInSegment = segment => {
     let nextSegment = segment;
     for (const ref of refs) {
-      if (["iif", "score", "contains", "hasValue", "countTrue", "null", "true", "false"].includes(ref)) continue;
+      if (["iif", "score", "contains", "hasValue", "countTrue", "daysSince", "monthsSince", "null", "true", "false"].includes(ref)) continue;
       const numeric = _toNumericValue(valuesByFieldId?.[ref]);
       if (!Number.isFinite(numeric)) return null;
       nextSegment = nextSegment.replace(new RegExp(\`\\\\b\${_escapeRegExp(ref)}\\\\b\`, "g"), String(numeric));
@@ -2688,7 +2737,7 @@ const _evaluateComputedExpression = (expression, valuesByFieldId, currentFieldId
   prepared = _replaceBareReferencesOutsideQuotes(prepared, uniqueBareRefs, valuesByFieldId);
   if (prepared === null) return null;
   try {
-    const result = Function("iif", "score", "contains", "hasValue", "countTrue", \`"use strict"; return (\${prepared});\`)(_iif, _score, _contains, _hasValue, _countTrue);
+    const result = Function("iif", "score", "contains", "hasValue", "countTrue", "daysSince", "monthsSince", \`"use strict"; return (\${prepared});\`)(_iif, _score, _contains, _hasValue, _countTrue, _daysSince, _monthsSince);
     if (typeof result === "number") return Number.isFinite(result) ? result : null;
     if (typeof result === "string" || typeof result === "boolean") return result;
     return null;
@@ -27926,7 +27975,7 @@ const normalizeFooterActions = (actions, dialogLibraryId, showPrintButton) => {
       id: action.id,
       label: typeof action.label === "string" && action.label.trim() ? action.label.trim() : action.id,
       primary: action.primary === true,
-      disabledWhenSigned: action.disabledWhenSigned === true,
+      disabledWhenSigned: action.disabledWhenSigned === true || action.id === "submit",
       hiddenWhenSigned: action.hiddenWhenSigned === true
     }));
   }
@@ -28210,11 +28259,12 @@ const UnsavedChangesGuard = ({
         Object.assign(draft.formData, domFieldValues);
       });
     }
-    const persistAction = actionId === "sign" ? "sign" : "save";
+    const persistAction = actionId === "sign" ? "sign" : actionId === "submit" ? "submit" : "save";
     const prepared = nhAuthPrepareSave(persistFd, persistAction);
-    // Sign-and-submit should persist the full submit payload (mapped
+    // Sign/submit should persist the full submit payload (mapped
     // observation updates, document comment) when the form provides it.
-    const payload = actionId === "sign" && typeof getSubmitData === "function" ? getSubmitData(prepared) : typeof getSaveData === "function" ? getSaveData(prepared) : buildDefaultSavePayload(persistFd, prepared?.formData);
+    const isSubmitAction = actionId === "sign" || actionId === "submit";
+    const payload = isSubmitAction && typeof getSubmitData === "function" ? getSubmitData(prepared) : typeof getSaveData === "function" ? getSaveData(prepared) : buildDefaultSavePayload(persistFd, prepared?.formData);
     if (actionId === "sign" && typeof signSubmit === "function") {
       // Real MOIS signSubmit is (note, sd, fd, options)
       const success = await signSubmit("", sd, persistFd, payload);
@@ -28224,12 +28274,17 @@ const UnsavedChangesGuard = ({
       if (success !== false) closeWindow();
       return;
     }
-    if (actionId === "sign" && typeof saveSubmit === "function") {
+    if (isSubmitAction && typeof saveSubmit === "function") {
+      // Real MOIS saveSubmit is (sd, fd, options); it has no note argument.
       const success = await saveSubmit(sd, persistFd, payload);
       if (success !== false) nhAuthCommitSave(prepared);
       markSaved(prepared?.nextState?.field?.data ?? prepared?.formData ?? payload?.formData);
       setIsOpen(false);
       if (success !== false) closeWindow();
+      return;
+    }
+    if (actionId === "submit") {
+      setIsOpen(false);
       return;
     }
     if (typeof saveDraft === "function") {
@@ -28604,7 +28659,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './CodedObservationChoiceField/index.jsx': ["CodedObservationChoiceField","candidates","checklistOptions","code","codedChoicePayloadsEqual","codings","commentValue","componentId","container","createdBy","currentPayload","display","effectiveFieldId","effectiveRenderAs","effectiveSelectionType","findExistingObservationId","formatCodedChoiceReport","fromContext","handleFindCodeChange","isMultiple","match","nextGroup","normalizeCodedChoiceOptions","normalizeSelectedCodings","oldId","option","options","report","sd","selectOptions","selectedValue","setCodedChoicePayload","stripVolatileCodedChoicePayloadFields","value","values","writeCodedChoiceValue"],
   './CommonSchemaDefn/index.jsx': ["NameBlockFields","active","commonSchemaDefn","formHistorySchema","makeCodedObsUpdates","makeObsUpdatesFromVs","makeTextObsUpdates","makeValueSetOptions","nameBlockSchema","newDco","oldObs","oldObsId","options","selectAll","startDateDesc","valueSet","vso","ynuaOptions"],
   './CompactBooleanField/index.jsx': ["BooleanLabelPresets","CompactBooleanChecklist","CompactBooleanChecklistSchema","CompactBooleanField","CompactBooleanFieldSchema","CompactBooleanGroup","CompactChoiceField","CompactChoiceFieldMultiSchema","CompactChoiceFieldSchema","OptionButtons","YesNoButtons","baseContainerStyle","buttonStyle","checkboxWrapperRef","choiceContent","commitValue","containerStyle","currentData","currentValue","data","decodePDFHex","decoded","fieldContent","getBooleanLabels","getButtonStyles","getCardContainerStyles","getFieldContainerStyles","getWidthStyle","handleChange","handleCheckboxChange","handleClick","handleNoClick","handleYesClick","input","isDarkMode","isDisabled","isHorizontal","isLast","isLeftLabel","isMultiple","isSelected","labelStyle","lastRowStyle","newValues","noButtonStyle","normalizeValue","normalized","normalizedValue","noteStyle","prevDecoded","rowStyle","selected","selectedValues","setFormData","sizeStyles","theme","themeLabelMaxWidth","themeLabelMinWidth","titleStyle","values","widthMap","yesButtonStyle"],
-  './ComputedField/index.jsx': ["ComputedField","_COMPUTED_REF_PATTERN","_contains","_countTrue","_escapeRegExp","_evaluateComputedExpression","_extractComputedReferences","_getInterpretationRange","_hasAllReferencedValues","_hasValue","_iif","_isSafeComputedExpression","_replaceBareReferencesOutsideQuotes","_roundComputedValue","_score","_stripQuotedStrings","_toComparableValue","_toDisplayValue","_toNumericValue","bareRefs","bracketedRefs","canShowInterpretation","candidate","computedValue","cursor","direct","displayValue","interpretationRange","max","min","nextSegment","numeric","parsed","passesMax","passesMin","prepared","refs","replaceInSegment","replaced","result","rounded","roundedValue","start","storedValue","stringPattern","strippedExpression","tail","trimmed","uniqueBareRefs","uniqueBracketedRefs","unwrappedExpression","valuesByFieldId"],
+  './ComputedField/index.jsx': ["ComputedField","_COMPUTED_REF_PATTERN","_MS_PER_DAY","_contains","_countTrue","_daysSince","_escapeRegExp","_evaluateComputedExpression","_extractComputedReferences","_getInterpretationRange","_hasAllReferencedValues","_hasValue","_iif","_isSafeComputedExpression","_monthsSince","_replaceBareReferencesOutsideQuotes","_roundComputedValue","_score","_stripQuotedStrings","_toComparableValue","_toDateValue","_toDisplayValue","_toNumericValue","bareRefs","bracketedRefs","canShowInterpretation","candidate","computedValue","cursor","date","dateOnly","direct","displayValue","interpretationRange","max","min","months","nextSegment","numeric","parsed","passesMax","passesMin","prepared","reference","refs","replaceInSegment","replaced","result","rounded","roundedValue","start","storedValue","stringPattern","strippedExpression","tail","trimmed","uniqueBareRefs","uniqueBracketedRefs","unwrappedExpression","valuesByFieldId"],
   './ConditionalGroup/index.jsx': ["ConditionalField","ConditionalGroup","ConditionalGroupSchema","ControllerLabelPresets","LogicGateContext","LogicGateProvider","MAX_SUBGROUP_DEPTH","allParentsVisible","baseContainerStyle","baseContentStyle","checkChoiceMatch","checkComparisonMatch","checkControllerMatch","childContext","clippedField","containerStyle","contentNode","contentRef","contentStyle","context","contextValue","controllerFieldId","controllerValue","controllerWrapperStyle","createBranchingRule","currentDepth","defaultPadding","depthIndicatorStyle","effectiveValue","fieldValues","frame","generateConditionalGroupJSX","generateGroup","getControllerValue","groupRect","handleControllerChange","hasMatch","hiddenIndicatorStyle","indent","isDarkMode","isGroupVisible","isVisible","jsx","left","matches","mergeStyles","nestedValue","normalizeComparableValue","normalizeComparableValues","normalizeValue","normalized","normalizedOptionValues","parentChain","parentContext","props","readControllerValue","rect","reportOverflow","result","right","rule","rules","theme","titleStyle","useConditionalVisibility","useIsVisible","useLogicGate"],
   './Conditions/index.jsx': ["Conditions","ConditionsFields"],
   './Connections/index.jsx': ["Connections","ConnectionsFields","SelectActiveConnections"],
@@ -28654,7 +28709,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './ServiceRequests/index.jsx': ["ServiceRequests","ServiceRequestsFields","activeServiceRequests","orderDateDesc"],
   './SignaturePad/index.jsx': ["B","D","L","O","SignaturePad","SignaturePadLib","T","U","W","_","__exports","a","c","canvas","canvasRef","container","containerRef","containerStyle","dataUrl","define","e","exports","f","h","handleClear","handleEndStroke","i","k","l","m","module","o","p","pad","padRef","r","ratio","readOnlyImageStyle","resizeCanvas","s","savedDataUrl","t","theme","u","width","y"],
   './SubformScoring/index.jsx': ["AnswerSummaryItem","CalculationSummaryItem","DataFieldSummaryItem","DataInterpretationSummaryItem","FormSessionProvider","InterpretationSummaryItem","MOIS_WRITE_ID_FALLBACK_PATHS","MOIS_WRITE_MUTATIONS","MOIS_WRITE_MUTATION_KEYS","ProgressSummaryItem","ScoreSummaryItem","SubformScoring","SubformScoringInner","_LOCAL_INPUT_STYLE","_LOCAL_RADIO_GROUP_STYLE","_LOCAL_TEXTAREA_STYLE","__SubformScoringSessionContext","__cloneSubformScoringSessionValue","_buildDataEntryRenderGroups","_buildMappedPayload","_buildScaleLegendSignature","_buildScaleOptions","_buildScoreMap","_collectScoreCandidates","_computeMorphineEquivalent","_evaluateDataEntryVisibility","_evaluateExpression","_formatBounds","_formatCalculatorDisplayValue","_formatNumericValue","_getInterpretation","_getScoreFromValue","_getSelectableOptionNumericValue","_getValueAtPath","_isHeadingField","_isInRange","_isMeaningfulValue","_isScaleChoiceSelected","_isSelectableOptionSelected","_normalizeChartPreferenceValue","_normalizeScoreToken","_normalizeSelectableOptions","_optionMatchesValue","_recordSubformActionPayload","_resolveChecklistOptions","_resolveFieldDefaultValue","_resolveFieldEmptyNumericValue","_resolveFieldWidthBasis","_resolvePathValue","_resolveQuestionOptions","_resolveSelectableBinaryOptions","_resolveWriteActionId","_serializeSelectableValue","_toDisplayValue","_toNumericValue","_toPathSegments","_usesStructuredSelectableOptions","action","actionPayload","answer","answerScore","answerableFields","answered","answers","barBg","barFill","baseDose","baseEquivalentDoseMg","baseEquivalentDoseRaw","basis","boundedPrecision","buttonRowStyle","cadFieldId","calc","calculatedExpressions","calculatedTotals","calculation","calculatorFields","candidate","candidateKeys","candidatePaths","candidates","checked","checkedFromConfig","checkedOption","checklist","cloneFormSessionState","columnTemplate","commentsField","commonProps","computedFallback","configuredField","container","containerStyle","controlLabel","controllerId","conversions","current","currentSignature","cursor","dataEntryAction","dataEntryCalculations","dataEntryCalculatorConfig","dataEntryFieldById","dataEntryFields","dataEntryRenderGroups","dataEntryValues","dateField","day","defaultValue","defaults","description","dialogContentProps","dialogMinWidth","dialogTitle","direct","displayText","displayValue","dose","doseColumnLabel","effectiveInitialData","entry","equivalentColumnLabel","equivalentDose","equivalentDoseMg","explicitDefault","extracted","fallbackOptions","field","fieldExists","fields","fieldsForProgress","flushMatrixBuffer","formatted","fromCalculation","getCalculationConfig","getDataEntryFieldConfig","getQuestionConfig","getTotalConfig","groups","handleCommitToParent","handleOpenChange","hasAnyAnswers","hasAnyRowValue","hasExternalDataEntryStore","hasRequiredId","history","inputFieldId","inputType","inputValue","interpretation","isComplete","isDarkMode","isDataEntryMode","isDialogOpen","isHeading","isMatrixCandidate","isMorphineCalculatorMode","key","label","labelStyle","left","map","matchedOption","matrixBuffer","matrixGroupId","max","meetsMax","meetsMin","meqCalculationId","meqDisplay","meqValue","mergeFormSessionState","min","minSymbol","modalProps","month","next","nextGroup","nextKey","nextOption","nextRaw","nextState","normalize","normalized","normalizedButtonIconName","normalizedOptionMap","normalizedOptions","normalizedSessionData","normalizedType","numeric","numericValue","option","optionList","optionMap","optionScoreMap","optionTokens","optionValue","options","parsed","payload","payloadMap","pendingDefaults","precision","precisionRaw","prepared","prevIndex","previousEntry","previousField","previousScaleSignature","progress","providedOptions","question","questionOptions","questionsById","rawConfig","rawOptions","rawRows","rawType","rawValue","renderBloodGlucoseReadingEditor","renderDataEntryField","renderDataEntryScaleMatrix","renderMorphineCalculator","renderNumberInput","renderStyle","renderSummaryItem","replacement","required","requiredFields","resolved","resolvedId","response","result","resultColumnLabel","results","right","root","rowId","rowLabels","rowValues","rows","rule","runMutation","runtime","scaleOptions","scopedSetter","score","scoreMap","sd","segments","selected","selectedOption","selectedWithSetter","sessionContext","sessionSetFormData","sessionState","setDataEntryValue","setDialogOpen","setFormData","shouldClose","shouldHideButtonIcon","shouldUseDefaultButtonIcon","showCalculationsInModal","showItems","showLegend","showLegendForScale","signature","step","style","summaryContainerStyle","summaryItemsStyle","summaryLayout","target","termQuestionId","text","theme","today","token","tokenMatches","total","totalCalculationId","totalFallback","totalFromCalculation","totalLabel","totalValue","totals","triggerButtonIconProps","trimmed","uncheckedFromConfig","uncheckedOption","uniqueTokens","usFieldId","useBloodGlucoseReadingLayout","useFormSessionData","useRadio","useToggleSwitch","value","variableFieldIds","variables","vars","writeDefinition","writeKey","writeMutationRunners","year"],
-  './UnsavedChangesGuard/index.jsx': ["ButtonComponent","DCOUpdates","DEFAULT_WINDOW_HOURS","UnsavedChangesGuard","actionItems","actor","actorFrom","addHoursIso","baselineRef","buildDefaultSavePayload","buildKey","c","changed","ck","claim","claims","closeWindow","collectComponentPayloads","collectDomFieldValues","commitSave","componentPayload","confirmUnloadActive","current","d","data","dcoGroups","disabled","domFieldValues","editableUntil","euDate","existing","expired","field","fieldData","fieldId","footerActionItems","footerActions","formData","formatTimestamp","guardSkipsWhenSigned","handleAction","handler","hasLifecycleSignals","host","inputType","isNonEmpty","isOwner","isSettling","isSigned","keepStatus","key","label","lifecycle","linkedPanels","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","markSaved","mergeFieldValuesIntoState","narratives","nextStatus","nextValue","nhAuthCommitSave","nhAuthPrepareSave","normalizeFooterActions","normalizeGuardActions","normalizeGuardValue","normalizeStore","now","nowIso","ownerId","ownerName","ownerRefresh","pad2","panelUpdates","panels","payload","payloads","pending","persistAction","persistFd","policyAppliesToAction","prepareSave","prepared","primaryAction","promptText","raw","readStore","release","renderFooterAction","resolveNow","sameActor","saveSettleRef","sd","secondaryActions","serializeGuardValue","store","stripComponentPayloads","success","tagName","trackedSnapshot","trackedValue","ts","untilSelf","useHostConfirmUnload","values","warmupRef","webformGroups","webformUpdate","windowHours"],
+  './UnsavedChangesGuard/index.jsx': ["ButtonComponent","DCOUpdates","DEFAULT_WINDOW_HOURS","UnsavedChangesGuard","actionItems","actor","actorFrom","addHoursIso","baselineRef","buildDefaultSavePayload","buildKey","c","changed","ck","claim","claims","closeWindow","collectComponentPayloads","collectDomFieldValues","commitSave","componentPayload","confirmUnloadActive","current","d","data","dcoGroups","disabled","domFieldValues","editableUntil","euDate","existing","expired","field","fieldData","fieldId","footerActionItems","footerActions","formData","formatTimestamp","guardSkipsWhenSigned","handleAction","handler","hasLifecycleSignals","host","inputType","isNonEmpty","isOwner","isSettling","isSigned","isSubmitAction","keepStatus","key","label","lifecycle","linkedPanels","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","markSaved","mergeFieldValuesIntoState","narratives","nextStatus","nextValue","nhAuthCommitSave","nhAuthPrepareSave","normalizeFooterActions","normalizeGuardActions","normalizeGuardValue","normalizeStore","now","nowIso","ownerId","ownerName","ownerRefresh","pad2","panelUpdates","panels","payload","payloads","pending","persistAction","persistFd","policyAppliesToAction","prepareSave","prepared","primaryAction","promptText","raw","readStore","release","renderFooterAction","resolveNow","sameActor","saveSettleRef","sd","secondaryActions","serializeGuardValue","store","stripComponentPayloads","success","tagName","trackedSnapshot","trackedValue","ts","untilSelf","useHostConfirmUnload","values","warmupRef","webformGroups","webformUpdate","windowHours"],
   './UseChangeWatch/index.jsx': ["_defaultCompare","_normalizeWatchOptions","baselineRef","compare","delayCount","dirtyRef","disabled","forcedDirtyRef","isDirty","normalizedOptions","onDirtyChange","renderCountRef","setChanged","useChangeWatch"],
   './ValueSetObservationField/index.jsx': ["ValueSetObservationField","checklistOptions","commentValue","componentId","container","createdBy","currentPayload","effectiveFieldId","fromContext","handleChange","key","nextGroup","normalizeObservationOptions","oldId","oldObs","options","payloadsEqual","report","sd","selectedCode","selectedDisplay","selectedValue","setNestedPayload","stripVolatilePayloadFields"],
 };

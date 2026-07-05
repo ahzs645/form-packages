@@ -33,10 +33,43 @@ const _toComparableValue = (value) => {
   if (value === undefined || value === null) return ""
   if (typeof value === "number" || typeof value === "boolean" || typeof value === "string") return value
   if (Array.isArray(value)) return value.map(_toComparableValue)
+  if (value instanceof Date) return Number.isFinite(value.getTime()) ? value.toISOString() : ""
   if (typeof value === "object") {
-    return value.value ?? value.selectedKey ?? value.display ?? value.text ?? value.code ?? value.key ?? value.response ?? ""
+    return value.value ?? value.selectedKey ?? value.date ?? value.display ?? value.text ?? value.code ?? value.key ?? value.response ?? ""
   }
   return String(value)
+}
+
+const _toDateValue = (value) => {
+  if (value === undefined || value === null || value === "") return null
+  if (value instanceof Date) {
+    return Number.isFinite(value.getTime()) ? value : null
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return null
+    const date = new Date(value)
+    return Number.isFinite(date.getTime()) ? date : null
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim()
+    if (!trimmed) return null
+    // ISO date-only strings parse as UTC midnight; local getters then read the
+    // previous day in negative-offset timezones. Parse them as calendar dates.
+    const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed)
+    if (dateOnly) {
+      const date = new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]))
+      return Number.isFinite(date.getTime()) ? date : null
+    }
+    const date = new Date(trimmed)
+    return Number.isFinite(date.getTime()) ? date : null
+  }
+  if (typeof value === "object") {
+    for (const key of ["value", "date", "text", "display"]) {
+      const date = _toDateValue(value[key])
+      if (date) return date
+    }
+  }
+  return null
 }
 
 const _score = (value, scoreMap) => {
@@ -67,6 +100,25 @@ const _hasValue = (value) => {
 
 const _iif = (condition, whenTrue, whenFalse) => (condition ? whenTrue : whenFalse)
 const _countTrue = (...values) => values.flat().filter((value) => value === true || value === "true" || value === "Y" || value === "Yes" || value === 1).length
+const _MS_PER_DAY = 24 * 60 * 60 * 1000
+
+const _daysSince = (value, ref) => {
+  const date = _toDateValue(value)
+  if (!date) return null
+  const reference = ref === undefined ? new Date() : _toDateValue(ref)
+  if (!reference) return null
+  return Math.floor((reference.getTime() - date.getTime()) / _MS_PER_DAY)
+}
+
+const _monthsSince = (value, ref) => {
+  const date = _toDateValue(value)
+  if (!date) return null
+  const reference = ref === undefined ? new Date() : _toDateValue(ref)
+  if (!reference) return null
+  let months = (reference.getFullYear() - date.getFullYear()) * 12 + (reference.getMonth() - date.getMonth())
+  if (reference.getDate() < date.getDate()) months -= 1
+  return months
+}
 
 // A field reference is `[field-id]`, and ids are slugified to id-safe
 // characters. Restricting the class (rather than `[^\]]+`) keeps JSON array
@@ -93,7 +145,7 @@ const _replaceBareReferencesOutsideQuotes = (expression, refs, valuesByFieldId) 
   const replaceInSegment = (segment) => {
     let nextSegment = segment
     for (const ref of refs) {
-      if (["iif", "score", "contains", "hasValue", "countTrue", "null", "true", "false"].includes(ref)) continue
+      if (["iif", "score", "contains", "hasValue", "countTrue", "daysSince", "monthsSince", "null", "true", "false"].includes(ref)) continue
       const numeric = _toNumericValue(valuesByFieldId?.[ref])
       if (!Number.isFinite(numeric)) return null
       nextSegment = nextSegment.replace(new RegExp(`\\b${_escapeRegExp(ref)}\\b`, "g"), String(numeric))
@@ -153,12 +205,14 @@ const _evaluateComputedExpression = (expression, valuesByFieldId, currentFieldId
   if (prepared === null) return null
 
   try {
-    const result = Function("iif", "score", "contains", "hasValue", "countTrue", `"use strict"; return (${prepared});`)(
+    const result = Function("iif", "score", "contains", "hasValue", "countTrue", "daysSince", "monthsSince", `"use strict"; return (${prepared});`)(
       _iif,
       _score,
       _contains,
       _hasValue,
-      _countTrue
+      _countTrue,
+      _daysSince,
+      _monthsSince
     )
     if (typeof result === "number") return Number.isFinite(result) ? result : null
     if (typeof result === "string" || typeof result === "boolean") return result
