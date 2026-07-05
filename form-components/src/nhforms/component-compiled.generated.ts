@@ -2748,6 +2748,10 @@ const ComputedField = ({
     return roundedValue;
   }, [precision, resultType, roundedValue]);
   const displayValue = useMemo(() => {
+    // String/boolean results (e.g. iif chains returning "LOW"/"HIGH") must
+    // render, not just persist — Number.isFinite alone blanked them.
+    if (typeof roundedValue === "string") return roundedValue;
+    if (typeof roundedValue === "boolean") return String(roundedValue);
     if (!Number.isFinite(roundedValue)) return "";
     return _toDisplayValue(roundedValue, precision, resultType);
   }, [precision, resultType, roundedValue]);
