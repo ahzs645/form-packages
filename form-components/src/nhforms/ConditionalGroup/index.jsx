@@ -576,7 +576,7 @@ const ConditionalField = ({
   children,
   ...props
 }) => {
-  const [fd] = useActiveData()
+  const [fd, setFormData] = useActiveData()
   const parentContext = useContext(LogicGateContext)
 
   // Determine visibility based on mode
@@ -611,6 +611,30 @@ const ConditionalField = ({
       return parentContext.isGroupVisible(parentId)
     })
   }
+
+  // Hiding a field must also withdraw its STAGED chart writes. Observation /
+  // narrative components stage payloads in __componentPayloads keyed by field
+  // id; when this wrapper hides the child it UNMOUNTS, so nothing else can
+  // clear a payload staged before the controller flipped (e.g. veteran
+  // category picked, then veteran status set to No — legacy forms skipped the
+  // write by evaluating the condition at submit). This wrapper stays mounted
+  // while hiding, so it clears the entry here. Page unmounts (PageSelect)
+  // unmount this wrapper too, so cross-page payloads are never touched.
+  // Previously-SAVED chart observations stay untouched — hiding withdraws the
+  // pending write, it does not delete history (legacy parity).
+  useEffect(() => {
+    if (isVisible || !fieldId) return
+    setFormData(produce((draft) => {
+      const payloads = draft?.field?.data?.__componentPayloads
+      if (!payloads) return
+      if (payloads.dcoUpdatesByComponent && payloads.dcoUpdatesByComponent[fieldId] !== undefined) {
+        delete payloads.dcoUpdatesByComponent[fieldId]
+      }
+      if (payloads.webformUpdatesByComponent && payloads.webformUpdatesByComponent[fieldId] !== undefined) {
+        delete payloads.webformUpdatesByComponent[fieldId]
+      }
+    }))
+  }, [isVisible, fieldId, setFormData])
 
   if (!isVisible) {
     return null
