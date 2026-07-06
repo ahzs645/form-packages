@@ -4614,6 +4614,20 @@ const _getDefaultCellValue = (column = {}) => {
   if (column.type === "checkbox") return column.prefill === true ? true : false;
   return "";
 };
+const _formatLocalDate = date => {
+  const pad2 = value => String(value).padStart(2, "0");
+  return \`\${date.getFullYear()}-\${pad2(date.getMonth() + 1)}-\${pad2(date.getDate())}\`;
+};
+const _todayDateValue = () => _formatLocalDate(new Date());
+const _addDaysToDateValue = (value, days = 1) => {
+  if (!value) return "";
+  const text = String(value).trim();
+  const match = /^(\\d{4})-(\\d{2})-(\\d{2})/.exec(text);
+  const date = match ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3])) : new Date(text);
+  if (Number.isNaN(date.getTime())) return "";
+  date.setDate(date.getDate() + days);
+  return _formatLocalDate(date);
+};
 const _makeEmptyRow = (columns = [], rowIndex = 0) => {
   const row = {
     _rowId: \`row_\${rowIndex}_\${Date.now()}\`
@@ -4621,6 +4635,18 @@ const _makeEmptyRow = (columns = [], rowIndex = 0) => {
   columns.forEach(col => {
     const path = col.dataPath || col.id;
     _setValueAtPath(row, path, _getDefaultCellValue(col));
+  });
+  return row;
+};
+const _applyDefaultValuesToRow = (row, fields = [], context = {}) => {
+  if (!row || !Array.isArray(fields)) return row;
+  fields.forEach(field => {
+    if (!field || typeof field !== "object" || typeof field.defaultValue === "undefined") return;
+    const fieldId = field.id;
+    if (!fieldId) return;
+    const currentValue = _getValueAtPath(row, fieldId);
+    if (_isMeaningfulValue(currentValue)) return;
+    _setValueAtPath(row, fieldId, _resolveFieldDefaultValue(field.defaultValue, context));
   });
   return row;
 };
@@ -4665,6 +4691,23 @@ const _resolveLiteralValue = (value, context) => {
   if (value === "$userFullName") return _resolvePathValue(context, "userProfile.identity.fullName");
   if (value === "$userLoginName") return _resolvePathValue(context, "userProfile.loginName");
   return value;
+};
+const _resolveFieldDefaultValue = (defaultValue, context = {}) => {
+  if (!defaultValue || typeof defaultValue !== "object" || Array.isArray(defaultValue)) {
+    return defaultValue;
+  }
+  if (defaultValue.kind === "today") return _todayDateValue();
+  if (defaultValue.kind === "nextDateAfterLastRow") {
+    const sourceColumn = defaultValue.sourceColumn || "Date";
+    const rows = Array.isArray(context.currentRows) ? context.currentRows : [];
+    for (let index = rows.length - 1; index >= 0; index -= 1) {
+      const candidate = _getValueAtPath(rows[index], sourceColumn);
+      const nextDate = _addDaysToDateValue(candidate, 1);
+      if (nextDate) return nextDate;
+    }
+    return _todayDateValue();
+  }
+  return defaultValue;
 };
 const _normalizeStampCellValue = value => {
   if (value == null) return "";
@@ -5217,6 +5260,7 @@ EditableTable = ({
   const isModalMode = mode === "modal";
   const isVertical = orientation === "vertical";
   const isLocked = disabled || readOnly;
+  const effectiveMaxRows = Number(maxRows) > 0 ? Number(maxRows) : Number.POSITIVE_INFINITY;
   const modalEditorConfig = props.modalEditorConfig || null;
   const processingConfig = props.processingConfig || modalEditorConfig?.processingConfig || null;
   const validationConfig = props.validationConfig || modalEditorConfig?.validationConfig || null;
@@ -5237,6 +5281,8 @@ EditableTable = ({
     ...(modalEditorConfig?.modalConfig || {}),
     title: modalEditorConfig?.modalConfig?.title || modalEditorConfig?.title || modalTitle || label || "Row Details"
   }), [modalEditorConfig, modalTitle, label]);
+  const saveAndAddNextConfig = subformModalConfig?.saveAndAddNext && typeof subformModalConfig.saveAndAddNext === "object" ? subformModalConfig.saveAndAddNext : null;
+  const saveAndAddNextLabel = typeof saveAndAddNextConfig?.label === "string" && saveAndAddNextConfig.label.trim() ? saveAndAddNextConfig.label.trim() : "Save & Add Next";
   const getRows = () => {
     try {
       const data = fd?.field?.data?.[id];
@@ -5337,6 +5383,7 @@ EditableTable = ({
     setRows(sourceSeedRows);
   }, [rows, columns, setRows, sourceSeedRows]);
   const currentRows = Array.isArray(rows) ? rows : [];
+  const canSaveAndAddNext = Boolean(saveAndAddNextConfig) && editingRowIndex === null && allowAddRows && !isLocked && currentRows.length + 1 < effectiveMaxRows;
   const getSourceFieldId = (rowIndex, columnId) => {
     return sourceFieldIdsByRow?.[rowIndex]?.[columnId] || sourceFieldIds[columnId] || undefined;
   };
@@ -5364,10 +5411,22 @@ EditableTable = ({
       });
     }
   }, [setRows, onRowsChange, id, columns, mode]);
+  const makeDraftRow = (rowIndex = currentRows.length) => {
+    const nextRow = _makeEmptyRow(columns, rowIndex);
+    return _applyDefaultValuesToRow(nextRow, modalEditorConfig?.dataEntryConfig?.fields, {
+      currentRows,
+      columns,
+      rowIndex,
+      sd,
+      sourceData: sd,
+      userProfile: sd?.userProfile,
+      fd
+    });
+  };
   const openCreateDialog = () => {
-    if (isLocked || !allowAddRows || currentRows.length >= maxRows) return;
+    if (isLocked || !allowAddRows || currentRows.length >= effectiveMaxRows) return;
     setEditingRowIndex(null);
-    setDraftRow(_makeEmptyRow(columns, currentRows.length));
+    setDraftRow(makeDraftRow(currentRows.length));
     setErrorMessage("");
     setIsDialogOpen(true);
   };
@@ -5532,10 +5591,10 @@ EditableTable = ({
     }
     return null;
   };
-  const saveDraftRow = () => {
-    if (!draftRow) return;
-    if (isLocked) return;
-    if (authorshipEnabled && editingRowIndex !== null && getRowLock(currentRows[editingRowIndex]).locked) return;
+  const prepareSave = () => {
+    if (!draftRow) return null;
+    if (isLocked) return null;
+    if (authorshipEnabled && editingRowIndex !== null && getRowLock(currentRows[editingRowIndex]).locked) return null;
     let resolvedRow = _applyComputedColumns(_cloneRow(draftRow, columns), columns);
     if (processingConfig) {
       resolvedRow = _applyRowProcessingConfig(resolvedRow, processingConfig, columns);
@@ -5550,17 +5609,17 @@ EditableTable = ({
         }
       } catch (error) {
         setErrorMessage(error?.message || "Unable to prepare row for save.");
-        return;
+        return null;
       }
     }
     if (!resolvedRow || typeof resolvedRow !== "object") {
       setErrorMessage("Row save failed because the row data was invalid.");
-      return;
+      return null;
     }
     const validationError = validateResolvedRow(resolvedRow);
     if (validationError) {
       setErrorMessage(validationError);
-      return;
+      return null;
     }
     const normalizedRow = {
       ...resolvedRow,
@@ -5583,16 +5642,49 @@ EditableTable = ({
       rowId: normalizedRow._rowId,
       value: normalizedRow
     });
+    return {
+      normalizedRow,
+      savedRowIndex,
+      sortedRows
+    };
+  };
+  const commitSave = (options = {}) => {
+    const saved = prepareSave();
+    if (!saved) return false;
+    const {
+      normalizedRow,
+      savedRowIndex,
+      sortedRows
+    } = saved;
     onRowSaved?.(normalizedRow, buildRowContext(normalizedRow, {
       rowIndex: savedRowIndex,
       reason: editingRowIndex === null ? "create" : "edit",
       previousRows: currentRows,
       nextRows: sortedRows
     }));
-    closeDialog();
+    if (options.addNext && editingRowIndex === null && sortedRows.length < effectiveMaxRows) {
+      setEditingRowIndex(null);
+      setDraftRow(_applyDefaultValuesToRow(_makeEmptyRow(columns, sortedRows.length), modalEditorConfig?.dataEntryConfig?.fields, {
+        currentRows: sortedRows,
+        columns,
+        rowIndex: sortedRows.length,
+        sd,
+        sourceData: sd,
+        userProfile: sd?.userProfile,
+        fd
+      }));
+      setErrorMessage("");
+      setIsDialogOpen(true);
+    } else {
+      closeDialog();
+    }
+    return true;
+  };
+  const saveDraftRow = () => {
+    commitSave();
   };
   const addInlineRow = () => {
-    if (isLocked || !allowAddRows || currentRows.length >= maxRows) return;
+    if (isLocked || !allowAddRows || currentRows.length >= effectiveMaxRows) return;
     const nextRows = [...currentRows, _makeEmptyRow(columns, currentRows.length)];
     commitRows(nextRows, {
       reason: "create",
@@ -5632,7 +5724,7 @@ EditableTable = ({
     }));
   })();
   const currentRowCount = isModalMode ? displayRows.length : currentRows.length;
-  const remaining = Math.max(0, maxRows - currentRowCount);
+  const remaining = Number.isFinite(effectiveMaxRows) ? Math.max(0, effectiveMaxRows - currentRowCount) : Number.POSITIVE_INFINITY;
   const shouldShowActions = !isLocked && (allowEditRows || allowDeleteRows);
   const renderEditorInput = (row, rowIndex, column, onValueChange, inline, rowReadOnly = false, onStampColumn = null) => {
     const value = _getValueAtPath(row, column.dataPath || column.id);
@@ -6025,12 +6117,12 @@ EditableTable = ({
         fontWeight: 400
       }
     }
-  }), /*#__PURE__*/React.createElement(Text, {
+  }), Number.isFinite(remaining) ? /*#__PURE__*/React.createElement(Text, {
     style: {
       fontSize: "14px",
       color: isDarkMode ? "#a0a0a0" : "#666666"
     }
-  }, remaining, " more row", remaining !== 1 ? "s" : "", " available")), isModalMode && isDialogOpen && draftRow && usesSubformEditor && /*#__PURE__*/React.createElement(SubformScoring, {
+  }, remaining, " more row", remaining !== 1 ? "s" : "", " available") : null), isModalMode && isDialogOpen && draftRow && usesSubformEditor && /*#__PURE__*/React.createElement(SubformScoring, {
     id: \`\${id}__rowEditor\`,
     mode: "data-entry",
     title: subformModalConfig.title,
@@ -6043,7 +6135,14 @@ EditableTable = ({
       }
     },
     completeButtonText: modalEditorConfig?.completeButtonText || "Save",
+    secondaryCompleteButtonText: canSaveAndAddNext ? saveAndAddNextLabel : undefined,
     cancelButtonText: modalEditorConfig?.cancelButtonText || "Cancel",
+    onSecondaryComplete: canSaveAndAddNext ? () => {
+      commitSave({
+        addNext: true
+      });
+      return false;
+    } : undefined,
     onComplete: () => {
       saveDraftRow();
       return false;
@@ -6084,7 +6183,12 @@ EditableTable = ({
   }, /*#__PURE__*/React.createElement(DefaultButton, {
     text: "Cancel",
     onClick: closeDialog
-  }), /*#__PURE__*/React.createElement(PrimaryButton, {
+  }), canSaveAndAddNext ? /*#__PURE__*/React.createElement(DefaultButton, {
+    text: saveAndAddNextLabel,
+    onClick: () => commitSave({
+      addNext: true
+    })
+  }) : null, /*#__PURE__*/React.createElement(PrimaryButton, {
     text: "Save",
     onClick: saveDraftRow
   })))));
@@ -10357,9 +10461,29 @@ const asciiCompare = (a, b) => a < b ? +1 : a > b ? -1 : 0;`,
   Checkbox,
   ChoiceGroup
 } = Fluent;
+const {
+  useEffect
+} = React;
+const defaultFollowUpAppts = () => ({
+  appointments: [],
+  appointmentCount: 0
+});
 const HFC_PT_ASMT_SnapShot = props => {
   const [fd, setFd] = useActiveData();
   const sd = useSourceData();
+  useEffect(() => {
+    if (fd?.field?.data?.FollowUpAppts !== undefined) return;
+    fd.setFormData(produce(draft => {
+      if (!draft.field) draft.field = {
+        data: {},
+        status: {},
+        history: []
+      };
+      if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {};
+      if (draft.field.data.FollowUpAppts !== undefined) return;
+      draft.field.data.FollowUpAppts = defaultFollowUpAppts();
+    }));
+  }, [fd]);
   const RadioSelectGroup = ({
     optionList,
     fieldId,
@@ -12886,8 +13010,8 @@ const createScaleQuestion = ({
       options: renderedChoiceOptions,
       styles: choiceGroupStyle,
       selectedKey: fditem.selectedKey,
-      onKeyUp: e => handleKeyUp(id, e, fditem, fd, dropdownOptions, disableCount, effectiveChoiceOptions, tooltipLookup, fallbackDescription),
-      onChange: (e, option) => handleChoiceChanged(id, option, fditem, fd, dropdownOptions, disableCount, tooltipLookup, fallbackDescription)
+      onKeyUp: e => handleKeyUp(id, e, fditem, fd, dropdownOptions, disableCount, effectiveChoiceOptions, tooltipLookup, fallbackLookup, fallbackDescription),
+      onChange: (e, option) => handleChoiceChanged(id, option, fditem, fd, dropdownOptions, disableCount, tooltipLookup, fallbackLookup, fallbackDescription)
     }))))));
   };
 };
@@ -13028,7 +13152,7 @@ const buildTooltipLookup = (tooltip, fallbackLookup = {}) => {
   }
   return lookup;
 };
-const handleKeyUp = (id, e, selectedQuestion, fd, hasDropdown, disableCount, choiceOptions, tooltipLookup, fallbackDescription) => {
+const handleKeyUp = (id, e, selectedQuestion, fd, hasDropdown, disableCount, choiceOptions, tooltipLookup, responseLookup, fallbackDescription) => {
   const selectedOptions = choiceOptions.filter(option => {
     return option.key === e.key;
   });
@@ -13037,7 +13161,7 @@ const handleKeyUp = (id, e, selectedQuestion, fd, hasDropdown, disableCount, cho
     if (nextChoiceGroup) {
       nextChoiceGroup.focus();
     }
-    handleChoiceChanged(id, selectedOptions[0], selectedQuestion, fd, hasDropdown, disableCount, tooltipLookup, fallbackDescription);
+    handleChoiceChanged(id, selectedOptions[0], selectedQuestion, fd, hasDropdown, disableCount, tooltipLookup, responseLookup, fallbackDescription);
   }
 };
 const handleDropdownChanged = (option, id, forms, modForms) => {
@@ -13050,7 +13174,7 @@ const handleDropdownChanged = (option, id, forms, modForms) => {
     [id]: updatedValue
   });
 };
-const handleChoiceChanged = (id, option, question, fd, hasDropdown, disableCount, tooltipLookup, fallbackDescription) => {
+const handleChoiceChanged = (id, option, question, fd, hasDropdown, disableCount, tooltipLookup, responseLookup, fallbackDescription) => {
   const item = fd.field.data[id];
   let value = Number(option?.value);
   if (!Number.isFinite(value)) {
@@ -13066,7 +13190,7 @@ const handleChoiceChanged = (id, option, question, fd, hasDropdown, disableCount
     ...item,
     selectedKey: option.key,
     value,
-    response: tooltipLookup[String(option.key)] ?? fallbackDescription,
+    response: responseLookup[String(option.key)] ?? fallbackDescription,
     detailResponse: tooltipLookup[String(option.key)] ?? fallbackDescription
   };
   UpdateContext(fd, id, updatedValue);
@@ -19921,6 +20045,10 @@ const stringifyValue = value => {
   }
   return "";
 };
+const optionalString = value => {
+  if (value === undefined || value === null || value === "") return undefined;
+  return stringifyValue(value);
+};
 const parseDateValue = value => {
   const text = stringifyValue(value);
   if (!text) return null;
@@ -20047,6 +20175,7 @@ const PastMeasurementField = ({
   autoFillFromHistory = false,
   persistenceMode = "formOnly",
   valueType = "TEXT",
+  observationDescription,
   saveDescription,
   saveUnits,
   showHistory = true,
@@ -20061,6 +20190,12 @@ const PastMeasurementField = ({
   abnormalHigh,
   criticalLow,
   criticalHigh,
+  rangeAbsurdLow,
+  rangeAbsurdHigh,
+  rangeNormalLow,
+  rangeNormalHigh,
+  rangeVeryLow,
+  rangeVeryHigh,
   abnormalMessage = "Abnormal",
   normalMessage = "",
   readOnly = false,
@@ -20109,8 +20244,12 @@ const PastMeasurementField = ({
   const resolvedCurrentValue = hasMeaningfulValue(storedValue) ? storedValue : linkedObservationItem?.valueText ?? (autoFillFromHistory ? latestHistoryItem?.valueText : "") ?? "";
   const numericCurrentValue = Number(stringifyValue(resolvedCurrentValue));
   const hasNumericCurrentValue = Number.isFinite(numericCurrentValue);
-  const abnormalLowValue = Number(abnormalLow);
-  const abnormalHighValue = Number(abnormalHigh);
+  const resolvedAbnormalLow = abnormalLow ?? rangeNormalLow;
+  const resolvedAbnormalHigh = abnormalHigh ?? rangeNormalHigh;
+  const resolvedCriticalLow = criticalLow ?? rangeAbsurdLow ?? rangeVeryLow;
+  const resolvedCriticalHigh = criticalHigh ?? rangeAbsurdHigh ?? rangeVeryHigh;
+  const abnormalLowValue = Number(resolvedAbnormalLow);
+  const abnormalHighValue = Number(resolvedAbnormalHigh);
   const hasAbnormalLow = Number.isFinite(abnormalLowValue);
   const hasAbnormalHigh = Number.isFinite(abnormalHighValue);
   const isAbnormal = hasNumericCurrentValue && (hasAbnormalLow && numericCurrentValue < abnormalLowValue || hasAbnormalHigh && numericCurrentValue > abnormalHighValue);
@@ -20149,8 +20288,8 @@ const PastMeasurementField = ({
     // abnormalLow/High -> L/H. Display resolves from the host's option list
     // when available, matching the HFC source.
     const numericExplicitValue = Number(explicitValue);
-    const criticalLowValue = Number(criticalLow);
-    const criticalHighValue = Number(criticalHigh);
+    const criticalLowValue = Number(resolvedCriticalLow);
+    const criticalHighValue = Number(resolvedCriticalHigh);
     const flagCode = !Number.isFinite(numericExplicitValue) ? null : Number.isFinite(criticalLowValue) && numericExplicitValue < criticalLowValue ? "LL" : Number.isFinite(criticalHighValue) && numericExplicitValue > criticalHighValue ? "HH" : hasAbnormalLow && numericExplicitValue < abnormalLowValue ? "L" : hasAbnormalHigh && numericExplicitValue > abnormalHighValue ? "H" : null;
     const flagDisplays = {
       LL: "Critical low",
@@ -20158,19 +20297,35 @@ const PastMeasurementField = ({
       H: "High",
       HH: "Critical high"
     };
-    const abnormalFlag = flagCode ? {
+    const hasRangeMetadata = [resolvedCriticalLow, resolvedCriticalHigh, resolvedAbnormalLow, resolvedAbnormalHigh].some(value => optionalString(value) !== undefined);
+    const abnormalFlag = hasRangeMetadata ? {
       code: flagCode,
-      display: sd?.optionLists?.["MOIS-ABNORMALFLAG"]?.[flagCode] ?? flagDisplays[flagCode],
+      display: flagCode ? sd?.optionLists?.["MOIS-ABNORMALFLAG"]?.[flagCode] ?? flagDisplays[flagCode] : null,
       system: "MOIS-ABNORMALFLAG"
     } : null;
+    const legacyRangePayload = {
+      ...(optionalString(resolvedCriticalHigh) !== undefined ? {
+        rangeAbsurdHigh: optionalString(resolvedCriticalHigh)
+      } : {}),
+      ...(optionalString(resolvedCriticalLow) !== undefined ? {
+        rangeAbsurdLow: optionalString(resolvedCriticalLow)
+      } : {}),
+      ...(optionalString(resolvedAbnormalHigh) !== undefined ? {
+        rangeNormalHigh: optionalString(resolvedAbnormalHigh)
+      } : {}),
+      ...(optionalString(resolvedAbnormalLow) !== undefined ? {
+        rangeNormalLow: optionalString(resolvedAbnormalLow)
+      } : {})
+    };
     setNestedPayload(setFormData, componentId, "dco", [{
       observationId: oldId,
       observationCode,
       observationClass: "DCOBS",
       value: explicitValue,
       valueType: String(valueType || "TEXT"),
+      ...legacyRangePayload,
       status: oldId ? "C" : "F",
-      description: stringifyValue(saveDescription) || label || "Measurement",
+      description: stringifyValue(observationDescription) || stringifyValue(saveDescription) || label || "Measurement",
       units: resolvedUnits,
       orderedBy: createdBy,
       collectedBy: createdBy,
@@ -20182,7 +20337,7 @@ const PastMeasurementField = ({
         abnormalFlag
       } : {})
     }]);
-  }, [componentId, effectiveFieldId, fieldData, hasStoredValue, label, latestHistoryItem, linkedObservationItem, observationCode, persistenceMode, saveDescription, saveUnits, sd, setFormData, storedValue, valueType, commentFilter, abnormalLow, abnormalHigh, criticalLow, criticalHigh]);
+  }, [componentId, effectiveFieldId, fieldData, hasStoredValue, label, latestHistoryItem, linkedObservationItem, observationCode, observationDescription, persistenceMode, rangeAbsurdHigh, rangeAbsurdLow, rangeNormalHigh, rangeNormalLow, rangeVeryHigh, rangeVeryLow, resolvedAbnormalHigh, resolvedAbnormalLow, resolvedCriticalHigh, resolvedCriticalLow, saveDescription, saveUnits, sd, setFormData, storedValue, valueType, commentFilter]);
   useEffect(() => {
     if (!effectiveFieldId || !autoFillFromHistory) return;
     if (!latestHistoryItem?.valueText) return;
@@ -26229,8 +26384,10 @@ const SubformScoringInner = ({
   hideTriggerButton = false,
   showSummary = true,
   completeButtonText = "Done",
+  secondaryCompleteButtonText,
   cancelButtonText = "Cancel",
   onComplete,
+  onSecondaryComplete,
   onCommitToParent,
   dataEntryValueRoot,
   onDataEntryValueChange,
@@ -27551,7 +27708,23 @@ const SubformScoringInner = ({
     tokens: {
       childrenGap: 8
     }
-  }, /*#__PURE__*/React.createElement(PrimaryButton, {
+  }, typeof onSecondaryComplete === "function" ? /*#__PURE__*/React.createElement(DefaultButton, {
+    text: secondaryCompleteButtonText || "Save & Add Next",
+    onClick: () => {
+      const shouldClose = onSecondaryComplete({
+        mode: isDataEntryMode ? "data-entry" : "scoring",
+        dataEntryValues,
+        calculatedExpressions,
+        progress,
+        answers,
+        calculatedTotals
+      });
+      if (shouldClose !== false) {
+        onCommitToParent?.(fd);
+        setDialogOpen(false);
+      }
+    }
+  }) : null, /*#__PURE__*/React.createElement(PrimaryButton, {
     text: completeButtonText,
     onClick: async () => {
       const shouldClose = onComplete?.({
@@ -28731,7 +28904,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './ConversionField/index.jsx': ["ConversionField","ConversionFieldSchema","_asPositiveNumber","_asPrecision","_conversionPathSegments","_normalizeConversionRows","_readConversionPath","_readConversionValue","_sanitizeConversionNumber","activeFrom","activeTo","canUseFrom","canUseTo","char","clearValues","convertRow","current","fromValue","hasAnyValue","hasDecimal","index","lastEdited","lastEditedRef","next","nextValue","normalizedFromFieldId","normalizedToFieldId","parsed","parsedFrom","parsedTo","pathValue","rows","segments","setConversionValues","source","sourceFieldId","text","toValue","updateValue","updates"],
   './CustomJsxBlock/index.jsx': ["CustomJsxBlock","displaySource","raw"],
   './DentalWeightConverter/index.jsx': ["DentalWeightConverter","DentalWeightConverterSchema","_positiveNumber","_readDentalField","_sanitizeDentalWeight","cellStyle","clearWeights","convertWeights","data","disabled","factor","fieldWrapperStyle","fixedPrecision","kgValue","kilograms","lastEdited","lastEditedRef","lbValue","nextValue","numeric","parsed","parts","pounds","setDentalValues","text","updateWeight"],
-  './EditableTable/index.jsx': ["ButtonComponent","DEFAULT_WINDOW_HOURS","EditableTable","EditableTableSchema","_applyComputedColumns","_applyRowProcessingConfig","_buildRowsFromSourceFields","_buildSubformFieldFromColumn","_cloneRow","_coerceNumberCellValue","_computeTemplateColumnValue","_evaluateColumnVisibility","_formatCellValue","_formatProcessedNumber","_getDefaultCellValue","_getValueAtPath","_isMeaningfulValue","_isRowEmpty","_makeEmptyRow","_normalizeChoiceOptions","_normalizeInitialRowCount","_normalizeInitialRows","_normalizeMirroredCellValue","_normalizeNumberConfig","_normalizeRows","_normalizeSourceCellValue","_normalizeStampCellValue","_normalizeTableColumns","_normalizeUniqueToken","_normalizeValidationMessage","_normalizeZeroLikeValue","_resolveLiteralValue","_resolvePathValue","_resolveStampCellValue","_rowContentSignature","_setValueAtPath","_sortRowsByPath","_stringifyValue","_toFiniteNumber","_toPathSegments","_validateRowWithConfig","actor","actorFrom","addHoursIso","addInlineRow","authorshipEnabled","authorshipHeaderCellStyle","authorshipPolicy","bodyCellStyle","buildKey","buildRowContext","c","cadNumber","cadPath","cadPrecision","canDeleteInline","canResign","candidate","changed","ck","claim","claims","closeDialog","column","columns","commitRows","commitSave","computed","config","configMessage","containerStyle","controllerId","copy","count","createTableColumns","current","currentRowCount","currentRows","currentValue","customMessage","customResult","d","data","defaultSubformDataEntryConfig","deletedRow","disabledStamp","displayRows","displayValue","dropdownOptions","duplicateIndex","editableUntil","effectiveReadOnly","euDate","existing","existingRows","expired","explicitRowIndexes","explicitRowMapping","factor","fallback","fieldData","fieldId","first","formatTimestamp","getRowLock","getRows","getSourceFieldId","hasExplicitRowMapping","hasMeaningfulRows","hasMeaningfulValue","hasStampedValue","hasValue","headerCellStyle","headerRowStyle","id","index","inferredRowCount","initialRowCount","initialSeedRows","isDarkMode","isEmpty","isLocked","isModalMode","isNonEmpty","isOwner","isVertical","keepStatus","key","label","left","leftDate","leftValue","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","message","mirroredFieldIds","modalColumns","modalEditorConfig","modalEditorType","nextDraft","nextRow","nextRows","nextStatus","nextValue","nhAuth","normalizeStore","normalizedConfig","normalizedRow","normalizedValue","now","nowIso","numberConfig","numericValue","omitEmptyLines","onBeforeSaveRow","onRowDeleted","onRowSaved","onRowsChange","openCreateDialog","openEditDialog","owner","ownerId","ownerName","ownerRefresh","pad2","pairCadPrecision","pairFactor","pairPrefer","pairUsPrecision","pairs","parsed","path","paths","pending","policyAppliesToAction","prefer","prepareSave","processingConfig","raw","rawCad","rawKey","rawUs","rawValue","readStore","release","remaining","removeRowAt","renderEditorInput","renderRowAuthorshipStatus","renderVerticalTable","rendered","requireAnyGroups","requiredPaths","resolveNow","resolvedFactor","resolvedRow","right","rightDate","rightValue","row","rowIndex","rowLock","rowNumberCellStyle","rowNumberHeaderStyle","rowReadOnly","rows","rowsForVerticalLayout","rule","safeFactor","safePrecision","sameActor","saveDraftRow","savedAt","savedRowIndex","sd","section","seededRows","segments","selectionType","setRows","shouldShowActions","showRowAuthorshipColumn","sign","signedAt","sortedRows","sourceFieldId","sourcePath","sourceSeedRows","spinButtonProps","stampCell","stampConfig","stampDraftCell","stampedValue","store","subformModalConfig","tableColumns","tableContainerStyle","tableStyle","text","theme","transformedRow","trimTrailingZero","trimmed","ts","untilSelf","updateCell","updateDraftCell","updateDraftValueAtPath","usNumber","usPath","usPrecision","usesSubformEditor","validateResolvedRow","validateRow","validationConfig","validationError","value","verticalBodyCellStyle","verticalLabelCellStyle","visibility","windowHours","withCommon","zeroIsEmpty"],
+  './EditableTable/index.jsx': ["ButtonComponent","DEFAULT_WINDOW_HOURS","EditableTable","EditableTableSchema","_addDaysToDateValue","_applyComputedColumns","_applyDefaultValuesToRow","_applyRowProcessingConfig","_buildRowsFromSourceFields","_buildSubformFieldFromColumn","_cloneRow","_coerceNumberCellValue","_computeTemplateColumnValue","_evaluateColumnVisibility","_formatCellValue","_formatLocalDate","_formatProcessedNumber","_getDefaultCellValue","_getValueAtPath","_isMeaningfulValue","_isRowEmpty","_makeEmptyRow","_normalizeChoiceOptions","_normalizeInitialRowCount","_normalizeInitialRows","_normalizeMirroredCellValue","_normalizeNumberConfig","_normalizeRows","_normalizeSourceCellValue","_normalizeStampCellValue","_normalizeTableColumns","_normalizeUniqueToken","_normalizeValidationMessage","_normalizeZeroLikeValue","_resolveFieldDefaultValue","_resolveLiteralValue","_resolvePathValue","_resolveStampCellValue","_rowContentSignature","_setValueAtPath","_sortRowsByPath","_stringifyValue","_toFiniteNumber","_toPathSegments","_todayDateValue","_validateRowWithConfig","actor","actorFrom","addHoursIso","addInlineRow","authorshipEnabled","authorshipHeaderCellStyle","authorshipPolicy","bodyCellStyle","buildKey","buildRowContext","c","cadNumber","cadPath","cadPrecision","canDeleteInline","canResign","canSaveAndAddNext","candidate","changed","ck","claim","claims","closeDialog","column","columns","commitRows","commitSave","computed","config","configMessage","containerStyle","controllerId","copy","count","createTableColumns","current","currentRowCount","currentRows","currentValue","customMessage","customResult","d","data","date","defaultSubformDataEntryConfig","deletedRow","disabledStamp","displayRows","displayValue","dropdownOptions","duplicateIndex","editableUntil","effectiveMaxRows","effectiveReadOnly","euDate","existing","existingRows","expired","explicitRowIndexes","explicitRowMapping","factor","fallback","fieldData","fieldId","first","formatTimestamp","getRowLock","getRows","getSourceFieldId","hasExplicitRowMapping","hasMeaningfulRows","hasMeaningfulValue","hasStampedValue","hasValue","headerCellStyle","headerRowStyle","id","index","inferredRowCount","initialRowCount","initialSeedRows","isDarkMode","isEmpty","isLocked","isModalMode","isNonEmpty","isOwner","isVertical","keepStatus","key","label","left","leftDate","leftValue","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","makeDraftRow","match","message","mirroredFieldIds","modalColumns","modalEditorConfig","modalEditorType","nextDate","nextDraft","nextRow","nextRows","nextStatus","nextValue","nhAuth","normalizeStore","normalizedConfig","normalizedRow","normalizedValue","now","nowIso","numberConfig","numericValue","omitEmptyLines","onBeforeSaveRow","onRowDeleted","onRowSaved","onRowsChange","openCreateDialog","openEditDialog","owner","ownerId","ownerName","ownerRefresh","pad2","pairCadPrecision","pairFactor","pairPrefer","pairUsPrecision","pairs","parsed","path","paths","pending","policyAppliesToAction","prefer","prepareSave","processingConfig","raw","rawCad","rawKey","rawUs","rawValue","readStore","release","remaining","removeRowAt","renderEditorInput","renderRowAuthorshipStatus","renderVerticalTable","rendered","requireAnyGroups","requiredPaths","resolveNow","resolvedFactor","resolvedRow","right","rightDate","rightValue","row","rowIndex","rowLock","rowNumberCellStyle","rowNumberHeaderStyle","rowReadOnly","rows","rowsForVerticalLayout","rule","safeFactor","safePrecision","sameActor","saveAndAddNextConfig","saveAndAddNextLabel","saveDraftRow","saved","savedAt","savedRowIndex","sd","section","seededRows","segments","selectionType","setRows","shouldShowActions","showRowAuthorshipColumn","sign","signedAt","sortedRows","sourceColumn","sourceFieldId","sourcePath","sourceSeedRows","spinButtonProps","stampCell","stampConfig","stampDraftCell","stampedValue","store","subformModalConfig","tableColumns","tableContainerStyle","tableStyle","text","theme","transformedRow","trimTrailingZero","trimmed","ts","untilSelf","updateCell","updateDraftCell","updateDraftValueAtPath","usNumber","usPath","usPrecision","usesSubformEditor","validateResolvedRow","validateRow","validationConfig","validationError","value","verticalBodyCellStyle","verticalLabelCellStyle","visibility","windowHours","withCommon","zeroIsEmpty"],
   './EducationHistory/index.jsx': ["EducationHistory","EducationHistoryFields"],
   './Ethnicity/index.jsx': ["Ethnicity","firstNationEthnicityCodes","firstNationsEthnicityReferenceSet"],
   './FieldStampButton/index.jsx': ["ButtonComponent","FieldStampButton","buildContext","clearStamp","context","effectiveStampFieldId","fallback","fieldData","fieldId","isDisabled","isSigned","normalizeStampTargets","normalizeStampValue","normalizedTargets","raw","resolveLiteralValue","resolvePathValue","sd","signedAt","signedAtText","sourcePath","stamp","stampRecord","statusText","value","written"],
@@ -28743,7 +28916,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './Goals/index.jsx': ["Goals","GoalsFields"],
   './HFC_PT_ASMT_PatientAssessment/index.jsx': ["HFC_PT_ASMT_PatientAssessment","MeasureRow","PHQ2Quest","PHQ9Quest","PHQ9answers","PHQ9btnstyle","TableMeasureRow","TotalVal2","TotalVal9","_onupdate","acol","asciiCompare","bcol","border","checkarr2","checkarr9","curvalue","fieldData","finalSourceMap","handleChange","histcols","inputValue","items","latestCollectedFirst","newval","questionairre","sd","swellingTable","symptomsTable","tcell","tempPanel","toggleSelect"],
   './HFC_PT_ASMT_PatientSummary/index.jsx': ["ConditionsSortDesc","ConnectionEditSubForm","EFHistory","EFcols","HFC_PT_ASMT_PatientSummary","TestResult","acol","allergiesCols","asciiCompare","bcol","code","connectionMutation","connectionTemplate","connectionTypeCode","currentConnection","defaultProviderType","defaultProviderTypeLookup","finalSourceMap","getLastRead","getListSelectionColumns","gridRows","handleCreateConnection","handleEditConnection","healthIssuesCols","isInitialMount","labs","latestCollectedFirst","lookupSelectedProviderType","ltRXcols","providerTypes","result","savedValueMapper","sd","sortStartDateDesc"],
-  './HFC_PT_ASMT_SnapShot/index.jsx': ["EndDateToTop","HFC_PT_ASMT_SnapShot","RadioSelectGroup","StartDatetoTop","_AddAppt","_handlecheckchange","_onChoiceChange","_removeAppt","appts","checkBoxStyles","codesys","fieldData","followUpList","handleStateChange","newAppt","newitem","optionList","optionlist","optlist","reminder","sd","snapdate","sortStartDatethenEndDateDesc","tableCellStyle","tableStyle"],
+  './HFC_PT_ASMT_SnapShot/index.jsx': ["EndDateToTop","HFC_PT_ASMT_SnapShot","RadioSelectGroup","StartDatetoTop","_AddAppt","_handlecheckchange","_onChoiceChange","_removeAppt","appts","checkBoxStyles","codesys","defaultFollowUpAppts","fieldData","followUpList","handleStateChange","newAppt","newitem","optionList","optionlist","optlist","reminder","sd","snapdate","sortStartDatethenEndDateDesc","tableCellStyle","tableStyle"],
   './HealthMaintenanceReview/index.jsx': ["DEFAULT_HEALTH_MAINTENANCE_RULES","HealthMaintenanceReview","ItemCard","STATUS_META","STATUS_ORDER","Sparkline","StatusBadge","SummaryCard","activeRoot","addDays","age","alias","allItems","appendRecord","appliesTo","asOf","base","buckets","buildDueText","buildReviewItem","buildSparklinePath","candidate","candidateKeys","chartNumber","code","codeMatch","codes","coercePositiveInt","collectConditionRecords","collectObservationRecords","collected","collectedDate","computeAge","conditionSpecific","conditions","context","current","date","dateOnly","day","daysBetween","dedupeStrings","deduped","delta","description","descriptionMatch","descriptions","direct","display","dob","dueDate","effectiveRules","effectiveSource","end","explicitDate","family","findObservationHistory","findPathHistory","first","flattenRuleEntries","flattenValues","flattened","formatDate","formatFrequencyLabel","formatValueLabel","frequencyDays","fromAdmin","fromEntry","fromGender","fromSource","gender","general","generalItems","generalSource","groupItemsBySection","healthNumber","history","isActive","isMeaningfulValue","isObject","isRuleApplicable","key","latest","match","matchedConditionGroups","matchesConditionFilters","max","mergeSourceData","merged","meta","middle","min","month","monthDelta","months","next","normalizeConditionRecord","normalizeDate","normalizeGenderValue","normalizeObservationRecord","normalizePathRecord","normalizePatientName","normalizeRuleItem","normalizeRuleSet","normalizeString","normalized","normalizedCodes","normalizedFrequencyDays","normalizedPath","normalizedText","normalizedY","numeric","observationHistory","observations","out","override","parseNumericValue","parsed","parsedRules","parts","path","pathHistory","patient","patientCandidates","patientSex","range","raw","rawConditionGroups","readScopedPathValue","renderHeaderField","resolveDate","resolvePathValue","resolved","resolvedFieldId","resolvedReviewDate","review","ruleSource","scoped","sd","seen","segments","start","status","statusDelta","stringifyValue","stroke","summary","text","textMatch","toArrayOfRecords","toDisplayGender","toPathSegments","trendHistory","trendPoints","triggerSummaryText","trimmed","unitsText","usableHeight","usableWidth","value","valueText","values","x","y","year","years"],
   './HistoricalObservationTable/index.jsx': ["HistoricalObservationTable","current","date","getHistorySource","grouped","historyDateKey","matchedColumn","raw","rows","sd","source","steps"],
   './HonosQuestion/index.jsx': ["CHOICE_FIELD_STYLE","HonosFinalScore","QUESTION_STACK_STYLE","QUESTION_defaultLabelStyle","SCALE_10_LEGENDS","SCALE_10_LEGEND_LOOKUP","SCALE_10_OPTIONS","SCALE_5_LEGENDS","SCALE_5_LEGEND_LOOKUP","SCALE_5_OPTIONS","Scale10","Scale10Legend","Scale5","Scale5Legend","Scale5QuestionList","Scale5SubmitButton","Scale5ToolTip","ScaleLegend","UpdateContext","buildLegendLookupFromOptions","buildTooltipLookup","calculatedTotal","createScaleQuestion","customChoiceOptions","description","dropdownStyles","effectiveChoiceOptions","effectiveTooltip","fallbackLookup","fditem","fillAllUnfilledQuestions","finalScoreStyle","generatedTooltip","handleChoiceChanged","handleDropdownChanged","handleKeyUp","i","item","key","keySource","nextChoiceGroup","normalizeScaleChoiceOptions","numeric","numericValue","option","questionIds","questionStyle","rawValue","rawfditem","renderedChoiceOptions","scoredQuestionIds","seenKeys","selectedOptions","targetFieldId","text","theme","toFiniteNumber","tooltipList","tooltipLookup","totalScore","value"],
@@ -28759,7 +28932,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './ObservationChart/index.jsx': ["$","$e","$l","$n","$t","A","Ae","Ai","Al","An","B","Be","Bl","Bt","C","Ce","Ci","Cl","Ct","D","De","Di","Dl","Dn","Dt","E","El","En","F","Fe","Ft","G","Gt","H","He","Hi","Hl","Ht","I","Ii","Il","It","J","Je","Jl","Jn","Jt","Ke","Kl","Kn","Kt","L","Li","Ll","Lt","M","Mn","Mt","N","Nl","O","OBSERVATION_CHART_PALETTE","OBSERVATION_CHART_STYLE_ID","ObservationChart","Ol","Ot","P","Pe","Pi","Pl","Pn","Q","Qn","Qt","R","Re","Ri","Rt","S","Sn","St","T","Tn","Tt","UPlotCssText","UPlotLib","Ut","Vl","Vt","W","We","Wi","Wl","Wt","X","Xl","Xn","Xt","Y","Ye","Yi","Yl","Yt","Z","Zl","Zn","Zt","_","_i","_l","_n","_t","a","ai","at","b","be","bi","bl","bn","bt","buildChartPayload","buildChartPayloadFromObservations","buildChartPayloadFromRows","buildSeriesDefinitions","buildUPlotOptions","c","candidate","chartPayload","chartSeries","ci","codeCandidates","coerceNumber","coercePositiveInt","container","containerRef","current","d","data","dataKey","day","di","direct","document","dt","e","ee","effectiveHeight","effectiveTitle","ei","el","en","ensureObservationChartStyles","entryCode","entryDescription","et","f","fi","finalizeChartRows","formatDate","frameStyle","fromPatient","fromQueryResult","ft","g","gi","gn","gt","h","hi","hl","ht","i","ie","ii","includes","isNonEmptyString","isRecord","it","jl","jt","k","keys","ki","kn","kt","l","ll","ln","m","match","matchesObservationSeries","maxPoints","mi","mode","month","mt","n","ne","ni","normalizeString","normalizeStringArray","normalized","normalizedCodePath","normalizedCodes","normalizedDateOnly","normalizedDescriptionPath","nt","numericDate","numericValue","o","observationCodes","oi","p","parseDateValue","parseMeasurementValue","parseNumericValue","parsed","parsedDateOnly","patientPath","plot","plotRef","pt","qe","qn","qt","r","rawValue","renderWidth","resizeChart","resizeObserver","resolveMoisValue","resolvePathValue","root","rowIndex","rowMap","s","sd","segments","self","seriesDefs","seriesPointSize","seriesShowsPoints","showAxes","showGrid","showLegend","showPoints","single","singleCode","sortedRows","sourceItems","sourcePath","stringifyValue","style","summaryParts","t","target","te","text","timeValue","timestamp","tl","tn","toPathSegments","trimmed","tt","u","uPlot","units","v","value","valueText","ve","vi","vl","vn","vt","w","wi","window","wl","wn","wrapperStyle","wt","xKey","xValues","xi","xl","xn","xt","y","year","yi","yn","yt","z","ze","zi","zl","zn"],
   './ObservationPanelEditor/index.jsx': ["DEFAULT_WINDOW_HOURS","ObservationPanelEditor","actor","actorFrom","addHoursIso","authorshipPolicy","buildKey","c","changed","ck","claim","claims","codeSet","commitSave","componentId","computedTotals","container","createdBy","current","currentActorName","currentPayload","d","data","dcoUpdates","editableUntil","effectiveFieldId","euDate","existing","expired","fieldData","formatTimestamp","getCurrentActorName","getNhAuth","getPanelValue","grouped","hasValue","historyRows","isNonEmpty","isOwner","keepStatus","key","label","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","maxHistory","next","nextGroup","nextStatus","nhAuth","normalizePanelRows","normalizePanelTotals","normalizeStore","now","nowIso","numeric","oldObs","optionList","ownerId","ownerName","ownerRefresh","pad2","panelDateKey","payloadsEqual","pending","policyAppliesToAction","prepareSave","raw","readStore","release","resolveNow","rootValue","rowDefs","rowLockInfo","rowReadOnly","sameActor","sd","section","setPanelPayload","setRowValue","source","sourceIds","store","stripVolatilePayloadFields","toNumericValue","totalDefs","ts","untilSelf","value","windowHours"],
   './Occupations/index.jsx': ["Occupations","OccupationsFields"],
-  './PastMeasurementField/index.jsx': ["PastMeasurementField","abnormalFlag","abnormalHighValue","abnormalLowValue","candidate","codeFilter","coercePositiveInt","commentFilter","componentId","container","createdBy","criticalHighValue","criticalLowValue","current","currentPayload","day","direct","documentDate","effectiveFieldId","effectiveHistorySize","entryCode","entryComment","entryDate","entryUnits","entryValue","explicitValue","fieldData","flagCode","flagDisplays","formatDate","fromPatient","fromQueryResult","handleValueChange","hasAbnormalHigh","hasAbnormalLow","hasExplicitValue","hasMeaningfulValue","hasNumericCurrentValue","hasStoredValue","historyItems","historySummary","index","inputSuffix","isAbnormal","isNonEmptyString","key","latestHistoryItem","linkedObservationItem","month","nextGroup","normalizeObservationItems","normalizedDateOnly","numericCurrentValue","numericExplicitValue","numericTime","oldId","oldObs","parseDateValue","parsed","parsedDate","parsedDateOnly","patientPath","payloadsEqual","recentHistoryText","resolveMoisValue","resolvePathValue","resolvedCurrentValue","resolvedUnits","sd","segments","setNestedPayload","shouldReserveHistory","shouldShowHistory","storedValue","stringifyValue","stripVolatilePayloadFields","text","toObservationList","toPathSegments","updatedValue","valueKeys","valuePart","year"],
+  './PastMeasurementField/index.jsx': ["PastMeasurementField","abnormalFlag","abnormalHighValue","abnormalLowValue","candidate","codeFilter","coercePositiveInt","commentFilter","componentId","container","createdBy","criticalHighValue","criticalLowValue","current","currentPayload","day","direct","documentDate","effectiveFieldId","effectiveHistorySize","entryCode","entryComment","entryDate","entryUnits","entryValue","explicitValue","fieldData","flagCode","flagDisplays","formatDate","fromPatient","fromQueryResult","handleValueChange","hasAbnormalHigh","hasAbnormalLow","hasExplicitValue","hasMeaningfulValue","hasNumericCurrentValue","hasRangeMetadata","hasStoredValue","historyItems","historySummary","index","inputSuffix","isAbnormal","isNonEmptyString","key","latestHistoryItem","legacyRangePayload","linkedObservationItem","month","nextGroup","normalizeObservationItems","normalizedDateOnly","numericCurrentValue","numericExplicitValue","numericTime","oldId","oldObs","optionalString","parseDateValue","parsed","parsedDate","parsedDateOnly","patientPath","payloadsEqual","recentHistoryText","resolveMoisValue","resolvePathValue","resolvedAbnormalHigh","resolvedAbnormalLow","resolvedCriticalHigh","resolvedCriticalLow","resolvedCurrentValue","resolvedUnits","sd","segments","setNestedPayload","shouldReserveHistory","shouldShowHistory","storedValue","stringifyValue","stripVolatilePayloadFields","text","toObservationList","toPathSegments","updatedValue","valueKeys","valuePart","year"],
   './PatientFileSections/index.jsx': ["PatientFileSections","activeText","addressText","cityLine","compactLines","contactText","countryLine","createdDate","editButtonStyle","encounter","fieldWrapStyle","formatAddress","formatContact","formatDate","getPatientFromData","gridStyle","healthNumber","insuranceBy","insuranceNumber","insuranceText","lines","match","mergeObjects","nextPatient","optionCode","optionDisplay","patient","preferredCode","preferredPhoneOptions","providerName","queryPatient","raw","renderClientDemographics","renderDocumentDetails","renderEncounterDetails","renderTitle","requested","sd","section","sectionTitleStyle","textValue","updateContactText","visibleSections","whiteDropdownStyles","whiteFlexTextFieldStyles","whiteTextFieldStyles","writePatientUpdates"],
   './PatientValueField/index.jsx': ["PatientValueField","age","applyPatientTransform","coercePatientValue","computeAgeYears","dob","effectiveFieldId","monthDelta","now","raw","resolvePatientContextPath","resolved","root","sd","stored"],
   './PdfRegenerator/index.jsx': ["PDFLib","PDF_LIB_URL","PdfRegenerator","_base64ToBytes","_buildDateComponentIndex","_buildTableReverseIndex","_collectCandidates","_decodePdfHex","_downloadBytes","_fillField","_getCheckboxOnStates","_inferBooleanState","_installPdfLibFromSource","_isNonEmptyString","_loadPdfLib","_loadPdfLibFromCdn","_matchMultipleOptions","_matchSingleOption","_normalizeFieldMap","_normalizeToken","_pdfLibPromise","_printBytes","_resolveDateComponentValue","_resolveTableCellValue","_resolveValueByPath","_setCheckboxByState","_splitCanonicalDateParts","_statusColor","_toBooleanLike","_toCandidateList","_toText","acro","baseMap","binary","blob","boolValue","booleanStates","buttonDisabled","byRow","bytes","candidate","candidateKeys","candidates","clean","cleaned","cleanup","components","current","dateComponentIndex","dateComponentValue","dateEntry","diagnosticsText","didFill","direct","doc","existing","filledFieldCount","form","formData","formKeys","fromData","fromPath","fuzzy","handleGeneratePdf","hasMatchingState","i","iframe","includeSet","index","inferredState","inlineSource","installed","isOn","left","leftIsFormId","lib","link","map","mapped","match","matches","maybe","maybeDate","maybeTime","nextFileName","normalized","normalizedAction","normalizedCandidate","normalizedOption","normalizedOptionMap","normalizedRequested","offState","onText","onValue","options","outputBytes","parts","pathByColumnId","payload","pdfFieldId","pdfFieldName","printWindow","rawValue","renderActionButton","renderButton","resolvePath","resolvedPdfSource","right","rightIsFormId","row","rowIndex","rowMapping","rows","runner","script","sd","segments","selected","selectedCount","set","single","skippedFieldCount","sourceFieldId","sourceId","sourceValues","state","states","strategy","tableEntry","tableId","tableIndex","targetAction","targetState","targetStateName","targetWidget","text","trimmed","url","warningCount","warnings","widgets","withoutSlash"],

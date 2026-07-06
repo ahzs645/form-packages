@@ -30,11 +30,43 @@ const _getDefaultCellValue = (column = {}) => {
   return ""
 }
 
+const _formatLocalDate = (date) => {
+  const pad2 = (value) => String(value).padStart(2, "0")
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`
+}
+
+const _todayDateValue = () => _formatLocalDate(new Date())
+
+const _addDaysToDateValue = (value, days = 1) => {
+  if (!value) return ""
+  const text = String(value).trim()
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(text)
+  const date = match
+    ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+    : new Date(text)
+  if (Number.isNaN(date.getTime())) return ""
+  date.setDate(date.getDate() + days)
+  return _formatLocalDate(date)
+}
+
 const _makeEmptyRow = (columns = [], rowIndex = 0) => {
   const row = { _rowId: `row_${rowIndex}_${Date.now()}` }
   columns.forEach((col) => {
     const path = col.dataPath || col.id
     _setValueAtPath(row, path, _getDefaultCellValue(col))
+  })
+  return row
+}
+
+const _applyDefaultValuesToRow = (row, fields = [], context = {}) => {
+  if (!row || !Array.isArray(fields)) return row
+  fields.forEach((field) => {
+    if (!field || typeof field !== "object" || typeof field.defaultValue === "undefined") return
+    const fieldId = field.id
+    if (!fieldId) return
+    const currentValue = _getValueAtPath(row, fieldId)
+    if (_isMeaningfulValue(currentValue)) return
+    _setValueAtPath(row, fieldId, _resolveFieldDefaultValue(field.defaultValue, context))
   })
   return row
 }
@@ -94,6 +126,27 @@ const _resolveLiteralValue = (value, context) => {
   if (value === "$userFullName") return _resolvePathValue(context, "userProfile.identity.fullName")
   if (value === "$userLoginName") return _resolvePathValue(context, "userProfile.loginName")
   return value
+}
+
+const _resolveFieldDefaultValue = (defaultValue, context = {}) => {
+  if (!defaultValue || typeof defaultValue !== "object" || Array.isArray(defaultValue)) {
+    return defaultValue
+  }
+
+  if (defaultValue.kind === "today") return _todayDateValue()
+
+  if (defaultValue.kind === "nextDateAfterLastRow") {
+    const sourceColumn = defaultValue.sourceColumn || "Date"
+    const rows = Array.isArray(context.currentRows) ? context.currentRows : []
+    for (let index = rows.length - 1; index >= 0; index -= 1) {
+      const candidate = _getValueAtPath(rows[index], sourceColumn)
+      const nextDate = _addDaysToDateValue(candidate, 1)
+      if (nextDate) return nextDate
+    }
+    return _todayDateValue()
+  }
+
+  return defaultValue
 }
 
 const _normalizeStampCellValue = (value) => {
@@ -737,6 +790,7 @@ EditableTable = ({
   const isModalMode = mode === "modal"
   const isVertical = orientation === "vertical"
   const isLocked = disabled || readOnly
+  const effectiveMaxRows = Number(maxRows) > 0 ? Number(maxRows) : Number.POSITIVE_INFINITY
   const modalEditorConfig = props.modalEditorConfig || null
   const processingConfig = props.processingConfig || modalEditorConfig?.processingConfig || null
   const validationConfig = props.validationConfig || modalEditorConfig?.validationConfig || null
@@ -768,6 +822,14 @@ EditableTable = ({
       || label
       || "Row Details",
   }), [modalEditorConfig, modalTitle, label])
+  const saveAndAddNextConfig =
+    subformModalConfig?.saveAndAddNext && typeof subformModalConfig.saveAndAddNext === "object"
+      ? subformModalConfig.saveAndAddNext
+      : null
+  const saveAndAddNextLabel =
+    typeof saveAndAddNextConfig?.label === "string" && saveAndAddNextConfig.label.trim()
+      ? saveAndAddNextConfig.label.trim()
+      : "Save & Add Next"
 
   const getRows = () => {
     try {
@@ -874,6 +936,12 @@ EditableTable = ({
   }, [rows, columns, setRows, sourceSeedRows])
 
   const currentRows = Array.isArray(rows) ? rows : []
+  const canSaveAndAddNext =
+    Boolean(saveAndAddNextConfig) &&
+    editingRowIndex === null &&
+    allowAddRows &&
+    !isLocked &&
+    currentRows.length + 1 < effectiveMaxRows
 
   const getSourceFieldId = (rowIndex, columnId) => {
     return sourceFieldIdsByRow?.[rowIndex]?.[columnId]
@@ -907,10 +975,23 @@ EditableTable = ({
     }
   }, [setRows, onRowsChange, id, columns, mode])
 
+  const makeDraftRow = (rowIndex = currentRows.length) => {
+    const nextRow = _makeEmptyRow(columns, rowIndex)
+    return _applyDefaultValuesToRow(nextRow, modalEditorConfig?.dataEntryConfig?.fields, {
+      currentRows,
+      columns,
+      rowIndex,
+      sd,
+      sourceData: sd,
+      userProfile: sd?.userProfile,
+      fd,
+    })
+  }
+
   const openCreateDialog = () => {
-    if (isLocked || !allowAddRows || currentRows.length >= maxRows) return
+    if (isLocked || !allowAddRows || currentRows.length >= effectiveMaxRows) return
     setEditingRowIndex(null)
-    setDraftRow(_makeEmptyRow(columns, currentRows.length))
+    setDraftRow(makeDraftRow(currentRows.length))
     setErrorMessage("")
     setIsDialogOpen(true)
   }
@@ -1078,14 +1159,14 @@ EditableTable = ({
     return null
   }
 
-  const saveDraftRow = () => {
-    if (!draftRow) return
-    if (isLocked) return
+  const prepareSave = () => {
+    if (!draftRow) return null
+    if (isLocked) return null
     if (
       authorshipEnabled &&
       editingRowIndex !== null &&
       getRowLock(currentRows[editingRowIndex]).locked
-    ) return
+    ) return null
 
     let resolvedRow = _applyComputedColumns(_cloneRow(draftRow, columns), columns)
     if (processingConfig) {
@@ -1101,19 +1182,19 @@ EditableTable = ({
         }
       } catch (error) {
         setErrorMessage(error?.message || "Unable to prepare row for save.")
-        return
+        return null
       }
     }
 
     if (!resolvedRow || typeof resolvedRow !== "object") {
       setErrorMessage("Row save failed because the row data was invalid.")
-      return
+      return null
     }
 
     const validationError = validateResolvedRow(resolvedRow)
     if (validationError) {
       setErrorMessage(validationError)
-      return
+      return null
     }
 
     const normalizedRow = {
@@ -1142,17 +1223,45 @@ EditableTable = ({
       row: normalizedRow,
       previousRows: currentRows,
     }, { rowId: normalizedRow._rowId, value: normalizedRow })
+
+    return { normalizedRow, savedRowIndex, sortedRows }
+  }
+
+  const commitSave = (options = {}) => {
+    const saved = prepareSave()
+    if (!saved) return false
+    const { normalizedRow, savedRowIndex, sortedRows } = saved
     onRowSaved?.(normalizedRow, buildRowContext(normalizedRow, {
       rowIndex: savedRowIndex,
       reason: editingRowIndex === null ? "create" : "edit",
       previousRows: currentRows,
       nextRows: sortedRows,
     }))
-    closeDialog()
+    if (options.addNext && editingRowIndex === null && sortedRows.length < effectiveMaxRows) {
+      setEditingRowIndex(null)
+      setDraftRow(_applyDefaultValuesToRow(_makeEmptyRow(columns, sortedRows.length), modalEditorConfig?.dataEntryConfig?.fields, {
+        currentRows: sortedRows,
+        columns,
+        rowIndex: sortedRows.length,
+        sd,
+        sourceData: sd,
+        userProfile: sd?.userProfile,
+        fd,
+      }))
+      setErrorMessage("")
+      setIsDialogOpen(true)
+    } else {
+      closeDialog()
+    }
+    return true
+  }
+
+  const saveDraftRow = () => {
+    commitSave()
   }
 
   const addInlineRow = () => {
-    if (isLocked || !allowAddRows || currentRows.length >= maxRows) return
+    if (isLocked || !allowAddRows || currentRows.length >= effectiveMaxRows) return
     const nextRows = [...currentRows, _makeEmptyRow(columns, currentRows.length)]
     commitRows(nextRows, {
       reason: "create",
@@ -1186,7 +1295,9 @@ EditableTable = ({
   })()
 
   const currentRowCount = isModalMode ? displayRows.length : currentRows.length
-  const remaining = Math.max(0, maxRows - currentRowCount)
+  const remaining = Number.isFinite(effectiveMaxRows)
+    ? Math.max(0, effectiveMaxRows - currentRowCount)
+    : Number.POSITIVE_INFINITY
   const shouldShowActions = !isLocked && (allowEditRows || allowDeleteRows)
 
   const renderEditorInput = (row, rowIndex, column, onValueChange, inline, rowReadOnly = false, onStampColumn = null) => {
@@ -1635,9 +1746,11 @@ EditableTable = ({
               },
             }}
           />
-          <Text style={{ fontSize: "14px", color: isDarkMode ? "#a0a0a0" : "#666666" }}>
-            {remaining} more row{remaining !== 1 ? "s" : ""} available
-          </Text>
+          {Number.isFinite(remaining) ? (
+            <Text style={{ fontSize: "14px", color: isDarkMode ? "#a0a0a0" : "#666666" }}>
+              {remaining} more row{remaining !== 1 ? "s" : ""} available
+            </Text>
+          ) : null}
         </Stack>
       )}
 
@@ -1655,7 +1768,12 @@ EditableTable = ({
             }
           }}
           completeButtonText={modalEditorConfig?.completeButtonText || "Save"}
+          secondaryCompleteButtonText={canSaveAndAddNext ? saveAndAddNextLabel : undefined}
           cancelButtonText={modalEditorConfig?.cancelButtonText || "Cancel"}
+          onSecondaryComplete={canSaveAndAddNext ? () => {
+            commitSave({ addNext: true })
+            return false
+          } : undefined}
           onComplete={() => {
             saveDraftRow()
             return false
@@ -1702,6 +1820,9 @@ EditableTable = ({
             )}
             <Stack horizontal horizontalAlign="end" tokens={{ childrenGap: 8 }}>
               <DefaultButton text="Cancel" onClick={closeDialog} />
+              {canSaveAndAddNext ? (
+                <DefaultButton text={saveAndAddNextLabel} onClick={() => commitSave({ addNext: true })} />
+              ) : null}
               <PrimaryButton text="Save" onClick={saveDraftRow} />
             </Stack>
           </Stack>

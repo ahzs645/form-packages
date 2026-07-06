@@ -1266,8 +1266,10 @@ const SubformScoringInner = ({
   hideTriggerButton = false,
   showSummary = true,
   completeButtonText = "Done",
+  secondaryCompleteButtonText,
   cancelButtonText = "Cancel",
   onComplete,
+  onSecondaryComplete,
   onCommitToParent,
   dataEntryValueRoot,
   onDataEntryValueChange,
@@ -2708,6 +2710,25 @@ const SubformScoringInner = ({
         )}
         <div style={{ height: "16px" }} />
         <Stack horizontal horizontalAlign="end" tokens={{ childrenGap: 8 }}>
+          {typeof onSecondaryComplete === "function" ? (
+            <DefaultButton
+              text={secondaryCompleteButtonText || "Save & Add Next"}
+              onClick={() => {
+                const shouldClose = onSecondaryComplete({
+                  mode: isDataEntryMode ? "data-entry" : "scoring",
+                  dataEntryValues,
+                  calculatedExpressions,
+                  progress,
+                  answers,
+                  calculatedTotals,
+                })
+                if (shouldClose !== false) {
+                  onCommitToParent?.(fd)
+                  setDialogOpen(false)
+                }
+              }}
+            />
+          ) : null}
           <PrimaryButton
             text={completeButtonText}
             onClick={async () => {

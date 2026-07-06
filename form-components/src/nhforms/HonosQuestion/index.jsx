@@ -440,6 +440,7 @@ const createScaleQuestion = ({
                       disableCount,
                       effectiveChoiceOptions,
                       tooltipLookup,
+                      fallbackLookup,
                       fallbackDescription
                     )
                   }
@@ -452,6 +453,7 @@ const createScaleQuestion = ({
                       dropdownOptions,
                       disableCount,
                       tooltipLookup,
+                      fallbackLookup,
                       fallbackDescription
                     )
                   }
@@ -611,6 +613,7 @@ const handleKeyUp = (
   disableCount: boolean,
   choiceOptions: any[],
   tooltipLookup: Record<string, string>,
+  responseLookup: Record<string, string>,
   fallbackDescription: string
 ) => {
   const selectedOptions = choiceOptions.filter(option => {
@@ -634,6 +637,7 @@ const handleKeyUp = (
       hasDropdown,
       disableCount,
       tooltipLookup,
+      responseLookup,
       fallbackDescription
     )
   }
@@ -658,6 +662,7 @@ const handleChoiceChanged = (
   hasDropdown: boolean,
   disableCount: boolean,
   tooltipLookup: Record<string, string>,
+  responseLookup: Record<string, string>,
   fallbackDescription: string
 ) => {
   const item = fd.field.data[id]
@@ -683,7 +688,7 @@ const handleChoiceChanged = (
     ...item,
     selectedKey: option.key,
     value,
-    response: tooltipLookup[String(option.key)] ?? fallbackDescription,
+    response: responseLookup[String(option.key)] ?? fallbackDescription,
     detailResponse: tooltipLookup[String(option.key)] ?? fallbackDescription,
   }
 

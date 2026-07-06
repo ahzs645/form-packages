@@ -1,10 +1,27 @@
 const {Checkbox, ChoiceGroup} = Fluent
+const {useEffect} = React
+
+const defaultFollowUpAppts = () => ({
+    appointments: [],
+    appointmentCount: 0
+})
 
 
 
 const HFC_PT_ASMT_SnapShot = (props) => {
     const [fd,setFd] = useActiveData()    
     const sd = useSourceData()
+
+    useEffect(() => {
+        if (fd?.field?.data?.FollowUpAppts !== undefined) return
+
+        fd.setFormData(produce((draft) => {
+            if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
+            if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
+            if (draft.field.data.FollowUpAppts !== undefined) return
+            draft.field.data.FollowUpAppts = defaultFollowUpAppts()
+        }))
+    }, [fd])
     
     const RadioSelectGroup=({optionList,fieldId,codeSystem,section,...props})=>{
         //An extension of the fluent ChoiceGroup that ensures data is sent to the ActiveData properly

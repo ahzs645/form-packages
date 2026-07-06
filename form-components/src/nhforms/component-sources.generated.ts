@@ -4741,11 +4741,43 @@ const _getDefaultCellValue = (column = {}) => {
   return ""
 }
 
+const _formatLocalDate = (date) => {
+  const pad2 = (value) => String(value).padStart(2, "0")
+  return \`\${date.getFullYear()}-\${pad2(date.getMonth() + 1)}-\${pad2(date.getDate())}\`
+}
+
+const _todayDateValue = () => _formatLocalDate(new Date())
+
+const _addDaysToDateValue = (value, days = 1) => {
+  if (!value) return ""
+  const text = String(value).trim()
+  const match = /^(\\d{4})-(\\d{2})-(\\d{2})/.exec(text)
+  const date = match
+    ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+    : new Date(text)
+  if (Number.isNaN(date.getTime())) return ""
+  date.setDate(date.getDate() + days)
+  return _formatLocalDate(date)
+}
+
 const _makeEmptyRow = (columns = [], rowIndex = 0) => {
   const row = { _rowId: \`row_\${rowIndex}_\${Date.now()}\` }
   columns.forEach((col) => {
     const path = col.dataPath || col.id
     _setValueAtPath(row, path, _getDefaultCellValue(col))
+  })
+  return row
+}
+
+const _applyDefaultValuesToRow = (row, fields = [], context = {}) => {
+  if (!row || !Array.isArray(fields)) return row
+  fields.forEach((field) => {
+    if (!field || typeof field !== "object" || typeof field.defaultValue === "undefined") return
+    const fieldId = field.id
+    if (!fieldId) return
+    const currentValue = _getValueAtPath(row, fieldId)
+    if (_isMeaningfulValue(currentValue)) return
+    _setValueAtPath(row, fieldId, _resolveFieldDefaultValue(field.defaultValue, context))
   })
   return row
 }
@@ -4805,6 +4837,27 @@ const _resolveLiteralValue = (value, context) => {
   if (value === "$userFullName") return _resolvePathValue(context, "userProfile.identity.fullName")
   if (value === "$userLoginName") return _resolvePathValue(context, "userProfile.loginName")
   return value
+}
+
+const _resolveFieldDefaultValue = (defaultValue, context = {}) => {
+  if (!defaultValue || typeof defaultValue !== "object" || Array.isArray(defaultValue)) {
+    return defaultValue
+  }
+
+  if (defaultValue.kind === "today") return _todayDateValue()
+
+  if (defaultValue.kind === "nextDateAfterLastRow") {
+    const sourceColumn = defaultValue.sourceColumn || "Date"
+    const rows = Array.isArray(context.currentRows) ? context.currentRows : []
+    for (let index = rows.length - 1; index >= 0; index -= 1) {
+      const candidate = _getValueAtPath(rows[index], sourceColumn)
+      const nextDate = _addDaysToDateValue(candidate, 1)
+      if (nextDate) return nextDate
+    }
+    return _todayDateValue()
+  }
+
+  return defaultValue
 }
 
 const _normalizeStampCellValue = (value) => {
@@ -5448,6 +5501,7 @@ EditableTable = ({
   const isModalMode = mode === "modal"
   const isVertical = orientation === "vertical"
   const isLocked = disabled || readOnly
+  const effectiveMaxRows = Number(maxRows) > 0 ? Number(maxRows) : Number.POSITIVE_INFINITY
   const modalEditorConfig = props.modalEditorConfig || null
   const processingConfig = props.processingConfig || modalEditorConfig?.processingConfig || null
   const validationConfig = props.validationConfig || modalEditorConfig?.validationConfig || null
@@ -5479,6 +5533,14 @@ EditableTable = ({
       || label
       || "Row Details",
   }), [modalEditorConfig, modalTitle, label])
+  const saveAndAddNextConfig =
+    subformModalConfig?.saveAndAddNext && typeof subformModalConfig.saveAndAddNext === "object"
+      ? subformModalConfig.saveAndAddNext
+      : null
+  const saveAndAddNextLabel =
+    typeof saveAndAddNextConfig?.label === "string" && saveAndAddNextConfig.label.trim()
+      ? saveAndAddNextConfig.label.trim()
+      : "Save & Add Next"
 
   const getRows = () => {
     try {
@@ -5585,6 +5647,12 @@ EditableTable = ({
   }, [rows, columns, setRows, sourceSeedRows])
 
   const currentRows = Array.isArray(rows) ? rows : []
+  const canSaveAndAddNext =
+    Boolean(saveAndAddNextConfig) &&
+    editingRowIndex === null &&
+    allowAddRows &&
+    !isLocked &&
+    currentRows.length + 1 < effectiveMaxRows
 
   const getSourceFieldId = (rowIndex, columnId) => {
     return sourceFieldIdsByRow?.[rowIndex]?.[columnId]
@@ -5618,10 +5686,23 @@ EditableTable = ({
     }
   }, [setRows, onRowsChange, id, columns, mode])
 
+  const makeDraftRow = (rowIndex = currentRows.length) => {
+    const nextRow = _makeEmptyRow(columns, rowIndex)
+    return _applyDefaultValuesToRow(nextRow, modalEditorConfig?.dataEntryConfig?.fields, {
+      currentRows,
+      columns,
+      rowIndex,
+      sd,
+      sourceData: sd,
+      userProfile: sd?.userProfile,
+      fd,
+    })
+  }
+
   const openCreateDialog = () => {
-    if (isLocked || !allowAddRows || currentRows.length >= maxRows) return
+    if (isLocked || !allowAddRows || currentRows.length >= effectiveMaxRows) return
     setEditingRowIndex(null)
-    setDraftRow(_makeEmptyRow(columns, currentRows.length))
+    setDraftRow(makeDraftRow(currentRows.length))
     setErrorMessage("")
     setIsDialogOpen(true)
   }
@@ -5789,14 +5870,14 @@ EditableTable = ({
     return null
   }
 
-  const saveDraftRow = () => {
-    if (!draftRow) return
-    if (isLocked) return
+  const prepareSave = () => {
+    if (!draftRow) return null
+    if (isLocked) return null
     if (
       authorshipEnabled &&
       editingRowIndex !== null &&
       getRowLock(currentRows[editingRowIndex]).locked
-    ) return
+    ) return null
 
     let resolvedRow = _applyComputedColumns(_cloneRow(draftRow, columns), columns)
     if (processingConfig) {
@@ -5812,19 +5893,19 @@ EditableTable = ({
         }
       } catch (error) {
         setErrorMessage(error?.message || "Unable to prepare row for save.")
-        return
+        return null
       }
     }
 
     if (!resolvedRow || typeof resolvedRow !== "object") {
       setErrorMessage("Row save failed because the row data was invalid.")
-      return
+      return null
     }
 
     const validationError = validateResolvedRow(resolvedRow)
     if (validationError) {
       setErrorMessage(validationError)
-      return
+      return null
     }
 
     const normalizedRow = {
@@ -5853,17 +5934,45 @@ EditableTable = ({
       row: normalizedRow,
       previousRows: currentRows,
     }, { rowId: normalizedRow._rowId, value: normalizedRow })
+
+    return { normalizedRow, savedRowIndex, sortedRows }
+  }
+
+  const commitSave = (options = {}) => {
+    const saved = prepareSave()
+    if (!saved) return false
+    const { normalizedRow, savedRowIndex, sortedRows } = saved
     onRowSaved?.(normalizedRow, buildRowContext(normalizedRow, {
       rowIndex: savedRowIndex,
       reason: editingRowIndex === null ? "create" : "edit",
       previousRows: currentRows,
       nextRows: sortedRows,
     }))
-    closeDialog()
+    if (options.addNext && editingRowIndex === null && sortedRows.length < effectiveMaxRows) {
+      setEditingRowIndex(null)
+      setDraftRow(_applyDefaultValuesToRow(_makeEmptyRow(columns, sortedRows.length), modalEditorConfig?.dataEntryConfig?.fields, {
+        currentRows: sortedRows,
+        columns,
+        rowIndex: sortedRows.length,
+        sd,
+        sourceData: sd,
+        userProfile: sd?.userProfile,
+        fd,
+      }))
+      setErrorMessage("")
+      setIsDialogOpen(true)
+    } else {
+      closeDialog()
+    }
+    return true
+  }
+
+  const saveDraftRow = () => {
+    commitSave()
   }
 
   const addInlineRow = () => {
-    if (isLocked || !allowAddRows || currentRows.length >= maxRows) return
+    if (isLocked || !allowAddRows || currentRows.length >= effectiveMaxRows) return
     const nextRows = [...currentRows, _makeEmptyRow(columns, currentRows.length)]
     commitRows(nextRows, {
       reason: "create",
@@ -5897,7 +6006,9 @@ EditableTable = ({
   })()
 
   const currentRowCount = isModalMode ? displayRows.length : currentRows.length
-  const remaining = Math.max(0, maxRows - currentRowCount)
+  const remaining = Number.isFinite(effectiveMaxRows)
+    ? Math.max(0, effectiveMaxRows - currentRowCount)
+    : Number.POSITIVE_INFINITY
   const shouldShowActions = !isLocked && (allowEditRows || allowDeleteRows)
 
   const renderEditorInput = (row, rowIndex, column, onValueChange, inline, rowReadOnly = false, onStampColumn = null) => {
@@ -6346,9 +6457,11 @@ EditableTable = ({
               },
             }}
           />
-          <Text style={{ fontSize: "14px", color: isDarkMode ? "#a0a0a0" : "#666666" }}>
-            {remaining} more row{remaining !== 1 ? "s" : ""} available
-          </Text>
+          {Number.isFinite(remaining) ? (
+            <Text style={{ fontSize: "14px", color: isDarkMode ? "#a0a0a0" : "#666666" }}>
+              {remaining} more row{remaining !== 1 ? "s" : ""} available
+            </Text>
+          ) : null}
         </Stack>
       )}
 
@@ -6366,7 +6479,12 @@ EditableTable = ({
             }
           }}
           completeButtonText={modalEditorConfig?.completeButtonText || "Save"}
+          secondaryCompleteButtonText={canSaveAndAddNext ? saveAndAddNextLabel : undefined}
           cancelButtonText={modalEditorConfig?.cancelButtonText || "Cancel"}
+          onSecondaryComplete={canSaveAndAddNext ? () => {
+            commitSave({ addNext: true })
+            return false
+          } : undefined}
           onComplete={() => {
             saveDraftRow()
             return false
@@ -6413,6 +6531,9 @@ EditableTable = ({
             )}
             <Stack horizontal horizontalAlign="end" tokens={{ childrenGap: 8 }}>
               <DefaultButton text="Cancel" onClick={closeDialog} />
+              {canSaveAndAddNext ? (
+                <DefaultButton text={saveAndAddNextLabel} onClick={() => commitSave({ addNext: true })} />
+              ) : null}
               <PrimaryButton text="Save" onClick={saveDraftRow} />
             </Stack>
           </Stack>
@@ -10554,12 +10675,29 @@ const getListSelectionColumns = (
 
 `,
   './HFC_PT_ASMT_SnapShot/index.jsx': `const {Checkbox, ChoiceGroup} = Fluent
+const {useEffect} = React
+
+const defaultFollowUpAppts = () => ({
+    appointments: [],
+    appointmentCount: 0
+})
 
 
 
 const HFC_PT_ASMT_SnapShot = (props) => {
     const [fd,setFd] = useActiveData()    
     const sd = useSourceData()
+
+    useEffect(() => {
+        if (fd?.field?.data?.FollowUpAppts !== undefined) return
+
+        fd.setFormData(produce((draft) => {
+            if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
+            if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
+            if (draft.field.data.FollowUpAppts !== undefined) return
+            draft.field.data.FollowUpAppts = defaultFollowUpAppts()
+        }))
+    }, [fd])
     
     const RadioSelectGroup=({optionList,fieldId,codeSystem,section,...props})=>{
         //An extension of the fluent ChoiceGroup that ensures data is sent to the ActiveData properly
@@ -13265,6 +13403,7 @@ const createScaleQuestion = ({
                       disableCount,
                       effectiveChoiceOptions,
                       tooltipLookup,
+                      fallbackLookup,
                       fallbackDescription
                     )
                   }
@@ -13277,6 +13416,7 @@ const createScaleQuestion = ({
                       dropdownOptions,
                       disableCount,
                       tooltipLookup,
+                      fallbackLookup,
                       fallbackDescription
                     )
                   }
@@ -13436,6 +13576,7 @@ const handleKeyUp = (
   disableCount: boolean,
   choiceOptions: any[],
   tooltipLookup: Record<string, string>,
+  responseLookup: Record<string, string>,
   fallbackDescription: string
 ) => {
   const selectedOptions = choiceOptions.filter(option => {
@@ -13459,6 +13600,7 @@ const handleKeyUp = (
       hasDropdown,
       disableCount,
       tooltipLookup,
+      responseLookup,
       fallbackDescription
     )
   }
@@ -13483,6 +13625,7 @@ const handleChoiceChanged = (
   hasDropdown: boolean,
   disableCount: boolean,
   tooltipLookup: Record<string, string>,
+  responseLookup: Record<string, string>,
   fallbackDescription: string
 ) => {
   const item = fd.field.data[id]
@@ -13508,7 +13651,7 @@ const handleChoiceChanged = (
     ...item,
     selectedKey: option.key,
     value,
-    response: tooltipLookup[String(option.key)] ?? fallbackDescription,
+    response: responseLookup[String(option.key)] ?? fallbackDescription,
     detailResponse: tooltipLookup[String(option.key)] ?? fallbackDescription,
   }
 
@@ -18384,6 +18527,11 @@ const stringifyValue = (value) => {
   return ""
 }
 
+const optionalString = (value) => {
+  if (value === undefined || value === null || value === "") return undefined
+  return stringifyValue(value)
+}
+
 const parseDateValue = (value) => {
   const text = stringifyValue(value)
   if (!text) return null
@@ -18538,6 +18686,7 @@ const PastMeasurementField = ({
   autoFillFromHistory = false,
   persistenceMode = "formOnly",
   valueType = "TEXT",
+  observationDescription,
   saveDescription,
   saveUnits,
   showHistory = true,
@@ -18552,6 +18701,12 @@ const PastMeasurementField = ({
   abnormalHigh,
   criticalLow,
   criticalHigh,
+  rangeAbsurdLow,
+  rangeAbsurdHigh,
+  rangeNormalLow,
+  rangeNormalHigh,
+  rangeVeryLow,
+  rangeVeryHigh,
   abnormalMessage = "Abnormal",
   normalMessage = "",
   readOnly = false,
@@ -18622,8 +18777,12 @@ const PastMeasurementField = ({
     : linkedObservationItem?.valueText ?? (autoFillFromHistory ? latestHistoryItem?.valueText : "") ?? ""
   const numericCurrentValue = Number(stringifyValue(resolvedCurrentValue))
   const hasNumericCurrentValue = Number.isFinite(numericCurrentValue)
-  const abnormalLowValue = Number(abnormalLow)
-  const abnormalHighValue = Number(abnormalHigh)
+  const resolvedAbnormalLow = abnormalLow ?? rangeNormalLow
+  const resolvedAbnormalHigh = abnormalHigh ?? rangeNormalHigh
+  const resolvedCriticalLow = criticalLow ?? rangeAbsurdLow ?? rangeVeryLow
+  const resolvedCriticalHigh = criticalHigh ?? rangeAbsurdHigh ?? rangeVeryHigh
+  const abnormalLowValue = Number(resolvedAbnormalLow)
+  const abnormalHighValue = Number(resolvedAbnormalHigh)
   const hasAbnormalLow = Number.isFinite(abnormalLowValue)
   const hasAbnormalHigh = Number.isFinite(abnormalHighValue)
   const isAbnormal = hasNumericCurrentValue && (
@@ -18668,8 +18827,8 @@ const PastMeasurementField = ({
     // abnormalLow/High -> L/H. Display resolves from the host's option list
     // when available, matching the HFC source.
     const numericExplicitValue = Number(explicitValue)
-    const criticalLowValue = Number(criticalLow)
-    const criticalHighValue = Number(criticalHigh)
+    const criticalLowValue = Number(resolvedCriticalLow)
+    const criticalHighValue = Number(resolvedCriticalHigh)
     const flagCode = !Number.isFinite(numericExplicitValue)
       ? null
       : Number.isFinite(criticalLowValue) && numericExplicitValue < criticalLowValue
@@ -18682,13 +18841,25 @@ const PastMeasurementField = ({
               ? "H"
               : null
     const flagDisplays = { LL: "Critical low", L: "Low", H: "High", HH: "Critical high" }
-    const abnormalFlag = flagCode
+    const hasRangeMetadata = [
+      resolvedCriticalLow,
+      resolvedCriticalHigh,
+      resolvedAbnormalLow,
+      resolvedAbnormalHigh,
+    ].some((value) => optionalString(value) !== undefined)
+    const abnormalFlag = hasRangeMetadata
       ? {
           code: flagCode,
-          display: sd?.optionLists?.["MOIS-ABNORMALFLAG"]?.[flagCode] ?? flagDisplays[flagCode],
+          display: flagCode ? (sd?.optionLists?.["MOIS-ABNORMALFLAG"]?.[flagCode] ?? flagDisplays[flagCode]) : null,
           system: "MOIS-ABNORMALFLAG",
         }
       : null
+    const legacyRangePayload = {
+      ...(optionalString(resolvedCriticalHigh) !== undefined ? { rangeAbsurdHigh: optionalString(resolvedCriticalHigh) } : {}),
+      ...(optionalString(resolvedCriticalLow) !== undefined ? { rangeAbsurdLow: optionalString(resolvedCriticalLow) } : {}),
+      ...(optionalString(resolvedAbnormalHigh) !== undefined ? { rangeNormalHigh: optionalString(resolvedAbnormalHigh) } : {}),
+      ...(optionalString(resolvedAbnormalLow) !== undefined ? { rangeNormalLow: optionalString(resolvedAbnormalLow) } : {}),
+    }
 
     setNestedPayload(setFormData, componentId, "dco", [{
       observationId: oldId,
@@ -18696,8 +18867,9 @@ const PastMeasurementField = ({
       observationClass: "DCOBS",
       value: explicitValue,
       valueType: String(valueType || "TEXT"),
+      ...legacyRangePayload,
       status: oldId ? "C" : "F",
-      description: stringifyValue(saveDescription) || label || "Measurement",
+      description: stringifyValue(observationDescription) || stringifyValue(saveDescription) || label || "Measurement",
       units: resolvedUnits,
       orderedBy: createdBy,
       collectedBy: createdBy,
@@ -18714,7 +18886,18 @@ const PastMeasurementField = ({
     latestHistoryItem,
     linkedObservationItem,
     observationCode,
+    observationDescription,
     persistenceMode,
+    rangeAbsurdHigh,
+    rangeAbsurdLow,
+    rangeNormalHigh,
+    rangeNormalLow,
+    rangeVeryHigh,
+    rangeVeryLow,
+    resolvedAbnormalHigh,
+    resolvedAbnormalLow,
+    resolvedCriticalHigh,
+    resolvedCriticalLow,
     saveDescription,
     saveUnits,
     sd,
@@ -18722,10 +18905,6 @@ const PastMeasurementField = ({
     storedValue,
     valueType,
     commentFilter,
-    abnormalLow,
-    abnormalHigh,
-    criticalLow,
-    criticalHigh,
   ])
 
   useEffect(() => {
@@ -24282,8 +24461,10 @@ const SubformScoringInner = ({
   hideTriggerButton = false,
   showSummary = true,
   completeButtonText = "Done",
+  secondaryCompleteButtonText,
   cancelButtonText = "Cancel",
   onComplete,
+  onSecondaryComplete,
   onCommitToParent,
   dataEntryValueRoot,
   onDataEntryValueChange,
@@ -25724,6 +25905,25 @@ const SubformScoringInner = ({
         )}
         <div style={{ height: "16px" }} />
         <Stack horizontal horizontalAlign="end" tokens={{ childrenGap: 8 }}>
+          {typeof onSecondaryComplete === "function" ? (
+            <DefaultButton
+              text={secondaryCompleteButtonText || "Save & Add Next"}
+              onClick={() => {
+                const shouldClose = onSecondaryComplete({
+                  mode: isDataEntryMode ? "data-entry" : "scoring",
+                  dataEntryValues,
+                  calculatedExpressions,
+                  progress,
+                  answers,
+                  calculatedTotals,
+                })
+                if (shouldClose !== false) {
+                  onCommitToParent?.(fd)
+                  setDialogOpen(false)
+                }
+              }}
+            />
+          ) : null}
           <PrimaryButton
             text={completeButtonText}
             onClick={async () => {

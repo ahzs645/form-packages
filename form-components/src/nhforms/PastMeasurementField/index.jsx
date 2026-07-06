@@ -94,6 +94,11 @@ const stringifyValue = (value) => {
   return ""
 }
 
+const optionalString = (value) => {
+  if (value === undefined || value === null || value === "") return undefined
+  return stringifyValue(value)
+}
+
 const parseDateValue = (value) => {
   const text = stringifyValue(value)
   if (!text) return null
@@ -248,6 +253,7 @@ const PastMeasurementField = ({
   autoFillFromHistory = false,
   persistenceMode = "formOnly",
   valueType = "TEXT",
+  observationDescription,
   saveDescription,
   saveUnits,
   showHistory = true,
@@ -262,6 +268,12 @@ const PastMeasurementField = ({
   abnormalHigh,
   criticalLow,
   criticalHigh,
+  rangeAbsurdLow,
+  rangeAbsurdHigh,
+  rangeNormalLow,
+  rangeNormalHigh,
+  rangeVeryLow,
+  rangeVeryHigh,
   abnormalMessage = "Abnormal",
   normalMessage = "",
   readOnly = false,
@@ -332,8 +344,12 @@ const PastMeasurementField = ({
     : linkedObservationItem?.valueText ?? (autoFillFromHistory ? latestHistoryItem?.valueText : "") ?? ""
   const numericCurrentValue = Number(stringifyValue(resolvedCurrentValue))
   const hasNumericCurrentValue = Number.isFinite(numericCurrentValue)
-  const abnormalLowValue = Number(abnormalLow)
-  const abnormalHighValue = Number(abnormalHigh)
+  const resolvedAbnormalLow = abnormalLow ?? rangeNormalLow
+  const resolvedAbnormalHigh = abnormalHigh ?? rangeNormalHigh
+  const resolvedCriticalLow = criticalLow ?? rangeAbsurdLow ?? rangeVeryLow
+  const resolvedCriticalHigh = criticalHigh ?? rangeAbsurdHigh ?? rangeVeryHigh
+  const abnormalLowValue = Number(resolvedAbnormalLow)
+  const abnormalHighValue = Number(resolvedAbnormalHigh)
   const hasAbnormalLow = Number.isFinite(abnormalLowValue)
   const hasAbnormalHigh = Number.isFinite(abnormalHighValue)
   const isAbnormal = hasNumericCurrentValue && (
@@ -378,8 +394,8 @@ const PastMeasurementField = ({
     // abnormalLow/High -> L/H. Display resolves from the host's option list
     // when available, matching the HFC source.
     const numericExplicitValue = Number(explicitValue)
-    const criticalLowValue = Number(criticalLow)
-    const criticalHighValue = Number(criticalHigh)
+    const criticalLowValue = Number(resolvedCriticalLow)
+    const criticalHighValue = Number(resolvedCriticalHigh)
     const flagCode = !Number.isFinite(numericExplicitValue)
       ? null
       : Number.isFinite(criticalLowValue) && numericExplicitValue < criticalLowValue
@@ -392,13 +408,25 @@ const PastMeasurementField = ({
               ? "H"
               : null
     const flagDisplays = { LL: "Critical low", L: "Low", H: "High", HH: "Critical high" }
-    const abnormalFlag = flagCode
+    const hasRangeMetadata = [
+      resolvedCriticalLow,
+      resolvedCriticalHigh,
+      resolvedAbnormalLow,
+      resolvedAbnormalHigh,
+    ].some((value) => optionalString(value) !== undefined)
+    const abnormalFlag = hasRangeMetadata
       ? {
           code: flagCode,
-          display: sd?.optionLists?.["MOIS-ABNORMALFLAG"]?.[flagCode] ?? flagDisplays[flagCode],
+          display: flagCode ? (sd?.optionLists?.["MOIS-ABNORMALFLAG"]?.[flagCode] ?? flagDisplays[flagCode]) : null,
           system: "MOIS-ABNORMALFLAG",
         }
       : null
+    const legacyRangePayload = {
+      ...(optionalString(resolvedCriticalHigh) !== undefined ? { rangeAbsurdHigh: optionalString(resolvedCriticalHigh) } : {}),
+      ...(optionalString(resolvedCriticalLow) !== undefined ? { rangeAbsurdLow: optionalString(resolvedCriticalLow) } : {}),
+      ...(optionalString(resolvedAbnormalHigh) !== undefined ? { rangeNormalHigh: optionalString(resolvedAbnormalHigh) } : {}),
+      ...(optionalString(resolvedAbnormalLow) !== undefined ? { rangeNormalLow: optionalString(resolvedAbnormalLow) } : {}),
+    }
 
     setNestedPayload(setFormData, componentId, "dco", [{
       observationId: oldId,
@@ -406,8 +434,9 @@ const PastMeasurementField = ({
       observationClass: "DCOBS",
       value: explicitValue,
       valueType: String(valueType || "TEXT"),
+      ...legacyRangePayload,
       status: oldId ? "C" : "F",
-      description: stringifyValue(saveDescription) || label || "Measurement",
+      description: stringifyValue(observationDescription) || stringifyValue(saveDescription) || label || "Measurement",
       units: resolvedUnits,
       orderedBy: createdBy,
       collectedBy: createdBy,
@@ -424,7 +453,18 @@ const PastMeasurementField = ({
     latestHistoryItem,
     linkedObservationItem,
     observationCode,
+    observationDescription,
     persistenceMode,
+    rangeAbsurdHigh,
+    rangeAbsurdLow,
+    rangeNormalHigh,
+    rangeNormalLow,
+    rangeVeryHigh,
+    rangeVeryLow,
+    resolvedAbnormalHigh,
+    resolvedAbnormalLow,
+    resolvedCriticalHigh,
+    resolvedCriticalLow,
     saveDescription,
     saveUnits,
     sd,
@@ -432,10 +472,6 @@ const PastMeasurementField = ({
     storedValue,
     valueType,
     commentFilter,
-    abnormalLow,
-    abnormalHigh,
-    criticalLow,
-    criticalHigh,
   ])
 
   useEffect(() => {
