@@ -20762,20 +20762,6 @@ const _normalizeSaveOnCloseOptions = (value) => {
   return {}
 }
 
-const _collectComponentPayloads = (fd) => {
-  const payloads = fd?.field?.data?.__componentPayloads
-  const dcoGroups = payloads?.dcoUpdatesByComponent || {}
-  const webformGroups = payloads?.webformUpdatesByComponent || {}
-  const DCOUpdates = Object.values(dcoGroups).flatMap((entry) => Array.isArray(entry) ? entry : [])
-  const panelUpdates = Object.values(webformGroups).flatMap((entry) => Array.isArray(entry?.panelUpdates) ? entry.panelUpdates : [])
-  const narratives = Object.values(webformGroups).flatMap((entry) => Array.isArray(entry?.narratives) ? entry.narratives : [])
-  const panels = panelUpdates.length ? panelUpdates : undefined
-  const linkedPanels = panelUpdates.length ? panelUpdates : undefined
-  const webformUpdate = narratives.length ? { narratives } : null
-
-  return { DCOUpdates, webformUpdate, panels, linkedPanels, narratives: narratives.length ? narratives : undefined }
-}
-
 // __componentPayloads is runtime staging; never serialize it into formdata.
 const _stripComponentPayloads = (data) => {
   if (!data || typeof data !== "object") return data || {}
@@ -20790,17 +20776,12 @@ const _stripComponentPayloads = (data) => {
 const _nhAuthPrepareSave = (fd, sd) =>
   (typeof window !== "undefined" && window.__nhAuth) ? window.__nhAuth.prepareSave(fd, sd, "save") : null
 
-const _buildDefaultSavePayload = (fd, formDataOverride) => {
-  const componentPayload = _collectComponentPayloads(fd)
-  return {
-    formData: _stripComponentPayloads(formDataOverride ?? fd?.field?.data),
-    webformUpdate: componentPayload.webformUpdate,
-    panels: componentPayload.panels,
-    linkedPanels: componentPayload.linkedPanels,
-    narratives: componentPayload.narratives,
-    DCOUpdates: componentPayload.DCOUpdates,
-  }
-}
+// Draft saves are formdata-only (legacy parity: saveDraft(sd, fd, { formData,
+// webformUpdate: null })). Chart writes ship from submit paths only.
+const _buildDefaultSavePayload = (fd, formDataOverride) => ({
+  formData: _stripComponentPayloads(formDataOverride ?? fd?.field?.data),
+  webformUpdate: null,
+})
 
 const _useChangeAwareDirtyState = ({
   watchedValue,
@@ -21123,9 +21104,11 @@ const ScaleField = ({
 
   // Convert options to ChoiceGroup format
   const normalizedTooltipMode = tooltipMode === "option" ? "option" : "all"
+  // opt.key wins over the numeric value so distinct options may share a score
+  // (HoNOS "9" = Unknown stores key "9" but scores 0, legacy parity).
   const choiceOptions = scaleOptions.map(opt => ({
-    key: String(opt.value),
-    text: showInlineLabels ? String(opt.value) : "",
+    key: opt.key ?? String(opt.value),
+    text: showInlineLabels ? (opt.label ?? String(opt.value)) : "",
     title: showTooltip && normalizedTooltipMode === "option" ? (opt.description || opt.label) : undefined,
     onRenderField:
       showTooltip && normalizedTooltipMode === "option" && (opt.description || opt.label)
@@ -21164,7 +21147,7 @@ const ScaleField = ({
   const handleChange = (ev, option) => {
     if (readOnly) return
 
-    const selectedOption = scaleOptions.find(o => String(o.value) === option.key)
+    const selectedOption = scaleOptions.find(o => (o.key ?? String(o.value)) === option.key)
 
     setFieldData({
       [fieldId]: {
@@ -26310,7 +26293,15 @@ const serializeGuardValue = (value) => {
   }
 }
 
-const buildDefaultSavePayload = (fd, formDataOverride) => {
+// Draft saves are formdata-only (legacy parity: saveDraft(sd, fd, { formData,
+// webformUpdate: null })) — chart writes ship from sign/submit only.
+const buildDefaultSavePayload = (fd, formDataOverride) => ({
+  formData: stripComponentPayloads(formDataOverride ?? fd?.field?.data),
+  webformUpdate: null,
+  documentUpdate: null,
+})
+
+const buildDefaultSubmitPayload = (fd, formDataOverride) => {
   const componentPayload = collectComponentPayloads(fd)
   return {
     formData: stripComponentPayloads(formDataOverride ?? fd?.field?.data),
@@ -26549,11 +26540,13 @@ const UnsavedChangesGuard = ({
     // Sign/submit should persist the full submit payload (mapped
     // observation updates, document comment) when the form provides it.
     const isSubmitAction = actionId === "sign" || actionId === "submit"
-    const payload = isSubmitAction && typeof getSubmitData === "function"
-      ? getSubmitData(prepared)
-      : typeof getSaveData === "function"
-        ? getSaveData(prepared)
-        : buildDefaultSavePayload(persistFd, prepared?.formData)
+    const payload = isSubmitAction
+      ? (typeof getSubmitData === "function"
+          ? getSubmitData(prepared)
+          : buildDefaultSubmitPayload(persistFd, prepared?.formData))
+      : (typeof getSaveData === "function"
+          ? getSaveData(prepared)
+          : buildDefaultSavePayload(persistFd, prepared?.formData))
 
     if (actionId === "sign" && typeof signSubmit === "function") {
       // Real MOIS signSubmit is (note, sd, fd, options)

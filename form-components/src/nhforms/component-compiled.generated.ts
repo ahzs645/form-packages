@@ -22223,26 +22223,6 @@ const _normalizeSaveOnCloseOptions = value => {
   }
   return {};
 };
-const _collectComponentPayloads = fd => {
-  const payloads = fd?.field?.data?.__componentPayloads;
-  const dcoGroups = payloads?.dcoUpdatesByComponent || {};
-  const webformGroups = payloads?.webformUpdatesByComponent || {};
-  const DCOUpdates = Object.values(dcoGroups).flatMap(entry => Array.isArray(entry) ? entry : []);
-  const panelUpdates = Object.values(webformGroups).flatMap(entry => Array.isArray(entry?.panelUpdates) ? entry.panelUpdates : []);
-  const narratives = Object.values(webformGroups).flatMap(entry => Array.isArray(entry?.narratives) ? entry.narratives : []);
-  const panels = panelUpdates.length ? panelUpdates : undefined;
-  const linkedPanels = panelUpdates.length ? panelUpdates : undefined;
-  const webformUpdate = narratives.length ? {
-    narratives
-  } : null;
-  return {
-    DCOUpdates,
-    webformUpdate,
-    panels,
-    linkedPanels,
-    narratives: narratives.length ? narratives : undefined
-  };
-};
 
 // __componentPayloads is runtime staging; never serialize it into formdata.
 const _stripComponentPayloads = data => {
@@ -22259,17 +22239,13 @@ const _stripComponentPayloads = data => {
 // preview-only prepareAuthorshipPersist path. (No in-memory commit here — the
 // onbeforeunload save is best-effort while the window is tearing down.)
 const _nhAuthPrepareSave = (fd, sd) => typeof window !== "undefined" && window.__nhAuth ? window.__nhAuth.prepareSave(fd, sd, "save") : null;
-const _buildDefaultSavePayload = (fd, formDataOverride) => {
-  const componentPayload = _collectComponentPayloads(fd);
-  return {
-    formData: _stripComponentPayloads(formDataOverride ?? fd?.field?.data),
-    webformUpdate: componentPayload.webformUpdate,
-    panels: componentPayload.panels,
-    linkedPanels: componentPayload.linkedPanels,
-    narratives: componentPayload.narratives,
-    DCOUpdates: componentPayload.DCOUpdates
-  };
-};
+
+// Draft saves are formdata-only (legacy parity: saveDraft(sd, fd, { formData,
+// webformUpdate: null })). Chart writes ship from submit paths only.
+const _buildDefaultSavePayload = (fd, formDataOverride) => ({
+  formData: _stripComponentPayloads(formDataOverride ?? fd?.field?.data),
+  webformUpdate: null
+});
 const _useChangeAwareDirtyState = ({
   watchedValue,
   disabled = false,
@@ -22593,9 +22569,11 @@ const ScaleField = ({
 
   // Convert options to ChoiceGroup format
   const normalizedTooltipMode = tooltipMode === "option" ? "option" : "all";
+  // opt.key wins over the numeric value so distinct options may share a score
+  // (HoNOS "9" = Unknown stores key "9" but scores 0, legacy parity).
   const choiceOptions = scaleOptions.map(opt => ({
-    key: String(opt.value),
-    text: showInlineLabels ? String(opt.value) : "",
+    key: opt.key ?? String(opt.value),
+    text: showInlineLabels ? opt.label ?? String(opt.value) : "",
     title: showTooltip && normalizedTooltipMode === "option" ? opt.description || opt.label : undefined,
     onRenderField: showTooltip && normalizedTooltipMode === "option" && (opt.description || opt.label) ? (optionProps, defaultRender) => /*#__PURE__*/React.createElement(TooltipHost, {
       tooltipProps: {
@@ -22633,7 +22611,7 @@ const ScaleField = ({
   // Handle selection change
   const handleChange = (ev, option) => {
     if (readOnly) return;
-    const selectedOption = scaleOptions.find(o => String(o.value) === option.key);
+    const selectedOption = scaleOptions.find(o => (o.key ?? String(o.value)) === option.key);
     setFieldData({
       [fieldId]: {
         selectedKey: option.key,
@@ -28116,7 +28094,15 @@ const serializeGuardValue = value => {
     return String(value);
   }
 };
-const buildDefaultSavePayload = (fd, formDataOverride) => {
+
+// Draft saves are formdata-only (legacy parity: saveDraft(sd, fd, { formData,
+// webformUpdate: null })) — chart writes ship from sign/submit only.
+const buildDefaultSavePayload = (fd, formDataOverride) => ({
+  formData: stripComponentPayloads(formDataOverride ?? fd?.field?.data),
+  webformUpdate: null,
+  documentUpdate: null
+});
+const buildDefaultSubmitPayload = (fd, formDataOverride) => {
   const componentPayload = collectComponentPayloads(fd);
   return {
     formData: stripComponentPayloads(formDataOverride ?? fd?.field?.data),
@@ -28329,7 +28315,7 @@ const UnsavedChangesGuard = ({
     // Sign/submit should persist the full submit payload (mapped
     // observation updates, document comment) when the form provides it.
     const isSubmitAction = actionId === "sign" || actionId === "submit";
-    const payload = isSubmitAction && typeof getSubmitData === "function" ? getSubmitData(prepared) : typeof getSaveData === "function" ? getSaveData(prepared) : buildDefaultSavePayload(persistFd, prepared?.formData);
+    const payload = isSubmitAction ? typeof getSubmitData === "function" ? getSubmitData(prepared) : buildDefaultSubmitPayload(persistFd, prepared?.formData) : typeof getSaveData === "function" ? getSaveData(prepared) : buildDefaultSavePayload(persistFd, prepared?.formData);
     if (actionId === "sign" && typeof signSubmit === "function") {
       // Real MOIS signSubmit is (note, sd, fd, options)
       const success = await signSubmit("", sd, persistFd, payload);
@@ -28767,14 +28753,14 @@ export const componentDefinedNames: Record<string, string[]> = {
   './ReferralSource/index.jsx': ["ReferralSource","codeSystem","defaultValue","optionList","referralValueSet","sd"],
   './RelationshipStatus/index.jsx': ["RelationshipStatus"],
   './RichMarkdownBlock/index.jsx': ["MarkdownRenderer","RichMarkdownBlock","baseComponents","content","defaultRehypePlugins","defaultRemarkPlugins","effectiveFieldId","extra","extraPlugins","fullWidthStyle","mergedMarkdownProps"],
-  './SaveOnClose/index.jsx': ["DCOUpdates","DEFAULT_WINDOW_HOURS","SaveOnClose","_buildDefaultSavePayload","_collectComponentPayloads","_nhAuthPrepareSave","_normalizeSaveOnCloseOptions","_stripComponentPayloads","_useChangeAwareDirtyState","actor","actorFrom","addHoursIso","baselineRef","buildKey","c","changed","ck","claim","claims","commitSave","componentPayload","current","d","data","dcoGroups","dirtyRef","editableUntil","euDate","existing","expired","fieldData","formatTimestamp","isDirty","isNonEmpty","isOwner","keepStatus","key","label","linkedPanels","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","markSaved","narratives","nextStatus","normalizeStore","normalizedOptions","now","nowIso","ownerId","ownerName","ownerRefresh","pad2","panelUpdates","panels","payloads","pending","policyAppliesToAction","prepareSave","prepared","raw","readStore","release","renderCountRef","resolveNow","sameActor","saveData","sd","store","trackedValue","ts","untilSelf","useSaveOnClose","webformGroups","webformUpdate","windowHours"],
+  './SaveOnClose/index.jsx': ["DEFAULT_WINDOW_HOURS","SaveOnClose","_buildDefaultSavePayload","_nhAuthPrepareSave","_normalizeSaveOnCloseOptions","_stripComponentPayloads","_useChangeAwareDirtyState","actor","actorFrom","addHoursIso","baselineRef","buildKey","c","changed","ck","claim","claims","commitSave","current","d","data","dirtyRef","editableUntil","euDate","existing","expired","fieldData","formatTimestamp","isDirty","isNonEmpty","isOwner","keepStatus","key","label","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","markSaved","nextStatus","normalizeStore","normalizedOptions","now","nowIso","ownerId","ownerName","ownerRefresh","pad2","pending","policyAppliesToAction","prepareSave","prepared","raw","readStore","release","renderCountRef","resolveNow","sameActor","saveData","sd","store","trackedValue","ts","untilSelf","useSaveOnClose","windowHours"],
   './ScaleField/index.jsx': ["CHOICE_FIELD_STYLE","LABEL_COLUMN_STYLE","LABEL_STYLE","ScaleField","ScaleFieldLegend","ScaleFieldTooltip","_getInlineMinWidth","_renderOptionTooltipContent","choiceGroupStyles","choiceOptions","containerStyle","currentData","fieldContent","handleChange","hasDescriptions","inlineMinWidth","label","legendItemStyle","legendRowStyle","normalizedTooltipMode","scaleOptions","selectedOption","shouldShowAllTooltip","theme"],
   './ScoringModule/index.jsx': ["CompactScoringQuestion","GroupedChecklistQuestion","GroupedChecklistSection","INTERPRETATION_BOX_STYLE","MatrixScoringRow","MatrixScoringTable","QUESTION_CONTAINER_STYLE","ScoringModule","ScoringModuleSchema","ScoringOptionTooltip","ScoringQuestion","ScoringScales","ScoringTotal","TOTAL_CONTAINER_STYLE","_cloneMirrorValue","_getQuestionMirrorFieldIds","_safeSerialize","allEntries","answer","answerScore","answerValue","answered","answers","buildScoreMap","calculatedTotals","candidateKeys","candidates","checked","checkedFromConfig","checkedOption","checklist","checklistUngroupedQuestions","collectScoreCandidates","containerStyle","continuumLabels","countsBySignature","createScoringConfig","createScoringQuestion","createScoringTotal","currentData","direct","effectiveShowProgress","errorContainerStyle","explicitShared","formatBounds","getAnswers","getInterpretation","getScoreFromValue","groupedQuestionIds","handleSelect","handleToggle","hasChanges","hasDescription","headerLabelStyle","headerOptionStyle","headerStyle","ids","interpretation","interpretationStyle","isComplete","isDarkMode","isInRange","keyValue","labelCellStyle","labelStyle","map","matrixQuestionIds","matrixQuestions","matrixSignature","max","maxContinuumLabel","maxSymbol","meetsMax","meetsMin","min","minContinuumLabel","minSymbol","mirrorIds","nextChecked","nextOption","normalizeQuestionIds","normalizeScoreToken","normalizeScoringOption","normalizeScoringOptions","normalizedLayout","normalizedOptionMap","optionCellStyle","optionControl","optionMap","optionScoreMap","options","optionsBySignature","progress","progressStyle","question","questionGroups","questionMirrorEntries","questionOptions","questions","questionsById","resolveChecklistOptions","resolveMatrixOptions","resolveQuestionOptions","resolvedOptions","results","rowStyle","scaleGridStyle","scaleWrapStyle","score","scoreMap","scoreValue","sectionQuestions","selected","serializeOptionSignature","sharedOptions","shouldRenderCompact","shouldRenderGroupedChecklist","shouldRenderMatrix","signature","stackedQuestions","tableStyle","targetIds","termQuestionId","textValue","theme","token","total","totalMirrorEntries","totals","uncheckedFromConfig","uncheckedOption","value","winnerCount","winnerSignature","wrapperStyle"],
   './ServiceEpisodes/index.jsx': ["ServiceEpisodes","ServiceEpisodesFields","activeServiceEpisodes","startDateDesc"],
   './ServiceRequests/index.jsx': ["ServiceRequests","ServiceRequestsFields","activeServiceRequests","orderDateDesc"],
   './SignaturePad/index.jsx': ["B","D","L","O","SignaturePad","SignaturePadLib","T","U","W","_","__exports","a","c","canvas","canvasRef","container","containerRef","containerStyle","dataUrl","define","e","exports","f","h","handleClear","handleEndStroke","i","k","l","m","module","o","p","pad","padRef","r","ratio","readOnlyImageStyle","resizeCanvas","s","savedDataUrl","t","theme","u","width","y"],
   './SubformScoring/index.jsx': ["AnswerSummaryItem","CalculationSummaryItem","DataFieldSummaryItem","DataInterpretationSummaryItem","FormSessionProvider","InterpretationSummaryItem","MOIS_WRITE_ID_FALLBACK_PATHS","MOIS_WRITE_MUTATIONS","MOIS_WRITE_MUTATION_KEYS","ProgressSummaryItem","ScoreSummaryItem","SubformScoring","SubformScoringInner","_LOCAL_INPUT_STYLE","_LOCAL_RADIO_GROUP_STYLE","_LOCAL_TEXTAREA_STYLE","__SubformScoringSessionContext","__cloneSubformScoringSessionValue","_buildDataEntryRenderGroups","_buildMappedPayload","_buildScaleLegendSignature","_buildScaleOptions","_buildScoreMap","_collectScoreCandidates","_computeMorphineEquivalent","_evaluateDataEntryVisibility","_evaluateExpression","_formatBounds","_formatCalculatorDisplayValue","_formatNumericValue","_getInterpretation","_getScoreFromValue","_getSelectableOptionNumericValue","_getValueAtPath","_isHeadingField","_isInRange","_isMeaningfulValue","_isScaleChoiceSelected","_isSelectableOptionSelected","_normalizeChartPreferenceValue","_normalizeScoreToken","_normalizeSelectableOptions","_optionMatchesValue","_recordSubformActionPayload","_resolveChecklistOptions","_resolveFieldDefaultValue","_resolveFieldEmptyNumericValue","_resolveFieldWidthBasis","_resolvePathValue","_resolveQuestionOptions","_resolveSelectableBinaryOptions","_resolveWriteActionId","_serializeSelectableValue","_toDisplayValue","_toNumericValue","_toPathSegments","_usesStructuredSelectableOptions","action","actionPayload","answer","answerScore","answerableFields","answered","answers","barBg","barFill","baseDose","baseEquivalentDoseMg","baseEquivalentDoseRaw","basis","boundedPrecision","buttonRowStyle","cadFieldId","calc","calculatedExpressions","calculatedTotals","calculation","calculatorFields","candidate","candidateKeys","candidatePaths","candidates","checked","checkedFromConfig","checkedOption","checklist","cloneFormSessionState","columnTemplate","commentsField","commonProps","computedFallback","configuredField","container","containerStyle","controlLabel","controllerId","conversions","current","currentSignature","cursor","dataEntryAction","dataEntryCalculations","dataEntryCalculatorConfig","dataEntryFieldById","dataEntryFields","dataEntryRenderGroups","dataEntryValues","dateField","day","defaultValue","defaults","description","dialogContentProps","dialogMinWidth","dialogTitle","direct","displayText","displayValue","dose","doseColumnLabel","effectiveInitialData","entry","equivalentColumnLabel","equivalentDose","equivalentDoseMg","explicitDefault","extracted","fallbackOptions","field","fieldExists","fields","fieldsForProgress","flushMatrixBuffer","formatted","fromCalculation","getCalculationConfig","getDataEntryFieldConfig","getQuestionConfig","getTotalConfig","groups","handleCommitToParent","handleOpenChange","hasAnyAnswers","hasAnyRowValue","hasExternalDataEntryStore","hasRequiredId","history","inputFieldId","inputType","inputValue","interpretation","isComplete","isDarkMode","isDataEntryMode","isDialogOpen","isHeading","isMatrixCandidate","isMorphineCalculatorMode","key","label","labelStyle","left","map","matchedOption","matrixBuffer","matrixGroupId","max","meetsMax","meetsMin","meqCalculationId","meqDisplay","meqValue","mergeFormSessionState","min","minSymbol","modalProps","month","next","nextGroup","nextKey","nextOption","nextRaw","nextState","normalize","normalized","normalizedButtonIconName","normalizedOptionMap","normalizedOptions","normalizedSessionData","normalizedType","numeric","numericValue","option","optionList","optionMap","optionScoreMap","optionTokens","optionValue","options","parsed","payload","payloadMap","pendingDefaults","precision","precisionRaw","prepared","prevIndex","previousEntry","previousField","previousScaleSignature","progress","providedOptions","question","questionOptions","questionsById","rawConfig","rawOptions","rawRows","rawType","rawValue","renderBloodGlucoseReadingEditor","renderDataEntryField","renderDataEntryScaleMatrix","renderMorphineCalculator","renderNumberInput","renderStyle","renderSummaryItem","replacement","required","requiredFields","resolved","resolvedId","response","result","resultColumnLabel","results","right","root","rowId","rowLabels","rowValues","rows","rule","runMutation","runtime","scaleOptions","scopedSetter","score","scoreMap","sd","segments","selected","selectedOption","selectedWithSetter","sessionContext","sessionSetFormData","sessionState","setDataEntryValue","setDialogOpen","setFormData","shouldClose","shouldHideButtonIcon","shouldUseDefaultButtonIcon","showCalculationsInModal","showItems","showLegend","showLegendForScale","signature","step","style","summaryContainerStyle","summaryItemsStyle","summaryLayout","target","termQuestionId","text","theme","today","token","tokenMatches","total","totalCalculationId","totalFallback","totalFromCalculation","totalLabel","totalValue","totals","triggerButtonIconProps","trimmed","uncheckedFromConfig","uncheckedOption","uniqueTokens","usFieldId","useBloodGlucoseReadingLayout","useFormSessionData","useRadio","useToggleSwitch","value","variableFieldIds","variables","vars","writeDefinition","writeKey","writeMutationRunners","year"],
-  './UnsavedChangesGuard/index.jsx': ["ButtonComponent","DCOUpdates","DEFAULT_WINDOW_HOURS","UnsavedChangesGuard","actionItems","actor","actorFrom","addHoursIso","baselineRef","buildDefaultSavePayload","buildKey","c","changed","ck","claim","claims","closeWindow","collectComponentPayloads","collectDomFieldValues","commitSave","componentPayload","confirmUnloadActive","current","d","data","dcoGroups","disabled","domFieldValues","editableUntil","euDate","existing","expired","field","fieldData","fieldId","footerActionItems","footerActions","formData","formatTimestamp","guardSkipsWhenSigned","handleAction","handler","hasLifecycleSignals","host","inputType","isNonEmpty","isOwner","isSettling","isSigned","isSubmitAction","keepStatus","key","label","lifecycle","linkedPanels","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","markSaved","mergeFieldValuesIntoState","narratives","nextStatus","nextValue","nhAuthCommitSave","nhAuthPrepareSave","normalizeFooterActions","normalizeGuardActions","normalizeGuardValue","normalizeStore","now","nowIso","ownerId","ownerName","ownerRefresh","pad2","panelUpdates","panels","payload","payloads","pending","persistAction","persistFd","policyAppliesToAction","prepareSave","prepared","primaryAction","promptText","raw","readStore","release","renderFooterAction","resolveNow","sameActor","saveSettleRef","sd","secondaryActions","serializeGuardValue","store","stripComponentPayloads","success","tagName","trackedSnapshot","trackedValue","ts","untilSelf","useHostConfirmUnload","values","warmupRef","webformGroups","webformUpdate","windowHours"],
+  './UnsavedChangesGuard/index.jsx': ["ButtonComponent","DCOUpdates","DEFAULT_WINDOW_HOURS","UnsavedChangesGuard","actionItems","actor","actorFrom","addHoursIso","baselineRef","buildDefaultSavePayload","buildDefaultSubmitPayload","buildKey","c","changed","ck","claim","claims","closeWindow","collectComponentPayloads","collectDomFieldValues","commitSave","componentPayload","confirmUnloadActive","current","d","data","dcoGroups","disabled","domFieldValues","editableUntil","euDate","existing","expired","field","fieldData","fieldId","footerActionItems","footerActions","formData","formatTimestamp","guardSkipsWhenSigned","handleAction","handler","hasLifecycleSignals","host","inputType","isNonEmpty","isOwner","isSettling","isSigned","isSubmitAction","keepStatus","key","label","lifecycle","linkedPanels","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","markSaved","mergeFieldValuesIntoState","narratives","nextStatus","nextValue","nhAuthCommitSave","nhAuthPrepareSave","normalizeFooterActions","normalizeGuardActions","normalizeGuardValue","normalizeStore","now","nowIso","ownerId","ownerName","ownerRefresh","pad2","panelUpdates","panels","payload","payloads","pending","persistAction","persistFd","policyAppliesToAction","prepareSave","prepared","primaryAction","promptText","raw","readStore","release","renderFooterAction","resolveNow","sameActor","saveSettleRef","sd","secondaryActions","serializeGuardValue","store","stripComponentPayloads","success","tagName","trackedSnapshot","trackedValue","ts","untilSelf","useHostConfirmUnload","values","warmupRef","webformGroups","webformUpdate","windowHours"],
   './UseChangeWatch/index.jsx': ["_defaultCompare","_normalizeWatchOptions","baselineRef","compare","delayCount","dirtyRef","disabled","forcedDirtyRef","isDirty","normalizedOptions","onDirtyChange","renderCountRef","setChanged","useChangeWatch"],
   './ValueSetObservationField/index.jsx': ["ValueSetObservationField","checklistOptions","commentValue","componentId","container","createdBy","currentPayload","effectiveFieldId","fromContext","handleChange","key","nextGroup","normalizeObservationOptions","oldId","oldObs","options","payloadsEqual","report","sd","selectedCode","selectedDisplay","selectedValue","setNestedPayload","stripVolatilePayloadFields"],
 };

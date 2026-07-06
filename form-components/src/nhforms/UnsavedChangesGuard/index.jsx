@@ -117,7 +117,15 @@ const serializeGuardValue = (value) => {
   }
 }
 
-const buildDefaultSavePayload = (fd, formDataOverride) => {
+// Draft saves are formdata-only (legacy parity: saveDraft(sd, fd, { formData,
+// webformUpdate: null })) — chart writes ship from sign/submit only.
+const buildDefaultSavePayload = (fd, formDataOverride) => ({
+  formData: stripComponentPayloads(formDataOverride ?? fd?.field?.data),
+  webformUpdate: null,
+  documentUpdate: null,
+})
+
+const buildDefaultSubmitPayload = (fd, formDataOverride) => {
   const componentPayload = collectComponentPayloads(fd)
   return {
     formData: stripComponentPayloads(formDataOverride ?? fd?.field?.data),
@@ -356,11 +364,13 @@ const UnsavedChangesGuard = ({
     // Sign/submit should persist the full submit payload (mapped
     // observation updates, document comment) when the form provides it.
     const isSubmitAction = actionId === "sign" || actionId === "submit"
-    const payload = isSubmitAction && typeof getSubmitData === "function"
-      ? getSubmitData(prepared)
-      : typeof getSaveData === "function"
-        ? getSaveData(prepared)
-        : buildDefaultSavePayload(persistFd, prepared?.formData)
+    const payload = isSubmitAction
+      ? (typeof getSubmitData === "function"
+          ? getSubmitData(prepared)
+          : buildDefaultSubmitPayload(persistFd, prepared?.formData))
+      : (typeof getSaveData === "function"
+          ? getSaveData(prepared)
+          : buildDefaultSavePayload(persistFd, prepared?.formData))
 
     if (actionId === "sign" && typeof signSubmit === "function") {
       // Real MOIS signSubmit is (note, sd, fd, options)

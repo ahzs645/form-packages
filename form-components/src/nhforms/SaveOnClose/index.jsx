@@ -17,20 +17,6 @@ const _normalizeSaveOnCloseOptions = (value) => {
   return {}
 }
 
-const _collectComponentPayloads = (fd) => {
-  const payloads = fd?.field?.data?.__componentPayloads
-  const dcoGroups = payloads?.dcoUpdatesByComponent || {}
-  const webformGroups = payloads?.webformUpdatesByComponent || {}
-  const DCOUpdates = Object.values(dcoGroups).flatMap((entry) => Array.isArray(entry) ? entry : [])
-  const panelUpdates = Object.values(webformGroups).flatMap((entry) => Array.isArray(entry?.panelUpdates) ? entry.panelUpdates : [])
-  const narratives = Object.values(webformGroups).flatMap((entry) => Array.isArray(entry?.narratives) ? entry.narratives : [])
-  const panels = panelUpdates.length ? panelUpdates : undefined
-  const linkedPanels = panelUpdates.length ? panelUpdates : undefined
-  const webformUpdate = narratives.length ? { narratives } : null
-
-  return { DCOUpdates, webformUpdate, panels, linkedPanels, narratives: narratives.length ? narratives : undefined }
-}
-
 // __componentPayloads is runtime staging; never serialize it into formdata.
 const _stripComponentPayloads = (data) => {
   if (!data || typeof data !== "object") return data || {}
@@ -45,17 +31,12 @@ const _stripComponentPayloads = (data) => {
 const _nhAuthPrepareSave = (fd, sd) =>
   (typeof window !== "undefined" && window.__nhAuth) ? window.__nhAuth.prepareSave(fd, sd, "save") : null
 
-const _buildDefaultSavePayload = (fd, formDataOverride) => {
-  const componentPayload = _collectComponentPayloads(fd)
-  return {
-    formData: _stripComponentPayloads(formDataOverride ?? fd?.field?.data),
-    webformUpdate: componentPayload.webformUpdate,
-    panels: componentPayload.panels,
-    linkedPanels: componentPayload.linkedPanels,
-    narratives: componentPayload.narratives,
-    DCOUpdates: componentPayload.DCOUpdates,
-  }
-}
+// Draft saves are formdata-only (legacy parity: saveDraft(sd, fd, { formData,
+// webformUpdate: null })). Chart writes ship from submit paths only.
+const _buildDefaultSavePayload = (fd, formDataOverride) => ({
+  formData: _stripComponentPayloads(formDataOverride ?? fd?.field?.data),
+  webformUpdate: null,
+})
 
 const _useChangeAwareDirtyState = ({
   watchedValue,

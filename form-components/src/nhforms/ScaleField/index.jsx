@@ -166,9 +166,11 @@ const ScaleField = ({
 
   // Convert options to ChoiceGroup format
   const normalizedTooltipMode = tooltipMode === "option" ? "option" : "all"
+  // opt.key wins over the numeric value so distinct options may share a score
+  // (HoNOS "9" = Unknown stores key "9" but scores 0, legacy parity).
   const choiceOptions = scaleOptions.map(opt => ({
-    key: String(opt.value),
-    text: showInlineLabels ? String(opt.value) : "",
+    key: opt.key ?? String(opt.value),
+    text: showInlineLabels ? (opt.label ?? String(opt.value)) : "",
     title: showTooltip && normalizedTooltipMode === "option" ? (opt.description || opt.label) : undefined,
     onRenderField:
       showTooltip && normalizedTooltipMode === "option" && (opt.description || opt.label)
@@ -207,7 +209,7 @@ const ScaleField = ({
   const handleChange = (ev, option) => {
     if (readOnly) return
 
-    const selectedOption = scaleOptions.find(o => String(o.value) === option.key)
+    const selectedOption = scaleOptions.find(o => (o.key ?? String(o.value)) === option.key)
 
     setFieldData({
       [fieldId]: {
