@@ -1327,6 +1327,8 @@ const CodedObservationChoiceField = ({
   reportTemplate = "{display}",
   commentFieldId = "",
   placeholder = "Select an option",
+  size,
+  optionSize,
   autoHotKey = false,
   noAutoSkip = false,
   showOtherOption = false,
@@ -1412,6 +1414,8 @@ const CodedObservationChoiceField = ({
           optionList={checklistOptions}
           codeSystem={codeSystem}
           multiline={multiline}
+          size={size}
+          optionSize={optionSize}
           autoHotKey={autoHotKey}
           noAutoSkip={noAutoSkip}
           showOtherOption={showOtherOption}
@@ -1428,6 +1432,7 @@ const CodedObservationChoiceField = ({
           optionList={selectOptions}
           selectionType={effectiveSelectionType}
           placeholder={placeholder}
+          size={size}
           openOnFocus
           showOtherOption={showOtherOption}
           onChange={handleFindCodeChange}
@@ -1445,6 +1450,8 @@ const CodedObservationChoiceField = ({
           optionList={selectOptions}
           codeSystem={codeSystem}
           placeholder={placeholder}
+          size={size}
+          optionSize={optionSize}
           showOtherOption={showOtherOption}
           autoHotKey={autoHotKey}
           noAutoSkip={noAutoSkip}
@@ -26830,6 +26837,8 @@ const ValueSetObservationField = ({
   reportTemplate = "{display}",
   commentFieldId = "",
   placeholder = "Select an option",
+  size,
+  optionSize,
   autoHotKey = false,
 }) => {
   const [fd, setFormData] = useActiveData()
@@ -26895,6 +26904,8 @@ const ValueSetObservationField = ({
           selectionType="single"
           optionList={checklistOptions}
           multiline
+          size={size}
+          optionSize={optionSize}
           autoHotKey={autoHotKey}
         />
       ) : renderAs === "findCode" ? (
@@ -26904,6 +26915,7 @@ const ValueSetObservationField = ({
           codeSystem={codeSystem}
           optionList={options}
           placeholder={placeholder}
+          size={size}
           openOnFocus
           onChange={handleChange}
           value={selectedValue}
@@ -26914,6 +26926,8 @@ const ValueSetObservationField = ({
           label={label}
           selectionType="single"
           optionList={checklistOptions}
+          size={size}
+          optionSize={optionSize}
           autoHotKey={autoHotKey}
         />
       )}

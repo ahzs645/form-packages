@@ -146,6 +146,8 @@ const CodedObservationChoiceField = ({
   reportTemplate = "{display}",
   commentFieldId = "",
   placeholder = "Select an option",
+  size,
+  optionSize,
   autoHotKey = false,
   noAutoSkip = false,
   showOtherOption = false,
@@ -231,6 +233,8 @@ const CodedObservationChoiceField = ({
           optionList={checklistOptions}
           codeSystem={codeSystem}
           multiline={multiline}
+          size={size}
+          optionSize={optionSize}
           autoHotKey={autoHotKey}
           noAutoSkip={noAutoSkip}
           showOtherOption={showOtherOption}
@@ -247,6 +251,7 @@ const CodedObservationChoiceField = ({
           optionList={selectOptions}
           selectionType={effectiveSelectionType}
           placeholder={placeholder}
+          size={size}
           openOnFocus
           showOtherOption={showOtherOption}
           onChange={handleFindCodeChange}
@@ -264,6 +269,8 @@ const CodedObservationChoiceField = ({
           optionList={selectOptions}
           codeSystem={codeSystem}
           placeholder={placeholder}
+          size={size}
+          optionSize={optionSize}
           showOtherOption={showOtherOption}
           autoHotKey={autoHotKey}
           noAutoSkip={noAutoSkip}
