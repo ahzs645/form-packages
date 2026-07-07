@@ -383,6 +383,8 @@ function loadComponentCode(code: string, componentName: string, additionalCompon
     'ScoringModule', 'ScoringModuleSchema', 'createScoringQuestion', 'createScoringTotal', 'createScoringConfig', 'ScoringScales',
     // FormSessionRuntime exports
     'FormSessionProvider', 'cloneFormSessionState', 'mergeFormSessionState', 'useFormSessionData',
+    // InvestigationTabs exports
+    'InvestigationTabs', 'InvestigationTab',
     // SubformScoring exports
     'SubformScoring',
     // PDF regeneration exports
@@ -671,6 +673,9 @@ export const {
   cloneFormSessionState,
   mergeFormSessionState,
   useFormSessionData,
+  // InvestigationTabs
+  InvestigationTabs,
+  InvestigationTab,
   // SubformScoring
   SubformScoring,
   // PDF regeneration

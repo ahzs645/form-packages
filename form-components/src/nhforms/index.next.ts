@@ -386,6 +386,8 @@ function loadComponentCode(
     'ScoringModule', 'ScoringModuleSchema', 'createScoringQuestion', 'createScoringTotal', 'createScoringConfig',
     // FormSessionRuntime exports
     'FormSessionProvider', 'cloneFormSessionState', 'mergeFormSessionState', 'useFormSessionData',
+    // InvestigationTabs exports
+    'InvestigationTabs', 'InvestigationTab',
     // SubformScoring exports
     'SubformScoring',
     // PDF regeneration exports

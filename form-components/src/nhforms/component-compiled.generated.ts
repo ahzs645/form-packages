@@ -14734,6 +14734,132 @@ const HotspotMapField = ({
 HotspotMapField.createConfig = createHotspotMapConfig;
 HotspotMapField.importSvgHotspots = importSvgHotspots;
 HotspotMapField.normalizeHotspots = normalizeHotspots;`,
+  './InvestigationTabs/index.jsx': `const INVESTIGATION_DEFAULT_TABS = ["Physiology", "Medication", "History / Physical", "Investigation", "Review", "Information"];
+const normalizeInvestigationTabs = tabs => {
+  const source = Array.isArray(tabs) && tabs.length > 0 ? tabs : INVESTIGATION_DEFAULT_TABS;
+  return source.map((tab, index) => {
+    if (typeof tab === "string") {
+      return {
+        id: index,
+        label: tab || \`Tab \${index + 1}\`
+      };
+    }
+    const label = typeof tab?.label === "string" && tab.label.trim() ? tab.label.trim() : \`Tab \${index + 1}\`;
+    const id = tab?.id ?? index;
+    return {
+      id,
+      label
+    };
+  });
+};
+const InvestigationTab = ({
+  children
+}) => /*#__PURE__*/React.createElement(React.Fragment, null, children);
+const InvestigationTabs = ({
+  tabs,
+  defaultTab = 0,
+  showNumbers = true,
+  children
+}) => {
+  const resolvedTabs = React.useMemo(() => normalizeInvestigationTabs(tabs), [tabs]);
+  const [activeIndex, setActiveIndex] = React.useState(() => {
+    const numeric = Number(defaultTab);
+    if (!Number.isFinite(numeric)) return 0;
+    return Math.min(Math.max(Math.trunc(numeric), 0), Math.max(resolvedTabs.length - 1, 0));
+  });
+  React.useEffect(() => {
+    setActiveIndex(current => Math.min(Math.max(current, 0), Math.max(resolvedTabs.length - 1, 0)));
+  }, [resolvedTabs.length]);
+  const childArray = React.Children.toArray(children);
+  const childById = new Map();
+  childArray.forEach((child, index) => {
+    if (!React.isValidElement(child)) return;
+    const props = child.props || {};
+    const childTabId = props.tabId ?? props.id ?? index;
+    childById.set(childTabId, props.children);
+  });
+  const activeTab = resolvedTabs[activeIndex] || resolvedTabs[0] || {
+    id: 0,
+    label: "Tab 1"
+  };
+  const activeChildren = childById.has(activeTab.id) ? childById.get(activeTab.id) : childArray[activeIndex] || childArray[0] || null;
+  return /*#__PURE__*/React.createElement("div", {
+    "data-nhforms-investigation-tabs": true,
+    style: {
+      border: "1px solid #b8b8b8",
+      background: "#f3f3f3",
+      color: "#202020",
+      fontFamily: "Arial, Helvetica, sans-serif",
+      fontSize: 12
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    role: "tablist",
+    "aria-label": "Investigation sections",
+    className: "hideonprint",
+    style: {
+      display: "flex",
+      alignItems: "stretch",
+      borderBottom: "1px solid #b8b8b8",
+      background: "#eeeeee",
+      overflowX: "auto"
+    }
+  }, resolvedTabs.map((tab, index) => {
+    const selected = index === activeIndex;
+    return /*#__PURE__*/React.createElement("button", {
+      key: String(tab.id),
+      type: "button",
+      role: "tab",
+      "aria-selected": selected,
+      "aria-controls": \`investigation-tab-panel-\${index}\`,
+      onClick: () => setActiveIndex(index),
+      style: {
+        minWidth: 118,
+        padding: "6px 12px 5px",
+        border: 0,
+        borderRight: "1px solid #d2d2d2",
+        borderBottom: selected ? "1px solid #ffffff" : "1px solid #b8b8b8",
+        background: selected ? "#ffffff" : "#f4f4f4",
+        color: "#202020",
+        cursor: "pointer",
+        font: "inherit",
+        fontWeight: selected ? 700 : 400,
+        lineHeight: 1.2,
+        marginBottom: selected ? -1 : 0,
+        outline: selected ? "1px dotted #6f6f6f" : "none",
+        outlineOffset: -4
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        display: "block",
+        whiteSpace: "nowrap"
+      }
+    }, tab.label), showNumbers ? /*#__PURE__*/React.createElement("span", {
+      style: {
+        display: "block",
+        marginTop: 1,
+        color: "#333333"
+      }
+    }, index + 1) : null);
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "showonprint",
+    style: {
+      display: "none",
+      borderBottom: "1px solid #b8b8b8",
+      background: "#dedbd8",
+      padding: "4px 6px",
+      fontWeight: 700
+    }
+  }, activeTab.label), /*#__PURE__*/React.createElement("div", {
+    id: \`investigation-tab-panel-\${activeIndex}\`,
+    role: "tabpanel",
+    "aria-label": activeTab.label,
+    style: {
+      minHeight: 420,
+      background: "#ffffff"
+    }
+  }, activeChildren));
+};
+export { InvestigationTabs, InvestigationTab };`,
   './LayoutTable/index.jsx': `function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 const normalizeLayoutTableOptionList = optionList => {
   if (!Array.isArray(optionList)) return [];
@@ -28934,6 +29060,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './HistoricalObservationTable/index.jsx': ["HistoricalObservationTable","current","date","getHistorySource","grouped","historyDateKey","matchedColumn","raw","rows","sd","source","steps"],
   './HonosQuestion/index.jsx': ["CHOICE_FIELD_STYLE","HonosFinalScore","QUESTION_STACK_STYLE","QUESTION_defaultLabelStyle","SCALE_10_LEGENDS","SCALE_10_LEGEND_LOOKUP","SCALE_10_OPTIONS","SCALE_5_LEGENDS","SCALE_5_LEGEND_LOOKUP","SCALE_5_OPTIONS","Scale10","Scale10Legend","Scale5","Scale5Legend","Scale5QuestionList","Scale5SubmitButton","Scale5ToolTip","ScaleLegend","UpdateContext","buildLegendLookupFromOptions","buildTooltipLookup","calculatedTotal","createScaleQuestion","customChoiceOptions","description","dropdownStyles","effectiveChoiceOptions","effectiveTooltip","fallbackLookup","fditem","fillAllUnfilledQuestions","finalScoreStyle","generatedTooltip","handleChoiceChanged","handleDropdownChanged","handleKeyUp","i","item","key","keySource","nextChoiceGroup","normalizeScaleChoiceOptions","numeric","numericValue","option","questionIds","questionStyle","rawValue","rawfditem","renderedChoiceOptions","scoredQuestionIds","seenKeys","selectedOptions","targetFieldId","text","theme","toFiniteNumber","tooltipList","tooltipLookup","totalScore","value"],
   './HotspotMapField/index.jsx': ["ANNOTATION_SYMBOL_LABELS","DEFAULT_ANNOTATION_COLOR","DEFAULT_ANNOTATION_SIZE_PERCENT","DEFAULT_ANNOTATION_SYMBOL","DEFAULT_ANNOTATION_SYMBOLS","DEFAULT_INTERACTION_MODE","DEFAULT_MAP_MARGIN_PX","DEFAULT_MAP_MAX_WIDTH","DEFAULT_MAP_MIN_HEIGHT","DEFAULT_MAP_PADDING_PX","DEFAULT_MAP_WIDTH_PERCENT","DEFAULT_MAP_ZOOM_PERCENT","DEFAULT_MARKER_RADIUS","DEFAULT_MARKER_SIZE","DEFAULT_NUMBER_FIELD_WIDTH_PERCENT","DEFAULT_SVG_VIEWBOX_MARGIN_PERCENT","HotspotMapField","annotationDefaultSymbol","annotationPointsToSvgString","annotationSymbols","annotations","append","assignedHotspotIds","baseId","bounds","buildCountsByGroup","buildFallbackPolygon","buildMapValue","byHotspot","centroid","centroidFromPoints","circleAspectRatio","clampPercent","clampSvgViewBoxMarginPercent","clamped","color","commitMapState","commitSelection","compact","count","counterGroups","counts","countsByGroup","createHotspotMapConfig","cx","cy","deltaX","deltaY","displayValue","doc","drawingPointerIdRef","drawingPointsRef","element","elements","ensureResponsiveSvg","ensuredDefault","fallbackList","fieldFillTextLayerIdSet","fieldFillValueMap","fieldId","fields","fill","getHotspotLabelAnchor","getNumberFieldValue","getPointFromEvent","group","groupId","groupLabel","groupsById","half","handleAddAnnotation","handleDrawPointerDown","handleDrawPointerMove","handleDrawPointerUp","handleHotspotKeyDown","handleNumberFieldChange","handleToggleHotspot","hasAnnotations","hasExplicitCounterGroups","hasMapData","hasSelections","hasSvgBackground","height","heightAttr","hotspot","hotspotIdSet","hotspots","hotspotsById","id","ids","importSvgHotspots","injectFieldFillValuesIntoSvg","inlineStyle","input","interactionMode","isDarkMode","isDrawModeActive","isDrawingRef","isFieldFillMode","isSelected","isSymbolModeActive","labelAnchor","map","mapFrameRef","mapFrameStyle","mapValue","marginPercent","markerSize","markup","match","max","min","names","next","nextAnnotations","nextAspectRatio","nextPoints","nextSymbol","nextValue","normalizeAnnotationPoints","normalizeAnnotationSymbol","normalizeAnnotationSymbols","normalizeAnnotationType","normalizeAnnotations","normalizeColor","normalizeCounterGroupId","normalizeCounterGroups","normalizeHotspotPoints","normalizeHotspots","normalizeMapInteractionMode","normalizeNumberFields","normalizeShape","normalizeString","normalized","normalizedAnnotations","normalizedCounterGroups","normalizedHotspot","normalizedHotspots","normalizedId","normalizedNumberFields","normalizedNumeric","normalizedRaw","numberFields","numeric","observer","overlayStyle","overlayViewBox","padX","padY","pair","panelStyle","parseAnnotationSymbol","parseList","parseSvgAspectRatio","parseSvgNumber","parsed","parsedPoints","parsedViewBox","parser","parts","point","points","pointsAttr","pointsToSvgString","previous","projectMapLengthToRenderPercent","projectMapPercentToRenderPercent","projectRenderPercentToMapPercent","r","radius","raw","rawId","rawLabel","rawValue","rect","renderAnnotationModeControls","renderMapFrame","renderSummary","renderedWidth","renderedX","renderedY","resolveAnnotationSymbol","resolveMapInteractionMode","resolved","resolvedAllowedSymbols","resolvedAnnotationDefaultColor","resolvedAnnotationDefaultSymbol","resolvedAnnotationSizePercent","resolvedAnnotationSymbols","resolvedInteractionMode","resolvedMapMarginPx","resolvedMapMaxWidth","resolvedMapMinHeight","resolvedMapPaddingPx","resolvedMapWidthPercent","resolvedMapZoomPercent","resolvedModalMinWidth","responsiveSvg","sanitizeHotspotIds","seen","selectedCount","selectedIds","selectedIdsCsv","selectedLabels","selectedLabelsCsv","serialized","shape","showSymbolPicker","showToolToggle","size","sourceHeight","sourceWidth","step","stroke","strokeWidth","suffix","summaryGroups","supportsAnnotations","supportsDrawAnnotations","supportsSelection","supportsSymbolAnnotations","svg","svgAspectRatio","svgViewBoxMarginPercent","svgViewBoxRenderSize","symbol","symbols","tagName","target","textLayerId","theme","toXPercent","toYPercent","total","trimmed","tspan","type","unique","updateAspectRatio","useSvgLayerTakeover","usedIds","value","vbHeight","vbWidth","vbX","vbY","viewBoxHeight","viewBoxParts","viewBoxRaw","viewBoxWidth","width","widthAttr","widthRaw","x","y","zoomFactor"],
+  './InvestigationTabs/index.jsx': ["INVESTIGATION_DEFAULT_TABS","InvestigationTab","InvestigationTabs","activeChildren","activeTab","childArray","childById","childTabId","id","label","normalizeInvestigationTabs","numeric","props","resolvedTabs","selected","source"],
   './LayoutTable/index.jsx': ["LayoutTable","Tag","bareRefs","bracketedRefs","cellStyle","checklistOptions","code","comparableValue","computeLayoutTableCellValue","computedCells","config","display","displayValue","evaluateLayoutTableFormula","extractLayoutTableFormulaRefs","fieldId","fields","formatLayoutTableComputedValue","formatLayoutTableFieldDisplayValue","formatOne","formula","getCellDisplayValue","getLayoutTableFieldRawValue","getNumericFieldValue","getPathValue","id","ids","isCheckedValue","isNoLikeValue","isSafeLayoutTableFormula","isYesLikeValue","jsExpression","label","labelProp","matched","multiline","nextData","normalizeComparableValue","normalizeLayoutTableOptionList","normalized","numeric","optionList","raw","rawValue","refs","renderLayoutTableCellContent","renderLayoutTableField","renderLayoutTableFieldList","renderLayoutTableReadOnlyField","renderLayoutTableResources","renderLayoutTableStampButton","renderLink","resources","rounded","rowIsVisible","rule","sd","section","setFieldValue","sharedProps","sourceValue","strippedExpression","sumMatch","tableData","tableRows","targets","unwrappedExpression","value","values","visibleRows"],
   './LongTermMedications/index.jsx': ["LongTermMedications","LongTermMedicationsFields"],
   './MoisMarkdownBlock/index.jsx': ["MarkdownRenderer","MoisMarkdownBlock","baseComponents","colon","content","defaultRehypePlugins","defaultRemarkPlugins","effectiveFieldId","extra","extraPlugins","fullWidthStyle","hasAllowedProtocol","hasLabel","match","mergedMarkdownProps","mois","moisModule","numberSign","parseMoisHref","parsedId","questionMark","slash","urlTransform"],
