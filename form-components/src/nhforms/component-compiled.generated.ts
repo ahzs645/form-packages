@@ -3710,14 +3710,25 @@ certainty { code display system }
  * such as their primary care provider, other care team members, and
  * associated care providers.
  */
+// Named comparators so fixtures/builder props can request a sort order without
+// a function prop (legacy homecare passed listCompare={sortRoleThenName}).
+const CONNECTIONS_SORTS = {
+  roleThenName: (a, b) => {
+    const byType = a.connectionType?.display?.localeCompare(b.connectionType?.display);
+    return (byType ? byType : a.name?.localeCompare(b.name)) ?? 0;
+  }
+};
 const Connections = ({
   id = "connectedResources",
   label = "Patient Connections",
   selectText = "Select connections",
   selectionType = "none",
   filterPred = SelectActiveConnections,
+  sortBy,
+  listCompare,
   ...props
 }) => {
+  const resolvedCompare = listCompare ?? (sortBy ? CONNECTIONS_SORTS[sortBy] : undefined);
   return /*#__PURE__*/React.createElement(ListSelection, _extends({
     id,
     label,
@@ -3725,7 +3736,9 @@ const Connections = ({
     selectionType,
     filterPred,
     columns: connectionsColumns
-  }, props));
+  }, resolvedCompare ? {
+    listCompare: resolvedCompare
+  } : {}, props));
 };
 const connectionsColumns = [{
   id: "connectionId",
@@ -28900,7 +28913,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './ComputedField/index.jsx': ["ComputedField","_COMPUTED_REF_PATTERN","_MS_PER_DAY","_contains","_countTrue","_daysSince","_escapeRegExp","_evaluateComputedExpression","_extractComputedReferences","_getInterpretationRange","_hasAllReferencedValues","_hasValue","_iif","_isSafeComputedExpression","_monthsSince","_replaceBareReferencesOutsideQuotes","_roundComputedValue","_score","_stripQuotedStrings","_toComparableValue","_toDateValue","_toDisplayValue","_toNumericValue","bareRefs","bracketedRefs","canShowInterpretation","candidate","computedValue","cursor","date","dateOnly","direct","displayValue","interpretationRange","max","min","months","nextSegment","numeric","parsed","passesMax","passesMin","prepared","reference","refs","replaceInSegment","replaced","result","rounded","roundedValue","start","storedValue","stringPattern","strippedExpression","tail","trimmed","uniqueBareRefs","uniqueBracketedRefs","unwrappedExpression","valuesByFieldId"],
   './ConditionalGroup/index.jsx': ["ConditionalField","ConditionalGroup","ConditionalGroupSchema","ControllerLabelPresets","LogicGateContext","LogicGateProvider","MAX_SUBGROUP_DEPTH","allParentsVisible","baseContainerStyle","baseContentStyle","checkChoiceMatch","checkComparisonMatch","checkControllerMatch","childContext","clippedField","containerStyle","contentNode","contentRef","contentStyle","context","contextValue","controllerFieldId","controllerValue","controllerWrapperStyle","createBranchingRule","currentDepth","defaultPadding","depthIndicatorStyle","effectiveValue","evaluateConditionEntries","evaluateConditionEntry","fieldValue","fieldValues","frame","generateConditionalGroupJSX","generateGroup","getControllerValue","groupRect","handleControllerChange","hasMatch","hiddenIndicatorStyle","indent","isDarkMode","isGroupVisible","isVisible","jsx","left","matches","mergeStyles","nestedValue","normalizeComparableValue","normalizeComparableValues","normalizeValue","normalized","normalizedOptionValues","parentChain","parentContext","payloads","props","readControllerValue","rect","reportOverflow","result","right","rule","rules","theme","titleStyle","type","useConditionalVisibility","useIsVisible","useLogicGate"],
   './Conditions/index.jsx': ["Conditions","ConditionsFields"],
-  './Connections/index.jsx': ["Connections","ConnectionsFields","SelectActiveConnections"],
+  './Connections/index.jsx': ["CONNECTIONS_SORTS","Connections","ConnectionsFields","SelectActiveConnections","byType","prop","resolvedCompare"],
   './ConversionField/index.jsx': ["ConversionField","ConversionFieldSchema","_asPositiveNumber","_asPrecision","_conversionPathSegments","_normalizeConversionRows","_readConversionPath","_readConversionValue","_sanitizeConversionNumber","activeFrom","activeTo","canUseFrom","canUseTo","char","clearValues","convertRow","current","fromValue","hasAnyValue","hasDecimal","index","lastEdited","lastEditedRef","next","nextValue","normalizedFromFieldId","normalizedToFieldId","parsed","parsedFrom","parsedTo","pathValue","rows","segments","setConversionValues","source","sourceFieldId","text","toValue","updateValue","updates"],
   './CustomJsxBlock/index.jsx': ["CustomJsxBlock","displaySource","raw"],
   './DentalWeightConverter/index.jsx': ["DentalWeightConverter","DentalWeightConverterSchema","_positiveNumber","_readDentalField","_sanitizeDentalWeight","cellStyle","clearWeights","convertWeights","data","disabled","factor","fieldWrapperStyle","fixedPrecision","kgValue","kilograms","lastEdited","lastEditedRef","lbValue","nextValue","numeric","parsed","parts","pounds","setDentalValues","text","updateWeight"],
