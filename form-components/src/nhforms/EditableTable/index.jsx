@@ -368,12 +368,12 @@ const _buildRowsFromSourceFields = ({
     : Math.max(initialRows, 1)
 
   const rows = []
+  let lastMeaningfulRowIndex = -1
 
   for (let rowIndex = 0; rowIndex < inferredRowCount; rowIndex += 1) {
     const row = _makeEmptyRow(columns, rowIndex)
     let hasMeaningfulValue = false
     const explicitRowMapping = sourceFieldIdsByRow?.[rowIndex] || null
-    const hasExplicitRowMapping = explicitRowMapping && Object.keys(explicitRowMapping).length > 0
 
     columns.forEach((column) => {
       const sourceFieldId = explicitRowMapping?.[column.id]
@@ -390,12 +390,13 @@ const _buildRowsFromSourceFields = ({
       }
     })
 
-    if (hasMeaningfulValue || hasExplicitRowMapping) {
-      rows.push(row)
+    rows.push(row)
+    if (hasMeaningfulValue) {
+      lastMeaningfulRowIndex = rowIndex
     }
   }
 
-  return rows
+  return lastMeaningfulRowIndex >= 0 ? rows.slice(0, lastMeaningfulRowIndex + 1) : []
 }
 
 const _normalizeUniqueToken = (row, columnId, columns = []) => {
