@@ -15733,8 +15733,6 @@ const InvestigationTabs = ({
     </div>
   )
 }
-
-export { InvestigationTabs, InvestigationTab }
 `,
   './LayoutTable/index.jsx': `const normalizeLayoutTableOptionList = (optionList) => {
   if (!Array.isArray(optionList)) return []

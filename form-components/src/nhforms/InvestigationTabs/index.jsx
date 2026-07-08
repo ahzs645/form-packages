@@ -140,5 +140,3 @@ const InvestigationTabs = ({
     </div>
   )
 }
-
-export { InvestigationTabs, InvestigationTab }
