@@ -680,6 +680,7 @@ export const defaultSourceData: SourceData = {
     healthNumberBy: 'BC',
     insuranceBy: { code: 'BC', display: 'British Columbia', system: 'MOIS-INSURANCEBY' },
     insuranceNumber: '9151065434',
+    insuranceDependent: '00',
     preferredPhone: { code: '1', display: 'Home', system: 'MOIS-PREFERREDPHONE' },
     preferredPharmacy: { name: 'Northern Pharmacy', phone: '250-555-1100', description: 'Downtown location' },
     shortNote: 'Hard of hearing',
