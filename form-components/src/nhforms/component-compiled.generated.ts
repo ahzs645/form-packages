@@ -15342,6 +15342,238 @@ const HotspotMapField = ({
 HotspotMapField.createConfig = createHotspotMapConfig;
 HotspotMapField.importSvgHotspots = importSvgHotspots;
 HotspotMapField.normalizeHotspots = normalizeHotspots;`,
+  './HttpJsonTestPanel/index.jsx': `const {
+  useEffect,
+  useMemo,
+  useState
+} = React;
+const HTTP_JSON_RESULT_EVENT = "builder:http-json-result";
+const readHttpJsonTestBody = async response => {
+  if (!response || typeof response.text !== "function") return null;
+  let text = "";
+  try {
+    text = await response.text();
+  } catch (_error) {
+    return null;
+  }
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch (_error) {
+    return text.length > 20000 ? \`\${text.slice(0, 20000)}...[truncated]\` : text;
+  }
+};
+const formatHttpJsonTestResult = value => {
+  if (value == null || value === "") return "No response body";
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch (_error) {
+    return String(value);
+  }
+};
+const persistHttpJsonTestResult = (setFormData, fieldId, result) => {
+  if (!fieldId || typeof setFormData !== "function") return;
+  setFormData(produce(draft => {
+    if (!draft.field) draft.field = {
+      data: {},
+      status: {},
+      history: []
+    };
+    if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {};
+    draft.field.data[fieldId] = result;
+    if (draft.formData && typeof draft.formData === "object") draft.formData[fieldId] = result;
+  }));
+};
+const publishHttpJsonTestResult = result => {
+  if (typeof window === "undefined") return;
+  const key = result?.outputId || "http-json";
+  const previous = window.__builderHttpJsonResults && typeof window.__builderHttpJsonResults === "object" ? window.__builderHttpJsonResults : {};
+  window.__builderHttpJsonResults = Object.assign({}, previous, {
+    [key]: result
+  });
+  if (typeof window.CustomEvent === "function") {
+    window.dispatchEvent(new window.CustomEvent(HTTP_JSON_RESULT_EVENT, {
+      detail: result
+    }));
+  }
+};
+
+/**
+ * HttpJsonTestPanel — exported MOIS diagnostics for HTTP JSON/Mirth outputs.
+ *
+ * The manual request is deliberately synthetic and contains no patient or form
+ * answers. The panel also listens for the generated submit/sign workflow result
+ * so a real listener response or browser error is visible after the action.
+ */
+const HttpJsonTestPanel = ({
+  id,
+  title = "Mirth HTTP listener test",
+  endpointUrl = "http://10.171.20.220:7900/webforms",
+  outputId = "",
+  responseFieldId = "mirthLastResult",
+  buttonText = "Send test request",
+  eventName = "webform-connectivity-test",
+  requestTimeoutMs = 15000,
+  showManualTest = true,
+  showResponseBody = true
+}) => {
+  const [fd, setFormData] = useActiveData();
+  const sd = useSourceData();
+  const effectiveOutputId = outputId || id || "http-json-test";
+  const storedResult = responseFieldId ? fd?.field?.data?.[responseFieldId] : null;
+  const [result, setResult] = useState(() => storedResult || null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (!storedResult || storedResult === result) return;
+    setResult(storedResult);
+  }, [storedResult, result]);
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const handler = event => {
+      const nextResult = event?.detail;
+      if (!nextResult || typeof nextResult !== "object") return;
+      if (outputId && nextResult.outputId !== outputId) return;
+      setResult(nextResult);
+      persistHttpJsonTestResult(setFormData, responseFieldId, nextResult);
+    };
+    window.addEventListener(HTTP_JSON_RESULT_EVENT, handler);
+    return () => window.removeEventListener(HTTP_JSON_RESULT_EVENT, handler);
+  }, [outputId, responseFieldId, setFormData]);
+  const responseText = useMemo(() => formatHttpJsonTestResult(result?.body), [result?.body]);
+  const sendTest = async () => {
+    if (!endpointUrl || busy) return;
+    const startedAt = Date.now();
+    const AbortControllerClass = typeof window !== "undefined" && typeof window.AbortController === "function" ? window.AbortController : null;
+    const controller = AbortControllerClass ? new AbortControllerClass() : null;
+    const timeout = controller ? window.setTimeout(() => controller.abort(), Math.max(1000, Number(requestTimeoutMs) || 15000)) : null;
+    setBusy(true);
+    try {
+      const fetchJson = typeof window !== "undefined" && typeof window.fetch === "function" ? window.fetch.bind(window) : null;
+      if (!fetchJson) throw new Error("Browser fetch is not available in this MOIS runtime.");
+      const requestBody = {
+        event: eventName || "webform-connectivity-test",
+        source: "webforms-http-test-panel",
+        test: true,
+        sentAt: new Date().toISOString(),
+        outputId: effectiveOutputId,
+        form: {
+          path: sd?.formParams?.formPath,
+          name: sd?.formObject?.Identity?.name || sd?.formParams?.formPath
+        }
+      };
+      const response = await fetchJson(endpointUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(requestBody),
+        ...(controller ? {
+          signal: controller.signal
+        } : {})
+      });
+      const body = await readHttpJsonTestBody(response);
+      const nextResult = {
+        source: "manual-test",
+        outputId: effectiveOutputId,
+        endpointUrl,
+        method: "POST",
+        ok: Boolean(response?.ok),
+        status: response?.status ?? null,
+        statusText: response?.statusText || "",
+        contentType: response?.headers?.get ? response.headers.get("content-type") : null,
+        body,
+        receivedAt: new Date().toISOString(),
+        durationMs: Date.now() - startedAt,
+        responseFieldId: responseFieldId || undefined
+      };
+      if (!response?.ok) nextResult.error = \`HTTP \${response?.status || "error"}\`;
+      setResult(nextResult);
+      persistHttpJsonTestResult(setFormData, responseFieldId, nextResult);
+      publishHttpJsonTestResult(nextResult);
+    } catch (error) {
+      const aborted = error?.name === "AbortError";
+      const nextResult = {
+        source: "manual-test",
+        outputId: effectiveOutputId,
+        endpointUrl,
+        method: "POST",
+        ok: false,
+        status: null,
+        statusText: "",
+        body: null,
+        error: aborted ? \`Request timed out after \${Math.max(1000, Number(requestTimeoutMs) || 15000)} ms\` : error?.message || String(error),
+        diagnostic: "No HTTP response was readable. Check network access, mixed-content policy, and Mirth CORS OPTIONS handling.",
+        receivedAt: new Date().toISOString(),
+        durationMs: Date.now() - startedAt,
+        responseFieldId: responseFieldId || undefined
+      };
+      setResult(nextResult);
+      persistHttpJsonTestResult(setFormData, responseFieldId, nextResult);
+      publishHttpJsonTestResult(nextResult);
+    } finally {
+      if (timeout) window.clearTimeout(timeout);
+      setBusy(false);
+    }
+  };
+  const statusLabel = !result ? "Not tested" : result.ok ? \`Success\${result.status ? \` (\${result.status})\` : ""}\` : result.status ? \`Failed (\${result.status})\` : "Connection failed";
+  const statusColor = !result ? "#605e5c" : result.ok ? "#107c10" : "#a4262c";
+  return /*#__PURE__*/React.createElement("div", {
+    "data-http-json-test-panel": effectiveOutputId,
+    style: {
+      border: "1px solid #d2d0ce",
+      padding: 12,
+      background: "#faf9f8"
+    }
+  }, /*#__PURE__*/React.createElement(Fluent.Stack, {
+    tokens: {
+      childrenGap: 8
+    }
+  }, /*#__PURE__*/React.createElement(Fluent.Text, {
+    variant: "mediumPlus",
+    styles: {
+      root: {
+        fontWeight: 600
+      }
+    }
+  }, title), /*#__PURE__*/React.createElement(Fluent.Text, {
+    variant: "small",
+    styles: {
+      root: {
+        color: "#605e5c",
+        wordBreak: "break-all"
+      }
+    }
+  }, endpointUrl || "No listener URL configured"), /*#__PURE__*/React.createElement("div", {
+    role: "status",
+    "aria-live": "polite",
+    style: {
+      color: statusColor,
+      fontWeight: 600
+    }
+  }, busy ? "Sending test request..." : statusLabel, result?.durationMs != null ? \` in \${result.durationMs} ms\` : ""), result?.error ? /*#__PURE__*/React.createElement(Fluent.Text, {
+    styles: {
+      root: {
+        color: "#a4262c"
+      }
+    }
+  }, result.error) : null, result?.diagnostic ? /*#__PURE__*/React.createElement(Fluent.Text, {
+    variant: "small"
+  }, result.diagnostic) : null, showResponseBody && result ? /*#__PURE__*/React.createElement("pre", {
+    style: {
+      margin: 0,
+      maxHeight: 240,
+      overflow: "auto",
+      whiteSpace: "pre-wrap",
+      wordBreak: "break-word",
+      fontSize: 11
+    }
+  }, responseText) : null, showManualTest ? /*#__PURE__*/React.createElement(Fluent.DefaultButton, {
+    text: busy ? "Sending..." : buttonText,
+    onClick: sendTest,
+    disabled: busy || !endpointUrl
+  }) : null));
+};`,
   './InvestigationTabs/index.jsx': `const INVESTIGATION_DEFAULT_TABS = ["Physiology", "Medication", "History / Physical", "Investigation", "Review", "Information"];
 const normalizeInvestigationTabs = tabs => {
   const source = Array.isArray(tabs) && tabs.length > 0 ? tabs : INVESTIGATION_DEFAULT_TABS;
@@ -21647,17 +21879,57 @@ function PatientFileSections({
 // components read sd.patient.* (FirstNationsStatus, NameBlock).
 const resolvePatientContextPath = (sd, path) => {
   const root = {
-    patient: sd?.patient,
+    patient: sd?.patient ?? sd?.queryResult?.patient?.[0],
     sd,
+    queryResult: sd?.queryResult,
     webform: sd?.webform,
     userProfile: sd?.userProfile
   };
   return String(path || "").split(".").map(part => part.trim()).filter(Boolean).reduce((current, key) => current && typeof current === "object" ? current[key] : undefined, root);
 };
+const resolveCollectionItemPath = (item, path) => {
+  if (!path) return item;
+  return String(path).split(".").map(part => part.trim()).filter(Boolean).reduce((current, key) => current && typeof current === "object" ? current[key] : undefined, item);
+};
 const coercePatientValue = raw => {
   if (raw == null) return "";
   if (typeof raw === "object") return String(raw.code ?? raw.display ?? raw.value ?? "");
   return String(raw);
+};
+const collectionCandidateValues = (raw, values = []) => {
+  if (raw == null) return values;
+  if (Array.isArray(raw)) {
+    raw.forEach(entry => collectionCandidateValues(entry, values));
+    return values;
+  }
+  if (typeof raw === "object") {
+    ;
+    ["code", "display", "value", "key", "text", "label", "id"].forEach(key => {
+      if (raw[key] != null && raw[key] !== "") values.push(String(raw[key]));
+    });
+    return values;
+  }
+  values.push(String(raw));
+  return values;
+};
+const collectionItemMatches = (item, itemPath, operator = "notEmpty", matchValue = "") => {
+  const raw = resolveCollectionItemPath(item, itemPath);
+  const values = collectionCandidateValues(raw);
+  const expected = String(matchValue ?? "").trim();
+  const normalizedExpected = expected.toUpperCase();
+  if (operator === "empty") return values.length === 0;
+  if (operator === "notEmpty") return values.length > 0;
+  if (operator === "in") {
+    const candidates = expected.split(",").map(value => value.trim()).filter(Boolean);
+    return values.some(value => candidates.includes(value));
+  }
+  if (operator === "contains") {
+    return values.some(value => value.toUpperCase().includes(normalizedExpected));
+  }
+  if (operator === "notEquals") {
+    return values.length > 0 && values.every(value => value !== expected);
+  }
+  return values.some(value => value === expected);
 };
 
 // Whole years between a birth date and a reference date (default: today).
@@ -21676,8 +21948,19 @@ const computeAgeYears = (birthValue, reference) => {
   return age >= 0 ? String(age) : "";
 };
 
-// Apply an optional value transform after resolving the patient path.
-const applyPatientTransform = (raw, transform) => transform === "ageYears" ? computeAgeYears(raw) : coercePatientValue(raw);
+// Apply an optional value transform after resolving the patient path. Collection
+// transforms deliberately reduce chart lists to rule-friendly scalar strings:
+// "true"/"false" for existence/matches and a number string for counts.
+const applyPatientTransform = (raw, transform, itemPath, matchOperator, matchValue) => {
+  if (transform === "ageYears") return computeAgeYears(raw);
+  if (transform === "collectionCount") return String(Array.isArray(raw) ? raw.length : 0);
+  if (transform === "collectionExists") return Array.isArray(raw) && raw.length > 0 ? "true" : "false";
+  if (transform === "collectionAnyMatch") {
+    const items = Array.isArray(raw) ? raw : [];
+    return items.some(item => collectionItemMatches(item, itemPath, matchOperator, matchValue)) ? "true" : "false";
+  }
+  return coercePatientValue(raw);
+};
 
 /**
  * PatientValueField — mirrors a patient-context value into a form field so the
@@ -21689,6 +21972,11 @@ const applyPatientTransform = (raw, transform) => transform === "ageYears" ? com
  * \`transform: "ageYears"\` derives a numeric age from a birth-date path
  * (patient.birthDate) so rules can gate on age (e.g. number-gte 65).
  *
+ * Collection transforms provide the equivalent for medications, conditions,
+ * allergies, and observations. Point \`patientPath\` at the collection, then
+ * use collectionExists, collectionCount, or collectionAnyMatch with an item
+ * path and comparator. The resulting scalar can drive ordinary field rules.
+ *
  * Hidden by default (renders nothing) — it is a data binding, not a control.
  */
 const PatientValueField = ({
@@ -21696,13 +21984,16 @@ const PatientValueField = ({
   fieldId = "patientValue",
   patientPath = "patient.administrativeGender.code",
   transform,
+  itemPath = "",
+  matchOperator = "notEmpty",
+  matchValue = "",
   hidden = true,
   label
 }) => {
   const [fd, setFormData] = useActiveData();
   const sd = useSourceData();
   const effectiveFieldId = fieldId || id || "patientValue";
-  const resolved = applyPatientTransform(resolvePatientContextPath(sd, patientPath), transform);
+  const resolved = applyPatientTransform(resolvePatientContextPath(sd, patientPath), transform, itemPath, matchOperator, matchValue);
   const stored = fd?.field?.data?.[effectiveFieldId];
   useEffect(() => {
     if (stored === resolved) return;
@@ -29463,6 +29754,18 @@ const UnsavedChangesGuard = ({
     const isSubmitAction = actionId === "sign" || actionId === "submit";
     const payload = isSubmitAction ? typeof getSubmitData === "function" ? getSubmitData(prepared) : buildDefaultSubmitPayload(persistFd, prepared?.formData) : typeof getSaveData === "function" ? getSaveData(prepared) : buildDefaultSavePayload(persistFd, prepared?.formData);
 
+    // Field-level MOIS write bindings are direct, catalog-backed mutations.
+    // Like encounter notes, they are intentionally submit-only and must finish
+    // before the form is signed/submitted; draft saves never invoke this hook.
+    if (isSubmitAction && typeof window !== "undefined" && typeof window.__builderMoisWriteBindingFlush === "function") {
+      try {
+        await window.__builderMoisWriteBindingFlush(prepared);
+      } catch (error) {
+        console.error("MOIS write binding failed", error);
+        return;
+      }
+    }
+
     // HTTP JSON workflow outputs (for example a Mirth listener) need the final
     // submit payload, so they flush after getSubmitData and before MOIS submit.
     if (isSubmitAction && typeof window !== "undefined" && typeof window.__builderHttpJsonFlush === "function") {
@@ -29901,6 +30204,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './HistoricalObservationTable/index.jsx': ["HistoricalObservationTable","current","date","getHistorySource","grouped","historyDateKey","matchedColumn","raw","rows","sd","source","steps"],
   './HonosQuestion/index.jsx': ["CHOICE_FIELD_STYLE","HonosFinalScore","QUESTION_STACK_STYLE","QUESTION_defaultLabelStyle","SCALE_10_LEGENDS","SCALE_10_LEGEND_LOOKUP","SCALE_10_OPTIONS","SCALE_5_LEGENDS","SCALE_5_LEGEND_LOOKUP","SCALE_5_OPTIONS","Scale10","Scale10Legend","Scale5","Scale5Legend","Scale5QuestionList","Scale5SubmitButton","Scale5ToolTip","ScaleLegend","UpdateContext","buildLegendLookupFromOptions","buildTooltipLookup","calculatedTotal","createScaleQuestion","customChoiceOptions","description","dropdownStyles","effectiveChoiceOptions","effectiveTooltip","fallbackLookup","fditem","fillAllUnfilledQuestions","finalScoreStyle","generatedTooltip","handleChoiceChanged","handleDropdownChanged","handleKeyUp","i","item","key","keySource","nextChoiceGroup","normalizeScaleChoiceOptions","numeric","numericValue","option","questionIds","questionStyle","rawValue","rawfditem","renderedChoiceOptions","scoredQuestionIds","seenKeys","selectedOptions","targetFieldId","text","theme","toFiniteNumber","tooltipList","tooltipLookup","totalScore","value"],
   './HotspotMapField/index.jsx': ["ANNOTATION_SYMBOL_LABELS","DEFAULT_ANNOTATION_COLOR","DEFAULT_ANNOTATION_SIZE_PERCENT","DEFAULT_ANNOTATION_SYMBOL","DEFAULT_ANNOTATION_SYMBOLS","DEFAULT_INTERACTION_MODE","DEFAULT_MAP_MARGIN_PX","DEFAULT_MAP_MAX_WIDTH","DEFAULT_MAP_MIN_HEIGHT","DEFAULT_MAP_PADDING_PX","DEFAULT_MAP_WIDTH_PERCENT","DEFAULT_MAP_ZOOM_PERCENT","DEFAULT_MARKER_RADIUS","DEFAULT_MARKER_SIZE","DEFAULT_NUMBER_FIELD_WIDTH_PERCENT","DEFAULT_SVG_VIEWBOX_MARGIN_PERCENT","HotspotMapField","annotationDefaultSymbol","annotationPointsToSvgString","annotationSymbols","annotations","append","assignedHotspotIds","baseId","bounds","buildCountsByGroup","buildFallbackPolygon","buildMapValue","byHotspot","centroid","centroidFromPoints","circleAspectRatio","clampPercent","clampSvgViewBoxMarginPercent","clamped","color","commitMapState","commitSelection","compact","count","counterGroups","counts","countsByGroup","createHotspotMapConfig","cx","cy","deltaX","deltaY","displayValue","doc","drawingPointerIdRef","drawingPointsRef","element","elements","ensureResponsiveSvg","ensuredDefault","fallbackList","fieldFillTextLayerIdSet","fieldFillValueMap","fieldId","fields","fill","getHotspotLabelAnchor","getNumberFieldValue","getPointFromEvent","group","groupId","groupLabel","groupsById","half","handleAddAnnotation","handleDrawPointerDown","handleDrawPointerMove","handleDrawPointerUp","handleHotspotKeyDown","handleNumberFieldChange","handleToggleHotspot","hasAnnotations","hasExplicitCounterGroups","hasMapData","hasSelections","hasSvgBackground","height","heightAttr","hotspot","hotspotIdSet","hotspots","hotspotsById","id","ids","importSvgHotspots","injectFieldFillValuesIntoSvg","inlineStyle","input","interactionMode","isDarkMode","isDrawModeActive","isDrawingRef","isFieldFillMode","isSelected","isSymbolModeActive","labelAnchor","map","mapFrameRef","mapFrameStyle","mapValue","marginPercent","markerSize","markup","match","max","min","names","next","nextAnnotations","nextAspectRatio","nextPoints","nextSymbol","nextValue","normalizeAnnotationPoints","normalizeAnnotationSymbol","normalizeAnnotationSymbols","normalizeAnnotationType","normalizeAnnotations","normalizeColor","normalizeCounterGroupId","normalizeCounterGroups","normalizeHotspotPoints","normalizeHotspots","normalizeMapInteractionMode","normalizeNumberFields","normalizeShape","normalizeString","normalized","normalizedAnnotations","normalizedCounterGroups","normalizedHotspot","normalizedHotspots","normalizedId","normalizedNumberFields","normalizedNumeric","normalizedRaw","numberFields","numeric","observer","overlayStyle","overlayViewBox","padX","padY","pair","panelStyle","parseAnnotationSymbol","parseList","parseSvgAspectRatio","parseSvgNumber","parsed","parsedPoints","parsedViewBox","parser","parts","point","points","pointsAttr","pointsToSvgString","previous","projectMapLengthToRenderPercent","projectMapPercentToRenderPercent","projectRenderPercentToMapPercent","r","radius","raw","rawId","rawLabel","rawValue","rect","renderAnnotationModeControls","renderMapFrame","renderSummary","renderedWidth","renderedX","renderedY","resolveAnnotationSymbol","resolveMapInteractionMode","resolved","resolvedAllowedSymbols","resolvedAnnotationDefaultColor","resolvedAnnotationDefaultSymbol","resolvedAnnotationSizePercent","resolvedAnnotationSymbols","resolvedInteractionMode","resolvedMapMarginPx","resolvedMapMaxWidth","resolvedMapMinHeight","resolvedMapPaddingPx","resolvedMapWidthPercent","resolvedMapZoomPercent","resolvedModalMinWidth","responsiveSvg","sanitizeHotspotIds","seen","selectedCount","selectedIds","selectedIdsCsv","selectedLabels","selectedLabelsCsv","serialized","shape","showSymbolPicker","showToolToggle","size","sourceHeight","sourceWidth","step","stroke","strokeWidth","suffix","summaryGroups","supportsAnnotations","supportsDrawAnnotations","supportsSelection","supportsSymbolAnnotations","svg","svgAspectRatio","svgViewBoxMarginPercent","svgViewBoxRenderSize","symbol","symbols","tagName","target","textLayerId","theme","toXPercent","toYPercent","total","trimmed","tspan","type","unique","updateAspectRatio","useSvgLayerTakeover","usedIds","value","vbHeight","vbWidth","vbX","vbY","viewBoxHeight","viewBoxParts","viewBoxRaw","viewBoxWidth","width","widthAttr","widthRaw","x","y","zoomFactor"],
+  './HttpJsonTestPanel/index.jsx': ["AbortControllerClass","HTTP_JSON_RESULT_EVENT","HttpJsonTestPanel","aborted","body","controller","effectiveOutputId","fetchJson","formatHttpJsonTestResult","handler","key","nextResult","persistHttpJsonTestResult","previous","publishHttpJsonTestResult","readHttpJsonTestBody","requestBody","response","responseText","sd","sendTest","startedAt","statusColor","statusLabel","storedResult","text","timeout"],
   './InvestigationTabs/index.jsx': ["INVESTIGATION_DEFAULT_TABS","InvestigationTab","InvestigationTabs","activeChildren","activeTab","childArray","childById","childTabId","id","label","normalizeInvestigationTabs","numeric","props","resolvedTabs","selected","source"],
   './LayoutTable/index.jsx': ["LayoutTable","Tag","bareRefs","bracketedRefs","cellStyle","checklistOptions","code","comparableValue","computeLayoutTableCellValue","computedCells","config","display","displayValue","evaluateLayoutTableFormula","extractLayoutTableFormulaRefs","fieldId","fields","formatLayoutTableComputedValue","formatLayoutTableFieldDisplayValue","formatOne","formula","getCellDisplayValue","getLayoutTableFieldRawValue","getNumericFieldValue","getPathValue","id","ids","isCheckedValue","isNoLikeValue","isSafeLayoutTableFormula","isYesLikeValue","jsExpression","label","labelProp","matched","multiline","nextData","normalizeComparableValue","normalizeLayoutTableOptionList","normalized","numeric","optionList","raw","rawValue","refs","renderLayoutTableCellContent","renderLayoutTableField","renderLayoutTableFieldList","renderLayoutTableReadOnlyField","renderLayoutTableResources","renderLayoutTableStampButton","renderLink","resources","rounded","rowIsVisible","rule","sd","section","setFieldValue","sharedProps","sourceValue","strippedExpression","sumMatch","tableData","tableRows","targets","unwrappedExpression","value","values","visibleRows"],
   './LegacyLookupField/index.jsx': ["LegacyLookupField","aliasSets","aliases","candidates","commit","directKeys","effectiveFieldId","fallback","key","matchingKey","normalizeLookupName","normalizeOption","normalized","normalizedLabel","optionLists","optionSources","options","raw","sd","seen","targets","text","value","valueForTarget"],
@@ -29916,7 +30220,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './Occupations/index.jsx': ["Occupations","OccupationsFields"],
   './PastMeasurementField/index.jsx': ["PastMeasurementField","abnormalFlag","abnormalHighValue","abnormalLowValue","candidate","codeFilter","coercePositiveInt","commentFilter","componentId","container","createdBy","criticalHighValue","criticalLowValue","current","currentPayload","day","direct","documentDate","effectiveFieldId","effectiveHistorySize","entryCode","entryComment","entryDate","entryUnits","entryValue","explicitValue","fieldData","flagCode","flagDisplays","formatDate","fromPatient","fromQueryResult","handleValueChange","hasAbnormalHigh","hasAbnormalLow","hasExplicitValue","hasMeaningfulValue","hasNumericCurrentValue","hasRangeMetadata","hasStoredValue","historyItems","historySummary","index","inputSuffix","isAbnormal","isNonEmptyString","key","latestHistoryItem","legacyRangePayload","linkedObservationItem","month","nextGroup","normalizeObservationItems","normalizedDateOnly","numericCurrentValue","numericExplicitValue","numericTime","oldId","oldObs","optionalString","parseDateValue","parsed","parsedDate","parsedDateOnly","patientPath","payloadsEqual","recentHistoryText","resolveMoisValue","resolvePathValue","resolvedAbnormalHigh","resolvedAbnormalLow","resolvedCriticalHigh","resolvedCriticalLow","resolvedCurrentValue","resolvedUnits","sd","segments","setNestedPayload","shouldReserveHistory","shouldShowHistory","storedValue","stringifyValue","stripVolatilePayloadFields","text","toObservationList","toPathSegments","updatedValue","valueKeys","valuePart","year"],
   './PatientFileSections/index.jsx': ["PatientFileSections","activeText","addressText","cityLine","compactLines","contactText","countryLine","createdDate","editButtonStyle","encounter","fieldWrapStyle","formatAddress","formatContact","formatDate","getPatientFromData","gridStyle","healthNumber","insuranceBy","insuranceNumber","insuranceText","lines","match","mergeObjects","nextPatient","optionCode","optionDisplay","patient","preferredCode","preferredPhoneOptions","providerName","queryPatient","raw","renderClientDemographics","renderDocumentDetails","renderEncounterDetails","renderTitle","requested","sd","section","sectionTitleStyle","textValue","updateContactText","visibleSections","whiteDropdownStyles","whiteFlexTextFieldStyles","whiteTextFieldStyles","writePatientUpdates"],
-  './PatientValueField/index.jsx': ["PatientValueField","age","applyPatientTransform","coercePatientValue","computeAgeYears","dob","effectiveFieldId","monthDelta","now","raw","resolvePatientContextPath","resolved","root","sd","stored"],
+  './PatientValueField/index.jsx': ["PatientValueField","age","applyPatientTransform","candidates","coercePatientValue","collectionCandidateValues","collectionItemMatches","computeAgeYears","dob","effectiveFieldId","expected","items","monthDelta","normalizedExpected","now","raw","resolveCollectionItemPath","resolvePatientContextPath","resolved","root","sd","stored","values"],
   './PdfRegenerator/index.jsx': ["PDFLib","PDF_LIB_URL","PdfRegenerator","_base64ToBytes","_buildDateComponentIndex","_buildTableReverseIndex","_collectCandidates","_decodePdfHex","_downloadBytes","_fillField","_getCheckboxOnStates","_inferBooleanState","_installPdfLibFromSource","_isNonEmptyString","_loadPdfLib","_loadPdfLibFromCdn","_matchMultipleOptions","_matchSingleOption","_normalizeFieldMap","_normalizeToken","_pdfLibPromise","_printBytes","_resolveDateComponentValue","_resolveTableCellValue","_resolveValueByPath","_setCheckboxByState","_splitCanonicalDateParts","_statusColor","_toBooleanLike","_toCandidateList","_toText","acro","baseMap","binary","blob","boolValue","booleanStates","buttonDisabled","byRow","bytes","candidate","candidateKeys","candidates","clean","cleaned","cleanup","components","current","dateComponentIndex","dateComponentValue","dateEntry","diagnosticsText","didFill","direct","doc","existing","filledFieldCount","form","formData","formKeys","fromData","fromPath","fuzzy","handleGeneratePdf","hasMatchingState","i","iframe","includeSet","index","inferredState","inlineSource","installed","isOn","left","leftIsFormId","lib","link","map","mapped","match","matches","maybe","maybeDate","maybeTime","nextFileName","normalized","normalizedAction","normalizedCandidate","normalizedOption","normalizedOptionMap","normalizedRequested","offState","onText","onValue","options","outputBytes","parts","pathByColumnId","payload","pdfFieldId","pdfFieldName","printWindow","rawValue","renderActionButton","renderButton","resolvePath","resolvedPdfSource","right","rightIsFormId","row","rowIndex","rowMapping","rows","runner","script","sd","segments","selected","selectedCount","set","single","skippedFieldCount","sourceFieldId","sourceId","sourceValues","state","states","strategy","tableEntry","tableId","tableIndex","targetAction","targetState","targetStateName","targetWidget","text","trimmed","url","warningCount","warnings","widgets","withoutSlash"],
   './PlannedActions/index.jsx': ["PlannedActions","PlannedActionsFields","plannedActionsActiveOnly","plannedActionsColumns"],
   './ReferralSource/index.jsx': ["ReferralSource","codeSystem","defaultValue","optionList","referralValueSet","sd"],

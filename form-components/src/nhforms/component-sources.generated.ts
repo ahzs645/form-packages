@@ -16049,6 +16049,226 @@ HotspotMapField.createConfig = createHotspotMapConfig
 HotspotMapField.importSvgHotspots = importSvgHotspots
 HotspotMapField.normalizeHotspots = normalizeHotspots
 `,
+  './HttpJsonTestPanel/index.jsx': `const { useEffect, useMemo, useState } = React
+
+const HTTP_JSON_RESULT_EVENT = "builder:http-json-result"
+
+const readHttpJsonTestBody = async (response) => {
+  if (!response || typeof response.text !== "function") return null
+  let text = ""
+  try {
+    text = await response.text()
+  } catch (_error) {
+    return null
+  }
+  if (!text) return null
+  try {
+    return JSON.parse(text)
+  } catch (_error) {
+    return text.length > 20000 ? \`\${text.slice(0, 20000)}...[truncated]\` : text
+  }
+}
+
+const formatHttpJsonTestResult = (value) => {
+  if (value == null || value === "") return "No response body"
+  if (typeof value === "string") return value
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch (_error) {
+    return String(value)
+  }
+}
+
+const persistHttpJsonTestResult = (setFormData, fieldId, result) => {
+  if (!fieldId || typeof setFormData !== "function") return
+  setFormData(produce((draft) => {
+    if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
+    if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
+    draft.field.data[fieldId] = result
+    if (draft.formData && typeof draft.formData === "object") draft.formData[fieldId] = result
+  }))
+}
+
+const publishHttpJsonTestResult = (result) => {
+  if (typeof window === "undefined") return
+  const key = result?.outputId || "http-json"
+  const previous = window.__builderHttpJsonResults && typeof window.__builderHttpJsonResults === "object"
+    ? window.__builderHttpJsonResults
+    : {}
+  window.__builderHttpJsonResults = Object.assign({}, previous, { [key]: result })
+  if (typeof window.CustomEvent === "function") {
+    window.dispatchEvent(new window.CustomEvent(HTTP_JSON_RESULT_EVENT, { detail: result }))
+  }
+}
+
+/**
+ * HttpJsonTestPanel — exported MOIS diagnostics for HTTP JSON/Mirth outputs.
+ *
+ * The manual request is deliberately synthetic and contains no patient or form
+ * answers. The panel also listens for the generated submit/sign workflow result
+ * so a real listener response or browser error is visible after the action.
+ */
+const HttpJsonTestPanel = ({
+  id,
+  title = "Mirth HTTP listener test",
+  endpointUrl = "http://10.171.20.220:7900/webforms",
+  outputId = "",
+  responseFieldId = "mirthLastResult",
+  buttonText = "Send test request",
+  eventName = "webform-connectivity-test",
+  requestTimeoutMs = 15000,
+  showManualTest = true,
+  showResponseBody = true,
+}) => {
+  const [fd, setFormData] = useActiveData()
+  const sd = useSourceData()
+  const effectiveOutputId = outputId || id || "http-json-test"
+  const storedResult = responseFieldId ? fd?.field?.data?.[responseFieldId] : null
+  const [result, setResult] = useState(() => storedResult || null)
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    if (!storedResult || storedResult === result) return
+    setResult(storedResult)
+  }, [storedResult, result])
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined
+    const handler = (event) => {
+      const nextResult = event?.detail
+      if (!nextResult || typeof nextResult !== "object") return
+      if (outputId && nextResult.outputId !== outputId) return
+      setResult(nextResult)
+      persistHttpJsonTestResult(setFormData, responseFieldId, nextResult)
+    }
+    window.addEventListener(HTTP_JSON_RESULT_EVENT, handler)
+    return () => window.removeEventListener(HTTP_JSON_RESULT_EVENT, handler)
+  }, [outputId, responseFieldId, setFormData])
+
+  const responseText = useMemo(() => formatHttpJsonTestResult(result?.body), [result?.body])
+
+  const sendTest = async () => {
+    if (!endpointUrl || busy) return
+    const startedAt = Date.now()
+    const AbortControllerClass = typeof window !== "undefined" && typeof window.AbortController === "function"
+      ? window.AbortController
+      : null
+    const controller = AbortControllerClass ? new AbortControllerClass() : null
+    const timeout = controller
+      ? window.setTimeout(() => controller.abort(), Math.max(1000, Number(requestTimeoutMs) || 15000))
+      : null
+    setBusy(true)
+    try {
+      const fetchJson = typeof window !== "undefined" && typeof window.fetch === "function"
+        ? window.fetch.bind(window)
+        : null
+      if (!fetchJson) throw new Error("Browser fetch is not available in this MOIS runtime.")
+      const requestBody = {
+        event: eventName || "webform-connectivity-test",
+        source: "webforms-http-test-panel",
+        test: true,
+        sentAt: new Date().toISOString(),
+        outputId: effectiveOutputId,
+        form: {
+          path: sd?.formParams?.formPath,
+          name: sd?.formObject?.Identity?.name || sd?.formParams?.formPath,
+        },
+      }
+      const response = await fetchJson(endpointUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(requestBody),
+        ...(controller ? { signal: controller.signal } : {}),
+      })
+      const body = await readHttpJsonTestBody(response)
+      const nextResult = {
+        source: "manual-test",
+        outputId: effectiveOutputId,
+        endpointUrl,
+        method: "POST",
+        ok: Boolean(response?.ok),
+        status: response?.status ?? null,
+        statusText: response?.statusText || "",
+        contentType: response?.headers?.get ? response.headers.get("content-type") : null,
+        body,
+        receivedAt: new Date().toISOString(),
+        durationMs: Date.now() - startedAt,
+        responseFieldId: responseFieldId || undefined,
+      }
+      if (!response?.ok) nextResult.error = \`HTTP \${response?.status || "error"}\`
+      setResult(nextResult)
+      persistHttpJsonTestResult(setFormData, responseFieldId, nextResult)
+      publishHttpJsonTestResult(nextResult)
+    } catch (error) {
+      const aborted = error?.name === "AbortError"
+      const nextResult = {
+        source: "manual-test",
+        outputId: effectiveOutputId,
+        endpointUrl,
+        method: "POST",
+        ok: false,
+        status: null,
+        statusText: "",
+        body: null,
+        error: aborted
+          ? \`Request timed out after \${Math.max(1000, Number(requestTimeoutMs) || 15000)} ms\`
+          : (error?.message || String(error)),
+        diagnostic: "No HTTP response was readable. Check network access, mixed-content policy, and Mirth CORS OPTIONS handling.",
+        receivedAt: new Date().toISOString(),
+        durationMs: Date.now() - startedAt,
+        responseFieldId: responseFieldId || undefined,
+      }
+      setResult(nextResult)
+      persistHttpJsonTestResult(setFormData, responseFieldId, nextResult)
+      publishHttpJsonTestResult(nextResult)
+    } finally {
+      if (timeout) window.clearTimeout(timeout)
+      setBusy(false)
+    }
+  }
+
+  const statusLabel = !result
+    ? "Not tested"
+    : result.ok
+      ? \`Success\${result.status ? \` (\${result.status})\` : ""}\`
+      : result.status
+        ? \`Failed (\${result.status})\`
+        : "Connection failed"
+  const statusColor = !result ? "#605e5c" : result.ok ? "#107c10" : "#a4262c"
+
+  return (
+    <div
+      data-http-json-test-panel={effectiveOutputId}
+      style={{ border: "1px solid #d2d0ce", padding: 12, background: "#faf9f8" }}
+    >
+      <Fluent.Stack tokens={{ childrenGap: 8 }}>
+        <Fluent.Text variant="mediumPlus" styles={{ root: { fontWeight: 600 } }}>{title}</Fluent.Text>
+        <Fluent.Text variant="small" styles={{ root: { color: "#605e5c", wordBreak: "break-all" } }}>
+          {endpointUrl || "No listener URL configured"}
+        </Fluent.Text>
+        <div role="status" aria-live="polite" style={{ color: statusColor, fontWeight: 600 }}>
+          {busy ? "Sending test request..." : statusLabel}
+          {result?.durationMs != null ? \` in \${result.durationMs} ms\` : ""}
+        </div>
+        {result?.error ? <Fluent.Text styles={{ root: { color: "#a4262c" } }}>{result.error}</Fluent.Text> : null}
+        {result?.diagnostic ? <Fluent.Text variant="small">{result.diagnostic}</Fluent.Text> : null}
+        {showResponseBody && result ? (
+          <pre style={{ margin: 0, maxHeight: 240, overflow: "auto", whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: 11 }}>
+            {responseText}
+          </pre>
+        ) : null}
+        {showManualTest ? (
+          <Fluent.DefaultButton
+            text={busy ? "Sending..." : buttonText}
+            onClick={sendTest}
+            disabled={busy || !endpointUrl}
+          />
+        ) : null}
+      </Fluent.Stack>
+    </div>
+  )
+}
+`,
   './InvestigationTabs/index.jsx': `const INVESTIGATION_DEFAULT_TABS = [
   "Physiology",
   "Medication",
@@ -20033,7 +20253,13 @@ function PatientFileSections({
 // "patient.administrativeGender.code"). Mirrors the way other NHForms
 // components read sd.patient.* (FirstNationsStatus, NameBlock).
 const resolvePatientContextPath = (sd, path) => {
-  const root = { patient: sd?.patient, sd, webform: sd?.webform, userProfile: sd?.userProfile }
+  const root = {
+    patient: sd?.patient ?? sd?.queryResult?.patient?.[0],
+    sd,
+    queryResult: sd?.queryResult,
+    webform: sd?.webform,
+    userProfile: sd?.userProfile,
+  }
   return String(path || "")
     .split(".")
     .map((part) => part.trim())
@@ -20041,10 +20267,56 @@ const resolvePatientContextPath = (sd, path) => {
     .reduce((current, key) => (current && typeof current === "object" ? current[key] : undefined), root)
 }
 
+const resolveCollectionItemPath = (item, path) => {
+  if (!path) return item
+  return String(path)
+    .split(".")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .reduce((current, key) => (current && typeof current === "object" ? current[key] : undefined), item)
+}
+
 const coercePatientValue = (raw) => {
   if (raw == null) return ""
   if (typeof raw === "object") return String(raw.code ?? raw.display ?? raw.value ?? "")
   return String(raw)
+}
+
+const collectionCandidateValues = (raw, values = []) => {
+  if (raw == null) return values
+  if (Array.isArray(raw)) {
+    raw.forEach((entry) => collectionCandidateValues(entry, values))
+    return values
+  }
+  if (typeof raw === "object") {
+    ;["code", "display", "value", "key", "text", "label", "id"].forEach((key) => {
+      if (raw[key] != null && raw[key] !== "") values.push(String(raw[key]))
+    })
+    return values
+  }
+  values.push(String(raw))
+  return values
+}
+
+const collectionItemMatches = (item, itemPath, operator = "notEmpty", matchValue = "") => {
+  const raw = resolveCollectionItemPath(item, itemPath)
+  const values = collectionCandidateValues(raw)
+  const expected = String(matchValue ?? "").trim()
+  const normalizedExpected = expected.toUpperCase()
+
+  if (operator === "empty") return values.length === 0
+  if (operator === "notEmpty") return values.length > 0
+  if (operator === "in") {
+    const candidates = expected.split(",").map((value) => value.trim()).filter(Boolean)
+    return values.some((value) => candidates.includes(value))
+  }
+  if (operator === "contains") {
+    return values.some((value) => value.toUpperCase().includes(normalizedExpected))
+  }
+  if (operator === "notEquals") {
+    return values.length > 0 && values.every((value) => value !== expected)
+  }
+  return values.some((value) => value === expected)
 }
 
 // Whole years between a birth date and a reference date (default: today).
@@ -20065,9 +20337,19 @@ const computeAgeYears = (birthValue, reference) => {
   return age >= 0 ? String(age) : ""
 }
 
-// Apply an optional value transform after resolving the patient path.
-const applyPatientTransform = (raw, transform) =>
-  transform === "ageYears" ? computeAgeYears(raw) : coercePatientValue(raw)
+// Apply an optional value transform after resolving the patient path. Collection
+// transforms deliberately reduce chart lists to rule-friendly scalar strings:
+// "true"/"false" for existence/matches and a number string for counts.
+const applyPatientTransform = (raw, transform, itemPath, matchOperator, matchValue) => {
+  if (transform === "ageYears") return computeAgeYears(raw)
+  if (transform === "collectionCount") return String(Array.isArray(raw) ? raw.length : 0)
+  if (transform === "collectionExists") return Array.isArray(raw) && raw.length > 0 ? "true" : "false"
+  if (transform === "collectionAnyMatch") {
+    const items = Array.isArray(raw) ? raw : []
+    return items.some((item) => collectionItemMatches(item, itemPath, matchOperator, matchValue)) ? "true" : "false"
+  }
+  return coercePatientValue(raw)
+}
 
 /**
  * PatientValueField — mirrors a patient-context value into a form field so the
@@ -20079,6 +20361,11 @@ const applyPatientTransform = (raw, transform) =>
  * \`transform: "ageYears"\` derives a numeric age from a birth-date path
  * (patient.birthDate) so rules can gate on age (e.g. number-gte 65).
  *
+ * Collection transforms provide the equivalent for medications, conditions,
+ * allergies, and observations. Point \`patientPath\` at the collection, then
+ * use collectionExists, collectionCount, or collectionAnyMatch with an item
+ * path and comparator. The resulting scalar can drive ordinary field rules.
+ *
  * Hidden by default (renders nothing) — it is a data binding, not a control.
  */
 const PatientValueField = ({
@@ -20086,13 +20373,22 @@ const PatientValueField = ({
   fieldId = "patientValue",
   patientPath = "patient.administrativeGender.code",
   transform,
+  itemPath = "",
+  matchOperator = "notEmpty",
+  matchValue = "",
   hidden = true,
   label,
 }) => {
   const [fd, setFormData] = useActiveData()
   const sd = useSourceData()
   const effectiveFieldId = fieldId || id || "patientValue"
-  const resolved = applyPatientTransform(resolvePatientContextPath(sd, patientPath), transform)
+  const resolved = applyPatientTransform(
+    resolvePatientContextPath(sd, patientPath),
+    transform,
+    itemPath,
+    matchOperator,
+    matchValue,
+  )
   const stored = fd?.field?.data?.[effectiveFieldId]
 
   useEffect(() => {
@@ -27618,6 +27914,22 @@ const UnsavedChangesGuard = ({
           ? getSaveData(prepared)
           : buildDefaultSavePayload(persistFd, prepared?.formData))
 
+    // Field-level MOIS write bindings are direct, catalog-backed mutations.
+    // Like encounter notes, they are intentionally submit-only and must finish
+    // before the form is signed/submitted; draft saves never invoke this hook.
+    if (
+      isSubmitAction &&
+      typeof window !== "undefined" &&
+      typeof window.__builderMoisWriteBindingFlush === "function"
+    ) {
+      try {
+        await window.__builderMoisWriteBindingFlush(prepared)
+      } catch (error) {
+        console.error("MOIS write binding failed", error)
+        return
+      }
+    }
+
     // HTTP JSON workflow outputs (for example a Mirth listener) need the final
     // submit payload, so they flush after getSubmitData and before MOIS submit.
     if (
@@ -28866,6 +29178,19 @@ export const componentIdentities: Record<string, any> = {
       "patch": 12
     }
   },
+  'HttpJsonTestPanel': {
+    "name": "HttpJsonTestPanel",
+    "title": "HTTP JSON Test Panel",
+    "description": "Tests an HTTP JSON listener and displays submit/sign response details or browser errors inside the exported MOIS form.",
+    "version": {
+      "major": 1,
+      "minor": 0,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "NHForms",
+    "components": []
+  },
   'InvestigationTabs': {
     "name": "InvestigationTabs",
     "title": "Investigation Tabs",
@@ -29174,10 +29499,10 @@ export const componentIdentities: Record<string, any> = {
   'PatientValueField': {
     "name": "PatientValueField",
     "title": "Patient Value Field",
-    "description": "Mirrors a patient-context value (e.g. administrativeGender.code) into a hidden form field so visibility rules can gate on patient demographics.",
+    "description": "Mirrors scalar patient context or list predicates (medications, conditions, allergies, observations) into a hidden form field for visibility rules.",
     "version": {
       "major": 1,
-      "minor": 0,
+      "minor": 1,
       "patch": 0
     },
     "type": "component",

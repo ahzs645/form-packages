@@ -45,8 +45,8 @@ const publishHttpJsonTestResult = (result) => {
     ? window.__builderHttpJsonResults
     : {}
   window.__builderHttpJsonResults = Object.assign({}, previous, { [key]: result })
-  if (typeof CustomEvent === "function") {
-    window.dispatchEvent(new CustomEvent(HTTP_JSON_RESULT_EVENT, { detail: result }))
+  if (typeof window.CustomEvent === "function") {
+    window.dispatchEvent(new window.CustomEvent(HTTP_JSON_RESULT_EVENT, { detail: result }))
   }
 }
 
@@ -99,13 +99,19 @@ const HttpJsonTestPanel = ({
   const sendTest = async () => {
     if (!endpointUrl || busy) return
     const startedAt = Date.now()
-    const controller = typeof AbortController === "function" ? new AbortController() : null
+    const AbortControllerClass = typeof window !== "undefined" && typeof window.AbortController === "function"
+      ? window.AbortController
+      : null
+    const controller = AbortControllerClass ? new AbortControllerClass() : null
     const timeout = controller
-      ? setTimeout(() => controller.abort(), Math.max(1000, Number(requestTimeoutMs) || 15000))
+      ? window.setTimeout(() => controller.abort(), Math.max(1000, Number(requestTimeoutMs) || 15000))
       : null
     setBusy(true)
     try {
-      if (typeof fetch !== "function") throw new Error("Browser fetch is not available in this MOIS runtime.")
+      const fetchJson = typeof window !== "undefined" && typeof window.fetch === "function"
+        ? window.fetch.bind(window)
+        : null
+      if (!fetchJson) throw new Error("Browser fetch is not available in this MOIS runtime.")
       const requestBody = {
         event: eventName || "webform-connectivity-test",
         source: "webforms-http-test-panel",
@@ -117,7 +123,7 @@ const HttpJsonTestPanel = ({
           name: sd?.formObject?.Identity?.name || sd?.formParams?.formPath,
         },
       }
-      const response = await fetch(endpointUrl, {
+      const response = await fetchJson(endpointUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(requestBody),
@@ -165,7 +171,7 @@ const HttpJsonTestPanel = ({
       persistHttpJsonTestResult(setFormData, responseFieldId, nextResult)
       publishHttpJsonTestResult(nextResult)
     } finally {
-      if (timeout) clearTimeout(timeout)
+      if (timeout) window.clearTimeout(timeout)
       setBusy(false)
     }
   }
