@@ -1,0 +1,9 @@
+{
+  "name": "HistoricalFormValueField",
+  "title": "Historical Form Value Field",
+  "description": "Read-only latest value from prior MOIS Dynamic Form data when supplied by the source query",
+  "version": { "major": 1, "minor": 0, "patch": 0 },
+  "type": "component",
+  "owner": "Northern Health",
+  "components": []
+}

@@ -262,6 +262,29 @@ const _stringifyValue = (value) => {
   return String(value)
 }
 
+const _stampColumnLocksRow = (column = {}) => (
+  column?.type === "stampButton" && column?.stampConfig?.lockRowUntilPersisted === true
+)
+
+const _hasStampedLockValue = (row = {}, column = {}) => {
+  if (!_stampColumnLocksRow(column)) return false
+  return _stringifyValue(_getValueAtPath(row, column.dataPath || column.id)).length > 0
+}
+
+const _getLocalStampLock = (row = {}, columns = []) => {
+  const lockColumns = columns.filter((column) => _hasStampedLockValue(row, column))
+  if (lockColumns.length === 0) return { locked: false, columns: [] }
+  return {
+    locked: true,
+    columns: lockColumns,
+    note: "Initialed row is locked until the stamp is cleared or the form is submitted.",
+  }
+}
+
+const _hasPersistedAuthorshipClaim = (rowLock = {}) => (
+  !!rowLock?.claim && rowLock.claim.status !== "pending" && rowLock.claim.status !== "unlocked"
+)
+
 const _formatCellValue = (row, column) => {
   if (column?.computedValue?.mode === "template") {
     const computed = _computeTemplateColumnValue(row, column)
@@ -1018,7 +1041,12 @@ EditableTable = ({
   const updateCell = (rowIndex, columnId, value) => {
     // Defense in depth: a locked row cannot be edited even if an input slips
     // through (read-only enforcement also gates onChange at the input level).
-    if (isLocked || (authorshipEnabled && getRowLock(currentRows[rowIndex]).locked)) return
+    const rowLock = getRowLock(currentRows[rowIndex])
+    if (
+      isLocked ||
+      (authorshipEnabled && rowLock.locked) ||
+      (!_hasPersistedAuthorshipClaim(rowLock) && _getLocalStampLock(currentRows[rowIndex], columns).locked)
+    ) return
     const nextRows = [...currentRows]
     if (!nextRows[rowIndex]) {
       nextRows[rowIndex] = _makeEmptyRow(columns, rowIndex)
@@ -1044,6 +1072,28 @@ EditableTable = ({
     }
     const nextRow = _cloneRow(nextRows[rowIndex], columns)
     const signedAt = new Date().toISOString()
+    const stampPath = column.dataPath || column.id
+    const hasStampedValue = _stringifyValue(_getValueAtPath(nextRow, stampPath)).length > 0
+    const shouldToggleLocalLock =
+      _stampColumnLocksRow(column) &&
+      hasStampedValue &&
+      column.stampConfig?.allowResign !== false
+
+    if (shouldToggleLocalLock) {
+      _setValueAtPath(nextRow, stampPath, "")
+      if (column.stampConfig?.signedAtPath) {
+        _setValueAtPath(nextRow, column.stampConfig.signedAtPath, "")
+      }
+      nextRows[rowIndex] = nextRow
+      commitRows(nextRows, {
+        reason: "unstamp",
+        rowIndex,
+        row: nextRow,
+        previousRows: currentRows,
+      }, { rowId: nextRow._rowId, value: nextRow })
+      return
+    }
+
     const value = _resolveStampCellValue(column, {
       sd,
       sourceData: sd,
@@ -1057,7 +1107,7 @@ EditableTable = ({
       tableId: id,
       row: nextRow,
     })
-    _setValueAtPath(nextRow, column.dataPath || column.id, value)
+    _setValueAtPath(nextRow, stampPath, value)
     if (column.stampConfig?.signedAtPath) {
       _setValueAtPath(nextRow, column.stampConfig.signedAtPath, signedAt)
     }
@@ -1071,6 +1121,7 @@ EditableTable = ({
   }
 
   const updateDraftCell = (columnId, value) => {
+    if (_getLocalStampLock(draftRow || {}, columns).locked) return
     const nextDraft = _cloneRow(draftRow || _makeEmptyRow(columns, currentRows.length), columns)
     const column = columns.find((item) => item.id === columnId) || { id: columnId, dataPath: columnId }
     _setValueAtPath(nextDraft, column.dataPath || column.id, value)
@@ -1081,6 +1132,22 @@ EditableTable = ({
     if (isLocked) return
     const nextDraft = _cloneRow(draftRow || _makeEmptyRow(columns, currentRows.length), columns)
     const signedAt = new Date().toISOString()
+    const stampPath = column.dataPath || column.id
+    const hasStampedValue = _stringifyValue(_getValueAtPath(nextDraft, stampPath)).length > 0
+    const shouldToggleLocalLock =
+      _stampColumnLocksRow(column) &&
+      hasStampedValue &&
+      column.stampConfig?.allowResign !== false
+
+    if (shouldToggleLocalLock) {
+      _setValueAtPath(nextDraft, stampPath, "")
+      if (column.stampConfig?.signedAtPath) {
+        _setValueAtPath(nextDraft, column.stampConfig.signedAtPath, "")
+      }
+      setDraftRow(nextDraft)
+      return
+    }
+
     const value = _resolveStampCellValue(column, {
       sd,
       sourceData: sd,
@@ -1094,7 +1161,7 @@ EditableTable = ({
       tableId: id,
       row: nextDraft,
     })
-    _setValueAtPath(nextDraft, column.dataPath || column.id, value)
+    _setValueAtPath(nextDraft, stampPath, value)
     if (column.stampConfig?.signedAtPath) {
       _setValueAtPath(nextDraft, column.stampConfig.signedAtPath, signedAt)
     }
@@ -1301,9 +1368,17 @@ EditableTable = ({
     : Number.POSITIVE_INFINITY
   const shouldShowActions = !isLocked && (allowEditRows || allowDeleteRows)
 
-  const renderEditorInput = (row, rowIndex, column, onValueChange, inline, rowReadOnly = false, onStampColumn = null) => {
+  const renderEditorInput = (row, rowIndex, column, onValueChange, inline, rowReadOnly = false, onStampColumn = null, rowLockState = null) => {
     const value = _getValueAtPath(row, column.dataPath || column.id)
-    const effectiveReadOnly = isLocked || rowReadOnly
+    const realRowReadOnly = !!rowLockState?.authorship?.locked
+    const localStampLocked = !!rowLockState?.localStamp?.locked
+    const thisStampLocksRow = _hasStampedLockValue(row, column)
+    const stampCanUnlockLocalRow =
+      column.type === "stampButton" &&
+      localStampLocked &&
+      thisStampLocksRow &&
+      column.stampConfig?.allowResign !== false
+    const effectiveReadOnly = isLocked || (rowReadOnly && !stampCanUnlockLocalRow)
     // When the table/row is locked, neutralize edits at the input level so even
     // controls that ignore a readOnly prop cannot write.
     if (effectiveReadOnly) onValueChange = () => {}
@@ -1407,7 +1482,11 @@ EditableTable = ({
         const stampedValue = _stringifyValue(value)
         const hasStampedValue = stampedValue.length > 0
         const canResign = stampConfig.allowResign !== false
-        const disabledStamp = isLocked || rowReadOnly || (hasStampedValue && !canResign)
+        const disabledStamp =
+          isLocked ||
+          realRowReadOnly ||
+          (localStampLocked && !thisStampLocksRow) ||
+          (hasStampedValue && !canResign)
         const ButtonComponent = column.buttonType === "default" ? DefaultButton : PrimaryButton
         return (
           <Stack horizontal verticalAlign="center" tokens={{ childrenGap: 8 }} wrap>
@@ -1562,27 +1641,41 @@ EditableTable = ({
               >
                 {col.title || col.id}
               </th>
-              {rowsForVerticalLayout.map(({ row, rowIndex, isEmptyPlaceholder }, displayIndex) => (
-                <td
-                  key={`${col.id}-${rowIndex}-${displayIndex}`}
-                  style={verticalBodyCellStyle}
-                  data-source-field-id={isEmptyPlaceholder ? undefined : getSourceFieldId(rowIndex, col.id)}
-                >
-                  {isEmptyPlaceholder
-                    ? emptyStateText
-                    : isModalMode
-                      ? col.type === "stampButton"
-                        ? renderEditorInput(row, rowIndex, col, updateCell, true, getRowLock(row).locked, stampCell)
-                        : <div>{_formatCellValue(row, col)}</div>
-                      : renderEditorInput(row, rowIndex, col, updateCell, true, getRowLock(row).locked, stampCell)}
-                </td>
-              ))}
+              {rowsForVerticalLayout.map(({ row, rowIndex, isEmptyPlaceholder }, displayIndex) => {
+                const rowLock = isEmptyPlaceholder ? { locked: false } : getRowLock(row)
+                const localStampLock =
+                  isEmptyPlaceholder || _hasPersistedAuthorshipClaim(rowLock)
+                    ? { locked: false, columns: [] }
+                    : _getLocalStampLock(row, columns)
+                const rowReadOnly = !!(rowLock.locked || localStampLock.locked)
+                const rowLockState = { authorship: rowLock, localStamp: localStampLock }
+
+                return (
+                  <td
+                    key={`${col.id}-${rowIndex}-${displayIndex}`}
+                    style={verticalBodyCellStyle}
+                    data-source-field-id={isEmptyPlaceholder ? undefined : getSourceFieldId(rowIndex, col.id)}
+                    title={rowReadOnly ? rowLock.note || localStampLock.note : undefined}
+                  >
+                    {isEmptyPlaceholder
+                      ? emptyStateText
+                      : isModalMode
+                        ? col.type === "stampButton"
+                          ? renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell, rowLockState)
+                          : <div>{_formatCellValue(row, col)}</div>
+                        : renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell, rowLockState)}
+                  </td>
+                )
+              })}
             </tr>
           ))}
         </tbody>
       </table>
     )
   }
+
+  const draftLocalStampLock = draftRow ? _getLocalStampLock(draftRow, columns) : { locked: false, columns: [] }
+  const draftLockState = { authorship: { locked: false }, localStamp: draftLocalStampLock }
 
   return (
     <div style={containerStyle}>
@@ -1638,7 +1731,11 @@ EditableTable = ({
               displayRows.map(({ row, rowIndex }, displayIndex) => {
                 const isEmpty = _isRowEmpty(row, columns)
                 const rowLock = getRowLock(row)
-                const rowReadOnly = !!rowLock.locked
+                const localStampLock = _hasPersistedAuthorshipClaim(rowLock)
+                  ? { locked: false, columns: [] }
+                  : _getLocalStampLock(row, columns)
+                const rowReadOnly = !!(rowLock.locked || localStampLock.locked)
+                const rowLockState = { authorship: rowLock, localStamp: localStampLock }
                 // Any row can be removed (not just the last): removal shifts
                 // later rows up a slot, which the per-row source mapping
                 // handles. Rows with values still need allowDeleteNonEmpty.
@@ -1651,7 +1748,7 @@ EditableTable = ({
                   (allowDeleteNonEmpty || isEmpty)
 
                 return (
-                  <tr key={row?._rowId || `row_${rowIndex}`} title={rowReadOnly ? rowLock.note : undefined}>
+                  <tr key={row?._rowId || `row_${rowIndex}`} title={rowReadOnly ? rowLock.note || localStampLock.note : undefined}>
                     {showRowNumbers && (
                       <td key="row-number" style={rowNumberCellStyle}>
                         {isModalMode ? (
@@ -1685,9 +1782,9 @@ EditableTable = ({
                       <td key={col.id} style={bodyCellStyle} data-source-field-id={getSourceFieldId(rowIndex, col.id)}>
                         {isModalMode
                           ? col.type === "stampButton"
-                            ? renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell)
+                            ? renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell, rowLockState)
                             : <div>{_formatCellValue(row, col)}</div>
-                          : renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell)}
+                          : renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell, rowLockState)}
                       </td>
                     ))}
                     {showRowAuthorshipColumn && (
@@ -1809,8 +1906,9 @@ EditableTable = ({
                   column,
                   (rowIndex, columnId, value) => updateDraftCell(columnId, value),
                   false,
-                  false,
-                  (_rowIndex, stampColumn) => stampDraftCell(stampColumn)
+                  draftLocalStampLock.locked,
+                  (_rowIndex, stampColumn) => stampDraftCell(stampColumn),
+                  draftLockState
                 )}
               </div>
             ))}

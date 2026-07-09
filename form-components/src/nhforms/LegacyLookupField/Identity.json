@@ -1,0 +1,9 @@
+{
+  "name": "LegacyLookupField",
+  "title": "MOIS Lookup Field",
+  "description": "Service-location and organization lookup adapter for imported Dynamic Forms",
+  "version": { "major": 1, "minor": 0, "patch": 0 },
+  "type": "component",
+  "owner": "Northern Health",
+  "components": []
+}

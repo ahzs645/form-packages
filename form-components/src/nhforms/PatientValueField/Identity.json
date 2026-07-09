@@ -1,8 +1,8 @@
 {
   "name": "PatientValueField",
   "title": "Patient Value Field",
-  "description": "Mirrors a patient-context value (e.g. administrativeGender.code) into a hidden form field so visibility rules can gate on patient demographics.",
-  "version": { "major": 1, "minor": 0, "patch": 0 },
+  "description": "Mirrors scalar patient context or list predicates (medications, conditions, allergies, observations) into a hidden form field for visibility rules.",
+  "version": { "major": 1, "minor": 1, "patch": 0 },
   "type": "component",
   "owner": "MOIS Styleguide",
   "components": []

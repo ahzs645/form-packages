@@ -372,6 +372,22 @@ const UnsavedChangesGuard = ({
           ? getSaveData(prepared)
           : buildDefaultSavePayload(persistFd, prepared?.formData))
 
+    // Field-level MOIS write bindings are direct, catalog-backed mutations.
+    // Like encounter notes, they are intentionally submit-only and must finish
+    // before the form is signed/submitted; draft saves never invoke this hook.
+    if (
+      isSubmitAction &&
+      typeof window !== "undefined" &&
+      typeof window.__builderMoisWriteBindingFlush === "function"
+    ) {
+      try {
+        await window.__builderMoisWriteBindingFlush(prepared)
+      } catch (error) {
+        console.error("MOIS write binding failed", error)
+        return
+      }
+    }
+
     // HTTP JSON workflow outputs (for example a Mirth listener) need the final
     // submit payload, so they flush after getSubmitData and before MOIS submit.
     if (

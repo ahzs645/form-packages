@@ -5255,6 +5255,24 @@ const _stringifyValue = value => {
   }
   return String(value);
 };
+const _stampColumnLocksRow = (column = {}) => column?.type === "stampButton" && column?.stampConfig?.lockRowUntilPersisted === true;
+const _hasStampedLockValue = (row = {}, column = {}) => {
+  if (!_stampColumnLocksRow(column)) return false;
+  return _stringifyValue(_getValueAtPath(row, column.dataPath || column.id)).length > 0;
+};
+const _getLocalStampLock = (row = {}, columns = []) => {
+  const lockColumns = columns.filter(column => _hasStampedLockValue(row, column));
+  if (lockColumns.length === 0) return {
+    locked: false,
+    columns: []
+  };
+  return {
+    locked: true,
+    columns: lockColumns,
+    note: "Initialed row is locked until the stamp is cleared or the form is submitted."
+  };
+};
+const _hasPersistedAuthorshipClaim = (rowLock = {}) => !!rowLock?.claim && rowLock.claim.status !== "pending" && rowLock.claim.status !== "unlocked";
 const _formatCellValue = (row, column) => {
   if (column?.computedValue?.mode === "template") {
     const computed = _computeTemplateColumnValue(row, column);
@@ -5898,7 +5916,8 @@ EditableTable = ({
   const updateCell = (rowIndex, columnId, value) => {
     // Defense in depth: a locked row cannot be edited even if an input slips
     // through (read-only enforcement also gates onChange at the input level).
-    if (isLocked || authorshipEnabled && getRowLock(currentRows[rowIndex]).locked) return;
+    const rowLock = getRowLock(currentRows[rowIndex]);
+    if (isLocked || authorshipEnabled && rowLock.locked || !_hasPersistedAuthorshipClaim(rowLock) && _getLocalStampLock(currentRows[rowIndex], columns).locked) return;
     const nextRows = [...currentRows];
     if (!nextRows[rowIndex]) {
       nextRows[rowIndex] = _makeEmptyRow(columns, rowIndex);
@@ -5929,6 +5948,26 @@ EditableTable = ({
     }
     const nextRow = _cloneRow(nextRows[rowIndex], columns);
     const signedAt = new Date().toISOString();
+    const stampPath = column.dataPath || column.id;
+    const hasStampedValue = _stringifyValue(_getValueAtPath(nextRow, stampPath)).length > 0;
+    const shouldToggleLocalLock = _stampColumnLocksRow(column) && hasStampedValue && column.stampConfig?.allowResign !== false;
+    if (shouldToggleLocalLock) {
+      _setValueAtPath(nextRow, stampPath, "");
+      if (column.stampConfig?.signedAtPath) {
+        _setValueAtPath(nextRow, column.stampConfig.signedAtPath, "");
+      }
+      nextRows[rowIndex] = nextRow;
+      commitRows(nextRows, {
+        reason: "unstamp",
+        rowIndex,
+        row: nextRow,
+        previousRows: currentRows
+      }, {
+        rowId: nextRow._rowId,
+        value: nextRow
+      });
+      return;
+    }
     const value = _resolveStampCellValue(column, {
       sd,
       sourceData: sd,
@@ -5942,7 +5981,7 @@ EditableTable = ({
       tableId: id,
       row: nextRow
     });
-    _setValueAtPath(nextRow, column.dataPath || column.id, value);
+    _setValueAtPath(nextRow, stampPath, value);
     if (column.stampConfig?.signedAtPath) {
       _setValueAtPath(nextRow, column.stampConfig.signedAtPath, signedAt);
     }
@@ -5958,6 +5997,7 @@ EditableTable = ({
     });
   };
   const updateDraftCell = (columnId, value) => {
+    if (_getLocalStampLock(draftRow || {}, columns).locked) return;
     const nextDraft = _cloneRow(draftRow || _makeEmptyRow(columns, currentRows.length), columns);
     const column = columns.find(item => item.id === columnId) || {
       id: columnId,
@@ -5970,6 +6010,17 @@ EditableTable = ({
     if (isLocked) return;
     const nextDraft = _cloneRow(draftRow || _makeEmptyRow(columns, currentRows.length), columns);
     const signedAt = new Date().toISOString();
+    const stampPath = column.dataPath || column.id;
+    const hasStampedValue = _stringifyValue(_getValueAtPath(nextDraft, stampPath)).length > 0;
+    const shouldToggleLocalLock = _stampColumnLocksRow(column) && hasStampedValue && column.stampConfig?.allowResign !== false;
+    if (shouldToggleLocalLock) {
+      _setValueAtPath(nextDraft, stampPath, "");
+      if (column.stampConfig?.signedAtPath) {
+        _setValueAtPath(nextDraft, column.stampConfig.signedAtPath, "");
+      }
+      setDraftRow(nextDraft);
+      return;
+    }
     const value = _resolveStampCellValue(column, {
       sd,
       sourceData: sd,
@@ -5983,7 +6034,7 @@ EditableTable = ({
       tableId: id,
       row: nextDraft
     });
-    _setValueAtPath(nextDraft, column.dataPath || column.id, value);
+    _setValueAtPath(nextDraft, stampPath, value);
     if (column.stampConfig?.signedAtPath) {
       _setValueAtPath(nextDraft, column.stampConfig.signedAtPath, signedAt);
     }
@@ -6175,9 +6226,13 @@ EditableTable = ({
   const currentRowCount = isModalMode ? displayRows.length : currentRows.length;
   const remaining = Number.isFinite(effectiveMaxRows) ? Math.max(0, effectiveMaxRows - currentRowCount) : Number.POSITIVE_INFINITY;
   const shouldShowActions = !isLocked && (allowEditRows || allowDeleteRows);
-  const renderEditorInput = (row, rowIndex, column, onValueChange, inline, rowReadOnly = false, onStampColumn = null) => {
+  const renderEditorInput = (row, rowIndex, column, onValueChange, inline, rowReadOnly = false, onStampColumn = null, rowLockState = null) => {
     const value = _getValueAtPath(row, column.dataPath || column.id);
-    const effectiveReadOnly = isLocked || rowReadOnly;
+    const realRowReadOnly = !!rowLockState?.authorship?.locked;
+    const localStampLocked = !!rowLockState?.localStamp?.locked;
+    const thisStampLocksRow = _hasStampedLockValue(row, column);
+    const stampCanUnlockLocalRow = column.type === "stampButton" && localStampLocked && thisStampLocksRow && column.stampConfig?.allowResign !== false;
+    const effectiveReadOnly = isLocked || rowReadOnly && !stampCanUnlockLocalRow;
     // When the table/row is locked, neutralize edits at the input level so even
     // controls that ignore a readOnly prop cannot write.
     if (effectiveReadOnly) onValueChange = () => {};
@@ -6263,7 +6318,7 @@ EditableTable = ({
         const stampedValue = _stringifyValue(value);
         const hasStampedValue = stampedValue.length > 0;
         const canResign = stampConfig.allowResign !== false;
-        const disabledStamp = isLocked || rowReadOnly || hasStampedValue && !canResign;
+        const disabledStamp = isLocked || realRowReadOnly || localStampLocked && !thisStampLocksRow || hasStampedValue && !canResign;
         const ButtonComponent = column.buttonType === "default" ? DefaultButton : PrimaryButton;
         return /*#__PURE__*/React.createElement(Stack, {
           horizontal: true,
@@ -6407,11 +6462,36 @@ EditableTable = ({
       row,
       rowIndex,
       isEmptyPlaceholder
-    }, displayIndex) => /*#__PURE__*/React.createElement("td", {
-      key: \`\${col.id}-\${rowIndex}-\${displayIndex}\`,
-      style: verticalBodyCellStyle,
-      "data-source-field-id": isEmptyPlaceholder ? undefined : getSourceFieldId(rowIndex, col.id)
-    }, isEmptyPlaceholder ? emptyStateText : isModalMode ? col.type === "stampButton" ? renderEditorInput(row, rowIndex, col, updateCell, true, getRowLock(row).locked, stampCell) : /*#__PURE__*/React.createElement("div", null, _formatCellValue(row, col)) : renderEditorInput(row, rowIndex, col, updateCell, true, getRowLock(row).locked, stampCell)))))));
+    }, displayIndex) => {
+      const rowLock = isEmptyPlaceholder ? {
+        locked: false
+      } : getRowLock(row);
+      const localStampLock = isEmptyPlaceholder || _hasPersistedAuthorshipClaim(rowLock) ? {
+        locked: false,
+        columns: []
+      } : _getLocalStampLock(row, columns);
+      const rowReadOnly = !!(rowLock.locked || localStampLock.locked);
+      const rowLockState = {
+        authorship: rowLock,
+        localStamp: localStampLock
+      };
+      return /*#__PURE__*/React.createElement("td", {
+        key: \`\${col.id}-\${rowIndex}-\${displayIndex}\`,
+        style: verticalBodyCellStyle,
+        "data-source-field-id": isEmptyPlaceholder ? undefined : getSourceFieldId(rowIndex, col.id),
+        title: rowReadOnly ? rowLock.note || localStampLock.note : undefined
+      }, isEmptyPlaceholder ? emptyStateText : isModalMode ? col.type === "stampButton" ? renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell, rowLockState) : /*#__PURE__*/React.createElement("div", null, _formatCellValue(row, col)) : renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell, rowLockState));
+    })))));
+  };
+  const draftLocalStampLock = draftRow ? _getLocalStampLock(draftRow, columns) : {
+    locked: false,
+    columns: []
+  };
+  const draftLockState = {
+    authorship: {
+      locked: false
+    },
+    localStamp: draftLocalStampLock
   };
   return /*#__PURE__*/React.createElement("div", {
     style: containerStyle
@@ -6467,7 +6547,15 @@ EditableTable = ({
   }, displayIndex) => {
     const isEmpty = _isRowEmpty(row, columns);
     const rowLock = getRowLock(row);
-    const rowReadOnly = !!rowLock.locked;
+    const localStampLock = _hasPersistedAuthorshipClaim(rowLock) ? {
+      locked: false,
+      columns: []
+    } : _getLocalStampLock(row, columns);
+    const rowReadOnly = !!(rowLock.locked || localStampLock.locked);
+    const rowLockState = {
+      authorship: rowLock,
+      localStamp: localStampLock
+    };
     // Any row can be removed (not just the last): removal shifts
     // later rows up a slot, which the per-row source mapping
     // handles. Rows with values still need allowDeleteNonEmpty.
@@ -6475,7 +6563,7 @@ EditableTable = ({
     const canDeleteInline = currentRows.length > 1 && rowIndex < currentRows.length && allowDeleteRows && !rowReadOnly && (allowDeleteNonEmpty || isEmpty);
     return /*#__PURE__*/React.createElement("tr", {
       key: row?._rowId || \`row_\${rowIndex}\`,
-      title: rowReadOnly ? rowLock.note : undefined
+      title: rowReadOnly ? rowLock.note || localStampLock.note : undefined
     }, showRowNumbers && /*#__PURE__*/React.createElement("td", {
       key: "row-number",
       style: rowNumberCellStyle
@@ -6507,7 +6595,7 @@ EditableTable = ({
       key: col.id,
       style: bodyCellStyle,
       "data-source-field-id": getSourceFieldId(rowIndex, col.id)
-    }, isModalMode ? col.type === "stampButton" ? renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell) : /*#__PURE__*/React.createElement("div", null, _formatCellValue(row, col)) : renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell))), showRowAuthorshipColumn && /*#__PURE__*/React.createElement("td", {
+    }, isModalMode ? col.type === "stampButton" ? renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell, rowLockState) : /*#__PURE__*/React.createElement("div", null, _formatCellValue(row, col)) : renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell, rowLockState))), showRowAuthorshipColumn && /*#__PURE__*/React.createElement("td", {
       key: "authorship",
       style: bodyCellStyle,
       title: rowLock.note || undefined
@@ -6619,7 +6707,7 @@ EditableTable = ({
     }
   }, modalColumns.filter(column => _evaluateColumnVisibility(column, draftRow)).map(column => /*#__PURE__*/React.createElement("div", {
     key: column.id
-  }, /*#__PURE__*/React.createElement(Label, null, column.title || column.id), renderEditorInput(draftRow, editingRowIndex ?? currentRows.length, column, (rowIndex, columnId, value) => updateDraftCell(columnId, value), false, false, (_rowIndex, stampColumn) => stampDraftCell(stampColumn)))), errorMessage && /*#__PURE__*/React.createElement(Text, {
+  }, /*#__PURE__*/React.createElement(Label, null, column.title || column.id), renderEditorInput(draftRow, editingRowIndex ?? currentRows.length, column, (rowIndex, columnId, value) => updateDraftCell(columnId, value), false, draftLocalStampLock.locked, (_rowIndex, stampColumn) => stampDraftCell(stampColumn), draftLockState))), errorMessage && /*#__PURE__*/React.createElement(Text, {
     style: {
       color: isDarkMode ? "#ffb3b3" : "#b42318"
     }
@@ -13018,6 +13106,90 @@ const HealthMaintenanceReview = ({
     onClick: () => setIsOpen(false)
   })))));
 };`,
+  './HistoricalFormValueField/index.jsx': `const {
+  useEffect,
+  useMemo
+} = React;
+const {
+  TextField
+} = Fluent;
+const asText = value => {
+  if (value === undefined || value === null) return "";
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value);
+  if (typeof value === "object") return String(value.display ?? value.text ?? value.value ?? value.code ?? "");
+  return "";
+};
+const resolveHistoryRows = sd => {
+  const roots = [sd?.webformHistory, sd?.historicalForms, sd?.patient?.webforms, sd?.patient?.forms, sd?.patient?.dformHistory, sd?.queryResult?.patient?.[0]?.webforms, sd?.queryResult?.patient?.[0]?.forms];
+  return roots.flatMap(value => Array.isArray(value) ? value : []);
+};
+const fieldValueFromRow = (row, legacyFieldId) => {
+  if (!row || typeof row !== "object" || !legacyFieldId) return "";
+  const candidates = [row, row.formData, row.data, row.field?.data, row.values];
+  for (const candidate of candidates) {
+    if (!candidate || typeof candidate !== "object") continue;
+    if (Object.prototype.hasOwnProperty.call(candidate, legacyFieldId)) {
+      return asText(candidate[legacyFieldId]);
+    }
+    const matchingKey = Object.keys(candidate).find(key => key.endsWith(\`_\${legacyFieldId}\`) || key.endsWith(\`_field_\${legacyFieldId}\`));
+    if (matchingKey) return asText(candidate[matchingKey]);
+  }
+  return "";
+};
+const rowDate = row => {
+  const raw = row?.docDate ?? row?.documentDate ?? row?.createdDate ?? row?.createdAt ?? row?.updatedAt;
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? 0 : parsed.getTime();
+};
+
+/**
+ * Mirrors the latest value of a legacy Dynamic Form field when MOIS exposes
+ * prior webform/DForm rows in the source query. It is intentionally read-only:
+ * legacy \`viewonly=dform\` tags never created a new chart write.
+ */
+const HistoricalFormValueField = ({
+  id,
+  fieldId,
+  label = "Prior form value",
+  legacyFieldId = "",
+  placeholder = "No prior value",
+  readOnly = true,
+  disabled = false
+}) => {
+  const [fd, setFormData] = useActiveData();
+  const sd = useSourceData();
+  const effectiveFieldId = fieldId || id || "historicalFormValue";
+  const value = useMemo(() => {
+    const rows = resolveHistoryRows(sd).map(row => ({
+      row,
+      value: fieldValueFromRow(row, legacyFieldId)
+    })).filter(entry => entry.value).sort((left, right) => rowDate(right.row) - rowDate(left.row));
+    return rows[0]?.value ?? "";
+  }, [legacyFieldId, sd]);
+  const stored = fd?.field?.data?.[effectiveFieldId];
+  useEffect(() => {
+    if (!value || stored === value || typeof setFormData !== "function") return;
+    setFormData(produce(draft => {
+      if (!draft.field) draft.field = {
+        data: {},
+        status: {},
+        history: []
+      };
+      if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {};
+      draft.field.data[effectiveFieldId] = value;
+    }));
+  }, [effectiveFieldId, setFormData, stored, value]);
+  return /*#__PURE__*/React.createElement(LayoutItem, {
+    fieldId: effectiveFieldId,
+    label: label,
+    disabled: disabled
+  }, /*#__PURE__*/React.createElement(TextField, {
+    value: value,
+    placeholder: placeholder,
+    readOnly: readOnly,
+    disabled: disabled
+  }));
+};`,
   './HistoricalObservationTable/index.jsx': `const {
   useMemo
 } = React;
@@ -15708,6 +15880,114 @@ function LayoutTable({
     }, renderLayoutTableCellContent(cell, readOnly, tableData, sd, setFieldValue));
   }))))));
 }`,
+  './LegacyLookupField/index.jsx': `const {
+  useMemo
+} = React;
+const {
+  ComboBox
+} = Fluent;
+const normalizeLookupName = value => String(value || "").replace(/[^a-z0-9]/gi, "").toLowerCase();
+const normalizeOption = (value, index) => {
+  if (value === undefined || value === null) return null;
+  if (typeof value === "string" || typeof value === "number") {
+    const text = String(value);
+    return {
+      key: text,
+      text,
+      raw: value
+    };
+  }
+  if (typeof value !== "object") return null;
+  const key = String(value.code ?? value.id ?? value.key ?? value.value ?? value.display ?? value.label ?? index);
+  const text = String(value.display ?? value.label ?? value.text ?? value.name ?? value.code ?? key);
+  return {
+    key,
+    text,
+    raw: value
+  };
+};
+const optionSources = (sd, lookupType) => {
+  const normalized = normalizeLookupName(lookupType);
+  const optionLists = sd?.optionLists || {};
+  const candidates = [sd?.lookups?.[lookupType], sd?.lookupValues?.[lookupType], sd?.[\`\${lookupType}Options\`], sd?.[\`\${lookupType}s\`], optionLists[lookupType], optionLists[lookupType?.toUpperCase?.()], optionLists[\`MOIS-\${lookupType?.toUpperCase?.()}\`]];
+  if (normalized === "servicelocation") {
+    candidates.push(sd?.serviceLocations, optionLists.SERVICELOCATION, optionLists.SERVICE_LOCATION, optionLists["MOIS-SERVICELOCATION"]);
+  }
+  if (normalized === "jorg") {
+    candidates.push(sd?.jorg, sd?.organizations, optionLists.JORG, optionLists["MOIS-JORG"]);
+  }
+  return candidates.flatMap(candidate => Array.isArray(candidate) ? candidate : []);
+};
+const valueForTarget = (raw, targetId, targetLabel, fallback) => {
+  if (!raw || typeof raw !== "object") return fallback;
+  const normalizedLabel = normalizeLookupName(targetLabel);
+  const directKeys = [targetId, targetId?.split("_").pop(), normalizedLabel];
+  for (const key of directKeys) {
+    if (key && raw[key] !== undefined && raw[key] !== null) return String(raw[key]);
+  }
+  const aliasSets = [["healthauthority", "authority"], ["healthservicedeliveryarea", "hsda"], ["branch"], ["responsibleservicedeliverylocation", "servicedeliverylocation", "sdl", "location"]];
+  const aliases = aliasSets.find(items => items.some(item => normalizedLabel.includes(item))) ?? [];
+  for (const alias of aliases) {
+    const matchingKey = Object.keys(raw).find(key => normalizeLookupName(key) === alias);
+    if (matchingKey && raw[matchingKey] != null) return String(raw[matchingKey]);
+  }
+  return fallback;
+};
+
+/**
+ * Dynamic Form lookups used source-specific service-location and organization
+ * lists. This adapter accepts those lists from common MOIS source locations and
+ * writes the selected record into the primary field plus any mapped targets.
+ */
+const LegacyLookupField = ({
+  id,
+  fieldId,
+  label = "Lookup",
+  lookupType = "",
+  targetFieldIds = [],
+  targetLabels = {},
+  placeholder = "Select or enter a value",
+  disabled = false
+}) => {
+  const [fd, setFormData] = useActiveData();
+  const sd = useSourceData();
+  const effectiveFieldId = fieldId || id || "legacyLookup";
+  const value = fd?.field?.data?.[effectiveFieldId] ?? "";
+  const options = useMemo(() => {
+    const seen = new Set();
+    return optionSources(sd, lookupType).map(normalizeOption).filter(option => option && !seen.has(option.key) && seen.add(option.key));
+  }, [lookupType, sd]);
+  const commit = (option, freeformValue) => {
+    const fallback = String(option?.text ?? freeformValue ?? "");
+    const raw = option?.raw;
+    setFormData(produce(draft => {
+      if (!draft.field) draft.field = {
+        data: {},
+        status: {},
+        history: []
+      };
+      if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {};
+      const targets = Array.isArray(targetFieldIds) && targetFieldIds.length > 0 ? targetFieldIds : [effectiveFieldId];
+      targets.forEach(targetId => {
+        if (!targetId) return;
+        draft.field.data[targetId] = valueForTarget(raw, targetId, targetLabels?.[targetId], fallback);
+      });
+    }));
+  };
+  return /*#__PURE__*/React.createElement(LayoutItem, {
+    fieldId: effectiveFieldId,
+    label: label,
+    disabled: disabled
+  }, /*#__PURE__*/React.createElement(ComboBox, {
+    text: String(value),
+    placeholder: placeholder,
+    options: options,
+    allowFreeform: true,
+    autoComplete: "on",
+    disabled: disabled,
+    onChange: (_, option, __, freeformValue) => commit(option, freeformValue)
+  }));
+};`,
   './LongTermMedications/index.jsx': `function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /**
  * Display a list of long term medication orders for this patient.
@@ -26219,6 +26499,82 @@ const _recordSubformActionPayload = (setFormData, componentId, payload) => {
     draft.tempArea.__moisRuntime = runtime;
   }));
 };
+const _stringifyObservationValue = value => {
+  if (value === undefined || value === null) return "";
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) return value.map(_stringifyObservationValue).filter(Boolean).join(", ");
+  if (typeof value !== "object") return "";
+  if (Number.isFinite(value.count)) return String(value.count);
+  if (Number.isFinite(value.selectedCount)) return String(value.selectedCount);
+  if (Array.isArray(value.selectedIds)) return String(value.selectedIds.length);
+  if (Array.isArray(value.selectedItems)) return String(value.selectedItems.length);
+  return _stringifyObservationValue(value.value ?? value.code ?? value.text ?? value.display ?? value.label ?? value.total);
+};
+const _resolveObservationTemplate = (template, values) => String(template || "").replace(/\\{\\{\\s*([^}\\s]+)\\s*\\}\\}/g, (_, fieldId) => _stringifyObservationValue(values?.[fieldId]));
+const _buildSubformObservationUpdates = (outputs, context) => {
+  if (!Array.isArray(outputs) || outputs.length === 0) return [];
+  const allValues = {
+    ...(context?.answers || {}),
+    ...(context?.dataEntryValues || {}),
+    ...(context?.calculatedExpressions || {})
+  };
+  Object.entries(context?.calculatedTotals || {}).forEach(([totalId, result]) => {
+    allValues[totalId] = result?.score;
+  });
+  const observationRows = [...(Array.isArray(context?.sd?.webform?.observations) ? context.sd.webform.observations : []), ...(Array.isArray(context?.sd?.patient?.observations) ? context.sd.patient.observations : [])];
+  const createdBy = context?.formData?.createdBy ?? context?.sd?.userProfile?.identity?.fullName;
+  return outputs.flatMap(output => {
+    if (!output || typeof output !== "object" || !output.observationCode) return [];
+    const source = String(output.source || "").toLowerCase();
+    let rawValue;
+    if (source === "calculation") rawValue = context?.calculatedExpressions?.[output.calculationId];else if (source === "total") rawValue = context?.calculatedTotals?.[output.totalId]?.score;else if (source === "template") rawValue = _resolveObservationTemplate(output.valueTemplate, allValues);else rawValue = allValues[output.fieldId] ?? _resolveObservationTemplate(output.valueTemplate, allValues);
+    const value = _stringifyObservationValue(rawValue);
+    const oldObservation = observationRows.find(entry => entry?.observationCode === output.observationCode);
+    const oldId = oldObservation?.observationId ?? 0;
+    if (!value) {
+      return output.deleteWhenEmpty && oldId ? [{
+        observationId: -oldId
+      }] : [];
+    }
+    const report = output.reportTemplate ? _resolveObservationTemplate(output.reportTemplate, allValues) : "";
+    return [{
+      observationId: oldId,
+      observationCode: String(output.observationCode),
+      observationClass: "DCOBS",
+      value,
+      valueType: String(output.valueType || "NUMERIC"),
+      status: oldId ? "C" : "F",
+      description: String(output.description || output.observationCode),
+      ...(output.units ? {
+        units: String(output.units)
+      } : {}),
+      ...(report ? {
+        report
+      } : {}),
+      ...(createdBy ? {
+        orderedBy: createdBy,
+        collectedBy: createdBy
+      } : {}),
+      collectedDateTime: getDateTimeString(new Date())
+    }];
+  });
+};
+const _setSubformObservationPayloads = (setFormData, componentId, payload) => {
+  if (typeof setFormData !== "function") return;
+  setFormData(produce(draft => {
+    if (!draft.field) draft.field = {
+      data: {},
+      status: {},
+      history: []
+    };
+    if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {};
+    const container = draft.field.data.__componentPayloads ?? {};
+    const groups = container.dcoUpdatesByComponent ?? {};
+    if (!payload || payload.length === 0) delete groups[componentId];else groups[componentId] = payload;
+    container.dcoUpdatesByComponent = groups;
+    draft.field.data.__componentPayloads = container;
+  }));
+};
 const _isInRange = (score, range) => {
   if (score === null || score === undefined) return false;
   const min = range.min;
@@ -26527,9 +26883,23 @@ const _resolveSelectableBinaryOptions = (field, fallbackOptions = []) => {
     uncheckedOption
   };
 };
-const _resolveFieldDefaultValue = field => {
+const _latestObservationDefault = (field, sd) => {
+  const binding = field?.defaultFromObservation ?? field?.default_from_observation;
+  const code = String(binding?.observationCode ?? binding?.observation_code ?? "").trim();
+  if (!code) return undefined;
+  const aspect = String(binding?.aspect ?? "value");
+  const observations = Array.isArray(sd?.patient?.observations) ? sd.patient.observations : Array.isArray(sd?.queryResult?.patient?.[0]?.observations) ? sd.queryResult.patient[0].observations : [];
+  const latest = observations.filter(entry => entry?.observationCode === code).sort((left, right) => {
+    const leftDate = new Date(left?.collectedDateTime ?? 0).getTime() || 0;
+    const rightDate = new Date(right?.collectedDateTime ?? 0).getTime() || 0;
+    return rightDate - leftDate;
+  })[0];
+  if (!latest) return undefined;
+  return latest[aspect];
+};
+const _resolveFieldDefaultValue = (field, sd) => {
   if (!field || _isHeadingField(field)) return undefined;
-  const explicitDefault = field.defaultValue ?? field.default_value;
+  const explicitDefault = _latestObservationDefault(field, sd) ?? field.defaultValue ?? field.default_value;
   if (explicitDefault === undefined) return undefined;
   if (explicitDefault === "__today") {
     const today = new Date();
@@ -26965,6 +27335,7 @@ const SubformScoringInner = ({
   onCommitToParent,
   dataEntryValueRoot,
   onDataEntryValueChange,
+  observationOutputs = [],
   ...props
 }) => {
   const [internalIsOpen, setInternalIsOpen] = useState(false);
@@ -27171,7 +27542,7 @@ const SubformScoringInner = ({
     const pendingDefaults = [];
     for (const field of dataEntryFields) {
       if (!field?.id || _isMeaningfulValue(dataEntryValues[field.id])) continue;
-      const defaultValue = _resolveFieldDefaultValue(field);
+      const defaultValue = _resolveFieldDefaultValue(field, sd);
       if (defaultValue === undefined) continue;
       pendingDefaults.push([field.id, defaultValue]);
     }
@@ -27198,7 +27569,7 @@ const SubformScoringInner = ({
         draft.field.data[fieldId] = defaultValue;
       });
     }));
-  }, [isDataEntryMode, isDialogOpen, dataEntryFields, dataEntryValues, fd, onDataEntryValueChange]);
+  }, [isDataEntryMode, isDialogOpen, dataEntryFields, dataEntryValues, fd, onDataEntryValueChange, sd]);
   const dataEntryCalculations = useMemo(() => {
     if (Array.isArray(dataEntryConfig?.calculatedValues) && dataEntryConfig.calculatedValues.length > 0) {
       return dataEntryConfig.calculatedValues;
@@ -27232,6 +27603,14 @@ const SubformScoringInner = ({
       }
       const precision = Number.isFinite(calculation.precision) ? Math.max(0, Math.min(6, calculation.precision)) : null;
       result[calculation.id] = precision === null ? value : Number(value.toFixed(precision));
+    }
+    if (isMorphineCalculatorMode && dataEntryCalculatorConfig?.totalCalculationId) {
+      const rowValues = (dataEntryCalculatorConfig.rows || []).map(row => {
+        const fromCalculation = row.meqCalculationId ? result[row.meqCalculationId] : null;
+        return fromCalculation ?? _computeMorphineEquivalent(dataEntryValues[row.inputFieldId], row.equivalentDoseMg, dataEntryCalculatorConfig.baseEquivalentDoseMg);
+      });
+      const numericValues = rowValues.filter(value => Number.isFinite(Number(value))).map(Number);
+      result[dataEntryCalculatorConfig.totalCalculationId] = numericValues.length > 0 ? Number(numericValues.reduce((sum, value) => sum + value, 0).toFixed(1)) : null;
     }
     return result;
   }, [isDataEntryMode, isMorphineCalculatorMode, dataEntryCalculatorConfig, dataEntryFieldById, dataEntryFields, dataEntryValues, dataEntryCalculations]);
@@ -27273,6 +27652,17 @@ const SubformScoringInner = ({
     }
     return progress.answered > 0;
   }, [isDataEntryMode, isMorphineCalculatorMode, dataEntryCalculatorConfig, dataEntryFields, dataEntryValues, progress]);
+  const commitObservationOutputs = useCallback(() => {
+    const payload = _buildSubformObservationUpdates(observationOutputs, {
+      answers,
+      calculatedExpressions,
+      calculatedTotals,
+      dataEntryValues,
+      formData: fd?.field?.data,
+      sd
+    });
+    _setSubformObservationPayloads(fd?.setFormData, id, payload);
+  }, [answers, calculatedExpressions, calculatedTotals, dataEntryValues, fd, id, observationOutputs, sd]);
   const showItems = useMemo(() => {
     if (Array.isArray(summaryConfig.showItems) && summaryConfig.showItems.length > 0) {
       return summaryConfig.showItems;
@@ -27435,7 +27825,7 @@ const SubformScoringInner = ({
           label: field.label,
           codeSystem: field.codeSystem,
           value: dataEntryValues[field.id] ?? null,
-          defaultValue: _resolveFieldDefaultValue(field),
+          defaultValue: _resolveFieldDefaultValue(field, sd),
           placeholder: field.placeholder || "Please search",
           required: required,
           openOnFocus: true,
@@ -28294,6 +28684,7 @@ const SubformScoringInner = ({
         calculatedTotals
       });
       if (shouldClose !== false) {
+        commitObservationOutputs();
         onCommitToParent?.(fd);
         setDialogOpen(false);
       }
@@ -28342,6 +28733,7 @@ const SubformScoringInner = ({
             }
           }
         }
+        commitObservationOutputs();
         onCommitToParent?.(fd);
         setDialogOpen(false);
       }
@@ -29491,7 +29883,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './ConversionField/index.jsx': ["ConversionField","ConversionFieldSchema","_asPositiveNumber","_asPrecision","_conversionPathSegments","_normalizeConversionRows","_readConversionPath","_readConversionValue","_sanitizeConversionNumber","activeFrom","activeTo","canUseFrom","canUseTo","char","clearValues","convertRow","current","fromValue","hasAnyValue","hasDecimal","index","lastEdited","lastEditedRef","next","nextValue","normalizedFromFieldId","normalizedToFieldId","parsed","parsedFrom","parsedTo","pathValue","rows","segments","setConversionValues","source","sourceFieldId","text","toValue","updateValue","updates"],
   './CustomJsxBlock/index.jsx': ["CustomJsxBlock","displaySource","raw"],
   './DentalWeightConverter/index.jsx': ["DentalWeightConverter","DentalWeightConverterSchema","_positiveNumber","_readDentalField","_sanitizeDentalWeight","cellStyle","clearWeights","convertWeights","data","disabled","factor","fieldWrapperStyle","fixedPrecision","kgValue","kilograms","lastEdited","lastEditedRef","lbValue","nextValue","numeric","parsed","parts","pounds","setDentalValues","text","updateWeight"],
-  './EditableTable/index.jsx': ["ButtonComponent","DEFAULT_WINDOW_HOURS","EditableTable","EditableTableSchema","_addDaysToDateValue","_applyComputedColumns","_applyDefaultValuesToRow","_applyRowProcessingConfig","_buildRowsFromSourceFields","_buildSubformFieldFromColumn","_cloneRow","_coerceNumberCellValue","_computeTemplateColumnValue","_evaluateColumnVisibility","_formatCellValue","_formatLocalDate","_formatProcessedNumber","_getDefaultCellValue","_getValueAtPath","_isMeaningfulValue","_isRowEmpty","_makeEmptyRow","_normalizeChoiceOptions","_normalizeInitialRowCount","_normalizeInitialRows","_normalizeMirroredCellValue","_normalizeNumberConfig","_normalizeRows","_normalizeSourceCellValue","_normalizeStampCellValue","_normalizeTableColumns","_normalizeUniqueToken","_normalizeValidationMessage","_normalizeZeroLikeValue","_resolveFieldDefaultValue","_resolveLiteralValue","_resolvePathValue","_resolveStampCellValue","_rowContentSignature","_setValueAtPath","_sortRowsByPath","_stringifyValue","_toFiniteNumber","_toPathSegments","_todayDateValue","_validateRowWithConfig","actor","actorFrom","addHoursIso","addInlineRow","authorshipEnabled","authorshipHeaderCellStyle","authorshipPolicy","bodyCellStyle","buildKey","buildRowContext","c","cadNumber","cadPath","cadPrecision","canDeleteInline","canResign","canSaveAndAddNext","candidate","changed","ck","claim","claims","closeDialog","column","columns","commitRows","commitSave","computed","config","configMessage","containerStyle","controllerId","copy","count","createTableColumns","current","currentRowCount","currentRows","currentValue","customMessage","customResult","d","data","date","defaultSubformDataEntryConfig","deletedRow","disabledStamp","displayRows","displayValue","dropdownOptions","duplicateIndex","editableUntil","effectiveMaxRows","effectiveReadOnly","euDate","existing","existingRows","expired","explicitRowIndexes","explicitRowMapping","factor","fallback","fieldData","fieldId","first","formatTimestamp","getRowLock","getRows","getSourceFieldId","hasMeaningfulRows","hasMeaningfulValue","hasStampedValue","hasValue","headerCellStyle","headerRowStyle","id","index","inferredRowCount","initialRowCount","initialSeedRows","isDarkMode","isEmpty","isLocked","isModalMode","isNonEmpty","isOwner","isVertical","keepStatus","key","label","lastMeaningfulRowIndex","left","leftDate","leftValue","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","makeDraftRow","match","message","mirroredFieldIds","modalColumns","modalEditorConfig","modalEditorType","nextDate","nextDraft","nextRow","nextRows","nextStatus","nextValue","nhAuth","normalizeStore","normalizedConfig","normalizedRow","normalizedValue","now","nowIso","numberConfig","numericValue","omitEmptyLines","onBeforeSaveRow","onRowDeleted","onRowSaved","onRowsChange","openCreateDialog","openEditDialog","owner","ownerId","ownerName","ownerRefresh","pad2","pairCadPrecision","pairFactor","pairPrefer","pairUsPrecision","pairs","parsed","path","paths","pending","policyAppliesToAction","prefer","prepareSave","processingConfig","raw","rawCad","rawKey","rawUs","rawValue","readStore","release","remaining","removeRowAt","renderEditorInput","renderRowAuthorshipStatus","renderVerticalTable","rendered","requireAnyGroups","requiredPaths","resolveNow","resolvedFactor","resolvedRow","right","rightDate","rightValue","row","rowIndex","rowLock","rowNumberCellStyle","rowNumberHeaderStyle","rowReadOnly","rows","rowsForVerticalLayout","rule","safeFactor","safePrecision","sameActor","saveAndAddNextConfig","saveAndAddNextLabel","saveDraftRow","saved","savedAt","savedRowIndex","sd","section","seededRows","segments","selectionType","setRows","shouldShowActions","showRowAuthorshipColumn","sign","signedAt","sortedRows","sourceColumn","sourceFieldId","sourcePath","sourceSeedRows","spinButtonProps","stampCell","stampConfig","stampDraftCell","stampedValue","store","subformModalConfig","tableColumns","tableContainerStyle","tableStyle","text","theme","transformedRow","trimTrailingZero","trimmed","ts","untilSelf","updateCell","updateDraftCell","updateDraftValueAtPath","usNumber","usPath","usPrecision","usesSubformEditor","validateResolvedRow","validateRow","validationConfig","validationError","value","verticalBodyCellStyle","verticalLabelCellStyle","visibility","windowHours","withCommon","zeroIsEmpty"],
+  './EditableTable/index.jsx': ["ButtonComponent","DEFAULT_WINDOW_HOURS","EditableTable","EditableTableSchema","_addDaysToDateValue","_applyComputedColumns","_applyDefaultValuesToRow","_applyRowProcessingConfig","_buildRowsFromSourceFields","_buildSubformFieldFromColumn","_cloneRow","_coerceNumberCellValue","_computeTemplateColumnValue","_evaluateColumnVisibility","_formatCellValue","_formatLocalDate","_formatProcessedNumber","_getDefaultCellValue","_getLocalStampLock","_getValueAtPath","_hasPersistedAuthorshipClaim","_hasStampedLockValue","_isMeaningfulValue","_isRowEmpty","_makeEmptyRow","_normalizeChoiceOptions","_normalizeInitialRowCount","_normalizeInitialRows","_normalizeMirroredCellValue","_normalizeNumberConfig","_normalizeRows","_normalizeSourceCellValue","_normalizeStampCellValue","_normalizeTableColumns","_normalizeUniqueToken","_normalizeValidationMessage","_normalizeZeroLikeValue","_resolveFieldDefaultValue","_resolveLiteralValue","_resolvePathValue","_resolveStampCellValue","_rowContentSignature","_setValueAtPath","_sortRowsByPath","_stampColumnLocksRow","_stringifyValue","_toFiniteNumber","_toPathSegments","_todayDateValue","_validateRowWithConfig","actor","actorFrom","addHoursIso","addInlineRow","authorshipEnabled","authorshipHeaderCellStyle","authorshipPolicy","bodyCellStyle","buildKey","buildRowContext","c","cadNumber","cadPath","cadPrecision","canDeleteInline","canResign","canSaveAndAddNext","candidate","changed","ck","claim","claims","closeDialog","column","columns","commitRows","commitSave","computed","config","configMessage","containerStyle","controllerId","copy","count","createTableColumns","current","currentRowCount","currentRows","currentValue","customMessage","customResult","d","data","date","defaultSubformDataEntryConfig","deletedRow","disabledStamp","displayRows","displayValue","draftLocalStampLock","draftLockState","dropdownOptions","duplicateIndex","editableUntil","effectiveMaxRows","effectiveReadOnly","euDate","existing","existingRows","expired","explicitRowIndexes","explicitRowMapping","factor","fallback","fieldData","fieldId","first","formatTimestamp","getRowLock","getRows","getSourceFieldId","hasMeaningfulRows","hasMeaningfulValue","hasStampedValue","hasValue","headerCellStyle","headerRowStyle","id","index","inferredRowCount","initialRowCount","initialSeedRows","isDarkMode","isEmpty","isLocked","isModalMode","isNonEmpty","isOwner","isVertical","keepStatus","key","label","lastMeaningfulRowIndex","left","leftDate","leftValue","localStampLock","localStampLocked","lockColumns","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","makeDraftRow","match","message","mirroredFieldIds","modalColumns","modalEditorConfig","modalEditorType","nextDate","nextDraft","nextRow","nextRows","nextStatus","nextValue","nhAuth","normalizeStore","normalizedConfig","normalizedRow","normalizedValue","now","nowIso","numberConfig","numericValue","omitEmptyLines","onBeforeSaveRow","onRowDeleted","onRowSaved","onRowsChange","openCreateDialog","openEditDialog","owner","ownerId","ownerName","ownerRefresh","pad2","pairCadPrecision","pairFactor","pairPrefer","pairUsPrecision","pairs","parsed","path","paths","pending","policyAppliesToAction","prefer","prepareSave","processingConfig","raw","rawCad","rawKey","rawUs","rawValue","readStore","realRowReadOnly","release","remaining","removeRowAt","renderEditorInput","renderRowAuthorshipStatus","renderVerticalTable","rendered","requireAnyGroups","requiredPaths","resolveNow","resolvedFactor","resolvedRow","right","rightDate","rightValue","row","rowIndex","rowLock","rowLockState","rowNumberCellStyle","rowNumberHeaderStyle","rowReadOnly","rows","rowsForVerticalLayout","rule","safeFactor","safePrecision","sameActor","saveAndAddNextConfig","saveAndAddNextLabel","saveDraftRow","saved","savedAt","savedRowIndex","sd","section","seededRows","segments","selectionType","setRows","shouldShowActions","shouldToggleLocalLock","showRowAuthorshipColumn","sign","signedAt","sortedRows","sourceColumn","sourceFieldId","sourcePath","sourceSeedRows","spinButtonProps","stampCanUnlockLocalRow","stampCell","stampConfig","stampDraftCell","stampPath","stampedValue","store","subformModalConfig","tableColumns","tableContainerStyle","tableStyle","text","theme","thisStampLocksRow","transformedRow","trimTrailingZero","trimmed","ts","untilSelf","updateCell","updateDraftCell","updateDraftValueAtPath","usNumber","usPath","usPrecision","usesSubformEditor","validateResolvedRow","validateRow","validationConfig","validationError","value","verticalBodyCellStyle","verticalLabelCellStyle","visibility","windowHours","withCommon","zeroIsEmpty"],
   './EducationHistory/index.jsx': ["EducationHistory","EducationHistoryFields"],
   './Ethnicity/index.jsx': ["Ethnicity","firstNationEthnicityCodes","firstNationsEthnicityReferenceSet"],
   './FieldStampButton/index.jsx': ["ButtonComponent","FieldStampButton","buildContext","clearStamp","context","effectiveStampFieldId","fallback","fieldData","fieldId","isDisabled","isSigned","normalizeStampTargets","normalizeStampValue","normalizedTargets","raw","resolveLiteralValue","resolvePathValue","sd","signedAt","signedAtText","sourcePath","stamp","stampRecord","statusText","value","written"],
@@ -29505,11 +29897,13 @@ export const componentDefinedNames: Record<string, string[]> = {
   './HFC_PT_ASMT_PatientSummary/index.jsx': ["ConditionsSortDesc","ConnectionEditSubForm","EFHistory","EFcols","HFC_PT_ASMT_PatientSummary","TestResult","acol","allergiesCols","asciiCompare","bcol","code","connectionMutation","connectionTemplate","connectionTypeCode","currentConnection","defaultProviderType","defaultProviderTypeLookup","finalSourceMap","getLastRead","getListSelectionColumns","gridRows","handleCreateConnection","handleEditConnection","healthIssuesCols","isInitialMount","labs","latestCollectedFirst","lookupSelectedProviderType","ltRXcols","providerTypes","result","savedValueMapper","sd","sortStartDateDesc"],
   './HFC_PT_ASMT_SnapShot/index.jsx': ["EndDateToTop","HFC_PT_ASMT_SnapShot","RadioSelectGroup","StartDatetoTop","_AddAppt","_handlecheckchange","_onChoiceChange","_removeAppt","appts","checkBoxStyles","codesys","defaultFollowUpAppts","fieldData","followUpList","handleStateChange","newAppt","newitem","optionList","optionlist","optlist","reminder","sd","snapdate","sortStartDatethenEndDateDesc","tableCellStyle","tableStyle"],
   './HealthMaintenanceReview/index.jsx': ["DEFAULT_HEALTH_MAINTENANCE_RULES","HealthMaintenanceReview","ItemCard","STATUS_META","STATUS_ORDER","Sparkline","StatusBadge","SummaryCard","activeRoot","addDays","age","alias","allItems","appendRecord","appliesTo","asOf","base","buckets","buildDueText","buildReviewItem","buildSparklinePath","candidate","candidateKeys","chartNumber","code","codeMatch","codes","coercePositiveInt","collectConditionRecords","collectObservationRecords","collected","collectedDate","computeAge","conditionSpecific","conditions","context","current","date","dateOnly","day","daysBetween","dedupeStrings","deduped","delta","description","descriptionMatch","descriptions","direct","display","dob","dueDate","effectiveRules","effectiveSource","end","explicitDate","family","findObservationHistory","findPathHistory","first","flattenRuleEntries","flattenValues","flattened","formatDate","formatFrequencyLabel","formatValueLabel","frequencyDays","fromAdmin","fromEntry","fromGender","fromSource","gender","general","generalItems","generalSource","groupItemsBySection","healthNumber","history","isActive","isMeaningfulValue","isObject","isRuleApplicable","key","latest","match","matchedConditionGroups","matchesConditionFilters","max","mergeSourceData","merged","meta","middle","min","month","monthDelta","months","next","normalizeConditionRecord","normalizeDate","normalizeGenderValue","normalizeObservationRecord","normalizePathRecord","normalizePatientName","normalizeRuleItem","normalizeRuleSet","normalizeString","normalized","normalizedCodes","normalizedFrequencyDays","normalizedPath","normalizedText","normalizedY","numeric","observationHistory","observations","out","override","parseNumericValue","parsed","parsedRules","parts","path","pathHistory","patient","patientCandidates","patientSex","range","raw","rawConditionGroups","readScopedPathValue","renderHeaderField","resolveDate","resolvePathValue","resolved","resolvedFieldId","resolvedReviewDate","review","ruleSource","scoped","sd","seen","segments","start","status","statusDelta","stringifyValue","stroke","summary","text","textMatch","toArrayOfRecords","toDisplayGender","toPathSegments","trendHistory","trendPoints","triggerSummaryText","trimmed","unitsText","usableHeight","usableWidth","value","valueText","values","x","y","year","years"],
+  './HistoricalFormValueField/index.jsx': ["HistoricalFormValueField","asText","candidates","effectiveFieldId","fieldValueFromRow","matchingKey","parsed","raw","resolveHistoryRows","roots","rowDate","rows","sd","stored","value"],
   './HistoricalObservationTable/index.jsx': ["HistoricalObservationTable","current","date","getHistorySource","grouped","historyDateKey","matchedColumn","raw","rows","sd","source","steps"],
   './HonosQuestion/index.jsx': ["CHOICE_FIELD_STYLE","HonosFinalScore","QUESTION_STACK_STYLE","QUESTION_defaultLabelStyle","SCALE_10_LEGENDS","SCALE_10_LEGEND_LOOKUP","SCALE_10_OPTIONS","SCALE_5_LEGENDS","SCALE_5_LEGEND_LOOKUP","SCALE_5_OPTIONS","Scale10","Scale10Legend","Scale5","Scale5Legend","Scale5QuestionList","Scale5SubmitButton","Scale5ToolTip","ScaleLegend","UpdateContext","buildLegendLookupFromOptions","buildTooltipLookup","calculatedTotal","createScaleQuestion","customChoiceOptions","description","dropdownStyles","effectiveChoiceOptions","effectiveTooltip","fallbackLookup","fditem","fillAllUnfilledQuestions","finalScoreStyle","generatedTooltip","handleChoiceChanged","handleDropdownChanged","handleKeyUp","i","item","key","keySource","nextChoiceGroup","normalizeScaleChoiceOptions","numeric","numericValue","option","questionIds","questionStyle","rawValue","rawfditem","renderedChoiceOptions","scoredQuestionIds","seenKeys","selectedOptions","targetFieldId","text","theme","toFiniteNumber","tooltipList","tooltipLookup","totalScore","value"],
   './HotspotMapField/index.jsx': ["ANNOTATION_SYMBOL_LABELS","DEFAULT_ANNOTATION_COLOR","DEFAULT_ANNOTATION_SIZE_PERCENT","DEFAULT_ANNOTATION_SYMBOL","DEFAULT_ANNOTATION_SYMBOLS","DEFAULT_INTERACTION_MODE","DEFAULT_MAP_MARGIN_PX","DEFAULT_MAP_MAX_WIDTH","DEFAULT_MAP_MIN_HEIGHT","DEFAULT_MAP_PADDING_PX","DEFAULT_MAP_WIDTH_PERCENT","DEFAULT_MAP_ZOOM_PERCENT","DEFAULT_MARKER_RADIUS","DEFAULT_MARKER_SIZE","DEFAULT_NUMBER_FIELD_WIDTH_PERCENT","DEFAULT_SVG_VIEWBOX_MARGIN_PERCENT","HotspotMapField","annotationDefaultSymbol","annotationPointsToSvgString","annotationSymbols","annotations","append","assignedHotspotIds","baseId","bounds","buildCountsByGroup","buildFallbackPolygon","buildMapValue","byHotspot","centroid","centroidFromPoints","circleAspectRatio","clampPercent","clampSvgViewBoxMarginPercent","clamped","color","commitMapState","commitSelection","compact","count","counterGroups","counts","countsByGroup","createHotspotMapConfig","cx","cy","deltaX","deltaY","displayValue","doc","drawingPointerIdRef","drawingPointsRef","element","elements","ensureResponsiveSvg","ensuredDefault","fallbackList","fieldFillTextLayerIdSet","fieldFillValueMap","fieldId","fields","fill","getHotspotLabelAnchor","getNumberFieldValue","getPointFromEvent","group","groupId","groupLabel","groupsById","half","handleAddAnnotation","handleDrawPointerDown","handleDrawPointerMove","handleDrawPointerUp","handleHotspotKeyDown","handleNumberFieldChange","handleToggleHotspot","hasAnnotations","hasExplicitCounterGroups","hasMapData","hasSelections","hasSvgBackground","height","heightAttr","hotspot","hotspotIdSet","hotspots","hotspotsById","id","ids","importSvgHotspots","injectFieldFillValuesIntoSvg","inlineStyle","input","interactionMode","isDarkMode","isDrawModeActive","isDrawingRef","isFieldFillMode","isSelected","isSymbolModeActive","labelAnchor","map","mapFrameRef","mapFrameStyle","mapValue","marginPercent","markerSize","markup","match","max","min","names","next","nextAnnotations","nextAspectRatio","nextPoints","nextSymbol","nextValue","normalizeAnnotationPoints","normalizeAnnotationSymbol","normalizeAnnotationSymbols","normalizeAnnotationType","normalizeAnnotations","normalizeColor","normalizeCounterGroupId","normalizeCounterGroups","normalizeHotspotPoints","normalizeHotspots","normalizeMapInteractionMode","normalizeNumberFields","normalizeShape","normalizeString","normalized","normalizedAnnotations","normalizedCounterGroups","normalizedHotspot","normalizedHotspots","normalizedId","normalizedNumberFields","normalizedNumeric","normalizedRaw","numberFields","numeric","observer","overlayStyle","overlayViewBox","padX","padY","pair","panelStyle","parseAnnotationSymbol","parseList","parseSvgAspectRatio","parseSvgNumber","parsed","parsedPoints","parsedViewBox","parser","parts","point","points","pointsAttr","pointsToSvgString","previous","projectMapLengthToRenderPercent","projectMapPercentToRenderPercent","projectRenderPercentToMapPercent","r","radius","raw","rawId","rawLabel","rawValue","rect","renderAnnotationModeControls","renderMapFrame","renderSummary","renderedWidth","renderedX","renderedY","resolveAnnotationSymbol","resolveMapInteractionMode","resolved","resolvedAllowedSymbols","resolvedAnnotationDefaultColor","resolvedAnnotationDefaultSymbol","resolvedAnnotationSizePercent","resolvedAnnotationSymbols","resolvedInteractionMode","resolvedMapMarginPx","resolvedMapMaxWidth","resolvedMapMinHeight","resolvedMapPaddingPx","resolvedMapWidthPercent","resolvedMapZoomPercent","resolvedModalMinWidth","responsiveSvg","sanitizeHotspotIds","seen","selectedCount","selectedIds","selectedIdsCsv","selectedLabels","selectedLabelsCsv","serialized","shape","showSymbolPicker","showToolToggle","size","sourceHeight","sourceWidth","step","stroke","strokeWidth","suffix","summaryGroups","supportsAnnotations","supportsDrawAnnotations","supportsSelection","supportsSymbolAnnotations","svg","svgAspectRatio","svgViewBoxMarginPercent","svgViewBoxRenderSize","symbol","symbols","tagName","target","textLayerId","theme","toXPercent","toYPercent","total","trimmed","tspan","type","unique","updateAspectRatio","useSvgLayerTakeover","usedIds","value","vbHeight","vbWidth","vbX","vbY","viewBoxHeight","viewBoxParts","viewBoxRaw","viewBoxWidth","width","widthAttr","widthRaw","x","y","zoomFactor"],
   './InvestigationTabs/index.jsx': ["INVESTIGATION_DEFAULT_TABS","InvestigationTab","InvestigationTabs","activeChildren","activeTab","childArray","childById","childTabId","id","label","normalizeInvestigationTabs","numeric","props","resolvedTabs","selected","source"],
   './LayoutTable/index.jsx': ["LayoutTable","Tag","bareRefs","bracketedRefs","cellStyle","checklistOptions","code","comparableValue","computeLayoutTableCellValue","computedCells","config","display","displayValue","evaluateLayoutTableFormula","extractLayoutTableFormulaRefs","fieldId","fields","formatLayoutTableComputedValue","formatLayoutTableFieldDisplayValue","formatOne","formula","getCellDisplayValue","getLayoutTableFieldRawValue","getNumericFieldValue","getPathValue","id","ids","isCheckedValue","isNoLikeValue","isSafeLayoutTableFormula","isYesLikeValue","jsExpression","label","labelProp","matched","multiline","nextData","normalizeComparableValue","normalizeLayoutTableOptionList","normalized","numeric","optionList","raw","rawValue","refs","renderLayoutTableCellContent","renderLayoutTableField","renderLayoutTableFieldList","renderLayoutTableReadOnlyField","renderLayoutTableResources","renderLayoutTableStampButton","renderLink","resources","rounded","rowIsVisible","rule","sd","section","setFieldValue","sharedProps","sourceValue","strippedExpression","sumMatch","tableData","tableRows","targets","unwrappedExpression","value","values","visibleRows"],
+  './LegacyLookupField/index.jsx': ["LegacyLookupField","aliasSets","aliases","candidates","commit","directKeys","effectiveFieldId","fallback","key","matchingKey","normalizeLookupName","normalizeOption","normalized","normalizedLabel","optionLists","optionSources","options","raw","sd","seen","targets","text","value","valueForTarget"],
   './LongTermMedications/index.jsx': ["LongTermMedications","LongTermMedicationsFields"],
   './MoisMarkdownBlock/index.jsx': ["MarkdownRenderer","MoisMarkdownBlock","baseComponents","colon","content","defaultRehypePlugins","defaultRemarkPlugins","effectiveFieldId","extra","extraPlugins","fullWidthStyle","hasAllowedProtocol","hasLabel","match","mergedMarkdownProps","mois","moisModule","numberSign","parseMoisHref","parsedId","questionMark","slash","urlTransform"],
   './MoisModuleLinkList/index.jsx': ["MoisModuleLinkList","label","moisModule","normalizeItems","normalizedItems","source"],
@@ -29534,7 +29928,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './ServiceEpisodes/index.jsx': ["ServiceEpisodes","ServiceEpisodesFields","activeServiceEpisodes","startDateDesc"],
   './ServiceRequests/index.jsx': ["ServiceRequests","ServiceRequestsFields","activeServiceRequests","orderDateDesc"],
   './SignaturePad/index.jsx': ["B","D","L","O","SignaturePad","SignaturePadLib","T","U","W","_","__exports","a","c","canvas","canvasRef","container","containerRef","containerStyle","dataUrl","define","e","exports","f","h","handleClear","handleEndStroke","i","k","l","m","module","o","p","pad","padRef","r","ratio","readOnlyImageStyle","resizeCanvas","s","savedDataUrl","t","theme","u","width","y"],
-  './SubformScoring/index.jsx': ["AnswerSummaryItem","CalculationSummaryItem","DataFieldSummaryItem","DataInterpretationSummaryItem","FormSessionProvider","InterpretationSummaryItem","MOIS_WRITE_ID_FALLBACK_PATHS","MOIS_WRITE_MUTATIONS","MOIS_WRITE_MUTATION_KEYS","ProgressSummaryItem","ScoreSummaryItem","SubformScoring","SubformScoringInner","_LOCAL_INPUT_STYLE","_LOCAL_RADIO_GROUP_STYLE","_LOCAL_TEXTAREA_STYLE","__SubformScoringSessionContext","__cloneSubformScoringSessionValue","_buildDataEntryRenderGroups","_buildMappedPayload","_buildScaleLegendSignature","_buildScaleOptions","_buildScoreMap","_collectScoreCandidates","_computeMorphineEquivalent","_evaluateDataEntryVisibility","_evaluateExpression","_formatBounds","_formatCalculatorDisplayValue","_formatNumericValue","_getInterpretation","_getScoreFromValue","_getSelectableOptionNumericValue","_getValueAtPath","_isHeadingField","_isInRange","_isMeaningfulValue","_isScaleChoiceSelected","_isSelectableOptionSelected","_normalizeChartPreferenceValue","_normalizeScoreToken","_normalizeSelectableOptions","_optionMatchesValue","_recordSubformActionPayload","_resolveChecklistOptions","_resolveFieldDefaultValue","_resolveFieldEmptyNumericValue","_resolveFieldWidthBasis","_resolvePathValue","_resolveQuestionOptions","_resolveSelectableBinaryOptions","_resolveWriteActionId","_serializeSelectableValue","_toDisplayValue","_toNumericValue","_toPathSegments","_usesStructuredSelectableOptions","action","actionPayload","answer","answerScore","answerableFields","answered","answers","barBg","barFill","baseDose","baseEquivalentDoseMg","baseEquivalentDoseRaw","basis","boundedPrecision","buttonRowStyle","cadFieldId","calc","calculatedExpressions","calculatedTotals","calculation","calculatorFields","candidate","candidateKeys","candidatePaths","candidates","checked","checkedFromConfig","checkedOption","checklist","cloneFormSessionState","columnTemplate","commentsField","commonProps","computedFallback","configuredField","container","containerStyle","controlLabel","controllerId","conversions","current","currentSignature","cursor","dataEntryAction","dataEntryCalculations","dataEntryCalculatorConfig","dataEntryFieldById","dataEntryFields","dataEntryRenderGroups","dataEntryValues","dateField","day","defaultValue","defaults","description","dialogContentProps","dialogMinWidth","dialogTitle","direct","displayText","displayValue","dose","doseColumnLabel","effectiveInitialData","entry","equivalentColumnLabel","equivalentDose","equivalentDoseMg","explicitDefault","extracted","fallbackOptions","field","fieldExists","fields","fieldsForProgress","flushMatrixBuffer","formatted","fromCalculation","getCalculationConfig","getDataEntryFieldConfig","getQuestionConfig","getTotalConfig","groups","handleCommitToParent","handleOpenChange","hasAnyAnswers","hasAnyRowValue","hasExternalDataEntryStore","hasRequiredId","history","inputFieldId","inputType","inputValue","interpretation","isComplete","isDarkMode","isDataEntryMode","isDialogOpen","isHeading","isMatrixCandidate","isMorphineCalculatorMode","key","label","labelStyle","left","map","matchedOption","matrixBuffer","matrixGroupId","max","meetsMax","meetsMin","meqCalculationId","meqDisplay","meqValue","mergeFormSessionState","min","minSymbol","modalProps","month","next","nextGroup","nextKey","nextOption","nextRaw","nextState","normalize","normalized","normalizedButtonIconName","normalizedOptionMap","normalizedOptions","normalizedSessionData","normalizedType","numeric","numericValue","option","optionList","optionMap","optionScoreMap","optionTokens","optionValue","options","parsed","payload","payloadMap","pendingDefaults","precision","precisionRaw","prepared","prevIndex","previousEntry","previousField","previousScaleSignature","progress","providedOptions","question","questionOptions","questionsById","rawConfig","rawOptions","rawRows","rawType","rawValue","renderBloodGlucoseReadingEditor","renderDataEntryField","renderDataEntryScaleMatrix","renderMorphineCalculator","renderNumberInput","renderStyle","renderSummaryItem","replacement","required","requiredFields","resolved","resolvedId","response","result","resultColumnLabel","results","right","root","rowId","rowLabels","rowValues","rows","rule","runMutation","runtime","scaleOptions","scopedSetter","score","scoreMap","sd","segments","selected","selectedOption","selectedWithSetter","sessionContext","sessionSetFormData","sessionState","setDataEntryValue","setDialogOpen","setFormData","shouldClose","shouldHideButtonIcon","shouldUseDefaultButtonIcon","showCalculationsInModal","showItems","showLegend","showLegendForScale","signature","step","style","summaryContainerStyle","summaryItemsStyle","summaryLayout","target","termQuestionId","text","theme","today","token","tokenMatches","total","totalCalculationId","totalFallback","totalFromCalculation","totalLabel","totalValue","totals","triggerButtonIconProps","trimmed","uncheckedFromConfig","uncheckedOption","uniqueTokens","usFieldId","useBloodGlucoseReadingLayout","useFormSessionData","useRadio","useToggleSwitch","value","variableFieldIds","variables","vars","writeDefinition","writeKey","writeMutationRunners","year"],
+  './SubformScoring/index.jsx': ["AnswerSummaryItem","CalculationSummaryItem","DataFieldSummaryItem","DataInterpretationSummaryItem","FormSessionProvider","InterpretationSummaryItem","MOIS_WRITE_ID_FALLBACK_PATHS","MOIS_WRITE_MUTATIONS","MOIS_WRITE_MUTATION_KEYS","ProgressSummaryItem","ScoreSummaryItem","SubformScoring","SubformScoringInner","_LOCAL_INPUT_STYLE","_LOCAL_RADIO_GROUP_STYLE","_LOCAL_TEXTAREA_STYLE","__SubformScoringSessionContext","__cloneSubformScoringSessionValue","_buildDataEntryRenderGroups","_buildMappedPayload","_buildScaleLegendSignature","_buildScaleOptions","_buildScoreMap","_buildSubformObservationUpdates","_collectScoreCandidates","_computeMorphineEquivalent","_evaluateDataEntryVisibility","_evaluateExpression","_formatBounds","_formatCalculatorDisplayValue","_formatNumericValue","_getInterpretation","_getScoreFromValue","_getSelectableOptionNumericValue","_getValueAtPath","_isHeadingField","_isInRange","_isMeaningfulValue","_isScaleChoiceSelected","_isSelectableOptionSelected","_latestObservationDefault","_normalizeChartPreferenceValue","_normalizeScoreToken","_normalizeSelectableOptions","_optionMatchesValue","_recordSubformActionPayload","_resolveChecklistOptions","_resolveFieldDefaultValue","_resolveFieldEmptyNumericValue","_resolveFieldWidthBasis","_resolveObservationTemplate","_resolvePathValue","_resolveQuestionOptions","_resolveSelectableBinaryOptions","_resolveWriteActionId","_serializeSelectableValue","_setSubformObservationPayloads","_stringifyObservationValue","_toDisplayValue","_toNumericValue","_toPathSegments","_usesStructuredSelectableOptions","action","actionPayload","allValues","answer","answerScore","answerableFields","answered","answers","aspect","barBg","barFill","baseDose","baseEquivalentDoseMg","baseEquivalentDoseRaw","basis","binding","boundedPrecision","buttonRowStyle","cadFieldId","calc","calculatedExpressions","calculatedTotals","calculation","calculatorFields","candidate","candidateKeys","candidatePaths","candidates","checked","checkedFromConfig","checkedOption","checklist","cloneFormSessionState","code","columnTemplate","commentsField","commitObservationOutputs","commonProps","computedFallback","configuredField","container","containerStyle","controlLabel","controllerId","conversions","createdBy","current","currentSignature","cursor","dataEntryAction","dataEntryCalculations","dataEntryCalculatorConfig","dataEntryFieldById","dataEntryFields","dataEntryRenderGroups","dataEntryValues","dateField","day","defaultValue","defaults","description","dialogContentProps","dialogMinWidth","dialogTitle","direct","displayText","displayValue","dose","doseColumnLabel","effectiveInitialData","entry","equivalentColumnLabel","equivalentDose","equivalentDoseMg","explicitDefault","extracted","fallbackOptions","field","fieldExists","fields","fieldsForProgress","flushMatrixBuffer","formatted","fromCalculation","getCalculationConfig","getDataEntryFieldConfig","getQuestionConfig","getTotalConfig","groups","handleCommitToParent","handleOpenChange","hasAnyAnswers","hasAnyRowValue","hasExternalDataEntryStore","hasRequiredId","history","inputFieldId","inputType","inputValue","interpretation","isComplete","isDarkMode","isDataEntryMode","isDialogOpen","isHeading","isMatrixCandidate","isMorphineCalculatorMode","key","label","labelStyle","latest","left","leftDate","map","matchedOption","matrixBuffer","matrixGroupId","max","meetsMax","meetsMin","meqCalculationId","meqDisplay","meqValue","mergeFormSessionState","min","minSymbol","modalProps","month","next","nextGroup","nextKey","nextOption","nextRaw","nextState","normalize","normalized","normalizedButtonIconName","normalizedOptionMap","normalizedOptions","normalizedSessionData","normalizedType","numeric","numericValue","numericValues","observationRows","observations","oldId","oldObservation","option","optionList","optionMap","optionScoreMap","optionTokens","optionValue","options","parsed","payload","payloadMap","pendingDefaults","precision","precisionRaw","prepared","prevIndex","previousEntry","previousField","previousScaleSignature","progress","providedOptions","question","questionOptions","questionsById","rawConfig","rawOptions","rawRows","rawType","rawValue","renderBloodGlucoseReadingEditor","renderDataEntryField","renderDataEntryScaleMatrix","renderMorphineCalculator","renderNumberInput","renderStyle","renderSummaryItem","replacement","report","required","requiredFields","resolved","resolvedId","response","result","resultColumnLabel","results","right","rightDate","root","rowId","rowLabels","rowValues","rows","rule","runMutation","runtime","scaleOptions","scopedSetter","score","scoreMap","sd","segments","selected","selectedOption","selectedWithSetter","sessionContext","sessionSetFormData","sessionState","setDataEntryValue","setDialogOpen","setFormData","shouldClose","shouldHideButtonIcon","shouldUseDefaultButtonIcon","showCalculationsInModal","showItems","showLegend","showLegendForScale","signature","source","step","style","summaryContainerStyle","summaryItemsStyle","summaryLayout","target","termQuestionId","text","theme","today","token","tokenMatches","total","totalCalculationId","totalFallback","totalFromCalculation","totalLabel","totalValue","totals","triggerButtonIconProps","trimmed","uncheckedFromConfig","uncheckedOption","uniqueTokens","usFieldId","useBloodGlucoseReadingLayout","useFormSessionData","useRadio","useToggleSwitch","value","variableFieldIds","variables","vars","writeDefinition","writeKey","writeMutationRunners","year"],
   './UnsavedChangesGuard/index.jsx': ["ButtonComponent","DCOUpdates","DEFAULT_WINDOW_HOURS","UnsavedChangesGuard","actionItems","actor","actorFrom","addHoursIso","baselineRef","buildDefaultSavePayload","buildDefaultSubmitPayload","buildKey","c","changed","ck","claim","claims","closeWindow","collectComponentPayloads","collectDomFieldValues","commitSave","componentPayload","confirmUnloadActive","current","d","data","dcoGroups","disabled","domFieldValues","editableUntil","euDate","existing","expired","field","fieldData","fieldId","footerActionItems","footerActions","formData","formatTimestamp","guardSkipsWhenSigned","handleAction","handler","hasLifecycleSignals","host","inputType","isNonEmpty","isOwner","isSettling","isSigned","isSubmitAction","keepStatus","key","label","lifecycle","linkedPanels","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","markSaved","mergeFieldValuesIntoState","narratives","nextStatus","nextValue","nhAuthCommitSave","nhAuthPrepareSave","normalizeFooterActions","normalizeGuardActions","normalizeGuardValue","normalizeStore","now","nowIso","ownerId","ownerName","ownerRefresh","pad2","panelUpdates","panels","payload","payloads","pending","persistAction","persistFd","policyAppliesToAction","prepareSave","prepared","primaryAction","promptText","raw","readStore","release","renderFooterAction","resolveNow","sameActor","saveSettleRef","sd","secondaryActions","serializeGuardValue","store","stripComponentPayloads","success","tagName","trackedSnapshot","trackedValue","ts","untilSelf","useHostConfirmUnload","values","warmupRef","webformGroups","webformUpdate","windowHours"],
   './UseChangeWatch/index.jsx': ["_defaultCompare","_normalizeWatchOptions","baselineRef","compare","delayCount","dirtyRef","disabled","forcedDirtyRef","isDirty","normalizedOptions","onDirtyChange","renderCountRef","setChanged","useChangeWatch"],
   './ValueSetObservationField/index.jsx': ["ValueSetObservationField","checklistOptions","commentValue","componentId","container","createdBy","currentPayload","effectiveFieldId","fromContext","handleChange","key","nextGroup","normalizeObservationOptions","oldId","oldObs","options","payloadsEqual","report","sd","selectedCode","selectedDisplay","selectedValue","setNestedPayload","stripVolatilePayloadFields"],

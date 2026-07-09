@@ -5254,6 +5254,29 @@ const _stringifyValue = (value) => {
   return String(value)
 }
 
+const _stampColumnLocksRow = (column = {}) => (
+  column?.type === "stampButton" && column?.stampConfig?.lockRowUntilPersisted === true
+)
+
+const _hasStampedLockValue = (row = {}, column = {}) => {
+  if (!_stampColumnLocksRow(column)) return false
+  return _stringifyValue(_getValueAtPath(row, column.dataPath || column.id)).length > 0
+}
+
+const _getLocalStampLock = (row = {}, columns = []) => {
+  const lockColumns = columns.filter((column) => _hasStampedLockValue(row, column))
+  if (lockColumns.length === 0) return { locked: false, columns: [] }
+  return {
+    locked: true,
+    columns: lockColumns,
+    note: "Initialed row is locked until the stamp is cleared or the form is submitted.",
+  }
+}
+
+const _hasPersistedAuthorshipClaim = (rowLock = {}) => (
+  !!rowLock?.claim && rowLock.claim.status !== "pending" && rowLock.claim.status !== "unlocked"
+)
+
 const _formatCellValue = (row, column) => {
   if (column?.computedValue?.mode === "template") {
     const computed = _computeTemplateColumnValue(row, column)
@@ -6010,7 +6033,12 @@ EditableTable = ({
   const updateCell = (rowIndex, columnId, value) => {
     // Defense in depth: a locked row cannot be edited even if an input slips
     // through (read-only enforcement also gates onChange at the input level).
-    if (isLocked || (authorshipEnabled && getRowLock(currentRows[rowIndex]).locked)) return
+    const rowLock = getRowLock(currentRows[rowIndex])
+    if (
+      isLocked ||
+      (authorshipEnabled && rowLock.locked) ||
+      (!_hasPersistedAuthorshipClaim(rowLock) && _getLocalStampLock(currentRows[rowIndex], columns).locked)
+    ) return
     const nextRows = [...currentRows]
     if (!nextRows[rowIndex]) {
       nextRows[rowIndex] = _makeEmptyRow(columns, rowIndex)
@@ -6036,6 +6064,28 @@ EditableTable = ({
     }
     const nextRow = _cloneRow(nextRows[rowIndex], columns)
     const signedAt = new Date().toISOString()
+    const stampPath = column.dataPath || column.id
+    const hasStampedValue = _stringifyValue(_getValueAtPath(nextRow, stampPath)).length > 0
+    const shouldToggleLocalLock =
+      _stampColumnLocksRow(column) &&
+      hasStampedValue &&
+      column.stampConfig?.allowResign !== false
+
+    if (shouldToggleLocalLock) {
+      _setValueAtPath(nextRow, stampPath, "")
+      if (column.stampConfig?.signedAtPath) {
+        _setValueAtPath(nextRow, column.stampConfig.signedAtPath, "")
+      }
+      nextRows[rowIndex] = nextRow
+      commitRows(nextRows, {
+        reason: "unstamp",
+        rowIndex,
+        row: nextRow,
+        previousRows: currentRows,
+      }, { rowId: nextRow._rowId, value: nextRow })
+      return
+    }
+
     const value = _resolveStampCellValue(column, {
       sd,
       sourceData: sd,
@@ -6049,7 +6099,7 @@ EditableTable = ({
       tableId: id,
       row: nextRow,
     })
-    _setValueAtPath(nextRow, column.dataPath || column.id, value)
+    _setValueAtPath(nextRow, stampPath, value)
     if (column.stampConfig?.signedAtPath) {
       _setValueAtPath(nextRow, column.stampConfig.signedAtPath, signedAt)
     }
@@ -6063,6 +6113,7 @@ EditableTable = ({
   }
 
   const updateDraftCell = (columnId, value) => {
+    if (_getLocalStampLock(draftRow || {}, columns).locked) return
     const nextDraft = _cloneRow(draftRow || _makeEmptyRow(columns, currentRows.length), columns)
     const column = columns.find((item) => item.id === columnId) || { id: columnId, dataPath: columnId }
     _setValueAtPath(nextDraft, column.dataPath || column.id, value)
@@ -6073,6 +6124,22 @@ EditableTable = ({
     if (isLocked) return
     const nextDraft = _cloneRow(draftRow || _makeEmptyRow(columns, currentRows.length), columns)
     const signedAt = new Date().toISOString()
+    const stampPath = column.dataPath || column.id
+    const hasStampedValue = _stringifyValue(_getValueAtPath(nextDraft, stampPath)).length > 0
+    const shouldToggleLocalLock =
+      _stampColumnLocksRow(column) &&
+      hasStampedValue &&
+      column.stampConfig?.allowResign !== false
+
+    if (shouldToggleLocalLock) {
+      _setValueAtPath(nextDraft, stampPath, "")
+      if (column.stampConfig?.signedAtPath) {
+        _setValueAtPath(nextDraft, column.stampConfig.signedAtPath, "")
+      }
+      setDraftRow(nextDraft)
+      return
+    }
+
     const value = _resolveStampCellValue(column, {
       sd,
       sourceData: sd,
@@ -6086,7 +6153,7 @@ EditableTable = ({
       tableId: id,
       row: nextDraft,
     })
-    _setValueAtPath(nextDraft, column.dataPath || column.id, value)
+    _setValueAtPath(nextDraft, stampPath, value)
     if (column.stampConfig?.signedAtPath) {
       _setValueAtPath(nextDraft, column.stampConfig.signedAtPath, signedAt)
     }
@@ -6293,9 +6360,17 @@ EditableTable = ({
     : Number.POSITIVE_INFINITY
   const shouldShowActions = !isLocked && (allowEditRows || allowDeleteRows)
 
-  const renderEditorInput = (row, rowIndex, column, onValueChange, inline, rowReadOnly = false, onStampColumn = null) => {
+  const renderEditorInput = (row, rowIndex, column, onValueChange, inline, rowReadOnly = false, onStampColumn = null, rowLockState = null) => {
     const value = _getValueAtPath(row, column.dataPath || column.id)
-    const effectiveReadOnly = isLocked || rowReadOnly
+    const realRowReadOnly = !!rowLockState?.authorship?.locked
+    const localStampLocked = !!rowLockState?.localStamp?.locked
+    const thisStampLocksRow = _hasStampedLockValue(row, column)
+    const stampCanUnlockLocalRow =
+      column.type === "stampButton" &&
+      localStampLocked &&
+      thisStampLocksRow &&
+      column.stampConfig?.allowResign !== false
+    const effectiveReadOnly = isLocked || (rowReadOnly && !stampCanUnlockLocalRow)
     // When the table/row is locked, neutralize edits at the input level so even
     // controls that ignore a readOnly prop cannot write.
     if (effectiveReadOnly) onValueChange = () => {}
@@ -6399,7 +6474,11 @@ EditableTable = ({
         const stampedValue = _stringifyValue(value)
         const hasStampedValue = stampedValue.length > 0
         const canResign = stampConfig.allowResign !== false
-        const disabledStamp = isLocked || rowReadOnly || (hasStampedValue && !canResign)
+        const disabledStamp =
+          isLocked ||
+          realRowReadOnly ||
+          (localStampLocked && !thisStampLocksRow) ||
+          (hasStampedValue && !canResign)
         const ButtonComponent = column.buttonType === "default" ? DefaultButton : PrimaryButton
         return (
           <Stack horizontal verticalAlign="center" tokens={{ childrenGap: 8 }} wrap>
@@ -6554,27 +6633,41 @@ EditableTable = ({
               >
                 {col.title || col.id}
               </th>
-              {rowsForVerticalLayout.map(({ row, rowIndex, isEmptyPlaceholder }, displayIndex) => (
-                <td
-                  key={\`\${col.id}-\${rowIndex}-\${displayIndex}\`}
-                  style={verticalBodyCellStyle}
-                  data-source-field-id={isEmptyPlaceholder ? undefined : getSourceFieldId(rowIndex, col.id)}
-                >
-                  {isEmptyPlaceholder
-                    ? emptyStateText
-                    : isModalMode
-                      ? col.type === "stampButton"
-                        ? renderEditorInput(row, rowIndex, col, updateCell, true, getRowLock(row).locked, stampCell)
-                        : <div>{_formatCellValue(row, col)}</div>
-                      : renderEditorInput(row, rowIndex, col, updateCell, true, getRowLock(row).locked, stampCell)}
-                </td>
-              ))}
+              {rowsForVerticalLayout.map(({ row, rowIndex, isEmptyPlaceholder }, displayIndex) => {
+                const rowLock = isEmptyPlaceholder ? { locked: false } : getRowLock(row)
+                const localStampLock =
+                  isEmptyPlaceholder || _hasPersistedAuthorshipClaim(rowLock)
+                    ? { locked: false, columns: [] }
+                    : _getLocalStampLock(row, columns)
+                const rowReadOnly = !!(rowLock.locked || localStampLock.locked)
+                const rowLockState = { authorship: rowLock, localStamp: localStampLock }
+
+                return (
+                  <td
+                    key={\`\${col.id}-\${rowIndex}-\${displayIndex}\`}
+                    style={verticalBodyCellStyle}
+                    data-source-field-id={isEmptyPlaceholder ? undefined : getSourceFieldId(rowIndex, col.id)}
+                    title={rowReadOnly ? rowLock.note || localStampLock.note : undefined}
+                  >
+                    {isEmptyPlaceholder
+                      ? emptyStateText
+                      : isModalMode
+                        ? col.type === "stampButton"
+                          ? renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell, rowLockState)
+                          : <div>{_formatCellValue(row, col)}</div>
+                        : renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell, rowLockState)}
+                  </td>
+                )
+              })}
             </tr>
           ))}
         </tbody>
       </table>
     )
   }
+
+  const draftLocalStampLock = draftRow ? _getLocalStampLock(draftRow, columns) : { locked: false, columns: [] }
+  const draftLockState = { authorship: { locked: false }, localStamp: draftLocalStampLock }
 
   return (
     <div style={containerStyle}>
@@ -6630,7 +6723,11 @@ EditableTable = ({
               displayRows.map(({ row, rowIndex }, displayIndex) => {
                 const isEmpty = _isRowEmpty(row, columns)
                 const rowLock = getRowLock(row)
-                const rowReadOnly = !!rowLock.locked
+                const localStampLock = _hasPersistedAuthorshipClaim(rowLock)
+                  ? { locked: false, columns: [] }
+                  : _getLocalStampLock(row, columns)
+                const rowReadOnly = !!(rowLock.locked || localStampLock.locked)
+                const rowLockState = { authorship: rowLock, localStamp: localStampLock }
                 // Any row can be removed (not just the last): removal shifts
                 // later rows up a slot, which the per-row source mapping
                 // handles. Rows with values still need allowDeleteNonEmpty.
@@ -6643,7 +6740,7 @@ EditableTable = ({
                   (allowDeleteNonEmpty || isEmpty)
 
                 return (
-                  <tr key={row?._rowId || \`row_\${rowIndex}\`} title={rowReadOnly ? rowLock.note : undefined}>
+                  <tr key={row?._rowId || \`row_\${rowIndex}\`} title={rowReadOnly ? rowLock.note || localStampLock.note : undefined}>
                     {showRowNumbers && (
                       <td key="row-number" style={rowNumberCellStyle}>
                         {isModalMode ? (
@@ -6677,9 +6774,9 @@ EditableTable = ({
                       <td key={col.id} style={bodyCellStyle} data-source-field-id={getSourceFieldId(rowIndex, col.id)}>
                         {isModalMode
                           ? col.type === "stampButton"
-                            ? renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell)
+                            ? renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell, rowLockState)
                             : <div>{_formatCellValue(row, col)}</div>
-                          : renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell)}
+                          : renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell, rowLockState)}
                       </td>
                     ))}
                     {showRowAuthorshipColumn && (
@@ -6801,8 +6898,9 @@ EditableTable = ({
                   column,
                   (rowIndex, columnId, value) => updateDraftCell(columnId, value),
                   false,
-                  false,
-                  (_rowIndex, stampColumn) => stampDraftCell(stampColumn)
+                  draftLocalStampLock.locked,
+                  (_rowIndex, stampColumn) => stampDraftCell(stampColumn),
+                  draftLockState
                 )}
               </div>
             ))}
@@ -13153,6 +13251,98 @@ const HealthMaintenanceReview = ({
   )
 }
 `,
+  './HistoricalFormValueField/index.jsx': `const { useEffect, useMemo } = React
+const { TextField } = Fluent
+
+const asText = (value) => {
+  if (value === undefined || value === null) return ""
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value)
+  if (typeof value === "object") return String(value.display ?? value.text ?? value.value ?? value.code ?? "")
+  return ""
+}
+
+const resolveHistoryRows = (sd) => {
+  const roots = [
+    sd?.webformHistory,
+    sd?.historicalForms,
+    sd?.patient?.webforms,
+    sd?.patient?.forms,
+    sd?.patient?.dformHistory,
+    sd?.queryResult?.patient?.[0]?.webforms,
+    sd?.queryResult?.patient?.[0]?.forms,
+  ]
+  return roots.flatMap((value) => Array.isArray(value) ? value : [])
+}
+
+const fieldValueFromRow = (row, legacyFieldId) => {
+  if (!row || typeof row !== "object" || !legacyFieldId) return ""
+  const candidates = [row, row.formData, row.data, row.field?.data, row.values]
+  for (const candidate of candidates) {
+    if (!candidate || typeof candidate !== "object") continue
+    if (Object.prototype.hasOwnProperty.call(candidate, legacyFieldId)) {
+      return asText(candidate[legacyFieldId])
+    }
+    const matchingKey = Object.keys(candidate).find((key) =>
+      key.endsWith(\`_\${legacyFieldId}\`) || key.endsWith(\`_field_\${legacyFieldId}\`)
+    )
+    if (matchingKey) return asText(candidate[matchingKey])
+  }
+  return ""
+}
+
+const rowDate = (row) => {
+  const raw = row?.docDate ?? row?.documentDate ?? row?.createdDate ?? row?.createdAt ?? row?.updatedAt
+  const parsed = new Date(raw)
+  return Number.isNaN(parsed.getTime()) ? 0 : parsed.getTime()
+}
+
+/**
+ * Mirrors the latest value of a legacy Dynamic Form field when MOIS exposes
+ * prior webform/DForm rows in the source query. It is intentionally read-only:
+ * legacy \`viewonly=dform\` tags never created a new chart write.
+ */
+const HistoricalFormValueField = ({
+  id,
+  fieldId,
+  label = "Prior form value",
+  legacyFieldId = "",
+  placeholder = "No prior value",
+  readOnly = true,
+  disabled = false,
+}) => {
+  const [fd, setFormData] = useActiveData()
+  const sd = useSourceData()
+  const effectiveFieldId = fieldId || id || "historicalFormValue"
+  const value = useMemo(() => {
+    const rows = resolveHistoryRows(sd)
+      .map((row) => ({ row, value: fieldValueFromRow(row, legacyFieldId) }))
+      .filter((entry) => entry.value)
+      .sort((left, right) => rowDate(right.row) - rowDate(left.row))
+    return rows[0]?.value ?? ""
+  }, [legacyFieldId, sd])
+  const stored = fd?.field?.data?.[effectiveFieldId]
+
+  useEffect(() => {
+    if (!value || stored === value || typeof setFormData !== "function") return
+    setFormData(produce((draft) => {
+      if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
+      if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
+      draft.field.data[effectiveFieldId] = value
+    }))
+  }, [effectiveFieldId, setFormData, stored, value])
+
+  return (
+    <LayoutItem fieldId={effectiveFieldId} label={label} disabled={disabled}>
+      <TextField
+        value={value}
+        placeholder={placeholder}
+        readOnly={readOnly}
+        disabled={disabled}
+      />
+    </LayoutItem>
+  )
+}
+`,
   './HistoricalObservationTable/index.jsx': `const { useMemo } = React
 const { Stack, Label, Text } = Fluent
 
@@ -16413,6 +16603,120 @@ function LayoutTable({
         </tbody>
       </table>
     </div>
+  )
+}
+`,
+  './LegacyLookupField/index.jsx': `const { useMemo } = React
+const { ComboBox } = Fluent
+
+const normalizeLookupName = (value) => String(value || "").replace(/[^a-z0-9]/gi, "").toLowerCase()
+
+const normalizeOption = (value, index) => {
+  if (value === undefined || value === null) return null
+  if (typeof value === "string" || typeof value === "number") {
+    const text = String(value)
+    return { key: text, text, raw: value }
+  }
+  if (typeof value !== "object") return null
+  const key = String(value.code ?? value.id ?? value.key ?? value.value ?? value.display ?? value.label ?? index)
+  const text = String(value.display ?? value.label ?? value.text ?? value.name ?? value.code ?? key)
+  return { key, text, raw: value }
+}
+
+const optionSources = (sd, lookupType) => {
+  const normalized = normalizeLookupName(lookupType)
+  const optionLists = sd?.optionLists || {}
+  const candidates = [
+    sd?.lookups?.[lookupType],
+    sd?.lookupValues?.[lookupType],
+    sd?.[\`\${lookupType}Options\`],
+    sd?.[\`\${lookupType}s\`],
+    optionLists[lookupType],
+    optionLists[lookupType?.toUpperCase?.()],
+    optionLists[\`MOIS-\${lookupType?.toUpperCase?.()}\`],
+  ]
+  if (normalized === "servicelocation") {
+    candidates.push(sd?.serviceLocations, optionLists.SERVICELOCATION, optionLists.SERVICE_LOCATION, optionLists["MOIS-SERVICELOCATION"])
+  }
+  if (normalized === "jorg") {
+    candidates.push(sd?.jorg, sd?.organizations, optionLists.JORG, optionLists["MOIS-JORG"])
+  }
+  return candidates.flatMap((candidate) => Array.isArray(candidate) ? candidate : [])
+}
+
+const valueForTarget = (raw, targetId, targetLabel, fallback) => {
+  if (!raw || typeof raw !== "object") return fallback
+  const normalizedLabel = normalizeLookupName(targetLabel)
+  const directKeys = [targetId, targetId?.split("_").pop(), normalizedLabel]
+  for (const key of directKeys) {
+    if (key && raw[key] !== undefined && raw[key] !== null) return String(raw[key])
+  }
+  const aliasSets = [
+    ["healthauthority", "authority"],
+    ["healthservicedeliveryarea", "hsda"],
+    ["branch"],
+    ["responsibleservicedeliverylocation", "servicedeliverylocation", "sdl", "location"],
+  ]
+  const aliases = aliasSets.find((items) => items.some((item) => normalizedLabel.includes(item))) ?? []
+  for (const alias of aliases) {
+    const matchingKey = Object.keys(raw).find((key) => normalizeLookupName(key) === alias)
+    if (matchingKey && raw[matchingKey] != null) return String(raw[matchingKey])
+  }
+  return fallback
+}
+
+/**
+ * Dynamic Form lookups used source-specific service-location and organization
+ * lists. This adapter accepts those lists from common MOIS source locations and
+ * writes the selected record into the primary field plus any mapped targets.
+ */
+const LegacyLookupField = ({
+  id,
+  fieldId,
+  label = "Lookup",
+  lookupType = "",
+  targetFieldIds = [],
+  targetLabels = {},
+  placeholder = "Select or enter a value",
+  disabled = false,
+}) => {
+  const [fd, setFormData] = useActiveData()
+  const sd = useSourceData()
+  const effectiveFieldId = fieldId || id || "legacyLookup"
+  const value = fd?.field?.data?.[effectiveFieldId] ?? ""
+  const options = useMemo(() => {
+    const seen = new Set()
+    return optionSources(sd, lookupType)
+      .map(normalizeOption)
+      .filter((option) => option && !seen.has(option.key) && seen.add(option.key))
+  }, [lookupType, sd])
+
+  const commit = (option, freeformValue) => {
+    const fallback = String(option?.text ?? freeformValue ?? "")
+    const raw = option?.raw
+    setFormData(produce((draft) => {
+      if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
+      if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
+      const targets = Array.isArray(targetFieldIds) && targetFieldIds.length > 0 ? targetFieldIds : [effectiveFieldId]
+      targets.forEach((targetId) => {
+        if (!targetId) return
+        draft.field.data[targetId] = valueForTarget(raw, targetId, targetLabels?.[targetId], fallback)
+      })
+    }))
+  }
+
+  return (
+    <LayoutItem fieldId={effectiveFieldId} label={label} disabled={disabled}>
+      <ComboBox
+        text={String(value)}
+        placeholder={placeholder}
+        options={options}
+        allowFreeform
+        autoComplete="on"
+        disabled={disabled}
+        onChange={(_, option, __, freeformValue) => commit(option, freeformValue)}
+      />
+    </LayoutItem>
   )
 }
 `,
@@ -24118,6 +24422,90 @@ const _recordSubformActionPayload = (setFormData, componentId, payload) => {
   }))
 }
 
+const _stringifyObservationValue = (value) => {
+  if (value === undefined || value === null) return ""
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value)
+  if (Array.isArray(value)) return value.map(_stringifyObservationValue).filter(Boolean).join(", ")
+  if (typeof value !== "object") return ""
+  if (Number.isFinite(value.count)) return String(value.count)
+  if (Number.isFinite(value.selectedCount)) return String(value.selectedCount)
+  if (Array.isArray(value.selectedIds)) return String(value.selectedIds.length)
+  if (Array.isArray(value.selectedItems)) return String(value.selectedItems.length)
+  return _stringifyObservationValue(
+    value.value ?? value.code ?? value.text ?? value.display ?? value.label ?? value.total
+  )
+}
+
+const _resolveObservationTemplate = (template, values) => String(template || "").replace(
+  /\\{\\{\\s*([^}\\s]+)\\s*\\}\\}/g,
+  (_, fieldId) => _stringifyObservationValue(values?.[fieldId])
+)
+
+const _buildSubformObservationUpdates = (outputs, context) => {
+  if (!Array.isArray(outputs) || outputs.length === 0) return []
+  const allValues = {
+    ...(context?.answers || {}),
+    ...(context?.dataEntryValues || {}),
+    ...(context?.calculatedExpressions || {}),
+  }
+  Object.entries(context?.calculatedTotals || {}).forEach(([totalId, result]) => {
+    allValues[totalId] = result?.score
+  })
+  const observationRows = [
+    ...(Array.isArray(context?.sd?.webform?.observations) ? context.sd.webform.observations : []),
+    ...(Array.isArray(context?.sd?.patient?.observations) ? context.sd.patient.observations : []),
+  ]
+  const createdBy = context?.formData?.createdBy ?? context?.sd?.userProfile?.identity?.fullName
+
+  return outputs.flatMap((output) => {
+    if (!output || typeof output !== "object" || !output.observationCode) return []
+    const source = String(output.source || "").toLowerCase()
+    let rawValue
+    if (source === "calculation") rawValue = context?.calculatedExpressions?.[output.calculationId]
+    else if (source === "total") rawValue = context?.calculatedTotals?.[output.totalId]?.score
+    else if (source === "template") rawValue = _resolveObservationTemplate(output.valueTemplate, allValues)
+    else rawValue = allValues[output.fieldId] ?? _resolveObservationTemplate(output.valueTemplate, allValues)
+
+    const value = _stringifyObservationValue(rawValue)
+    const oldObservation = observationRows.find((entry) => entry?.observationCode === output.observationCode)
+    const oldId = oldObservation?.observationId ?? 0
+    if (!value) {
+      return output.deleteWhenEmpty && oldId ? [{ observationId: -oldId }] : []
+    }
+
+    const report = output.reportTemplate
+      ? _resolveObservationTemplate(output.reportTemplate, allValues)
+      : ""
+    return [{
+      observationId: oldId,
+      observationCode: String(output.observationCode),
+      observationClass: "DCOBS",
+      value,
+      valueType: String(output.valueType || "NUMERIC"),
+      status: oldId ? "C" : "F",
+      description: String(output.description || output.observationCode),
+      ...(output.units ? { units: String(output.units) } : {}),
+      ...(report ? { report } : {}),
+      ...(createdBy ? { orderedBy: createdBy, collectedBy: createdBy } : {}),
+      collectedDateTime: getDateTimeString(new Date()),
+    }]
+  })
+}
+
+const _setSubformObservationPayloads = (setFormData, componentId, payload) => {
+  if (typeof setFormData !== "function") return
+  setFormData(produce((draft) => {
+    if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
+    if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
+    const container = draft.field.data.__componentPayloads ?? {}
+    const groups = container.dcoUpdatesByComponent ?? {}
+    if (!payload || payload.length === 0) delete groups[componentId]
+    else groups[componentId] = payload
+    container.dcoUpdatesByComponent = groups
+    draft.field.data.__componentPayloads = container
+  }))
+}
+
 const _isInRange = (score, range) => {
   if (score === null || score === undefined) return false
   const min = range.min
@@ -24501,10 +24889,31 @@ const _resolveSelectableBinaryOptions = (field, fallbackOptions = []) => {
   }
 }
 
-const _resolveFieldDefaultValue = (field) => {
+const _latestObservationDefault = (field, sd) => {
+  const binding = field?.defaultFromObservation ?? field?.default_from_observation
+  const code = String(binding?.observationCode ?? binding?.observation_code ?? "").trim()
+  if (!code) return undefined
+  const aspect = String(binding?.aspect ?? "value")
+  const observations = Array.isArray(sd?.patient?.observations)
+    ? sd.patient.observations
+    : Array.isArray(sd?.queryResult?.patient?.[0]?.observations)
+      ? sd.queryResult.patient[0].observations
+      : []
+  const latest = observations
+    .filter((entry) => entry?.observationCode === code)
+    .sort((left, right) => {
+      const leftDate = new Date(left?.collectedDateTime ?? 0).getTime() || 0
+      const rightDate = new Date(right?.collectedDateTime ?? 0).getTime() || 0
+      return rightDate - leftDate
+    })[0]
+  if (!latest) return undefined
+  return latest[aspect]
+}
+
+const _resolveFieldDefaultValue = (field, sd) => {
   if (!field || _isHeadingField(field)) return undefined
 
-  const explicitDefault = field.defaultValue ?? field.default_value
+  const explicitDefault = _latestObservationDefault(field, sd) ?? field.defaultValue ?? field.default_value
   if (explicitDefault === undefined) return undefined
 
   if (explicitDefault === "__today") {
@@ -24893,6 +25302,7 @@ const SubformScoringInner = ({
   onCommitToParent,
   dataEntryValueRoot,
   onDataEntryValueChange,
+  observationOutputs = [],
   ...props
 }) => {
   const [internalIsOpen, setInternalIsOpen] = useState(false)
@@ -25143,7 +25553,7 @@ const SubformScoringInner = ({
     const pendingDefaults = []
     for (const field of dataEntryFields) {
       if (!field?.id || _isMeaningfulValue(dataEntryValues[field.id])) continue
-      const defaultValue = _resolveFieldDefaultValue(field)
+      const defaultValue = _resolveFieldDefaultValue(field, sd)
       if (defaultValue === undefined) continue
       pendingDefaults.push([field.id, defaultValue])
     }
@@ -25170,7 +25580,7 @@ const SubformScoringInner = ({
         draft.field.data[fieldId] = defaultValue
       })
     }))
-  }, [isDataEntryMode, isDialogOpen, dataEntryFields, dataEntryValues, fd, onDataEntryValueChange])
+  }, [isDataEntryMode, isDialogOpen, dataEntryFields, dataEntryValues, fd, onDataEntryValueChange, sd])
 
   const dataEntryCalculations = useMemo(() => {
     if (Array.isArray(dataEntryConfig?.calculatedValues) && dataEntryConfig.calculatedValues.length > 0) {
@@ -25206,6 +25616,20 @@ const SubformScoringInner = ({
       }
       const precision = Number.isFinite(calculation.precision) ? Math.max(0, Math.min(6, calculation.precision)) : null
       result[calculation.id] = precision === null ? value : Number(value.toFixed(precision))
+    }
+    if (isMorphineCalculatorMode && dataEntryCalculatorConfig?.totalCalculationId) {
+      const rowValues = (dataEntryCalculatorConfig.rows || []).map((row) => {
+        const fromCalculation = row.meqCalculationId ? result[row.meqCalculationId] : null
+        return fromCalculation ?? _computeMorphineEquivalent(
+          dataEntryValues[row.inputFieldId],
+          row.equivalentDoseMg,
+          dataEntryCalculatorConfig.baseEquivalentDoseMg
+        )
+      })
+      const numericValues = rowValues.filter((value) => Number.isFinite(Number(value))).map(Number)
+      result[dataEntryCalculatorConfig.totalCalculationId] = numericValues.length > 0
+        ? Number(numericValues.reduce((sum, value) => sum + value, 0).toFixed(1))
+        : null
     }
     return result
   }, [isDataEntryMode, isMorphineCalculatorMode, dataEntryCalculatorConfig, dataEntryFieldById, dataEntryFields, dataEntryValues, dataEntryCalculations])
@@ -25260,6 +25684,18 @@ const SubformScoringInner = ({
     }
     return progress.answered > 0
   }, [isDataEntryMode, isMorphineCalculatorMode, dataEntryCalculatorConfig, dataEntryFields, dataEntryValues, progress])
+
+  const commitObservationOutputs = useCallback(() => {
+    const payload = _buildSubformObservationUpdates(observationOutputs, {
+      answers,
+      calculatedExpressions,
+      calculatedTotals,
+      dataEntryValues,
+      formData: fd?.field?.data,
+      sd,
+    })
+    _setSubformObservationPayloads(fd?.setFormData, id, payload)
+  }, [answers, calculatedExpressions, calculatedTotals, dataEntryValues, fd, id, observationOutputs, sd])
 
   const showItems = useMemo(() => {
     if (Array.isArray(summaryConfig.showItems) && summaryConfig.showItems.length > 0) {
@@ -25454,7 +25890,7 @@ const SubformScoringInner = ({
             label={field.label}
             codeSystem={field.codeSystem}
             value={dataEntryValues[field.id] ?? null}
-            defaultValue={_resolveFieldDefaultValue(field)}
+            defaultValue={_resolveFieldDefaultValue(field, sd)}
             placeholder={field.placeholder || "Please search"}
             required={required}
             openOnFocus
@@ -26343,6 +26779,7 @@ const SubformScoringInner = ({
                   calculatedTotals,
                 })
                 if (shouldClose !== false) {
+                  commitObservationOutputs()
                   onCommitToParent?.(fd)
                   setDialogOpen(false)
                 }
@@ -26393,6 +26830,7 @@ const SubformScoringInner = ({
                     }
                   }
                 }
+                commitObservationOutputs()
                 onCommitToParent?.(fd)
                 setDialogOpen(false)
               }
@@ -28358,6 +28796,19 @@ export const componentIdentities: Record<string, any> = {
     "owner": "MOIS Styleguide",
     "components": []
   },
+  'HistoricalFormValueField': {
+    "name": "HistoricalFormValueField",
+    "title": "Historical Form Value Field",
+    "description": "Read-only latest value from prior MOIS Dynamic Form data when supplied by the source query",
+    "version": {
+      "major": 1,
+      "minor": 0,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "Northern Health",
+    "components": []
+  },
   'HistoricalObservationTable': {
     "name": "HistoricalObservationTable",
     "title": "Historical Observation Table",
@@ -28468,6 +28919,19 @@ export const componentIdentities: Record<string, any> = {
     "components": [
       "FieldStampButton"
     ]
+  },
+  'LegacyLookupField': {
+    "name": "LegacyLookupField",
+    "title": "MOIS Lookup Field",
+    "description": "Service-location and organization lookup adapter for imported Dynamic Forms",
+    "version": {
+      "major": 1,
+      "minor": 0,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "Northern Health",
+    "components": []
   },
   'LongTermMedications': {
     "name": "LongTermMedications",

@@ -1,0 +1,9 @@
+{
+  "name": "HttpJsonTestPanel",
+  "title": "HTTP JSON Test Panel",
+  "description": "Tests an HTTP JSON listener and displays submit/sign response details or browser errors inside the exported MOIS form.",
+  "version": { "major": 1, "minor": 0, "patch": 0 },
+  "type": "component",
+  "owner": "NHForms",
+  "components": []
+}

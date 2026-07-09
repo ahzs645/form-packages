@@ -498,6 +498,90 @@ const _recordSubformActionPayload = (setFormData, componentId, payload) => {
   }))
 }
 
+const _stringifyObservationValue = (value) => {
+  if (value === undefined || value === null) return ""
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value)
+  if (Array.isArray(value)) return value.map(_stringifyObservationValue).filter(Boolean).join(", ")
+  if (typeof value !== "object") return ""
+  if (Number.isFinite(value.count)) return String(value.count)
+  if (Number.isFinite(value.selectedCount)) return String(value.selectedCount)
+  if (Array.isArray(value.selectedIds)) return String(value.selectedIds.length)
+  if (Array.isArray(value.selectedItems)) return String(value.selectedItems.length)
+  return _stringifyObservationValue(
+    value.value ?? value.code ?? value.text ?? value.display ?? value.label ?? value.total
+  )
+}
+
+const _resolveObservationTemplate = (template, values) => String(template || "").replace(
+  /\{\{\s*([^}\s]+)\s*\}\}/g,
+  (_, fieldId) => _stringifyObservationValue(values?.[fieldId])
+)
+
+const _buildSubformObservationUpdates = (outputs, context) => {
+  if (!Array.isArray(outputs) || outputs.length === 0) return []
+  const allValues = {
+    ...(context?.answers || {}),
+    ...(context?.dataEntryValues || {}),
+    ...(context?.calculatedExpressions || {}),
+  }
+  Object.entries(context?.calculatedTotals || {}).forEach(([totalId, result]) => {
+    allValues[totalId] = result?.score
+  })
+  const observationRows = [
+    ...(Array.isArray(context?.sd?.webform?.observations) ? context.sd.webform.observations : []),
+    ...(Array.isArray(context?.sd?.patient?.observations) ? context.sd.patient.observations : []),
+  ]
+  const createdBy = context?.formData?.createdBy ?? context?.sd?.userProfile?.identity?.fullName
+
+  return outputs.flatMap((output) => {
+    if (!output || typeof output !== "object" || !output.observationCode) return []
+    const source = String(output.source || "").toLowerCase()
+    let rawValue
+    if (source === "calculation") rawValue = context?.calculatedExpressions?.[output.calculationId]
+    else if (source === "total") rawValue = context?.calculatedTotals?.[output.totalId]?.score
+    else if (source === "template") rawValue = _resolveObservationTemplate(output.valueTemplate, allValues)
+    else rawValue = allValues[output.fieldId] ?? _resolveObservationTemplate(output.valueTemplate, allValues)
+
+    const value = _stringifyObservationValue(rawValue)
+    const oldObservation = observationRows.find((entry) => entry?.observationCode === output.observationCode)
+    const oldId = oldObservation?.observationId ?? 0
+    if (!value) {
+      return output.deleteWhenEmpty && oldId ? [{ observationId: -oldId }] : []
+    }
+
+    const report = output.reportTemplate
+      ? _resolveObservationTemplate(output.reportTemplate, allValues)
+      : ""
+    return [{
+      observationId: oldId,
+      observationCode: String(output.observationCode),
+      observationClass: "DCOBS",
+      value,
+      valueType: String(output.valueType || "NUMERIC"),
+      status: oldId ? "C" : "F",
+      description: String(output.description || output.observationCode),
+      ...(output.units ? { units: String(output.units) } : {}),
+      ...(report ? { report } : {}),
+      ...(createdBy ? { orderedBy: createdBy, collectedBy: createdBy } : {}),
+      collectedDateTime: getDateTimeString(new Date()),
+    }]
+  })
+}
+
+const _setSubformObservationPayloads = (setFormData, componentId, payload) => {
+  if (typeof setFormData !== "function") return
+  setFormData(produce((draft) => {
+    if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
+    if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
+    const container = draft.field.data.__componentPayloads ?? {}
+    const groups = container.dcoUpdatesByComponent ?? {}
+    if (!payload || payload.length === 0) delete groups[componentId]
+    else groups[componentId] = payload
+    container.dcoUpdatesByComponent = groups
+    draft.field.data.__componentPayloads = container
+  }))
+}
+
 const _isInRange = (score, range) => {
   if (score === null || score === undefined) return false
   const min = range.min
@@ -881,10 +965,31 @@ const _resolveSelectableBinaryOptions = (field, fallbackOptions = []) => {
   }
 }
 
-const _resolveFieldDefaultValue = (field) => {
+const _latestObservationDefault = (field, sd) => {
+  const binding = field?.defaultFromObservation ?? field?.default_from_observation
+  const code = String(binding?.observationCode ?? binding?.observation_code ?? "").trim()
+  if (!code) return undefined
+  const aspect = String(binding?.aspect ?? "value")
+  const observations = Array.isArray(sd?.patient?.observations)
+    ? sd.patient.observations
+    : Array.isArray(sd?.queryResult?.patient?.[0]?.observations)
+      ? sd.queryResult.patient[0].observations
+      : []
+  const latest = observations
+    .filter((entry) => entry?.observationCode === code)
+    .sort((left, right) => {
+      const leftDate = new Date(left?.collectedDateTime ?? 0).getTime() || 0
+      const rightDate = new Date(right?.collectedDateTime ?? 0).getTime() || 0
+      return rightDate - leftDate
+    })[0]
+  if (!latest) return undefined
+  return latest[aspect]
+}
+
+const _resolveFieldDefaultValue = (field, sd) => {
   if (!field || _isHeadingField(field)) return undefined
 
-  const explicitDefault = field.defaultValue ?? field.default_value
+  const explicitDefault = _latestObservationDefault(field, sd) ?? field.defaultValue ?? field.default_value
   if (explicitDefault === undefined) return undefined
 
   if (explicitDefault === "__today") {
@@ -1273,6 +1378,7 @@ const SubformScoringInner = ({
   onCommitToParent,
   dataEntryValueRoot,
   onDataEntryValueChange,
+  observationOutputs = [],
   ...props
 }) => {
   const [internalIsOpen, setInternalIsOpen] = useState(false)
@@ -1523,7 +1629,7 @@ const SubformScoringInner = ({
     const pendingDefaults = []
     for (const field of dataEntryFields) {
       if (!field?.id || _isMeaningfulValue(dataEntryValues[field.id])) continue
-      const defaultValue = _resolveFieldDefaultValue(field)
+      const defaultValue = _resolveFieldDefaultValue(field, sd)
       if (defaultValue === undefined) continue
       pendingDefaults.push([field.id, defaultValue])
     }
@@ -1550,7 +1656,7 @@ const SubformScoringInner = ({
         draft.field.data[fieldId] = defaultValue
       })
     }))
-  }, [isDataEntryMode, isDialogOpen, dataEntryFields, dataEntryValues, fd, onDataEntryValueChange])
+  }, [isDataEntryMode, isDialogOpen, dataEntryFields, dataEntryValues, fd, onDataEntryValueChange, sd])
 
   const dataEntryCalculations = useMemo(() => {
     if (Array.isArray(dataEntryConfig?.calculatedValues) && dataEntryConfig.calculatedValues.length > 0) {
@@ -1586,6 +1692,20 @@ const SubformScoringInner = ({
       }
       const precision = Number.isFinite(calculation.precision) ? Math.max(0, Math.min(6, calculation.precision)) : null
       result[calculation.id] = precision === null ? value : Number(value.toFixed(precision))
+    }
+    if (isMorphineCalculatorMode && dataEntryCalculatorConfig?.totalCalculationId) {
+      const rowValues = (dataEntryCalculatorConfig.rows || []).map((row) => {
+        const fromCalculation = row.meqCalculationId ? result[row.meqCalculationId] : null
+        return fromCalculation ?? _computeMorphineEquivalent(
+          dataEntryValues[row.inputFieldId],
+          row.equivalentDoseMg,
+          dataEntryCalculatorConfig.baseEquivalentDoseMg
+        )
+      })
+      const numericValues = rowValues.filter((value) => Number.isFinite(Number(value))).map(Number)
+      result[dataEntryCalculatorConfig.totalCalculationId] = numericValues.length > 0
+        ? Number(numericValues.reduce((sum, value) => sum + value, 0).toFixed(1))
+        : null
     }
     return result
   }, [isDataEntryMode, isMorphineCalculatorMode, dataEntryCalculatorConfig, dataEntryFieldById, dataEntryFields, dataEntryValues, dataEntryCalculations])
@@ -1640,6 +1760,18 @@ const SubformScoringInner = ({
     }
     return progress.answered > 0
   }, [isDataEntryMode, isMorphineCalculatorMode, dataEntryCalculatorConfig, dataEntryFields, dataEntryValues, progress])
+
+  const commitObservationOutputs = useCallback(() => {
+    const payload = _buildSubformObservationUpdates(observationOutputs, {
+      answers,
+      calculatedExpressions,
+      calculatedTotals,
+      dataEntryValues,
+      formData: fd?.field?.data,
+      sd,
+    })
+    _setSubformObservationPayloads(fd?.setFormData, id, payload)
+  }, [answers, calculatedExpressions, calculatedTotals, dataEntryValues, fd, id, observationOutputs, sd])
 
   const showItems = useMemo(() => {
     if (Array.isArray(summaryConfig.showItems) && summaryConfig.showItems.length > 0) {
@@ -1834,7 +1966,7 @@ const SubformScoringInner = ({
             label={field.label}
             codeSystem={field.codeSystem}
             value={dataEntryValues[field.id] ?? null}
-            defaultValue={_resolveFieldDefaultValue(field)}
+            defaultValue={_resolveFieldDefaultValue(field, sd)}
             placeholder={field.placeholder || "Please search"}
             required={required}
             openOnFocus
@@ -2723,6 +2855,7 @@ const SubformScoringInner = ({
                   calculatedTotals,
                 })
                 if (shouldClose !== false) {
+                  commitObservationOutputs()
                   onCommitToParent?.(fd)
                   setDialogOpen(false)
                 }
@@ -2773,6 +2906,7 @@ const SubformScoringInner = ({
                     }
                   }
                 }
+                commitObservationOutputs()
                 onCommitToParent?.(fd)
                 setDialogOpen(false)
               }
