@@ -50,6 +50,18 @@ const publishHttpJsonTestResult = (result) => {
   }
 }
 
+const normalizeHttpJsonEndpointUrl = (value) => {
+  const trimmed = String(value || "").trim()
+  if (!trimmed) return ""
+  try {
+    const url = new URL(trimmed)
+    if (url.pathname === "/webforms") url.pathname = "/webforms/"
+    return url.toString()
+  } catch (_error) {
+    return trimmed.replace(/\/webforms$/i, "/webforms/")
+  }
+}
+
 /**
  * HttpJsonTestPanel — exported MOIS diagnostics for HTTP JSON/Mirth outputs.
  *
@@ -60,7 +72,7 @@ const publishHttpJsonTestResult = (result) => {
 const HttpJsonTestPanel = ({
   id,
   title = "Mirth HTTP listener test",
-  endpointUrl = "http://10.171.20.220:7900/webforms",
+  endpointUrl = "http://mirthc1.northernhealth.ca:7900/webforms/",
   outputId = "",
   responseFieldId = "mirthLastResult",
   buttonText = "Send test request",
@@ -75,6 +87,7 @@ const HttpJsonTestPanel = ({
   const storedResult = responseFieldId ? fd?.field?.data?.[responseFieldId] : null
   const [result, setResult] = useState(() => storedResult || null)
   const [busy, setBusy] = useState(false)
+  const effectiveEndpointUrl = useMemo(() => normalizeHttpJsonEndpointUrl(endpointUrl), [endpointUrl])
 
   useEffect(() => {
     if (!storedResult || storedResult === result) return
@@ -97,7 +110,7 @@ const HttpJsonTestPanel = ({
   const responseText = useMemo(() => formatHttpJsonTestResult(result?.body), [result?.body])
 
   const sendTest = async () => {
-    if (!endpointUrl || busy) return
+    if (!effectiveEndpointUrl || busy) return
     const startedAt = Date.now()
     const AbortControllerClass = typeof window !== "undefined" && typeof window.AbortController === "function"
       ? window.AbortController
@@ -123,7 +136,7 @@ const HttpJsonTestPanel = ({
           name: sd?.formObject?.Identity?.name || sd?.formParams?.formPath,
         },
       }
-      const response = await fetchJson(endpointUrl, {
+      const response = await fetchJson(effectiveEndpointUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(requestBody),
@@ -133,7 +146,7 @@ const HttpJsonTestPanel = ({
       const nextResult = {
         source: "manual-test",
         outputId: effectiveOutputId,
-        endpointUrl,
+        endpointUrl: effectiveEndpointUrl,
         method: "POST",
         ok: Boolean(response?.ok),
         status: response?.status ?? null,
@@ -153,7 +166,7 @@ const HttpJsonTestPanel = ({
       const nextResult = {
         source: "manual-test",
         outputId: effectiveOutputId,
-        endpointUrl,
+        endpointUrl: effectiveEndpointUrl,
         method: "POST",
         ok: false,
         status: null,
@@ -193,7 +206,7 @@ const HttpJsonTestPanel = ({
       <Fluent.Stack tokens={{ childrenGap: 8 }}>
         <Fluent.Text variant="mediumPlus" styles={{ root: { fontWeight: 600 } }}>{title}</Fluent.Text>
         <Fluent.Text variant="small" styles={{ root: { color: "#605e5c", wordBreak: "break-all" } }}>
-          {endpointUrl || "No listener URL configured"}
+          {effectiveEndpointUrl || endpointUrl || "No listener URL configured"}
         </Fluent.Text>
         <div role="status" aria-live="polite" style={{ color: statusColor, fontWeight: 600 }}>
           {busy ? "Sending test request..." : statusLabel}
@@ -210,7 +223,7 @@ const HttpJsonTestPanel = ({
           <Fluent.DefaultButton
             text={busy ? "Sending..." : buttonText}
             onClick={sendTest}
-            disabled={busy || !endpointUrl}
+            disabled={busy || !effectiveEndpointUrl}
           />
         ) : null}
       </Fluent.Stack>

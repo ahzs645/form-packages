@@ -15398,6 +15398,17 @@ const publishHttpJsonTestResult = result => {
     }));
   }
 };
+const normalizeHttpJsonEndpointUrl = value => {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return "";
+  try {
+    const url = new URL(trimmed);
+    if (url.pathname === "/webforms") url.pathname = "/webforms/";
+    return url.toString();
+  } catch (_error) {
+    return trimmed.replace(/\\/webforms$/i, "/webforms/");
+  }
+};
 
 /**
  * HttpJsonTestPanel — exported MOIS diagnostics for HTTP JSON/Mirth outputs.
@@ -15409,7 +15420,7 @@ const publishHttpJsonTestResult = result => {
 const HttpJsonTestPanel = ({
   id,
   title = "Mirth HTTP listener test",
-  endpointUrl = "http://10.171.20.220:7900/webforms",
+  endpointUrl = "http://mirthc1.northernhealth.ca:7900/webforms/",
   outputId = "",
   responseFieldId = "mirthLastResult",
   buttonText = "Send test request",
@@ -15424,6 +15435,7 @@ const HttpJsonTestPanel = ({
   const storedResult = responseFieldId ? fd?.field?.data?.[responseFieldId] : null;
   const [result, setResult] = useState(() => storedResult || null);
   const [busy, setBusy] = useState(false);
+  const effectiveEndpointUrl = useMemo(() => normalizeHttpJsonEndpointUrl(endpointUrl), [endpointUrl]);
   useEffect(() => {
     if (!storedResult || storedResult === result) return;
     setResult(storedResult);
@@ -15442,7 +15454,7 @@ const HttpJsonTestPanel = ({
   }, [outputId, responseFieldId, setFormData]);
   const responseText = useMemo(() => formatHttpJsonTestResult(result?.body), [result?.body]);
   const sendTest = async () => {
-    if (!endpointUrl || busy) return;
+    if (!effectiveEndpointUrl || busy) return;
     const startedAt = Date.now();
     const AbortControllerClass = typeof window !== "undefined" && typeof window.AbortController === "function" ? window.AbortController : null;
     const controller = AbortControllerClass ? new AbortControllerClass() : null;
@@ -15462,7 +15474,7 @@ const HttpJsonTestPanel = ({
           name: sd?.formObject?.Identity?.name || sd?.formParams?.formPath
         }
       };
-      const response = await fetchJson(endpointUrl, {
+      const response = await fetchJson(effectiveEndpointUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -15476,7 +15488,7 @@ const HttpJsonTestPanel = ({
       const nextResult = {
         source: "manual-test",
         outputId: effectiveOutputId,
-        endpointUrl,
+        endpointUrl: effectiveEndpointUrl,
         method: "POST",
         ok: Boolean(response?.ok),
         status: response?.status ?? null,
@@ -15496,7 +15508,7 @@ const HttpJsonTestPanel = ({
       const nextResult = {
         source: "manual-test",
         outputId: effectiveOutputId,
-        endpointUrl,
+        endpointUrl: effectiveEndpointUrl,
         method: "POST",
         ok: false,
         status: null,
@@ -15544,7 +15556,7 @@ const HttpJsonTestPanel = ({
         wordBreak: "break-all"
       }
     }
-  }, endpointUrl || "No listener URL configured"), /*#__PURE__*/React.createElement("div", {
+  }, effectiveEndpointUrl || endpointUrl || "No listener URL configured"), /*#__PURE__*/React.createElement("div", {
     role: "status",
     "aria-live": "polite",
     style: {
@@ -15571,7 +15583,7 @@ const HttpJsonTestPanel = ({
   }, responseText) : null, showManualTest ? /*#__PURE__*/React.createElement(Fluent.DefaultButton, {
     text: busy ? "Sending..." : buttonText,
     onClick: sendTest,
-    disabled: busy || !endpointUrl
+    disabled: busy || !effectiveEndpointUrl
   }) : null));
 };`,
   './InvestigationTabs/index.jsx': `const INVESTIGATION_DEFAULT_TABS = ["Physiology", "Medication", "History / Physical", "Investigation", "Review", "Information"];
@@ -29765,12 +29777,19 @@ const UnsavedChangesGuard = ({
         return;
       }
     }
+    let savedWebform = null;
+    const submitSd = isSubmitAction && sd && typeof sd.lifecycleDispatch === "function" ? Object.assign({}, sd, {
+      lifecycleDispatch: event => {
+        if (event?.type === "form-saved" && event.webform) savedWebform = event.webform;
+        return sd.lifecycleDispatch(event);
+      }
+    }) : sd;
 
-    // HTTP JSON workflow outputs (for example a Mirth listener) need the final
-    // submit payload, so they flush after getSubmitData and before MOIS submit.
+    // Legacy HTTP JSON outputs flush before MOIS submit. Safe Mirth
+    // notifications are phase-filtered and wait for the committed webform IDs.
     if (isSubmitAction && typeof window !== "undefined" && typeof window.__builderHttpJsonFlush === "function") {
       try {
-        await window.__builderHttpJsonFlush(payload, persistFd);
+        await window.__builderHttpJsonFlush(payload, persistFd, "beforeSubmit");
       } catch (error) {
         console.error("Workflow HTTP JSON output failed", error);
         return;
@@ -29778,18 +29797,34 @@ const UnsavedChangesGuard = ({
     }
     if (actionId === "sign" && typeof signSubmit === "function") {
       // Real MOIS signSubmit is (note, sd, fd, options)
-      const success = await signSubmit("", sd, persistFd, payload);
+      const success = await signSubmit("", submitSd, persistFd, payload);
       if (success !== false) nhAuthCommitSave(prepared);
       markSaved(prepared?.nextState?.field?.data ?? prepared?.formData ?? payload?.formData);
+      if (success !== false && typeof window !== "undefined" && typeof window.__builderHttpJsonFlush === "function") {
+        try {
+          await window.__builderHttpJsonFlush(payload, persistFd, "afterSubmit", savedWebform || sd?.webform || null);
+        } catch (error) {
+          console.error("Post-save workflow HTTP JSON output failed", error);
+          return;
+        }
+      }
       setIsOpen(false);
       if (success !== false) closeWindow();
       return;
     }
     if (isSubmitAction && typeof saveSubmit === "function") {
       // Real MOIS saveSubmit is (sd, fd, options); it has no note argument.
-      const success = await saveSubmit(sd, persistFd, payload);
+      const success = await saveSubmit(submitSd, persistFd, payload);
       if (success !== false) nhAuthCommitSave(prepared);
       markSaved(prepared?.nextState?.field?.data ?? prepared?.formData ?? payload?.formData);
+      if (success !== false && typeof window !== "undefined" && typeof window.__builderHttpJsonFlush === "function") {
+        try {
+          await window.__builderHttpJsonFlush(payload, persistFd, "afterSubmit", savedWebform || sd?.webform || null);
+        } catch (error) {
+          console.error("Post-save workflow HTTP JSON output failed", error);
+          return;
+        }
+      }
       setIsOpen(false);
       if (success !== false) closeWindow();
       return;
@@ -30204,7 +30239,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './HistoricalObservationTable/index.jsx': ["HistoricalObservationTable","current","date","getHistorySource","grouped","historyDateKey","matchedColumn","raw","rows","sd","source","steps"],
   './HonosQuestion/index.jsx': ["CHOICE_FIELD_STYLE","HonosFinalScore","QUESTION_STACK_STYLE","QUESTION_defaultLabelStyle","SCALE_10_LEGENDS","SCALE_10_LEGEND_LOOKUP","SCALE_10_OPTIONS","SCALE_5_LEGENDS","SCALE_5_LEGEND_LOOKUP","SCALE_5_OPTIONS","Scale10","Scale10Legend","Scale5","Scale5Legend","Scale5QuestionList","Scale5SubmitButton","Scale5ToolTip","ScaleLegend","UpdateContext","buildLegendLookupFromOptions","buildTooltipLookup","calculatedTotal","createScaleQuestion","customChoiceOptions","description","dropdownStyles","effectiveChoiceOptions","effectiveTooltip","fallbackLookup","fditem","fillAllUnfilledQuestions","finalScoreStyle","generatedTooltip","handleChoiceChanged","handleDropdownChanged","handleKeyUp","i","item","key","keySource","nextChoiceGroup","normalizeScaleChoiceOptions","numeric","numericValue","option","questionIds","questionStyle","rawValue","rawfditem","renderedChoiceOptions","scoredQuestionIds","seenKeys","selectedOptions","targetFieldId","text","theme","toFiniteNumber","tooltipList","tooltipLookup","totalScore","value"],
   './HotspotMapField/index.jsx': ["ANNOTATION_SYMBOL_LABELS","DEFAULT_ANNOTATION_COLOR","DEFAULT_ANNOTATION_SIZE_PERCENT","DEFAULT_ANNOTATION_SYMBOL","DEFAULT_ANNOTATION_SYMBOLS","DEFAULT_INTERACTION_MODE","DEFAULT_MAP_MARGIN_PX","DEFAULT_MAP_MAX_WIDTH","DEFAULT_MAP_MIN_HEIGHT","DEFAULT_MAP_PADDING_PX","DEFAULT_MAP_WIDTH_PERCENT","DEFAULT_MAP_ZOOM_PERCENT","DEFAULT_MARKER_RADIUS","DEFAULT_MARKER_SIZE","DEFAULT_NUMBER_FIELD_WIDTH_PERCENT","DEFAULT_SVG_VIEWBOX_MARGIN_PERCENT","HotspotMapField","annotationDefaultSymbol","annotationPointsToSvgString","annotationSymbols","annotations","append","assignedHotspotIds","baseId","bounds","buildCountsByGroup","buildFallbackPolygon","buildMapValue","byHotspot","centroid","centroidFromPoints","circleAspectRatio","clampPercent","clampSvgViewBoxMarginPercent","clamped","color","commitMapState","commitSelection","compact","count","counterGroups","counts","countsByGroup","createHotspotMapConfig","cx","cy","deltaX","deltaY","displayValue","doc","drawingPointerIdRef","drawingPointsRef","element","elements","ensureResponsiveSvg","ensuredDefault","fallbackList","fieldFillTextLayerIdSet","fieldFillValueMap","fieldId","fields","fill","getHotspotLabelAnchor","getNumberFieldValue","getPointFromEvent","group","groupId","groupLabel","groupsById","half","handleAddAnnotation","handleDrawPointerDown","handleDrawPointerMove","handleDrawPointerUp","handleHotspotKeyDown","handleNumberFieldChange","handleToggleHotspot","hasAnnotations","hasExplicitCounterGroups","hasMapData","hasSelections","hasSvgBackground","height","heightAttr","hotspot","hotspotIdSet","hotspots","hotspotsById","id","ids","importSvgHotspots","injectFieldFillValuesIntoSvg","inlineStyle","input","interactionMode","isDarkMode","isDrawModeActive","isDrawingRef","isFieldFillMode","isSelected","isSymbolModeActive","labelAnchor","map","mapFrameRef","mapFrameStyle","mapValue","marginPercent","markerSize","markup","match","max","min","names","next","nextAnnotations","nextAspectRatio","nextPoints","nextSymbol","nextValue","normalizeAnnotationPoints","normalizeAnnotationSymbol","normalizeAnnotationSymbols","normalizeAnnotationType","normalizeAnnotations","normalizeColor","normalizeCounterGroupId","normalizeCounterGroups","normalizeHotspotPoints","normalizeHotspots","normalizeMapInteractionMode","normalizeNumberFields","normalizeShape","normalizeString","normalized","normalizedAnnotations","normalizedCounterGroups","normalizedHotspot","normalizedHotspots","normalizedId","normalizedNumberFields","normalizedNumeric","normalizedRaw","numberFields","numeric","observer","overlayStyle","overlayViewBox","padX","padY","pair","panelStyle","parseAnnotationSymbol","parseList","parseSvgAspectRatio","parseSvgNumber","parsed","parsedPoints","parsedViewBox","parser","parts","point","points","pointsAttr","pointsToSvgString","previous","projectMapLengthToRenderPercent","projectMapPercentToRenderPercent","projectRenderPercentToMapPercent","r","radius","raw","rawId","rawLabel","rawValue","rect","renderAnnotationModeControls","renderMapFrame","renderSummary","renderedWidth","renderedX","renderedY","resolveAnnotationSymbol","resolveMapInteractionMode","resolved","resolvedAllowedSymbols","resolvedAnnotationDefaultColor","resolvedAnnotationDefaultSymbol","resolvedAnnotationSizePercent","resolvedAnnotationSymbols","resolvedInteractionMode","resolvedMapMarginPx","resolvedMapMaxWidth","resolvedMapMinHeight","resolvedMapPaddingPx","resolvedMapWidthPercent","resolvedMapZoomPercent","resolvedModalMinWidth","responsiveSvg","sanitizeHotspotIds","seen","selectedCount","selectedIds","selectedIdsCsv","selectedLabels","selectedLabelsCsv","serialized","shape","showSymbolPicker","showToolToggle","size","sourceHeight","sourceWidth","step","stroke","strokeWidth","suffix","summaryGroups","supportsAnnotations","supportsDrawAnnotations","supportsSelection","supportsSymbolAnnotations","svg","svgAspectRatio","svgViewBoxMarginPercent","svgViewBoxRenderSize","symbol","symbols","tagName","target","textLayerId","theme","toXPercent","toYPercent","total","trimmed","tspan","type","unique","updateAspectRatio","useSvgLayerTakeover","usedIds","value","vbHeight","vbWidth","vbX","vbY","viewBoxHeight","viewBoxParts","viewBoxRaw","viewBoxWidth","width","widthAttr","widthRaw","x","y","zoomFactor"],
-  './HttpJsonTestPanel/index.jsx': ["AbortControllerClass","HTTP_JSON_RESULT_EVENT","HttpJsonTestPanel","aborted","body","controller","effectiveOutputId","fetchJson","formatHttpJsonTestResult","handler","key","nextResult","persistHttpJsonTestResult","previous","publishHttpJsonTestResult","readHttpJsonTestBody","requestBody","response","responseText","sd","sendTest","startedAt","statusColor","statusLabel","storedResult","text","timeout"],
+  './HttpJsonTestPanel/index.jsx': ["AbortControllerClass","HTTP_JSON_RESULT_EVENT","HttpJsonTestPanel","aborted","body","controller","effectiveEndpointUrl","effectiveOutputId","fetchJson","formatHttpJsonTestResult","handler","key","nextResult","normalizeHttpJsonEndpointUrl","persistHttpJsonTestResult","previous","publishHttpJsonTestResult","readHttpJsonTestBody","requestBody","response","responseText","sd","sendTest","startedAt","statusColor","statusLabel","storedResult","text","timeout","trimmed","url"],
   './InvestigationTabs/index.jsx': ["INVESTIGATION_DEFAULT_TABS","InvestigationTab","InvestigationTabs","activeChildren","activeTab","childArray","childById","childTabId","id","label","normalizeInvestigationTabs","numeric","props","resolvedTabs","selected","source"],
   './LayoutTable/index.jsx': ["LayoutTable","Tag","bareRefs","bracketedRefs","cellStyle","checklistOptions","code","comparableValue","computeLayoutTableCellValue","computedCells","config","display","displayValue","evaluateLayoutTableFormula","extractLayoutTableFormulaRefs","fieldId","fields","formatLayoutTableComputedValue","formatLayoutTableFieldDisplayValue","formatOne","formula","getCellDisplayValue","getLayoutTableFieldRawValue","getNumericFieldValue","getPathValue","id","ids","isCheckedValue","isNoLikeValue","isSafeLayoutTableFormula","isYesLikeValue","jsExpression","label","labelProp","matched","multiline","nextData","normalizeComparableValue","normalizeLayoutTableOptionList","normalized","numeric","optionList","raw","rawValue","refs","renderLayoutTableCellContent","renderLayoutTableField","renderLayoutTableFieldList","renderLayoutTableReadOnlyField","renderLayoutTableResources","renderLayoutTableStampButton","renderLink","resources","rounded","rowIsVisible","rule","sd","section","setFieldValue","sharedProps","sourceValue","strippedExpression","sumMatch","tableData","tableRows","targets","unwrappedExpression","value","values","visibleRows"],
   './LegacyLookupField/index.jsx': ["LegacyLookupField","aliasSets","aliases","candidates","commit","directKeys","effectiveFieldId","fallback","key","matchingKey","normalizeLookupName","normalizeOption","normalized","normalizedLabel","optionLists","optionSources","options","raw","sd","seen","targets","text","value","valueForTarget"],
@@ -30233,7 +30268,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './ServiceRequests/index.jsx': ["ServiceRequests","ServiceRequestsFields","activeServiceRequests","orderDateDesc"],
   './SignaturePad/index.jsx': ["B","D","L","O","SignaturePad","SignaturePadLib","T","U","W","_","__exports","a","c","canvas","canvasRef","container","containerRef","containerStyle","dataUrl","define","e","exports","f","h","handleClear","handleEndStroke","i","k","l","m","module","o","p","pad","padRef","r","ratio","readOnlyImageStyle","resizeCanvas","s","savedDataUrl","t","theme","u","width","y"],
   './SubformScoring/index.jsx': ["AnswerSummaryItem","CalculationSummaryItem","DataFieldSummaryItem","DataInterpretationSummaryItem","FormSessionProvider","InterpretationSummaryItem","MOIS_WRITE_ID_FALLBACK_PATHS","MOIS_WRITE_MUTATIONS","MOIS_WRITE_MUTATION_KEYS","ProgressSummaryItem","ScoreSummaryItem","SubformScoring","SubformScoringInner","_LOCAL_INPUT_STYLE","_LOCAL_RADIO_GROUP_STYLE","_LOCAL_TEXTAREA_STYLE","__SubformScoringSessionContext","__cloneSubformScoringSessionValue","_buildDataEntryRenderGroups","_buildMappedPayload","_buildScaleLegendSignature","_buildScaleOptions","_buildScoreMap","_buildSubformObservationUpdates","_collectScoreCandidates","_computeMorphineEquivalent","_evaluateDataEntryVisibility","_evaluateExpression","_formatBounds","_formatCalculatorDisplayValue","_formatNumericValue","_getInterpretation","_getScoreFromValue","_getSelectableOptionNumericValue","_getValueAtPath","_isHeadingField","_isInRange","_isMeaningfulValue","_isScaleChoiceSelected","_isSelectableOptionSelected","_latestObservationDefault","_normalizeChartPreferenceValue","_normalizeScoreToken","_normalizeSelectableOptions","_optionMatchesValue","_recordSubformActionPayload","_resolveChecklistOptions","_resolveFieldDefaultValue","_resolveFieldEmptyNumericValue","_resolveFieldWidthBasis","_resolveObservationTemplate","_resolvePathValue","_resolveQuestionOptions","_resolveSelectableBinaryOptions","_resolveWriteActionId","_serializeSelectableValue","_setSubformObservationPayloads","_stringifyObservationValue","_toDisplayValue","_toNumericValue","_toPathSegments","_usesStructuredSelectableOptions","action","actionPayload","allValues","answer","answerScore","answerableFields","answered","answers","aspect","barBg","barFill","baseDose","baseEquivalentDoseMg","baseEquivalentDoseRaw","basis","binding","boundedPrecision","buttonRowStyle","cadFieldId","calc","calculatedExpressions","calculatedTotals","calculation","calculatorFields","candidate","candidateKeys","candidatePaths","candidates","checked","checkedFromConfig","checkedOption","checklist","cloneFormSessionState","code","columnTemplate","commentsField","commitObservationOutputs","commonProps","computedFallback","configuredField","container","containerStyle","controlLabel","controllerId","conversions","createdBy","current","currentSignature","cursor","dataEntryAction","dataEntryCalculations","dataEntryCalculatorConfig","dataEntryFieldById","dataEntryFields","dataEntryRenderGroups","dataEntryValues","dateField","day","defaultValue","defaults","description","dialogContentProps","dialogMinWidth","dialogTitle","direct","displayText","displayValue","dose","doseColumnLabel","effectiveInitialData","entry","equivalentColumnLabel","equivalentDose","equivalentDoseMg","explicitDefault","extracted","fallbackOptions","field","fieldExists","fields","fieldsForProgress","flushMatrixBuffer","formatted","fromCalculation","getCalculationConfig","getDataEntryFieldConfig","getQuestionConfig","getTotalConfig","groups","handleCommitToParent","handleOpenChange","hasAnyAnswers","hasAnyRowValue","hasExternalDataEntryStore","hasRequiredId","history","inputFieldId","inputType","inputValue","interpretation","isComplete","isDarkMode","isDataEntryMode","isDialogOpen","isHeading","isMatrixCandidate","isMorphineCalculatorMode","key","label","labelStyle","latest","left","leftDate","map","matchedOption","matrixBuffer","matrixGroupId","max","meetsMax","meetsMin","meqCalculationId","meqDisplay","meqValue","mergeFormSessionState","min","minSymbol","modalProps","month","next","nextGroup","nextKey","nextOption","nextRaw","nextState","normalize","normalized","normalizedButtonIconName","normalizedOptionMap","normalizedOptions","normalizedSessionData","normalizedType","numeric","numericValue","numericValues","observationRows","observations","oldId","oldObservation","option","optionList","optionMap","optionScoreMap","optionTokens","optionValue","options","parsed","payload","payloadMap","pendingDefaults","precision","precisionRaw","prepared","prevIndex","previousEntry","previousField","previousScaleSignature","progress","providedOptions","question","questionOptions","questionsById","rawConfig","rawOptions","rawRows","rawType","rawValue","renderBloodGlucoseReadingEditor","renderDataEntryField","renderDataEntryScaleMatrix","renderMorphineCalculator","renderNumberInput","renderStyle","renderSummaryItem","replacement","report","required","requiredFields","resolved","resolvedId","response","result","resultColumnLabel","results","right","rightDate","root","rowId","rowLabels","rowValues","rows","rule","runMutation","runtime","scaleOptions","scopedSetter","score","scoreMap","sd","segments","selected","selectedOption","selectedWithSetter","sessionContext","sessionSetFormData","sessionState","setDataEntryValue","setDialogOpen","setFormData","shouldClose","shouldHideButtonIcon","shouldUseDefaultButtonIcon","showCalculationsInModal","showItems","showLegend","showLegendForScale","signature","source","step","style","summaryContainerStyle","summaryItemsStyle","summaryLayout","target","termQuestionId","text","theme","today","token","tokenMatches","total","totalCalculationId","totalFallback","totalFromCalculation","totalLabel","totalValue","totals","triggerButtonIconProps","trimmed","uncheckedFromConfig","uncheckedOption","uniqueTokens","usFieldId","useBloodGlucoseReadingLayout","useFormSessionData","useRadio","useToggleSwitch","value","variableFieldIds","variables","vars","writeDefinition","writeKey","writeMutationRunners","year"],
-  './UnsavedChangesGuard/index.jsx': ["ButtonComponent","DCOUpdates","DEFAULT_WINDOW_HOURS","UnsavedChangesGuard","actionItems","actor","actorFrom","addHoursIso","baselineRef","buildDefaultSavePayload","buildDefaultSubmitPayload","buildKey","c","changed","ck","claim","claims","closeWindow","collectComponentPayloads","collectDomFieldValues","commitSave","componentPayload","confirmUnloadActive","current","d","data","dcoGroups","disabled","domFieldValues","editableUntil","euDate","existing","expired","field","fieldData","fieldId","footerActionItems","footerActions","formData","formatTimestamp","guardSkipsWhenSigned","handleAction","handler","hasLifecycleSignals","host","inputType","isNonEmpty","isOwner","isSettling","isSigned","isSubmitAction","keepStatus","key","label","lifecycle","linkedPanels","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","markSaved","mergeFieldValuesIntoState","narratives","nextStatus","nextValue","nhAuthCommitSave","nhAuthPrepareSave","normalizeFooterActions","normalizeGuardActions","normalizeGuardValue","normalizeStore","now","nowIso","ownerId","ownerName","ownerRefresh","pad2","panelUpdates","panels","payload","payloads","pending","persistAction","persistFd","policyAppliesToAction","prepareSave","prepared","primaryAction","promptText","raw","readStore","release","renderFooterAction","resolveNow","sameActor","saveSettleRef","sd","secondaryActions","serializeGuardValue","store","stripComponentPayloads","success","tagName","trackedSnapshot","trackedValue","ts","untilSelf","useHostConfirmUnload","values","warmupRef","webformGroups","webformUpdate","windowHours"],
+  './UnsavedChangesGuard/index.jsx': ["ButtonComponent","DCOUpdates","DEFAULT_WINDOW_HOURS","UnsavedChangesGuard","actionItems","actor","actorFrom","addHoursIso","baselineRef","buildDefaultSavePayload","buildDefaultSubmitPayload","buildKey","c","changed","ck","claim","claims","closeWindow","collectComponentPayloads","collectDomFieldValues","commitSave","componentPayload","confirmUnloadActive","current","d","data","dcoGroups","disabled","domFieldValues","editableUntil","euDate","existing","expired","field","fieldData","fieldId","footerActionItems","footerActions","formData","formatTimestamp","guardSkipsWhenSigned","handleAction","handler","hasLifecycleSignals","host","inputType","isNonEmpty","isOwner","isSettling","isSigned","isSubmitAction","keepStatus","key","label","lifecycle","linkedPanels","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","markSaved","mergeFieldValuesIntoState","narratives","nextStatus","nextValue","nhAuthCommitSave","nhAuthPrepareSave","normalizeFooterActions","normalizeGuardActions","normalizeGuardValue","normalizeStore","now","nowIso","ownerId","ownerName","ownerRefresh","pad2","panelUpdates","panels","payload","payloads","pending","persistAction","persistFd","policyAppliesToAction","prepareSave","prepared","primaryAction","promptText","raw","readStore","release","renderFooterAction","resolveNow","sameActor","saveSettleRef","savedWebform","sd","secondaryActions","serializeGuardValue","store","stripComponentPayloads","submitSd","success","tagName","trackedSnapshot","trackedValue","ts","untilSelf","useHostConfirmUnload","values","warmupRef","webformGroups","webformUpdate","windowHours"],
   './UseChangeWatch/index.jsx': ["_defaultCompare","_normalizeWatchOptions","baselineRef","compare","delayCount","dirtyRef","disabled","forcedDirtyRef","isDirty","normalizedOptions","onDirtyChange","renderCountRef","setChanged","useChangeWatch"],
   './ValueSetObservationField/index.jsx': ["ValueSetObservationField","checklistOptions","commentValue","componentId","container","createdBy","currentPayload","effectiveFieldId","fromContext","handleChange","key","nextGroup","normalizeObservationOptions","oldId","oldObs","options","payloadsEqual","report","sd","selectedCode","selectedDisplay","selectedValue","setNestedPayload","stripVolatilePayloadFields"],
 };

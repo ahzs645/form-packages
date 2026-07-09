@@ -388,15 +388,25 @@ const UnsavedChangesGuard = ({
       }
     }
 
-    // HTTP JSON workflow outputs (for example a Mirth listener) need the final
-    // submit payload, so they flush after getSubmitData and before MOIS submit.
+    let savedWebform = null
+    const submitSd = isSubmitAction && sd && typeof sd.lifecycleDispatch === "function"
+      ? Object.assign({}, sd, {
+          lifecycleDispatch: (event) => {
+            if (event?.type === "form-saved" && event.webform) savedWebform = event.webform
+            return sd.lifecycleDispatch(event)
+          },
+        })
+      : sd
+
+    // Legacy HTTP JSON outputs flush before MOIS submit. Safe Mirth
+    // notifications are phase-filtered and wait for the committed webform IDs.
     if (
       isSubmitAction &&
       typeof window !== "undefined" &&
       typeof window.__builderHttpJsonFlush === "function"
     ) {
       try {
-        await window.__builderHttpJsonFlush(payload, persistFd)
+        await window.__builderHttpJsonFlush(payload, persistFd, "beforeSubmit")
       } catch (error) {
         console.error("Workflow HTTP JSON output failed", error)
         return
@@ -405,9 +415,21 @@ const UnsavedChangesGuard = ({
 
     if (actionId === "sign" && typeof signSubmit === "function") {
       // Real MOIS signSubmit is (note, sd, fd, options)
-      const success = await signSubmit("", sd, persistFd, payload)
+      const success = await signSubmit("", submitSd, persistFd, payload)
       if (success !== false) nhAuthCommitSave(prepared)
       markSaved(prepared?.nextState?.field?.data ?? prepared?.formData ?? payload?.formData)
+      if (
+        success !== false &&
+        typeof window !== "undefined" &&
+        typeof window.__builderHttpJsonFlush === "function"
+      ) {
+        try {
+          await window.__builderHttpJsonFlush(payload, persistFd, "afterSubmit", savedWebform || sd?.webform || null)
+        } catch (error) {
+          console.error("Post-save workflow HTTP JSON output failed", error)
+          return
+        }
+      }
       setIsOpen(false)
       if (success !== false) closeWindow()
       return
@@ -415,9 +437,21 @@ const UnsavedChangesGuard = ({
 
     if (isSubmitAction && typeof saveSubmit === "function") {
       // Real MOIS saveSubmit is (sd, fd, options); it has no note argument.
-      const success = await saveSubmit(sd, persistFd, payload)
+      const success = await saveSubmit(submitSd, persistFd, payload)
       if (success !== false) nhAuthCommitSave(prepared)
       markSaved(prepared?.nextState?.field?.data ?? prepared?.formData ?? payload?.formData)
+      if (
+        success !== false &&
+        typeof window !== "undefined" &&
+        typeof window.__builderHttpJsonFlush === "function"
+      ) {
+        try {
+          await window.__builderHttpJsonFlush(payload, persistFd, "afterSubmit", savedWebform || sd?.webform || null)
+        } catch (error) {
+          console.error("Post-save workflow HTTP JSON output failed", error)
+          return
+        }
+      }
       setIsOpen(false)
       if (success !== false) closeWindow()
       return

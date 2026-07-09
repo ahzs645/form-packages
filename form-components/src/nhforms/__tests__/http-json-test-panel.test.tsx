@@ -56,7 +56,7 @@ function renderPanel(props: Record<string, unknown> = {}) {
       ActiveDataContext.Provider,
       { value: [state, setter] },
       React.createElement(Panel, {
-        endpointUrl: "http://10.171.20.220:7900/webforms",
+        endpointUrl: "http://mirthc1.northernhealth.ca:7900/webforms",
         outputId: "dev-mirth-http-json",
         responseFieldId: "dev_mirth_last_result",
         ...props,
@@ -95,6 +95,7 @@ describe("HttpJsonTestPanel", () => {
     });
 
     expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[0][0]).toBe("http://mirthc1.northernhealth.ca:7900/webforms/");
     const request = fetchMock.mock.calls[0][1];
     const body = JSON.parse(request.body);
     expect(body).toMatchObject({
@@ -108,6 +109,7 @@ describe("HttpJsonTestPanel", () => {
     expect(harness.container.textContent).toContain("Success (202)");
     expect(harness.container.textContent).toContain('"messageId": "test-123"');
     expect(harness.getState().field.data.dev_mirth_last_result).toMatchObject({
+      endpointUrl: "http://mirthc1.northernhealth.ca:7900/webforms/",
       ok: true,
       status: 202,
       body: { accepted: true, messageId: "test-123" },
