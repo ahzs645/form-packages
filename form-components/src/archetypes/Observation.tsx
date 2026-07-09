@@ -12,6 +12,7 @@ import { useActiveData, useCodeList } from '../context/MoisContext';
 import { MoisTextField } from '../components/MoisTextField';
 import { MoisDropdown } from '../components/MoisDropdown';
 import { ButtonBar } from '../controls/ButtonBar';
+import { ListSelection } from '../controls/ListSelection';
 
 // Observation data interface
 export interface ObservationData {
@@ -657,6 +658,52 @@ const Fields = {
 };
 
 // ============================================================================
+// Columns / List - grid rendering for observation lists.
+//
+// The column specs below are a VERBATIM copy of the real MOIS engine's
+// observation list columns (extracted from the SMOIS FormTester bundle,
+// 02.31 era): observationId key, "Date" collectedDateTime, "Code"
+// observationCode, "Test name" description, "Value" value, "Flag"
+// abnormalFlag (rawcode). Do not add units/status/performed columns here —
+// the real engine does not include them.
+//
+// The real build exports { ...fields, All, List, Fields }; List is a
+// ready-made ListSelection over the observations collection using these
+// columns. (The archetype docs additionally list Columns and LinksBar; this
+// build ships neither, so treat those as preview/docs extras when authoring
+// forms that must run in real MOIS.)
+// ============================================================================
+
+const observationListColumns = [
+  { id: 'observationId', type: 'key' },
+  { title: 'Date', id: 'collectedDateTime', type: 'date', size: 'small' },
+  { title: 'Code', id: 'observationCode', type: 'string', size: 'tiny' },
+  { title: 'Test name', id: 'description', type: 'string' },
+  { title: 'Value', id: 'value', type: 'string', size: 'small' },
+  { title: 'Flag', id: 'abnormalFlag', type: 'rawcode' },
+];
+
+const Columns = {
+  observationId: observationListColumns[0],
+  collectedDateTime: observationListColumns[1],
+  observationCode: observationListColumns[2],
+  description: observationListColumns[3],
+  value: observationListColumns[4],
+  abnormalFlag: observationListColumns[5],
+};
+
+const List: React.FC<any> = (props) => {
+  return (
+    <ListSelection
+      sourceId="observations"
+      fieldId="observations"
+      columns={observationListColumns as any}
+      {...props}
+    />
+  );
+};
+
+// ============================================================================
 // LinksBar - Groups navigation link buttons together
 // ============================================================================
 
@@ -735,8 +782,10 @@ const All: React.FC<any> = (props) => {
 export const Observation = {
   ...Fields,
   All,
+  Columns,
   Fields,
   LinksBar,
+  List,
 };
 
 export default Observation;
