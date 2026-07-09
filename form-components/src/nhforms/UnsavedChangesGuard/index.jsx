@@ -372,6 +372,21 @@ const UnsavedChangesGuard = ({
           ? getSaveData(prepared)
           : buildDefaultSavePayload(persistFd, prepared?.formData))
 
+    // HTTP JSON workflow outputs (for example a Mirth listener) need the final
+    // submit payload, so they flush after getSubmitData and before MOIS submit.
+    if (
+      isSubmitAction &&
+      typeof window !== "undefined" &&
+      typeof window.__builderHttpJsonFlush === "function"
+    ) {
+      try {
+        await window.__builderHttpJsonFlush(payload, persistFd)
+      } catch (error) {
+        console.error("Workflow HTTP JSON output failed", error)
+        return
+      }
+    }
+
     if (actionId === "sign" && typeof signSubmit === "function") {
       // Real MOIS signSubmit is (note, sd, fd, options)
       const success = await signSubmit("", sd, persistFd, payload)
