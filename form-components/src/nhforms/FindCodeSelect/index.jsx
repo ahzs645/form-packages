@@ -204,6 +204,12 @@ const valueForLookupTarget = (selected, targetId, targetLabel, fallback) => {
   return fallback
 }
 
+const hasLookupSelection = (selected) => {
+  if (!selected || typeof selected !== 'object') return false
+  return [selected.code, selected.key, selected.value, selected.display, selected.text]
+    .some((value) => value !== undefined && value !== null && String(value).trim() !== '')
+}
+
 /**
  * Shared implementation used by the inline-option and code-list-backed variants.
  */
@@ -544,6 +550,7 @@ const FindCodeSelectWithSourceLookup = ({
   lookupType = '',
   lookupSourcePaths = [],
   targetFieldIds = [],
+  clearTargetFieldIds = [],
   targetLabels = {},
   ...props
 }) => {
@@ -575,9 +582,21 @@ const FindCodeSelectWithSourceLookup = ({
     const selected = Array.isArray(nextValue) ? nextValue[nextValue.length - 1] : nextValue
     const fallback = String(selected?.display ?? selected?.text ?? selected?.value ?? selected?.code ?? '')
     const targets = Array.isArray(targetFieldIds) && targetFieldIds.length > 0 ? targetFieldIds : [effectiveFieldId]
+    const clearTargets = Array.from(new Set([
+      ...targets,
+      ...(Array.isArray(clearTargetFieldIds) ? clearTargetFieldIds : []),
+    ].filter(Boolean)))
     setFormData(produce((draft) => {
       if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
       if (!draft.field.data || typeof draft.field.data !== 'object') draft.field.data = {}
+
+      if (!hasLookupSelection(selected)) {
+        clearTargets.forEach((targetId) => {
+          draft.field.data[targetId] = ''
+        })
+        return
+      }
+
       targets.forEach((targetId) => {
         if (!targetId) return
         draft.field.data[targetId] = valueForLookupTarget(selected, targetId, targetLabels?.[targetId], fallback)

@@ -544,6 +544,103 @@ const evaluateConditionEntries = (entries, match, getFieldValue) => {
     : entries.every((entry) => evaluateConditionEntry(entry, getFieldValue))
 }
 
+const READ_ONLY_NATIVE_ELEMENTS = new Set(['input', 'textarea'])
+const DISABLED_NATIVE_ELEMENTS = new Set(['button', 'fieldset', 'input', 'optgroup', 'option', 'select', 'textarea'])
+
+const cloneWithProtection = (children, overrides) => {
+  return React.Children.map(children, (child) => {
+    if (!React.isValidElement(child)) return child
+
+    if (child.type === React.Fragment) {
+      return React.cloneElement(child, {
+        children: cloneWithProtection(child.props.children, overrides),
+      })
+    }
+
+    if (typeof child.type === 'string') {
+      const nextProps = {}
+      if (READ_ONLY_NATIVE_ELEMENTS.has(child.type) && overrides.readOnly !== undefined) {
+        nextProps.readOnly = overrides.readOnly
+      }
+      if (DISABLED_NATIVE_ELEMENTS.has(child.type) && overrides.disabled !== undefined) {
+        nextProps.disabled = overrides.disabled
+      }
+      if (!READ_ONLY_NATIVE_ELEMENTS.has(child.type) && !DISABLED_NATIVE_ELEMENTS.has(child.type) && child.props.children) {
+        nextProps.children = cloneWithProtection(child.props.children, overrides)
+      }
+      return Object.keys(nextProps).length > 0 ? React.cloneElement(child, nextProps) : child
+    }
+
+    return React.cloneElement(child, {
+      ...(overrides.readOnly !== undefined ? { readOnly: overrides.readOnly } : {}),
+      ...(overrides.disabled !== undefined ? { disabled: overrides.disabled } : {}),
+    })
+  })
+}
+
+/**
+ * ConditionalReadOnly - applies or clears input protection while preserving content visibility.
+ *
+ * @param {Object} props
+ * @param {Array<Object>} props.conditions - Field-link conditions to evaluate
+ * @param {'all' | 'any'} [props.match='all'] - How multiple conditions combine
+ * @param {'set-readonly' | 'clear-readonly'} [props.action='set-readonly']
+ * @param {'readOnly' | 'disabled' | 'both'} [props.protectionMode='both']
+ * @param {Array<Object>} [props.rules] - Ordered protection rules; supersedes the single-rule props
+ * @param {React.ReactNode} props.children
+ */
+const ConditionalReadOnly = ({
+  conditions,
+  match = 'all',
+  action = 'set-readonly',
+  protectionMode = 'both',
+  rules,
+  children,
+}) => {
+  const [fd] = useActiveData()
+  const orderedRules = Array.isArray(rules) && rules.length > 0
+    ? rules
+    : [{ conditions, match, action, protectionMode }]
+  const overrides = orderedRules.reduce((next, rule) => {
+    const conditionMet = evaluateConditionEntries(
+      rule.conditions,
+      rule.match || 'all',
+      (id) => readControllerValue(fd?.field?.data, id)
+    )
+    if (!conditionMet) return next
+
+    const override = rule.action !== 'clear-readonly'
+    const mode = rule.protectionMode || 'both'
+    if (mode === 'readOnly' || mode === 'both') next.readOnly = override
+    if (mode === 'disabled' || mode === 'both') next.disabled = override
+    return next
+  }, {})
+
+  if (overrides.readOnly === undefined && overrides.disabled === undefined) return <>{children}</>
+
+  const protectedChildren = cloneWithProtection(children, overrides)
+  const usesDisabledFallback = overrides.disabled === true
+
+  if (!usesDisabledFallback) return <>{protectedChildren}</>
+
+  return (
+    <fieldset
+      disabled
+      aria-disabled='true'
+      data-conditional-read-only='true'
+      style={{
+        border: 0,
+        margin: 0,
+        minInlineSize: 0,
+        padding: 0,
+        width: '100%',
+      }}
+    >
+      {protectedChildren}
+    </fieldset>
+  )
+}
+
 /**
  * ConditionalField - A field wrapper with visibility rules
  *

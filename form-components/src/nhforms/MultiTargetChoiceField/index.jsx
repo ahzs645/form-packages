@@ -7,7 +7,7 @@
 //
 // option = {
 //   code, display,
-//   target: { fieldId, mode: "scalar" | "arrayMember" | "flag", value?, system? },
+//   target: { fieldId, mode: "scalar" | "arrayMember" | "flag" | "yesNo", value?, offValue?, system? },
 //   force?: { fieldId, value, whenAnyOf?: string[] }   // value may be a coding or a code string
 // }
 //
@@ -19,6 +19,9 @@
 //   "flag"        — field is a boolean envelope { checked }; checked ⇔ field.checked.
 //                   Toggle on → { checked: true }; off → { checked: undefined }. Use
 //                   for yes/no fields shared with other checkboxes (e.g. genC19contact).
+//   "yesNo"       — field stores independent legacy values (default "YES"/"NO").
+//                   This keeps grouped checkbox presentation without collapsing
+//                   separate MOIS columns into one multi-select array.
 //
 // option.visibleWhen (optional) — gate a single option's visibility with the SAME
 // condition vocabulary the builder's fieldLinkRules use:
@@ -130,6 +133,9 @@ const optionChecked = (data, option) => {
   if (target.mode === "flag") {
     return Boolean(current && current.checked)
   }
+  if (target.mode === "yesNo") {
+    return codeOf(current) === String(target.value ?? "YES")
+  }
   return target.value != null && target.value !== "" ? codeOf(current) === target.value : hasValue(current)
 }
 
@@ -166,6 +172,10 @@ const computeToggledData = (prevData, option, next, options, aggregateFieldId) =
     }
   } else if (target.mode === "flag") {
     data[target.fieldId] = next ? { checked: true } : { checked: undefined }
+  } else if (target.mode === "yesNo") {
+    data[target.fieldId] = next
+      ? String(target.value ?? "YES")
+      : String(target.offValue ?? "NO")
   } else {
     data[target.fieldId] = next ? toCoding(target.value, option.display, target.system) : null
   }
@@ -182,6 +192,7 @@ const MultiTargetChoiceField = ({
   label = "Categories",
   options = [],
   columns = 1,
+  writeAggregate = true,
   readOnly = false,
   disabled = false,
 }) => {
@@ -194,7 +205,13 @@ const MultiTargetChoiceField = ({
     setFormData(produce((draftFd) => {
       if (!draftFd.field) draftFd.field = { data: {}, status: {}, history: [] }
       if (!draftFd.field.data || typeof draftFd.field.data !== "object") draftFd.field.data = {}
-      draftFd.field.data = computeToggledData(draftFd.field.data, option, next, options, effectiveFieldId)
+      draftFd.field.data = computeToggledData(
+        draftFd.field.data,
+        option,
+        next,
+        options,
+        writeAggregate ? effectiveFieldId : undefined
+      )
     }))
   }
 

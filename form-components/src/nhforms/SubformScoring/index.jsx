@@ -514,7 +514,12 @@ const _stringifyObservationValue = (value) => {
 
 const _resolveObservationTemplate = (template, values) => String(template || "").replace(
   /\{\{\s*([^}\s]+)\s*\}\}/g,
-  (_, fieldId) => _stringifyObservationValue(values?.[fieldId])
+  (_, fieldPath) => {
+    const direct = values && Object.prototype.hasOwnProperty.call(values, fieldPath)
+      ? values[fieldPath]
+      : _resolvePathValue(values, fieldPath)
+    return _stringifyObservationValue(direct)
+  }
 )
 
 const _buildSubformObservationUpdates = (outputs, context) => {
@@ -738,20 +743,44 @@ const _evaluateExpression = (expression, varsByName) => {
   if (typeof expression !== "string") return null
   const trimmed = expression.trim()
   if (!trimmed) return null
-  if (!/^[0-9+\-*/().,\s_a-zA-Z]+$/.test(trimmed)) return null
+  if (!/^[0-9+\-*/().,\s_[\]a-zA-Z]+$/.test(trimmed)) return null
 
-  const tokenMatches = trimmed.match(/[A-Za-z_][A-Za-z0-9_]*/g) || []
+  const functionNames = new Set(["round", "floor", "ceil", "min", "max", "abs", "mod", "iif"])
+  const generatedVars = {}
+  let generatedIndex = 0
+  let prepared = trimmed.replace(/\[([^\]]+)\]/g, (_match, fieldId) => {
+    const token = `__field_${generatedIndex++}`
+    generatedVars[token] = varsByName[String(fieldId).trim()]
+    return token
+  })
+  const allVars = { ...varsByName, ...generatedVars }
+  const tokenMatches = prepared.match(/[A-Za-z_][A-Za-z0-9_]*/g) || []
   const uniqueTokens = Array.from(new Set(tokenMatches)).sort((a, b) => b.length - a.length)
-  let prepared = trimmed
   for (const token of uniqueTokens) {
-    const numeric = varsByName[token]
+    if (functionNames.has(token)) continue
+    const numeric = allVars[token]
     if (!Number.isFinite(numeric)) return null
     const replacement = String(numeric)
     prepared = prepared.replace(new RegExp(`\\b${token}\\b`, "g"), replacement)
   }
 
   try {
-    const result = Function(`"use strict"; return (${prepared});`)()
+    const round = (value, precision = 0) => {
+      const places = Number.isFinite(precision) ? Math.max(0, Math.floor(precision)) : 0
+      const factor = 10 ** places
+      return Math.round((Number(value) + Number.EPSILON) * factor) / factor
+    }
+    const floor = Math.floor
+    const ceil = Math.ceil
+    const min = Math.min
+    const max = Math.max
+    const abs = Math.abs
+    const mod = (left, right) => Number(left) % Number(right)
+    const iif = (condition, whenTrue, whenFalse) => condition ? whenTrue : whenFalse
+    const result = Function(
+      "round", "floor", "ceil", "min", "max", "abs", "mod", "iif",
+      `"use strict"; return (${prepared});`
+    )(round, floor, ceil, min, max, abs, mod, iif)
     return typeof result === "number" && Number.isFinite(result) ? result : null
   } catch (error) {
     return null
@@ -986,10 +1015,11 @@ const _latestObservationDefault = (field, sd) => {
   return latest[aspect]
 }
 
-const _resolveFieldDefaultValue = (field, sd) => {
+const _resolveFieldDefaultValue = (field, sd, allowObservationDefault = true) => {
   if (!field || _isHeadingField(field)) return undefined
 
-  const explicitDefault = _latestObservationDefault(field, sd) ?? field.defaultValue ?? field.default_value
+  const observationDefault = allowObservationDefault ? _latestObservationDefault(field, sd) : undefined
+  const explicitDefault = observationDefault ?? field.defaultValue ?? field.default_value
   if (explicitDefault === undefined) return undefined
 
   if (explicitDefault === "__today") {
@@ -1366,6 +1396,7 @@ const SubformScoringInner = ({
   modalConfig = {},
   hideTitle = false,
   showProgress = true,
+  bringForward = true,
   isOpen: controlledIsOpen,
   onOpenChange,
   hideTriggerButton = false,
@@ -1445,7 +1476,7 @@ const SubformScoringInner = ({
     const result = {}
     for (const question of config.questions || []) {
       const value = fd?.field?.data?.[question.id]
-      if (value) {
+      if (value !== undefined && value !== null && value !== "") {
         result[question.id] = value
       }
     }
@@ -1462,6 +1493,33 @@ const SubformScoringInner = ({
     for (const total of totals) {
       let score = 0
       let isComplete = true
+      const expressionVars = {}
+      for (const question of config.questions || []) {
+        const answer = answers[question.id]
+        const optionScoreMap = scoreMap.get(question.id)
+        const answerScore = _getScoreFromValue(answer, optionScoreMap)
+        const resolvedScore = answerScore !== null
+          ? answerScore
+          : (Number.isFinite(question.emptyScore) ? Number(question.emptyScore) : null)
+        if (resolvedScore === null) continue
+        const aliases = [question.id, question.fieldId, ...(question.childFieldIds || [])]
+        aliases.filter(Boolean).forEach((alias) => {
+          expressionVars[alias] = resolvedScore
+        })
+      }
+      for (const variable of total.contextVariables || []) {
+        if (!variable?.id || !variable?.sourcePath) continue
+        const root = { patient: sd?.patient, sourceData: sd, formData: fd?.field?.data }
+        const rawValue = _resolvePathValue(root, variable.sourcePath)
+        const normalizedValues = Array.from(_collectScoreCandidates(rawValue))
+          .map((candidate) => String(candidate ?? "").trim().toLowerCase())
+        const matched = (variable.equals || []).some((candidate) =>
+          normalizedValues.includes(String(candidate ?? "").trim().toLowerCase())
+        )
+        expressionVars[variable.id] = matched
+          ? (Number.isFinite(variable.trueValue) ? Number(variable.trueValue) : 1)
+          : (Number.isFinite(variable.falseValue) ? Number(variable.falseValue) : 0)
+      }
       for (const term of total.terms || []) {
         const termQuestionId = term.questionId || term.answerFieldId
         const answer = answers[termQuestionId]
@@ -1469,6 +1527,8 @@ const SubformScoringInner = ({
         const answerScore = _getScoreFromValue(answer, optionScoreMap)
         if (answerScore !== null) {
           score += answerScore * (term.weight || 1)
+        } else if (Number.isFinite(questionsById.get(termQuestionId)?.emptyScore)) {
+          score += Number(questionsById.get(termQuestionId).emptyScore) * (term.weight || 1)
         } else if (config.layout === "grouped-checklist") {
           const question = questionsById.get(termQuestionId)
           const { uncheckedOption } = _resolveChecklistOptions(question, config.sharedOptions)
@@ -1481,10 +1541,19 @@ const SubformScoringInner = ({
           isComplete = false
         }
       }
+      if (typeof total.expression === "string" && total.expression.trim()) {
+        const evaluated = isComplete ? _evaluateExpression(total.expression, expressionVars) : null
+        score = evaluated
+        isComplete = evaluated !== null
+      }
+      if (isComplete && Number.isFinite(score) && Number.isFinite(total.precision)) {
+        const factor = 10 ** Math.max(0, Math.floor(Number(total.precision)))
+        score = Math.round((score + Number.EPSILON) * factor) / factor
+      }
       results[total.id] = { score: isComplete ? score : null, isComplete }
     }
     return results
-  }, [isDataEntryMode, answers, config.calculatedValues, config.layout, config.questions, config.sharedOptions, config.totals, scoreMap])
+  }, [isDataEntryMode, answers, config.calculatedValues, config.layout, config.questions, config.sharedOptions, config.totals, scoreMap, sd, fd])
 
   // Data-entry-mode values and calculations
   const dataEntryFields = useMemo(() => {
@@ -1602,7 +1671,7 @@ const SubformScoringInner = ({
   const [showBloodGlucoseUsEntry, setShowBloodGlucoseUsEntry] = useState(false)
 
   const dataEntryValues = useMemo(() => {
-    if (!isDataEntryMode) return {}
+    if (!isDataEntryMode && dataEntryFields.length === 0) return {}
     const result = {}
     for (const field of dataEntryFields) {
       if (_isHeadingField(field)) continue
@@ -1629,7 +1698,7 @@ const SubformScoringInner = ({
     const pendingDefaults = []
     for (const field of dataEntryFields) {
       if (!field?.id || _isMeaningfulValue(dataEntryValues[field.id])) continue
-      const defaultValue = _resolveFieldDefaultValue(field, sd)
+      const defaultValue = _resolveFieldDefaultValue(field, sd, bringForward)
       if (defaultValue === undefined) continue
       pendingDefaults.push([field.id, defaultValue])
     }
@@ -1656,7 +1725,7 @@ const SubformScoringInner = ({
         draft.field.data[fieldId] = defaultValue
       })
     }))
-  }, [isDataEntryMode, isDialogOpen, dataEntryFields, dataEntryValues, fd, onDataEntryValueChange, sd])
+  }, [bringForward, isDataEntryMode, isDialogOpen, dataEntryFields, dataEntryValues, fd, onDataEntryValueChange, sd])
 
   const dataEntryCalculations = useMemo(() => {
     if (Array.isArray(dataEntryConfig?.calculatedValues) && dataEntryConfig.calculatedValues.length > 0) {
@@ -1966,7 +2035,7 @@ const SubformScoringInner = ({
             label={field.label}
             codeSystem={field.codeSystem}
             value={dataEntryValues[field.id] ?? null}
-            defaultValue={_resolveFieldDefaultValue(field, sd)}
+            defaultValue={_resolveFieldDefaultValue(field, sd, bringForward)}
             placeholder={field.placeholder || "Please search"}
             required={required}
             openOnFocus
@@ -2833,12 +2902,30 @@ const SubformScoringInner = ({
             )}
           </div>
         ) : (
-          <ScoringModule
-            id={id}
-            config={config}
-            title=""
-            showProgress={showProgress}
-          />
+          <div style={{ maxHeight: "65vh", overflowY: "auto", paddingRight: "4px" }}>
+            {dataEntryFields.length > 0 && (
+              <div style={{ display: "flex", flexWrap: "wrap", columnGap: "12px", rowGap: "10px", marginBottom: "16px" }}>
+                {dataEntryFields.map((field) => {
+                  if (!_evaluateDataEntryVisibility(field, dataEntryValues)) return null
+                  const basis = _resolveFieldWidthBasis(field)
+                  return (
+                    <div
+                      key={`supplemental-${field.id}`}
+                      style={{ flex: `1 1 ${basis}`, maxWidth: basis, minWidth: "220px" }}
+                    >
+                      {renderDataEntryField(field)}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+            <ScoringModule
+              id={id}
+              config={config}
+              title=""
+              showProgress={showProgress}
+            />
+          </div>
         )}
         <div style={{ height: "16px" }} />
         <Stack horizontal horizontalAlign="end" tokens={{ childrenGap: 8 }}>

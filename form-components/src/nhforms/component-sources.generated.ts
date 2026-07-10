@@ -2948,13 +2948,50 @@ const _hasValue = (value) => {
 
 const _iif = (condition, whenTrue, whenFalse) => (condition ? whenTrue : whenFalse)
 const _countTrue = (...values) => values.flat().filter((value) => value === true || value === "true" || value === "Y" || value === "Yes" || value === 1).length
+const _floor = (value) => {
+  const numeric = _toNumericValue(value)
+  return Number.isFinite(numeric) ? Math.floor(numeric) : null
+}
+const _mod = (value, divisor) => {
+  const numeric = _toNumericValue(value)
+  const numericDivisor = _toNumericValue(divisor)
+  if (!Number.isFinite(numeric) || !Number.isFinite(numericDivisor) || numericDivisor === 0) return null
+  return numeric % numericDivisor
+}
+const _round = (value, precision = 0) => {
+  const numeric = _toNumericValue(value)
+  const numericPrecision = _toNumericValue(precision)
+  if (!Number.isFinite(numeric) || !Number.isFinite(numericPrecision)) return null
+  const digits = Math.round(numericPrecision)
+  const factor = 10 ** digits
+  if (!Number.isFinite(factor) || factor === 0) return null
+  return Math.round(numeric * factor) / factor
+}
+const _numericExtrema = (values, select) => {
+  const numericValues = values.flat().map(_toNumericValue)
+  if (numericValues.length === 0 || numericValues.some((value) => !Number.isFinite(value))) return null
+  return select(...numericValues)
+}
+const _min = (...values) => _numericExtrema(values, Math.min)
+const _max = (...values) => _numericExtrema(values, Math.max)
 const _MS_PER_DAY = 24 * 60 * 60 * 1000
+
+const _isDateOnlyValue = (value) => {
+  if (typeof value === "string") return /^\\d{4}-\\d{2}-\\d{2}$/.test(value.trim())
+  if (!value || typeof value !== "object" || value instanceof Date) return false
+  return ["value", "date", "text", "display"].some((key) => _isDateOnlyValue(value[key]))
+}
+
+const _calendarDayNumber = (date) => Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / _MS_PER_DAY
 
 const _daysSince = (value, ref) => {
   const date = _toDateValue(value)
   if (!date) return null
   const reference = ref === undefined ? new Date() : _toDateValue(ref)
   if (!reference) return null
+  if (_isDateOnlyValue(value) && _isDateOnlyValue(ref)) {
+    return _calendarDayNumber(reference) - _calendarDayNumber(date)
+  }
   return Math.floor((reference.getTime() - date.getTime()) / _MS_PER_DAY)
 }
 
@@ -2993,7 +3030,7 @@ const _replaceBareReferencesOutsideQuotes = (expression, refs, valuesByFieldId) 
   const replaceInSegment = (segment) => {
     let nextSegment = segment
     for (const ref of refs) {
-      if (["iif", "score", "contains", "hasValue", "countTrue", "daysSince", "monthsSince", "null", "true", "false"].includes(ref)) continue
+      if (["iif", "score", "contains", "hasValue", "countTrue", "daysSince", "monthsSince", "floor", "mod", "round", "min", "max", "null", "true", "false"].includes(ref)) continue
       const numeric = _toNumericValue(valuesByFieldId?.[ref])
       if (!Number.isFinite(numeric)) return null
       nextSegment = nextSegment.replace(new RegExp(\`\\\\b\${_escapeRegExp(ref)}\\\\b\`, "g"), String(numeric))
@@ -3053,14 +3090,19 @@ const _evaluateComputedExpression = (expression, valuesByFieldId, currentFieldId
   if (prepared === null) return null
 
   try {
-    const result = Function("iif", "score", "contains", "hasValue", "countTrue", "daysSince", "monthsSince", \`"use strict"; return (\${prepared});\`)(
+    const result = Function("iif", "score", "contains", "hasValue", "countTrue", "daysSince", "monthsSince", "floor", "mod", "round", "min", "max", \`"use strict"; return (\${prepared});\`)(
       _iif,
       _score,
       _contains,
       _hasValue,
       _countTrue,
       _daysSince,
-      _monthsSince
+      _monthsSince,
+      _floor,
+      _mod,
+      _round,
+      _min,
+      _max
     )
     if (typeof result === "number") return Number.isFinite(result) ? result : null
     if (typeof result === "string" || typeof result === "boolean") return result
@@ -3735,6 +3777,103 @@ const evaluateConditionEntries = (entries, match, getFieldValue) => {
   return match === 'any'
     ? entries.some((entry) => evaluateConditionEntry(entry, getFieldValue))
     : entries.every((entry) => evaluateConditionEntry(entry, getFieldValue))
+}
+
+const READ_ONLY_NATIVE_ELEMENTS = new Set(['input', 'textarea'])
+const DISABLED_NATIVE_ELEMENTS = new Set(['button', 'fieldset', 'input', 'optgroup', 'option', 'select', 'textarea'])
+
+const cloneWithProtection = (children, overrides) => {
+  return React.Children.map(children, (child) => {
+    if (!React.isValidElement(child)) return child
+
+    if (child.type === React.Fragment) {
+      return React.cloneElement(child, {
+        children: cloneWithProtection(child.props.children, overrides),
+      })
+    }
+
+    if (typeof child.type === 'string') {
+      const nextProps = {}
+      if (READ_ONLY_NATIVE_ELEMENTS.has(child.type) && overrides.readOnly !== undefined) {
+        nextProps.readOnly = overrides.readOnly
+      }
+      if (DISABLED_NATIVE_ELEMENTS.has(child.type) && overrides.disabled !== undefined) {
+        nextProps.disabled = overrides.disabled
+      }
+      if (!READ_ONLY_NATIVE_ELEMENTS.has(child.type) && !DISABLED_NATIVE_ELEMENTS.has(child.type) && child.props.children) {
+        nextProps.children = cloneWithProtection(child.props.children, overrides)
+      }
+      return Object.keys(nextProps).length > 0 ? React.cloneElement(child, nextProps) : child
+    }
+
+    return React.cloneElement(child, {
+      ...(overrides.readOnly !== undefined ? { readOnly: overrides.readOnly } : {}),
+      ...(overrides.disabled !== undefined ? { disabled: overrides.disabled } : {}),
+    })
+  })
+}
+
+/**
+ * ConditionalReadOnly - applies or clears input protection while preserving content visibility.
+ *
+ * @param {Object} props
+ * @param {Array<Object>} props.conditions - Field-link conditions to evaluate
+ * @param {'all' | 'any'} [props.match='all'] - How multiple conditions combine
+ * @param {'set-readonly' | 'clear-readonly'} [props.action='set-readonly']
+ * @param {'readOnly' | 'disabled' | 'both'} [props.protectionMode='both']
+ * @param {Array<Object>} [props.rules] - Ordered protection rules; supersedes the single-rule props
+ * @param {React.ReactNode} props.children
+ */
+const ConditionalReadOnly = ({
+  conditions,
+  match = 'all',
+  action = 'set-readonly',
+  protectionMode = 'both',
+  rules,
+  children,
+}) => {
+  const [fd] = useActiveData()
+  const orderedRules = Array.isArray(rules) && rules.length > 0
+    ? rules
+    : [{ conditions, match, action, protectionMode }]
+  const overrides = orderedRules.reduce((next, rule) => {
+    const conditionMet = evaluateConditionEntries(
+      rule.conditions,
+      rule.match || 'all',
+      (id) => readControllerValue(fd?.field?.data, id)
+    )
+    if (!conditionMet) return next
+
+    const override = rule.action !== 'clear-readonly'
+    const mode = rule.protectionMode || 'both'
+    if (mode === 'readOnly' || mode === 'both') next.readOnly = override
+    if (mode === 'disabled' || mode === 'both') next.disabled = override
+    return next
+  }, {})
+
+  if (overrides.readOnly === undefined && overrides.disabled === undefined) return <>{children}</>
+
+  const protectedChildren = cloneWithProtection(children, overrides)
+  const usesDisabledFallback = overrides.disabled === true
+
+  if (!usesDisabledFallback) return <>{protectedChildren}</>
+
+  return (
+    <fieldset
+      disabled
+      aria-disabled='true'
+      data-conditional-read-only='true'
+      style={{
+        border: 0,
+        margin: 0,
+        minInlineSize: 0,
+        padding: 0,
+        width: '100%',
+      }}
+    >
+      {protectedChildren}
+    </fieldset>
+  )
 }
 
 /**
@@ -7396,6 +7535,12 @@ const valueForLookupTarget = (selected, targetId, targetLabel, fallback) => {
   return fallback
 }
 
+const hasLookupSelection = (selected) => {
+  if (!selected || typeof selected !== 'object') return false
+  return [selected.code, selected.key, selected.value, selected.display, selected.text]
+    .some((value) => value !== undefined && value !== null && String(value).trim() !== '')
+}
+
 /**
  * Shared implementation used by the inline-option and code-list-backed variants.
  */
@@ -7736,6 +7881,7 @@ const FindCodeSelectWithSourceLookup = ({
   lookupType = '',
   lookupSourcePaths = [],
   targetFieldIds = [],
+  clearTargetFieldIds = [],
   targetLabels = {},
   ...props
 }) => {
@@ -7767,9 +7913,21 @@ const FindCodeSelectWithSourceLookup = ({
     const selected = Array.isArray(nextValue) ? nextValue[nextValue.length - 1] : nextValue
     const fallback = String(selected?.display ?? selected?.text ?? selected?.value ?? selected?.code ?? '')
     const targets = Array.isArray(targetFieldIds) && targetFieldIds.length > 0 ? targetFieldIds : [effectiveFieldId]
+    const clearTargets = Array.from(new Set([
+      ...targets,
+      ...(Array.isArray(clearTargetFieldIds) ? clearTargetFieldIds : []),
+    ].filter(Boolean)))
     setFormData(produce((draft) => {
       if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
       if (!draft.field.data || typeof draft.field.data !== 'object') draft.field.data = {}
+
+      if (!hasLookupSelection(selected)) {
+        clearTargets.forEach((targetId) => {
+          draft.field.data[targetId] = ''
+        })
+        return
+      }
+
       targets.forEach((targetId) => {
         if (!targetId) return
         draft.field.data[targetId] = valueForLookupTarget(selected, targetId, targetLabels?.[targetId], fallback)
@@ -17524,7 +17682,7 @@ const MoisPatientReviewLink = ({
 //
 // option = {
 //   code, display,
-//   target: { fieldId, mode: "scalar" | "arrayMember" | "flag", value?, system? },
+//   target: { fieldId, mode: "scalar" | "arrayMember" | "flag" | "yesNo", value?, offValue?, system? },
 //   force?: { fieldId, value, whenAnyOf?: string[] }   // value may be a coding or a code string
 // }
 //
@@ -17536,6 +17694,9 @@ const MoisPatientReviewLink = ({
 //   "flag"        — field is a boolean envelope { checked }; checked ⇔ field.checked.
 //                   Toggle on → { checked: true }; off → { checked: undefined }. Use
 //                   for yes/no fields shared with other checkboxes (e.g. genC19contact).
+//   "yesNo"       — field stores independent legacy values (default "YES"/"NO").
+//                   This keeps grouped checkbox presentation without collapsing
+//                   separate MOIS columns into one multi-select array.
 //
 // option.visibleWhen (optional) — gate a single option's visibility with the SAME
 // condition vocabulary the builder's fieldLinkRules use:
@@ -17647,6 +17808,9 @@ const optionChecked = (data, option) => {
   if (target.mode === "flag") {
     return Boolean(current && current.checked)
   }
+  if (target.mode === "yesNo") {
+    return codeOf(current) === String(target.value ?? "YES")
+  }
   return target.value != null && target.value !== "" ? codeOf(current) === target.value : hasValue(current)
 }
 
@@ -17683,6 +17847,10 @@ const computeToggledData = (prevData, option, next, options, aggregateFieldId) =
     }
   } else if (target.mode === "flag") {
     data[target.fieldId] = next ? { checked: true } : { checked: undefined }
+  } else if (target.mode === "yesNo") {
+    data[target.fieldId] = next
+      ? String(target.value ?? "YES")
+      : String(target.offValue ?? "NO")
   } else {
     data[target.fieldId] = next ? toCoding(target.value, option.display, target.system) : null
   }
@@ -17699,6 +17867,7 @@ const MultiTargetChoiceField = ({
   label = "Categories",
   options = [],
   columns = 1,
+  writeAggregate = true,
   readOnly = false,
   disabled = false,
 }) => {
@@ -17711,7 +17880,13 @@ const MultiTargetChoiceField = ({
     setFormData(produce((draftFd) => {
       if (!draftFd.field) draftFd.field = { data: {}, status: {}, history: [] }
       if (!draftFd.field.data || typeof draftFd.field.data !== "object") draftFd.field.data = {}
-      draftFd.field.data = computeToggledData(draftFd.field.data, option, next, options, effectiveFieldId)
+      draftFd.field.data = computeToggledData(
+        draftFd.field.data,
+        option,
+        next,
+        options,
+        writeAggregate ? effectiveFieldId : undefined
+      )
     }))
   }
 
@@ -24762,7 +24937,12 @@ const _stringifyObservationValue = (value) => {
 
 const _resolveObservationTemplate = (template, values) => String(template || "").replace(
   /\\{\\{\\s*([^}\\s]+)\\s*\\}\\}/g,
-  (_, fieldId) => _stringifyObservationValue(values?.[fieldId])
+  (_, fieldPath) => {
+    const direct = values && Object.prototype.hasOwnProperty.call(values, fieldPath)
+      ? values[fieldPath]
+      : _resolvePathValue(values, fieldPath)
+    return _stringifyObservationValue(direct)
+  }
 )
 
 const _buildSubformObservationUpdates = (outputs, context) => {
@@ -24986,20 +25166,44 @@ const _evaluateExpression = (expression, varsByName) => {
   if (typeof expression !== "string") return null
   const trimmed = expression.trim()
   if (!trimmed) return null
-  if (!/^[0-9+\\-*/().,\\s_a-zA-Z]+$/.test(trimmed)) return null
+  if (!/^[0-9+\\-*/().,\\s_[\\]a-zA-Z]+$/.test(trimmed)) return null
 
-  const tokenMatches = trimmed.match(/[A-Za-z_][A-Za-z0-9_]*/g) || []
+  const functionNames = new Set(["round", "floor", "ceil", "min", "max", "abs", "mod", "iif"])
+  const generatedVars = {}
+  let generatedIndex = 0
+  let prepared = trimmed.replace(/\\[([^\\]]+)\\]/g, (_match, fieldId) => {
+    const token = \`__field_\${generatedIndex++}\`
+    generatedVars[token] = varsByName[String(fieldId).trim()]
+    return token
+  })
+  const allVars = { ...varsByName, ...generatedVars }
+  const tokenMatches = prepared.match(/[A-Za-z_][A-Za-z0-9_]*/g) || []
   const uniqueTokens = Array.from(new Set(tokenMatches)).sort((a, b) => b.length - a.length)
-  let prepared = trimmed
   for (const token of uniqueTokens) {
-    const numeric = varsByName[token]
+    if (functionNames.has(token)) continue
+    const numeric = allVars[token]
     if (!Number.isFinite(numeric)) return null
     const replacement = String(numeric)
     prepared = prepared.replace(new RegExp(\`\\\\b\${token}\\\\b\`, "g"), replacement)
   }
 
   try {
-    const result = Function(\`"use strict"; return (\${prepared});\`)()
+    const round = (value, precision = 0) => {
+      const places = Number.isFinite(precision) ? Math.max(0, Math.floor(precision)) : 0
+      const factor = 10 ** places
+      return Math.round((Number(value) + Number.EPSILON) * factor) / factor
+    }
+    const floor = Math.floor
+    const ceil = Math.ceil
+    const min = Math.min
+    const max = Math.max
+    const abs = Math.abs
+    const mod = (left, right) => Number(left) % Number(right)
+    const iif = (condition, whenTrue, whenFalse) => condition ? whenTrue : whenFalse
+    const result = Function(
+      "round", "floor", "ceil", "min", "max", "abs", "mod", "iif",
+      \`"use strict"; return (\${prepared});\`
+    )(round, floor, ceil, min, max, abs, mod, iif)
     return typeof result === "number" && Number.isFinite(result) ? result : null
   } catch (error) {
     return null
@@ -25234,10 +25438,11 @@ const _latestObservationDefault = (field, sd) => {
   return latest[aspect]
 }
 
-const _resolveFieldDefaultValue = (field, sd) => {
+const _resolveFieldDefaultValue = (field, sd, allowObservationDefault = true) => {
   if (!field || _isHeadingField(field)) return undefined
 
-  const explicitDefault = _latestObservationDefault(field, sd) ?? field.defaultValue ?? field.default_value
+  const observationDefault = allowObservationDefault ? _latestObservationDefault(field, sd) : undefined
+  const explicitDefault = observationDefault ?? field.defaultValue ?? field.default_value
   if (explicitDefault === undefined) return undefined
 
   if (explicitDefault === "__today") {
@@ -25614,6 +25819,7 @@ const SubformScoringInner = ({
   modalConfig = {},
   hideTitle = false,
   showProgress = true,
+  bringForward = true,
   isOpen: controlledIsOpen,
   onOpenChange,
   hideTriggerButton = false,
@@ -25693,7 +25899,7 @@ const SubformScoringInner = ({
     const result = {}
     for (const question of config.questions || []) {
       const value = fd?.field?.data?.[question.id]
-      if (value) {
+      if (value !== undefined && value !== null && value !== "") {
         result[question.id] = value
       }
     }
@@ -25710,6 +25916,33 @@ const SubformScoringInner = ({
     for (const total of totals) {
       let score = 0
       let isComplete = true
+      const expressionVars = {}
+      for (const question of config.questions || []) {
+        const answer = answers[question.id]
+        const optionScoreMap = scoreMap.get(question.id)
+        const answerScore = _getScoreFromValue(answer, optionScoreMap)
+        const resolvedScore = answerScore !== null
+          ? answerScore
+          : (Number.isFinite(question.emptyScore) ? Number(question.emptyScore) : null)
+        if (resolvedScore === null) continue
+        const aliases = [question.id, question.fieldId, ...(question.childFieldIds || [])]
+        aliases.filter(Boolean).forEach((alias) => {
+          expressionVars[alias] = resolvedScore
+        })
+      }
+      for (const variable of total.contextVariables || []) {
+        if (!variable?.id || !variable?.sourcePath) continue
+        const root = { patient: sd?.patient, sourceData: sd, formData: fd?.field?.data }
+        const rawValue = _resolvePathValue(root, variable.sourcePath)
+        const normalizedValues = Array.from(_collectScoreCandidates(rawValue))
+          .map((candidate) => String(candidate ?? "").trim().toLowerCase())
+        const matched = (variable.equals || []).some((candidate) =>
+          normalizedValues.includes(String(candidate ?? "").trim().toLowerCase())
+        )
+        expressionVars[variable.id] = matched
+          ? (Number.isFinite(variable.trueValue) ? Number(variable.trueValue) : 1)
+          : (Number.isFinite(variable.falseValue) ? Number(variable.falseValue) : 0)
+      }
       for (const term of total.terms || []) {
         const termQuestionId = term.questionId || term.answerFieldId
         const answer = answers[termQuestionId]
@@ -25717,6 +25950,8 @@ const SubformScoringInner = ({
         const answerScore = _getScoreFromValue(answer, optionScoreMap)
         if (answerScore !== null) {
           score += answerScore * (term.weight || 1)
+        } else if (Number.isFinite(questionsById.get(termQuestionId)?.emptyScore)) {
+          score += Number(questionsById.get(termQuestionId).emptyScore) * (term.weight || 1)
         } else if (config.layout === "grouped-checklist") {
           const question = questionsById.get(termQuestionId)
           const { uncheckedOption } = _resolveChecklistOptions(question, config.sharedOptions)
@@ -25729,10 +25964,19 @@ const SubformScoringInner = ({
           isComplete = false
         }
       }
+      if (typeof total.expression === "string" && total.expression.trim()) {
+        const evaluated = isComplete ? _evaluateExpression(total.expression, expressionVars) : null
+        score = evaluated
+        isComplete = evaluated !== null
+      }
+      if (isComplete && Number.isFinite(score) && Number.isFinite(total.precision)) {
+        const factor = 10 ** Math.max(0, Math.floor(Number(total.precision)))
+        score = Math.round((score + Number.EPSILON) * factor) / factor
+      }
       results[total.id] = { score: isComplete ? score : null, isComplete }
     }
     return results
-  }, [isDataEntryMode, answers, config.calculatedValues, config.layout, config.questions, config.sharedOptions, config.totals, scoreMap])
+  }, [isDataEntryMode, answers, config.calculatedValues, config.layout, config.questions, config.sharedOptions, config.totals, scoreMap, sd, fd])
 
   // Data-entry-mode values and calculations
   const dataEntryFields = useMemo(() => {
@@ -25850,7 +26094,7 @@ const SubformScoringInner = ({
   const [showBloodGlucoseUsEntry, setShowBloodGlucoseUsEntry] = useState(false)
 
   const dataEntryValues = useMemo(() => {
-    if (!isDataEntryMode) return {}
+    if (!isDataEntryMode && dataEntryFields.length === 0) return {}
     const result = {}
     for (const field of dataEntryFields) {
       if (_isHeadingField(field)) continue
@@ -25877,7 +26121,7 @@ const SubformScoringInner = ({
     const pendingDefaults = []
     for (const field of dataEntryFields) {
       if (!field?.id || _isMeaningfulValue(dataEntryValues[field.id])) continue
-      const defaultValue = _resolveFieldDefaultValue(field, sd)
+      const defaultValue = _resolveFieldDefaultValue(field, sd, bringForward)
       if (defaultValue === undefined) continue
       pendingDefaults.push([field.id, defaultValue])
     }
@@ -25904,7 +26148,7 @@ const SubformScoringInner = ({
         draft.field.data[fieldId] = defaultValue
       })
     }))
-  }, [isDataEntryMode, isDialogOpen, dataEntryFields, dataEntryValues, fd, onDataEntryValueChange, sd])
+  }, [bringForward, isDataEntryMode, isDialogOpen, dataEntryFields, dataEntryValues, fd, onDataEntryValueChange, sd])
 
   const dataEntryCalculations = useMemo(() => {
     if (Array.isArray(dataEntryConfig?.calculatedValues) && dataEntryConfig.calculatedValues.length > 0) {
@@ -26214,7 +26458,7 @@ const SubformScoringInner = ({
             label={field.label}
             codeSystem={field.codeSystem}
             value={dataEntryValues[field.id] ?? null}
-            defaultValue={_resolveFieldDefaultValue(field, sd)}
+            defaultValue={_resolveFieldDefaultValue(field, sd, bringForward)}
             placeholder={field.placeholder || "Please search"}
             required={required}
             openOnFocus
@@ -27081,12 +27325,30 @@ const SubformScoringInner = ({
             )}
           </div>
         ) : (
-          <ScoringModule
-            id={id}
-            config={config}
-            title=""
-            showProgress={showProgress}
-          />
+          <div style={{ maxHeight: "65vh", overflowY: "auto", paddingRight: "4px" }}>
+            {dataEntryFields.length > 0 && (
+              <div style={{ display: "flex", flexWrap: "wrap", columnGap: "12px", rowGap: "10px", marginBottom: "16px" }}>
+                {dataEntryFields.map((field) => {
+                  if (!_evaluateDataEntryVisibility(field, dataEntryValues)) return null
+                  const basis = _resolveFieldWidthBasis(field)
+                  return (
+                    <div
+                      key={\`supplemental-\${field.id}\`}
+                      style={{ flex: \`1 1 \${basis}\`, maxWidth: basis, minWidth: "220px" }}
+                    >
+                      {renderDataEntryField(field)}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+            <ScoringModule
+              id={id}
+              config={config}
+              title=""
+              showProgress={showProgress}
+            />
+          </div>
         )}
         <div style={{ height: "16px" }} />
         <Stack horizontal horizontalAlign="end" tokens={{ childrenGap: 8 }}>
@@ -28930,7 +29192,7 @@ export const componentIdentities: Record<string, any> = {
     "version": {
       "major": 1,
       "minor": 0,
-      "patch": 1
+      "patch": 2
     },
     "type": "component",
     "owner": "Northern Health",

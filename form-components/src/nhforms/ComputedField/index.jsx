@@ -100,13 +100,50 @@ const _hasValue = (value) => {
 
 const _iif = (condition, whenTrue, whenFalse) => (condition ? whenTrue : whenFalse)
 const _countTrue = (...values) => values.flat().filter((value) => value === true || value === "true" || value === "Y" || value === "Yes" || value === 1).length
+const _floor = (value) => {
+  const numeric = _toNumericValue(value)
+  return Number.isFinite(numeric) ? Math.floor(numeric) : null
+}
+const _mod = (value, divisor) => {
+  const numeric = _toNumericValue(value)
+  const numericDivisor = _toNumericValue(divisor)
+  if (!Number.isFinite(numeric) || !Number.isFinite(numericDivisor) || numericDivisor === 0) return null
+  return numeric % numericDivisor
+}
+const _round = (value, precision = 0) => {
+  const numeric = _toNumericValue(value)
+  const numericPrecision = _toNumericValue(precision)
+  if (!Number.isFinite(numeric) || !Number.isFinite(numericPrecision)) return null
+  const digits = Math.round(numericPrecision)
+  const factor = 10 ** digits
+  if (!Number.isFinite(factor) || factor === 0) return null
+  return Math.round(numeric * factor) / factor
+}
+const _numericExtrema = (values, select) => {
+  const numericValues = values.flat().map(_toNumericValue)
+  if (numericValues.length === 0 || numericValues.some((value) => !Number.isFinite(value))) return null
+  return select(...numericValues)
+}
+const _min = (...values) => _numericExtrema(values, Math.min)
+const _max = (...values) => _numericExtrema(values, Math.max)
 const _MS_PER_DAY = 24 * 60 * 60 * 1000
+
+const _isDateOnlyValue = (value) => {
+  if (typeof value === "string") return /^\d{4}-\d{2}-\d{2}$/.test(value.trim())
+  if (!value || typeof value !== "object" || value instanceof Date) return false
+  return ["value", "date", "text", "display"].some((key) => _isDateOnlyValue(value[key]))
+}
+
+const _calendarDayNumber = (date) => Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / _MS_PER_DAY
 
 const _daysSince = (value, ref) => {
   const date = _toDateValue(value)
   if (!date) return null
   const reference = ref === undefined ? new Date() : _toDateValue(ref)
   if (!reference) return null
+  if (_isDateOnlyValue(value) && _isDateOnlyValue(ref)) {
+    return _calendarDayNumber(reference) - _calendarDayNumber(date)
+  }
   return Math.floor((reference.getTime() - date.getTime()) / _MS_PER_DAY)
 }
 
@@ -145,7 +182,7 @@ const _replaceBareReferencesOutsideQuotes = (expression, refs, valuesByFieldId) 
   const replaceInSegment = (segment) => {
     let nextSegment = segment
     for (const ref of refs) {
-      if (["iif", "score", "contains", "hasValue", "countTrue", "daysSince", "monthsSince", "null", "true", "false"].includes(ref)) continue
+      if (["iif", "score", "contains", "hasValue", "countTrue", "daysSince", "monthsSince", "floor", "mod", "round", "min", "max", "null", "true", "false"].includes(ref)) continue
       const numeric = _toNumericValue(valuesByFieldId?.[ref])
       if (!Number.isFinite(numeric)) return null
       nextSegment = nextSegment.replace(new RegExp(`\\b${_escapeRegExp(ref)}\\b`, "g"), String(numeric))
@@ -205,14 +242,19 @@ const _evaluateComputedExpression = (expression, valuesByFieldId, currentFieldId
   if (prepared === null) return null
 
   try {
-    const result = Function("iif", "score", "contains", "hasValue", "countTrue", "daysSince", "monthsSince", `"use strict"; return (${prepared});`)(
+    const result = Function("iif", "score", "contains", "hasValue", "countTrue", "daysSince", "monthsSince", "floor", "mod", "round", "min", "max", `"use strict"; return (${prepared});`)(
       _iif,
       _score,
       _contains,
       _hasValue,
       _countTrue,
       _daysSince,
-      _monthsSince
+      _monthsSince,
+      _floor,
+      _mod,
+      _round,
+      _min,
+      _max
     )
     if (typeof result === "number") return Number.isFinite(result) ? result : null
     if (typeof result === "string" || typeof result === "boolean") return result
