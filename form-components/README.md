@@ -47,22 +47,12 @@ pnpm test
 
 Preview success in one loader path does not prove the other path is correct. Keep Next and Vite entrypoints aligned.
 
-## `@styleguide` alias
-
-This package still has an `@styleguide/*` TypeScript alias that points to the app/styleguide source location:
-
-```json
-"@styleguide/*": ["../../src/*"]
-```
-
-When embedding this package outside the monorepo, either provide the same alias in your bundler/TypeScript config or remove the dependency from the component code you are using. In this repo, the alias is part of the workspace integration contract.
-
 ## Standalone usage
 
 When copying this package to another project:
 
 1. Copy all internal MOIS packages under `packages/`, not just this package.
-2. Configure aliases for `@mois/form-components`, `@mois/form-engine-core`, and `@styleguide/*`.
+2. Configure aliases for `@mois/form-components` and `@mois/form-engine-core`.
 3. Install peer dependencies.
 4. Choose the appropriate NHForms loader for your bundler.
 
