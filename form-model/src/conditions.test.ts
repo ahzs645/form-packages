@@ -12,7 +12,7 @@ import {
 import { parseBuilderFields } from "./schemas";
 
 describe("form-model condition kernel", () => {
-  it("normalizes coded choices, numbers, and custom boolean labels", () => {
+  it("normalizes coded choices, numbers, and SMOIS runtime boolean values", () => {
     expect(evaluateFieldCondition(
       { type: "choice-selected", optionValues: ["A"] },
       { code: "A", display: "Alpha" },
@@ -20,9 +20,13 @@ describe("form-model condition kernel", () => {
     expect(evaluateFieldCondition({ type: "number-gte", value: 10 }, "10")).toBe(true);
     expect(evaluateFieldCondition(
       { type: "boolean-yes" },
+      { code: "Y", display: "Yes" },
+    )).toBe(true);
+    expect(evaluateFieldCondition(
+      { type: "boolean-yes" },
       "Present",
       { booleanLabels: { on: "Present", off: "Absent" } },
-    )).toBe(true);
+    )).toBe(false);
   });
 
   it("combines primary and additional conditions consistently", () => {

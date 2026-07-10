@@ -100,7 +100,10 @@ export function compileFieldLinkProtectionRule(
 }
 
 export function normalizeConditionComparable(candidate: unknown): unknown {
-  if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) {
+  // Match the exported ConditionalGroup helper exactly. Arrays deliberately
+  // reach this object branch and normalize to an empty scalar; choice operators
+  // use normalizeConditionChoiceValues instead and retain array membership.
+  if (candidate && typeof candidate === "object") {
     const record = candidate as Record<string, unknown>;
     return record.code ?? record.display ?? record.value ?? record.text ?? "";
   }
@@ -123,41 +126,24 @@ export function normalizeConditionChoiceValues(candidate: unknown): string[] {
 
 export function normalizeConditionBoolean(
   value: unknown,
-  metadata?: FieldConditionMetadata,
+  _metadata?: FieldConditionMetadata,
 ): "yes" | "no" | undefined {
-  if (value === true) return "yes";
-  if (value === false) return "no";
-
-  if (value && typeof value === "object" && "code" in value) {
-    const coding = value as { code?: string; display?: string };
-    const code = coding.code?.toLowerCase();
-    if (code === "y" || code === "yes" || code === "true" || code === "1") return "yes";
-    if (code === "n" || code === "no" || code === "false" || code === "0") return "no";
-    const display = coding.display?.toLowerCase();
-    if (display === "yes" || display === "y") return "yes";
-    if (display === "no" || display === "n") return "no";
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return normalizeConditionBoolean(
+      record.code ?? record.display ?? record.value ?? record.text ?? record.label,
+    );
   }
-
-  if (typeof value !== "string") return undefined;
-  const normalized = value.trim().toLowerCase();
-  if (["yes", "y", "true", "1", "on", "normal", "positive", "planned"].includes(normalized)) {
-    return "yes";
-  }
-  if (["no", "n", "false", "0", "off", "abnormal", "negative"].includes(normalized)) {
-    return "no";
-  }
-  if (metadata?.booleanLabels) {
-    if (normalized === metadata.booleanLabels.on.toLowerCase()) return "yes";
-    if (normalized === metadata.booleanLabels.off.toLowerCase()) return "no";
-  }
+  if (value === true || value === "yes" || value === "Y" || value === 1) return "yes";
+  if (value === false || value === "no" || value === "N" || value === 0) return "no";
   return undefined;
 }
 
 export function isConditionValueEmpty(value: unknown): boolean {
-  if (value === undefined || value === null) return true;
-  if (typeof value === "string" && value.trim() === "") return true;
-  if (Array.isArray(value) && value.length === 0) return true;
-  return false;
+  const normalized = normalizeConditionComparable(value);
+  if (Array.isArray(normalized)) return normalized.length === 0;
+  if (normalized && typeof normalized === "object") return Object.keys(normalized).length === 0;
+  return normalized === null || normalized === undefined || String(normalized).trim() === "";
 }
 
 function evaluateNumericCondition(
@@ -165,7 +151,9 @@ function evaluateNumericCondition(
   leftValue: unknown,
   rightValue: unknown,
 ): boolean {
-  const left = Number(normalizeConditionComparable(leftValue));
+  const normalized = normalizeConditionComparable(leftValue);
+  if (normalized === null || normalized === undefined || normalized === "") return false;
+  const left = Number(normalized);
   const right = Number(rightValue);
   if (!Number.isFinite(left) || !Number.isFinite(right)) return false;
   if (type === "number-gt") return left > right;
@@ -202,10 +190,16 @@ export function evaluateFieldCondition(
     case "number-lte":
     case "number-equals":
       return evaluateNumericCondition(type, controllerValue, value);
-    case "equals":
-      return String(normalizeConditionComparable(controllerValue) ?? "") === String(value ?? "");
-    case "not-equals":
-      return String(normalizeConditionComparable(controllerValue) ?? "") !== String(value ?? "");
+    case "equals": {
+      const normalized = normalizeConditionComparable(controllerValue);
+      if (normalized === null || normalized === undefined || normalized === "") return false;
+      return String(normalized) === String(value ?? "");
+    }
+    case "not-equals": {
+      const normalized = normalizeConditionComparable(controllerValue);
+      if (normalized === null || normalized === undefined || normalized === "") return false;
+      return String(normalized) !== String(value ?? "");
+    }
     case "filled":
       return !isConditionValueEmpty(controllerValue);
     case "empty":
