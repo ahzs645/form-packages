@@ -1591,6 +1591,18 @@ export interface BuilderDocument<TLayoutDraft = unknown> {
   workflow?: BuilderWorkflowConfig;
 }
 
+/**
+ * Canonical persistence document. Transport-specific envelopes (session ZIPs,
+ * share tokens, local storage, fixtures) should migrate to this shape before
+ * application code consumes them.
+ */
+export interface WorkspaceDocumentV3<TLayoutDraft = unknown, TPreviewSettings = unknown> {
+  version: 3;
+  document: BuilderDocument<TLayoutDraft>;
+  fieldLinkRules: FieldLinkRule[];
+  preview?: TPreviewSettings;
+}
+
 export interface BuilderVariant<TLayoutDraft = unknown> {
   id: string;
   label: string;
@@ -1612,14 +1624,21 @@ export interface BuilderVariantSelectorConfig {
 }
 
 export {
+  compileFieldLinkConditionGroup,
+  compileFieldLinkProtectionRule,
+  compileFieldLinkVisibilityRule,
   evaluateFieldCondition,
   evaluateFieldLinkRuleCondition,
   isConditionValueEmpty,
   normalizeConditionBoolean,
   normalizeConditionChoiceValues,
   normalizeConditionComparable,
+  type CompiledFieldLinkConditionGroup,
+  type CompiledFieldLinkProtectionRule,
+  type CompiledFieldLinkVisibilityRule,
   type FieldConditionMetadata,
   type FieldConditionMetadataLookup,
+  type SerializedFieldLinkCondition,
 } from "./conditions";
 
 export {

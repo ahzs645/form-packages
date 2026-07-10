@@ -12,6 +12,93 @@ export type FieldConditionMetadataLookup = (
   fieldId: string,
 ) => FieldConditionMetadata | undefined;
 
+/**
+ * UI-independent condition entry consumed by exported NHForms condition
+ * components. This is deliberately flat so it can be JSON-serialized into
+ * generated JSX without leaking the builder's nested condition shape.
+ */
+export interface SerializedFieldLinkCondition {
+  controllerFieldId: string;
+  type: FieldLinkConditionType;
+  optionValues?: string[];
+  value?: string | number | boolean;
+}
+
+export interface CompiledFieldLinkConditionGroup {
+  conditions: SerializedFieldLinkCondition[];
+  match: "all" | "any";
+}
+
+export interface CompiledFieldLinkVisibilityRule extends CompiledFieldLinkConditionGroup {
+  invertMatch: boolean;
+}
+
+export interface CompiledFieldLinkProtectionRule extends CompiledFieldLinkConditionGroup {
+  action: "set-readonly" | "clear-readonly";
+  protectionMode: "readOnly" | "disabled" | "both";
+}
+
+/** Compile a builder rule into the stable JSON contract used by NHForms. */
+export function compileFieldLinkConditionGroup(
+  rule: Pick<
+    FieldLinkRule,
+    "controllerFieldId" | "condition" | "additionalConditions" | "conditionMatch"
+  >,
+): CompiledFieldLinkConditionGroup {
+  const conditions = [
+    { controllerFieldId: rule.controllerFieldId, condition: rule.condition },
+    ...(rule.additionalConditions ?? []),
+  ].map(({ controllerFieldId, condition }) => ({
+    controllerFieldId,
+    type: condition.type,
+    ...(condition.optionValues?.length ? { optionValues: condition.optionValues } : {}),
+    ...(condition.value !== undefined && condition.value !== null
+      ? { value: condition.value }
+      : {}),
+  }));
+
+  return {
+    conditions,
+    match: rule.conditionMatch === "any" ? "any" : "all",
+  };
+}
+
+export function compileFieldLinkVisibilityRule(
+  rule: Pick<
+    FieldLinkRule,
+    "controllerFieldId" | "condition" | "additionalConditions" | "conditionMatch" | "action"
+  >,
+): CompiledFieldLinkVisibilityRule {
+  if (rule.action !== "show" && rule.action !== "hide") {
+    throw new Error(`Cannot compile ${rule.action} as a field visibility rule`);
+  }
+  return {
+    ...compileFieldLinkConditionGroup(rule),
+    invertMatch: rule.action === "hide",
+  };
+}
+
+export function compileFieldLinkProtectionRule(
+  rule: Pick<
+    FieldLinkRule,
+    | "controllerFieldId"
+    | "condition"
+    | "additionalConditions"
+    | "conditionMatch"
+    | "action"
+    | "protectionMode"
+  >,
+): CompiledFieldLinkProtectionRule {
+  if (rule.action !== "set-readonly" && rule.action !== "clear-readonly") {
+    throw new Error(`Cannot compile ${rule.action} as a field protection rule`);
+  }
+  return {
+    ...compileFieldLinkConditionGroup(rule),
+    action: rule.action,
+    protectionMode: rule.protectionMode ?? "both",
+  };
+}
+
 export function normalizeConditionComparable(candidate: unknown): unknown {
   if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) {
     const record = candidate as Record<string, unknown>;
@@ -134,17 +221,14 @@ export function evaluateFieldLinkRuleCondition(
   metadataByFieldId: FieldConditionMetadataLookup,
   values: Record<string, unknown>,
 ): boolean {
-  const entries = [
-    { controllerFieldId: rule.controllerFieldId, condition: rule.condition },
-    ...(rule.additionalConditions ?? []),
-  ];
-  const evaluate = (entry: (typeof entries)[number]) =>
+  const compiled = compileFieldLinkConditionGroup(rule);
+  const evaluate = (entry: SerializedFieldLinkCondition) =>
     evaluateFieldCondition(
-      entry.condition,
+      entry,
       values[entry.controllerFieldId],
       metadataByFieldId(entry.controllerFieldId),
     );
-  return (rule.conditionMatch ?? "all") === "any"
-    ? entries.some(evaluate)
-    : entries.every(evaluate);
+  return compiled.match === "any"
+    ? compiled.conditions.some(evaluate)
+    : compiled.conditions.every(evaluate);
 }
