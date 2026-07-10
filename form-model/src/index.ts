@@ -656,6 +656,8 @@ export interface BuilderAlayaCareConfig {
    * AlayaCare-native fields that do not map 1:1 to generic builder types.
    */
   fieldType?: BuilderAlayaCareFieldType | null;
+  /** Original numeric field ID retained when importing an AlayaCare form. */
+  sourceFieldId?: number | null;
   /** Optional exported field_tag value. */
   fieldTag?: string | null;
   /** Optional exported task_field value. */
@@ -682,6 +684,10 @@ export interface BuilderAlayaCareConfig {
   drawingImageType?: string | null;
   /** AlayaCare progress notes setting: progress_note_type */
   progressNoteType?: string | null;
+  /** Unmodeled AlayaCare settings retained for lossless import/edit/export. */
+  rawSettings?: Record<string, unknown> | null;
+  /** Original AlayaCare JSON Logic retained when it cannot be represented by the simple builder visibility editor. */
+  rawJsonLogic?: Record<string, unknown> | null;
   /** Docmosis image placeholder variable used in LibreOffice templates. */
   docmosisImageVariable?: string | null;
   /** Docmosis collection path for generating repeating table rows, for example comments or service_tasks. */
