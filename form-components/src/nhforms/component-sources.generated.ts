@@ -7318,6 +7318,84 @@ const resolveItems = (optionList, fallbackItems = []) => {
   return fallbackItems.map(normalizeOption)
 }
 
+const normalizeLookupName = (value) => String(value || '').replace(/[^a-z0-9]/gi, '').toLowerCase()
+
+const resolveLookupPath = (source, path) => {
+  const segments = String(path || '').split('.').map((segment) => segment.trim()).filter(Boolean)
+  if (!source || segments.length === 0) return undefined
+  return segments.reduce((current, segment) => {
+    if (current === undefined || current === null) return undefined
+    if (Array.isArray(current) && /^\\d+$/.test(segment)) return current[Number(segment)]
+    return typeof current === 'object' ? current[segment] : undefined
+  }, source)
+}
+
+const sourceEntries = (value) => {
+  if (Array.isArray(value)) return value
+  if (!value || typeof value !== 'object') return []
+  return Object.entries(value).map(([code, entry]) => (
+    entry && typeof entry === 'object'
+      ? { ...entry, code: entry.code ?? entry.key ?? code }
+      : { code, display: entry }
+  ))
+}
+
+const sourceLookupItems = (source, lookupType, lookupSourcePaths = []) => {
+  const normalized = normalizeLookupName(lookupType)
+  const optionLists = source?.optionLists || {}
+  const customSources = Array.isArray(lookupSourcePaths)
+    ? lookupSourcePaths.map((path) => resolveLookupPath(source, path))
+    : []
+  const candidates = [
+    source?.lookups?.[lookupType],
+    source?.lookupValues?.[lookupType],
+    source?.[\`\${lookupType}Options\`],
+    source?.[\`\${lookupType}s\`],
+    optionLists[lookupType],
+    optionLists[lookupType?.toUpperCase?.()],
+    optionLists[\`MOIS-\${lookupType?.toUpperCase?.()}\`],
+    ...customSources,
+  ]
+  if (normalized === 'servicelocation') {
+    candidates.push(source?.serviceLocations, optionLists.SERVICELOCATION, optionLists.SERVICE_LOCATION, optionLists['MOIS-SERVICELOCATION'])
+  }
+  if (normalized === 'jorg') {
+    candidates.push(source?.jorg, source?.organizations, optionLists.JORG, optionLists['MOIS-JORG'])
+  }
+
+  const seen = new Set()
+  return candidates
+    .flatMap(sourceEntries)
+    .map(normalizeOption)
+    .filter((item, index) => {
+      const key = getItemKey(item, 'code', \`__lookup_\${index}\`)
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+}
+
+const valueForLookupTarget = (selected, targetId, targetLabel, fallback) => {
+  if (!selected || typeof selected !== 'object') return fallback
+  const normalizedLabel = normalizeLookupName(targetLabel)
+  const directKeys = [targetId, targetId?.split('_').pop(), normalizedLabel]
+  for (const key of directKeys) {
+    if (key && selected[key] !== undefined && selected[key] !== null) return String(selected[key])
+  }
+  const aliasSets = [
+    ['healthauthority', 'authority'],
+    ['healthservicedeliveryarea', 'hsda'],
+    ['branch'],
+    ['responsibleservicedeliverylocation', 'servicedeliverylocation', 'sdl', 'location'],
+  ]
+  const aliases = aliasSets.find((items) => items.some((item) => normalizedLabel.includes(item))) ?? []
+  for (const alias of aliases) {
+    const matchingKey = Object.keys(selected).find((key) => normalizeLookupName(key) === alias)
+    if (matchingKey && selected[matchingKey] != null) return String(selected[matchingKey])
+  }
+  return fallback
+}
+
 /**
  * Shared implementation used by the inline-option and code-list-backed variants.
  */
@@ -7654,6 +7732,64 @@ const FindCodeSelectWithCodeList = (props) => {
   return <FindCodeSelectBase {...props} fallbackItems={codeListFromContext} />
 }
 
+const FindCodeSelectWithSourceLookup = ({
+  lookupType = '',
+  lookupSourcePaths = [],
+  targetFieldIds = [],
+  targetLabels = {},
+  ...props
+}) => {
+  const [fd, setFormData] = useActiveData()
+  const sd = useSourceData()
+  const effectiveFieldId = props.fieldId || props.id || 'findCodeSelect'
+  const sourceItems = useMemo(
+    () => sourceLookupItems(sd, lookupType, lookupSourcePaths),
+    [lookupSourcePaths, lookupType, sd]
+  )
+  const fallbackItems = useMemo(
+    () => resolveItems(props.optionList, []),
+    [props.optionList]
+  )
+  const items = sourceItems.length > 0 ? sourceItems : fallbackItems
+  const storedValue = fd?.field?.data?.[effectiveFieldId]
+  const boundValue = useMemo(() => {
+    if (props.value !== undefined || storedValue === undefined || storedValue === null || storedValue === '') {
+      return props.value
+    }
+    if (typeof storedValue === 'object') return storedValue
+    const text = String(storedValue)
+    return items.find((item) => String(item?.code ?? item?.key ?? '') === text || String(item?.display ?? item?.text ?? '') === text)
+      ?? { code: null, display: text }
+  }, [items, props.value, storedValue])
+
+  const handleChange = (nextValue) => {
+    props.onChange?.(nextValue)
+    const selected = Array.isArray(nextValue) ? nextValue[nextValue.length - 1] : nextValue
+    const fallback = String(selected?.display ?? selected?.text ?? selected?.value ?? selected?.code ?? '')
+    const targets = Array.isArray(targetFieldIds) && targetFieldIds.length > 0 ? targetFieldIds : [effectiveFieldId]
+    setFormData(produce((draft) => {
+      if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
+      if (!draft.field.data || typeof draft.field.data !== 'object') draft.field.data = {}
+      targets.forEach((targetId) => {
+        if (!targetId) return
+        draft.field.data[targetId] = valueForLookupTarget(selected, targetId, targetLabels?.[targetId], fallback)
+      })
+    }))
+  }
+
+  return (
+    <FindCodeSelectBase
+      {...props}
+      fieldId={effectiveFieldId}
+      optionList={items}
+      fallbackItems={[]}
+      value={boundValue}
+      showOtherOption={props.showOtherOption ?? true}
+      onChange={handleChange}
+    />
+  )
+}
+
 /**
  * FindCodeSelect
  * Hybrid between FindCode and SimpleCodeSelect:
@@ -7666,6 +7802,12 @@ const FindCodeSelectWithCodeList = (props) => {
  * code-list host context, and calling \`useCodeList\` in that path can fail.
  */
 const FindCodeSelect = (props) => {
+  const hasSourceLookup = Boolean(String(props?.lookupType ?? '').trim()) ||
+    (Array.isArray(props?.lookupSourcePaths) && props.lookupSourcePaths.length > 0)
+  if (hasSourceLookup) {
+    return <FindCodeSelectWithSourceLookup {...props} />
+  }
+
   const optionList = props?.optionList
   const hasExplicitOptionList = Array.isArray(optionList)
     ? optionList.length > 0
@@ -13251,98 +13393,6 @@ const HealthMaintenanceReview = ({
   )
 }
 `,
-  './HistoricalFormValueField/index.jsx': `const { useEffect, useMemo } = React
-const { TextField } = Fluent
-
-const asText = (value) => {
-  if (value === undefined || value === null) return ""
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value)
-  if (typeof value === "object") return String(value.display ?? value.text ?? value.value ?? value.code ?? "")
-  return ""
-}
-
-const resolveHistoryRows = (sd) => {
-  const roots = [
-    sd?.webformHistory,
-    sd?.historicalForms,
-    sd?.patient?.webforms,
-    sd?.patient?.forms,
-    sd?.patient?.dformHistory,
-    sd?.queryResult?.patient?.[0]?.webforms,
-    sd?.queryResult?.patient?.[0]?.forms,
-  ]
-  return roots.flatMap((value) => Array.isArray(value) ? value : [])
-}
-
-const fieldValueFromRow = (row, legacyFieldId) => {
-  if (!row || typeof row !== "object" || !legacyFieldId) return ""
-  const candidates = [row, row.formData, row.data, row.field?.data, row.values]
-  for (const candidate of candidates) {
-    if (!candidate || typeof candidate !== "object") continue
-    if (Object.prototype.hasOwnProperty.call(candidate, legacyFieldId)) {
-      return asText(candidate[legacyFieldId])
-    }
-    const matchingKey = Object.keys(candidate).find((key) =>
-      key.endsWith(\`_\${legacyFieldId}\`) || key.endsWith(\`_field_\${legacyFieldId}\`)
-    )
-    if (matchingKey) return asText(candidate[matchingKey])
-  }
-  return ""
-}
-
-const rowDate = (row) => {
-  const raw = row?.docDate ?? row?.documentDate ?? row?.createdDate ?? row?.createdAt ?? row?.updatedAt
-  const parsed = new Date(raw)
-  return Number.isNaN(parsed.getTime()) ? 0 : parsed.getTime()
-}
-
-/**
- * Mirrors the latest value of a legacy Dynamic Form field when MOIS exposes
- * prior webform/DForm rows in the source query. It is intentionally read-only:
- * legacy \`viewonly=dform\` tags never created a new chart write.
- */
-const HistoricalFormValueField = ({
-  id,
-  fieldId,
-  label = "Prior form value",
-  legacyFieldId = "",
-  placeholder = "No prior value",
-  readOnly = true,
-  disabled = false,
-}) => {
-  const [fd, setFormData] = useActiveData()
-  const sd = useSourceData()
-  const effectiveFieldId = fieldId || id || "historicalFormValue"
-  const value = useMemo(() => {
-    const rows = resolveHistoryRows(sd)
-      .map((row) => ({ row, value: fieldValueFromRow(row, legacyFieldId) }))
-      .filter((entry) => entry.value)
-      .sort((left, right) => rowDate(right.row) - rowDate(left.row))
-    return rows[0]?.value ?? ""
-  }, [legacyFieldId, sd])
-  const stored = fd?.field?.data?.[effectiveFieldId]
-
-  useEffect(() => {
-    if (!value || stored === value || typeof setFormData !== "function") return
-    setFormData(produce((draft) => {
-      if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
-      if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
-      draft.field.data[effectiveFieldId] = value
-    }))
-  }, [effectiveFieldId, setFormData, stored, value])
-
-  return (
-    <LayoutItem fieldId={effectiveFieldId} label={label} disabled={disabled}>
-      <TextField
-        value={value}
-        placeholder={placeholder}
-        readOnly={readOnly}
-        disabled={disabled}
-      />
-    </LayoutItem>
-  )
-}
-`,
   './HistoricalObservationTable/index.jsx': `const { useMemo } = React
 const { Stack, Label, Text } = Fluent
 
@@ -16839,120 +16889,6 @@ function LayoutTable({
   )
 }
 `,
-  './LegacyLookupField/index.jsx': `const { useMemo } = React
-const { ComboBox } = Fluent
-
-const normalizeLookupName = (value) => String(value || "").replace(/[^a-z0-9]/gi, "").toLowerCase()
-
-const normalizeOption = (value, index) => {
-  if (value === undefined || value === null) return null
-  if (typeof value === "string" || typeof value === "number") {
-    const text = String(value)
-    return { key: text, text, raw: value }
-  }
-  if (typeof value !== "object") return null
-  const key = String(value.code ?? value.id ?? value.key ?? value.value ?? value.display ?? value.label ?? index)
-  const text = String(value.display ?? value.label ?? value.text ?? value.name ?? value.code ?? key)
-  return { key, text, raw: value }
-}
-
-const optionSources = (sd, lookupType) => {
-  const normalized = normalizeLookupName(lookupType)
-  const optionLists = sd?.optionLists || {}
-  const candidates = [
-    sd?.lookups?.[lookupType],
-    sd?.lookupValues?.[lookupType],
-    sd?.[\`\${lookupType}Options\`],
-    sd?.[\`\${lookupType}s\`],
-    optionLists[lookupType],
-    optionLists[lookupType?.toUpperCase?.()],
-    optionLists[\`MOIS-\${lookupType?.toUpperCase?.()}\`],
-  ]
-  if (normalized === "servicelocation") {
-    candidates.push(sd?.serviceLocations, optionLists.SERVICELOCATION, optionLists.SERVICE_LOCATION, optionLists["MOIS-SERVICELOCATION"])
-  }
-  if (normalized === "jorg") {
-    candidates.push(sd?.jorg, sd?.organizations, optionLists.JORG, optionLists["MOIS-JORG"])
-  }
-  return candidates.flatMap((candidate) => Array.isArray(candidate) ? candidate : [])
-}
-
-const valueForTarget = (raw, targetId, targetLabel, fallback) => {
-  if (!raw || typeof raw !== "object") return fallback
-  const normalizedLabel = normalizeLookupName(targetLabel)
-  const directKeys = [targetId, targetId?.split("_").pop(), normalizedLabel]
-  for (const key of directKeys) {
-    if (key && raw[key] !== undefined && raw[key] !== null) return String(raw[key])
-  }
-  const aliasSets = [
-    ["healthauthority", "authority"],
-    ["healthservicedeliveryarea", "hsda"],
-    ["branch"],
-    ["responsibleservicedeliverylocation", "servicedeliverylocation", "sdl", "location"],
-  ]
-  const aliases = aliasSets.find((items) => items.some((item) => normalizedLabel.includes(item))) ?? []
-  for (const alias of aliases) {
-    const matchingKey = Object.keys(raw).find((key) => normalizeLookupName(key) === alias)
-    if (matchingKey && raw[matchingKey] != null) return String(raw[matchingKey])
-  }
-  return fallback
-}
-
-/**
- * Dynamic Form lookups used source-specific service-location and organization
- * lists. This adapter accepts those lists from common MOIS source locations and
- * writes the selected record into the primary field plus any mapped targets.
- */
-const LegacyLookupField = ({
-  id,
-  fieldId,
-  label = "Lookup",
-  lookupType = "",
-  targetFieldIds = [],
-  targetLabels = {},
-  placeholder = "Select or enter a value",
-  disabled = false,
-}) => {
-  const [fd, setFormData] = useActiveData()
-  const sd = useSourceData()
-  const effectiveFieldId = fieldId || id || "legacyLookup"
-  const value = fd?.field?.data?.[effectiveFieldId] ?? ""
-  const options = useMemo(() => {
-    const seen = new Set()
-    return optionSources(sd, lookupType)
-      .map(normalizeOption)
-      .filter((option) => option && !seen.has(option.key) && seen.add(option.key))
-  }, [lookupType, sd])
-
-  const commit = (option, freeformValue) => {
-    const fallback = String(option?.text ?? freeformValue ?? "")
-    const raw = option?.raw
-    setFormData(produce((draft) => {
-      if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
-      if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
-      const targets = Array.isArray(targetFieldIds) && targetFieldIds.length > 0 ? targetFieldIds : [effectiveFieldId]
-      targets.forEach((targetId) => {
-        if (!targetId) return
-        draft.field.data[targetId] = valueForTarget(raw, targetId, targetLabels?.[targetId], fallback)
-      })
-    }))
-  }
-
-  return (
-    <LayoutItem fieldId={effectiveFieldId} label={label} disabled={disabled}>
-      <ComboBox
-        text={String(value)}
-        placeholder={placeholder}
-        options={options}
-        allowFreeform
-        autoComplete="on"
-        disabled={disabled}
-        onChange={(_, option, __, freeformValue) => commit(option, freeformValue)}
-      />
-    </LayoutItem>
-  )
-}
-`,
   './LongTermMedications/index.jsx': `/**
  * Display a list of long term medication orders for this patient.
  */
@@ -19489,6 +19425,47 @@ const stringifyValue = (value) => {
   return ""
 }
 
+const resolveHistoricalFormRows = (source) => {
+  const roots = [
+    source?.webformHistory,
+    source?.historicalForms,
+    source?.patient?.webforms,
+    source?.patient?.forms,
+    source?.patient?.dformHistory,
+    source?.queryResult?.patient?.[0]?.webforms,
+    source?.queryResult?.patient?.[0]?.forms,
+  ]
+  return roots.flatMap((value) => (Array.isArray(value) ? value : []))
+}
+
+const valueFromHistoricalFormRow = (row, legacyFieldId) => {
+  if (!row || typeof row !== "object" || !legacyFieldId) return ""
+  const candidates = [
+    row,
+    row.formData,
+    row.formData?.field?.data,
+    row.data,
+    row.field?.data,
+    row.values,
+  ]
+  for (const candidate of candidates) {
+    if (!candidate || typeof candidate !== "object") continue
+    if (Object.prototype.hasOwnProperty.call(candidate, legacyFieldId)) {
+      return stringifyValue(candidate[legacyFieldId])
+    }
+    const matchingKey = Object.keys(candidate).find((key) => (
+      key.endsWith(\`_\${legacyFieldId}\`) || key.endsWith(\`_field_\${legacyFieldId}\`)
+    ))
+    if (matchingKey) return stringifyValue(candidate[matchingKey])
+  }
+  return ""
+}
+
+const historicalFormRowDate = (row) => {
+  const raw = row?.docDate ?? row?.documentDate ?? row?.createdDate ?? row?.createdAt ?? row?.updatedAt
+  return parseDateValue(raw)?.getTime() ?? 0
+}
+
 const optionalString = (value) => {
   if (value === undefined || value === null || value === "") return undefined
   return stringifyValue(value)
@@ -19635,6 +19612,8 @@ const PastMeasurementField = ({
   fieldId,
   label = "Measurement",
   placeholder,
+  historyKind = "observation",
+  legacyFieldId = "",
   historySourcePath = "patient.observations",
   valuePath = "value",
   datePath = "collectedDateTime",
@@ -19680,6 +19659,7 @@ const PastMeasurementField = ({
   const sd = useSourceData()
   const componentId = id || fieldId || "PastMeasurementField"
   const effectiveFieldId = fieldId || componentId
+  const isHistoricalFormValue = String(historyKind || "").replace(/[^a-z]/gi, "").toLowerCase() === "formvalue"
 
   const fieldData = fd?.field?.data ?? {}
   const hasStoredValue = effectiveFieldId
@@ -19691,7 +19671,29 @@ const PastMeasurementField = ({
   const commentFilter = stringifyValue(observationComment)
   const documentDate = docDateFieldPath ? parseDateValue(resolvePathValue(fieldData, docDateFieldPath)) : null
 
-  const historyItems = useMemo(() => {
+  const formHistoryItems = useMemo(() => {
+    if (!isHistoricalFormValue) return []
+    return resolveHistoricalFormRows(sd)
+      .map((row, index) => {
+        const valueText = valueFromHistoricalFormRow(row, legacyFieldId)
+        const rawDate = row?.docDate ?? row?.documentDate ?? row?.createdDate ?? row?.createdAt ?? row?.updatedAt
+        return {
+          index,
+          raw: row,
+          rawDate,
+          dateText: formatDate(rawDate) || "-",
+          dateTimeValue: historicalFormRowDate(row),
+          valueText,
+          unitsText: "",
+        }
+      })
+      .filter((entry) => Boolean(entry.valueText))
+      .sort((left, right) => right.dateTimeValue - left.dateTimeValue || left.index - right.index)
+      .slice(0, effectiveHistorySize)
+  }, [effectiveHistorySize, isHistoricalFormValue, legacyFieldId, sd])
+
+  const observationHistoryItems = useMemo(() => {
+    if (isHistoricalFormValue) return []
     return normalizeObservationItems({
       items: resolveMoisValue(sd, historySourcePath),
       valuePath,
@@ -19716,9 +19718,15 @@ const PastMeasurementField = ({
     sd,
     unitsPath,
     valuePath,
+    isHistoricalFormValue,
   ])
 
+  const historyItems = isHistoricalFormValue ? formHistoryItems : observationHistoryItems
+
   const linkedObservationItem = useMemo(() => (
+    isHistoricalFormValue
+      ? null
+      :
     normalizeObservationItems({
       items: sd?.webform?.observations,
       valuePath,
@@ -19731,12 +19739,14 @@ const PastMeasurementField = ({
       documentDate: null,
       applyDocumentDateFilter: false,
     })[0] ?? null
-  ), [codeFilter, commentPath, codePath, commentFilter, datePath, sd, unitsPath, valuePath])
+  ), [codeFilter, commentPath, codePath, commentFilter, datePath, isHistoricalFormValue, sd, unitsPath, valuePath])
 
   const latestHistoryItem = historyItems[0] ?? null
-  const resolvedCurrentValue = hasMeaningfulValue(storedValue)
-    ? storedValue
-    : linkedObservationItem?.valueText ?? (autoFillFromHistory ? latestHistoryItem?.valueText : "") ?? ""
+  const resolvedCurrentValue = isHistoricalFormValue
+    ? latestHistoryItem?.valueText ?? ""
+    : hasMeaningfulValue(storedValue)
+      ? storedValue
+      : linkedObservationItem?.valueText ?? (autoFillFromHistory ? latestHistoryItem?.valueText : "") ?? ""
   const numericCurrentValue = Number(stringifyValue(resolvedCurrentValue))
   const hasNumericCurrentValue = Number.isFinite(numericCurrentValue)
   const resolvedAbnormalLow = abnormalLow ?? rangeNormalLow
@@ -19756,7 +19766,7 @@ const PastMeasurementField = ({
   const inputSuffix = stringifyValue(saveUnits) || latestHistoryItem?.unitsText || ""
 
   useEffect(() => {
-    if (persistenceMode !== "observationAndForm") {
+    if (isHistoricalFormValue || persistenceMode !== "observationAndForm") {
       setNestedPayload(setFormData, componentId, "dco", null)
       return
     }
@@ -19847,6 +19857,7 @@ const PastMeasurementField = ({
     label,
     latestHistoryItem,
     linkedObservationItem,
+    isHistoricalFormValue,
     observationCode,
     observationDescription,
     persistenceMode,
@@ -19870,10 +19881,14 @@ const PastMeasurementField = ({
   ])
 
   useEffect(() => {
-    if (!effectiveFieldId || !autoFillFromHistory) return
+    if (!effectiveFieldId) return
     if (!latestHistoryItem?.valueText) return
-    if (hasMeaningfulValue(storedValue)) return
-    if (linkedObservationItem?.valueText) return
+    if (isHistoricalFormValue && storedValue === latestHistoryItem.valueText) return
+    if (!isHistoricalFormValue) {
+      if (!autoFillFromHistory) return
+      if (hasMeaningfulValue(storedValue)) return
+      if (linkedObservationItem?.valueText) return
+    }
 
     setFormData(produce((draft) => {
       if (!draft.field) {
@@ -19882,10 +19897,10 @@ const PastMeasurementField = ({
       if (!draft.field.data || typeof draft.field.data !== "object") {
         draft.field.data = {}
       }
-      if (hasMeaningfulValue(draft.field.data[effectiveFieldId])) return
+      if (!isHistoricalFormValue && hasMeaningfulValue(draft.field.data[effectiveFieldId])) return
       draft.field.data[effectiveFieldId] = latestHistoryItem.valueText
     }))
-  }, [autoFillFromHistory, effectiveFieldId, latestHistoryItem, linkedObservationItem, setFormData, storedValue])
+  }, [autoFillFromHistory, effectiveFieldId, isHistoricalFormValue, latestHistoryItem, linkedObservationItem, setFormData, storedValue])
 
   const handleValueChange = (event, nextValue) => {
     if (!effectiveFieldId) return
@@ -28911,11 +28926,11 @@ export const componentIdentities: Record<string, any> = {
   'FindCodeSelect': {
     "name": "FindCodeSelect",
     "title": "Find code searchable dropdown",
-    "description": "Hybrid coded-value selector combining FindCode-style search with dropdown selection",
+    "description": "Searchable coded-value selector with code-list, inline-option, and MOIS source-lookup modes",
     "version": {
       "major": 1,
       "minor": 0,
-      "patch": 0
+      "patch": 1
     },
     "type": "component",
     "owner": "Northern Health",
@@ -29155,19 +29170,6 @@ export const componentIdentities: Record<string, any> = {
     "owner": "MOIS Styleguide",
     "components": []
   },
-  'HistoricalFormValueField': {
-    "name": "HistoricalFormValueField",
-    "title": "Historical Form Value Field",
-    "description": "Read-only latest value from prior MOIS Dynamic Form data when supplied by the source query",
-    "version": {
-      "major": 1,
-      "minor": 0,
-      "patch": 0
-    },
-    "type": "component",
-    "owner": "Northern Health",
-    "components": []
-  },
   'HistoricalObservationTable': {
     "name": "HistoricalObservationTable",
     "title": "Historical Observation Table",
@@ -29291,19 +29293,6 @@ export const componentIdentities: Record<string, any> = {
     "components": [
       "FieldStampButton"
     ]
-  },
-  'LegacyLookupField': {
-    "name": "LegacyLookupField",
-    "title": "MOIS Lookup Field",
-    "description": "Service-location and organization lookup adapter for imported Dynamic Forms",
-    "version": {
-      "major": 1,
-      "minor": 0,
-      "patch": 0
-    },
-    "type": "component",
-    "owner": "Northern Health",
-    "components": []
   },
   'LongTermMedications': {
     "name": "LongTermMedications",
@@ -29496,11 +29485,11 @@ export const componentIdentities: Record<string, any> = {
   'PastMeasurementField': {
     "name": "PastMeasurementField",
     "title": "Past Measurement Field",
-    "description": "Editable measurement text field that also shows latest historical value from MOIS query data",
+    "description": "Measurement field with observation history or a read-only latest value from prior MOIS form data",
     "version": {
       "major": 1,
       "minor": 0,
-      "patch": 0
+      "patch": 1
     },
     "type": "component",
     "owner": "Northern Health",

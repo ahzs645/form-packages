@@ -7107,6 +7107,61 @@ const resolveItems = (optionList, fallbackItems = []) => {
   }
   return fallbackItems.map(normalizeOption);
 };
+const normalizeLookupName = value => String(value || '').replace(/[^a-z0-9]/gi, '').toLowerCase();
+const resolveLookupPath = (source, path) => {
+  const segments = String(path || '').split('.').map(segment => segment.trim()).filter(Boolean);
+  if (!source || segments.length === 0) return undefined;
+  return segments.reduce((current, segment) => {
+    if (current === undefined || current === null) return undefined;
+    if (Array.isArray(current) && /^\\d+$/.test(segment)) return current[Number(segment)];
+    return typeof current === 'object' ? current[segment] : undefined;
+  }, source);
+};
+const sourceEntries = value => {
+  if (Array.isArray(value)) return value;
+  if (!value || typeof value !== 'object') return [];
+  return Object.entries(value).map(([code, entry]) => entry && typeof entry === 'object' ? {
+    ...entry,
+    code: entry.code ?? entry.key ?? code
+  } : {
+    code,
+    display: entry
+  });
+};
+const sourceLookupItems = (source, lookupType, lookupSourcePaths = []) => {
+  const normalized = normalizeLookupName(lookupType);
+  const optionLists = source?.optionLists || {};
+  const customSources = Array.isArray(lookupSourcePaths) ? lookupSourcePaths.map(path => resolveLookupPath(source, path)) : [];
+  const candidates = [source?.lookups?.[lookupType], source?.lookupValues?.[lookupType], source?.[\`\${lookupType}Options\`], source?.[\`\${lookupType}s\`], optionLists[lookupType], optionLists[lookupType?.toUpperCase?.()], optionLists[\`MOIS-\${lookupType?.toUpperCase?.()}\`], ...customSources];
+  if (normalized === 'servicelocation') {
+    candidates.push(source?.serviceLocations, optionLists.SERVICELOCATION, optionLists.SERVICE_LOCATION, optionLists['MOIS-SERVICELOCATION']);
+  }
+  if (normalized === 'jorg') {
+    candidates.push(source?.jorg, source?.organizations, optionLists.JORG, optionLists['MOIS-JORG']);
+  }
+  const seen = new Set();
+  return candidates.flatMap(sourceEntries).map(normalizeOption).filter((item, index) => {
+    const key = getItemKey(item, 'code', \`__lookup_\${index}\`);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
+const valueForLookupTarget = (selected, targetId, targetLabel, fallback) => {
+  if (!selected || typeof selected !== 'object') return fallback;
+  const normalizedLabel = normalizeLookupName(targetLabel);
+  const directKeys = [targetId, targetId?.split('_').pop(), normalizedLabel];
+  for (const key of directKeys) {
+    if (key && selected[key] !== undefined && selected[key] !== null) return String(selected[key]);
+  }
+  const aliasSets = [['healthauthority', 'authority'], ['healthservicedeliveryarea', 'hsda'], ['branch'], ['responsibleservicedeliverylocation', 'servicedeliverylocation', 'sdl', 'location']];
+  const aliases = aliasSets.find(items => items.some(item => normalizedLabel.includes(item))) ?? [];
+  for (const alias of aliases) {
+    const matchingKey = Object.keys(selected).find(key => normalizeLookupName(key) === alias);
+    if (matchingKey && selected[matchingKey] != null) return String(selected[matchingKey]);
+  }
+  return fallback;
+};
 
 /**
  * Shared implementation used by the inline-option and code-list-backed variants.
@@ -7397,6 +7452,58 @@ const FindCodeSelectWithCodeList = props => {
     fallbackItems: codeListFromContext
   }));
 };
+const FindCodeSelectWithSourceLookup = ({
+  lookupType = '',
+  lookupSourcePaths = [],
+  targetFieldIds = [],
+  targetLabels = {},
+  ...props
+}) => {
+  const [fd, setFormData] = useActiveData();
+  const sd = useSourceData();
+  const effectiveFieldId = props.fieldId || props.id || 'findCodeSelect';
+  const sourceItems = useMemo(() => sourceLookupItems(sd, lookupType, lookupSourcePaths), [lookupSourcePaths, lookupType, sd]);
+  const fallbackItems = useMemo(() => resolveItems(props.optionList, []), [props.optionList]);
+  const items = sourceItems.length > 0 ? sourceItems : fallbackItems;
+  const storedValue = fd?.field?.data?.[effectiveFieldId];
+  const boundValue = useMemo(() => {
+    if (props.value !== undefined || storedValue === undefined || storedValue === null || storedValue === '') {
+      return props.value;
+    }
+    if (typeof storedValue === 'object') return storedValue;
+    const text = String(storedValue);
+    return items.find(item => String(item?.code ?? item?.key ?? '') === text || String(item?.display ?? item?.text ?? '') === text) ?? {
+      code: null,
+      display: text
+    };
+  }, [items, props.value, storedValue]);
+  const handleChange = nextValue => {
+    props.onChange?.(nextValue);
+    const selected = Array.isArray(nextValue) ? nextValue[nextValue.length - 1] : nextValue;
+    const fallback = String(selected?.display ?? selected?.text ?? selected?.value ?? selected?.code ?? '');
+    const targets = Array.isArray(targetFieldIds) && targetFieldIds.length > 0 ? targetFieldIds : [effectiveFieldId];
+    setFormData(produce(draft => {
+      if (!draft.field) draft.field = {
+        data: {},
+        status: {},
+        history: []
+      };
+      if (!draft.field.data || typeof draft.field.data !== 'object') draft.field.data = {};
+      targets.forEach(targetId => {
+        if (!targetId) return;
+        draft.field.data[targetId] = valueForLookupTarget(selected, targetId, targetLabels?.[targetId], fallback);
+      });
+    }));
+  };
+  return /*#__PURE__*/React.createElement(FindCodeSelectBase, _extends({}, props, {
+    fieldId: effectiveFieldId,
+    optionList: items,
+    fallbackItems: [],
+    value: boundValue,
+    showOtherOption: props.showOtherOption ?? true,
+    onChange: handleChange
+  }));
+};
 
 /**
  * FindCodeSelect
@@ -7410,6 +7517,10 @@ const FindCodeSelectWithCodeList = props => {
  * code-list host context, and calling \`useCodeList\` in that path can fail.
  */
 const FindCodeSelect = props => {
+  const hasSourceLookup = Boolean(String(props?.lookupType ?? '').trim()) || Array.isArray(props?.lookupSourcePaths) && props.lookupSourcePaths.length > 0;
+  if (hasSourceLookup) {
+    return /*#__PURE__*/React.createElement(FindCodeSelectWithSourceLookup, props);
+  }
   const optionList = props?.optionList;
   const hasExplicitOptionList = Array.isArray(optionList) ? optionList.length > 0 : Boolean(optionList && typeof optionList === 'object');
   if (hasExplicitOptionList) {
@@ -13106,90 +13217,6 @@ const HealthMaintenanceReview = ({
     onClick: () => setIsOpen(false)
   })))));
 };`,
-  './HistoricalFormValueField/index.jsx': `const {
-  useEffect,
-  useMemo
-} = React;
-const {
-  TextField
-} = Fluent;
-const asText = value => {
-  if (value === undefined || value === null) return "";
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value);
-  if (typeof value === "object") return String(value.display ?? value.text ?? value.value ?? value.code ?? "");
-  return "";
-};
-const resolveHistoryRows = sd => {
-  const roots = [sd?.webformHistory, sd?.historicalForms, sd?.patient?.webforms, sd?.patient?.forms, sd?.patient?.dformHistory, sd?.queryResult?.patient?.[0]?.webforms, sd?.queryResult?.patient?.[0]?.forms];
-  return roots.flatMap(value => Array.isArray(value) ? value : []);
-};
-const fieldValueFromRow = (row, legacyFieldId) => {
-  if (!row || typeof row !== "object" || !legacyFieldId) return "";
-  const candidates = [row, row.formData, row.data, row.field?.data, row.values];
-  for (const candidate of candidates) {
-    if (!candidate || typeof candidate !== "object") continue;
-    if (Object.prototype.hasOwnProperty.call(candidate, legacyFieldId)) {
-      return asText(candidate[legacyFieldId]);
-    }
-    const matchingKey = Object.keys(candidate).find(key => key.endsWith(\`_\${legacyFieldId}\`) || key.endsWith(\`_field_\${legacyFieldId}\`));
-    if (matchingKey) return asText(candidate[matchingKey]);
-  }
-  return "";
-};
-const rowDate = row => {
-  const raw = row?.docDate ?? row?.documentDate ?? row?.createdDate ?? row?.createdAt ?? row?.updatedAt;
-  const parsed = new Date(raw);
-  return Number.isNaN(parsed.getTime()) ? 0 : parsed.getTime();
-};
-
-/**
- * Mirrors the latest value of a legacy Dynamic Form field when MOIS exposes
- * prior webform/DForm rows in the source query. It is intentionally read-only:
- * legacy \`viewonly=dform\` tags never created a new chart write.
- */
-const HistoricalFormValueField = ({
-  id,
-  fieldId,
-  label = "Prior form value",
-  legacyFieldId = "",
-  placeholder = "No prior value",
-  readOnly = true,
-  disabled = false
-}) => {
-  const [fd, setFormData] = useActiveData();
-  const sd = useSourceData();
-  const effectiveFieldId = fieldId || id || "historicalFormValue";
-  const value = useMemo(() => {
-    const rows = resolveHistoryRows(sd).map(row => ({
-      row,
-      value: fieldValueFromRow(row, legacyFieldId)
-    })).filter(entry => entry.value).sort((left, right) => rowDate(right.row) - rowDate(left.row));
-    return rows[0]?.value ?? "";
-  }, [legacyFieldId, sd]);
-  const stored = fd?.field?.data?.[effectiveFieldId];
-  useEffect(() => {
-    if (!value || stored === value || typeof setFormData !== "function") return;
-    setFormData(produce(draft => {
-      if (!draft.field) draft.field = {
-        data: {},
-        status: {},
-        history: []
-      };
-      if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {};
-      draft.field.data[effectiveFieldId] = value;
-    }));
-  }, [effectiveFieldId, setFormData, stored, value]);
-  return /*#__PURE__*/React.createElement(LayoutItem, {
-    fieldId: effectiveFieldId,
-    label: label,
-    disabled: disabled
-  }, /*#__PURE__*/React.createElement(TextField, {
-    value: value,
-    placeholder: placeholder,
-    readOnly: readOnly,
-    disabled: disabled
-  }));
-};`,
   './HistoricalObservationTable/index.jsx': `const {
   useMemo
 } = React;
@@ -16124,114 +16151,6 @@ function LayoutTable({
     }, renderLayoutTableCellContent(cell, readOnly, tableData, sd, setFieldValue));
   }))))));
 }`,
-  './LegacyLookupField/index.jsx': `const {
-  useMemo
-} = React;
-const {
-  ComboBox
-} = Fluent;
-const normalizeLookupName = value => String(value || "").replace(/[^a-z0-9]/gi, "").toLowerCase();
-const normalizeOption = (value, index) => {
-  if (value === undefined || value === null) return null;
-  if (typeof value === "string" || typeof value === "number") {
-    const text = String(value);
-    return {
-      key: text,
-      text,
-      raw: value
-    };
-  }
-  if (typeof value !== "object") return null;
-  const key = String(value.code ?? value.id ?? value.key ?? value.value ?? value.display ?? value.label ?? index);
-  const text = String(value.display ?? value.label ?? value.text ?? value.name ?? value.code ?? key);
-  return {
-    key,
-    text,
-    raw: value
-  };
-};
-const optionSources = (sd, lookupType) => {
-  const normalized = normalizeLookupName(lookupType);
-  const optionLists = sd?.optionLists || {};
-  const candidates = [sd?.lookups?.[lookupType], sd?.lookupValues?.[lookupType], sd?.[\`\${lookupType}Options\`], sd?.[\`\${lookupType}s\`], optionLists[lookupType], optionLists[lookupType?.toUpperCase?.()], optionLists[\`MOIS-\${lookupType?.toUpperCase?.()}\`]];
-  if (normalized === "servicelocation") {
-    candidates.push(sd?.serviceLocations, optionLists.SERVICELOCATION, optionLists.SERVICE_LOCATION, optionLists["MOIS-SERVICELOCATION"]);
-  }
-  if (normalized === "jorg") {
-    candidates.push(sd?.jorg, sd?.organizations, optionLists.JORG, optionLists["MOIS-JORG"]);
-  }
-  return candidates.flatMap(candidate => Array.isArray(candidate) ? candidate : []);
-};
-const valueForTarget = (raw, targetId, targetLabel, fallback) => {
-  if (!raw || typeof raw !== "object") return fallback;
-  const normalizedLabel = normalizeLookupName(targetLabel);
-  const directKeys = [targetId, targetId?.split("_").pop(), normalizedLabel];
-  for (const key of directKeys) {
-    if (key && raw[key] !== undefined && raw[key] !== null) return String(raw[key]);
-  }
-  const aliasSets = [["healthauthority", "authority"], ["healthservicedeliveryarea", "hsda"], ["branch"], ["responsibleservicedeliverylocation", "servicedeliverylocation", "sdl", "location"]];
-  const aliases = aliasSets.find(items => items.some(item => normalizedLabel.includes(item))) ?? [];
-  for (const alias of aliases) {
-    const matchingKey = Object.keys(raw).find(key => normalizeLookupName(key) === alias);
-    if (matchingKey && raw[matchingKey] != null) return String(raw[matchingKey]);
-  }
-  return fallback;
-};
-
-/**
- * Dynamic Form lookups used source-specific service-location and organization
- * lists. This adapter accepts those lists from common MOIS source locations and
- * writes the selected record into the primary field plus any mapped targets.
- */
-const LegacyLookupField = ({
-  id,
-  fieldId,
-  label = "Lookup",
-  lookupType = "",
-  targetFieldIds = [],
-  targetLabels = {},
-  placeholder = "Select or enter a value",
-  disabled = false
-}) => {
-  const [fd, setFormData] = useActiveData();
-  const sd = useSourceData();
-  const effectiveFieldId = fieldId || id || "legacyLookup";
-  const value = fd?.field?.data?.[effectiveFieldId] ?? "";
-  const options = useMemo(() => {
-    const seen = new Set();
-    return optionSources(sd, lookupType).map(normalizeOption).filter(option => option && !seen.has(option.key) && seen.add(option.key));
-  }, [lookupType, sd]);
-  const commit = (option, freeformValue) => {
-    const fallback = String(option?.text ?? freeformValue ?? "");
-    const raw = option?.raw;
-    setFormData(produce(draft => {
-      if (!draft.field) draft.field = {
-        data: {},
-        status: {},
-        history: []
-      };
-      if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {};
-      const targets = Array.isArray(targetFieldIds) && targetFieldIds.length > 0 ? targetFieldIds : [effectiveFieldId];
-      targets.forEach(targetId => {
-        if (!targetId) return;
-        draft.field.data[targetId] = valueForTarget(raw, targetId, targetLabels?.[targetId], fallback);
-      });
-    }));
-  };
-  return /*#__PURE__*/React.createElement(LayoutItem, {
-    fieldId: effectiveFieldId,
-    label: label,
-    disabled: disabled
-  }, /*#__PURE__*/React.createElement(ComboBox, {
-    text: String(value),
-    placeholder: placeholder,
-    options: options,
-    allowFreeform: true,
-    autoComplete: "on",
-    disabled: disabled,
-    onChange: (_, option, __, freeformValue) => commit(option, freeformValue)
-  }));
-};`,
   './LongTermMedications/index.jsx': `function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /**
  * Display a list of long term medication orders for this patient.
@@ -21143,6 +21062,27 @@ const stringifyValue = value => {
   }
   return "";
 };
+const resolveHistoricalFormRows = source => {
+  const roots = [source?.webformHistory, source?.historicalForms, source?.patient?.webforms, source?.patient?.forms, source?.patient?.dformHistory, source?.queryResult?.patient?.[0]?.webforms, source?.queryResult?.patient?.[0]?.forms];
+  return roots.flatMap(value => Array.isArray(value) ? value : []);
+};
+const valueFromHistoricalFormRow = (row, legacyFieldId) => {
+  if (!row || typeof row !== "object" || !legacyFieldId) return "";
+  const candidates = [row, row.formData, row.formData?.field?.data, row.data, row.field?.data, row.values];
+  for (const candidate of candidates) {
+    if (!candidate || typeof candidate !== "object") continue;
+    if (Object.prototype.hasOwnProperty.call(candidate, legacyFieldId)) {
+      return stringifyValue(candidate[legacyFieldId]);
+    }
+    const matchingKey = Object.keys(candidate).find(key => key.endsWith(\`_\${legacyFieldId}\`) || key.endsWith(\`_field_\${legacyFieldId}\`));
+    if (matchingKey) return stringifyValue(candidate[matchingKey]);
+  }
+  return "";
+};
+const historicalFormRowDate = row => {
+  const raw = row?.docDate ?? row?.documentDate ?? row?.createdDate ?? row?.createdAt ?? row?.updatedAt;
+  return parseDateValue(raw)?.getTime() ?? 0;
+};
 const optionalString = value => {
   if (value === undefined || value === null || value === "") return undefined;
   return stringifyValue(value);
@@ -21260,6 +21200,8 @@ const PastMeasurementField = ({
   fieldId,
   label = "Measurement",
   placeholder,
+  historyKind = "observation",
+  legacyFieldId = "",
   historySourcePath = "patient.observations",
   valuePath = "value",
   datePath = "collectedDateTime",
@@ -21305,6 +21247,7 @@ const PastMeasurementField = ({
   const sd = useSourceData();
   const componentId = id || fieldId || "PastMeasurementField";
   const effectiveFieldId = fieldId || componentId;
+  const isHistoricalFormValue = String(historyKind || "").replace(/[^a-z]/gi, "").toLowerCase() === "formvalue";
   const fieldData = fd?.field?.data ?? {};
   const hasStoredValue = effectiveFieldId ? Object.prototype.hasOwnProperty.call(fieldData, effectiveFieldId) : false;
   const storedValue = effectiveFieldId ? fieldData[effectiveFieldId] : "";
@@ -21312,7 +21255,24 @@ const PastMeasurementField = ({
   const codeFilter = stringifyValue(observationCode);
   const commentFilter = stringifyValue(observationComment);
   const documentDate = docDateFieldPath ? parseDateValue(resolvePathValue(fieldData, docDateFieldPath)) : null;
-  const historyItems = useMemo(() => {
+  const formHistoryItems = useMemo(() => {
+    if (!isHistoricalFormValue) return [];
+    return resolveHistoricalFormRows(sd).map((row, index) => {
+      const valueText = valueFromHistoricalFormRow(row, legacyFieldId);
+      const rawDate = row?.docDate ?? row?.documentDate ?? row?.createdDate ?? row?.createdAt ?? row?.updatedAt;
+      return {
+        index,
+        raw: row,
+        rawDate,
+        dateText: formatDate(rawDate) || "-",
+        dateTimeValue: historicalFormRowDate(row),
+        valueText,
+        unitsText: ""
+      };
+    }).filter(entry => Boolean(entry.valueText)).sort((left, right) => right.dateTimeValue - left.dateTimeValue || left.index - right.index).slice(0, effectiveHistorySize);
+  }, [effectiveHistorySize, isHistoricalFormValue, legacyFieldId, sd]);
+  const observationHistoryItems = useMemo(() => {
+    if (isHistoricalFormValue) return [];
     return normalizeObservationItems({
       items: resolveMoisValue(sd, historySourcePath),
       valuePath,
@@ -21325,8 +21285,9 @@ const PastMeasurementField = ({
       documentDate,
       applyDocumentDateFilter: true
     }).slice(0, effectiveHistorySize);
-  }, [codeFilter, commentPath, codePath, commentFilter, datePath, documentDate, effectiveHistorySize, historySourcePath, sd, unitsPath, valuePath]);
-  const linkedObservationItem = useMemo(() => normalizeObservationItems({
+  }, [codeFilter, commentPath, codePath, commentFilter, datePath, documentDate, effectiveHistorySize, historySourcePath, sd, unitsPath, valuePath, isHistoricalFormValue]);
+  const historyItems = isHistoricalFormValue ? formHistoryItems : observationHistoryItems;
+  const linkedObservationItem = useMemo(() => isHistoricalFormValue ? null : normalizeObservationItems({
     items: sd?.webform?.observations,
     valuePath,
     datePath,
@@ -21337,9 +21298,9 @@ const PastMeasurementField = ({
     commentFilter,
     documentDate: null,
     applyDocumentDateFilter: false
-  })[0] ?? null, [codeFilter, commentPath, codePath, commentFilter, datePath, sd, unitsPath, valuePath]);
+  })[0] ?? null, [codeFilter, commentPath, codePath, commentFilter, datePath, isHistoricalFormValue, sd, unitsPath, valuePath]);
   const latestHistoryItem = historyItems[0] ?? null;
-  const resolvedCurrentValue = hasMeaningfulValue(storedValue) ? storedValue : linkedObservationItem?.valueText ?? (autoFillFromHistory ? latestHistoryItem?.valueText : "") ?? "";
+  const resolvedCurrentValue = isHistoricalFormValue ? latestHistoryItem?.valueText ?? "" : hasMeaningfulValue(storedValue) ? storedValue : linkedObservationItem?.valueText ?? (autoFillFromHistory ? latestHistoryItem?.valueText : "") ?? "";
   const numericCurrentValue = Number(stringifyValue(resolvedCurrentValue));
   const hasNumericCurrentValue = Number.isFinite(numericCurrentValue);
   const resolvedAbnormalLow = abnormalLow ?? rangeNormalLow;
@@ -21355,7 +21316,7 @@ const PastMeasurementField = ({
   const shouldReserveHistory = showHistory && showHistoryOnFocus;
   const inputSuffix = stringifyValue(saveUnits) || latestHistoryItem?.unitsText || "";
   useEffect(() => {
-    if (persistenceMode !== "observationAndForm") {
+    if (isHistoricalFormValue || persistenceMode !== "observationAndForm") {
       setNestedPayload(setFormData, componentId, "dco", null);
       return;
     }
@@ -21435,12 +21396,16 @@ const PastMeasurementField = ({
         abnormalFlag
       } : {})
     }]);
-  }, [componentId, effectiveFieldId, fieldData, hasStoredValue, label, latestHistoryItem, linkedObservationItem, observationCode, observationDescription, persistenceMode, rangeAbsurdHigh, rangeAbsurdLow, rangeNormalHigh, rangeNormalLow, rangeVeryHigh, rangeVeryLow, resolvedAbnormalHigh, resolvedAbnormalLow, resolvedCriticalHigh, resolvedCriticalLow, saveDescription, saveUnits, sd, setFormData, storedValue, valueType, commentFilter]);
+  }, [componentId, effectiveFieldId, fieldData, hasStoredValue, label, latestHistoryItem, linkedObservationItem, isHistoricalFormValue, observationCode, observationDescription, persistenceMode, rangeAbsurdHigh, rangeAbsurdLow, rangeNormalHigh, rangeNormalLow, rangeVeryHigh, rangeVeryLow, resolvedAbnormalHigh, resolvedAbnormalLow, resolvedCriticalHigh, resolvedCriticalLow, saveDescription, saveUnits, sd, setFormData, storedValue, valueType, commentFilter]);
   useEffect(() => {
-    if (!effectiveFieldId || !autoFillFromHistory) return;
+    if (!effectiveFieldId) return;
     if (!latestHistoryItem?.valueText) return;
-    if (hasMeaningfulValue(storedValue)) return;
-    if (linkedObservationItem?.valueText) return;
+    if (isHistoricalFormValue && storedValue === latestHistoryItem.valueText) return;
+    if (!isHistoricalFormValue) {
+      if (!autoFillFromHistory) return;
+      if (hasMeaningfulValue(storedValue)) return;
+      if (linkedObservationItem?.valueText) return;
+    }
     setFormData(produce(draft => {
       if (!draft.field) {
         draft.field = {
@@ -21452,10 +21417,10 @@ const PastMeasurementField = ({
       if (!draft.field.data || typeof draft.field.data !== "object") {
         draft.field.data = {};
       }
-      if (hasMeaningfulValue(draft.field.data[effectiveFieldId])) return;
+      if (!isHistoricalFormValue && hasMeaningfulValue(draft.field.data[effectiveFieldId])) return;
       draft.field.data[effectiveFieldId] = latestHistoryItem.valueText;
     }));
-  }, [autoFillFromHistory, effectiveFieldId, latestHistoryItem, linkedObservationItem, setFormData, storedValue]);
+  }, [autoFillFromHistory, effectiveFieldId, isHistoricalFormValue, latestHistoryItem, linkedObservationItem, setFormData, storedValue]);
   const handleValueChange = (event, nextValue) => {
     if (!effectiveFieldId) return;
     if (readOnly || disabled) return;
@@ -30225,7 +30190,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './EducationHistory/index.jsx': ["EducationHistory","EducationHistoryFields"],
   './Ethnicity/index.jsx': ["Ethnicity","firstNationEthnicityCodes","firstNationsEthnicityReferenceSet"],
   './FieldStampButton/index.jsx': ["ButtonComponent","FieldStampButton","buildContext","clearStamp","context","effectiveStampFieldId","fallback","fieldData","fieldId","isDisabled","isSigned","normalizeStampTargets","normalizeStampValue","normalizedTargets","raw","resolveLiteralValue","resolvePathValue","sd","signedAt","signedAtText","sourcePath","stamp","stampRecord","statusText","value","written"],
-  './FindCodeSelect/index.jsx': ["CONTROL_KEY_TOKENS","FindCodeSelect","FindCodeSelectBase","FindCodeSelectWithCodeList","candidateKeys","candidates","code","codeListFromContext","combinedStyles","comboSelectedKey","currentValues","defaultComboStyles","defaultGetCandidates","defaultMapCandidateSavedValue","defaultRenderSelected","effectiveLabelPosition","filteringActive","fluentLabel","freeText","freeTextItem","getItemKey","getSizeStyles","handleChange","handleInputValueChange","handleKeyDown","handlePendingValueChanged","hasExplicitOptionList","hasSearchText","hidden","i","idx","isDeleteKey","isEmpty","isKeyboardToken","isMultiSelect","item","items","key","keys","leftKey","mapped","match","nextValues","normalizeOption","normalizeSelectedValues","optionList","options","rawKey","renderCandidateOption","resolveItems","rightKey","sameSelectedItem","sectionLayout","selectedCode","selectedItem","selectedItems","selectedKey","selectedKeySet","selectedKeys","shouldSelect","shouldSuppressLayoutItemLabel","showChildren","sizeMap","sizeStyles","text","withoutItem","wrapperStyle"],
+  './FindCodeSelect/index.jsx': ["CONTROL_KEY_TOKENS","FindCodeSelect","FindCodeSelectBase","FindCodeSelectWithCodeList","FindCodeSelectWithSourceLookup","aliasSets","aliases","boundValue","candidateKeys","candidates","code","codeListFromContext","combinedStyles","comboSelectedKey","currentValues","customSources","defaultComboStyles","defaultGetCandidates","defaultMapCandidateSavedValue","defaultRenderSelected","directKeys","effectiveFieldId","effectiveLabelPosition","fallback","fallbackItems","filteringActive","fluentLabel","freeText","freeTextItem","getItemKey","getSizeStyles","handleChange","handleInputValueChange","handleKeyDown","handlePendingValueChanged","hasExplicitOptionList","hasSearchText","hasSourceLookup","hidden","i","idx","isDeleteKey","isEmpty","isKeyboardToken","isMultiSelect","item","items","key","keys","leftKey","mapped","match","matchingKey","nextValues","normalizeLookupName","normalizeOption","normalizeSelectedValues","normalized","normalizedLabel","optionList","optionLists","options","rawKey","renderCandidateOption","resolveItems","resolveLookupPath","rightKey","sameSelectedItem","sd","sectionLayout","seen","segments","selected","selectedCode","selectedItem","selectedItems","selectedKey","selectedKeySet","selectedKeys","shouldSelect","shouldSuppressLayoutItemLabel","showChildren","sizeMap","sizeStyles","sourceEntries","sourceItems","sourceLookupItems","storedValue","targets","text","valueForLookupTarget","withoutItem","wrapperStyle"],
   './FirstNationsStatus/index.jsx': ["FirstNationsStatus","connections","ethnicity","firstNationsStatusPatientFields","firstNationsStatusSchema","hasReserveName","races","reserveConnection","reserveName","selfId"],
   './FocusedObservationHistory/index.jsx': ["FocusedObservationHistory","candidate","current","date","day","direct","formatDate","getFocusedFieldId","handleBlur","handleFocus","host","isVisible","items","month","normalizeItems","parseDate","parsed","parsedDate","pathSegments","patientPath","raw","resolveMoisValue","resolvePath","rows","sd","textValue","year"],
   './FormContextHeader/index.jsx': ["FormContextHeader","FormContextHeaderSchema","appointmentDateTime","code","date","display","encounter","legacyContextDate","legacyContextDateTime","legacyContextText","legacyContextVisitCode","legacyFieldWrap","legacySmallFieldWrap","legacyTextStyles","match","providerName","raw","renderReadOnlyField","sd","section","values"],
@@ -30235,14 +30200,12 @@ export const componentDefinedNames: Record<string, string[]> = {
   './HFC_PT_ASMT_PatientSummary/index.jsx': ["ConditionsSortDesc","ConnectionEditSubForm","EFHistory","EFcols","HFC_PT_ASMT_PatientSummary","TestResult","acol","allergiesCols","asciiCompare","bcol","code","connectionMutation","connectionTemplate","connectionTypeCode","currentConnection","defaultProviderType","defaultProviderTypeLookup","finalSourceMap","getLastRead","getListSelectionColumns","gridRows","handleCreateConnection","handleEditConnection","healthIssuesCols","isInitialMount","labs","latestCollectedFirst","lookupSelectedProviderType","ltRXcols","providerTypes","result","savedValueMapper","sd","sortStartDateDesc"],
   './HFC_PT_ASMT_SnapShot/index.jsx': ["EndDateToTop","HFC_PT_ASMT_SnapShot","RadioSelectGroup","StartDatetoTop","_AddAppt","_handlecheckchange","_onChoiceChange","_removeAppt","appts","checkBoxStyles","codesys","defaultFollowUpAppts","fieldData","followUpList","handleStateChange","newAppt","newitem","optionList","optionlist","optlist","reminder","sd","snapdate","sortStartDatethenEndDateDesc","tableCellStyle","tableStyle"],
   './HealthMaintenanceReview/index.jsx': ["DEFAULT_HEALTH_MAINTENANCE_RULES","HealthMaintenanceReview","ItemCard","STATUS_META","STATUS_ORDER","Sparkline","StatusBadge","SummaryCard","activeRoot","addDays","age","alias","allItems","appendRecord","appliesTo","asOf","base","buckets","buildDueText","buildReviewItem","buildSparklinePath","candidate","candidateKeys","chartNumber","code","codeMatch","codes","coercePositiveInt","collectConditionRecords","collectObservationRecords","collected","collectedDate","computeAge","conditionSpecific","conditions","context","current","date","dateOnly","day","daysBetween","dedupeStrings","deduped","delta","description","descriptionMatch","descriptions","direct","display","dob","dueDate","effectiveRules","effectiveSource","end","explicitDate","family","findObservationHistory","findPathHistory","first","flattenRuleEntries","flattenValues","flattened","formatDate","formatFrequencyLabel","formatValueLabel","frequencyDays","fromAdmin","fromEntry","fromGender","fromSource","gender","general","generalItems","generalSource","groupItemsBySection","healthNumber","history","isActive","isMeaningfulValue","isObject","isRuleApplicable","key","latest","match","matchedConditionGroups","matchesConditionFilters","max","mergeSourceData","merged","meta","middle","min","month","monthDelta","months","next","normalizeConditionRecord","normalizeDate","normalizeGenderValue","normalizeObservationRecord","normalizePathRecord","normalizePatientName","normalizeRuleItem","normalizeRuleSet","normalizeString","normalized","normalizedCodes","normalizedFrequencyDays","normalizedPath","normalizedText","normalizedY","numeric","observationHistory","observations","out","override","parseNumericValue","parsed","parsedRules","parts","path","pathHistory","patient","patientCandidates","patientSex","range","raw","rawConditionGroups","readScopedPathValue","renderHeaderField","resolveDate","resolvePathValue","resolved","resolvedFieldId","resolvedReviewDate","review","ruleSource","scoped","sd","seen","segments","start","status","statusDelta","stringifyValue","stroke","summary","text","textMatch","toArrayOfRecords","toDisplayGender","toPathSegments","trendHistory","trendPoints","triggerSummaryText","trimmed","unitsText","usableHeight","usableWidth","value","valueText","values","x","y","year","years"],
-  './HistoricalFormValueField/index.jsx': ["HistoricalFormValueField","asText","candidates","effectiveFieldId","fieldValueFromRow","matchingKey","parsed","raw","resolveHistoryRows","roots","rowDate","rows","sd","stored","value"],
   './HistoricalObservationTable/index.jsx': ["HistoricalObservationTable","current","date","getHistorySource","grouped","historyDateKey","matchedColumn","raw","rows","sd","source","steps"],
   './HonosQuestion/index.jsx': ["CHOICE_FIELD_STYLE","HonosFinalScore","QUESTION_STACK_STYLE","QUESTION_defaultLabelStyle","SCALE_10_LEGENDS","SCALE_10_LEGEND_LOOKUP","SCALE_10_OPTIONS","SCALE_5_LEGENDS","SCALE_5_LEGEND_LOOKUP","SCALE_5_OPTIONS","Scale10","Scale10Legend","Scale5","Scale5Legend","Scale5QuestionList","Scale5SubmitButton","Scale5ToolTip","ScaleLegend","UpdateContext","buildLegendLookupFromOptions","buildTooltipLookup","calculatedTotal","createScaleQuestion","customChoiceOptions","description","dropdownStyles","effectiveChoiceOptions","effectiveTooltip","fallbackLookup","fditem","fillAllUnfilledQuestions","finalScoreStyle","generatedTooltip","handleChoiceChanged","handleDropdownChanged","handleKeyUp","i","item","key","keySource","nextChoiceGroup","normalizeScaleChoiceOptions","numeric","numericValue","option","questionIds","questionStyle","rawValue","rawfditem","renderedChoiceOptions","scoredQuestionIds","seenKeys","selectedOptions","targetFieldId","text","theme","toFiniteNumber","tooltipList","tooltipLookup","totalScore","value"],
   './HotspotMapField/index.jsx': ["ANNOTATION_SYMBOL_LABELS","DEFAULT_ANNOTATION_COLOR","DEFAULT_ANNOTATION_SIZE_PERCENT","DEFAULT_ANNOTATION_SYMBOL","DEFAULT_ANNOTATION_SYMBOLS","DEFAULT_INTERACTION_MODE","DEFAULT_MAP_MARGIN_PX","DEFAULT_MAP_MAX_WIDTH","DEFAULT_MAP_MIN_HEIGHT","DEFAULT_MAP_PADDING_PX","DEFAULT_MAP_WIDTH_PERCENT","DEFAULT_MAP_ZOOM_PERCENT","DEFAULT_MARKER_RADIUS","DEFAULT_MARKER_SIZE","DEFAULT_NUMBER_FIELD_WIDTH_PERCENT","DEFAULT_SVG_VIEWBOX_MARGIN_PERCENT","HotspotMapField","annotationDefaultSymbol","annotationPointsToSvgString","annotationSymbols","annotations","append","assignedHotspotIds","baseId","bounds","buildCountsByGroup","buildFallbackPolygon","buildMapValue","byHotspot","centroid","centroidFromPoints","circleAspectRatio","clampPercent","clampSvgViewBoxMarginPercent","clamped","color","commitMapState","commitSelection","compact","count","counterGroups","counts","countsByGroup","createHotspotMapConfig","cx","cy","deltaX","deltaY","displayValue","doc","drawingPointerIdRef","drawingPointsRef","element","elements","ensureResponsiveSvg","ensuredDefault","fallbackList","fieldFillTextLayerIdSet","fieldFillValueMap","fieldId","fields","fill","getHotspotLabelAnchor","getNumberFieldValue","getPointFromEvent","group","groupId","groupLabel","groupsById","half","handleAddAnnotation","handleDrawPointerDown","handleDrawPointerMove","handleDrawPointerUp","handleHotspotKeyDown","handleNumberFieldChange","handleToggleHotspot","hasAnnotations","hasExplicitCounterGroups","hasMapData","hasSelections","hasSvgBackground","height","heightAttr","hotspot","hotspotIdSet","hotspots","hotspotsById","id","ids","importSvgHotspots","injectFieldFillValuesIntoSvg","inlineStyle","input","interactionMode","isDarkMode","isDrawModeActive","isDrawingRef","isFieldFillMode","isSelected","isSymbolModeActive","labelAnchor","map","mapFrameRef","mapFrameStyle","mapValue","marginPercent","markerSize","markup","match","max","min","names","next","nextAnnotations","nextAspectRatio","nextPoints","nextSymbol","nextValue","normalizeAnnotationPoints","normalizeAnnotationSymbol","normalizeAnnotationSymbols","normalizeAnnotationType","normalizeAnnotations","normalizeColor","normalizeCounterGroupId","normalizeCounterGroups","normalizeHotspotPoints","normalizeHotspots","normalizeMapInteractionMode","normalizeNumberFields","normalizeShape","normalizeString","normalized","normalizedAnnotations","normalizedCounterGroups","normalizedHotspot","normalizedHotspots","normalizedId","normalizedNumberFields","normalizedNumeric","normalizedRaw","numberFields","numeric","observer","overlayStyle","overlayViewBox","padX","padY","pair","panelStyle","parseAnnotationSymbol","parseList","parseSvgAspectRatio","parseSvgNumber","parsed","parsedPoints","parsedViewBox","parser","parts","point","points","pointsAttr","pointsToSvgString","previous","projectMapLengthToRenderPercent","projectMapPercentToRenderPercent","projectRenderPercentToMapPercent","r","radius","raw","rawId","rawLabel","rawValue","rect","renderAnnotationModeControls","renderMapFrame","renderSummary","renderedWidth","renderedX","renderedY","resolveAnnotationSymbol","resolveMapInteractionMode","resolved","resolvedAllowedSymbols","resolvedAnnotationDefaultColor","resolvedAnnotationDefaultSymbol","resolvedAnnotationSizePercent","resolvedAnnotationSymbols","resolvedInteractionMode","resolvedMapMarginPx","resolvedMapMaxWidth","resolvedMapMinHeight","resolvedMapPaddingPx","resolvedMapWidthPercent","resolvedMapZoomPercent","resolvedModalMinWidth","responsiveSvg","sanitizeHotspotIds","seen","selectedCount","selectedIds","selectedIdsCsv","selectedLabels","selectedLabelsCsv","serialized","shape","showSymbolPicker","showToolToggle","size","sourceHeight","sourceWidth","step","stroke","strokeWidth","suffix","summaryGroups","supportsAnnotations","supportsDrawAnnotations","supportsSelection","supportsSymbolAnnotations","svg","svgAspectRatio","svgViewBoxMarginPercent","svgViewBoxRenderSize","symbol","symbols","tagName","target","textLayerId","theme","toXPercent","toYPercent","total","trimmed","tspan","type","unique","updateAspectRatio","useSvgLayerTakeover","usedIds","value","vbHeight","vbWidth","vbX","vbY","viewBoxHeight","viewBoxParts","viewBoxRaw","viewBoxWidth","width","widthAttr","widthRaw","x","y","zoomFactor"],
   './HttpJsonTestPanel/index.jsx': ["AbortControllerClass","HTTP_JSON_RESULT_EVENT","HttpJsonTestPanel","aborted","body","controller","effectiveEndpointUrl","effectiveOutputId","fetchJson","formatHttpJsonTestResult","handler","key","nextResult","normalizeHttpJsonEndpointUrl","persistHttpJsonTestResult","previous","publishHttpJsonTestResult","readHttpJsonTestBody","requestBody","response","responseText","sd","sendTest","startedAt","statusColor","statusLabel","storedResult","text","timeout","trimmed","url"],
   './InvestigationTabs/index.jsx': ["INVESTIGATION_DEFAULT_TABS","InvestigationTab","InvestigationTabs","activeChildren","activeTab","childArray","childById","childTabId","id","label","normalizeInvestigationTabs","numeric","props","resolvedTabs","selected","source"],
   './LayoutTable/index.jsx': ["LayoutTable","Tag","bareRefs","bracketedRefs","cellStyle","checklistOptions","code","comparableValue","computeLayoutTableCellValue","computedCells","config","display","displayValue","evaluateLayoutTableFormula","extractLayoutTableFormulaRefs","fieldId","fields","formatLayoutTableComputedValue","formatLayoutTableFieldDisplayValue","formatOne","formula","getCellDisplayValue","getLayoutTableFieldRawValue","getNumericFieldValue","getPathValue","id","ids","isCheckedValue","isNoLikeValue","isSafeLayoutTableFormula","isYesLikeValue","jsExpression","label","labelProp","matched","multiline","nextData","normalizeComparableValue","normalizeLayoutTableOptionList","normalized","numeric","optionList","raw","rawValue","refs","renderLayoutTableCellContent","renderLayoutTableField","renderLayoutTableFieldList","renderLayoutTableReadOnlyField","renderLayoutTableResources","renderLayoutTableStampButton","renderLink","resources","rounded","rowIsVisible","rule","sd","section","setFieldValue","sharedProps","sourceValue","strippedExpression","sumMatch","tableData","tableRows","targets","unwrappedExpression","value","values","visibleRows"],
-  './LegacyLookupField/index.jsx': ["LegacyLookupField","aliasSets","aliases","candidates","commit","directKeys","effectiveFieldId","fallback","key","matchingKey","normalizeLookupName","normalizeOption","normalized","normalizedLabel","optionLists","optionSources","options","raw","sd","seen","targets","text","value","valueForTarget"],
   './LongTermMedications/index.jsx': ["LongTermMedications","LongTermMedicationsFields"],
   './MoisMarkdownBlock/index.jsx': ["MarkdownRenderer","MoisMarkdownBlock","baseComponents","colon","content","defaultRehypePlugins","defaultRemarkPlugins","effectiveFieldId","extra","extraPlugins","fullWidthStyle","hasAllowedProtocol","hasLabel","match","mergedMarkdownProps","mois","moisModule","numberSign","parseMoisHref","parsedId","questionMark","slash","urlTransform"],
   './MoisModuleLinkList/index.jsx': ["MoisModuleLinkList","label","moisModule","normalizeItems","normalizedItems","source"],
@@ -30253,7 +30216,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './ObservationChart/index.jsx': ["$","$e","$l","$n","$t","A","Ae","Ai","Al","An","B","Be","Bl","Bt","C","Ce","Ci","Cl","Ct","D","De","Di","Dl","Dn","Dt","E","El","En","F","Fe","Ft","G","Gt","H","He","Hi","Hl","Ht","I","Ii","Il","It","J","Je","Jl","Jn","Jt","Ke","Kl","Kn","Kt","L","Li","Ll","Lt","M","Mn","Mt","N","Nl","O","OBSERVATION_CHART_PALETTE","OBSERVATION_CHART_STYLE_ID","ObservationChart","Ol","Ot","P","Pe","Pi","Pl","Pn","Q","Qn","Qt","R","Re","Ri","Rt","S","Sn","St","T","Tn","Tt","UPlotCssText","UPlotLib","Ut","Vl","Vt","W","We","Wi","Wl","Wt","X","Xl","Xn","Xt","Y","Ye","Yi","Yl","Yt","Z","Zl","Zn","Zt","_","_i","_l","_n","_t","a","ai","at","b","be","bi","bl","bn","bt","buildChartPayload","buildChartPayloadFromObservations","buildChartPayloadFromRows","buildSeriesDefinitions","buildUPlotOptions","c","candidate","chartPayload","chartSeries","ci","codeCandidates","coerceNumber","coercePositiveInt","container","containerRef","current","d","data","dataKey","day","di","direct","document","dt","e","ee","effectiveHeight","effectiveTitle","ei","el","en","ensureObservationChartStyles","entryCode","entryDescription","et","f","fi","finalizeChartRows","formatDate","frameStyle","fromPatient","fromQueryResult","ft","g","gi","gn","gt","h","hi","hl","ht","i","ie","ii","includes","isNonEmptyString","isRecord","it","jl","jt","k","keys","ki","kn","kt","l","ll","ln","m","match","matchesObservationSeries","maxPoints","mi","mode","month","mt","n","ne","ni","normalizeString","normalizeStringArray","normalized","normalizedCodePath","normalizedCodes","normalizedDateOnly","normalizedDescriptionPath","nt","numericDate","numericValue","o","observationCodes","oi","p","parseDateValue","parseMeasurementValue","parseNumericValue","parsed","parsedDateOnly","patientPath","plot","plotRef","pt","qe","qn","qt","r","rawValue","renderWidth","resizeChart","resizeObserver","resolveMoisValue","resolvePathValue","root","rowIndex","rowMap","s","sd","segments","self","seriesDefs","seriesPointSize","seriesShowsPoints","showAxes","showGrid","showLegend","showPoints","single","singleCode","sortedRows","sourceItems","sourcePath","stringifyValue","style","summaryParts","t","target","te","text","timeValue","timestamp","tl","tn","toPathSegments","trimmed","tt","u","uPlot","units","v","value","valueText","ve","vi","vl","vn","vt","w","wi","window","wl","wn","wrapperStyle","wt","xKey","xValues","xi","xl","xn","xt","y","year","yi","yn","yt","z","ze","zi","zl","zn"],
   './ObservationPanelEditor/index.jsx': ["DEFAULT_WINDOW_HOURS","ObservationPanelEditor","actor","actorFrom","addHoursIso","authorshipPolicy","buildKey","c","changed","ck","claim","claims","codeSet","commitSave","componentId","computedTotals","container","createdBy","current","currentActorName","currentPayload","d","data","dcoUpdates","editableUntil","effectiveFieldId","euDate","existing","expired","fieldData","formatTimestamp","getCurrentActorName","getNhAuth","getPanelValue","grouped","hasValue","historyRows","isNonEmpty","isOwner","keepStatus","key","label","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","maxHistory","next","nextGroup","nextStatus","nhAuth","normalizePanelRows","normalizePanelTotals","normalizeStore","now","nowIso","numeric","oldObs","optionList","ownerId","ownerName","ownerRefresh","pad2","panelDateKey","payloadsEqual","pending","policyAppliesToAction","prepareSave","raw","readStore","release","resolveNow","rootValue","rowDefs","rowLockInfo","rowReadOnly","sameActor","sd","section","setPanelPayload","setRowValue","source","sourceIds","store","stripVolatilePayloadFields","toNumericValue","totalDefs","ts","untilSelf","value","windowHours"],
   './Occupations/index.jsx': ["Occupations","OccupationsFields"],
-  './PastMeasurementField/index.jsx': ["PastMeasurementField","abnormalFlag","abnormalHighValue","abnormalLowValue","candidate","codeFilter","coercePositiveInt","commentFilter","componentId","container","createdBy","criticalHighValue","criticalLowValue","current","currentPayload","day","direct","documentDate","effectiveFieldId","effectiveHistorySize","entryCode","entryComment","entryDate","entryUnits","entryValue","explicitValue","fieldData","flagCode","flagDisplays","formatDate","fromPatient","fromQueryResult","handleValueChange","hasAbnormalHigh","hasAbnormalLow","hasExplicitValue","hasMeaningfulValue","hasNumericCurrentValue","hasRangeMetadata","hasStoredValue","historyItems","historySummary","index","inputSuffix","isAbnormal","isNonEmptyString","key","latestHistoryItem","legacyRangePayload","linkedObservationItem","month","nextGroup","normalizeObservationItems","normalizedDateOnly","numericCurrentValue","numericExplicitValue","numericTime","oldId","oldObs","optionalString","parseDateValue","parsed","parsedDate","parsedDateOnly","patientPath","payloadsEqual","recentHistoryText","resolveMoisValue","resolvePathValue","resolvedAbnormalHigh","resolvedAbnormalLow","resolvedCriticalHigh","resolvedCriticalLow","resolvedCurrentValue","resolvedUnits","sd","segments","setNestedPayload","shouldReserveHistory","shouldShowHistory","storedValue","stringifyValue","stripVolatilePayloadFields","text","toObservationList","toPathSegments","updatedValue","valueKeys","valuePart","year"],
+  './PastMeasurementField/index.jsx': ["PastMeasurementField","abnormalFlag","abnormalHighValue","abnormalLowValue","candidate","candidates","codeFilter","coercePositiveInt","commentFilter","componentId","container","createdBy","criticalHighValue","criticalLowValue","current","currentPayload","day","direct","documentDate","effectiveFieldId","effectiveHistorySize","entryCode","entryComment","entryDate","entryUnits","entryValue","explicitValue","fieldData","flagCode","flagDisplays","formHistoryItems","formatDate","fromPatient","fromQueryResult","handleValueChange","hasAbnormalHigh","hasAbnormalLow","hasExplicitValue","hasMeaningfulValue","hasNumericCurrentValue","hasRangeMetadata","hasStoredValue","historicalFormRowDate","historyItems","historySummary","index","inputSuffix","isAbnormal","isHistoricalFormValue","isNonEmptyString","key","latestHistoryItem","legacyRangePayload","linkedObservationItem","matchingKey","month","nextGroup","normalizeObservationItems","normalizedDateOnly","numericCurrentValue","numericExplicitValue","numericTime","observationHistoryItems","oldId","oldObs","optionalString","parseDateValue","parsed","parsedDate","parsedDateOnly","patientPath","payloadsEqual","raw","rawDate","recentHistoryText","resolveHistoricalFormRows","resolveMoisValue","resolvePathValue","resolvedAbnormalHigh","resolvedAbnormalLow","resolvedCriticalHigh","resolvedCriticalLow","resolvedCurrentValue","resolvedUnits","roots","sd","segments","setNestedPayload","shouldReserveHistory","shouldShowHistory","storedValue","stringifyValue","stripVolatilePayloadFields","text","toObservationList","toPathSegments","updatedValue","valueFromHistoricalFormRow","valueKeys","valuePart","valueText","year"],
   './PatientFileSections/index.jsx': ["PatientFileSections","activeText","addressText","cityLine","compactLines","contactText","countryLine","createdDate","editButtonStyle","encounter","fieldWrapStyle","formatAddress","formatContact","formatDate","getPatientFromData","gridStyle","healthNumber","insuranceBy","insuranceNumber","insuranceText","lines","match","mergeObjects","nextPatient","optionCode","optionDisplay","patient","preferredCode","preferredPhoneOptions","providerName","queryPatient","raw","renderClientDemographics","renderDocumentDetails","renderEncounterDetails","renderTitle","requested","sd","section","sectionTitleStyle","textValue","updateContactText","visibleSections","whiteDropdownStyles","whiteFlexTextFieldStyles","whiteTextFieldStyles","writePatientUpdates"],
   './PatientValueField/index.jsx': ["PatientValueField","age","applyPatientTransform","candidates","coercePatientValue","collectionCandidateValues","collectionItemMatches","computeAgeYears","dob","effectiveFieldId","expected","items","monthDelta","normalizedExpected","now","raw","resolveCollectionItemPath","resolvePatientContextPath","resolved","root","sd","stored","values"],
   './PdfRegenerator/index.jsx': ["PDFLib","PDF_LIB_URL","PdfRegenerator","_base64ToBytes","_buildDateComponentIndex","_buildTableReverseIndex","_collectCandidates","_decodePdfHex","_downloadBytes","_fillField","_getCheckboxOnStates","_inferBooleanState","_installPdfLibFromSource","_isNonEmptyString","_loadPdfLib","_loadPdfLibFromCdn","_matchMultipleOptions","_matchSingleOption","_normalizeFieldMap","_normalizeToken","_pdfLibPromise","_printBytes","_resolveDateComponentValue","_resolveTableCellValue","_resolveValueByPath","_setCheckboxByState","_splitCanonicalDateParts","_statusColor","_toBooleanLike","_toCandidateList","_toText","acro","baseMap","binary","blob","boolValue","booleanStates","buttonDisabled","byRow","bytes","candidate","candidateKeys","candidates","clean","cleaned","cleanup","components","current","dateComponentIndex","dateComponentValue","dateEntry","diagnosticsText","didFill","direct","doc","existing","filledFieldCount","form","formData","formKeys","fromData","fromPath","fuzzy","handleGeneratePdf","hasMatchingState","i","iframe","includeSet","index","inferredState","inlineSource","installed","isOn","left","leftIsFormId","lib","link","map","mapped","match","matches","maybe","maybeDate","maybeTime","nextFileName","normalized","normalizedAction","normalizedCandidate","normalizedOption","normalizedOptionMap","normalizedRequested","offState","onText","onValue","options","outputBytes","parts","pathByColumnId","payload","pdfFieldId","pdfFieldName","printWindow","rawValue","renderActionButton","renderButton","resolvePath","resolvedPdfSource","right","rightIsFormId","row","rowIndex","rowMapping","rows","runner","script","sd","segments","selected","selectedCount","set","single","skippedFieldCount","sourceFieldId","sourceId","sourceValues","state","states","strategy","tableEntry","tableId","tableIndex","targetAction","targetState","targetStateName","targetWidget","text","trimmed","url","warningCount","warnings","widgets","withoutSlash"],
