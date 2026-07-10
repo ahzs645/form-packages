@@ -72,6 +72,7 @@ export const WorkspaceDocumentV3Schema = z.object({
   document: BuilderDocumentSchema,
   fieldLinkRules: z.array(FieldLinkRuleSchema),
   preview: z.unknown().optional(),
+  extensions: z.record(z.unknown()).optional(),
 });
 
 function formatIssues(error: z.ZodError): string {

@@ -1601,6 +1601,8 @@ export interface WorkspaceDocumentV3<TLayoutDraft = unknown, TPreviewSettings = 
   document: BuilderDocument<TLayoutDraft>;
   fieldLinkRules: FieldLinkRule[];
   preview?: TPreviewSettings;
+  /** Namespaced compatibility data that is not part of the authoring domain. */
+  extensions?: Record<string, unknown>;
 }
 
 export interface BuilderVariant<TLayoutDraft = unknown> {
