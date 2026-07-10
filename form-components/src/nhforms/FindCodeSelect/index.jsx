@@ -126,6 +126,84 @@ const resolveItems = (optionList, fallbackItems = []) => {
   return fallbackItems.map(normalizeOption)
 }
 
+const normalizeLookupName = (value) => String(value || '').replace(/[^a-z0-9]/gi, '').toLowerCase()
+
+const resolveLookupPath = (source, path) => {
+  const segments = String(path || '').split('.').map((segment) => segment.trim()).filter(Boolean)
+  if (!source || segments.length === 0) return undefined
+  return segments.reduce((current, segment) => {
+    if (current === undefined || current === null) return undefined
+    if (Array.isArray(current) && /^\d+$/.test(segment)) return current[Number(segment)]
+    return typeof current === 'object' ? current[segment] : undefined
+  }, source)
+}
+
+const sourceEntries = (value) => {
+  if (Array.isArray(value)) return value
+  if (!value || typeof value !== 'object') return []
+  return Object.entries(value).map(([code, entry]) => (
+    entry && typeof entry === 'object'
+      ? { ...entry, code: entry.code ?? entry.key ?? code }
+      : { code, display: entry }
+  ))
+}
+
+const sourceLookupItems = (source, lookupType, lookupSourcePaths = []) => {
+  const normalized = normalizeLookupName(lookupType)
+  const optionLists = source?.optionLists || {}
+  const customSources = Array.isArray(lookupSourcePaths)
+    ? lookupSourcePaths.map((path) => resolveLookupPath(source, path))
+    : []
+  const candidates = [
+    source?.lookups?.[lookupType],
+    source?.lookupValues?.[lookupType],
+    source?.[`${lookupType}Options`],
+    source?.[`${lookupType}s`],
+    optionLists[lookupType],
+    optionLists[lookupType?.toUpperCase?.()],
+    optionLists[`MOIS-${lookupType?.toUpperCase?.()}`],
+    ...customSources,
+  ]
+  if (normalized === 'servicelocation') {
+    candidates.push(source?.serviceLocations, optionLists.SERVICELOCATION, optionLists.SERVICE_LOCATION, optionLists['MOIS-SERVICELOCATION'])
+  }
+  if (normalized === 'jorg') {
+    candidates.push(source?.jorg, source?.organizations, optionLists.JORG, optionLists['MOIS-JORG'])
+  }
+
+  const seen = new Set()
+  return candidates
+    .flatMap(sourceEntries)
+    .map(normalizeOption)
+    .filter((item, index) => {
+      const key = getItemKey(item, 'code', `__lookup_${index}`)
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+}
+
+const valueForLookupTarget = (selected, targetId, targetLabel, fallback) => {
+  if (!selected || typeof selected !== 'object') return fallback
+  const normalizedLabel = normalizeLookupName(targetLabel)
+  const directKeys = [targetId, targetId?.split('_').pop(), normalizedLabel]
+  for (const key of directKeys) {
+    if (key && selected[key] !== undefined && selected[key] !== null) return String(selected[key])
+  }
+  const aliasSets = [
+    ['healthauthority', 'authority'],
+    ['healthservicedeliveryarea', 'hsda'],
+    ['branch'],
+    ['responsibleservicedeliverylocation', 'servicedeliverylocation', 'sdl', 'location'],
+  ]
+  const aliases = aliasSets.find((items) => items.some((item) => normalizedLabel.includes(item))) ?? []
+  for (const alias of aliases) {
+    const matchingKey = Object.keys(selected).find((key) => normalizeLookupName(key) === alias)
+    if (matchingKey && selected[matchingKey] != null) return String(selected[matchingKey])
+  }
+  return fallback
+}
+
 /**
  * Shared implementation used by the inline-option and code-list-backed variants.
  */
@@ -462,6 +540,64 @@ const FindCodeSelectWithCodeList = (props) => {
   return <FindCodeSelectBase {...props} fallbackItems={codeListFromContext} />
 }
 
+const FindCodeSelectWithSourceLookup = ({
+  lookupType = '',
+  lookupSourcePaths = [],
+  targetFieldIds = [],
+  targetLabels = {},
+  ...props
+}) => {
+  const [fd, setFormData] = useActiveData()
+  const sd = useSourceData()
+  const effectiveFieldId = props.fieldId || props.id || 'findCodeSelect'
+  const sourceItems = useMemo(
+    () => sourceLookupItems(sd, lookupType, lookupSourcePaths),
+    [lookupSourcePaths, lookupType, sd]
+  )
+  const fallbackItems = useMemo(
+    () => resolveItems(props.optionList, []),
+    [props.optionList]
+  )
+  const items = sourceItems.length > 0 ? sourceItems : fallbackItems
+  const storedValue = fd?.field?.data?.[effectiveFieldId]
+  const boundValue = useMemo(() => {
+    if (props.value !== undefined || storedValue === undefined || storedValue === null || storedValue === '') {
+      return props.value
+    }
+    if (typeof storedValue === 'object') return storedValue
+    const text = String(storedValue)
+    return items.find((item) => String(item?.code ?? item?.key ?? '') === text || String(item?.display ?? item?.text ?? '') === text)
+      ?? { code: null, display: text }
+  }, [items, props.value, storedValue])
+
+  const handleChange = (nextValue) => {
+    props.onChange?.(nextValue)
+    const selected = Array.isArray(nextValue) ? nextValue[nextValue.length - 1] : nextValue
+    const fallback = String(selected?.display ?? selected?.text ?? selected?.value ?? selected?.code ?? '')
+    const targets = Array.isArray(targetFieldIds) && targetFieldIds.length > 0 ? targetFieldIds : [effectiveFieldId]
+    setFormData(produce((draft) => {
+      if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
+      if (!draft.field.data || typeof draft.field.data !== 'object') draft.field.data = {}
+      targets.forEach((targetId) => {
+        if (!targetId) return
+        draft.field.data[targetId] = valueForLookupTarget(selected, targetId, targetLabels?.[targetId], fallback)
+      })
+    }))
+  }
+
+  return (
+    <FindCodeSelectBase
+      {...props}
+      fieldId={effectiveFieldId}
+      optionList={items}
+      fallbackItems={[]}
+      value={boundValue}
+      showOtherOption={props.showOtherOption ?? true}
+      onChange={handleChange}
+    />
+  )
+}
+
 /**
  * FindCodeSelect
  * Hybrid between FindCode and SimpleCodeSelect:
@@ -474,6 +610,12 @@ const FindCodeSelectWithCodeList = (props) => {
  * code-list host context, and calling `useCodeList` in that path can fail.
  */
 const FindCodeSelect = (props) => {
+  const hasSourceLookup = Boolean(String(props?.lookupType ?? '').trim()) ||
+    (Array.isArray(props?.lookupSourcePaths) && props.lookupSourcePaths.length > 0)
+  if (hasSourceLookup) {
+    return <FindCodeSelectWithSourceLookup {...props} />
+  }
+
   const optionList = props?.optionList
   const hasExplicitOptionList = Array.isArray(optionList)
     ? optionList.length > 0

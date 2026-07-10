@@ -94,6 +94,47 @@ const stringifyValue = (value) => {
   return ""
 }
 
+const resolveHistoricalFormRows = (source) => {
+  const roots = [
+    source?.webformHistory,
+    source?.historicalForms,
+    source?.patient?.webforms,
+    source?.patient?.forms,
+    source?.patient?.dformHistory,
+    source?.queryResult?.patient?.[0]?.webforms,
+    source?.queryResult?.patient?.[0]?.forms,
+  ]
+  return roots.flatMap((value) => (Array.isArray(value) ? value : []))
+}
+
+const valueFromHistoricalFormRow = (row, legacyFieldId) => {
+  if (!row || typeof row !== "object" || !legacyFieldId) return ""
+  const candidates = [
+    row,
+    row.formData,
+    row.formData?.field?.data,
+    row.data,
+    row.field?.data,
+    row.values,
+  ]
+  for (const candidate of candidates) {
+    if (!candidate || typeof candidate !== "object") continue
+    if (Object.prototype.hasOwnProperty.call(candidate, legacyFieldId)) {
+      return stringifyValue(candidate[legacyFieldId])
+    }
+    const matchingKey = Object.keys(candidate).find((key) => (
+      key.endsWith(`_${legacyFieldId}`) || key.endsWith(`_field_${legacyFieldId}`)
+    ))
+    if (matchingKey) return stringifyValue(candidate[matchingKey])
+  }
+  return ""
+}
+
+const historicalFormRowDate = (row) => {
+  const raw = row?.docDate ?? row?.documentDate ?? row?.createdDate ?? row?.createdAt ?? row?.updatedAt
+  return parseDateValue(raw)?.getTime() ?? 0
+}
+
 const optionalString = (value) => {
   if (value === undefined || value === null || value === "") return undefined
   return stringifyValue(value)
@@ -240,6 +281,8 @@ const PastMeasurementField = ({
   fieldId,
   label = "Measurement",
   placeholder,
+  historyKind = "observation",
+  legacyFieldId = "",
   historySourcePath = "patient.observations",
   valuePath = "value",
   datePath = "collectedDateTime",
@@ -285,6 +328,7 @@ const PastMeasurementField = ({
   const sd = useSourceData()
   const componentId = id || fieldId || "PastMeasurementField"
   const effectiveFieldId = fieldId || componentId
+  const isHistoricalFormValue = String(historyKind || "").replace(/[^a-z]/gi, "").toLowerCase() === "formvalue"
 
   const fieldData = fd?.field?.data ?? {}
   const hasStoredValue = effectiveFieldId
@@ -296,7 +340,29 @@ const PastMeasurementField = ({
   const commentFilter = stringifyValue(observationComment)
   const documentDate = docDateFieldPath ? parseDateValue(resolvePathValue(fieldData, docDateFieldPath)) : null
 
-  const historyItems = useMemo(() => {
+  const formHistoryItems = useMemo(() => {
+    if (!isHistoricalFormValue) return []
+    return resolveHistoricalFormRows(sd)
+      .map((row, index) => {
+        const valueText = valueFromHistoricalFormRow(row, legacyFieldId)
+        const rawDate = row?.docDate ?? row?.documentDate ?? row?.createdDate ?? row?.createdAt ?? row?.updatedAt
+        return {
+          index,
+          raw: row,
+          rawDate,
+          dateText: formatDate(rawDate) || "-",
+          dateTimeValue: historicalFormRowDate(row),
+          valueText,
+          unitsText: "",
+        }
+      })
+      .filter((entry) => Boolean(entry.valueText))
+      .sort((left, right) => right.dateTimeValue - left.dateTimeValue || left.index - right.index)
+      .slice(0, effectiveHistorySize)
+  }, [effectiveHistorySize, isHistoricalFormValue, legacyFieldId, sd])
+
+  const observationHistoryItems = useMemo(() => {
+    if (isHistoricalFormValue) return []
     return normalizeObservationItems({
       items: resolveMoisValue(sd, historySourcePath),
       valuePath,
@@ -321,9 +387,15 @@ const PastMeasurementField = ({
     sd,
     unitsPath,
     valuePath,
+    isHistoricalFormValue,
   ])
 
+  const historyItems = isHistoricalFormValue ? formHistoryItems : observationHistoryItems
+
   const linkedObservationItem = useMemo(() => (
+    isHistoricalFormValue
+      ? null
+      :
     normalizeObservationItems({
       items: sd?.webform?.observations,
       valuePath,
@@ -336,12 +408,14 @@ const PastMeasurementField = ({
       documentDate: null,
       applyDocumentDateFilter: false,
     })[0] ?? null
-  ), [codeFilter, commentPath, codePath, commentFilter, datePath, sd, unitsPath, valuePath])
+  ), [codeFilter, commentPath, codePath, commentFilter, datePath, isHistoricalFormValue, sd, unitsPath, valuePath])
 
   const latestHistoryItem = historyItems[0] ?? null
-  const resolvedCurrentValue = hasMeaningfulValue(storedValue)
-    ? storedValue
-    : linkedObservationItem?.valueText ?? (autoFillFromHistory ? latestHistoryItem?.valueText : "") ?? ""
+  const resolvedCurrentValue = isHistoricalFormValue
+    ? latestHistoryItem?.valueText ?? ""
+    : hasMeaningfulValue(storedValue)
+      ? storedValue
+      : linkedObservationItem?.valueText ?? (autoFillFromHistory ? latestHistoryItem?.valueText : "") ?? ""
   const numericCurrentValue = Number(stringifyValue(resolvedCurrentValue))
   const hasNumericCurrentValue = Number.isFinite(numericCurrentValue)
   const resolvedAbnormalLow = abnormalLow ?? rangeNormalLow
@@ -361,7 +435,7 @@ const PastMeasurementField = ({
   const inputSuffix = stringifyValue(saveUnits) || latestHistoryItem?.unitsText || ""
 
   useEffect(() => {
-    if (persistenceMode !== "observationAndForm") {
+    if (isHistoricalFormValue || persistenceMode !== "observationAndForm") {
       setNestedPayload(setFormData, componentId, "dco", null)
       return
     }
@@ -452,6 +526,7 @@ const PastMeasurementField = ({
     label,
     latestHistoryItem,
     linkedObservationItem,
+    isHistoricalFormValue,
     observationCode,
     observationDescription,
     persistenceMode,
@@ -475,10 +550,14 @@ const PastMeasurementField = ({
   ])
 
   useEffect(() => {
-    if (!effectiveFieldId || !autoFillFromHistory) return
+    if (!effectiveFieldId) return
     if (!latestHistoryItem?.valueText) return
-    if (hasMeaningfulValue(storedValue)) return
-    if (linkedObservationItem?.valueText) return
+    if (isHistoricalFormValue && storedValue === latestHistoryItem.valueText) return
+    if (!isHistoricalFormValue) {
+      if (!autoFillFromHistory) return
+      if (hasMeaningfulValue(storedValue)) return
+      if (linkedObservationItem?.valueText) return
+    }
 
     setFormData(produce((draft) => {
       if (!draft.field) {
@@ -487,10 +566,10 @@ const PastMeasurementField = ({
       if (!draft.field.data || typeof draft.field.data !== "object") {
         draft.field.data = {}
       }
-      if (hasMeaningfulValue(draft.field.data[effectiveFieldId])) return
+      if (!isHistoricalFormValue && hasMeaningfulValue(draft.field.data[effectiveFieldId])) return
       draft.field.data[effectiveFieldId] = latestHistoryItem.valueText
     }))
-  }, [autoFillFromHistory, effectiveFieldId, latestHistoryItem, linkedObservationItem, setFormData, storedValue])
+  }, [autoFillFromHistory, effectiveFieldId, isHistoricalFormValue, latestHistoryItem, linkedObservationItem, setFormData, storedValue])
 
   const handleValueChange = (event, nextValue) => {
     if (!effectiveFieldId) return

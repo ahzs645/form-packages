@@ -1,11 +1,11 @@
 {
   "name": "PastMeasurementField",
   "title": "Past Measurement Field",
-  "description": "Editable measurement text field that also shows latest historical value from MOIS query data",
+  "description": "Measurement field with observation history or a read-only latest value from prior MOIS form data",
   "version": {
     "major": 1,
     "minor": 0,
-    "patch": 0
+    "patch": 1
   },
   "type": "component",
   "owner": "Northern Health",
