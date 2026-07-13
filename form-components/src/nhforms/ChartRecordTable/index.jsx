@@ -42,6 +42,7 @@ ChartRecordTable = ({
   moisModule,
   filterPred,
   listCompare,
+  sortBy,
   sourceMap,
   ...props
 }) => {
@@ -51,12 +52,12 @@ ChartRecordTable = ({
   const resolvedChartColumns = columns || preset.columns || _chartRecordTableGenericColumns
   const resolvedEntryColumns = entryColumns || preset.entryColumns || _chartRecordTableGenericEntryColumns
   const resolvedMoisModule = typeof moisModule === "undefined" ? preset.moisModule : moisModule
-  const resolvedFieldId = fieldId || source
-  const resolvedSourceId = sourceId || source
+  const resolvedFieldId = fieldId || preset.fieldId || source
+  const resolvedSourceId = sourceId || preset.sourceId || source
   const resolvedSourceMap = sourceMap || preset.sourceMap
   const resolvedSelectionType = selectionType || preset.selectionType || "none"
   const resolvedFilterPred = filterPred || preset.filterPred
-  const resolvedListCompare = listCompare || preset.listCompare
+  const resolvedListCompare = listCompare || (sortBy ? _chartRecordTableSorts[sortBy] : undefined) || preset.listCompare
 
   return (
     <Fluent.Stack tokens={{ childrenGap: 10 }}>
@@ -114,6 +115,14 @@ const _chartRecordTableGenericEntryColumns = [
 ]
 
 const _chartRecordTableActivePlannedActions = item => item.isCompleted?.code !== "Y"
+const _chartRecordTableActiveConnections = item => !item.stopDate
+const _chartRecordTableStartDateDesc = (a, b) => -(a.startDate?.localeCompare(b.startDate) ?? 0)
+const _chartRecordTableSorts = {
+  roleThenName: (a, b) => {
+    const byType = a.connectionType?.display?.localeCompare(b.connectionType?.display)
+    return (byType ? byType : a.name?.localeCompare(b.name)) ?? 0
+  },
+}
 
 // Column shapes follow the real MOIS full-chart GraphQL schema
 // (Mois.Patient.Query.fullChartFields); coded values render via display text.
@@ -144,17 +153,19 @@ const _chartRecordTablePresets = {
   },
   longTermMedications: {
     label: "Long-term medications",
+    fieldId: "longTermMedicationOrders",
+    sourceId: "longTermMedicationOrders",
+    selectText: "Select relevant medications",
     reportedLabel: "Medication changes reported on this form",
     addButtonText: "+ Add medication",
     emptyStateText: "No medication changes reported",
     uniqueBy: ["medication"],
     columns: [
-      { id: "longTermMedicationId", type: "key" },
+      { id: "longTermMedicationOrderId", type: "key" },
       { title: "Start", id: "startDate", type: "date" },
-      { title: "Medication", id: "medication", type: "string" },
-      { title: "Dose / frequency", id: "doseFrequency", type: "string" },
       { title: "End", id: "endDate", type: "date" },
-      { title: "Ordered by", id: "orderedBy", type: "string" },
+      { title: "Medication", id: "medication", type: "string" },
+      { title: "Dose Frequency", id: "doseFrequency", type: "string" },
     ],
     entryColumns: [
       { id: "medication", label: "Medication", type: "text", rows: 1, required: true },
@@ -174,34 +185,41 @@ const _chartRecordTablePresets = {
     ],
   },
   conditions: {
-    label: "Conditions / health issues",
+    label: "Conditions",
+    selectText: "Select conditions",
     columns: [
       { id: "conditionId", type: "key" },
-      { title: "Start", id: "startDate", type: "date" },
-      { title: "Condition", id: "condition", type: "string" },
-      { title: "Resolved", id: "resolveDate", type: "date" },
-      { title: "Comment", id: "comment", type: "string" },
+      { title: "Date", id: "startDate", type: "date" },
+      { id: "resolveDate", type: "hidden" },
+      { title: "Condition", id: "condition", type: "code", size: "large" },
+      { title: "Certainty", id: "certainty", type: "code" },
+      { title: "Severity", id: "severity", type: "code" },
     ],
   },
   connections: {
-    label: "Connections / care team",
+    label: "Patient Connections",
+    fieldId: "connectedResources",
+    sourceId: "connectedResources",
+    selectText: "Select connections",
+    filterPred: _chartRecordTableActiveConnections,
     columns: [
       { id: "connectionId", type: "key" },
-      { title: "Start", id: "startDate", type: "date" },
+      { title: "Date", id: "startDate", type: "date" },
+      { id: "stopDate", type: "hidden" },
+      { title: "Role", id: "connectionType", type: "code" },
       { title: "Name", id: "name", type: "string" },
-      { title: "Type", id: "connectionType", type: "string" },
-      { title: "Provider", id: "provider", type: "string" },
     ],
   },
   goals: {
     label: "Goals",
-    moisModule: "GOALS",
+    selectText: "Select goals",
     columns: [
       { id: "goalId", type: "key" },
-      { title: "Start", id: "startDate", type: "date" },
+      { title: "Date", id: "startDate", type: "date" },
+      { id: "endDate", type: "hidden" },
       { title: "Goal", id: "goal", type: "string" },
-      { title: "Expected outcome", id: "expectedOutcome", type: "string" },
-      { title: "End", id: "endDate", type: "date" },
+      { id: "expectedOutcome", type: "hidden" },
+      { title: "Detail", id: "detail", type: "string", size: "large" },
     ],
   },
   plannedActions: {
@@ -235,12 +253,13 @@ const _chartRecordTablePresets = {
     label: "Service episodes",
     selectText: "Select service episodes",
     selectionType: "single",
+    listCompare: _chartRecordTableStartDateDesc,
     columns: [
       { id: "serviceEpisodeId", type: "key" },
       { title: "Start", id: "startDate", type: "date" },
-      { title: "Service", id: "service", type: "string" },
       { title: "End", id: "endDate", type: "date" },
-      { title: "Note", id: "note", type: "string" },
+      { title: "Service Episode", id: "service", type: "code", size: "large" },
+      { title: "Service MRP", id: "serviceMrp", type: "code", size: "small" },
     ],
   },
   occupations: {

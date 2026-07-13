@@ -335,6 +335,7 @@ const PastMeasurementField = ({
   showHistoryList = false,
   showHistoryOnFocus = false,
   historyInitiallyVisible = false,
+  inlineLayout = false,
   emptyHistoryText = "No past measurement available",
   graphLinkText = "Graph",
   graphHref,
@@ -652,11 +653,38 @@ const PastMeasurementField = ({
     .join(" | ")
 
   return (
-    <Stack tokens={{ childrenGap: 4 }} styles={{ root: resolveMeasurementContainerStyle(size) }}>
-      {label ? <Label>{label}</Label> : null}
+    <Stack
+      horizontal={inlineLayout}
+      verticalAlign={inlineLayout ? "center" : undefined}
+      tokens={{ childrenGap: inlineLayout ? 8 : 4 }}
+      styles={{
+        root: {
+          ...resolveMeasurementContainerStyle(size),
+          ...(inlineLayout ? { flexWrap: "wrap" } : {}),
+        },
+      }}
+    >
+      {label ? (
+        <Label styles={inlineLayout ? { root: { whiteSpace: "nowrap" } } : undefined}>{label}</Label>
+      ) : null}
 
-      <Stack tokens={{ childrenGap: 4 }}>
-        <StackItem styles={{ root: { width: "100%", minWidth: 0 } }}>
+      <Stack
+        horizontal={inlineLayout}
+        verticalAlign={inlineLayout ? "center" : undefined}
+        tokens={{ childrenGap: inlineLayout ? 8 : 4 }}
+        styles={{
+          root: inlineLayout
+            ? { flex: "1 1 24rem", minWidth: 0, flexWrap: "wrap" }
+            : undefined,
+        }}
+      >
+        <StackItem
+          styles={{
+            root: inlineLayout
+              ? { flex: "0 1 12rem", minWidth: "8rem" }
+              : { width: "100%", minWidth: 0 },
+          }}
+        >
           <TextField
             value={displayedCurrentValue}
             placeholder={placeholder}
@@ -672,7 +700,16 @@ const PastMeasurementField = ({
         </StackItem>
 
         {shouldShowHistory || shouldReserveHistory ? (
-          <StackItem styles={{ root: { width: "100%", minWidth: 0, visibility: shouldShowHistory ? "visible" : "hidden" } }}>
+          <StackItem
+            styles={{
+              root: {
+                ...(inlineLayout
+                  ? { flex: "1 1 14rem", minWidth: 0 }
+                  : { width: "100%", minWidth: 0 }),
+                visibility: shouldShowHistory ? "visible" : "hidden",
+              },
+            }}
+          >
             <Stack horizontal verticalAlign="center" tokens={{ childrenGap: 8 }} styles={{ root: { flexWrap: "wrap" } }}>
               {isNonEmptyString(graphLinkText) ? (
                 isNonEmptyString(graphHref) ? (
@@ -709,7 +746,9 @@ const PastMeasurementField = ({
       </Stack>
 
       {shouldShowHistory && showHistoryList && historyItems.length > 1 ? (
-        <Text variant="xSmall">Recent: {recentHistoryText}</Text>
+        <Text variant="xSmall" styles={inlineLayout ? { root: { flexBasis: "100%" } } : undefined}>
+          Recent: {recentHistoryText}
+        </Text>
       ) : null}
     </Stack>
   )

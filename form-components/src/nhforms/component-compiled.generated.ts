@@ -1249,6 +1249,7 @@ ChartRecordTable = ({
   moisModule,
   filterPred,
   listCompare,
+  sortBy,
   sourceMap,
   ...props
 }) => {
@@ -1258,12 +1259,12 @@ ChartRecordTable = ({
   const resolvedChartColumns = columns || preset.columns || _chartRecordTableGenericColumns;
   const resolvedEntryColumns = entryColumns || preset.entryColumns || _chartRecordTableGenericEntryColumns;
   const resolvedMoisModule = typeof moisModule === "undefined" ? preset.moisModule : moisModule;
-  const resolvedFieldId = fieldId || source;
-  const resolvedSourceId = sourceId || source;
+  const resolvedFieldId = fieldId || preset.fieldId || source;
+  const resolvedSourceId = sourceId || preset.sourceId || source;
   const resolvedSourceMap = sourceMap || preset.sourceMap;
   const resolvedSelectionType = selectionType || preset.selectionType || "none";
   const resolvedFilterPred = filterPred || preset.filterPred;
-  const resolvedListCompare = listCompare || preset.listCompare;
+  const resolvedListCompare = listCompare || (sortBy ? _chartRecordTableSorts[sortBy] : undefined) || preset.listCompare;
   return /*#__PURE__*/React.createElement(Fluent.Stack, {
     tokens: {
       childrenGap: 10
@@ -1331,6 +1332,14 @@ const _chartRecordTableGenericEntryColumns = [{
   rows: 1
 }];
 const _chartRecordTableActivePlannedActions = item => item.isCompleted?.code !== "Y";
+const _chartRecordTableActiveConnections = item => !item.stopDate;
+const _chartRecordTableStartDateDesc = (a, b) => -(a.startDate?.localeCompare(b.startDate) ?? 0);
+const _chartRecordTableSorts = {
+  roleThenName: (a, b) => {
+    const byType = a.connectionType?.display?.localeCompare(b.connectionType?.display);
+    return (byType ? byType : a.name?.localeCompare(b.name)) ?? 0;
+  }
+};
 
 // Column shapes follow the real MOIS full-chart GraphQL schema
 // (Mois.Patient.Query.fullChartFields); coded values render via display text.
@@ -1402,32 +1411,31 @@ const _chartRecordTablePresets = {
   },
   longTermMedications: {
     label: "Long-term medications",
+    fieldId: "longTermMedicationOrders",
+    sourceId: "longTermMedicationOrders",
+    selectText: "Select relevant medications",
     reportedLabel: "Medication changes reported on this form",
     addButtonText: "+ Add medication",
     emptyStateText: "No medication changes reported",
     uniqueBy: ["medication"],
     columns: [{
-      id: "longTermMedicationId",
+      id: "longTermMedicationOrderId",
       type: "key"
     }, {
       title: "Start",
       id: "startDate",
       type: "date"
     }, {
-      title: "Medication",
-      id: "medication",
-      type: "string"
-    }, {
-      title: "Dose / frequency",
-      id: "doseFrequency",
-      type: "string"
-    }, {
       title: "End",
       id: "endDate",
       type: "date"
     }, {
-      title: "Ordered by",
-      id: "orderedBy",
+      title: "Medication",
+      id: "medication",
+      type: "string"
+    }, {
+      title: "Dose Frequency",
+      id: "doseFrequency",
       type: "string"
     }],
     entryColumns: [{
@@ -1476,73 +1484,84 @@ const _chartRecordTablePresets = {
     }]
   },
   conditions: {
-    label: "Conditions / health issues",
+    label: "Conditions",
+    selectText: "Select conditions",
     columns: [{
       id: "conditionId",
       type: "key"
     }, {
-      title: "Start",
+      title: "Date",
       id: "startDate",
       type: "date"
     }, {
+      id: "resolveDate",
+      type: "hidden"
+    }, {
       title: "Condition",
       id: "condition",
-      type: "string"
+      type: "code",
+      size: "large"
     }, {
-      title: "Resolved",
-      id: "resolveDate",
-      type: "date"
+      title: "Certainty",
+      id: "certainty",
+      type: "code"
     }, {
-      title: "Comment",
-      id: "comment",
-      type: "string"
+      title: "Severity",
+      id: "severity",
+      type: "code"
     }]
   },
   connections: {
-    label: "Connections / care team",
+    label: "Patient Connections",
+    fieldId: "connectedResources",
+    sourceId: "connectedResources",
+    selectText: "Select connections",
+    filterPred: _chartRecordTableActiveConnections,
     columns: [{
       id: "connectionId",
       type: "key"
     }, {
-      title: "Start",
+      title: "Date",
       id: "startDate",
       type: "date"
     }, {
+      id: "stopDate",
+      type: "hidden"
+    }, {
+      title: "Role",
+      id: "connectionType",
+      type: "code"
+    }, {
       title: "Name",
       id: "name",
-      type: "string"
-    }, {
-      title: "Type",
-      id: "connectionType",
-      type: "string"
-    }, {
-      title: "Provider",
-      id: "provider",
       type: "string"
     }]
   },
   goals: {
     label: "Goals",
-    moisModule: "GOALS",
+    selectText: "Select goals",
     columns: [{
       id: "goalId",
       type: "key"
     }, {
-      title: "Start",
+      title: "Date",
       id: "startDate",
       type: "date"
+    }, {
+      id: "endDate",
+      type: "hidden"
     }, {
       title: "Goal",
       id: "goal",
       type: "string"
     }, {
-      title: "Expected outcome",
       id: "expectedOutcome",
-      type: "string"
+      type: "hidden"
     }, {
-      title: "End",
-      id: "endDate",
-      type: "date"
+      title: "Detail",
+      id: "detail",
+      type: "string",
+      size: "large"
     }]
   },
   plannedActions: {
@@ -1608,6 +1627,7 @@ const _chartRecordTablePresets = {
     label: "Service episodes",
     selectText: "Select service episodes",
     selectionType: "single",
+    listCompare: _chartRecordTableStartDateDesc,
     columns: [{
       id: "serviceEpisodeId",
       type: "key"
@@ -1616,17 +1636,19 @@ const _chartRecordTablePresets = {
       id: "startDate",
       type: "date"
     }, {
-      title: "Service",
-      id: "service",
-      type: "string"
-    }, {
       title: "End",
       id: "endDate",
       type: "date"
     }, {
-      title: "Note",
-      id: "note",
-      type: "string"
+      title: "Service Episode",
+      id: "service",
+      type: "code",
+      size: "large"
+    }, {
+      title: "Service MRP",
+      id: "serviceMrp",
+      type: "code",
+      size: "small"
     }]
   },
   occupations: {
@@ -21596,6 +21618,7 @@ const PastMeasurementField = ({
   showHistoryList = false,
   showHistoryOnFocus = false,
   historyInitiallyVisible = false,
+  inlineLayout = false,
   emptyHistoryText = "No past measurement available",
   graphLinkText = "Graph",
   graphHref,
@@ -21824,19 +21847,44 @@ const PastMeasurementField = ({
     return \`\${item.dateText}: \${valuePart}\`;
   }).join(" | ");
   return /*#__PURE__*/React.createElement(Stack, {
+    horizontal: inlineLayout,
+    verticalAlign: inlineLayout ? "center" : undefined,
     tokens: {
-      childrenGap: 4
+      childrenGap: inlineLayout ? 8 : 4
     },
     styles: {
-      root: resolveMeasurementContainerStyle(size)
+      root: {
+        ...resolveMeasurementContainerStyle(size),
+        ...(inlineLayout ? {
+          flexWrap: "wrap"
+        } : {})
+      }
     }
-  }, label ? /*#__PURE__*/React.createElement(Label, null, label) : null, /*#__PURE__*/React.createElement(Stack, {
+  }, label ? /*#__PURE__*/React.createElement(Label, {
+    styles: inlineLayout ? {
+      root: {
+        whiteSpace: "nowrap"
+      }
+    } : undefined
+  }, label) : null, /*#__PURE__*/React.createElement(Stack, {
+    horizontal: inlineLayout,
+    verticalAlign: inlineLayout ? "center" : undefined,
     tokens: {
-      childrenGap: 4
+      childrenGap: inlineLayout ? 8 : 4
+    },
+    styles: {
+      root: inlineLayout ? {
+        flex: "1 1 24rem",
+        minWidth: 0,
+        flexWrap: "wrap"
+      } : undefined
     }
   }, /*#__PURE__*/React.createElement(StackItem, {
     styles: {
-      root: {
+      root: inlineLayout ? {
+        flex: "0 1 12rem",
+        minWidth: "8rem"
+      } : {
         width: "100%",
         minWidth: 0
       }
@@ -21855,8 +21903,13 @@ const PastMeasurementField = ({
   })), shouldShowHistory || shouldReserveHistory ? /*#__PURE__*/React.createElement(StackItem, {
     styles: {
       root: {
-        width: "100%",
-        minWidth: 0,
+        ...(inlineLayout ? {
+          flex: "1 1 14rem",
+          minWidth: 0
+        } : {
+          width: "100%",
+          minWidth: 0
+        }),
         visibility: shouldShowHistory ? "visible" : "hidden"
       }
     }
@@ -21893,7 +21946,12 @@ const PastMeasurementField = ({
       }
     }
   }, isAbnormal ? abnormalMessage : normalMessage) : null)) : null), shouldShowHistory && showHistoryList && historyItems.length > 1 ? /*#__PURE__*/React.createElement(Text, {
-    variant: "xSmall"
+    variant: "xSmall",
+    styles: inlineLayout ? {
+      root: {
+        flexBasis: "100%"
+      }
+    } : undefined
   }, "Recent: ", recentHistoryText) : null);
 };`,
   './PatientFileSections/index.jsx': `const {
@@ -30643,7 +30701,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './AssessmentScoringTable/index.jsx': ["AssessmentScoringTable","getFieldValue","hasValue","inputStyle","labelCellStyle","number","numberOrBlank","raw","renderRow","scoreRows","setScore","sum","tableStyle","total","value","valueCellStyle"],
   './AttestationSignOff/index.jsx': ["AttestationSignOff","cleaned","current","deriveInitials","flatTargets","getCurrentActorName","initials","key","name","nestedTargets","next","normalizeInitialsName","normalizeRoleOptions","normalizeTargets","parts","roleOptions","row","sd","signatureFieldId","signatureValue","signedAt","source","table","text","updateValue","value"],
   './AuthorshipField/index.jsx': ["AuthorshipField","DEFAULT_WINDOW_HOURS","_defaultPolicy","_nhAuth","_normalizeFieldOptions","actor","actorFrom","addHoursIso","base","buildKey","c","changed","ck","claim","claims","commitSave","commitValue","componentId","current","d","data","editableUntil","effectiveFieldId","euDate","existing","expired","fieldData","formatTimestamp","isNonEmpty","isOwner","keepStatus","key","label","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","nextStatus","nhAuth","normalizeStore","now","nowIso","numeric","optionList","ownerId","ownerName","ownerRefresh","pad2","pending","policy","policyAppliesToAction","prepareSave","query","raw","readOnly","readStore","release","renderInput","resolveNow","sameActor","sd","section","store","text","trimmed","ts","untilSelf","value","windowHours"],
-  './ChartRecordTable/index.jsx': ["ChartRecordTable","_chartRecordTableActivePlannedActions","_chartRecordTableGenericColumns","_chartRecordTableGenericEntryColumns","_chartRecordTablePresets","preset","resolvedChartColumns","resolvedEntryColumns","resolvedFieldId","resolvedFilterPred","resolvedId","resolvedLabel","resolvedListCompare","resolvedMoisModule","resolvedSelectionType","resolvedSourceId","resolvedSourceMap"],
+  './ChartRecordTable/index.jsx': ["ChartRecordTable","_chartRecordTableActiveConnections","_chartRecordTableActivePlannedActions","_chartRecordTableGenericColumns","_chartRecordTableGenericEntryColumns","_chartRecordTablePresets","_chartRecordTableSorts","_chartRecordTableStartDateDesc","byType","preset","resolvedChartColumns","resolvedEntryColumns","resolvedFieldId","resolvedFilterPred","resolvedId","resolvedLabel","resolvedListCompare","resolvedMoisModule","resolvedSelectionType","resolvedSourceId","resolvedSourceMap"],
   './CodedObservationChoiceField/index.jsx': ["CodedObservationChoiceField","candidates","checklistOptions","code","codedChoicePayloadsEqual","codings","commentValue","componentId","container","createdBy","currentPayload","display","effectiveFieldId","effectiveRenderAs","effectiveSelectionType","findExistingObservationId","formatCodedChoiceReport","fromContext","handleFindCodeChange","isMultiple","match","nextGroup","normalizeCodedChoiceOptions","normalizeSelectedCodings","oldId","option","options","report","sd","selectOptions","selectedValue","setCodedChoicePayload","stripVolatileCodedChoicePayloadFields","value","values","writeCodedChoiceValue"],
   './CommonSchemaDefn/index.jsx': ["NameBlockFields","active","commonSchemaDefn","formHistorySchema","makeCodedObsUpdates","makeObsUpdatesFromVs","makeTextObsUpdates","makeValueSetOptions","nameBlockSchema","newDco","oldObs","oldObsId","options","selectAll","startDateDesc","valueSet","vso","ynuaOptions"],
   './CompactBooleanField/index.jsx': ["BooleanLabelPresets","CompactBooleanChecklist","CompactBooleanChecklistSchema","CompactBooleanField","CompactBooleanFieldSchema","CompactBooleanGroup","CompactChoiceField","CompactChoiceFieldMultiSchema","CompactChoiceFieldSchema","OptionButtons","YesNoButtons","baseContainerStyle","buttonStyle","checkboxWrapperRef","choiceContent","commitValue","containerStyle","currentData","currentValue","data","decodePDFHex","decoded","fieldContent","getBooleanLabels","getButtonStyles","getCardContainerStyles","getFieldContainerStyles","getWidthStyle","handleChange","handleCheckboxChange","handleClick","handleNoClick","handleYesClick","input","isDarkMode","isDisabled","isHorizontal","isLast","isLeftLabel","isMultiple","isSelected","labelStyle","lastRowStyle","newValues","noButtonStyle","normalizeValue","normalized","normalizedValue","noteStyle","prevDecoded","rowStyle","selected","selectedValues","setFormData","sizeStyles","theme","themeLabelMaxWidth","themeLabelMinWidth","titleStyle","values","widthMap","yesButtonStyle"],
