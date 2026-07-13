@@ -914,6 +914,13 @@ export interface BuilderFieldSourceContract {
   version: 1;
   origin: "legacy-dform" | "fixture-layout" | "generated-enrichment";
   identity: BuilderLegacySourceIdentity | null;
+  /** Helper columns/actions absorbed into this composite field during materialization. */
+  consolidatedSources?: Array<{
+    fieldName: string;
+    subformId?: string;
+    role: "history-value" | "history-date" | "history-other" | "graph";
+    tags: Record<string, string>;
+  }>;
   storedOptions?: Array<{
     label: string;
     value: string | number | boolean;
