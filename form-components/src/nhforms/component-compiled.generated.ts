@@ -21685,6 +21685,7 @@ const PastMeasurementField = ({
   showHistoryOnFocus = false,
   historyInitiallyVisible = false,
   inlineLayout = false,
+  labelPosition = "top",
   emptyHistoryText = "No past measurement available",
   graphLinkText = "Graph",
   graphHref,
@@ -21912,11 +21913,18 @@ const PastMeasurementField = ({
     const valuePart = item.unitsText ? \`\${item.valueText} (\${item.unitsText})\` : item.valueText;
     return \`\${item.dateText}: \${valuePart}\`;
   }).join(" | ");
+
+  // \`inlineLayout\` is the component-specific option that places the label,
+  // input, and history on one row. \`labelPosition\` only controls the label's
+  // relationship to the input/history block so the form-wide design default
+  // can apply without changing that component-specific behavior.
+  const labelIsHorizontal = inlineLayout || labelPosition === "left";
+  const showLabel = Boolean(label) && labelPosition !== "none";
   return /*#__PURE__*/React.createElement(Stack, {
-    horizontal: inlineLayout,
-    verticalAlign: inlineLayout ? "center" : undefined,
+    horizontal: labelIsHorizontal,
+    verticalAlign: labelIsHorizontal ? "center" : undefined,
     tokens: {
-      childrenGap: inlineLayout ? 8 : 4
+      childrenGap: labelIsHorizontal ? 8 : 4
     },
     styles: {
       root: {
@@ -21926,10 +21934,11 @@ const PastMeasurementField = ({
         } : {})
       }
     }
-  }, label ? /*#__PURE__*/React.createElement(Label, {
-    styles: inlineLayout ? {
+  }, showLabel ? /*#__PURE__*/React.createElement(Label, {
+    styles: labelIsHorizontal ? {
       root: {
-        whiteSpace: "nowrap"
+        whiteSpace: "nowrap",
+        flex: "0 0 auto"
       }
     } : undefined
   }, label) : null, /*#__PURE__*/React.createElement(Stack, {
@@ -21943,6 +21952,9 @@ const PastMeasurementField = ({
         flex: "1 1 24rem",
         minWidth: 0,
         flexWrap: "wrap"
+      } : labelIsHorizontal ? {
+        flex: "1 1 auto",
+        minWidth: 0
       } : undefined
     }
   }, /*#__PURE__*/React.createElement(StackItem, {
@@ -27349,6 +27361,83 @@ const _setSubformObservationPayloads = (setFormData, componentId, payload) => {
     draft.field.data.__componentPayloads = container;
   }));
 };
+const _buildDataEntrySnapshot = (fields, formData, externalRoot) => {
+  const sourceRoot = externalRoot && typeof externalRoot === "object" ? externalRoot : formData;
+  const snapshot = {};
+  for (const field of fields || []) {
+    if (!field || _isHeadingField(field)) continue;
+    if (field.type === "conversion") {
+      const conversions = Array.isArray(field.conversions) ? field.conversions : [];
+      for (const conversion of conversions) {
+        for (const path of [conversion?.fromFieldId, conversion?.toFieldId].filter(Boolean)) {
+          const value = _getValueAtPath(sourceRoot, path);
+          if (value !== undefined) _setValueAtPath(snapshot, path, __cloneSubformScoringSessionValue(value, null));
+        }
+      }
+      continue;
+    }
+    const value = _getValueAtPath(sourceRoot, field.id);
+    if (value !== undefined) _setValueAtPath(snapshot, field.id, __cloneSubformScoringSessionValue(value, null));
+  }
+  return snapshot;
+};
+const _buildSubformFormDataWrites = (outputs, context) => {
+  if (!Array.isArray(outputs) || outputs.length === 0) return [];
+  const allValues = {
+    ...(context?.answers || {}),
+    ...(context?.dataEntryValues || {}),
+    ...(context?.calculatedExpressions || {})
+  };
+  Object.entries(context?.calculatedTotals || {}).forEach(([totalId, result]) => {
+    allValues[totalId] = result?.score;
+  });
+  const dataEntrySnapshot = _buildDataEntrySnapshot(context?.dataEntryFields, context?.formData, context?.dataEntryValueRoot);
+  return outputs.flatMap(output => {
+    if (!output || typeof output !== "object" || !output.targetPath) return [];
+    const source = String(output.source || "field").toLowerCase();
+    let value;
+    if (source === "data-entry") value = dataEntrySnapshot;else if (source === "calculation") value = context?.calculatedExpressions?.[output.calculationId];else if (source === "total") value = context?.calculatedTotals?.[output.totalId]?.score;else if (source === "template") value = _resolveObservationTemplate(output.valueTemplate, allValues);else value = allValues[output.fieldId];
+    if (value === undefined) return [];
+    return [{
+      targetPath: String(output.targetPath),
+      mode: output.mode === "append" ? "append" : "replace",
+      value: __cloneSubformScoringSessionValue(value, null)
+    }];
+  });
+};
+const _setSubformFormDataOutputs = (setFormData, writes) => {
+  if (typeof setFormData !== "function" || !Array.isArray(writes) || writes.length === 0) return;
+  setFormData(produce(draft => {
+    if (!draft.field) draft.field = {
+      data: {},
+      status: {},
+      history: []
+    };
+    if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {};
+    for (const write of writes) {
+      const current = _getValueAtPath(draft.field.data, write.targetPath);
+      const nextValue = write.mode === "append" ? [...(Array.isArray(current) ? current : []), write.value] : write.value;
+      _setValueAtPath(draft.field.data, write.targetPath, nextValue);
+    }
+  }));
+};
+const _createPreparedSessionSetter = initialState => {
+  let prepared = cloneFormSessionState(initialState);
+  return {
+    setFormData: updater => {
+      if (typeof updater === "function") {
+        const result = updater(prepared);
+        prepared = cloneFormSessionState(result || prepared);
+      } else if (updater && typeof updater === "object") {
+        prepared = cloneFormSessionState({
+          ...prepared,
+          ...updater
+        });
+      }
+    },
+    getFormData: () => prepared
+  };
+};
 const _isInRange = (score, range) => {
   if (score === null || score === undefined) return false;
   const min = range.min;
@@ -27430,6 +27519,21 @@ const _getValueAtPath = (root, path) => {
     current = current[segment];
   }
   return current;
+};
+const _setValueAtPath = (root, path, value) => {
+  const segments = _toPathSegments(path);
+  if (!root || typeof root !== "object" || segments.length === 0) return;
+  let current = root;
+  segments.forEach((segment, index) => {
+    if (index === segments.length - 1) {
+      current[segment] = value;
+      return;
+    }
+    if (!current[segment] || typeof current[segment] !== "object" || Array.isArray(current[segment])) {
+      current[segment] = {};
+    }
+    current = current[segment];
+  });
 };
 const _toDisplayValue = value => {
   if (!_isMeaningfulValue(value)) return "";
@@ -30809,7 +30913,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './ObservationChart/index.jsx': ["$","$e","$l","$n","$t","A","Ae","Ai","Al","An","B","Be","Bl","Bt","C","Ce","Ci","Cl","Ct","D","De","Di","Dl","Dn","Dt","E","El","En","F","Fe","Ft","G","Gt","H","He","Hi","Hl","Ht","I","Ii","Il","It","J","Je","Jl","Jn","Jt","Ke","Kl","Kn","Kt","L","Li","Ll","Lt","M","Mn","Mt","N","Nl","O","OBSERVATION_CHART_PALETTE","OBSERVATION_CHART_STYLE_ID","ObservationChart","Ol","Ot","P","Pe","Pi","Pl","Pn","Q","Qn","Qt","R","Re","Ri","Rt","S","Sn","St","T","Tn","Tt","UPlotCssText","UPlotLib","Ut","Vl","Vt","W","We","Wi","Wl","Wt","X","Xl","Xn","Xt","Y","Ye","Yi","Yl","Yt","Z","Zl","Zn","Zt","_","_i","_l","_n","_t","a","ai","at","b","be","bi","bl","bn","bt","buildChartPayload","buildChartPayloadFromObservations","buildChartPayloadFromRows","buildSeriesDefinitions","buildUPlotOptions","c","candidate","chartPayload","chartSeries","ci","codeCandidates","coerceNumber","coercePositiveInt","container","containerRef","current","d","data","dataKey","day","di","direct","document","dt","e","ee","effectiveHeight","effectiveTitle","ei","el","en","ensureObservationChartStyles","entryCode","entryDescription","et","f","fi","finalizeChartRows","formatDate","frameStyle","fromPatient","fromQueryResult","ft","g","gi","gn","gt","h","hi","hl","ht","i","ie","ii","includes","isNonEmptyString","isRecord","it","jl","jt","k","keys","ki","kn","kt","l","ll","ln","m","match","matchesObservationSeries","maxPoints","mi","mode","month","mt","n","ne","ni","normalizeString","normalizeStringArray","normalized","normalizedCodePath","normalizedCodes","normalizedDateOnly","normalizedDescriptionPath","nt","numericDate","numericValue","o","observationCodes","oi","p","parseDateValue","parseMeasurementValue","parseNumericValue","parsed","parsedDateOnly","patientPath","plot","plotRef","pt","qe","qn","qt","r","rawValue","renderWidth","resizeChart","resizeObserver","resolveMoisValue","resolvePathValue","root","rowIndex","rowMap","s","sd","segments","self","seriesDefs","seriesPointSize","seriesShowsPoints","showAxes","showGrid","showLegend","showPoints","single","singleCode","sortedRows","sourceItems","sourcePath","stringifyValue","style","summaryParts","t","target","te","text","timeValue","timestamp","tl","tn","toPathSegments","trimmed","tt","u","uPlot","units","v","value","valueText","ve","vi","vl","vn","vt","w","wi","window","wl","wn","wrapperStyle","wt","xKey","xValues","xi","xl","xn","xt","y","year","yi","yn","yt","z","ze","zi","zl","zn"],
   './ObservationPanelEditor/index.jsx': ["DEFAULT_WINDOW_HOURS","ObservationPanelEditor","actor","actorFrom","addHoursIso","authorshipPolicy","buildKey","c","changed","ck","claim","claims","codeSet","commitSave","componentId","computedTotals","container","createdBy","current","currentActorName","currentPayload","d","data","dcoUpdates","editableUntil","effectiveFieldId","euDate","existing","expired","fieldData","formatTimestamp","getCurrentActorName","getNhAuth","getPanelValue","grouped","hasValue","historyRows","isNonEmpty","isOwner","keepStatus","key","label","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","maxHistory","next","nextGroup","nextStatus","nhAuth","normalizePanelRows","normalizePanelTotals","normalizeStore","now","nowIso","numeric","oldObs","optionList","ownerId","ownerName","ownerRefresh","pad2","panelDateKey","payloadsEqual","pending","policyAppliesToAction","prepareSave","raw","readStore","release","resolveNow","rootValue","rowDefs","rowLockInfo","rowReadOnly","sameActor","sd","section","setPanelPayload","setRowValue","source","sourceIds","store","stripVolatilePayloadFields","toNumericValue","totalDefs","ts","untilSelf","value","windowHours"],
   './Occupations/index.jsx': ["Occupations","OccupationsFields"],
-  './PastMeasurementField/index.jsx': ["PastMeasurementField","abnormalFlag","abnormalHighValue","abnormalLowValue","candidate","candidates","codeFilter","coercePositiveInt","commentFilter","componentId","container","createdBy","criticalHighValue","criticalLowValue","current","currentPayload","day","direct","displayedCurrentValue","documentDate","effectiveFieldId","effectiveHistorySize","entryCode","entryComment","entryDate","entryUnits","entryValue","explicitValue","fieldData","flagCode","flagDisplays","formHistoryItems","formatDate","fromPatient","fromQueryResult","handleValueChange","hasAbnormalHigh","hasAbnormalLow","hasExplicitValue","hasMeaningfulValue","hasNumericCurrentValue","hasRangeMetadata","hasStoredValue","historicalFormRowDate","historyItems","historySummary","index","inputSuffix","isAbnormal","isHistoricalFormValue","isNonEmptyString","key","latestHistoryItem","legacyRangePayload","linkedObservationItem","matchingKey","measurementWidthBySize","month","nextGroup","normalizeObservationItems","normalizedDateOnly","numericCurrentValue","numericExplicitValue","numericTime","observationHistoryItems","oldId","oldObs","optionalString","parseDateValue","parsed","parsedDate","parsedDateOnly","patientPath","payloadsEqual","raw","rawDate","recentHistoryText","resolveHistoricalFormRows","resolveMeasurementContainerStyle","resolveMoisValue","resolvePathValue","resolvedAbnormalHigh","resolvedAbnormalLow","resolvedCriticalHigh","resolvedCriticalLow","resolvedCurrentValue","resolvedUnits","roots","sd","segments","setNestedPayload","shouldReserveHistory","shouldShowHistory","storedValue","stringifyValue","stripVolatilePayloadFields","text","toObservationList","toPathSegments","updatedValue","valueFromHistoricalFormRow","valueIsDate","valueKeys","valuePart","valueText","width","year"],
+  './PastMeasurementField/index.jsx': ["PastMeasurementField","abnormalFlag","abnormalHighValue","abnormalLowValue","candidate","candidates","codeFilter","coercePositiveInt","commentFilter","componentId","container","createdBy","criticalHighValue","criticalLowValue","current","currentPayload","day","direct","displayedCurrentValue","documentDate","effectiveFieldId","effectiveHistorySize","entryCode","entryComment","entryDate","entryUnits","entryValue","explicitValue","fieldData","flagCode","flagDisplays","formHistoryItems","formatDate","fromPatient","fromQueryResult","handleValueChange","hasAbnormalHigh","hasAbnormalLow","hasExplicitValue","hasMeaningfulValue","hasNumericCurrentValue","hasRangeMetadata","hasStoredValue","historicalFormRowDate","historyItems","historySummary","index","inputSuffix","isAbnormal","isHistoricalFormValue","isNonEmptyString","key","labelIsHorizontal","latestHistoryItem","legacyRangePayload","linkedObservationItem","matchingKey","measurementWidthBySize","month","nextGroup","normalizeObservationItems","normalizedDateOnly","numericCurrentValue","numericExplicitValue","numericTime","observationHistoryItems","oldId","oldObs","optionalString","parseDateValue","parsed","parsedDate","parsedDateOnly","patientPath","payloadsEqual","raw","rawDate","recentHistoryText","resolveHistoricalFormRows","resolveMeasurementContainerStyle","resolveMoisValue","resolvePathValue","resolvedAbnormalHigh","resolvedAbnormalLow","resolvedCriticalHigh","resolvedCriticalLow","resolvedCurrentValue","resolvedUnits","roots","sd","segments","setNestedPayload","shouldReserveHistory","shouldShowHistory","showLabel","storedValue","stringifyValue","stripVolatilePayloadFields","text","toObservationList","toPathSegments","updatedValue","valueFromHistoricalFormRow","valueIsDate","valueKeys","valuePart","valueText","width","year"],
   './PatientFileSections/index.jsx': ["PatientFileSections","activeText","addressText","cityLine","compactLines","contactText","countryLine","createdDate","editButtonStyle","encounter","fieldWrapStyle","formatAddress","formatContact","formatDate","getPatientFromData","gridStyle","healthNumber","insuranceBy","insuranceNumber","insuranceText","lines","match","mergeObjects","nextPatient","optionCode","optionDisplay","patient","preferredCode","preferredPhoneOptions","providerName","queryPatient","raw","renderClientDemographics","renderDocumentDetails","renderEncounterDetails","renderTitle","requested","sd","section","sectionTitleStyle","textValue","updateContactText","visibleSections","whiteDropdownStyles","whiteFlexTextFieldStyles","whiteTextFieldStyles","writePatientUpdates"],
   './PatientValueField/index.jsx': ["PatientValueField","age","applyPatientTransform","candidates","coercePatientValue","collectionCandidateValues","collectionItemMatches","computeAgeYears","dob","effectiveFieldId","expected","items","monthDelta","normalizedExpected","now","raw","resolveCollectionItemPath","resolvePatientContextPath","resolved","root","sd","stored","values"],
   './PdfRegenerator/index.jsx': ["PDFLib","PDF_LIB_URL","PdfRegenerator","_base64ToBytes","_buildDateComponentIndex","_buildTableReverseIndex","_collectCandidates","_decodePdfHex","_downloadBytes","_fillField","_getCheckboxOnStates","_inferBooleanState","_installPdfLibFromSource","_isNonEmptyString","_loadPdfLib","_loadPdfLibFromCdn","_matchMultipleOptions","_matchSingleOption","_normalizeFieldMap","_normalizeToken","_pdfLibPromise","_printBytes","_resolveDateComponentValue","_resolveTableCellValue","_resolveValueByPath","_setCheckboxByState","_splitCanonicalDateParts","_statusColor","_toBooleanLike","_toCandidateList","_toText","acro","baseMap","binary","blob","boolValue","booleanStates","buttonDisabled","byRow","bytes","candidate","candidateKeys","candidates","clean","cleaned","cleanup","components","current","dateComponentIndex","dateComponentValue","dateEntry","diagnosticsText","didFill","direct","doc","existing","filledFieldCount","form","formData","formKeys","fromData","fromPath","fuzzy","handleGeneratePdf","hasMatchingState","i","iframe","includeSet","index","inferredState","inlineSource","installed","isOn","left","leftIsFormId","lib","link","map","mapped","match","matches","maybe","maybeDate","maybeTime","nextFileName","normalized","normalizedAction","normalizedCandidate","normalizedOption","normalizedOptionMap","normalizedRequested","offState","onText","onValue","options","outputBytes","parts","pathByColumnId","payload","pdfFieldId","pdfFieldName","printWindow","rawValue","renderActionButton","renderButton","resolvePath","resolvedPdfSource","right","rightIsFormId","row","rowIndex","rowMapping","rows","runner","script","sd","segments","selected","selectedCount","set","single","skippedFieldCount","sourceFieldId","sourceId","sourceValues","state","states","strategy","tableEntry","tableId","tableIndex","targetAction","targetState","targetStateName","targetWidget","text","trimmed","url","warningCount","warnings","widgets","withoutSlash"],
@@ -30823,7 +30927,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './ServiceEpisodes/index.jsx': ["ServiceEpisodes","ServiceEpisodesFields","activeServiceEpisodes","startDateDesc"],
   './ServiceRequests/index.jsx': ["ServiceRequests","ServiceRequestsFields","activeServiceRequests","orderDateDesc"],
   './SignaturePad/index.jsx': ["B","D","L","O","SignaturePad","SignaturePadLib","T","U","W","_","__exports","a","c","canvas","canvasRef","container","containerRef","containerStyle","dataUrl","define","e","exports","f","h","handleClear","handleEndStroke","i","k","l","m","module","o","p","pad","padRef","r","ratio","readOnlyImageStyle","resizeCanvas","s","savedDataUrl","t","theme","u","width","y"],
-  './SubformScoring/index.jsx': ["AnswerSummaryItem","CalculationSummaryItem","DataFieldSummaryItem","DataInterpretationSummaryItem","FormSessionProvider","InterpretationSummaryItem","MOIS_WRITE_ID_FALLBACK_PATHS","MOIS_WRITE_MUTATIONS","MOIS_WRITE_MUTATION_KEYS","ProgressSummaryItem","ScoreSummaryItem","SubformScoring","SubformScoringInner","_LOCAL_INPUT_STYLE","_LOCAL_RADIO_GROUP_STYLE","_LOCAL_TEXTAREA_STYLE","__SubformScoringSessionContext","__cloneSubformScoringSessionValue","_buildDataEntryRenderGroups","_buildMappedPayload","_buildScaleLegendSignature","_buildScaleOptions","_buildScoreMap","_buildSubformObservationUpdates","_collectScoreCandidates","_computeMorphineEquivalent","_evaluateDataEntryVisibility","_evaluateExpression","_formatBounds","_formatCalculatorDisplayValue","_formatNumericValue","_getInterpretation","_getScoreFromValue","_getSelectableOptionNumericValue","_getValueAtPath","_isHeadingField","_isInRange","_isMeaningfulValue","_isScaleChoiceSelected","_isSelectableOptionSelected","_latestObservationDefault","_normalizeChartPreferenceValue","_normalizeScoreToken","_normalizeSelectableOptions","_optionMatchesValue","_recordSubformActionPayload","_resolveChecklistOptions","_resolveFieldDefaultValue","_resolveFieldEmptyNumericValue","_resolveFieldWidthBasis","_resolveObservationTemplate","_resolvePathValue","_resolveQuestionOptions","_resolveSelectableBinaryOptions","_resolveWriteActionId","_serializeSelectableValue","_setSubformObservationPayloads","_stringifyObservationValue","_toDisplayValue","_toNumericValue","_toPathSegments","_usesStructuredSelectableOptions","abs","action","actionPayload","aliases","allValues","allVars","answer","answerScore","answerableFields","answered","answers","aspect","barBg","barFill","baseDose","baseEquivalentDoseMg","baseEquivalentDoseRaw","basis","binding","boundedPrecision","buttonRowStyle","cadFieldId","calc","calculatedExpressions","calculatedTotals","calculation","calculatorFields","candidate","candidateKeys","candidatePaths","candidates","ceil","checked","checkedFromConfig","checkedOption","checklist","cloneFormSessionState","code","columnTemplate","commentsField","commitObservationOutputs","commonProps","computedFallback","configuredField","container","containerStyle","controlLabel","controllerId","conversions","createdBy","current","currentSignature","cursor","dataEntryAction","dataEntryCalculations","dataEntryCalculatorConfig","dataEntryFieldById","dataEntryFields","dataEntryRenderGroups","dataEntryValues","dateField","day","defaultValue","defaults","description","dialogContentProps","dialogMinWidth","dialogTitle","direct","displayText","displayValue","dose","doseColumnLabel","effectiveInitialData","entry","equivalentColumnLabel","equivalentDose","equivalentDoseMg","evaluated","explicitDefault","expressionVars","extracted","factor","fallbackOptions","field","fieldExists","fields","fieldsForProgress","floor","flushMatrixBuffer","formatted","fromCalculation","functionNames","generatedIndex","generatedVars","getCalculationConfig","getDataEntryFieldConfig","getQuestionConfig","getTotalConfig","groups","handleCommitToParent","handleOpenChange","hasAnyAnswers","hasAnyRowValue","hasExternalDataEntryStore","hasRequiredId","history","iif","inputFieldId","inputType","inputValue","interpretation","isComplete","isDarkMode","isDataEntryMode","isDialogOpen","isHeading","isMatrixCandidate","isMorphineCalculatorMode","key","label","labelStyle","latest","left","leftDate","map","matched","matchedOption","matrixBuffer","matrixGroupId","max","meetsMax","meetsMin","meqCalculationId","meqDisplay","meqValue","mergeFormSessionState","min","minSymbol","mod","modalProps","month","next","nextGroup","nextKey","nextOption","nextRaw","nextState","normalize","normalized","normalizedButtonIconName","normalizedOptionMap","normalizedOptions","normalizedSessionData","normalizedType","normalizedValues","numeric","numericValue","numericValues","observationDefault","observationRows","observations","oldId","oldObservation","option","optionList","optionMap","optionScoreMap","optionTokens","optionValue","options","parsed","payload","payloadMap","pendingDefaults","places","precision","precisionRaw","prepared","prevIndex","previousEntry","previousField","previousScaleSignature","progress","providedOptions","question","questionOptions","questionsById","rawConfig","rawOptions","rawRows","rawType","rawValue","renderBloodGlucoseReadingEditor","renderDataEntryField","renderDataEntryScaleMatrix","renderMorphineCalculator","renderNumberInput","renderStyle","renderSummaryItem","replacement","report","required","requiredFields","resolved","resolvedId","resolvedScore","response","result","resultColumnLabel","results","right","rightDate","root","round","rowId","rowLabels","rowValues","rows","rule","runMutation","runtime","scaleOptions","scopedSetter","score","scoreMap","sd","segments","selected","selectedOption","selectedWithSetter","sessionContext","sessionSetFormData","sessionState","setDataEntryValue","setDialogOpen","setFormData","shouldClose","shouldHideButtonIcon","shouldUseDefaultButtonIcon","showCalculationsInModal","showItems","showLegend","showLegendForScale","signature","source","step","style","summaryContainerStyle","summaryItemsStyle","summaryLayout","target","termQuestionId","text","theme","today","token","tokenMatches","total","totalCalculationId","totalFallback","totalFromCalculation","totalLabel","totalValue","totals","triggerButtonIconProps","trimmed","uncheckedFromConfig","uncheckedOption","uniqueTokens","usFieldId","useBloodGlucoseReadingLayout","useFormSessionData","useRadio","useToggleSwitch","value","variableFieldIds","variables","vars","writeDefinition","writeKey","writeMutationRunners","year"],
+  './SubformScoring/index.jsx': ["AnswerSummaryItem","CalculationSummaryItem","DataFieldSummaryItem","DataInterpretationSummaryItem","FormSessionProvider","InterpretationSummaryItem","MOIS_WRITE_ID_FALLBACK_PATHS","MOIS_WRITE_MUTATIONS","MOIS_WRITE_MUTATION_KEYS","ProgressSummaryItem","ScoreSummaryItem","SubformScoring","SubformScoringInner","_LOCAL_INPUT_STYLE","_LOCAL_RADIO_GROUP_STYLE","_LOCAL_TEXTAREA_STYLE","__SubformScoringSessionContext","__cloneSubformScoringSessionValue","_buildDataEntryRenderGroups","_buildDataEntrySnapshot","_buildMappedPayload","_buildScaleLegendSignature","_buildScaleOptions","_buildScoreMap","_buildSubformFormDataWrites","_buildSubformObservationUpdates","_collectScoreCandidates","_computeMorphineEquivalent","_createPreparedSessionSetter","_evaluateDataEntryVisibility","_evaluateExpression","_formatBounds","_formatCalculatorDisplayValue","_formatNumericValue","_getInterpretation","_getScoreFromValue","_getSelectableOptionNumericValue","_getValueAtPath","_isHeadingField","_isInRange","_isMeaningfulValue","_isScaleChoiceSelected","_isSelectableOptionSelected","_latestObservationDefault","_normalizeChartPreferenceValue","_normalizeScoreToken","_normalizeSelectableOptions","_optionMatchesValue","_recordSubformActionPayload","_resolveChecklistOptions","_resolveFieldDefaultValue","_resolveFieldEmptyNumericValue","_resolveFieldWidthBasis","_resolveObservationTemplate","_resolvePathValue","_resolveQuestionOptions","_resolveSelectableBinaryOptions","_resolveWriteActionId","_serializeSelectableValue","_setSubformFormDataOutputs","_setSubformObservationPayloads","_setValueAtPath","_stringifyObservationValue","_toDisplayValue","_toNumericValue","_toPathSegments","_usesStructuredSelectableOptions","abs","action","actionPayload","aliases","allValues","allVars","answer","answerScore","answerableFields","answered","answers","aspect","barBg","barFill","baseDose","baseEquivalentDoseMg","baseEquivalentDoseRaw","basis","binding","boundedPrecision","buttonRowStyle","cadFieldId","calc","calculatedExpressions","calculatedTotals","calculation","calculatorFields","candidate","candidateKeys","candidatePaths","candidates","ceil","checked","checkedFromConfig","checkedOption","checklist","cloneFormSessionState","code","columnTemplate","commentsField","commitObservationOutputs","commonProps","computedFallback","configuredField","container","containerStyle","controlLabel","controllerId","conversions","createdBy","current","currentSignature","cursor","dataEntryAction","dataEntryCalculations","dataEntryCalculatorConfig","dataEntryFieldById","dataEntryFields","dataEntryRenderGroups","dataEntrySnapshot","dataEntryValues","dateField","day","defaultValue","defaults","description","dialogContentProps","dialogMinWidth","dialogTitle","direct","displayText","displayValue","dose","doseColumnLabel","effectiveInitialData","entry","equivalentColumnLabel","equivalentDose","equivalentDoseMg","evaluated","explicitDefault","expressionVars","extracted","factor","fallbackOptions","field","fieldExists","fields","fieldsForProgress","floor","flushMatrixBuffer","formatted","fromCalculation","functionNames","generatedIndex","generatedVars","getCalculationConfig","getDataEntryFieldConfig","getQuestionConfig","getTotalConfig","groups","handleCommitToParent","handleOpenChange","hasAnyAnswers","hasAnyRowValue","hasExternalDataEntryStore","hasRequiredId","history","iif","inputFieldId","inputType","inputValue","interpretation","isComplete","isDarkMode","isDataEntryMode","isDialogOpen","isHeading","isMatrixCandidate","isMorphineCalculatorMode","key","label","labelStyle","latest","left","leftDate","map","matched","matchedOption","matrixBuffer","matrixGroupId","max","meetsMax","meetsMin","meqCalculationId","meqDisplay","meqValue","mergeFormSessionState","min","minSymbol","mod","modalProps","month","next","nextGroup","nextKey","nextOption","nextRaw","nextState","nextValue","normalize","normalized","normalizedButtonIconName","normalizedOptionMap","normalizedOptions","normalizedSessionData","normalizedType","normalizedValues","numeric","numericValue","numericValues","observationDefault","observationRows","observations","oldId","oldObservation","option","optionList","optionMap","optionScoreMap","optionTokens","optionValue","options","parsed","payload","payloadMap","pendingDefaults","places","precision","precisionRaw","prepared","prevIndex","previousEntry","previousField","previousScaleSignature","progress","providedOptions","question","questionOptions","questionsById","rawConfig","rawOptions","rawRows","rawType","rawValue","renderBloodGlucoseReadingEditor","renderDataEntryField","renderDataEntryScaleMatrix","renderMorphineCalculator","renderNumberInput","renderStyle","renderSummaryItem","replacement","report","required","requiredFields","resolved","resolvedId","resolvedScore","response","result","resultColumnLabel","results","right","rightDate","root","round","rowId","rowLabels","rowValues","rows","rule","runMutation","runtime","scaleOptions","scopedSetter","score","scoreMap","sd","segments","selected","selectedOption","selectedWithSetter","sessionContext","sessionSetFormData","sessionState","setDataEntryValue","setDialogOpen","setFormData","shouldClose","shouldHideButtonIcon","shouldUseDefaultButtonIcon","showCalculationsInModal","showItems","showLegend","showLegendForScale","signature","snapshot","source","sourceRoot","step","style","summaryContainerStyle","summaryItemsStyle","summaryLayout","target","termQuestionId","text","theme","today","token","tokenMatches","total","totalCalculationId","totalFallback","totalFromCalculation","totalLabel","totalValue","totals","triggerButtonIconProps","trimmed","uncheckedFromConfig","uncheckedOption","uniqueTokens","usFieldId","useBloodGlucoseReadingLayout","useFormSessionData","useRadio","useToggleSwitch","value","variableFieldIds","variables","vars","writeDefinition","writeKey","writeMutationRunners","year"],
   './UnsavedChangesGuard/index.jsx': ["ButtonComponent","DCOUpdates","DEFAULT_WINDOW_HOURS","UnsavedChangesGuard","actionItems","actor","actorFrom","addHoursIso","baselineRef","buildDefaultSavePayload","buildDefaultSubmitPayload","buildKey","c","changed","ck","claim","claims","closeWindow","collectComponentPayloads","collectDomFieldValues","commitSave","componentPayload","confirmUnloadActive","current","d","data","dcoGroups","disabled","domFieldValues","editableUntil","euDate","existing","expired","field","fieldData","fieldId","footerActionItems","footerActions","formData","formatTimestamp","guardSkipsWhenSigned","handleAction","handler","hasLifecycleSignals","host","inputType","isNonEmpty","isOwner","isSettling","isSigned","isSubmitAction","keepStatus","key","label","lifecycle","linkedPanels","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","markSaved","mergeFieldValuesIntoState","narratives","nextStatus","nextValue","nhAuthCommitSave","nhAuthPrepareSave","normalizeFooterActions","normalizeGuardActions","normalizeGuardValue","normalizeStore","now","nowIso","ownerId","ownerName","ownerRefresh","pad2","panelUpdates","panels","payload","payloads","pending","persistAction","persistFd","policyAppliesToAction","prepareSave","prepared","primaryAction","promptText","raw","readStore","release","renderFooterAction","resolveNow","sameActor","saveSettleRef","savedWebform","sd","secondaryActions","serializeGuardValue","store","stripComponentPayloads","submitSd","success","tagName","trackedSnapshot","trackedValue","ts","untilSelf","useHostConfirmUnload","values","warmupRef","webformGroups","webformUpdate","windowHours"],
   './UseChangeWatch/index.jsx': ["_defaultCompare","_normalizeWatchOptions","baselineRef","compare","delayCount","dirtyRef","disabled","forcedDirtyRef","isDirty","normalizedOptions","onDirtyChange","renderCountRef","setChanged","useChangeWatch"],
   './ValueSetObservationField/index.jsx': ["ValueSetObservationField","checklistOptions","commentValue","componentId","container","createdBy","currentPayload","effectiveFieldId","fromContext","handleChange","key","nextGroup","normalizeObservationOptions","oldId","oldObs","options","payloadsEqual","report","sd","selectedCode","selectedDisplay","selectedValue","setNestedPayload","stripVolatilePayloadFields"],

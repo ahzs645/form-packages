@@ -145,4 +145,29 @@ describe("PastMeasurementField date-aspect display", () => {
     expect(stacks[0]?.textContent).toContain("2026.04.21   72.4   (kg)");
     act(() => harness.root.unmount());
   });
+
+  it("uses labelPosition without forcing the input and history onto one row", () => {
+    const harness = renderField({
+      labelPosition: "left",
+      label: "Weight (kg)",
+      showHistory: true,
+    });
+
+    const stacks = harness.container.querySelectorAll('[data-stack="true"]');
+    expect(stacks[0]?.getAttribute("data-horizontal")).toBe("true");
+    expect(stacks[1]?.getAttribute("data-horizontal")).toBe("false");
+    expect(stacks[0]?.textContent).toContain("Weight (kg)");
+    act(() => harness.root.unmount());
+  });
+
+  it("keeps the label above by default and hides it for labelPosition none", () => {
+    const topHarness = renderField({ label: "Weight (kg)" });
+    expect(topHarness.container.querySelector('[data-stack="true"]')?.getAttribute("data-horizontal")).toBe("false");
+    expect(topHarness.container.textContent).toContain("Weight (kg)");
+    act(() => topHarness.root.unmount());
+
+    const hiddenHarness = renderField({ label: "Weight (kg)", labelPosition: "none" });
+    expect(hiddenHarness.container.textContent).not.toContain("Weight (kg)");
+    act(() => hiddenHarness.root.unmount());
+  });
 });

@@ -587,6 +587,91 @@ const _setSubformObservationPayloads = (setFormData, componentId, payload) => {
   }))
 }
 
+const _buildDataEntrySnapshot = (fields, formData, externalRoot) => {
+  const sourceRoot = externalRoot && typeof externalRoot === "object" ? externalRoot : formData
+  const snapshot = {}
+  for (const field of fields || []) {
+    if (!field || _isHeadingField(field)) continue
+    if (field.type === "conversion") {
+      const conversions = Array.isArray(field.conversions) ? field.conversions : []
+      for (const conversion of conversions) {
+        for (const path of [conversion?.fromFieldId, conversion?.toFieldId].filter(Boolean)) {
+          const value = _getValueAtPath(sourceRoot, path)
+          if (value !== undefined) _setValueAtPath(snapshot, path, __cloneSubformScoringSessionValue(value, null))
+        }
+      }
+      continue
+    }
+    const value = _getValueAtPath(sourceRoot, field.id)
+    if (value !== undefined) _setValueAtPath(snapshot, field.id, __cloneSubformScoringSessionValue(value, null))
+  }
+  return snapshot
+}
+
+const _buildSubformFormDataWrites = (outputs, context) => {
+  if (!Array.isArray(outputs) || outputs.length === 0) return []
+  const allValues = {
+    ...(context?.answers || {}),
+    ...(context?.dataEntryValues || {}),
+    ...(context?.calculatedExpressions || {}),
+  }
+  Object.entries(context?.calculatedTotals || {}).forEach(([totalId, result]) => {
+    allValues[totalId] = result?.score
+  })
+  const dataEntrySnapshot = _buildDataEntrySnapshot(
+    context?.dataEntryFields,
+    context?.formData,
+    context?.dataEntryValueRoot
+  )
+
+  return outputs.flatMap((output) => {
+    if (!output || typeof output !== "object" || !output.targetPath) return []
+    const source = String(output.source || "field").toLowerCase()
+    let value
+    if (source === "data-entry") value = dataEntrySnapshot
+    else if (source === "calculation") value = context?.calculatedExpressions?.[output.calculationId]
+    else if (source === "total") value = context?.calculatedTotals?.[output.totalId]?.score
+    else if (source === "template") value = _resolveObservationTemplate(output.valueTemplate, allValues)
+    else value = allValues[output.fieldId]
+    if (value === undefined) return []
+    return [{
+      targetPath: String(output.targetPath),
+      mode: output.mode === "append" ? "append" : "replace",
+      value: __cloneSubformScoringSessionValue(value, null),
+    }]
+  })
+}
+
+const _setSubformFormDataOutputs = (setFormData, writes) => {
+  if (typeof setFormData !== "function" || !Array.isArray(writes) || writes.length === 0) return
+  setFormData(produce((draft) => {
+    if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
+    if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
+    for (const write of writes) {
+      const current = _getValueAtPath(draft.field.data, write.targetPath)
+      const nextValue = write.mode === "append"
+        ? [...(Array.isArray(current) ? current : []), write.value]
+        : write.value
+      _setValueAtPath(draft.field.data, write.targetPath, nextValue)
+    }
+  }))
+}
+
+const _createPreparedSessionSetter = (initialState) => {
+  let prepared = cloneFormSessionState(initialState)
+  return {
+    setFormData: (updater) => {
+      if (typeof updater === "function") {
+        const result = updater(prepared)
+        prepared = cloneFormSessionState(result || prepared)
+      } else if (updater && typeof updater === "object") {
+        prepared = cloneFormSessionState({ ...prepared, ...updater })
+      }
+    },
+    getFormData: () => prepared,
+  }
+}
+
 const _isInRange = (score, range) => {
   if (score === null || score === undefined) return false
   const min = range.min
@@ -678,6 +763,23 @@ const _getValueAtPath = (root, path) => {
     current = current[segment]
   }
   return current
+}
+
+const _setValueAtPath = (root, path, value) => {
+  const segments = _toPathSegments(path)
+  if (!root || typeof root !== "object" || segments.length === 0) return
+
+  let current = root
+  segments.forEach((segment, index) => {
+    if (index === segments.length - 1) {
+      current[segment] = value
+      return
+    }
+    if (!current[segment] || typeof current[segment] !== "object" || Array.isArray(current[segment])) {
+      current[segment] = {}
+    }
+    current = current[segment]
+  })
 }
 
 const _toDisplayValue = (value) => {
@@ -1410,6 +1512,7 @@ const SubformScoringInner = ({
   dataEntryValueRoot,
   onDataEntryValueChange,
   observationOutputs = [],
+  formDataOutputs = [],
   ...props
 }) => {
   const [internalIsOpen, setInternalIsOpen] = useState(false)
@@ -1830,7 +1933,7 @@ const SubformScoringInner = ({
     return progress.answered > 0
   }, [isDataEntryMode, isMorphineCalculatorMode, dataEntryCalculatorConfig, dataEntryFields, dataEntryValues, progress])
 
-  const commitObservationOutputs = useCallback(() => {
+  const prepareCompletionState = useCallback((actionPayload) => {
     const payload = _buildSubformObservationUpdates(observationOutputs, {
       answers,
       calculatedExpressions,
@@ -1839,8 +1942,23 @@ const SubformScoringInner = ({
       formData: fd?.field?.data,
       sd,
     })
-    _setSubformObservationPayloads(fd?.setFormData, id, payload)
-  }, [answers, calculatedExpressions, calculatedTotals, dataEntryValues, fd, id, observationOutputs, sd])
+    const formDataWrites = _buildSubformFormDataWrites(formDataOutputs, {
+      answers,
+      calculatedExpressions,
+      calculatedTotals,
+      dataEntryFields,
+      dataEntryValues,
+      dataEntryValueRoot,
+      formData: fd?.field?.data,
+    })
+    const preparedSession = _createPreparedSessionSetter(fd)
+    _setSubformObservationPayloads(preparedSession.setFormData, id, payload)
+    _setSubformFormDataOutputs(preparedSession.setFormData, formDataWrites)
+    if (actionPayload) {
+      _recordSubformActionPayload(preparedSession.setFormData, id, actionPayload)
+    }
+    return preparedSession.getFormData()
+  }, [answers, calculatedExpressions, calculatedTotals, dataEntryFields, dataEntryValueRoot, dataEntryValues, fd, formDataOutputs, id, observationOutputs, sd])
 
   const showItems = useMemo(() => {
     if (Array.isArray(summaryConfig.showItems) && summaryConfig.showItems.length > 0) {
@@ -2942,8 +3060,7 @@ const SubformScoringInner = ({
                   calculatedTotals,
                 })
                 if (shouldClose !== false) {
-                  commitObservationOutputs()
-                  onCommitToParent?.(fd)
+                  onCommitToParent?.(prepareCompletionState())
                   setDialogOpen(false)
                 }
               }}
@@ -2961,6 +3078,7 @@ const SubformScoringInner = ({
                 calculatedTotals,
               })
               if (shouldClose !== false) {
+                let actionPayload = null
                 if (isDataEntryMode && dataEntryAction) {
                   const writeDefinition = MOIS_WRITE_MUTATIONS[dataEntryAction.writeKey]
                   const runMutation = writeMutationRunners[dataEntryAction.writeKey]
@@ -2971,13 +3089,12 @@ const SubformScoringInner = ({
                   )
                   const payload = _buildMappedPayload(dataEntryValues, dataEntryAction)
                   const variables = writeDefinition.buildVariables(resolvedId, payload)
-                  const actionPayload = {
+                  actionPayload = {
                     kind: "moisMutation",
                     resource: dataEntryAction.resource,
                     mutation: dataEntryAction.mutation,
                     ...variables,
                   }
-                  _recordSubformActionPayload(fd?.setFormData, id, actionPayload)
                   const hasRequiredId =
                     writeDefinition.requiresId === false ||
                     Boolean(variables[writeDefinition.idVariable])
@@ -2993,8 +3110,7 @@ const SubformScoringInner = ({
                     }
                   }
                 }
-                commitObservationOutputs()
-                onCommitToParent?.(fd)
+                onCommitToParent?.(prepareCompletionState(actionPayload))
                 setDialogOpen(false)
               }
             }}

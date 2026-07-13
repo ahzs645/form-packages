@@ -336,6 +336,7 @@ const PastMeasurementField = ({
   showHistoryOnFocus = false,
   historyInitiallyVisible = false,
   inlineLayout = false,
+  labelPosition = "top",
   emptyHistoryText = "No past measurement available",
   graphLinkText = "Graph",
   graphHref,
@@ -652,11 +653,18 @@ const PastMeasurementField = ({
     })
     .join(" | ")
 
+  // `inlineLayout` is the component-specific option that places the label,
+  // input, and history on one row. `labelPosition` only controls the label's
+  // relationship to the input/history block so the form-wide design default
+  // can apply without changing that component-specific behavior.
+  const labelIsHorizontal = inlineLayout || labelPosition === "left"
+  const showLabel = Boolean(label) && labelPosition !== "none"
+
   return (
     <Stack
-      horizontal={inlineLayout}
-      verticalAlign={inlineLayout ? "center" : undefined}
-      tokens={{ childrenGap: inlineLayout ? 8 : 4 }}
+      horizontal={labelIsHorizontal}
+      verticalAlign={labelIsHorizontal ? "center" : undefined}
+      tokens={{ childrenGap: labelIsHorizontal ? 8 : 4 }}
       styles={{
         root: {
           ...resolveMeasurementContainerStyle(size),
@@ -664,8 +672,8 @@ const PastMeasurementField = ({
         },
       }}
     >
-      {label ? (
-        <Label styles={inlineLayout ? { root: { whiteSpace: "nowrap" } } : undefined}>{label}</Label>
+      {showLabel ? (
+        <Label styles={labelIsHorizontal ? { root: { whiteSpace: "nowrap", flex: "0 0 auto" } } : undefined}>{label}</Label>
       ) : null}
 
       <Stack
@@ -675,6 +683,8 @@ const PastMeasurementField = ({
         styles={{
           root: inlineLayout
             ? { flex: "1 1 24rem", minWidth: 0, flexWrap: "wrap" }
+            : labelIsHorizontal
+              ? { flex: "1 1 auto", minWidth: 0 }
             : undefined,
         }}
       >
