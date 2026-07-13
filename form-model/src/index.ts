@@ -1068,6 +1068,12 @@ export interface BuilderField {
     style?: "numeric" | "labeled";
     /** Show legend row above the scale */
     showLegend?: boolean;
+    /** Show option labels next to the radio buttons */
+    showInlineLabels?: boolean;
+    /** Show option descriptions in a tooltip */
+    showTooltip?: boolean;
+    /** Show only the hovered option description or the full scale definition list */
+    tooltipMode?: "option" | "all";
     /** Custom scale options with labels and descriptions (for labeled style) */
     options?: Array<{
       value: number;

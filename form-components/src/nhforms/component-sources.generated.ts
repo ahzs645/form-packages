@@ -1252,6 +1252,8 @@ if (typeof ChartRecordTable === "undefined") {
 ChartRecordTable = ({
   source = "allergies",
   id,
+  fieldId,
+  sourceId,
   label,
   chartLabel,
   reportedLabel,
@@ -1267,6 +1269,9 @@ ChartRecordTable = ({
   columns,
   entryColumns,
   moisModule,
+  filterPred,
+  listCompare,
+  sourceMap,
   ...props
 }) => {
   const preset = _chartRecordTablePresets[source] || {}
@@ -1275,6 +1280,9 @@ ChartRecordTable = ({
   const resolvedChartColumns = columns || preset.columns || _chartRecordTableGenericColumns
   const resolvedEntryColumns = entryColumns || preset.entryColumns || _chartRecordTableGenericEntryColumns
   const resolvedMoisModule = typeof moisModule === "undefined" ? preset.moisModule : moisModule
+  const resolvedFieldId = fieldId || source
+  const resolvedSourceId = sourceId || source
+  const resolvedSourceMap = sourceMap || preset.sourceMap
 
   return (
     <Fluent.Stack tokens={{ childrenGap: 10 }}>
@@ -1284,13 +1292,17 @@ ChartRecordTable = ({
 
       {showChartRecords ? (
         <ListSelection
-          id={source}
+          fieldId={resolvedFieldId}
+          sourceId={resolvedSourceId}
           label={chartLabel || preset.chartLabel}
           selectionType={selectionType}
           selectText={selectText || preset.selectText}
           columns={resolvedChartColumns}
           moisModule={resolvedMoisModule}
           placeholder={chartPlaceholder}
+          filterPred={filterPred}
+          listCompare={listCompare}
+          sourceMap={resolvedSourceMap}
         />
       ) : null}
 
@@ -1435,6 +1447,46 @@ const _chartRecordTablePresets = {
       { title: "End", id: "endDate", type: "date" },
       { title: "Note", id: "note", type: "string" },
     ],
+  },
+  occupations: {
+    label: "Employment history",
+    selectText: "Select specific employment",
+    columns: [
+      { id: "occupationId", type: "key" },
+      { title: "Start", id: "startDate", type: "date" },
+      { title: "End", id: "endDate", type: "date" },
+      { title: "Description", id: "classification", type: "code", size: "medium" },
+      { title: "Employer", id: "employer", type: "string", size: "small" },
+      { title: "Hours/week", id: "hoursPerWeek", type: "number", size: "tiny" },
+    ],
+  },
+  educations: {
+    label: "Education history",
+    selectText: "Select relevant education",
+    columns: [
+      { id: "educationId", type: "key" },
+      { title: "Start", id: "startDate", type: "date" },
+      { title: "Stop", id: "stopDate", type: "date" },
+      { title: "Educational Institution", id: "educationalInstitution", type: "code", size: "medium" },
+      { title: "Level of Education", id: "educationLevel", type: "code" },
+    ],
+  },
+  aliasIdentifiers: {
+    label: "Alias patient identifiers",
+    columns: [
+      { id: "aliasIdentifierId", type: "key" },
+      { title: "Type", id: "idType", type: "string" },
+      { title: "Identifier", id: "identifier", type: "string" },
+      { title: "Effective date", id: "effectiveDate", type: "date" },
+      { title: "Comment", id: "comment", type: "string" },
+    ],
+    sourceMap: (alias) => ({
+      aliasIdentifierId: alias.aliasIdentifierId,
+      effectiveDate: alias.effectiveDate,
+      idType: alias.identifierType?.display,
+      identifier: alias.identifier,
+      comment: alias.comment,
+    }),
   },
   preferences: {
     label: "Preferences & consents",
@@ -28829,7 +28881,10 @@ export const componentIdentities: Record<string, any> = {
       "major": 2,
       "minor": 26,
       "patch": 12
-    }
+    },
+    "components": [
+      "ChartRecordTable"
+    ]
   },
   'AssessmentScoringTable': {
     "name": "AssessmentScoringTable",
@@ -28911,7 +28966,10 @@ export const componentIdentities: Record<string, any> = {
       "major": 2,
       "minor": 26,
       "patch": 12
-    }
+    },
+    "components": [
+      "EditableTable"
+    ]
   },
   'CodedObservationChoiceField': {
     "name": "CodedObservationChoiceField",

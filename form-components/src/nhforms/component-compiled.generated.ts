@@ -1230,6 +1230,8 @@ if (typeof ChartRecordTable === "undefined") {
 ChartRecordTable = ({
   source = "allergies",
   id,
+  fieldId,
+  sourceId,
   label,
   chartLabel,
   reportedLabel,
@@ -1245,6 +1247,9 @@ ChartRecordTable = ({
   columns,
   entryColumns,
   moisModule,
+  filterPred,
+  listCompare,
+  sourceMap,
   ...props
 }) => {
   const preset = _chartRecordTablePresets[source] || {};
@@ -1253,6 +1258,9 @@ ChartRecordTable = ({
   const resolvedChartColumns = columns || preset.columns || _chartRecordTableGenericColumns;
   const resolvedEntryColumns = entryColumns || preset.entryColumns || _chartRecordTableGenericEntryColumns;
   const resolvedMoisModule = typeof moisModule === "undefined" ? preset.moisModule : moisModule;
+  const resolvedFieldId = fieldId || source;
+  const resolvedSourceId = sourceId || source;
+  const resolvedSourceMap = sourceMap || preset.sourceMap;
   return /*#__PURE__*/React.createElement(Fluent.Stack, {
     tokens: {
       childrenGap: 10
@@ -1264,13 +1272,17 @@ ChartRecordTable = ({
       }
     }
   }, resolvedLabel) : null, showChartRecords ? /*#__PURE__*/React.createElement(ListSelection, {
-    id: source,
+    fieldId: resolvedFieldId,
+    sourceId: resolvedSourceId,
     label: chartLabel || preset.chartLabel,
     selectionType: selectionType,
     selectText: selectText || preset.selectText,
     columns: resolvedChartColumns,
     moisModule: resolvedMoisModule,
-    placeholder: chartPlaceholder
+    placeholder: chartPlaceholder,
+    filterPred: filterPred,
+    listCompare: listCompare,
+    sourceMap: resolvedSourceMap
   }) : null, allowAdd ? /*#__PURE__*/React.createElement(EditableTable, _extends({
     id: resolvedId,
     label: reportedLabel || preset.reportedLabel || "Reported on this form",
@@ -1574,6 +1586,92 @@ const _chartRecordTablePresets = {
       id: "note",
       type: "string"
     }]
+  },
+  occupations: {
+    label: "Employment history",
+    selectText: "Select specific employment",
+    columns: [{
+      id: "occupationId",
+      type: "key"
+    }, {
+      title: "Start",
+      id: "startDate",
+      type: "date"
+    }, {
+      title: "End",
+      id: "endDate",
+      type: "date"
+    }, {
+      title: "Description",
+      id: "classification",
+      type: "code",
+      size: "medium"
+    }, {
+      title: "Employer",
+      id: "employer",
+      type: "string",
+      size: "small"
+    }, {
+      title: "Hours/week",
+      id: "hoursPerWeek",
+      type: "number",
+      size: "tiny"
+    }]
+  },
+  educations: {
+    label: "Education history",
+    selectText: "Select relevant education",
+    columns: [{
+      id: "educationId",
+      type: "key"
+    }, {
+      title: "Start",
+      id: "startDate",
+      type: "date"
+    }, {
+      title: "Stop",
+      id: "stopDate",
+      type: "date"
+    }, {
+      title: "Educational Institution",
+      id: "educationalInstitution",
+      type: "code",
+      size: "medium"
+    }, {
+      title: "Level of Education",
+      id: "educationLevel",
+      type: "code"
+    }]
+  },
+  aliasIdentifiers: {
+    label: "Alias patient identifiers",
+    columns: [{
+      id: "aliasIdentifierId",
+      type: "key"
+    }, {
+      title: "Type",
+      id: "idType",
+      type: "string"
+    }, {
+      title: "Identifier",
+      id: "identifier",
+      type: "string"
+    }, {
+      title: "Effective date",
+      id: "effectiveDate",
+      type: "date"
+    }, {
+      title: "Comment",
+      id: "comment",
+      type: "string"
+    }],
+    sourceMap: alias => ({
+      aliasIdentifierId: alias.aliasIdentifierId,
+      effectiveDate: alias.effectiveDate,
+      idType: alias.identifierType?.display,
+      identifier: alias.identifier,
+      comment: alias.comment
+    })
   },
   preferences: {
     label: "Preferences & consents",
@@ -30484,7 +30582,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './AssessmentScoringTable/index.jsx': ["AssessmentScoringTable","getFieldValue","hasValue","inputStyle","labelCellStyle","number","numberOrBlank","raw","renderRow","scoreRows","setScore","sum","tableStyle","total","value","valueCellStyle"],
   './AttestationSignOff/index.jsx': ["AttestationSignOff","cleaned","current","deriveInitials","flatTargets","getCurrentActorName","initials","key","name","nestedTargets","next","normalizeInitialsName","normalizeRoleOptions","normalizeTargets","parts","roleOptions","row","sd","signatureFieldId","signatureValue","signedAt","source","table","text","updateValue","value"],
   './AuthorshipField/index.jsx': ["AuthorshipField","DEFAULT_WINDOW_HOURS","_defaultPolicy","_nhAuth","_normalizeFieldOptions","actor","actorFrom","addHoursIso","base","buildKey","c","changed","ck","claim","claims","commitSave","commitValue","componentId","current","d","data","editableUntil","effectiveFieldId","euDate","existing","expired","fieldData","formatTimestamp","isNonEmpty","isOwner","keepStatus","key","label","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","nextStatus","nhAuth","normalizeStore","now","nowIso","numeric","optionList","ownerId","ownerName","ownerRefresh","pad2","pending","policy","policyAppliesToAction","prepareSave","query","raw","readOnly","readStore","release","renderInput","resolveNow","sameActor","sd","section","store","text","trimmed","ts","untilSelf","value","windowHours"],
-  './ChartRecordTable/index.jsx': ["ChartRecordTable","_chartRecordTableGenericColumns","_chartRecordTableGenericEntryColumns","_chartRecordTablePresets","preset","resolvedChartColumns","resolvedEntryColumns","resolvedId","resolvedLabel","resolvedMoisModule"],
+  './ChartRecordTable/index.jsx': ["ChartRecordTable","_chartRecordTableGenericColumns","_chartRecordTableGenericEntryColumns","_chartRecordTablePresets","preset","resolvedChartColumns","resolvedEntryColumns","resolvedFieldId","resolvedId","resolvedLabel","resolvedMoisModule","resolvedSourceId","resolvedSourceMap"],
   './CodedObservationChoiceField/index.jsx': ["CodedObservationChoiceField","candidates","checklistOptions","code","codedChoicePayloadsEqual","codings","commentValue","componentId","container","createdBy","currentPayload","display","effectiveFieldId","effectiveRenderAs","effectiveSelectionType","findExistingObservationId","formatCodedChoiceReport","fromContext","handleFindCodeChange","isMultiple","match","nextGroup","normalizeCodedChoiceOptions","normalizeSelectedCodings","oldId","option","options","report","sd","selectOptions","selectedValue","setCodedChoicePayload","stripVolatileCodedChoicePayloadFields","value","values","writeCodedChoiceValue"],
   './CommonSchemaDefn/index.jsx': ["NameBlockFields","active","commonSchemaDefn","formHistorySchema","makeCodedObsUpdates","makeObsUpdatesFromVs","makeTextObsUpdates","makeValueSetOptions","nameBlockSchema","newDco","oldObs","oldObsId","options","selectAll","startDateDesc","valueSet","vso","ynuaOptions"],
   './CompactBooleanField/index.jsx': ["BooleanLabelPresets","CompactBooleanChecklist","CompactBooleanChecklistSchema","CompactBooleanField","CompactBooleanFieldSchema","CompactBooleanGroup","CompactChoiceField","CompactChoiceFieldMultiSchema","CompactChoiceFieldSchema","OptionButtons","YesNoButtons","baseContainerStyle","buttonStyle","checkboxWrapperRef","choiceContent","commitValue","containerStyle","currentData","currentValue","data","decodePDFHex","decoded","fieldContent","getBooleanLabels","getButtonStyles","getCardContainerStyles","getFieldContainerStyles","getWidthStyle","handleChange","handleCheckboxChange","handleClick","handleNoClick","handleYesClick","input","isDarkMode","isDisabled","isHorizontal","isLast","isLeftLabel","isMultiple","isSelected","labelStyle","lastRowStyle","newValues","noButtonStyle","normalizeValue","normalized","normalizedValue","noteStyle","prevDecoded","rowStyle","selected","selectedValues","setFormData","sizeStyles","theme","themeLabelMaxWidth","themeLabelMinWidth","titleStyle","values","widthMap","yesButtonStyle"],
