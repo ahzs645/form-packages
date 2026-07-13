@@ -3,6 +3,35 @@ const { Stack, StackItem, Label, Link, Text, TextField } = Fluent
 
 const isNonEmptyString = (value) => typeof value === "string" && value.trim().length > 0
 
+const measurementWidthBySize = {
+  "1/4": "25%",
+  "1/3": "33.333%",
+  "1/2": "50%",
+  "2/3": "66.667%",
+  "3/4": "75%",
+  tiny: "80px",
+  small: "160px",
+  medium: "320px",
+  large: "480px",
+}
+
+const resolveMeasurementContainerStyle = (size) => {
+  if (size && typeof size === "object") {
+    return { ...size, minWidth: size.minWidth ?? 0 }
+  }
+
+  const width = measurementWidthBySize[size]
+  if (!width) return { width: "100%", minWidth: 0 }
+
+  return {
+    boxSizing: "border-box",
+    flex: `0 0 ${width}`,
+    maxWidth: width,
+    minWidth: 0,
+    width,
+  }
+}
+
 const hasMeaningfulValue = (value) => {
   if (value === undefined || value === null) return false
   if (typeof value === "string") return value.trim().length > 0
@@ -281,6 +310,7 @@ const PastMeasurementField = ({
   fieldId,
   label = "Measurement",
   placeholder,
+  size,
   historyKind = "observation",
   legacyFieldId = "",
   historySourcePath = "patient.observations",
@@ -610,7 +640,7 @@ const PastMeasurementField = ({
     .join(" | ")
 
   return (
-    <Stack tokens={{ childrenGap: 4 }}>
+    <Stack tokens={{ childrenGap: 4 }} styles={{ root: resolveMeasurementContainerStyle(size) }}>
       {label ? <Label>{label}</Label> : null}
 
       <Stack tokens={{ childrenGap: 4 }}>
