@@ -26257,6 +26257,7 @@ const SubformScoringInner = ({
   dataEntryValueRoot,
   onDataEntryValueChange,
   observationOutputs = [],
+  formDataOutputs = [],
   ...props
 }) => {
   const [internalIsOpen, setInternalIsOpen] = useState(false)
@@ -26677,7 +26678,7 @@ const SubformScoringInner = ({
     return progress.answered > 0
   }, [isDataEntryMode, isMorphineCalculatorMode, dataEntryCalculatorConfig, dataEntryFields, dataEntryValues, progress])
 
-  const commitObservationOutputs = useCallback(() => {
+  const prepareCompletionState = useCallback((actionPayload) => {
     const payload = _buildSubformObservationUpdates(observationOutputs, {
       answers,
       calculatedExpressions,
@@ -26686,8 +26687,23 @@ const SubformScoringInner = ({
       formData: fd?.field?.data,
       sd,
     })
-    _setSubformObservationPayloads(fd?.setFormData, id, payload)
-  }, [answers, calculatedExpressions, calculatedTotals, dataEntryValues, fd, id, observationOutputs, sd])
+    const formDataWrites = _buildSubformFormDataWrites(formDataOutputs, {
+      answers,
+      calculatedExpressions,
+      calculatedTotals,
+      dataEntryFields,
+      dataEntryValues,
+      dataEntryValueRoot,
+      formData: fd?.field?.data,
+    })
+    const preparedSession = _createPreparedSessionSetter(fd)
+    _setSubformObservationPayloads(preparedSession.setFormData, id, payload)
+    _setSubformFormDataOutputs(preparedSession.setFormData, formDataWrites)
+    if (actionPayload) {
+      _recordSubformActionPayload(preparedSession.setFormData, id, actionPayload)
+    }
+    return preparedSession.getFormData()
+  }, [answers, calculatedExpressions, calculatedTotals, dataEntryFields, dataEntryValueRoot, dataEntryValues, fd, formDataOutputs, id, observationOutputs, sd])
 
   const showItems = useMemo(() => {
     if (Array.isArray(summaryConfig.showItems) && summaryConfig.showItems.length > 0) {
@@ -27789,8 +27805,7 @@ const SubformScoringInner = ({
                   calculatedTotals,
                 })
                 if (shouldClose !== false) {
-                  commitObservationOutputs()
-                  onCommitToParent?.(fd)
+                  onCommitToParent?.(prepareCompletionState())
                   setDialogOpen(false)
                 }
               }}
@@ -27808,6 +27823,7 @@ const SubformScoringInner = ({
                 calculatedTotals,
               })
               if (shouldClose !== false) {
+                let actionPayload = null
                 if (isDataEntryMode && dataEntryAction) {
                   const writeDefinition = MOIS_WRITE_MUTATIONS[dataEntryAction.writeKey]
                   const runMutation = writeMutationRunners[dataEntryAction.writeKey]
@@ -27818,13 +27834,12 @@ const SubformScoringInner = ({
                   )
                   const payload = _buildMappedPayload(dataEntryValues, dataEntryAction)
                   const variables = writeDefinition.buildVariables(resolvedId, payload)
-                  const actionPayload = {
+                  actionPayload = {
                     kind: "moisMutation",
                     resource: dataEntryAction.resource,
                     mutation: dataEntryAction.mutation,
                     ...variables,
                   }
-                  _recordSubformActionPayload(fd?.setFormData, id, actionPayload)
                   const hasRequiredId =
                     writeDefinition.requiresId === false ||
                     Boolean(variables[writeDefinition.idVariable])
@@ -27840,8 +27855,7 @@ const SubformScoringInner = ({
                     }
                   }
                 }
-                commitObservationOutputs()
-                onCommitToParent?.(fd)
+                onCommitToParent?.(prepareCompletionState(actionPayload))
                 setDialogOpen(false)
               }
             }}
@@ -27858,6 +27872,8 @@ const SubformScoring = (props) => {
     id = "subformScoring",
     isOpen: controlledIsOpen,
     onOpenChange,
+    formDataOutputs = [],
+    persistNestedFields = true,
   } = props
   const [parentFd] = useActiveData()
   const [internalIsOpen, setInternalIsOpen] = useState(false)
@@ -27883,10 +27899,30 @@ const SubformScoring = (props) => {
     const sessionState = cloneFormSessionState(sessionFd)
     parentFd.setFormData((current) => {
       const nextState = cloneFormSessionState(current)
-      mergeFormSessionState(nextState, sessionState)
+      if (persistNestedFields !== false) {
+        mergeFormSessionState(nextState, sessionState)
+      } else {
+        if (!nextState.field) nextState.field = { data: {}, status: {}, history: [] }
+        if (!nextState.field.data) nextState.field.data = {}
+        for (const output of formDataOutputs || []) {
+          if (!output?.targetPath) continue
+          const value = _getValueAtPath(sessionState?.field?.data, output.targetPath)
+          if (value !== undefined) {
+            _setValueAtPath(
+              nextState.field.data,
+              output.targetPath,
+              __cloneSubformScoringSessionValue(value, null)
+            )
+          }
+        }
+        const componentPayloads = sessionState?.field?.data?.__componentPayloads
+        if (componentPayloads) {
+          nextState.field.data.__componentPayloads = __cloneSubformScoringSessionValue(componentPayloads, {})
+        }
+      }
       return nextState
     })
-  }, [parentFd])
+  }, [formDataOutputs, parentFd, persistNestedFields])
 
   return (
     <FormSessionProvider initialFormData={effectiveInitialData}>
