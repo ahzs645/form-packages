@@ -3127,6 +3127,8 @@ const SubformScoring = (props) => {
     id = "subformScoring",
     isOpen: controlledIsOpen,
     onOpenChange,
+    formDataOutputs = [],
+    persistNestedFields = true,
   } = props
   const [parentFd] = useActiveData()
   const [internalIsOpen, setInternalIsOpen] = useState(false)
@@ -3152,10 +3154,30 @@ const SubformScoring = (props) => {
     const sessionState = cloneFormSessionState(sessionFd)
     parentFd.setFormData((current) => {
       const nextState = cloneFormSessionState(current)
-      mergeFormSessionState(nextState, sessionState)
+      if (persistNestedFields !== false) {
+        mergeFormSessionState(nextState, sessionState)
+      } else {
+        if (!nextState.field) nextState.field = { data: {}, status: {}, history: [] }
+        if (!nextState.field.data) nextState.field.data = {}
+        for (const output of formDataOutputs || []) {
+          if (!output?.targetPath) continue
+          const value = _getValueAtPath(sessionState?.field?.data, output.targetPath)
+          if (value !== undefined) {
+            _setValueAtPath(
+              nextState.field.data,
+              output.targetPath,
+              __cloneSubformScoringSessionValue(value, null)
+            )
+          }
+        }
+        const componentPayloads = sessionState?.field?.data?.__componentPayloads
+        if (componentPayloads) {
+          nextState.field.data.__componentPayloads = __cloneSubformScoringSessionValue(componentPayloads, {})
+        }
+      }
       return nextState
     })
-  }, [parentFd])
+  }, [formDataOutputs, parentFd, persistNestedFields])
 
   return (
     <FormSessionProvider initialFormData={effectiveInitialData}>
