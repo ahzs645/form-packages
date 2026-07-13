@@ -20047,7 +20047,7 @@ const PastMeasurementField = ({
   fieldId,
   label = "Measurement",
   placeholder,
-  size = "medium",
+  size,
   hidden,
   required,
   note,
@@ -20404,6 +20404,7 @@ const PastMeasurementField = ({
   // independently sized: a normal measurement defaults to the medium (320px)
   // control preset even when its field occupies a full-width form row.
   const effectiveLabelPosition = inlineLayout ? "left" : labelPosition
+  const effectiveMeasurementSize = size || (inlineLayout ? "max" : "medium")
 
   return (
     <LayoutItem
@@ -20425,7 +20426,7 @@ const PastMeasurementField = ({
       section={section}
       size={{ width: "100%", maxWidth: "none", minWidth: 0, flex: "1 1 100%" }}
     >
-      <div data-measurement-content style={resolveMeasurementContainerStyle(size)}>
+      <div data-measurement-content style={resolveMeasurementContainerStyle(effectiveMeasurementSize)}>
         <Stack
           horizontal={inlineLayout}
           verticalAlign={inlineLayout ? "center" : undefined}
