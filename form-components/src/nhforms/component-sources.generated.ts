@@ -13948,11 +13948,28 @@ const Scale5QuestionList = props => {
 
 const Scale5SubmitButton = props => {
   const [fd] = useActiveData()
+  const data = fd?.field?.data || {}
+  const requiredQuestionIds = Array.isArray(props.requiredQuestionIds)
+    ? props.requiredQuestionIds.map(id => String(id)).filter(Boolean)
+    : []
+  const requiredDropdownQuestionIds = Array.isArray(props.requiredDropdownQuestionIds)
+    ? props.requiredDropdownQuestionIds.map(id => String(id)).filter(Boolean)
+    : []
+  const missingRequiredAnswer = requiredQuestionIds.some(questionId => {
+    const item = data[questionId]
+    return !item || item.selectedKey === undefined || item.selectedKey === null || item.selectedKey === ""
+  })
+  const missingRequiredDropdown = requiredDropdownQuestionIds.some(questionId => {
+    const item = data[questionId]
+    return !item || item.selectedDropdownKey === undefined || item.selectedDropdownKey === null || item.selectedDropdownKey === ""
+  })
+  const submitDisabled = Boolean(props.disabled || missingRequiredAnswer || missingRequiredDropdown)
 
   return (
     <Stack horizontal wrap tokens={{ childrenGap: "m" }}>
       <SubmitButton
         {...props}
+        disabled={submitDisabled}
       />
       <DefaultButton
         data-automation-id='fill'

@@ -251,6 +251,20 @@ export type BuilderWorkflowOutputKind =
   | "customMutation"
   | "moisMutation";
 
+export type BuilderWorkflowValueType = "TEXT" | "NUMERIC" | "VALUESET";
+
+/**
+ * Stored workflow JSON (hand-written or legacy-imported) carries both cases;
+ * every consumer normalizes through here instead of ad-hoc `.toUpperCase()`.
+ */
+export function normalizeWorkflowValueType(
+  value: unknown,
+  fallback: BuilderWorkflowValueType = "TEXT"
+): BuilderWorkflowValueType {
+  const upper = typeof value === "string" ? value.trim().toUpperCase() : "";
+  return upper === "TEXT" || upper === "NUMERIC" || upper === "VALUESET" ? upper : fallback;
+}
+
 export interface BuilderWorkflowPanelRowBinding {
   fieldId?: string;
   observationCode?: string;
@@ -272,17 +286,33 @@ export interface BuilderWorkflowPanelUpdatePayload {
     system?: string;
   };
   rowBindings?: BuilderWorkflowPanelRowBinding[];
+  /** Preserve a row-binding entry even when its source field is empty. */
+  includeEmptyRows?: boolean;
 }
 
-export interface BuilderWorkflowOutputDefinition extends BuilderWorkflowBaseDefinition {
-  kind: BuilderWorkflowOutputKind;
+export interface BuilderWorkflowOutputCondition {
+  fieldId: string;
+  operator?: "truthy" | "equals" | "notEquals" | "yes" | "no" | "in" | "notIn";
+  value?: string | number | boolean | null;
+  /** For in/notIn: the value set (matched against code-aware values). */
+  values?: Array<string | number>;
+}
+
+/** Fields every output kind shares: identity, enablement, and the submit-time gate. */
+export interface BuilderWorkflowOutputBase extends BuilderWorkflowBaseDefinition {
+  condition?: BuilderWorkflowOutputCondition;
+}
+
+/** Chart observation write, keyed by observation code (update-or-create). */
+export interface BuilderWorkflowDcoObservationOutput extends BuilderWorkflowOutputBase {
+  kind: "dcoObservation";
   observationCode?: string;
-  description?: string;
   value?: string;
   valueFieldId?: string;
   valueType?: "TEXT" | "NUMERIC" | "VALUESET" | "numeric" | "text";
   valueSource?: "display" | "code";
   reportFromDisplay?: boolean;
+  /** The attached workflow report saved as the observation's report text. */
   reportId?: string;
   reportFieldId?: string;
   units?: string;
@@ -294,15 +324,38 @@ export interface BuilderWorkflowOutputDefinition extends BuilderWorkflowBaseDefi
   rangeAbsurdHigh?: string;
   updateExisting?: boolean;
   deleteWhenFalse?: boolean;
-  condition?: {
-    fieldId: string;
-    operator?: "truthy" | "equals" | "notEquals" | "yes" | "no" | "in" | "notIn";
-    value?: string | number | boolean | null;
-    /** For in/notIn: the value set (matched against code-aware values). */
-    values?: Array<string | number>;
-  };
+}
+
+/** Conditional line appended to the encounter document. */
+export interface BuilderWorkflowDocumentCommentOutput extends BuilderWorkflowOutputBase {
+  kind: "documentComment";
+  /** Comment template; tokens {value}, {label}, {fieldId}, {data.otherFieldId}. */
+  value?: string;
+  valueFieldId?: string;
+}
+
+/** The submit payload's single calculatedUpdate (computed score observation). */
+export interface BuilderWorkflowCalculatedObservationOutput extends BuilderWorkflowOutputBase {
+  kind: "calculatedObservation";
+  observationCode?: string;
+  valueFieldId?: string;
+  valueType?: "TEXT" | "NUMERIC" | "VALUESET" | "numeric" | "text";
+  units?: string;
+  reportFieldId?: string;
+}
+
+/** Observation panel (flowsheet) upsert. valueFieldId is the rows-array field when rowBindings are not used. */
+export interface BuilderWorkflowPanelUpdateOutput extends BuilderWorkflowOutputBase {
+  kind: "panelUpdate";
+  valueFieldId?: string;
   payload?: Record<string, unknown> & BuilderWorkflowPanelUpdatePayload;
-  /** httpJson outputs: submit-time POST/PUT to an HTTP JSON listener such as Mirth. */
+  /** Header value bindings: notes/orderedBy/facility field ids. */
+  payloadFields?: Record<string, string>;
+}
+
+/** Submit-time POST/PUT to an HTTP JSON listener such as Mirth. */
+export interface BuilderWorkflowHttpJsonOutput extends BuilderWorkflowOutputBase {
+  kind: "httpJson";
   endpointUrl?: string;
   httpMethod?: "POST" | "PUT";
   httpHeaders?: Record<string, string>;
@@ -311,6 +364,8 @@ export interface BuilderWorkflowOutputDefinition extends BuilderWorkflowBaseDefi
   deliveryPhase?: "beforeSubmit" | "afterSubmit";
   eventName?: string;
   requestTimeoutMs?: number;
+  /** The attached workflow report: MDM document body (safe mode) or the envelope's highlighted report. */
+  reportId?: string;
   /** Safe Mirth notification routing hints. Clinical content is retrieved downstream, never embedded here. */
   mirthRouting?: {
     /** genericDocument uses Mirth's environment-owned general-document route; documentLoinc uses the form's explicit code. */
@@ -330,7 +385,11 @@ export interface BuilderWorkflowOutputDefinition extends BuilderWorkflowBaseDefi
   /** Optional form-data field that receives the structured HTTP response/error before MOIS save. */
   responseFieldId?: string;
   failOnError?: boolean;
-  /** moisMutation outputs (e.g. encounterNote.changeEncounterNote): submit-time module write. */
+}
+
+/** Direct MOIS module mutation (only encounterNote.changeEncounterNote executes today). */
+export interface BuilderWorkflowMoisMutationOutput extends BuilderWorkflowOutputBase {
+  kind: "moisMutation";
   resource?: string;
   mutation?: string;
   patientIdPath?: string;
@@ -339,6 +398,20 @@ export interface BuilderWorkflowOutputDefinition extends BuilderWorkflowBaseDefi
   payloadDefaults?: Record<string, unknown>;
   note?: string;
 }
+
+/** Definition-only kinds carried by legacy imports; audited but never executed. */
+export interface BuilderWorkflowLegacyOutput extends BuilderWorkflowOutputBase {
+  kind: "documentUpdate" | "webformUpdate" | "customMutation";
+}
+
+export type BuilderWorkflowOutputDefinition =
+  | BuilderWorkflowDcoObservationOutput
+  | BuilderWorkflowDocumentCommentOutput
+  | BuilderWorkflowCalculatedObservationOutput
+  | BuilderWorkflowPanelUpdateOutput
+  | BuilderWorkflowHttpJsonOutput
+  | BuilderWorkflowMoisMutationOutput
+  | BuilderWorkflowLegacyOutput;
 
 export type BuilderWorkflowActionKind =
   | "saveDraft"
@@ -371,6 +444,7 @@ export interface BuilderWorkflowRuntimeHookDefinition extends BuilderWorkflowBas
     targetFieldId: string;
     sourcePath: string;
     mode?: "copy" | "copyIfEmpty";
+    valueTransform?: "none" | "string";
   }>;
 }
 
