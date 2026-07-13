@@ -104,6 +104,8 @@ function FocusedObservationHistory({
   id,
   title = "History",
   watchFieldId,
+  watchFields = [],
+  inactiveText = "",
   historySourcePath = "patient.observations",
   valuePath = "value",
   datePath = "collectedDateTime",
@@ -121,6 +123,24 @@ function FocusedObservationHistory({
   const sd = useSourceData()
   const [activeFieldId, setActiveFieldId] = useState("")
 
+  const normalizedWatchFields = useMemo(() => (
+    Array.isArray(watchFields)
+      ? watchFields
+          .filter((entry) => entry?.fieldId)
+          .map((entry) => ({
+            fieldId: textValue(entry.fieldId),
+            title: textValue(entry.title),
+            observationCode: textValue(entry.observationCode),
+            observationComment: textValue(entry.observationComment),
+          }))
+      : []
+  ), [watchFields])
+
+  const activeWatchField = useMemo(
+    () => normalizedWatchFields.find((entry) => entry.fieldId === activeFieldId) || null,
+    [activeFieldId, normalizedWatchFields]
+  )
+
   useEffect(() => {
     const handleFocus = (event) => setActiveFieldId(getFocusedFieldId(event.target))
     const handleBlur = () => window.setTimeout(() => setActiveFieldId(getFocusedFieldId(document.activeElement)), 0)
@@ -132,7 +152,12 @@ function FocusedObservationHistory({
     }
   }, [])
 
-  const isVisible = showWhenNotFocused || !watchFieldId || activeFieldId === watchFieldId
+  const hasFocusTarget = Boolean(watchFieldId) || normalizedWatchFields.length > 0
+  const isTrackedFieldFocused = activeWatchField != null || activeFieldId === watchFieldId
+  const isVisible = showWhenNotFocused || !hasFocusTarget || isTrackedFieldFocused
+  const effectiveObservationCode = activeWatchField?.observationCode || textValue(observationCode)
+  const effectiveObservationComment = activeWatchField?.observationComment || textValue(observationComment)
+  const effectiveTitle = activeWatchField?.title || title
   const items = useMemo(() => normalizeItems({
     source: resolveMoisValue(sd, historySourcePath),
     valuePath,
@@ -140,16 +165,18 @@ function FocusedObservationHistory({
     unitsPath,
     codePath,
     commentPath,
-    observationCode: textValue(observationCode),
-    observationComment: textValue(observationComment),
+    observationCode: effectiveObservationCode,
+    observationComment: effectiveObservationComment,
     maxRows,
-  }), [codePath, commentPath, datePath, historySourcePath, maxRows, observationCode, observationComment, sd, unitsPath, valuePath])
+  }), [codePath, commentPath, datePath, effectiveObservationCode, effectiveObservationComment, historySourcePath, maxRows, sd, unitsPath, valuePath])
 
-  if (!isVisible) return null
+  if (!isVisible) {
+    return inactiveText ? <Text styles={{ root: { fontWeight: 600 } }}>{inactiveText}</Text> : null
+  }
 
   return (
     <Stack id={id} data-focused-observation-history tokens={{ childrenGap: 4 }}>
-      {title ? <Label>{title}</Label> : null}
+      {effectiveTitle ? <Label>{effectiveTitle}</Label> : null}
       {graphLabel ? (
         graphHref ? <Link href={graphHref} target="_blank" rel="noreferrer">{graphLabel}</Link> : <Text variant="small">{graphLabel}</Text>
       ) : null}
@@ -167,4 +194,3 @@ function FocusedObservationHistory({
     </Stack>
   )
 }
-

@@ -7902,6 +7902,8 @@ function FocusedObservationHistory({
   id,
   title = "History",
   watchFieldId,
+  watchFields = [],
+  inactiveText = "",
   historySourcePath = "patient.observations",
   valuePath = "value",
   datePath = "collectedDateTime",
@@ -7918,6 +7920,13 @@ function FocusedObservationHistory({
 }) {
   const sd = useSourceData();
   const [activeFieldId, setActiveFieldId] = useState("");
+  const normalizedWatchFields = useMemo(() => Array.isArray(watchFields) ? watchFields.filter(entry => entry?.fieldId).map(entry => ({
+    fieldId: textValue(entry.fieldId),
+    title: textValue(entry.title),
+    observationCode: textValue(entry.observationCode),
+    observationComment: textValue(entry.observationComment)
+  })) : [], [watchFields]);
+  const activeWatchField = useMemo(() => normalizedWatchFields.find(entry => entry.fieldId === activeFieldId) || null, [activeFieldId, normalizedWatchFields]);
   useEffect(() => {
     const handleFocus = event => setActiveFieldId(getFocusedFieldId(event.target));
     const handleBlur = () => window.setTimeout(() => setActiveFieldId(getFocusedFieldId(document.activeElement)), 0);
@@ -7928,7 +7937,12 @@ function FocusedObservationHistory({
       document.removeEventListener("focusout", handleBlur);
     };
   }, []);
-  const isVisible = showWhenNotFocused || !watchFieldId || activeFieldId === watchFieldId;
+  const hasFocusTarget = Boolean(watchFieldId) || normalizedWatchFields.length > 0;
+  const isTrackedFieldFocused = activeWatchField != null || activeFieldId === watchFieldId;
+  const isVisible = showWhenNotFocused || !hasFocusTarget || isTrackedFieldFocused;
+  const effectiveObservationCode = activeWatchField?.observationCode || textValue(observationCode);
+  const effectiveObservationComment = activeWatchField?.observationComment || textValue(observationComment);
+  const effectiveTitle = activeWatchField?.title || title;
   const items = useMemo(() => normalizeItems({
     source: resolveMoisValue(sd, historySourcePath),
     valuePath,
@@ -7936,18 +7950,26 @@ function FocusedObservationHistory({
     unitsPath,
     codePath,
     commentPath,
-    observationCode: textValue(observationCode),
-    observationComment: textValue(observationComment),
+    observationCode: effectiveObservationCode,
+    observationComment: effectiveObservationComment,
     maxRows
-  }), [codePath, commentPath, datePath, historySourcePath, maxRows, observationCode, observationComment, sd, unitsPath, valuePath]);
-  if (!isVisible) return null;
+  }), [codePath, commentPath, datePath, effectiveObservationCode, effectiveObservationComment, historySourcePath, maxRows, sd, unitsPath, valuePath]);
+  if (!isVisible) {
+    return inactiveText ? /*#__PURE__*/React.createElement(Text, {
+      styles: {
+        root: {
+          fontWeight: 600
+        }
+      }
+    }, inactiveText) : null;
+  }
   return /*#__PURE__*/React.createElement(Stack, {
     id: id,
     "data-focused-observation-history": true,
     tokens: {
       childrenGap: 4
     }
-  }, title ? /*#__PURE__*/React.createElement(Label, null, title) : null, graphLabel ? graphHref ? /*#__PURE__*/React.createElement(Link, {
+  }, effectiveTitle ? /*#__PURE__*/React.createElement(Label, null, effectiveTitle) : null, graphLabel ? graphHref ? /*#__PURE__*/React.createElement(Link, {
     href: graphHref,
     target: "_blank",
     rel: "noreferrer"
@@ -8396,6 +8418,10 @@ const goalColumns = [{
   size: "large"
 }];
 const GoalsFields = "goalId startDate endDate goal expectedOutcome detail";`,
+  './HFC_PHQ_Subform/index.jsx': `const HFC_PHQ_Subform = props => {
+  const RuntimeSubformScoring = typeof window !== "undefined" && window.__nhformsRegistry__?.SubformScoring || SubformScoring;
+  return /*#__PURE__*/React.createElement(RuntimeSubformScoring, props);
+};`,
   './HFC_PT_ASMT_PatientAssessment/index.jsx': `const HFC_PT_ASMT_PatientAssessment = () => {
   const [phq9vis, setphq9vis] = React.useState(false);
   const [fd, setFd] = useActiveData();
@@ -11240,7 +11266,8 @@ const ConditionsSortDesc = (a, b) => {
 const asciiCompare = (a, b) => a < b ? +1 : a > b ? -1 : 0;`,
   './HFC_PT_ASMT_SnapShot/index.jsx': `const {
   Checkbox,
-  ChoiceGroup
+  ChoiceGroup,
+  PrimaryButton
 } = Fluent;
 const {
   useEffect
@@ -11253,7 +11280,6 @@ const HFC_PT_ASMT_SnapShot = props => {
   const [fd, setFd] = useActiveData();
   const sd = useSourceData();
   useEffect(() => {
-    if (fd?.field?.data?.FollowUpAppts !== undefined) return;
     fd.setFormData(produce(draft => {
       if (!draft.field) draft.field = {
         data: {},
@@ -11261,10 +11287,14 @@ const HFC_PT_ASMT_SnapShot = props => {
         history: []
       };
       if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {};
-      if (draft.field.data.FollowUpAppts !== undefined) return;
-      draft.field.data.FollowUpAppts = defaultFollowUpAppts();
+      if (draft.field.data.FollowUpAppts === undefined) {
+        draft.field.data.FollowUpAppts = defaultFollowUpAppts();
+      }
+      if (!draft.field.data.snapDate) {
+        draft.field.data.snapDate = getDateTimeString(new Date());
+      }
     }));
-  }, [fd]);
+  }, []);
   const RadioSelectGroup = ({
     optionList,
     fieldId,
@@ -11354,17 +11384,14 @@ const HFC_PT_ASMT_SnapShot = props => {
        }}) */
   };
   const _removeAppt = index => {
-    const appts = fd.field.data.FollowUpAppts;
-    appts.appointments.splice(index, 1);
-    appts.appointmentCount = appts.appointments.length;
-    const fieldData = {
-      ...fd.field.data,
-      FollowUpAppts: appts
-    };
-    handleStateChange(fieldData);
+    fd.setFormData(produce(draft => {
+      const appts = draft?.field?.data?.FollowUpAppts;
+      if (!appts || !Array.isArray(appts.appointments)) return;
+      appts.appointments.splice(index, 1);
+      appts.appointmentCount = appts.appointments.length;
+    }));
   };
   const _AddAppt = () => {
-    const appts = fd.field.data.FollowUpAppts;
     const newAppt = {
       "ptSnapFUDate": null,
       "ptSnapFUVisitType": {
@@ -11376,13 +11403,19 @@ const HFC_PT_ASMT_SnapShot = props => {
         "display": null
       }
     };
-    appts.appointments.push(newAppt);
-    appts.appointmentCount = appts.length;
-    const fieldData = {
-      ...fd.field.data,
-      FollowUpAppts: appts
-    };
-    handleStateChange(fieldData);
+    fd.setFormData(produce(draft => {
+      if (!draft.field) draft.field = {
+        data: {},
+        status: {},
+        history: []
+      };
+      if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {};
+      if (!draft.field.data.FollowUpAppts) draft.field.data.FollowUpAppts = defaultFollowUpAppts();
+      const appts = draft.field.data.FollowUpAppts;
+      if (!Array.isArray(appts.appointments)) appts.appointments = [];
+      appts.appointments.push(newAppt);
+      appts.appointmentCount = appts.appointments.length;
+    }));
   };
   const optlist = [{
     key: "BW",
@@ -11801,7 +11834,17 @@ const HFC_PT_ASMT_SnapShot = props => {
         fontWeight: "600"
       }
     }
-  }) : null));
+  }) : null), props.showPrintSnapshot === false ? null : /*#__PURE__*/React.createElement("div", {
+    className: "hideonprint",
+    style: {
+      marginTop: "12px",
+      display: "flex",
+      justifyContent: "flex-end"
+    }
+  }, /*#__PURE__*/React.createElement(PrimaryButton, {
+    text: "Print Snapshot",
+    onClick: () => window.print()
+  })));
 };
 
 /* const RadioSelectGroup=({optionList,fieldId,codeSystem,section,...props})=>{
@@ -30423,10 +30466,11 @@ export const componentDefinedNames: Record<string, string[]> = {
   './FieldStampButton/index.jsx': ["ButtonComponent","FieldStampButton","buildContext","clearStamp","context","effectiveStampFieldId","fallback","fieldData","fieldId","isDisabled","isSigned","normalizeStampTargets","normalizeStampValue","normalizedTargets","raw","resolveLiteralValue","resolvePathValue","sd","signedAt","signedAtText","sourcePath","stamp","stampRecord","statusText","value","written"],
   './FindCodeSelect/index.jsx': ["CONTROL_KEY_TOKENS","FindCodeSelect","FindCodeSelectBase","FindCodeSelectWithCodeList","FindCodeSelectWithSourceLookup","aliasSets","aliases","boundValue","candidateKeys","candidates","clearTargets","code","codeListFromContext","combinedStyles","comboSelectedKey","currentValues","customSources","defaultComboStyles","defaultGetCandidates","defaultMapCandidateSavedValue","defaultRenderSelected","directKeys","effectiveFieldId","effectiveLabelPosition","fallback","fallbackItems","filteringActive","fluentLabel","freeText","freeTextItem","getItemKey","getSizeStyles","handleChange","handleInputValueChange","handleKeyDown","handlePendingValueChanged","hasExplicitOptionList","hasLookupSelection","hasSearchText","hasSourceLookup","hidden","i","idx","isDeleteKey","isEmpty","isKeyboardToken","isMultiSelect","item","items","key","keys","leftKey","mapped","match","matchingKey","nextValues","normalizeLookupName","normalizeOption","normalizeSelectedValues","normalized","normalizedLabel","optionList","optionLists","options","rawKey","renderCandidateOption","resolveItems","resolveLookupPath","rightKey","sameSelectedItem","sd","sectionLayout","seen","segments","selected","selectedCode","selectedItem","selectedItems","selectedKey","selectedKeySet","selectedKeys","shouldSelect","shouldSuppressLayoutItemLabel","showChildren","sizeMap","sizeStyles","sourceEntries","sourceItems","sourceLookupItems","storedValue","targets","text","valueForLookupTarget","withoutItem","wrapperStyle"],
   './FirstNationsStatus/index.jsx': ["FirstNationsStatus","connections","ethnicity","firstNationsStatusPatientFields","firstNationsStatusSchema","hasReserveName","races","reserveConnection","reserveName","selfId"],
-  './FocusedObservationHistory/index.jsx': ["FocusedObservationHistory","candidate","current","date","day","direct","formatDate","getFocusedFieldId","handleBlur","handleFocus","host","isVisible","items","month","normalizeItems","parseDate","parsed","parsedDate","pathSegments","patientPath","raw","resolveMoisValue","resolvePath","rows","sd","textValue","year"],
+  './FocusedObservationHistory/index.jsx': ["FocusedObservationHistory","activeWatchField","candidate","current","date","day","direct","effectiveObservationCode","effectiveObservationComment","effectiveTitle","formatDate","getFocusedFieldId","handleBlur","handleFocus","hasFocusTarget","host","isTrackedFieldFocused","isVisible","items","month","normalizeItems","normalizedWatchFields","parseDate","parsed","parsedDate","pathSegments","patientPath","raw","resolveMoisValue","resolvePath","rows","sd","textValue","year"],
   './FormContextHeader/index.jsx': ["FormContextHeader","FormContextHeaderSchema","appointmentDateTime","code","date","display","encounter","legacyContextDate","legacyContextDateTime","legacyContextText","legacyContextVisitCode","legacyFieldWrap","legacySmallFieldWrap","legacyTextStyles","match","providerName","raw","renderReadOnlyField","sd","section","values"],
   './FormSessionRuntime/index.jsx': ["FormSessionContext","FormSessionProvider","__cloneSessionValue","__getSessionContext","applySessionUpdate","cloneFormSessionState","contextValue","formData","mergeFormSessionState","normalizeSessionState","normalized","normalizedSessionData","result","root","selectedSessionData","selectedSessionDataWithSetter","sessionContext","sessionDataWithSetter","sessionScopedSetter","sessionSetFormData","setFormData","target","useFormSessionData"],
   './Goals/index.jsx': ["Goals","GoalsFields"],
+  './HFC_PHQ_Subform/index.jsx': ["HFC_PHQ_Subform","RuntimeSubformScoring"],
   './HFC_PT_ASMT_PatientAssessment/index.jsx': ["HFC_PT_ASMT_PatientAssessment","MeasureRow","PHQ2Quest","PHQ9Quest","PHQ9answers","PHQ9btnstyle","TableMeasureRow","TotalVal2","TotalVal9","_onupdate","acol","asciiCompare","bcol","border","checkarr2","checkarr9","curvalue","fieldData","finalSourceMap","handleChange","histcols","inputValue","items","latestCollectedFirst","newval","questionairre","sd","swellingTable","symptomsTable","tcell","tempPanel","toggleSelect"],
   './HFC_PT_ASMT_PatientSummary/index.jsx': ["ConditionsSortDesc","ConnectionEditSubForm","EFHistory","EFcols","HFC_PT_ASMT_PatientSummary","TestResult","acol","allergiesCols","asciiCompare","bcol","code","connectionMutation","connectionTemplate","connectionTypeCode","currentConnection","defaultProviderType","defaultProviderTypeLookup","finalSourceMap","getLastRead","getListSelectionColumns","gridRows","handleCreateConnection","handleEditConnection","healthIssuesCols","isInitialMount","labs","latestCollectedFirst","lookupSelectedProviderType","ltRXcols","providerTypes","result","savedValueMapper","sd","sortStartDateDesc"],
   './HFC_PT_ASMT_SnapShot/index.jsx': ["EndDateToTop","HFC_PT_ASMT_SnapShot","RadioSelectGroup","StartDatetoTop","_AddAppt","_handlecheckchange","_onChoiceChange","_removeAppt","appts","checkBoxStyles","codesys","defaultFollowUpAppts","fieldData","followUpList","handleStateChange","newAppt","newitem","optionList","optionlist","optlist","reminder","sd","snapdate","sortStartDatethenEndDateDesc","tableCellStyle","tableStyle"],

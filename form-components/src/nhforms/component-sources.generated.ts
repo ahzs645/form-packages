@@ -8202,6 +8202,8 @@ function FocusedObservationHistory({
   id,
   title = "History",
   watchFieldId,
+  watchFields = [],
+  inactiveText = "",
   historySourcePath = "patient.observations",
   valuePath = "value",
   datePath = "collectedDateTime",
@@ -8219,6 +8221,24 @@ function FocusedObservationHistory({
   const sd = useSourceData()
   const [activeFieldId, setActiveFieldId] = useState("")
 
+  const normalizedWatchFields = useMemo(() => (
+    Array.isArray(watchFields)
+      ? watchFields
+          .filter((entry) => entry?.fieldId)
+          .map((entry) => ({
+            fieldId: textValue(entry.fieldId),
+            title: textValue(entry.title),
+            observationCode: textValue(entry.observationCode),
+            observationComment: textValue(entry.observationComment),
+          }))
+      : []
+  ), [watchFields])
+
+  const activeWatchField = useMemo(
+    () => normalizedWatchFields.find((entry) => entry.fieldId === activeFieldId) || null,
+    [activeFieldId, normalizedWatchFields]
+  )
+
   useEffect(() => {
     const handleFocus = (event) => setActiveFieldId(getFocusedFieldId(event.target))
     const handleBlur = () => window.setTimeout(() => setActiveFieldId(getFocusedFieldId(document.activeElement)), 0)
@@ -8230,7 +8250,12 @@ function FocusedObservationHistory({
     }
   }, [])
 
-  const isVisible = showWhenNotFocused || !watchFieldId || activeFieldId === watchFieldId
+  const hasFocusTarget = Boolean(watchFieldId) || normalizedWatchFields.length > 0
+  const isTrackedFieldFocused = activeWatchField != null || activeFieldId === watchFieldId
+  const isVisible = showWhenNotFocused || !hasFocusTarget || isTrackedFieldFocused
+  const effectiveObservationCode = activeWatchField?.observationCode || textValue(observationCode)
+  const effectiveObservationComment = activeWatchField?.observationComment || textValue(observationComment)
+  const effectiveTitle = activeWatchField?.title || title
   const items = useMemo(() => normalizeItems({
     source: resolveMoisValue(sd, historySourcePath),
     valuePath,
@@ -8238,16 +8263,18 @@ function FocusedObservationHistory({
     unitsPath,
     codePath,
     commentPath,
-    observationCode: textValue(observationCode),
-    observationComment: textValue(observationComment),
+    observationCode: effectiveObservationCode,
+    observationComment: effectiveObservationComment,
     maxRows,
-  }), [codePath, commentPath, datePath, historySourcePath, maxRows, observationCode, observationComment, sd, unitsPath, valuePath])
+  }), [codePath, commentPath, datePath, effectiveObservationCode, effectiveObservationComment, historySourcePath, maxRows, sd, unitsPath, valuePath])
 
-  if (!isVisible) return null
+  if (!isVisible) {
+    return inactiveText ? <Text styles={{ root: { fontWeight: 600 } }}>{inactiveText}</Text> : null
+  }
 
   return (
     <Stack id={id} data-focused-observation-history tokens={{ childrenGap: 4 }}>
-      {title ? <Label>{title}</Label> : null}
+      {effectiveTitle ? <Label>{effectiveTitle}</Label> : null}
       {graphLabel ? (
         graphHref ? <Link href={graphHref} target="_blank" rel="noreferrer">{graphLabel}</Link> : <Text variant="small">{graphLabel}</Text>
       ) : null}
@@ -8265,7 +8292,6 @@ function FocusedObservationHistory({
     </Stack>
   )
 }
-
 `,
   './FormContextHeader/index.jsx': `const { useEffect, useMemo } = React
 const { DatePicker, Label, TextField } = Fluent
@@ -8702,6 +8728,14 @@ const goalColumns: ColumnSelection = [
 ]
 
 const GoalsFields = "goalId startDate endDate goal expectedOutcome detail"
+`,
+  './HFC_PHQ_Subform/index.jsx': `const HFC_PHQ_Subform = (props) => {
+  const RuntimeSubformScoring =
+    (typeof window !== "undefined" && window.__nhformsRegistry__?.SubformScoring) ||
+    SubformScoring
+
+  return <RuntimeSubformScoring {...props} />
+}
 `,
   './HFC_PT_ASMT_PatientAssessment/index.jsx': `
 
@@ -11354,7 +11388,7 @@ const getListSelectionColumns = (
     
 
 `,
-  './HFC_PT_ASMT_SnapShot/index.jsx': `const {Checkbox, ChoiceGroup} = Fluent
+  './HFC_PT_ASMT_SnapShot/index.jsx': `const {Checkbox, ChoiceGroup, PrimaryButton} = Fluent
 const {useEffect} = React
 
 const defaultFollowUpAppts = () => ({
@@ -11369,15 +11403,17 @@ const HFC_PT_ASMT_SnapShot = (props) => {
     const sd = useSourceData()
 
     useEffect(() => {
-        if (fd?.field?.data?.FollowUpAppts !== undefined) return
-
         fd.setFormData(produce((draft) => {
             if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
             if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
-            if (draft.field.data.FollowUpAppts !== undefined) return
-            draft.field.data.FollowUpAppts = defaultFollowUpAppts()
+            if (draft.field.data.FollowUpAppts === undefined) {
+                draft.field.data.FollowUpAppts = defaultFollowUpAppts()
+            }
+            if (!draft.field.data.snapDate) {
+                draft.field.data.snapDate = getDateTimeString(new Date())
+            }
         }))
-    }, [fd])
+    }, [])
     
     const RadioSelectGroup=({optionList,fieldId,codeSystem,section,...props})=>{
         //An extension of the fluent ChoiceGroup that ensures data is sent to the ActiveData properly
@@ -11479,22 +11515,15 @@ const HFC_PT_ASMT_SnapShot = (props) => {
       }
     
     const _removeAppt=(index)=>{
-        const appts = fd.field.data.FollowUpAppts
-
-        appts.appointments.splice(index,1)
-        appts.appointmentCount = appts.appointments.length
-
-        const fieldData = {
-            ...fd.field.data,
-            FollowUpAppts:appts
-        }
-
-        handleStateChange(fieldData);
+        fd.setFormData(produce((draft) => {
+            const appts = draft?.field?.data?.FollowUpAppts
+            if (!appts || !Array.isArray(appts.appointments)) return
+            appts.appointments.splice(index,1)
+            appts.appointmentCount = appts.appointments.length
+        }))
     }
 
     const _AddAppt=()=>{
-        const appts = fd.field.data.FollowUpAppts
-
         const newAppt={
             "ptSnapFUDate": null,
             "ptSnapFUVisitType": {
@@ -11507,16 +11536,15 @@ const HFC_PT_ASMT_SnapShot = (props) => {
             },
         }
 
-        appts.appointments.push(newAppt);
-
-        appts.appointmentCount=appts.length
-        
-        const fieldData = {
-            ...fd.field.data,
-            FollowUpAppts:appts
-        }
-
-        handleStateChange(fieldData);
+        fd.setFormData(produce((draft) => {
+            if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
+            if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
+            if (!draft.field.data.FollowUpAppts) draft.field.data.FollowUpAppts = defaultFollowUpAppts()
+            const appts = draft.field.data.FollowUpAppts
+            if (!Array.isArray(appts.appointments)) appts.appointments = []
+            appts.appointments.push(newAppt)
+            appts.appointmentCount = appts.appointments.length
+        }))
 
     }
     
@@ -11845,6 +11873,11 @@ const HFC_PT_ASMT_SnapShot = (props) => {
                 <Heading label="Program Complete. No further follow-up needs to be booked." labelStyles={{style:{fontWeight:"600"}}} />:null
                 }
             </SimpleCodeChecklist>
+            {props.showPrintSnapshot === false ? null : (
+                <div className="hideonprint" style={{marginTop:"12px",display:"flex",justifyContent:"flex-end"}}>
+                    <PrimaryButton text="Print Snapshot" onClick={() => window.print()} />
+                </div>
+            )}
         </>
     )
 }
@@ -29339,6 +29372,39 @@ export const componentIdentities: Record<string, any> = {
       "minor": 26,
       "patch": 12
     }
+  },
+  'HFC_PHQ_Subform': {
+    "name": "HFC_PHQ_Subform",
+    "title": "HFC PHQ Subform",
+    "description": "Position-preserving PHQ scoring subform used by the North HFC assessment",
+    "version": {
+      "major": 1,
+      "minor": 0,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "MOIS Styleguide",
+    "author": "MOIS Styleguide",
+    "publisher": "MOIS Styleguide",
+    "globalIdentifier": "",
+    "requiredFormViewerVersion": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "requiredMoisVersion": {
+      "major": 2,
+      "minor": 26,
+      "patch": 12
+    },
+    "components": [
+      "ConversionField",
+      "FormSessionRuntime",
+      "HotspotMapField",
+      "ScoringModule",
+      "ScaleField",
+      "SubformScoring"
+    ]
   },
   'HFC_PT_ASMT_PatientAssessment': {
     "name": "hfc_pt_asmt_patientassessment",

@@ -1,4 +1,4 @@
-const {Checkbox, ChoiceGroup} = Fluent
+const {Checkbox, ChoiceGroup, PrimaryButton} = Fluent
 const {useEffect} = React
 
 const defaultFollowUpAppts = () => ({
@@ -13,15 +13,17 @@ const HFC_PT_ASMT_SnapShot = (props) => {
     const sd = useSourceData()
 
     useEffect(() => {
-        if (fd?.field?.data?.FollowUpAppts !== undefined) return
-
         fd.setFormData(produce((draft) => {
             if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
             if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
-            if (draft.field.data.FollowUpAppts !== undefined) return
-            draft.field.data.FollowUpAppts = defaultFollowUpAppts()
+            if (draft.field.data.FollowUpAppts === undefined) {
+                draft.field.data.FollowUpAppts = defaultFollowUpAppts()
+            }
+            if (!draft.field.data.snapDate) {
+                draft.field.data.snapDate = getDateTimeString(new Date())
+            }
         }))
-    }, [fd])
+    }, [])
     
     const RadioSelectGroup=({optionList,fieldId,codeSystem,section,...props})=>{
         //An extension of the fluent ChoiceGroup that ensures data is sent to the ActiveData properly
@@ -123,22 +125,15 @@ const HFC_PT_ASMT_SnapShot = (props) => {
       }
     
     const _removeAppt=(index)=>{
-        const appts = fd.field.data.FollowUpAppts
-
-        appts.appointments.splice(index,1)
-        appts.appointmentCount = appts.appointments.length
-
-        const fieldData = {
-            ...fd.field.data,
-            FollowUpAppts:appts
-        }
-
-        handleStateChange(fieldData);
+        fd.setFormData(produce((draft) => {
+            const appts = draft?.field?.data?.FollowUpAppts
+            if (!appts || !Array.isArray(appts.appointments)) return
+            appts.appointments.splice(index,1)
+            appts.appointmentCount = appts.appointments.length
+        }))
     }
 
     const _AddAppt=()=>{
-        const appts = fd.field.data.FollowUpAppts
-
         const newAppt={
             "ptSnapFUDate": null,
             "ptSnapFUVisitType": {
@@ -151,16 +146,15 @@ const HFC_PT_ASMT_SnapShot = (props) => {
             },
         }
 
-        appts.appointments.push(newAppt);
-
-        appts.appointmentCount=appts.length
-        
-        const fieldData = {
-            ...fd.field.data,
-            FollowUpAppts:appts
-        }
-
-        handleStateChange(fieldData);
+        fd.setFormData(produce((draft) => {
+            if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
+            if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
+            if (!draft.field.data.FollowUpAppts) draft.field.data.FollowUpAppts = defaultFollowUpAppts()
+            const appts = draft.field.data.FollowUpAppts
+            if (!Array.isArray(appts.appointments)) appts.appointments = []
+            appts.appointments.push(newAppt)
+            appts.appointmentCount = appts.appointments.length
+        }))
 
     }
     
@@ -489,6 +483,11 @@ const HFC_PT_ASMT_SnapShot = (props) => {
                 <Heading label="Program Complete. No further follow-up needs to be booked." labelStyles={{style:{fontWeight:"600"}}} />:null
                 }
             </SimpleCodeChecklist>
+            {props.showPrintSnapshot === false ? null : (
+                <div className="hideonprint" style={{marginTop:"12px",display:"flex",justifyContent:"flex-end"}}>
+                    <PrimaryButton text="Print Snapshot" onClick={() => window.print()} />
+                </div>
+            )}
         </>
     )
 }
