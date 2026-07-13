@@ -1,5 +1,5 @@
 const { useEffect, useMemo, useState } = React
-const { Stack, StackItem, Label, Link, Text, TextField } = Fluent
+const { Stack, StackItem, Link, Text, TextField } = Fluent
 
 const isNonEmptyString = (value) => typeof value === "string" && value.trim().length > 0
 
@@ -311,6 +311,15 @@ const PastMeasurementField = ({
   label = "Measurement",
   placeholder,
   size,
+  hidden,
+  required,
+  note,
+  moisModule,
+  section,
+  placement,
+  layoutId,
+  index,
+  isComplete,
   historyKind = "observation",
   legacyFieldId = "",
   historySourcePath = "patient.observations",
@@ -653,113 +662,113 @@ const PastMeasurementField = ({
     })
     .join(" | ")
 
-  // `inlineLayout` is the component-specific option that places the label,
-  // input, and history on one row. `labelPosition` only controls the label's
-  // relationship to the input/history block so the form-wide design default
-  // can apply without changing that component-specific behavior.
-  const labelIsHorizontal = inlineLayout || labelPosition === "left"
-  const showLabel = Boolean(label) && labelPosition !== "none"
+  // Use the same outer layout contract as regular MOIS fields so left labels
+  // share LayoutItem's fixed label column. Keep the measurement/history block
+  // independently sized: a normal measurement defaults to the medium (320px)
+  // control preset even when its field occupies a full-width form row.
+  const effectiveLabelPosition = inlineLayout ? "left" : labelPosition
+  const effectiveMeasurementSize = size || (inlineLayout ? "max" : "medium")
 
   return (
-    <Stack
-      horizontal={labelIsHorizontal}
-      verticalAlign={labelIsHorizontal ? "center" : undefined}
-      tokens={{ childrenGap: labelIsHorizontal ? 8 : 4 }}
-      styles={{
-        root: {
-          ...resolveMeasurementContainerStyle(size),
-          ...(inlineLayout ? { flexWrap: "wrap" } : {}),
-        },
-      }}
+    <LayoutItem
+      disabled={disabled}
+      fieldId={effectiveFieldId}
+      hidden={hidden}
+      id={id}
+      index={index}
+      isComplete={isComplete}
+      isEmpty={!hasMeaningfulValue(resolvedCurrentValue)}
+      label={label}
+      labelPosition={effectiveLabelPosition}
+      layoutId={layoutId}
+      moisModule={moisModule}
+      note={note}
+      placement={placement}
+      readOnly={readOnly}
+      required={required}
+      section={section}
+      size={{ width: "100%", maxWidth: "none", minWidth: 0, flex: "1 1 100%" }}
     >
-      {showLabel ? (
-        <Label styles={labelIsHorizontal ? { root: { whiteSpace: "nowrap", flex: "0 0 auto" } } : undefined}>{label}</Label>
-      ) : null}
-
-      <Stack
-        horizontal={inlineLayout}
-        verticalAlign={inlineLayout ? "center" : undefined}
-        tokens={{ childrenGap: inlineLayout ? 8 : 4 }}
-        styles={{
-          root: inlineLayout
-            ? { flex: "1 1 24rem", minWidth: 0, flexWrap: "wrap" }
-            : labelIsHorizontal
-              ? { flex: "1 1 auto", minWidth: 0 }
-            : undefined,
-        }}
-      >
-        <StackItem
-          styles={{
-            root: inlineLayout
-              ? { flex: "0 1 12rem", minWidth: "8rem" }
-              : { width: "100%", minWidth: 0 },
-          }}
+      <div data-measurement-content style={resolveMeasurementContainerStyle(effectiveMeasurementSize)}>
+        <Stack
+          horizontal={inlineLayout}
+          verticalAlign={inlineLayout ? "center" : undefined}
+          tokens={{ childrenGap: inlineLayout ? 8 : 4 }}
+          styles={{ root: { width: "100%", minWidth: 0, ...(inlineLayout ? { flexWrap: "wrap" } : {}) } }}
         >
-          <TextField
-            value={displayedCurrentValue}
-            placeholder={placeholder}
-            onChange={handleValueChange}
-            onFocus={() => setHistoryFocused(true)}
-            onBlur={() => {
-              if (!historyInitiallyVisible) setHistoryFocused(false)
-            }}
-            disabled={disabled}
-            readOnly={readOnly}
-            suffix={inputSuffix || undefined}
-          />
-        </StackItem>
-
-        {shouldShowHistory || shouldReserveHistory ? (
           <StackItem
             styles={{
-              root: {
-                ...(inlineLayout
-                  ? { flex: "1 1 14rem", minWidth: 0 }
-                  : { width: "100%", minWidth: 0 }),
-                visibility: shouldShowHistory ? "visible" : "hidden",
-              },
+              root: inlineLayout
+                ? { flex: "0 1 12rem", minWidth: "8rem" }
+                : { width: "100%", minWidth: 0 },
             }}
           >
-            <Stack horizontal verticalAlign="center" tokens={{ childrenGap: 8 }} styles={{ root: { flexWrap: "wrap" } }}>
-              {isNonEmptyString(graphLinkText) ? (
-                isNonEmptyString(graphHref) ? (
-                  <Link
-                    href={graphHref}
-                    target={openGraphInNewTab ? "_blank" : undefined}
-                    rel={openGraphInNewTab ? "noopener noreferrer" : undefined}
-                  >
-                    {graphLinkText}
-                  </Link>
-                ) : (
-                  <Text variant="small" styles={{ root: { color: "#0f5ea8" } }}>
-                    {graphLinkText}
-                  </Text>
-                )
-              ) : null}
-              <Text variant="small">{historySummary}</Text>
-              {hasNumericCurrentValue && (isAbnormal ? abnormalMessage : normalMessage) ? (
-                <Text
-                  variant="small"
-                  styles={{
-                    root: {
-                      color: isAbnormal ? "#a4262c" : "#107c10",
-                      fontWeight: 600,
-                    },
-                  }}
-                >
-                  {isAbnormal ? abnormalMessage : normalMessage}
-                </Text>
-              ) : null}
-            </Stack>
+            <TextField
+              value={displayedCurrentValue}
+              placeholder={placeholder}
+              onChange={handleValueChange}
+              onFocus={() => setHistoryFocused(true)}
+              onBlur={() => {
+                if (!historyInitiallyVisible) setHistoryFocused(false)
+              }}
+              disabled={disabled}
+              readOnly={readOnly}
+              suffix={inputSuffix || undefined}
+            />
           </StackItem>
-        ) : null}
-      </Stack>
 
-      {shouldShowHistory && showHistoryList && historyItems.length > 1 ? (
-        <Text variant="xSmall" styles={inlineLayout ? { root: { flexBasis: "100%" } } : undefined}>
-          Recent: {recentHistoryText}
-        </Text>
-      ) : null}
-    </Stack>
+          {shouldShowHistory || shouldReserveHistory ? (
+            <StackItem
+              styles={{
+                root: {
+                  ...(inlineLayout
+                    ? { flex: "1 1 14rem", minWidth: 0 }
+                    : { width: "100%", minWidth: 0 }),
+                  visibility: shouldShowHistory ? "visible" : "hidden",
+                },
+              }}
+            >
+              <Stack horizontal verticalAlign="center" tokens={{ childrenGap: 8 }} styles={{ root: { flexWrap: "wrap" } }}>
+                {isNonEmptyString(graphLinkText) ? (
+                  isNonEmptyString(graphHref) ? (
+                    <Link
+                      href={graphHref}
+                      target={openGraphInNewTab ? "_blank" : undefined}
+                      rel={openGraphInNewTab ? "noopener noreferrer" : undefined}
+                    >
+                      {graphLinkText}
+                    </Link>
+                  ) : (
+                    <Text variant="small" styles={{ root: { color: "#0f5ea8" } }}>
+                      {graphLinkText}
+                    </Text>
+                  )
+                ) : null}
+                <Text variant="small">{historySummary}</Text>
+                {hasNumericCurrentValue && (isAbnormal ? abnormalMessage : normalMessage) ? (
+                  <Text
+                    variant="small"
+                    styles={{
+                      root: {
+                        color: isAbnormal ? "#a4262c" : "#107c10",
+                        fontWeight: 600,
+                      },
+                    }}
+                  >
+                    {isAbnormal ? abnormalMessage : normalMessage}
+                  </Text>
+                ) : null}
+              </Stack>
+            </StackItem>
+          ) : null}
+        </Stack>
+
+        {shouldShowHistory && showHistoryList && historyItems.length > 1 ? (
+          <Text variant="xSmall" styles={inlineLayout ? { root: { flexBasis: "100%" } } : undefined}>
+            Recent: {recentHistoryText}
+          </Text>
+        ) : null}
+      </div>
+    </LayoutItem>
   )
 }

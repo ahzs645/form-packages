@@ -28,6 +28,19 @@ const stackStub = ({ children, horizontal, styles }: Record<string, any>) =>
     },
     children,
   );
+const layoutItemStub = ({ children, fieldId, label, labelPosition }: Record<string, any>) =>
+  React.createElement(
+    "div",
+    {
+      "data-layout-item": "true",
+      "data-field-id": fieldId,
+      "data-label-position": labelPosition,
+    },
+    label && labelPosition !== "none"
+      ? React.createElement("label", { "data-layout-label": "true" }, label)
+      : null,
+    React.createElement("div", { "data-layout-content": "true" }, children),
+  );
 const FluentStub = {
   Stack: stackStub,
   StackItem: passthrough,
@@ -51,6 +64,7 @@ function loadPastMeasurementField(sourceData: Record<string, unknown>): React.Co
     "useSourceData",
     "produce",
     "getDateTimeString",
+    "LayoutItem",
     `${compiled};\nreturn { PastMeasurementField };`
   );
   const useActiveData = () => React.useContext(ActiveDataContext);
@@ -60,7 +74,8 @@ function loadPastMeasurementField(sourceData: Record<string, unknown>): React.Co
     useActiveData,
     () => sourceData,
     produce,
-    (date: Date) => date.toISOString()
+    (date: Date) => date.toISOString(),
+    layoutItemStub,
   ).PastMeasurementField;
 }
 
@@ -140,7 +155,8 @@ describe("PastMeasurementField date-aspect display", () => {
     const stacks = harness.container.querySelectorAll('[data-stack="true"]');
     expect(stacks[0]?.getAttribute("data-horizontal")).toBe("true");
     expect(stacks[1]?.getAttribute("data-horizontal")).toBe("true");
-    expect(stacks[0]?.textContent).toContain("Weight (kg)");
+    expect(harness.container.querySelector('[data-layout-item="true"]')?.getAttribute("data-label-position")).toBe("left");
+    expect(harness.container.querySelector('[data-layout-label="true"]')?.textContent).toBe("Weight (kg)");
     expect(stacks[0]?.textContent).toContain("Graph");
     expect(stacks[0]?.textContent).toContain("2026.04.21   72.4   (kg)");
     act(() => harness.root.unmount());
@@ -153,21 +169,24 @@ describe("PastMeasurementField date-aspect display", () => {
       showHistory: true,
     });
 
-    const stacks = harness.container.querySelectorAll('[data-stack="true"]');
-    expect(stacks[0]?.getAttribute("data-horizontal")).toBe("true");
-    expect(stacks[1]?.getAttribute("data-horizontal")).toBe("false");
-    expect(stacks[0]?.textContent).toContain("Weight (kg)");
+    const layoutItem = harness.container.querySelector('[data-layout-item="true"]');
+    const measurementStack = harness.container.querySelector('[data-stack="true"]');
+    const measurementContent = harness.container.querySelector('[data-measurement-content]');
+    expect(layoutItem?.getAttribute("data-label-position")).toBe("left");
+    expect(layoutItem?.querySelector('[data-layout-label="true"]')?.textContent).toBe("Weight (kg)");
+    expect(measurementStack?.getAttribute("data-horizontal")).toBe("false");
+    expect((measurementContent as HTMLElement | null)?.style.width).toBe("320px");
     act(() => harness.root.unmount());
   });
 
   it("keeps the label above by default and hides it for labelPosition none", () => {
     const topHarness = renderField({ label: "Weight (kg)" });
-    expect(topHarness.container.querySelector('[data-stack="true"]')?.getAttribute("data-horizontal")).toBe("false");
-    expect(topHarness.container.textContent).toContain("Weight (kg)");
+    expect(topHarness.container.querySelector('[data-layout-item="true"]')?.getAttribute("data-label-position")).toBe("top");
+    expect(topHarness.container.querySelector('[data-layout-label="true"]')?.textContent).toBe("Weight (kg)");
     act(() => topHarness.root.unmount());
 
     const hiddenHarness = renderField({ label: "Weight (kg)", labelPosition: "none" });
-    expect(hiddenHarness.container.textContent).not.toContain("Weight (kg)");
+    expect(hiddenHarness.container.querySelector('[data-layout-label="true"]')).toBeNull();
     act(() => hiddenHarness.root.unmount());
   });
 });
