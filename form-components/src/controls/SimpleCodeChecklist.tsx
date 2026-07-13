@@ -12,9 +12,10 @@ import {
 } from '@fluentui/react';
 import { LayoutItem } from './LayoutItem';
 import { OptionChoice } from './OptionChoice';
-import { useCodeList, useSection } from '../context/MoisContext';
+import { useCodeList, useSection, useTheme } from '../context/MoisContext';
 import { useActiveDataSlice } from '../hooks/form-state';
 import { readSectionActiveFieldValue, writeSectionActiveFieldValue } from '../runtime/mois-contract';
+import { resolveMoisSizeStyles } from './size';
 
 export interface Coding {
   code: string | null;
@@ -134,7 +135,10 @@ export const SimpleCodeChecklist: React.FC<SimpleCodeChecklistProps> = ({
   actions,
   label,
   optionList,
+  optionProps,
+  optionSize = 'medium',
   codeSystem,
+  containerProps,
   selectionType = 'single',
   multiline = false,
   disabled = false,
@@ -161,6 +165,7 @@ export const SimpleCodeChecklist: React.FC<SimpleCodeChecklistProps> = ({
   // Get code list from codeSystem if provided and optionList is not
   const codeListItems = useCodeList(codeSystem || '');
   const sectionContext = useSection(section);
+  const theme = useTheme();
   const effectiveFieldId = fieldId || id || sourceId || layoutId;
   // Narrow subscription: re-renders only when this field's value changes.
   const [activeSlice, setActiveData] = useActiveDataSlice((data) => ({
@@ -171,6 +176,20 @@ export const SimpleCodeChecklist: React.FC<SimpleCodeChecklistProps> = ({
   const activeValue = activeSlice.activeValue as Coding | Coding[] | string | string[] | null;
   const effectiveReadOnly = Boolean(readOnly || isComplete);
   const controlsDisabled = disabled || effectiveReadOnly;
+  const optionSizeStyles = resolveMoisSizeStyles(theme, optionSize, 'medium');
+  const { style: containerStyleOverride, ...containerRestProps } = containerProps ?? {};
+  const optionContainerStyle: React.CSSProperties = {
+    display: 'flex',
+    flexFlow: multiline ? 'column' : 'row wrap',
+    alignItems: 'flex-start',
+    width: '100%',
+    ...containerStyleOverride,
+  };
+  const optionRootStyle: React.CSSProperties = {
+    marginTop: '6px',
+    marginRight: '10px',
+    ...optionSizeStyles,
+  };
 
   const [selectedKey, setSelectedKey] = useState<string | undefined>(() => {
     return normalizeSingleSelectionKey(activeValue) ?? normalizeSingleSelectionKey(defaultValue as Coding | Coding[] | undefined);
@@ -323,31 +342,37 @@ export const SimpleCodeChecklist: React.FC<SimpleCodeChecklistProps> = ({
     }
   };
 
-  const renderSingleSelect = () => (
+  const renderSingleSelect = () => {
+    const singleOptions = renderedOptions.map((option) => ({
+      ...option,
+      ...optionProps,
+      styles: optionProps?.styles ?? { root: optionRootStyle },
+    }));
+
+    return (
     <>
+      <div {...containerRestProps}>
       <OptionChoice
         displayStyle="radio"
-        options={renderedOptions}
+        options={singleOptions}
         selectedKey={effectiveSingleSelectionKey}
         onChange={handleOptionChoiceChange}
         disabled={controlsDisabled}
         required={required}
         multiline={multiline}
         labelPosition="none"
+        controlStyles={{ flexContainer: optionContainerStyle }}
       />
+      </div>
       {showOtherOption && effectiveSingleSelectionKey === OTHER_OPTION_KEY ? renderOtherInput() : null}
     </>
-  );
+    );
+  };
 
   const renderMultiSelect = () => (
     <div
-      style={{
-        display: multiline ? 'flex' : 'grid',
-        flexDirection: multiline ? 'column' : undefined,
-        gridTemplateColumns: multiline ? undefined : 'repeat(2, 1fr)',
-        gap: '8px 40px',
-        width: '100%',
-      }}
+      {...containerRestProps}
+      style={optionContainerStyle}
     >
       {renderedOptions.map((option, idx) => (
         <Checkbox
@@ -356,6 +381,8 @@ export const SimpleCodeChecklist: React.FC<SimpleCodeChecklistProps> = ({
           checked={effectiveMultipleSelectionKeys.includes(normalizeOptionKey(option.key))}
           onChange={(ev, checked) => handleCheckboxChange(normalizeOptionKey(option.key), checked)}
           disabled={controlsDisabled}
+          styles={{ root: optionRootStyle }}
+          {...optionProps}
         />
       ))}
       {showOtherOption && effectiveMultipleSelectionKeys.includes(OTHER_OPTION_KEY) ? renderOtherInput() : null}

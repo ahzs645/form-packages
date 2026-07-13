@@ -882,6 +882,12 @@ export interface BuilderField {
     | "checkbox"
     | "simpleCodeSelect"
     | "findCode";
+  /** Layout of radio/checklist answers inside a SimpleCodeChecklist field. */
+  choiceAnswerLayout?: "vertical" | "responsive" | "columns-2" | "columns-3" | "columns-4";
+  /** MOIS control density for coded selection controls. */
+  moisSize?: string;
+  /** MOIS per-answer density for radio/checklist controls. */
+  moisOptionSize?: string;
   codeSystem?: string | null; // MOIS code system (e.g., "MOIS-MARITALSTATUS")
   showOtherOption?: boolean; // Allow "Other" option with custom input
   /** MOIS keyboard shortcuts (autoHotKey) on coded selects/checklists. */
