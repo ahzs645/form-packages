@@ -19937,6 +19937,8 @@ const PastMeasurementField = ({
   observationDescription,
   saveDescription,
   saveUnits,
+  displayFormat = "auto",
+  showUnits = true,
   showHistory = true,
   showHistoryList = false,
   showHistoryOnFocus = false,
@@ -20054,6 +20056,14 @@ const PastMeasurementField = ({
     : hasMeaningfulValue(storedValue)
       ? storedValue
       : linkedObservationItem?.valueText ?? (autoFillFromHistory ? latestHistoryItem?.valueText : "") ?? ""
+  const valueIsDate = displayFormat === "date" || (
+    displayFormat === "auto" &&
+    isNonEmptyString(valuePath) &&
+    valuePath === datePath
+  )
+  const displayedCurrentValue = valueIsDate
+    ? formatDate(resolvedCurrentValue)
+    : stringifyValue(resolvedCurrentValue)
   const numericCurrentValue = Number(stringifyValue(resolvedCurrentValue))
   const hasNumericCurrentValue = Number.isFinite(numericCurrentValue)
   const resolvedAbnormalLow = abnormalLow ?? rangeNormalLow
@@ -20070,7 +20080,9 @@ const PastMeasurementField = ({
   )
   const shouldShowHistory = showHistory && (!showHistoryOnFocus || historyFocused)
   const shouldReserveHistory = showHistory && showHistoryOnFocus
-  const inputSuffix = stringifyValue(saveUnits) || latestHistoryItem?.unitsText || ""
+  const inputSuffix = !showUnits || valueIsDate
+    ? ""
+    : stringifyValue(saveUnits) || latestHistoryItem?.unitsText || ""
 
   useEffect(() => {
     if (isHistoricalFormValue || persistenceMode !== "observationAndForm") {
@@ -20254,7 +20266,7 @@ const PastMeasurementField = ({
       <Stack tokens={{ childrenGap: 4 }}>
         <StackItem styles={{ root: { width: "100%", minWidth: 0 } }}>
           <TextField
-            value={stringifyValue(resolvedCurrentValue)}
+            value={displayedCurrentValue}
             placeholder={placeholder}
             onChange={handleValueChange}
             onFocus={() => setHistoryFocused(true)}

@@ -897,17 +897,82 @@ export interface BuilderChoiceOptionObject {
 
 export type BuilderChoiceOption = string | BuilderChoiceOptionObject;
 
+export interface BuilderLegacySourceIdentity {
+  formId: string;
+  subformId?: string;
+  fieldName: string;
+  fid: string;
+  /** MOIS picker window that produced the filled tdt_dform_data row. */
+  dformWindowId?: string;
+  /** Runtime str_field_code observed in filled tdt_dform_data rows. */
+  dformFieldCode?: string;
+  /** Runtime data type observed for the field in filled dform instances. */
+  dformDataType?: string;
+}
+
+export interface BuilderFieldSourceContract {
+  version: 1;
+  origin: "legacy-dform" | "fixture-layout" | "generated-enrichment";
+  identity: BuilderLegacySourceIdentity | null;
+  storedOptions?: Array<{
+    label: string;
+    value: string | number | boolean;
+    targetFieldId?: string;
+    offValue?: string | number | boolean;
+    identity?: BuilderLegacySourceIdentity;
+  }>;
+  visibility: {
+    default: "always" | "hidden" | "field-rule" | "unspecified";
+    asTarget: Array<{
+      ruleId: string;
+      controllerFieldId: string;
+      action: string;
+    }>;
+    asController: Array<{
+      ruleId: string;
+      targetFieldIds: string[];
+      action: string;
+    }>;
+    /** Original DataWindow tags retained even when their behavior is unresolved. */
+    legacyTags?: Record<string, string>;
+  };
+  read: {
+    source: "none" | "patient-chart" | "observation-history" | "form-history" | "mois-lookup";
+    patientPath?: string;
+    observationCode?: string;
+    legacyFieldId?: string;
+    lookupType?: string;
+    valuePath?: string;
+    aspect?: string;
+  };
+  write: {
+    /** What the materialized Webforms runtime currently writes. */
+    destination:
+      | "none"
+      | "form-data"
+      | "observation"
+      | "observation-and-form-data"
+      | "multi-target-form-data";
+    fieldId?: string;
+    observationCode?: string;
+    targetFieldIds?: string[];
+    /** Destination declared by the original dump mapping, when one was present. */
+    sourceDestination?: "form-data" | "observation" | "chart-update" | "unresolved";
+    sourceObject?: string;
+    sourceColumn?: string;
+  };
+  /** Known source behavior that is retained as evidence but not yet executable. */
+  unresolved: string[];
+}
+
 export interface BuilderField {
   id: string;
   label: string;
   type: BuilderFieldType;
   /** Stable identity retained from a legacy Dynamic Form column. */
-  legacySource?: {
-    formId: string;
-    subformId?: string;
-    fieldName: string;
-    fid: string;
-  } | null;
+  legacySource?: BuilderLegacySourceIdentity | null;
+  /** Self-contained provenance/read/write/visibility contract for imported fields. */
+  sourceContract?: BuilderFieldSourceContract | null;
 
   // AlayaCare-specific export metadata
   alayaCareConfig?: BuilderAlayaCareConfig | null;
