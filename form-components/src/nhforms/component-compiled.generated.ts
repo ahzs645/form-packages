@@ -1237,7 +1237,7 @@ ChartRecordTable = ({
   reportedLabel,
   showChartRecords = true,
   allowAdd = false,
-  selectionType = "none",
+  selectionType,
   selectText,
   readOnly = false,
   maxRows = 10,
@@ -1261,6 +1261,9 @@ ChartRecordTable = ({
   const resolvedFieldId = fieldId || source;
   const resolvedSourceId = sourceId || source;
   const resolvedSourceMap = sourceMap || preset.sourceMap;
+  const resolvedSelectionType = selectionType || preset.selectionType || "none";
+  const resolvedFilterPred = filterPred || preset.filterPred;
+  const resolvedListCompare = listCompare || preset.listCompare;
   return /*#__PURE__*/React.createElement(Fluent.Stack, {
     tokens: {
       childrenGap: 10
@@ -1275,13 +1278,13 @@ ChartRecordTable = ({
     fieldId: resolvedFieldId,
     sourceId: resolvedSourceId,
     label: chartLabel || preset.chartLabel,
-    selectionType: selectionType,
+    selectionType: resolvedSelectionType,
     selectText: selectText || preset.selectText,
     columns: resolvedChartColumns,
     moisModule: resolvedMoisModule,
     placeholder: chartPlaceholder,
-    filterPred: filterPred,
-    listCompare: listCompare,
+    filterPred: resolvedFilterPred,
+    listCompare: resolvedListCompare,
     sourceMap: resolvedSourceMap
   }) : null, allowAdd ? /*#__PURE__*/React.createElement(EditableTable, _extends({
     id: resolvedId,
@@ -1327,6 +1330,7 @@ const _chartRecordTableGenericEntryColumns = [{
   type: "text",
   rows: 1
 }];
+const _chartRecordTableActivePlannedActions = item => item.isCompleted?.code !== "Y";
 
 // Column shapes follow the real MOIS full-chart GraphQL schema
 // (Mois.Patient.Query.fullChartFields); coded values render via display text.
@@ -1541,8 +1545,44 @@ const _chartRecordTablePresets = {
       type: "date"
     }]
   },
+  plannedActions: {
+    label: "Planned actions",
+    selectText: "Select actions",
+    selectionType: "multiple",
+    filterPred: _chartRecordTableActivePlannedActions,
+    columns: [{
+      id: "plannedActionId",
+      type: "key"
+    }, {
+      title: "Start",
+      id: "startDate",
+      type: "date"
+    }, {
+      title: "End",
+      id: "endDate",
+      type: "date"
+    }, {
+      title: "Action",
+      id: "action",
+      type: "string"
+    }, {
+      title: "Participant(s)",
+      id: "responsibility",
+      type: "string",
+      size: "small"
+    }, {
+      title: "Completed",
+      id: "completedDate",
+      type: "date"
+    }, {
+      id: "isCompleted",
+      type: "hidden"
+    }]
+  },
   serviceRequests: {
     label: "Service requests / referrals",
+    selectText: "Select service request",
+    selectionType: "single",
     columns: [{
       id: "serviceRequestId",
       type: "key"
@@ -1566,6 +1606,8 @@ const _chartRecordTablePresets = {
   },
   serviceEpisodes: {
     label: "Service episodes",
+    selectText: "Select service episodes",
+    selectionType: "single",
     columns: [{
       id: "serviceEpisodeId",
       type: "key"
@@ -30601,7 +30643,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './AssessmentScoringTable/index.jsx': ["AssessmentScoringTable","getFieldValue","hasValue","inputStyle","labelCellStyle","number","numberOrBlank","raw","renderRow","scoreRows","setScore","sum","tableStyle","total","value","valueCellStyle"],
   './AttestationSignOff/index.jsx': ["AttestationSignOff","cleaned","current","deriveInitials","flatTargets","getCurrentActorName","initials","key","name","nestedTargets","next","normalizeInitialsName","normalizeRoleOptions","normalizeTargets","parts","roleOptions","row","sd","signatureFieldId","signatureValue","signedAt","source","table","text","updateValue","value"],
   './AuthorshipField/index.jsx': ["AuthorshipField","DEFAULT_WINDOW_HOURS","_defaultPolicy","_nhAuth","_normalizeFieldOptions","actor","actorFrom","addHoursIso","base","buildKey","c","changed","ck","claim","claims","commitSave","commitValue","componentId","current","d","data","editableUntil","effectiveFieldId","euDate","existing","expired","fieldData","formatTimestamp","isNonEmpty","isOwner","keepStatus","key","label","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","nextStatus","nhAuth","normalizeStore","now","nowIso","numeric","optionList","ownerId","ownerName","ownerRefresh","pad2","pending","policy","policyAppliesToAction","prepareSave","query","raw","readOnly","readStore","release","renderInput","resolveNow","sameActor","sd","section","store","text","trimmed","ts","untilSelf","value","windowHours"],
-  './ChartRecordTable/index.jsx': ["ChartRecordTable","_chartRecordTableGenericColumns","_chartRecordTableGenericEntryColumns","_chartRecordTablePresets","preset","resolvedChartColumns","resolvedEntryColumns","resolvedFieldId","resolvedId","resolvedLabel","resolvedMoisModule","resolvedSourceId","resolvedSourceMap"],
+  './ChartRecordTable/index.jsx': ["ChartRecordTable","_chartRecordTableActivePlannedActions","_chartRecordTableGenericColumns","_chartRecordTableGenericEntryColumns","_chartRecordTablePresets","preset","resolvedChartColumns","resolvedEntryColumns","resolvedFieldId","resolvedFilterPred","resolvedId","resolvedLabel","resolvedListCompare","resolvedMoisModule","resolvedSelectionType","resolvedSourceId","resolvedSourceMap"],
   './CodedObservationChoiceField/index.jsx': ["CodedObservationChoiceField","candidates","checklistOptions","code","codedChoicePayloadsEqual","codings","commentValue","componentId","container","createdBy","currentPayload","display","effectiveFieldId","effectiveRenderAs","effectiveSelectionType","findExistingObservationId","formatCodedChoiceReport","fromContext","handleFindCodeChange","isMultiple","match","nextGroup","normalizeCodedChoiceOptions","normalizeSelectedCodings","oldId","option","options","report","sd","selectOptions","selectedValue","setCodedChoicePayload","stripVolatileCodedChoicePayloadFields","value","values","writeCodedChoiceValue"],
   './CommonSchemaDefn/index.jsx': ["NameBlockFields","active","commonSchemaDefn","formHistorySchema","makeCodedObsUpdates","makeObsUpdatesFromVs","makeTextObsUpdates","makeValueSetOptions","nameBlockSchema","newDco","oldObs","oldObsId","options","selectAll","startDateDesc","valueSet","vso","ynuaOptions"],
   './CompactBooleanField/index.jsx': ["BooleanLabelPresets","CompactBooleanChecklist","CompactBooleanChecklistSchema","CompactBooleanField","CompactBooleanFieldSchema","CompactBooleanGroup","CompactChoiceField","CompactChoiceFieldMultiSchema","CompactChoiceFieldSchema","OptionButtons","YesNoButtons","baseContainerStyle","buttonStyle","checkboxWrapperRef","choiceContent","commitValue","containerStyle","currentData","currentValue","data","decodePDFHex","decoded","fieldContent","getBooleanLabels","getButtonStyles","getCardContainerStyles","getFieldContainerStyles","getWidthStyle","handleChange","handleCheckboxChange","handleClick","handleNoClick","handleYesClick","input","isDarkMode","isDisabled","isHorizontal","isLast","isLeftLabel","isMultiple","isSelected","labelStyle","lastRowStyle","newValues","noButtonStyle","normalizeValue","normalized","normalizedValue","noteStyle","prevDecoded","rowStyle","selected","selectedValues","setFormData","sizeStyles","theme","themeLabelMaxWidth","themeLabelMinWidth","titleStyle","values","widthMap","yesButtonStyle"],

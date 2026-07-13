@@ -1259,7 +1259,7 @@ ChartRecordTable = ({
   reportedLabel,
   showChartRecords = true,
   allowAdd = false,
-  selectionType = "none",
+  selectionType,
   selectText,
   readOnly = false,
   maxRows = 10,
@@ -1283,6 +1283,9 @@ ChartRecordTable = ({
   const resolvedFieldId = fieldId || source
   const resolvedSourceId = sourceId || source
   const resolvedSourceMap = sourceMap || preset.sourceMap
+  const resolvedSelectionType = selectionType || preset.selectionType || "none"
+  const resolvedFilterPred = filterPred || preset.filterPred
+  const resolvedListCompare = listCompare || preset.listCompare
 
   return (
     <Fluent.Stack tokens={{ childrenGap: 10 }}>
@@ -1295,13 +1298,13 @@ ChartRecordTable = ({
           fieldId={resolvedFieldId}
           sourceId={resolvedSourceId}
           label={chartLabel || preset.chartLabel}
-          selectionType={selectionType}
+          selectionType={resolvedSelectionType}
           selectText={selectText || preset.selectText}
           columns={resolvedChartColumns}
           moisModule={resolvedMoisModule}
           placeholder={chartPlaceholder}
-          filterPred={filterPred}
-          listCompare={listCompare}
+          filterPred={resolvedFilterPred}
+          listCompare={resolvedListCompare}
           sourceMap={resolvedSourceMap}
         />
       ) : null}
@@ -1338,6 +1341,8 @@ const _chartRecordTableGenericEntryColumns = [
   { id: "startDate", label: "Date", type: "date" },
   { id: "comment", label: "Comment", type: "text", rows: 1 },
 ]
+
+const _chartRecordTableActivePlannedActions = item => item.isCompleted?.code !== "Y"
 
 // Column shapes follow the real MOIS full-chart GraphQL schema
 // (Mois.Patient.Query.fullChartFields); coded values render via display text.
@@ -1428,8 +1433,25 @@ const _chartRecordTablePresets = {
       { title: "End", id: "endDate", type: "date" },
     ],
   },
+  plannedActions: {
+    label: "Planned actions",
+    selectText: "Select actions",
+    selectionType: "multiple",
+    filterPred: _chartRecordTableActivePlannedActions,
+    columns: [
+      { id: "plannedActionId", type: "key" },
+      { title: "Start", id: "startDate", type: "date" },
+      { title: "End", id: "endDate", type: "date" },
+      { title: "Action", id: "action", type: "string" },
+      { title: "Participant(s)", id: "responsibility", type: "string", size: "small" },
+      { title: "Completed", id: "completedDate", type: "date" },
+      { id: "isCompleted", type: "hidden" },
+    ],
+  },
   serviceRequests: {
     label: "Service requests / referrals",
+    selectText: "Select service request",
+    selectionType: "single",
     columns: [
       { id: "serviceRequestId", type: "key" },
       { title: "Ordered", id: "orderDate", type: "date" },
@@ -1440,6 +1462,8 @@ const _chartRecordTablePresets = {
   },
   serviceEpisodes: {
     label: "Service episodes",
+    selectText: "Select service episodes",
+    selectionType: "single",
     columns: [
       { id: "serviceEpisodeId", type: "key" },
       { title: "Start", id: "startDate", type: "date" },
