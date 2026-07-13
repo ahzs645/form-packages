@@ -587,7 +587,9 @@ export interface BuilderLayoutTableCell {
   min?: number;
   max?: number;
   step?: number;
+  required?: boolean;
   formula?: string;
+  blankWhenEmpty?: boolean;
   precision?: number;
   resultType?: "number" | "text";
   sourceFieldIds?: string[];
@@ -624,6 +626,7 @@ export interface BuilderLayoutTableRow {
 }
 
 export interface BuilderLayoutTableConfig {
+  presetId?: string;
   rows: BuilderLayoutTableRow[];
   bordered?: boolean;
   compact?: boolean;

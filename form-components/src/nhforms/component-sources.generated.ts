@@ -16933,6 +16933,12 @@ const formatLayoutTableComputedValue = (value, precision, resultType) => {
 }
 
 const computeLayoutTableCellValue = (cell, data) => {
+  const sourceFieldIds = Array.isArray(cell.sourceFieldIds) && cell.sourceFieldIds.length > 0
+    ? cell.sourceFieldIds
+    : extractLayoutTableFormulaRefs(cell.formula).filter((fieldId) => fieldId !== cell.fieldId)
+  if (cell.blankWhenEmpty === true && sourceFieldIds.every((fieldId) => getNumericFieldValue(data, fieldId) == null)) {
+    return ""
+  }
   const rawValue = evaluateLayoutTableFormula(cell.formula, data, cell.fieldId) ?? cell.defaultValue ?? ""
   return formatLayoutTableComputedValue(rawValue, cell.precision, cell.resultType)
 }
@@ -16941,7 +16947,7 @@ const renderLayoutTableField = (cell, readOnly, data, setFieldValue) => {
   const fieldId = cell.fieldId || cell.id
   const label = cell.label || ""
   const labelProp = label ? { label } : {}
-  const sharedProps = { fieldId, labelPosition: label ? "top" : "none", readOnly }
+  const sharedProps = { fieldId, labelPosition: label ? "top" : "none", readOnly, required: cell.required === true }
   const optionList = normalizeLayoutTableOptionList(cell.optionList ?? cell.options)
 
   if (readOnly) return renderLayoutTableReadOnlyField(cell, data)
