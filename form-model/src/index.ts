@@ -1227,6 +1227,8 @@ export interface SectionConfig {
   layoutType?: "grid" | "stacked";
   /** Number of columns per row when in grid layout (1-4, default 2) */
   gridColumns?: 1 | 2 | 3 | 4;
+  /** Optional section override; omitted inherits the form-wide question spacing. */
+  questionSpacing?: FormQuestionSpacing;
   /** Show a shared scale legend at the top of the section */
   showScaleLegend?: boolean;
   /** Scale legend options (if not provided, uses first scale field's options) */
@@ -1469,6 +1471,7 @@ export type FormInputSize = "sm" | "md" | "lg";
 export type FormBorderRadius = "none" | "small" | "full";
 export type FormLabelPosition = "top" | "left" | "floating";
 export type FormWidth = "centered" | "full";
+export type FormQuestionSpacing = "compact" | "standard" | "comfortable" | "spacious";
 export type FormPresentationStyle = "classic" | "focused";
 export type BuilderFormPresentation = "standard" | "investigation";
 export type CaptchaProvider = "recaptcha" | "hcaptcha" | "none";
@@ -1506,6 +1509,8 @@ export interface FormDesign {
 
   // Layout
   formWidth: FormWidth;
+  /** Vertical spacing between questions. Standard matches the native MOIS 8px field margin. */
+  questionSpacing?: FormQuestionSpacing;
   rtlLayout: boolean;
   uppercaseLabels: boolean;
 
@@ -1566,6 +1571,7 @@ export const defaultFormDesign: FormDesign = {
   labelPosition: "top",
   showProgressBar: false,
   formWidth: "centered",
+  questionSpacing: "standard",
   rtlLayout: false,
   uppercaseLabels: false,
   presentationStyle: "classic",
