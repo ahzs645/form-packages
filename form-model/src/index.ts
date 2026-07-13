@@ -556,6 +556,7 @@ export type BuilderTableColumnType = "text" | "number" | "date" | "time" | "choi
 export type BuilderTableMode = "inline" | "modal";
 export type BuilderLayoutTableCellKind = "text" | "field" | "fieldList" | "resources" | "computed" | "stampButton";
 export type BuilderLayoutTableCellInputType = "text" | "textarea" | "number" | "date" | "time" | "choice" | "choiceMulti" | "booleanYesNo" | "booleanSingle";
+export type BuilderLayoutTableSourceFormat = "text" | "date" | "dateTime" | "visitCode";
 
 export interface BuilderLayoutTableStampTarget {
   fieldId: string;
@@ -579,9 +580,13 @@ export interface BuilderLayoutTableCell {
   kind: BuilderLayoutTableCellKind;
   text?: string;
   sourcePath?: string;
+  sourcePaths?: string[];
+  sourceFormat?: BuilderLayoutTableSourceFormat;
+  sourceFallback?: string | number | boolean | null;
   defaultValue?: string | number | boolean | null;
   fieldId?: string;
   label?: string;
+  readOnly?: boolean;
   fields?: BuilderLayoutTableCellField[];
   inputType?: BuilderLayoutTableCellInputType;
   min?: number;
@@ -628,6 +633,7 @@ export interface BuilderLayoutTableRow {
 export interface BuilderLayoutTableConfig {
   presetId?: string;
   rows: BuilderLayoutTableRow[];
+  showLabel?: boolean;
   bordered?: boolean;
   compact?: boolean;
   fullWidth?: boolean;

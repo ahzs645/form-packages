@@ -22,11 +22,73 @@ const getPathValue = (root, path) => {
     .reduce((current, part) => (current && typeof current === "object" ? current[part] : undefined), root)
 }
 
+const hasLayoutTableSourceValue = (value) => value !== undefined && value !== null && value !== ""
+
+const layoutTableSourceText = (value, fallback = "") => {
+  if (!hasLayoutTableSourceValue(value)) return fallback
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value)
+  if (Array.isArray(value)) return value.map((item) => layoutTableSourceText(item)).filter(Boolean).join(", ")
+  return value.display || value.text || value.name || value.code || fallback
+}
+
+const formatLayoutTableSourceValue = (value, sourceFormat = "text", fallback = "") => {
+  if (sourceFormat === "visitCode" && value && typeof value === "object") {
+    const code = value.code || value.key || ""
+    const display = value.display || value.text || ""
+    if (code && display) return `${code} (${display})`
+    return display || code || fallback
+  }
+
+  const raw = layoutTableSourceText(value, fallback)
+  if (!raw) return ""
+  if (sourceFormat === "date") {
+    const match = raw.match(/^(\d{4})[-.](\d{2})[-.](\d{2})/)
+    return match ? `${match[1]}.${match[2]}.${match[3]}` : raw
+  }
+  if (sourceFormat === "dateTime") {
+    const match = raw.match(/^(\d{4})[-.](\d{2})[-.](\d{2})(?:T|\s)?(\d{2})?:?(\d{2})?/)
+    if (!match) return raw
+    const date = `${match[1]}-${match[2]}-${match[3]}`
+    return match[4] ? `${date} ${match[4]}:${match[5] || "00"}` : date
+  }
+  return raw
+}
+
+const getLayoutTableSourcePaths = (cell) => {
+  const paths = Array.isArray(cell.sourcePaths) ? cell.sourcePaths : []
+  return Array.from(new Set([cell.sourcePath, ...paths].filter((path) => typeof path === "string" && path.trim()).map((path) => path.trim())))
+}
+
+const resolveLayoutTableSourceValue = (cell, data, sourceData) => {
+  const root = {
+    fd: data?.__fd,
+    field: data,
+    formData: data?.__fd?.formData,
+    sd: sourceData,
+    sourceData,
+    webform: sourceData?.webform,
+    patient: sourceData?.patient,
+    userProfile: sourceData?.userProfile,
+    encounter: sourceData?.encounter,
+  }
+  const paths = getLayoutTableSourcePaths(cell)
+  let sourceValue
+  for (const path of paths) {
+    const candidate = path === "system.currentDate" ? new Date().toISOString() : getPathValue(root, path)
+    if (hasLayoutTableSourceValue(candidate)) {
+      sourceValue = candidate
+      break
+    }
+  }
+  const fallback = cell.sourceFallback ?? cell.defaultValue ?? ""
+  return formatLayoutTableSourceValue(sourceValue, cell.sourceFormat || "text", fallback)
+}
+
 const getCellDisplayValue = (cell, data, sourceData) => {
-  const sourceValue = cell.sourcePath
-    ? getPathValue({ fd: data?.__fd, field: data, formData: data?.__fd?.formData, sd: sourceData, sourceData, webform: sourceData?.webform, patient: sourceData?.patient, userProfile: sourceData?.userProfile }, cell.sourcePath)
-    : undefined
-  const value = sourceValue ?? cell.defaultValue ?? cell.text ?? ""
+  const sourcePaths = getLayoutTableSourcePaths(cell)
+  const value = sourcePaths.length > 0
+    ? resolveLayoutTableSourceValue(cell, data, sourceData)
+    : cell.defaultValue ?? cell.text ?? ""
   if (value == null) return ""
   if (typeof value === "object") {
     return value.display ?? value.text ?? value.value ?? value.code ?? ""
@@ -167,10 +229,11 @@ const renderLayoutTableField = (cell, readOnly, data, setFieldValue) => {
   const fieldId = cell.fieldId || cell.id
   const label = cell.label || ""
   const labelProp = label ? { label } : {}
-  const sharedProps = { fieldId, labelPosition: label ? "top" : "none", readOnly, required: cell.required === true }
+  const effectiveReadOnly = readOnly || cell.readOnly === true
+  const sharedProps = { fieldId, labelPosition: label ? "top" : "none", readOnly: effectiveReadOnly, required: cell.required === true }
   const optionList = normalizeLayoutTableOptionList(cell.optionList ?? cell.options)
 
-  if (readOnly) return renderLayoutTableReadOnlyField(cell, data)
+  if (effectiveReadOnly) return renderLayoutTableReadOnlyField(cell, data)
 
   switch (cell.inputType) {
     case "booleanSingle":
@@ -352,7 +415,13 @@ function LayoutTable({
   const sd = useSourceData()
   const config = { bordered, compact, fullWidth, cellPadding, borderColor, pageBreakInsideAvoid }
   const tableRows = Array.isArray(rows) ? rows : []
+  const sourceBoundCells = tableRows
+    .flatMap((row) => Array.isArray(row.cells) ? row.cells : [])
+    .filter((cell) => cell?.kind === "field" && cell.fieldId && getLayoutTableSourcePaths(cell).length > 0)
   const tableData = { ...(activeData || {}) }
+  sourceBoundCells.forEach((cell) => {
+    tableData[cell.fieldId] = resolveLayoutTableSourceValue(cell, activeData, sd)
+  })
   const visibleRows = tableRows.filter((row) => rowIsVisible(row, activeData))
   const setFieldValue = (fieldId, value) => {
     if (typeof setActiveData !== "function") return
@@ -366,21 +435,32 @@ function LayoutTable({
     const computedCells = tableRows
       .flatMap((row) => Array.isArray(row.cells) ? row.cells : [])
       .filter((cell) => cell?.kind === "computed" && cell.fieldId)
-    if (computedCells.length === 0 || typeof setActiveData !== "function") return
+    const boundCells = tableRows
+      .flatMap((row) => Array.isArray(row.cells) ? row.cells : [])
+      .filter((cell) => cell?.kind === "field" && cell.fieldId && getLayoutTableSourcePaths(cell).length > 0)
+    if ((computedCells.length === 0 && boundCells.length === 0) || typeof setActiveData !== "function") return
 
     setActiveData((draft) => {
       if (!draft) {
         const nextData = {}
+        boundCells.forEach((cell) => {
+          nextData[cell.fieldId] = resolveLayoutTableSourceValue(cell, {}, sd)
+        })
         computedCells.forEach((cell) => {
-          nextData[cell.fieldId] = computeLayoutTableCellValue(cell, {})
+          nextData[cell.fieldId] = computeLayoutTableCellValue(cell, nextData)
         })
         return nextData
       }
+      boundCells.forEach((cell) => {
+        const nextValue = resolveLayoutTableSourceValue(cell, draft, sd)
+        if (draft[cell.fieldId] !== nextValue) draft[cell.fieldId] = nextValue
+      })
       computedCells.forEach((cell) => {
-        draft[cell.fieldId] = computeLayoutTableCellValue(cell, draft)
+        const nextValue = computeLayoutTableCellValue(cell, draft)
+        if (draft[cell.fieldId] !== nextValue) draft[cell.fieldId] = nextValue
       })
     })
-  }, [setActiveData, tableRows, JSON.stringify(activeData)])
+  }, [setActiveData, sd, tableRows, JSON.stringify(activeData)])
 
   if (visibleRows.length === 0) return null
 
