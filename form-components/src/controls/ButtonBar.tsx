@@ -1,10 +1,15 @@
 /**
  * ButtonBar Component
- * Horizontal button bar
+ * Horizontal button bar.
+ *
+ * SMOIS parity evidence: ButtonBar `q` in
+ * ~/github/smois/build/static/js/main.a75cc6b1.chunk.js uses 10px Stack
+ * padding, the `m` child gap, wrapping, and does not render while printing.
  */
 
 import React, { useState } from 'react';
 import { Stack, PrimaryButton, DefaultButton, MessageBar, MessageBarType } from '@fluentui/react';
+import { useSourceData } from '../context/MoisContext';
 
 export interface ButtonBarProps {
   /** Background color of the button bar */
@@ -25,25 +30,32 @@ export const ButtonBar: React.FC<ButtonBarProps> = ({
   background,
   children,
   horizontalAlign = 'start',
-  paddingBottom = 10,
+  paddingBottom,
+  gap,
+  padding,
 }) => {
+  const sourceData = useSourceData();
+
+  if (sourceData.lifecycleState.isPrinting) {
+    return null;
+  }
+
   return (
     <Stack
       horizontal
-      tokens={{ childrenGap: 8 }}
+      horizontalAlign={horizontalAlign}
+      verticalAlign="center"
+      tokens={{
+        padding: padding ?? '10px',
+        childrenGap: gap ?? 'm',
+      }}
       styles={{
         root: {
-          background: background,
-          paddingBottom: `${paddingBottom}px`,
-          alignItems: 'center',
-        },
-        inner: {
-          justifyContent: horizontalAlign === 'start' ? 'flex-start' :
-                          horizontalAlign === 'end' ? 'flex-end' :
-                          horizontalAlign === 'center' ? 'center' :
-                          horizontalAlign,
+          background,
+          paddingBottom,
         },
       }}
+      wrap
     >
       {children}
     </Stack>

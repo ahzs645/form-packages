@@ -1,10 +1,15 @@
 /**
  * Footer Component
- * Sticky footer container for form actions
+ * Sticky footer container for form actions.
+ *
+ * SMOIS parity evidence: Footer `Fe` in
+ * ~/github/smois/build/static/js/main.a75cc6b1.chunk.js uses a vertical Stack,
+ * the theme pageBottomMargin fallback, and a non-sticky printing branch.
  */
 
 import React from 'react';
 import { Stack, DefaultButton, PrimaryButton } from '@fluentui/react';
+import { useSourceData, useTheme } from '../context/MoisContext';
 
 export interface FooterProps {
   /** Child controls are contained inside the Footer */
@@ -17,18 +22,30 @@ export interface FooterProps {
 
 export const Footer: React.FC<FooterProps> = ({
   children,
-  bottom = 0,
+  bottom,
   background,
 }) => {
-  const footerStyle: React.CSSProperties = {
-    position: 'sticky',
-    bottom: `${bottom}px`,
-    zIndex: 950,
-  };
+  const sourceData = useSourceData();
+  const theme = useTheme();
+
+  if (sourceData.lifecycleState.isPrinting) {
+    return (
+      <div>
+        <Stack>{children}</Stack>
+      </div>
+    );
+  }
 
   return (
-    <div id="footerBlock" style={footerStyle}>
-      <Stack horizontal tokens={{ childrenGap: 8 }} styles={{ root: { background } }}>
+    <div
+      id="footerBlock"
+      style={{
+        position: 'sticky',
+        bottom: bottom ?? theme.mois.pageBottomMargin ?? 0,
+        zIndex: 950,
+      }}
+    >
+      <Stack styles={background ? { root: { background } } : undefined}>
         {children}
       </Stack>
     </div>

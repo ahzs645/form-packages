@@ -1,77 +1,65 @@
 /**
  * SaveStatus Component
- * Show a small block with save status and basic audit information
+ * Faithful reproduction of the MOIS save-status indicator.
+ *
+ * SMOIS parity evidence: SaveStatus `ft` in
+ * ~/github/smois/build/static/js/main.a75cc6b1.chunk.js reads loading state,
+ * formParams.webformId, and the webform create/modify stamp.
  */
 
 import React from 'react';
-import { Text } from '@fluentui/react';
+import { MessageBar, MessageBarType, Spinner } from '@fluentui/react';
+import { useSourceData, useTheme } from '../context/MoisContext';
 
 export interface SaveStatusProps {
   /** Show information even when form has never been saved */
   noHide?: boolean;
   /** Display size */
-  size?: 'small' | 'medium' | 'large';
-  /** Save status - determines what message to show */
-  status?: 'never-saved' | 'saved' | 'modified';
-  /** Last saved date */
-  lastSaved?: Date | string;
-  /** Last saved by user */
-  lastSavedBy?: string;
+  size?: 'min' | 'tiny' | 'small' | 'medium' | 'large' | 'max' | string;
 }
+
+type SaveStatusSizeStyle = {
+  flex?: string;
+  minWidth?: string | number;
+  maxWidth?: string | number;
+  width?: string;
+};
 
 export const SaveStatus: React.FC<SaveStatusProps> = ({
   noHide = false,
   size = 'medium',
-  status = 'never-saved',
-  lastSaved,
-  lastSavedBy,
 }) => {
-  const getStatusMessage = () => {
-    switch (status) {
-      case 'never-saved':
-        return noHide ? 'Not saved' : '';
-      case 'saved':
-        if (lastSaved && lastSavedBy) {
-          const dateStr = lastSaved instanceof Date
-            ? lastSaved.toLocaleString()
-            : lastSaved;
-          return `Saved: ${dateStr} by ${lastSavedBy}`;
-        }
-        return 'Saved';
-      case 'modified':
-        return 'Unsaved changes';
-      default:
-        return noHide ? 'Not saved' : '';
-    }
+  const sourceData = useSourceData();
+  const theme = useTheme();
+  const themedSize = (theme.mois.sizes as Record<string, SaveStatusSizeStyle>)[size];
+  const styles = {
+    root: themedSize ?? { width: size },
   };
 
-  const message = getStatusMessage();
-
-  // Hide if no message and noHide is false
-  if (!message) {
-    return null;
+  if (sourceData.lifecycleState.isLoading) {
+    return <Spinner label="Saving Form" labelPosition="right" styles={styles} />;
   }
 
-  const getFontSize = () => {
-    switch (size) {
-      case 'small': return '12px';
-      case 'large': return '16px';
-      default: return '14px';
-    }
-  };
+  if (sourceData.formParams.webformId) {
+    const stamp = sourceData.webform.stamp;
+    const savedAt = stamp?.modifyTime || stamp?.createTime;
+    const savedDate = savedAt ? new Date(savedAt) : null;
+    const formatted = savedDate && !Number.isNaN(savedDate.getTime())
+      ? `${savedDate.getFullYear()}.${String(savedDate.getMonth() + 1).padStart(2, '0')}.${String(savedDate.getDate()).padStart(2, '0')} ${String(savedDate.getHours()).padStart(2, '0')}:${String(savedDate.getMinutes()).padStart(2, '0')}`
+      : '';
 
-  return (
-    <Text
-      style={{
-        color: 'white',
-        fontSize: getFontSize(),
-        marginLeft: '8px',
-        alignSelf: 'center',
-      }}
-    >
-      {message}
-    </Text>
-  );
+    return (
+      <MessageBar styles={styles}>
+        Last saved on {formatted}
+      </MessageBar>
+    );
+  }
+
+  return noHide ? (
+    <MessageBar messageBarType={MessageBarType.warning} styles={styles}>
+      Form has never been saved
+    </MessageBar>
+  ) : null;
 };
 
 export default SaveStatus;
