@@ -35,6 +35,10 @@ export interface MoisNavigationTarget {
 export interface MoisCalculatedObservationConfig {
   enabled: boolean;
   observationCode?: string;
+  loincCode?: string;
+  system?: string;
+  labCode?: string;
+  status?: string;
   description?: string;
   valueType?: "NUMERIC" | "TEXT";
   units?: string;
@@ -276,6 +280,8 @@ export interface BuilderWorkflowPanelRowBinding {
   units?: string;
   rangeNormalLow?: string;
   rangeNormalHigh?: string;
+  rangeAbsurdLow?: string;
+  rangeAbsurdHigh?: string;
   referenceRangeText?: string;
 }
 
@@ -307,6 +313,10 @@ export interface BuilderWorkflowOutputBase extends BuilderWorkflowBaseDefinition
 export interface BuilderWorkflowDcoObservationOutput extends BuilderWorkflowOutputBase {
   kind: "dcoObservation";
   observationCode?: string;
+  loincCode?: string;
+  system?: string;
+  labCode?: string;
+  status?: string;
   value?: string;
   valueFieldId?: string;
   valueType?: "TEXT" | "NUMERIC" | "VALUESET" | "numeric" | "text";
@@ -338,6 +348,10 @@ export interface BuilderWorkflowDocumentCommentOutput extends BuilderWorkflowOut
 export interface BuilderWorkflowCalculatedObservationOutput extends BuilderWorkflowOutputBase {
   kind: "calculatedObservation";
   observationCode?: string;
+  loincCode?: string;
+  system?: string;
+  labCode?: string;
+  status?: string;
   valueFieldId?: string;
   valueType?: "TEXT" | "NUMERIC" | "VALUESET" | "numeric" | "text";
   units?: string;
@@ -691,6 +705,11 @@ export interface BuilderMoisOutputMapping {
   enabled?: boolean;
   kind: BuilderMoisOutputKind;
   observationCode?: string;
+  /** Standard LOINC code and dictionary metadata selected with the observation. */
+  loincCode?: string;
+  system?: string;
+  labCode?: string;
+  status?: string;
   description?: string;
   valueType?: BuilderMoisObservationValueType;
   valueSource?: "display" | "code";
@@ -699,6 +718,8 @@ export interface BuilderMoisOutputMapping {
   /** Persisted value override ("See report" pattern); field value gates the write. */
   valueTemplate?: string;
   reportFieldId?: string;
+  /** Static units from the selected MOIS measure; unitsFieldId wins when populated. */
+  units?: string;
   unitsFieldId?: string;
   unitsInline?: boolean;
   conditionalFieldId?: string;
