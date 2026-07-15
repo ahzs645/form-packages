@@ -1022,6 +1022,12 @@ export interface BuilderField {
   id: string;
   label: string;
   type: BuilderFieldType;
+  /**
+   * Stable concept ID from the curated MOIS ↔ AlayaCare mapping catalog.
+   * Native exporter settings remain in moisOutput/layout contracts and
+   * alayaCareConfig; this ID records why those two bindings belong together.
+   */
+  crossPlatformMappingId?: string | null;
   /** Stable identity retained from a legacy Dynamic Form column. */
   legacySource?: BuilderLegacySourceIdentity | null;
   /** Self-contained provenance/read/write/visibility contract for imported fields. */
