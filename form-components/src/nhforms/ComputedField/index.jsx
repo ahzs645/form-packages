@@ -415,7 +415,12 @@ const ComputedField = ({
       }
       draft.field.data.__computedFieldState = stateContainer
     })
-  }, [fieldId, isOverridden, policy, setFd, storedValue])
+  // The generated form's parent useOnLoad effect can run after this child
+  // effect and replace field data with InitialData/sourceFormData. Track the
+  // persisted value itself so an owned calculation repairs that late seed on
+  // the next render. Suggested values and user overrides still opt out through
+  // _shouldApplyComputedValue above.
+  }, [currentValue, fieldId, isOverridden, policy, setFd, storedValue])
 
   const markOverridden = () => {
     if (!fieldId || !canEdit) return
