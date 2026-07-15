@@ -61,12 +61,19 @@ export interface ScoreTotalTerm {
   weight: number;
 }
 
+export type CalculatedValuePolicy =
+  | "always-calculated"
+  | "calculated-until-overridden"
+  | "suggested-calculation";
+
 export interface CalculatedValueConfig {
   id: string;
   label: string;
   expression: string;
   precision?: number;
   resultType?: "number" | "text";
+  /** Controls whether the runtime owns the value, yields after a user edit, or only offers a suggestion. */
+  calculationPolicy?: CalculatedValuePolicy;
   showInterpretation?: boolean;
   ranges?: CalculatedValueRange[];
   sourceKind?: "computed-field" | "data-entry-calculation" | "scoring-total";
@@ -1286,6 +1293,8 @@ export interface BuilderField {
     precision?: number;
     /** Whether the computed value is stored/rendered as a number or formatted text */
     resultType?: "number" | "text";
+    /** Defaults to always-calculated for backward compatibility. */
+    calculationPolicy?: CalculatedValuePolicy;
     /** Show a score interpretation after referenced fields have values */
     showInterpretation?: boolean;
     /** Score interpretation ranges or thresholds */

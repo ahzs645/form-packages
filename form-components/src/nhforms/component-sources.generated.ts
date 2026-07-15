@@ -3229,6 +3229,33 @@ const _getInterpretationRange = (value, interpretation) => {
   }) ?? null
 }
 
+const _normalizeCalculationPolicy = (value) => {
+  if (value === "calculated-until-overridden" || value === "suggested-calculation") return value
+  return "always-calculated"
+}
+
+const _computedFieldState = (valuesByFieldId, fieldId) => {
+  const state = valuesByFieldId?.__computedFieldState?.[fieldId]
+  return state && typeof state === "object" ? state : null
+}
+
+const _computedFieldIsOverridden = (valuesByFieldId, fieldId) =>
+  _computedFieldState(valuesByFieldId, fieldId)?.overridden === true
+
+const _shouldApplyComputedValue = (calculationPolicy, isOverridden) => {
+  const policy = _normalizeCalculationPolicy(calculationPolicy)
+  if (policy === "suggested-calculation") return false
+  if (policy === "calculated-until-overridden") return !isOverridden
+  return true
+}
+
+const _toEditableComputedValue = (value) => {
+  if (value === undefined || value === null) return ""
+  if (typeof value === "string") return value
+  if (typeof value === "number" || typeof value === "boolean") return String(value)
+  return _toComparableValue(value) === value ? String(value) : String(_toComparableValue(value) ?? "")
+}
+
 const _hasAllReferencedValues = (expression, valuesByFieldId) => {
   const refs = Array.from(String(expression || "").matchAll(_COMPUTED_REF_PATTERN))
     .map((match) => match[1]?.trim() ?? "")
@@ -3243,16 +3270,19 @@ const ComputedField = ({
   expression,
   precision,
   resultType = "number",
+  calculationPolicy = "always-calculated",
   labelPosition = "left",
   placeholder = "Calculated automatically",
   size,
   required = false,
-  readOnly = true,
+  readOnly,
   showInterpretation = false,
   interpretation,
 }) => {
   const [fd, setFd] = useActiveData()
   const valuesByFieldId = fd?.field?.data || {}
+  const policy = _normalizeCalculationPolicy(calculationPolicy)
+  const isOverridden = _computedFieldIsOverridden(valuesByFieldId, fieldId)
 
   const computedValue = useMemo(
     () => _evaluateComputedExpression(expression, valuesByFieldId, fieldId),
@@ -3282,18 +3312,28 @@ const ComputedField = ({
     return _toDisplayValue(roundedValue, precision, resultType)
   }, [precision, resultType, roundedValue])
 
+  const currentValue = valuesByFieldId?.[fieldId]
+  const enteredDisplayValue = _toEditableComputedValue(currentValue)
+  const renderedValue = policy === "always-calculated" ? displayValue : enteredDisplayValue
+  const externallyReadOnly = readOnly === true
+  const canEdit = policy !== "always-calculated" && !externallyReadOnly
+
   const canShowInterpretation = useMemo(
     () => Boolean(showInterpretation && _hasAllReferencedValues(expression, valuesByFieldId)),
     [expression, showInterpretation, valuesByFieldId]
   )
 
+  const interpretationValue = policy === "always-calculated"
+    ? roundedValue
+    : _toNumericValue(currentValue)
   const interpretationRange = useMemo(
-    () => canShowInterpretation ? _getInterpretationRange(roundedValue, interpretation) : null,
-    [canShowInterpretation, interpretation, roundedValue]
+    () => canShowInterpretation ? _getInterpretationRange(interpretationValue, interpretation) : null,
+    [canShowInterpretation, interpretation, interpretationValue]
   )
 
   useEffect(() => {
     if (!fieldId) return
+    if (!_shouldApplyComputedValue(policy, isOverridden)) return
     setFd((draft) => {
       if (!draft.field) {
         draft.field = { data: {}, status: {}, history: [] }
@@ -3301,23 +3341,97 @@ const ComputedField = ({
       if (!draft.field.data || typeof draft.field.data !== "object") {
         draft.field.data = {}
       }
-      if (draft.field.data[fieldId] === storedValue) return
+      const stateContainer = draft.field.data.__computedFieldState && typeof draft.field.data.__computedFieldState === "object"
+        ? draft.field.data.__computedFieldState
+        : {}
+      const previousState = stateContainer[fieldId]
+      const valueMatches = draft.field.data[fieldId] === storedValue
+      const stateMatches = previousState?.overridden === false
+        && previousState?.policy === policy
+        && previousState?.lastCalculatedValue === storedValue
+      if (valueMatches && stateMatches) return
       draft.field.data[fieldId] = storedValue
+      stateContainer[fieldId] = {
+        overridden: false,
+        policy,
+        lastCalculatedValue: storedValue,
+      }
+      draft.field.data.__computedFieldState = stateContainer
     })
-  }, [fieldId, setFd, storedValue])
+  }, [fieldId, isOverridden, policy, setFd, storedValue])
+
+  const markOverridden = () => {
+    if (!fieldId || !canEdit) return
+    setFd((draft) => {
+      if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
+      if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
+      const stateContainer = draft.field.data.__computedFieldState && typeof draft.field.data.__computedFieldState === "object"
+        ? draft.field.data.__computedFieldState
+        : {}
+      stateContainer[fieldId] = {
+        overridden: true,
+        policy,
+        lastCalculatedValue: storedValue,
+      }
+      draft.field.data.__computedFieldState = stateContainer
+    })
+  }
+
+  const useCalculatedValue = () => {
+    if (!fieldId || !canEdit) return
+    setFd((draft) => {
+      if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
+      if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
+      const stateContainer = draft.field.data.__computedFieldState && typeof draft.field.data.__computedFieldState === "object"
+        ? draft.field.data.__computedFieldState
+        : {}
+      draft.field.data[fieldId] = storedValue
+      stateContainer[fieldId] = {
+        overridden: policy === "suggested-calculation",
+        policy,
+        lastCalculatedValue: storedValue,
+      }
+      draft.field.data.__computedFieldState = stateContainer
+    })
+  }
 
   return (
     <div>
       <TextArea
         fieldId={fieldId}
         label={label}
-        value={displayValue}
+        value={renderedValue}
+        onChange={markOverridden}
         labelPosition={labelPosition}
         placeholder={placeholder}
-        readOnly={readOnly !== false}
+        readOnly={!canEdit}
         required={required}
         size={size}
       />
+      {policy === "calculated-until-overridden" ? (
+        <div style={{ marginTop: 4, marginLeft: labelPosition === "left" ? 160 : 0, display: "flex", gap: 8, alignItems: "center", fontSize: 12, color: isOverridden ? "#9a3412" : "#475569" }}>
+          <span>
+            {isOverridden
+              ? \`User override preserved. Current calculation: \${displayValue || "unavailable"}.\`
+              : "Updates automatically until a user edits the value."}
+          </span>
+          {isOverridden && canEdit ? (
+            <button type="button" onClick={useCalculatedValue} style={{ border: "1px solid #cbd5e1", borderRadius: 4, background: "#fff", padding: "2px 8px", cursor: "pointer" }}>
+              Reset to calculation
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+      {policy === "suggested-calculation" ? (
+        <div style={{ marginTop: 4, marginLeft: labelPosition === "left" ? 160 : 0, display: "flex", gap: 8, alignItems: "center", fontSize: 12, color: "#475569" }}>
+          <span><strong>Suggested:</strong> {displayValue || "Unavailable until inputs are complete"}</span>
+          {displayValue && canEdit ? (
+            <button type="button" onClick={useCalculatedValue} style={{ border: "1px solid #cbd5e1", borderRadius: 4, background: "#fff", padding: "2px 8px", cursor: "pointer" }}>
+              Use suggestion
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       {interpretationRange ? (
         <div style={{ marginTop: 4, marginLeft: labelPosition === "left" ? 160 : 0, fontSize: 12, color: "#475569" }}>
           <strong>{interpretation?.label || "Interpretation"}:</strong> {interpretationRange.label}

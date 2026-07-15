@@ -3404,6 +3404,27 @@ const _getInterpretationRange = (value, interpretation) => {
     return passesMin && passesMax;
   }) ?? null;
 };
+const _normalizeCalculationPolicy = value => {
+  if (value === "calculated-until-overridden" || value === "suggested-calculation") return value;
+  return "always-calculated";
+};
+const _computedFieldState = (valuesByFieldId, fieldId) => {
+  const state = valuesByFieldId?.__computedFieldState?.[fieldId];
+  return state && typeof state === "object" ? state : null;
+};
+const _computedFieldIsOverridden = (valuesByFieldId, fieldId) => _computedFieldState(valuesByFieldId, fieldId)?.overridden === true;
+const _shouldApplyComputedValue = (calculationPolicy, isOverridden) => {
+  const policy = _normalizeCalculationPolicy(calculationPolicy);
+  if (policy === "suggested-calculation") return false;
+  if (policy === "calculated-until-overridden") return !isOverridden;
+  return true;
+};
+const _toEditableComputedValue = value => {
+  if (value === undefined || value === null) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return _toComparableValue(value) === value ? String(value) : String(_toComparableValue(value) ?? "");
+};
 const _hasAllReferencedValues = (expression, valuesByFieldId) => {
   const refs = Array.from(String(expression || "").matchAll(_COMPUTED_REF_PATTERN)).map(match => match[1]?.trim() ?? "").filter(Boolean);
   if (refs.length === 0) return true;
@@ -3415,16 +3436,19 @@ const ComputedField = ({
   expression,
   precision,
   resultType = "number",
+  calculationPolicy = "always-calculated",
   labelPosition = "left",
   placeholder = "Calculated automatically",
   size,
   required = false,
-  readOnly = true,
+  readOnly,
   showInterpretation = false,
   interpretation
 }) => {
   const [fd, setFd] = useActiveData();
   const valuesByFieldId = fd?.field?.data || {};
+  const policy = _normalizeCalculationPolicy(calculationPolicy);
+  const isOverridden = _computedFieldIsOverridden(valuesByFieldId, fieldId);
   const computedValue = useMemo(() => _evaluateComputedExpression(expression, valuesByFieldId, fieldId), [expression, fieldId, valuesByFieldId]);
   const roundedValue = useMemo(() => _roundComputedValue(computedValue, precision), [computedValue, precision]);
   const storedValue = useMemo(() => {
@@ -3443,10 +3467,17 @@ const ComputedField = ({
     if (!Number.isFinite(roundedValue)) return "";
     return _toDisplayValue(roundedValue, precision, resultType);
   }, [precision, resultType, roundedValue]);
+  const currentValue = valuesByFieldId?.[fieldId];
+  const enteredDisplayValue = _toEditableComputedValue(currentValue);
+  const renderedValue = policy === "always-calculated" ? displayValue : enteredDisplayValue;
+  const externallyReadOnly = readOnly === true;
+  const canEdit = policy !== "always-calculated" && !externallyReadOnly;
   const canShowInterpretation = useMemo(() => Boolean(showInterpretation && _hasAllReferencedValues(expression, valuesByFieldId)), [expression, showInterpretation, valuesByFieldId]);
-  const interpretationRange = useMemo(() => canShowInterpretation ? _getInterpretationRange(roundedValue, interpretation) : null, [canShowInterpretation, interpretation, roundedValue]);
+  const interpretationValue = policy === "always-calculated" ? roundedValue : _toNumericValue(currentValue);
+  const interpretationRange = useMemo(() => canShowInterpretation ? _getInterpretationRange(interpretationValue, interpretation) : null, [canShowInterpretation, interpretation, interpretationValue]);
   useEffect(() => {
     if (!fieldId) return;
+    if (!_shouldApplyComputedValue(policy, isOverridden)) return;
     setFd(draft => {
       if (!draft.field) {
         draft.field = {
@@ -3458,20 +3489,108 @@ const ComputedField = ({
       if (!draft.field.data || typeof draft.field.data !== "object") {
         draft.field.data = {};
       }
-      if (draft.field.data[fieldId] === storedValue) return;
+      const stateContainer = draft.field.data.__computedFieldState && typeof draft.field.data.__computedFieldState === "object" ? draft.field.data.__computedFieldState : {};
+      const previousState = stateContainer[fieldId];
+      const valueMatches = draft.field.data[fieldId] === storedValue;
+      const stateMatches = previousState?.overridden === false && previousState?.policy === policy && previousState?.lastCalculatedValue === storedValue;
+      if (valueMatches && stateMatches) return;
       draft.field.data[fieldId] = storedValue;
+      stateContainer[fieldId] = {
+        overridden: false,
+        policy,
+        lastCalculatedValue: storedValue
+      };
+      draft.field.data.__computedFieldState = stateContainer;
     });
-  }, [fieldId, setFd, storedValue]);
+  }, [fieldId, isOverridden, policy, setFd, storedValue]);
+  const markOverridden = () => {
+    if (!fieldId || !canEdit) return;
+    setFd(draft => {
+      if (!draft.field) draft.field = {
+        data: {},
+        status: {},
+        history: []
+      };
+      if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {};
+      const stateContainer = draft.field.data.__computedFieldState && typeof draft.field.data.__computedFieldState === "object" ? draft.field.data.__computedFieldState : {};
+      stateContainer[fieldId] = {
+        overridden: true,
+        policy,
+        lastCalculatedValue: storedValue
+      };
+      draft.field.data.__computedFieldState = stateContainer;
+    });
+  };
+  const useCalculatedValue = () => {
+    if (!fieldId || !canEdit) return;
+    setFd(draft => {
+      if (!draft.field) draft.field = {
+        data: {},
+        status: {},
+        history: []
+      };
+      if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {};
+      const stateContainer = draft.field.data.__computedFieldState && typeof draft.field.data.__computedFieldState === "object" ? draft.field.data.__computedFieldState : {};
+      draft.field.data[fieldId] = storedValue;
+      stateContainer[fieldId] = {
+        overridden: policy === "suggested-calculation",
+        policy,
+        lastCalculatedValue: storedValue
+      };
+      draft.field.data.__computedFieldState = stateContainer;
+    });
+  };
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(TextArea, {
     fieldId: fieldId,
     label: label,
-    value: displayValue,
+    value: renderedValue,
+    onChange: markOverridden,
     labelPosition: labelPosition,
     placeholder: placeholder,
-    readOnly: readOnly !== false,
+    readOnly: !canEdit,
     required: required,
     size: size
-  }), interpretationRange ? /*#__PURE__*/React.createElement("div", {
+  }), policy === "calculated-until-overridden" ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 4,
+      marginLeft: labelPosition === "left" ? 160 : 0,
+      display: "flex",
+      gap: 8,
+      alignItems: "center",
+      fontSize: 12,
+      color: isOverridden ? "#9a3412" : "#475569"
+    }
+  }, /*#__PURE__*/React.createElement("span", null, isOverridden ? \`User override preserved. Current calculation: \${displayValue || "unavailable"}.\` : "Updates automatically until a user edits the value."), isOverridden && canEdit ? /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: useCalculatedValue,
+    style: {
+      border: "1px solid #cbd5e1",
+      borderRadius: 4,
+      background: "#fff",
+      padding: "2px 8px",
+      cursor: "pointer"
+    }
+  }, "Reset to calculation") : null) : null, policy === "suggested-calculation" ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 4,
+      marginLeft: labelPosition === "left" ? 160 : 0,
+      display: "flex",
+      gap: 8,
+      alignItems: "center",
+      fontSize: 12,
+      color: "#475569"
+    }
+  }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("strong", null, "Suggested:"), " ", displayValue || "Unavailable until inputs are complete"), displayValue && canEdit ? /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: useCalculatedValue,
+    style: {
+      border: "1px solid #cbd5e1",
+      borderRadius: 4,
+      background: "#fff",
+      padding: "2px 8px",
+      cursor: "pointer"
+    }
+  }, "Use suggestion") : null) : null, interpretationRange ? /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 4,
       marginLeft: labelPosition === "left" ? 160 : 0,
@@ -31422,7 +31541,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './CodedObservationChoiceField/index.jsx': ["CodedObservationChoiceField","candidates","checklistOptions","code","codedChoicePayloadsEqual","codings","commentValue","componentId","container","createdBy","currentPayload","display","effectiveFieldId","effectiveRenderAs","effectiveSelectionType","findExistingObservationId","formatCodedChoiceReport","fromContext","handleFindCodeChange","isMultiple","match","nextGroup","normalizeCodedChoiceOptions","normalizeSelectedCodings","oldId","option","options","report","sd","selectOptions","selectedValue","setCodedChoicePayload","stripVolatileCodedChoicePayloadFields","value","values","writeCodedChoiceValue"],
   './CommonSchemaDefn/index.jsx': ["NameBlockFields","active","commonSchemaDefn","formHistorySchema","makeCodedObsUpdates","makeObsUpdatesFromVs","makeTextObsUpdates","makeValueSetOptions","nameBlockSchema","newDco","oldObs","oldObsId","options","selectAll","startDateDesc","valueSet","vso","ynuaOptions"],
   './CompactBooleanField/index.jsx': ["BooleanLabelPresets","CompactBooleanChecklist","CompactBooleanChecklistSchema","CompactBooleanField","CompactBooleanFieldSchema","CompactBooleanGroup","CompactChoiceField","CompactChoiceFieldMultiSchema","CompactChoiceFieldSchema","OptionButtons","YesNoButtons","baseContainerStyle","buttonStyle","checkboxWrapperRef","choiceContent","commitValue","containerStyle","currentData","currentValue","data","decodePDFHex","decoded","fieldContent","getBooleanLabels","getButtonStyles","getCardContainerStyles","getFieldContainerStyles","getWidthStyle","handleChange","handleCheckboxChange","handleClick","handleNoClick","handleYesClick","input","isDarkMode","isDisabled","isHorizontal","isLast","isLeftLabel","isMultiple","isSelected","labelStyle","lastRowStyle","newValues","noButtonStyle","normalizeValue","normalized","normalizedValue","noteStyle","prevDecoded","rowStyle","selected","selectedValues","setFormData","sizeStyles","theme","themeLabelMaxWidth","themeLabelMinWidth","titleStyle","values","widthMap","yesButtonStyle"],
-  './ComputedField/index.jsx': ["ComputedField","_COMPUTED_REF_PATTERN","_MS_PER_DAY","_calendarDayNumber","_contains","_countTrue","_daysSince","_escapeRegExp","_evaluateComputedExpression","_extractComputedReferences","_floor","_getInterpretationRange","_hasAllReferencedValues","_hasValue","_iif","_isDateOnlyValue","_isSafeComputedExpression","_max","_min","_mod","_monthsSince","_numericExtrema","_replaceBareReferencesOutsideQuotes","_round","_roundComputedValue","_score","_stripQuotedStrings","_toComparableValue","_toDateValue","_toDisplayValue","_toNumericValue","bareRefs","bracketedRefs","canShowInterpretation","candidate","computedValue","cursor","date","dateOnly","digits","direct","displayValue","factor","interpretationRange","max","min","months","nextSegment","numeric","numericDivisor","numericPrecision","numericValues","parsed","passesMax","passesMin","prepared","reference","refs","replaceInSegment","replaced","result","rounded","roundedValue","start","storedValue","stringPattern","strippedExpression","tail","trimmed","uniqueBareRefs","uniqueBracketedRefs","unwrappedExpression","valuesByFieldId"],
+  './ComputedField/index.jsx': ["ComputedField","_COMPUTED_REF_PATTERN","_MS_PER_DAY","_calendarDayNumber","_computedFieldIsOverridden","_computedFieldState","_contains","_countTrue","_daysSince","_escapeRegExp","_evaluateComputedExpression","_extractComputedReferences","_floor","_getInterpretationRange","_hasAllReferencedValues","_hasValue","_iif","_isDateOnlyValue","_isSafeComputedExpression","_max","_min","_mod","_monthsSince","_normalizeCalculationPolicy","_numericExtrema","_replaceBareReferencesOutsideQuotes","_round","_roundComputedValue","_score","_shouldApplyComputedValue","_stripQuotedStrings","_toComparableValue","_toDateValue","_toDisplayValue","_toEditableComputedValue","_toNumericValue","bareRefs","bracketedRefs","canEdit","canShowInterpretation","candidate","computedValue","currentValue","cursor","date","dateOnly","digits","direct","displayValue","enteredDisplayValue","externallyReadOnly","factor","interpretationRange","interpretationValue","isOverridden","markOverridden","max","min","months","nextSegment","numeric","numericDivisor","numericPrecision","numericValues","parsed","passesMax","passesMin","policy","prepared","previousState","reference","refs","renderedValue","replaceInSegment","replaced","result","rounded","roundedValue","start","state","stateContainer","stateMatches","storedValue","stringPattern","strippedExpression","tail","trimmed","uniqueBareRefs","uniqueBracketedRefs","unwrappedExpression","useCalculatedValue","valueMatches","valuesByFieldId"],
   './ConditionalGroup/index.jsx': ["ConditionalField","ConditionalGroup","ConditionalGroupSchema","ConditionalReadOnly","ControllerLabelPresets","DISABLED_NATIVE_ELEMENTS","LogicGateContext","LogicGateProvider","MAX_SUBGROUP_DEPTH","READ_ONLY_NATIVE_ELEMENTS","allParentsVisible","baseContainerStyle","baseContentStyle","checkChoiceMatch","checkComparisonMatch","checkControllerMatch","childContext","clippedField","cloneWithProtection","conditionMet","containerStyle","contentNode","contentRef","contentStyle","context","contextValue","controllerFieldId","controllerValue","controllerWrapperStyle","createBranchingRule","currentDepth","defaultPadding","depthIndicatorStyle","effectiveValue","evaluateConditionEntries","evaluateConditionEntry","fieldValue","fieldValues","frame","generateConditionalGroupJSX","generateGroup","getControllerValue","groupRect","handleControllerChange","hasMatch","hiddenIndicatorStyle","indent","isDarkMode","isGroupVisible","isVisible","jsx","left","matches","mergeStyles","mode","nestedValue","nextProps","normalizeComparableValue","normalizeComparableValues","normalizeValue","normalized","normalizedOptionValues","orderedRules","override","overrides","parentChain","parentContext","payloads","props","protectedChildren","readControllerValue","rect","reportOverflow","result","right","rule","rules","theme","titleStyle","type","useConditionalVisibility","useIsVisible","useLogicGate","usesDisabledFallback"],
   './Conditions/index.jsx': ["Conditions","ConditionsFields"],
   './Connections/index.jsx': ["CONNECTIONS_SORTS","Connections","ConnectionsFields","SelectActiveConnections","byType","prop","resolvedCompare"],

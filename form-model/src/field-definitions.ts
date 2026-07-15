@@ -17,7 +17,7 @@ export const BUILDER_FIELD_DEFINITIONS: readonly BuilderFieldDefinition[] = [
   { type: "textarea", label: "Long Text", defaultLabel: "Long text", description: "Multi-line text area", category: "input", palette: "primary" },
   { type: "richText", label: "Rich Text", defaultLabel: "Rich text", description: "Formatted markdown content", category: "input", palette: "primary" },
   { type: "number", label: "Number", defaultLabel: "Number", description: "Numeric input", category: "input", palette: "primary" },
-  { type: "computed", label: "Computed", defaultLabel: "Computed", description: "Read-only formula based on other fields", category: "advanced", palette: "primary" },
+  { type: "computed", label: "Computed", defaultLabel: "Computed", description: "Formula-derived value with configurable override behavior", category: "advanced", palette: "primary" },
   { type: "email", label: "Email", defaultLabel: "Email address", description: "Email address with validation", category: "input", palette: "primary" },
   { type: "phone", label: "Phone", defaultLabel: "Phone number", description: "Phone number input", category: "input", palette: "primary" },
   { type: "url", label: "URL", defaultLabel: "Web address", description: "Web address input", category: "input", palette: "primary" },
