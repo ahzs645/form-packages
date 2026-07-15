@@ -283,6 +283,7 @@ export interface BuilderWorkflowPanelRowBinding {
   rangeAbsurdLow?: string;
   rangeAbsurdHigh?: string;
   referenceRangeText?: string;
+  dictionaryMetadata?: BuilderClinicalDictionaryMetadata;
 }
 
 export interface BuilderWorkflowPanelUpdatePayload {
@@ -317,6 +318,7 @@ export interface BuilderWorkflowDcoObservationOutput extends BuilderWorkflowOutp
   system?: string;
   labCode?: string;
   status?: string;
+  dictionaryMetadata?: BuilderClinicalDictionaryMetadata;
   value?: string;
   valueFieldId?: string;
   valueType?: "TEXT" | "NUMERIC" | "VALUESET" | "numeric" | "text";
@@ -352,6 +354,7 @@ export interface BuilderWorkflowCalculatedObservationOutput extends BuilderWorkf
   system?: string;
   labCode?: string;
   status?: string;
+  dictionaryMetadata?: BuilderClinicalDictionaryMetadata;
   valueFieldId?: string;
   valueType?: "TEXT" | "NUMERIC" | "VALUESET" | "numeric" | "text";
   units?: string;
@@ -701,6 +704,14 @@ export interface BuilderLockWhenRule {
 export type BuilderMoisOutputKind = "observation" | "documentComment" | "dcoObservation";
 export type BuilderMoisObservationValueType = "TEXT" | "NUMERIC" | "VALUESET" | "numeric" | "text";
 
+/** Snapshot of dictionary defaults, retained so authored overrides remain explicit. */
+export interface BuilderClinicalDictionaryMetadata {
+  label?: string;
+  description?: string;
+  category?: string;
+  units?: string;
+}
+
 export interface BuilderMoisOutputMapping {
   enabled?: boolean;
   kind: BuilderMoisOutputKind;
@@ -710,6 +721,7 @@ export interface BuilderMoisOutputMapping {
   system?: string;
   labCode?: string;
   status?: string;
+  dictionaryMetadata?: BuilderClinicalDictionaryMetadata;
   description?: string;
   valueType?: BuilderMoisObservationValueType;
   valueSource?: "display" | "code";
@@ -762,6 +774,10 @@ export interface BuilderAlayaCareConfig {
   fieldType?: BuilderAlayaCareFieldType | null;
   /** Original numeric field ID retained when importing an AlayaCare form. */
   sourceFieldId?: number | null;
+  /** Original rank retained for lossless import/edit/export ordering. */
+  sourceRank?: number | null;
+  /** Original instructions value, preserving the distinction between null and an empty string. */
+  sourceInstructions?: string | null;
   /** Optional exported field_tag value. */
   fieldTag?: string | null;
   /** Optional exported task_field value. */
