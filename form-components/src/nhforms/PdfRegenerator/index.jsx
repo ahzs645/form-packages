@@ -305,6 +305,59 @@ const _resolveDateComponentValue = (formData, dateEntry, rawValue) => {
   return parts[dateEntry.role]
 }
 
+const _buildChoiceComponentIndex = (choiceComponentMaps) => {
+  const index = new Map()
+  if (!Array.isArray(choiceComponentMaps)) return index
+
+  choiceComponentMaps.forEach((choiceMap) => {
+    if (!choiceMap || typeof choiceMap !== "object" || !_isNonEmptyString(choiceMap.sourceFieldId)) return
+    const components = Array.isArray(choiceMap.components) ? choiceMap.components : []
+    const knownOptions = components.filter((component) => component?.role === "option")
+    components.forEach((component) => {
+      if (!component || !_isNonEmptyString(component.fieldId)) return
+      if (!["option", "other", "otherText"].includes(component.role)) return
+      index.set(component.fieldId, {
+        sourceFieldId: choiceMap.sourceFieldId,
+        component,
+        knownOptions,
+      })
+    })
+  })
+
+  return index
+}
+
+const _choiceItems = (value) => {
+  if (value === null || value === undefined || value === "") return []
+  return Array.isArray(value) ? value : [value]
+}
+
+const _choiceItemMatches = (item, component) => {
+  const requested = [component?.optionValue, component?.optionLabel, component?.fieldId]
+    .filter(_isNonEmptyString)
+    .map(_normalizeToken)
+  if (requested.length === 0) return false
+  return _toCandidateList(item).some((candidate) => requested.includes(_normalizeToken(candidate)))
+}
+
+const _resolveChoiceComponentValue = (formData, choiceEntry, rawValue) => {
+  if (!choiceEntry) return undefined
+  const sourceValue = formData?.[choiceEntry.sourceFieldId] ?? rawValue
+  const items = _choiceItems(sourceValue)
+  const component = choiceEntry.component
+
+  if (component.role === "option") {
+    return items.some((item) => _choiceItemMatches(item, component))
+  }
+
+  const otherItem = items.find((item) => (
+    !choiceEntry.knownOptions.some((knownOption) => _choiceItemMatches(item, knownOption))
+  ))
+  if (component.role === "other") return otherItem !== undefined
+  if (component.role === "otherText") return otherItem === undefined ? undefined : _toText(otherItem)
+  return undefined
+}
+
 const _base64ToBytes = (value) => {
   const trimmed = String(value || "").trim()
   const payload = trimmed.includes("base64,") ? trimmed.slice(trimmed.indexOf("base64,") + 7) : trimmed
@@ -658,6 +711,7 @@ const PdfRegenerator = ({
   tableSourceMaps,
   booleanFieldStates,
   dateComponentMaps,
+  choiceComponentMaps,
   includeOnlyFieldIds,
   flatten = false,
   disabled = false,
@@ -709,6 +763,7 @@ const PdfRegenerator = ({
       const map = _normalizeFieldMap(fieldMap, formData)
       const tableIndex = _buildTableReverseIndex(tableSourceMaps)
       const dateComponentIndex = _buildDateComponentIndex(dateComponentMaps)
+      const choiceComponentIndex = _buildChoiceComponentIndex(choiceComponentMaps)
       const includeSet = Array.isArray(includeOnlyFieldIds)
         ? new Set(includeOnlyFieldIds.map((id) => String(id || "").trim()).filter(Boolean))
         : null
@@ -733,6 +788,13 @@ const PdfRegenerator = ({
         }
 
         let rawValue = formData[sourceFieldId]
+        const choiceEntry = choiceComponentIndex.get(pdfFieldName) || choiceComponentIndex.get(sourceFieldId)
+        const choiceComponentValue = choiceEntry
+          ? _resolveChoiceComponentValue(formData, choiceEntry, rawValue)
+          : undefined
+        if (choiceComponentValue !== undefined && choiceComponentValue !== null && choiceComponentValue !== "") {
+          rawValue = choiceComponentValue
+        }
         const dateEntry = dateComponentIndex.get(pdfFieldName) || dateComponentIndex.get(sourceFieldId)
         const dateComponentValue = dateEntry
           ? _resolveDateComponentValue(formData, dateEntry, rawValue)
@@ -796,7 +858,7 @@ const PdfRegenerator = ({
     } finally {
       setIsBusy(false)
     }
-  }, [resolvedPdfSource, fd, fieldMap, tableSourceMaps, booleanFieldStates, dateComponentMaps, includeOnlyFieldIds, flatten, fileName, onComplete, pdfLibStrategy, pdfLibSource])
+  }, [resolvedPdfSource, fd, fieldMap, tableSourceMaps, booleanFieldStates, dateComponentMaps, choiceComponentMaps, includeOnlyFieldIds, flatten, fileName, onComplete, pdfLibStrategy, pdfLibSource])
 
   const diagnosticsText = useMemo(() => {
     if (!showDiagnostics) return null

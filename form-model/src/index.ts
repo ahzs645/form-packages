@@ -832,6 +832,38 @@ export interface BuilderFhirCoding {
   display?: string;
 }
 
+export interface BuilderFhirObservationHistoryConfig {
+  enabled?: boolean;
+  display?: "chart" | "table" | "both";
+  /** Other local/FHIR codes that represent the same clinical series. */
+  equivalentCodes?: BuilderFhirCoding[];
+  /** Unit used to normalize compatible numeric observations for display. */
+  canonicalUnit?: BuilderFhirCoding;
+  aggregation?: "none" | "day" | "week" | "month" | "quarter" | "year";
+}
+
+export interface BuilderLoincPanelMetadata {
+  releaseVersion?: string;
+  rootCode: string;
+  parentCode?: string;
+  sequence?: number;
+  observationId?: string;
+  observationRequired?: string;
+  entryType?: string;
+  skipLogicHelpText?: string;
+  conditionForInclusion?: string;
+  allowableAlternative?: string;
+  context?: string;
+  consistencyChecks?: string;
+  relevanceEquation?: string;
+  codingInstructions?: string;
+  questionCardinality?: string;
+  answerCardinality?: string;
+  answerListId?: string;
+  answerListType?: string;
+  externalCopyrightNotice?: string;
+}
+
 export interface BuilderFhirConfig {
   /** Original FHIR Questionnaire.item.linkId before local builder id normalization. */
   linkId?: string;
@@ -871,6 +903,19 @@ export interface BuilderFhirConfig {
   unitOptions?: BuilderFhirCoding[];
   /** Single display/unit coding for quantity-like items. */
   unit?: BuilderFhirCoding;
+  /** Author explicitly accepted a valid but non-recommended LOINC/UCUM unit. */
+  unitOverrideAcknowledged?: boolean;
+  unitOverrideReason?: string;
+  /** SDC extraction flags are explicit; a LOINC coding alone never implies extraction. */
+  observationExtract?: boolean;
+  observationLinkPeriod?: {
+    value?: number;
+    unit?: string;
+    system?: string;
+    code?: string;
+  };
+  /** Optional history/flowsheet presentation fed from the same clinical binding. */
+  history?: BuilderFhirObservationHistoryConfig;
   /** Original FHIR answerOption array, including non-Coding value[x] options. */
   answerOption?: FhirQuestionnaireAnswerOption[];
   /** Full FHIR Questionnaire.item.initial array preserved on import for lossless
@@ -889,6 +934,12 @@ export interface BuilderFhirConfig {
   prefix?: string;
   /** Preserved extension URLs that do not yet map to a native builder setting. */
   extensionUrls?: string[];
+  /** Full imported item extensions. Controlled extensions are regenerated from
+   *  editable settings; all other payloads are retained losslessly. */
+  preservedExtensions?: Array<{ url: string; [key: string]: unknown }>;
+  /** Serialized Questionnaire-level metadata, stored on the first imported
+   *  root field so it survives ordinary builder JSON/share persistence. */
+  questionnaireRoot?: Record<string, unknown>;
 }
 
 /**
@@ -1038,6 +1089,9 @@ export interface BuilderField {
 
   // FHIR Questionnaire import/export metadata
   fhirConfig?: BuilderFhirConfig | null;
+
+  /** Instance metadata when this field was created from LOINC Panels and Forms. */
+  loincPanel?: BuilderLoincPanelMetadata | null;
 
   /**
    * Per-language translations, keyed by BCP-47 language code (e.g. "fr-CA").

@@ -23247,6 +23247,47 @@ const _resolveDateComponentValue = (formData, dateEntry, rawValue) => {
   if (!parts) return undefined;
   return parts[dateEntry.role];
 };
+const _buildChoiceComponentIndex = choiceComponentMaps => {
+  const index = new Map();
+  if (!Array.isArray(choiceComponentMaps)) return index;
+  choiceComponentMaps.forEach(choiceMap => {
+    if (!choiceMap || typeof choiceMap !== "object" || !_isNonEmptyString(choiceMap.sourceFieldId)) return;
+    const components = Array.isArray(choiceMap.components) ? choiceMap.components : [];
+    const knownOptions = components.filter(component => component?.role === "option");
+    components.forEach(component => {
+      if (!component || !_isNonEmptyString(component.fieldId)) return;
+      if (!["option", "other", "otherText"].includes(component.role)) return;
+      index.set(component.fieldId, {
+        sourceFieldId: choiceMap.sourceFieldId,
+        component,
+        knownOptions
+      });
+    });
+  });
+  return index;
+};
+const _choiceItems = value => {
+  if (value === null || value === undefined || value === "") return [];
+  return Array.isArray(value) ? value : [value];
+};
+const _choiceItemMatches = (item, component) => {
+  const requested = [component?.optionValue, component?.optionLabel, component?.fieldId].filter(_isNonEmptyString).map(_normalizeToken);
+  if (requested.length === 0) return false;
+  return _toCandidateList(item).some(candidate => requested.includes(_normalizeToken(candidate)));
+};
+const _resolveChoiceComponentValue = (formData, choiceEntry, rawValue) => {
+  if (!choiceEntry) return undefined;
+  const sourceValue = formData?.[choiceEntry.sourceFieldId] ?? rawValue;
+  const items = _choiceItems(sourceValue);
+  const component = choiceEntry.component;
+  if (component.role === "option") {
+    return items.some(item => _choiceItemMatches(item, component));
+  }
+  const otherItem = items.find(item => !choiceEntry.knownOptions.some(knownOption => _choiceItemMatches(item, knownOption)));
+  if (component.role === "other") return otherItem !== undefined;
+  if (component.role === "otherText") return otherItem === undefined ? undefined : _toText(otherItem);
+  return undefined;
+};
 const _base64ToBytes = value => {
   const trimmed = String(value || "").trim();
   const payload = trimmed.includes("base64,") ? trimmed.slice(trimmed.indexOf("base64,") + 7) : trimmed;
@@ -23563,6 +23604,7 @@ const PdfRegenerator = ({
   tableSourceMaps,
   booleanFieldStates,
   dateComponentMaps,
+  choiceComponentMaps,
   includeOnlyFieldIds,
   flatten = false,
   disabled = false,
@@ -23614,6 +23656,7 @@ const PdfRegenerator = ({
       const map = _normalizeFieldMap(fieldMap, formData);
       const tableIndex = _buildTableReverseIndex(tableSourceMaps);
       const dateComponentIndex = _buildDateComponentIndex(dateComponentMaps);
+      const choiceComponentIndex = _buildChoiceComponentIndex(choiceComponentMaps);
       const includeSet = Array.isArray(includeOnlyFieldIds) ? new Set(includeOnlyFieldIds.map(id => String(id || "").trim()).filter(Boolean)) : null;
       const doc = await PDFLib.PDFDocument.load(bytes, {
         throwOnInvalidObject: false,
@@ -23631,6 +23674,11 @@ const PdfRegenerator = ({
           return;
         }
         let rawValue = formData[sourceFieldId];
+        const choiceEntry = choiceComponentIndex.get(pdfFieldName) || choiceComponentIndex.get(sourceFieldId);
+        const choiceComponentValue = choiceEntry ? _resolveChoiceComponentValue(formData, choiceEntry, rawValue) : undefined;
+        if (choiceComponentValue !== undefined && choiceComponentValue !== null && choiceComponentValue !== "") {
+          rawValue = choiceComponentValue;
+        }
         const dateEntry = dateComponentIndex.get(pdfFieldName) || dateComponentIndex.get(sourceFieldId);
         const dateComponentValue = dateEntry ? _resolveDateComponentValue(formData, dateEntry, rawValue) : undefined;
         if (dateComponentValue !== undefined && dateComponentValue !== null && dateComponentValue !== "") {
@@ -23684,7 +23732,7 @@ const PdfRegenerator = ({
     } finally {
       setIsBusy(false);
     }
-  }, [resolvedPdfSource, fd, fieldMap, tableSourceMaps, booleanFieldStates, dateComponentMaps, includeOnlyFieldIds, flatten, fileName, onComplete, pdfLibStrategy, pdfLibSource]);
+  }, [resolvedPdfSource, fd, fieldMap, tableSourceMaps, booleanFieldStates, dateComponentMaps, choiceComponentMaps, includeOnlyFieldIds, flatten, fileName, onComplete, pdfLibStrategy, pdfLibSource]);
   const diagnosticsText = useMemo(() => {
     if (!showDiagnostics) return null;
     if (!_isNonEmptyString(resolvedPdfSource)) return "Waiting for source PDF data.";
@@ -31416,7 +31464,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './PastMeasurementField/index.jsx': ["PastMeasurementField","abnormalFlag","abnormalHighValue","abnormalLowValue","candidate","candidates","codeFilter","coercePositiveInt","commentFilter","componentId","container","createdBy","criticalHighValue","criticalLowValue","current","currentPayload","day","direct","displayedCurrentValue","documentDate","effectiveFieldId","effectiveHistorySize","effectiveLabelPosition","effectiveMeasurementSize","entryCode","entryComment","entryDate","entryUnits","entryValue","explicitValue","fieldData","flagCode","flagDisplays","formHistoryItems","formatDate","fromPatient","fromQueryResult","handleValueChange","hasAbnormalHigh","hasAbnormalLow","hasExplicitValue","hasMeaningfulValue","hasNumericCurrentValue","hasRangeMetadata","hasStoredValue","historicalFormRowDate","historyItems","historySummary","index","inputSuffix","isAbnormal","isHistoricalFormValue","isNonEmptyString","key","latestHistoryItem","legacyRangePayload","linkedObservationItem","matchingKey","measurementWidthBySize","month","nextGroup","normalizeObservationItems","normalizedDateOnly","numericCurrentValue","numericExplicitValue","numericTime","observationHistoryItems","oldId","oldObs","optionalString","parseDateValue","parsed","parsedDate","parsedDateOnly","patientPath","payloadsEqual","raw","rawDate","recentHistoryText","resolveHistoricalFormRows","resolveMeasurementContainerStyle","resolveMoisValue","resolvePathValue","resolvedAbnormalHigh","resolvedAbnormalLow","resolvedCriticalHigh","resolvedCriticalLow","resolvedCurrentValue","resolvedUnits","roots","sd","segments","setNestedPayload","shouldReserveHistory","shouldShowHistory","storedValue","stringifyValue","stripVolatilePayloadFields","text","toObservationList","toPathSegments","updatedValue","valueFromHistoricalFormRow","valueIsDate","valueKeys","valuePart","valueText","width","year"],
   './PatientFileSections/index.jsx': ["PatientFileSections","activeText","addressText","cityLine","compactLines","contactText","countryLine","createdDate","editButtonStyle","encounter","fieldWrapStyle","formatAddress","formatContact","formatDate","getPatientFromData","gridStyle","healthNumber","insuranceBy","insuranceNumber","insuranceText","lines","match","mergeObjects","nextPatient","optionCode","optionDisplay","patient","preferredCode","preferredPhoneOptions","providerName","queryPatient","raw","renderClientDemographics","renderDocumentDetails","renderEncounterDetails","renderTitle","requested","sd","section","sectionTitleStyle","textValue","updateContactText","visibleSections","whiteDropdownStyles","whiteFlexTextFieldStyles","whiteTextFieldStyles","writePatientUpdates"],
   './PatientValueField/index.jsx': ["PatientValueField","age","applyPatientTransform","candidates","coercePatientValue","collectionCandidateValues","collectionItemMatches","computeAgeYears","dob","effectiveFieldId","expected","items","monthDelta","normalizedExpected","now","raw","resolveCollectionItemPath","resolvePatientContextPath","resolved","root","sd","stored","values"],
-  './PdfRegenerator/index.jsx': ["PDFLib","PDF_LIB_URL","PdfRegenerator","_base64ToBytes","_buildDateComponentIndex","_buildTableReverseIndex","_collectCandidates","_decodePdfHex","_downloadBytes","_fillField","_getCheckboxOnStates","_inferBooleanState","_installPdfLibFromSource","_isNonEmptyString","_loadPdfLib","_loadPdfLibFromCdn","_matchMultipleOptions","_matchSingleOption","_normalizeFieldMap","_normalizeToken","_pdfLibPromise","_printBytes","_resolveDateComponentValue","_resolveTableCellValue","_resolveValueByPath","_setCheckboxByState","_splitCanonicalDateParts","_statusColor","_toBooleanLike","_toCandidateList","_toText","acro","baseMap","binary","blob","boolValue","booleanStates","buttonDisabled","byRow","bytes","candidate","candidateKeys","candidates","clean","cleaned","cleanup","components","current","dateComponentIndex","dateComponentValue","dateEntry","diagnosticsText","didFill","direct","doc","existing","filledFieldCount","form","formData","formKeys","fromData","fromPath","fuzzy","handleGeneratePdf","hasMatchingState","i","iframe","includeSet","index","inferredState","inlineSource","installed","isOn","left","leftIsFormId","lib","link","map","mapped","match","matches","maybe","maybeDate","maybeTime","nextFileName","normalized","normalizedAction","normalizedCandidate","normalizedOption","normalizedOptionMap","normalizedRequested","offState","onText","onValue","options","outputBytes","parts","pathByColumnId","payload","pdfFieldId","pdfFieldName","printWindow","rawValue","renderActionButton","renderButton","resolvePath","resolvedPdfSource","right","rightIsFormId","row","rowIndex","rowMapping","rows","runner","script","sd","segments","selected","selectedCount","set","single","skippedFieldCount","sourceFieldId","sourceId","sourceValues","state","states","strategy","tableEntry","tableId","tableIndex","targetAction","targetState","targetStateName","targetWidget","text","trimmed","url","warningCount","warnings","widgets","withoutSlash"],
+  './PdfRegenerator/index.jsx': ["PDFLib","PDF_LIB_URL","PdfRegenerator","_base64ToBytes","_buildChoiceComponentIndex","_buildDateComponentIndex","_buildTableReverseIndex","_choiceItemMatches","_choiceItems","_collectCandidates","_decodePdfHex","_downloadBytes","_fillField","_getCheckboxOnStates","_inferBooleanState","_installPdfLibFromSource","_isNonEmptyString","_loadPdfLib","_loadPdfLibFromCdn","_matchMultipleOptions","_matchSingleOption","_normalizeFieldMap","_normalizeToken","_pdfLibPromise","_printBytes","_resolveChoiceComponentValue","_resolveDateComponentValue","_resolveTableCellValue","_resolveValueByPath","_setCheckboxByState","_splitCanonicalDateParts","_statusColor","_toBooleanLike","_toCandidateList","_toText","acro","baseMap","binary","blob","boolValue","booleanStates","buttonDisabled","byRow","bytes","candidate","candidateKeys","candidates","choiceComponentIndex","choiceComponentValue","choiceEntry","clean","cleaned","cleanup","component","components","current","dateComponentIndex","dateComponentValue","dateEntry","diagnosticsText","didFill","direct","doc","existing","filledFieldCount","form","formData","formKeys","fromData","fromPath","fuzzy","handleGeneratePdf","hasMatchingState","i","iframe","includeSet","index","inferredState","inlineSource","installed","isOn","items","knownOptions","left","leftIsFormId","lib","link","map","mapped","match","matches","maybe","maybeDate","maybeTime","nextFileName","normalized","normalizedAction","normalizedCandidate","normalizedOption","normalizedOptionMap","normalizedRequested","offState","onText","onValue","options","otherItem","outputBytes","parts","pathByColumnId","payload","pdfFieldId","pdfFieldName","printWindow","rawValue","renderActionButton","renderButton","requested","resolvePath","resolvedPdfSource","right","rightIsFormId","row","rowIndex","rowMapping","rows","runner","script","sd","segments","selected","selectedCount","set","single","skippedFieldCount","sourceFieldId","sourceId","sourceValue","sourceValues","state","states","strategy","tableEntry","tableId","tableIndex","targetAction","targetState","targetStateName","targetWidget","text","trimmed","url","warningCount","warnings","widgets","withoutSlash"],
   './PlannedActions/index.jsx': ["PlannedActions","PlannedActionsFields","plannedActionsActiveOnly","plannedActionsColumns"],
   './ReferralSource/index.jsx': ["ReferralSource","codeSystem","defaultValue","optionList","referralValueSet","sd"],
   './RelationshipStatus/index.jsx': ["RelationshipStatus"],
