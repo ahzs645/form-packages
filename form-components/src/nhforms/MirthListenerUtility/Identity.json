@@ -1,0 +1,9 @@
+{
+  "name": "MirthListenerUtility",
+  "title": "Mirth Listener Utility",
+  "description": "Developer utility for the Mirth webforms HTTP listener: pick the site URL, preview and edit the JSON payload, choose the send method, and sign & send the request.",
+  "version": { "major": 1, "minor": 0, "patch": 0 },
+  "type": "component",
+  "owner": "NHForms",
+  "components": []
+}
