@@ -827,6 +827,16 @@ export interface BuilderAlayaCareConfig {
   docmosisNumberFormat?: string | null;
   /** Optional manual Docmosis visibility expression, without surrounding cs_/cr_ tags. */
   docmosisVisibilityCondition?: string | null;
+  /**
+   * Render this source-backed value only in the AlayaCare custom template instead
+   * of exporting it as a question in the AlayaCare form definition.
+   */
+  templateOnly?: boolean;
+  /**
+   * AlayaCare/Docmosis data path for a template-only value, for example
+   * `client.last_name` or the flat system value `date_of_birth`.
+   */
+  docmosisDataPath?: string | null;
   /** Imported from AlayaCare as read-only because editing support is limited. */
   importReadOnly?: boolean;
   /** Human-readable reason shown in the inspector when importReadOnly is true. */
