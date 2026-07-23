@@ -4,28 +4,10 @@
  */
 
 import { BUILDER_FIELD_TYPES } from "./field-types";
+import type { BoundingBox, FieldPrefillValue, WidgetGeometry } from "./document";
+import type { BuilderInvestigationTab } from "./investigation-tabs";
 
 export { BUILDER_FIELD_TYPES } from "./field-types";
-
-export interface BoundingBox {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
-export interface WidgetGeometry {
-  page?: number;
-  bbox: BoundingBox;
-}
-
-export type FieldPrefillValue =
-  | string
-  | number
-  | boolean
-  | null
-  | FieldPrefillValue[]
-  | { [key: string]: FieldPrefillValue };
 
 export interface MoisNavigationTarget {
   moisModule: string;
@@ -1754,25 +1736,6 @@ export type BuilderFormPresentation = "standard" | "investigation";
 export type CaptchaProvider = "recaptcha" | "hcaptcha" | "none";
 
 export const DEFAULT_BUILDER_FORM_PRESENTATION: BuilderFormPresentation = "standard";
-export const INVESTIGATION_FORM_TAB_NAMES = [
-  "Physiology",
-  "Medication",
-  "History / Physical",
-  "Investigation",
-  "Review",
-  "Information",
-] as const;
-
-export interface BuilderInvestigationTab {
-  id: string;
-  label: string;
-}
-
-export const DEFAULT_INVESTIGATION_FORM_TABS: BuilderInvestigationTab[] =
-  INVESTIGATION_FORM_TAB_NAMES.map((label, index) => ({
-    id: `tab-${index + 1}`,
-    label,
-  }));
 
 export interface FormDesign {
   // Appearance
@@ -1945,3 +1908,26 @@ export {
   type BuilderFieldDefinition,
   type BuilderFieldPalette,
 } from "./field-definitions";
+
+export * from "./choice-options";
+export * from "./document";
+export {
+  DEFAULT_INVESTIGATION_FORM_TABS,
+  INVESTIGATION_FORM_TAB_NAMES,
+  createDefaultInvestigationTabs,
+  createInvestigationTabId,
+  normalizeInvestigationTabAssignments,
+  normalizeInvestigationTabs,
+  type BuilderInvestigationTab,
+} from "./investigation-tabs";
+export * from "./grouping";
+export * from "./layout";
+export { backfillOptionScoresFromFormula } from "./score-backfill";
+export {
+  type SessionFooterButtonConfig,
+  type SessionPayload,
+  type SessionPdfPayload,
+  type SessionPreviewSettings,
+  type SessionWorkflowSnapshot,
+  type SessionXmlAttachment,
+} from "./session";
