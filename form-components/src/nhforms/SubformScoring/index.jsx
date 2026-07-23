@@ -3,7 +3,17 @@
  *
  * mode="scoring": existing behavior, opens ScoringModule in a dialog.
  * mode="data-entry": opens regular fields in a dialog with optional calculations.
+ *
+ * Runtime packaging note:
+ * NHForms loads this file as source text and executes it in one injected scope.
+ * Keep the dependency-ordered sections below in this single compilation unit
+ * until both runtime loaders, the generator, MOIS export packaging, and the
+ * source-level characterization harness support ordered source fragments.
  */
+
+// =====================================================================
+// Injected-scope bindings
+// =====================================================================
 
 const { useState, useMemo, useCallback, useEffect } = React
 const {
@@ -16,6 +26,10 @@ const {
   DialogType,
   Toggle,
 } = Fluent
+
+// =====================================================================
+// Form-session bridge
+// =====================================================================
 
 var __SubformScoringSessionContext = (() => {
   const root = typeof globalThis !== "undefined"
@@ -152,9 +166,9 @@ var useFormSessionData = typeof useFormSessionData !== "undefined"
       return [selectedWithSetter, scopedSetter]
     }
 
-// ================================================
-// Scoring helpers (same logic as ScoringModule)
-// ================================================
+// =====================================================================
+// Scoring module: option resolution and answer normalization
+// =====================================================================
 
 const _resolveQuestionOptions = (question, sharedOptions) => {
   const questionOptions = Array.isArray(question?.options) ? question.options : []
@@ -269,6 +283,10 @@ const _getScoreFromValue = (value, optionScoreMap) => {
 
   return null
 }
+
+// =====================================================================
+// MOIS action module: path resolution, payload mapping, and mutations
+// =====================================================================
 
 const _resolvePathValue = (source, path) => {
   if (!path) return undefined
@@ -498,6 +516,10 @@ const _recordSubformActionPayload = (setFormData, componentId, payload) => {
   }))
 }
 
+// =====================================================================
+// Observation-output module: DCO construction and prepared writes
+// =====================================================================
+
 const _stringifyObservationValue = (value) => {
   if (value === undefined || value === null) return ""
   if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value)
@@ -587,6 +609,10 @@ const _setSubformObservationPayloads = (setFormData, componentId, payload) => {
   }))
 }
 
+// =====================================================================
+// Form-output module: nested snapshots and prepared-session writes
+// =====================================================================
+
 const _buildDataEntrySnapshot = (fields, formData, externalRoot) => {
   const sourceRoot = externalRoot && typeof externalRoot === "object" ? externalRoot : formData
   const snapshot = {}
@@ -672,6 +698,10 @@ const _createPreparedSessionSetter = (initialState) => {
   }
 }
 
+// =====================================================================
+// Interpretation module: range matching and labels
+// =====================================================================
+
 const _isInRange = (score, range) => {
   if (score === null || score === undefined) return false
   const min = range.min
@@ -704,9 +734,9 @@ const _formatBounds = (range) => {
   return `${range.min}-${range.max}`
 }
 
-// ================================================
-// Data-entry helpers
-// ================================================
+// =====================================================================
+// Data-entry value module: visibility, paths, display, and coercion
+// =====================================================================
 
 const _isMeaningfulValue = (value) => {
   if (value === null || value === undefined) return false
@@ -888,6 +918,10 @@ const _evaluateExpression = (expression, varsByName) => {
     return null
   }
 }
+
+// =====================================================================
+// Data-entry field module: layout, choices, defaults, and render groups
+// =====================================================================
 
 const _isHeadingField = (field) => field?.type === "heading"
 
@@ -1236,6 +1270,10 @@ const _isScaleChoiceSelected = (value, option) => {
   return false
 }
 
+// =====================================================================
+// Calculator and local-style module
+// =====================================================================
+
 const _formatNumericValue = (value, precision = 1) => {
   if (value === null || value === undefined || !Number.isFinite(Number(value))) return null
   const numeric = Number(value)
@@ -1284,9 +1322,9 @@ const _LOCAL_RADIO_GROUP_STYLE = {
   gap: "8px",
 }
 
-// ================================================
-// Summary sub-components
-// ================================================
+// =====================================================================
+// Summary-view module
+// =====================================================================
 
 const ScoreSummaryItem = ({ total, score, isComplete, isDarkMode }) => {
   const style = {
@@ -1482,9 +1520,9 @@ const ProgressSummaryItem = ({ answered, total, percentage, isDarkMode }) => {
   )
 }
 
-// ================================================
-// Main component
-// ================================================
+// =====================================================================
+// Dialog controller: state derivation and completion orchestration
+// =====================================================================
 
 const SubformScoringInner = ({
   id = "subformScoring",
@@ -1567,6 +1605,10 @@ const SubformScoringInner = ({
       }
     }))
   }, [fd, onDataEntryValueChange])
+
+  // -------------------------------------------------------------------
+  // Scoring-mode derivations
+  // -------------------------------------------------------------------
 
   // Scoring-mode answer and score calculations
   const scoreMap = useMemo(() => {
@@ -1658,7 +1700,10 @@ const SubformScoringInner = ({
     return results
   }, [isDataEntryMode, answers, config.calculatedValues, config.layout, config.questions, config.sharedOptions, config.totals, scoreMap, sd, fd])
 
-  // Data-entry-mode values and calculations
+  // -------------------------------------------------------------------
+  // Data-entry-mode configuration, values, and calculations
+  // -------------------------------------------------------------------
+
   const dataEntryFields = useMemo(() => {
     return Array.isArray(dataEntryConfig?.fields) ? dataEntryConfig.fields : []
   }, [dataEntryConfig])
@@ -1933,6 +1978,10 @@ const SubformScoringInner = ({
     return progress.answered > 0
   }, [isDataEntryMode, isMorphineCalculatorMode, dataEntryCalculatorConfig, dataEntryFields, dataEntryValues, progress])
 
+  // -------------------------------------------------------------------
+  // Completion payload and summary configuration
+  // -------------------------------------------------------------------
+
   const prepareCompletionState = useCallback((actionPayload) => {
     const payload = _buildSubformObservationUpdates(observationOutputs, {
       answers,
@@ -2004,6 +2053,10 @@ const SubformScoringInner = ({
   const getCalculationConfig = useCallback((calculationId) => {
     return dataEntryCalculations.find((calculation) => calculation.id === calculationId)
   }, [dataEntryCalculations])
+
+  // -------------------------------------------------------------------
+  // General field renderer
+  // -------------------------------------------------------------------
 
   const renderDataEntryField = (field, renderOptions = {}) => {
     if (_isHeadingField(field)) {
@@ -2372,6 +2425,10 @@ const SubformScoringInner = ({
     )
   }
 
+  // -------------------------------------------------------------------
+  // Scale-matrix renderer
+  // -------------------------------------------------------------------
+
   const renderDataEntryScaleMatrix = (group) => {
     const options = Array.isArray(group?.options) ? group.options : []
     const fields = Array.isArray(group?.fields) ? group.fields : []
@@ -2482,6 +2539,10 @@ const SubformScoringInner = ({
       </div>
     )
   }
+
+  // -------------------------------------------------------------------
+  // Morphine-equivalence renderer
+  // -------------------------------------------------------------------
 
   const renderMorphineCalculator = () => {
     if (!isMorphineCalculatorMode || !dataEntryCalculatorConfig) return null
@@ -2623,6 +2684,10 @@ const SubformScoringInner = ({
     )
   }
 
+  // -------------------------------------------------------------------
+  // Blood-glucose renderer
+  // -------------------------------------------------------------------
+
   const renderBloodGlucoseReadingEditor = () => {
     const rowLabels = ["AC/B", "PC/B", "AC/L", "PC/L", "AC/D", "PC/D", "HS"]
     const dateField = dataEntryFieldById.get("Date") || { id: "Date", label: "Select reading date" }
@@ -2730,6 +2795,10 @@ const SubformScoringInner = ({
       </div>
     )
   }
+
+  // -------------------------------------------------------------------
+  // Summary renderer and dialog composition
+  // -------------------------------------------------------------------
 
   const renderSummaryItem = (item, index) => {
     if (isDataEntryMode) {
@@ -3121,6 +3190,10 @@ const SubformScoringInner = ({
     </div>
   )
 }
+
+// =====================================================================
+// Public wrapper: isolated session lifecycle and parent commit
+// =====================================================================
 
 const SubformScoring = (props) => {
   const {
