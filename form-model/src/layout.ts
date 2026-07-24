@@ -595,13 +595,10 @@ export function sanitizeMoisFieldContract(
     return null;
   }
 
-  const availableTargetIds = options?.availableTargetIds ?? [];
-  const fallbackTargetId = normalizedDefaultTargetId ?? explicitLocalWriteTargetId;
-  const requestedTargetId = explicitLocalWriteTargetId ?? fallbackTargetId;
-  const resolvedTargetId =
-    requestedTargetId && (availableTargetIds.length === 0 || availableTargetIds.includes(requestedTargetId))
-      ? requestedTargetId
-      : fallbackTargetId;
+  // Custom save keys outside availableTargetIds are kept intentionally: they
+  // let a rebuilt form keep writing into a legacy document's data slot. The
+  // binding editor surfaces unknown keys with a warning instead.
+  const resolvedTargetId = explicitLocalWriteTargetId ?? normalizedDefaultTargetId;
 
   const normalizedContract: MoisFieldContract = {
     readBinding: readSourcePath
