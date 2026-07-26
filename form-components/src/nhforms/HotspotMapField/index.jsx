@@ -10,6 +10,19 @@
  * - Optional multi-counter summary using counterGroups
  * - Backward compatible fallback summary using hotspot.group values
  *
+ * Stored value shape (read by observation/formData templates as
+ * `{{fieldId.path}}`, e.g. `{{tender_joints.countsByGroup.CDAI_SDAI}}`):
+ * {
+ *   selectedIds: string[],
+ *   selectedLabels: string[],
+ *   selectedCount: number,
+ *   byHotspot: { [hotspotId]: boolean },
+ *   countsByGroup: { [groupId]: number },
+ *   labelsByGroup: { [groupId]: string[] },
+ *   annotations: [...], annotationCount: number,
+ *   updatedAt: string
+ * }
+ *
  * Hotspot config shape:
  * {
  *   id: string,
@@ -663,34 +676,55 @@ const injectFieldFillValuesIntoSvg = (
   }
 }
 
-const buildCountsByGroup = (selectedIds, hotspotsById, counterGroups = []) => {
+/**
+ * Per-group selection summary: how many hotspots of each counter group are
+ * selected, and which ones. Counts and labels are built together so a report
+ * can never disagree with the count published beside it.
+ *
+ * Labels follow hotspot order (not the group's authored id order) so a group
+ * report reads the same way as selectedLabels.
+ */
+const buildGroupSelectionSummary = (selectedIds, hotspots, hotspotsById, counterGroups = []) => {
+  const countsByGroup = {}
+  const labelsByGroup = {}
+
   if (Array.isArray(counterGroups) && counterGroups.length > 0) {
-    const counts = {}
     counterGroups.forEach((group) => {
       const groupId = normalizeString(group.id, "")
       if (!groupId) return
-      const assignedHotspotIds = Array.isArray(group.hotspotIds) ? group.hotspotIds : []
-      let count = 0
-      assignedHotspotIds.forEach((hotspotId) => {
-        if (!hotspotsById.has(hotspotId)) return
-        if (selectedIds.has(hotspotId)) {
-          count += 1
-        }
+      const assignedHotspotIds = new Set(
+        (Array.isArray(group.hotspotIds) ? group.hotspotIds : []).filter((hotspotId) =>
+          hotspotsById.has(hotspotId)
+        )
+      )
+      const labels = []
+      hotspots.forEach((hotspot) => {
+        if (!assignedHotspotIds.has(hotspot.id)) return
+        if (!selectedIds.has(hotspot.id)) return
+        labels.push(hotspot.label || hotspot.id)
       })
-      counts[groupId] = count
+      countsByGroup[groupId] = labels.length
+      labelsByGroup[groupId] = labels
     })
-    return counts
+    return { countsByGroup, labelsByGroup }
   }
 
-  const counts = {}
-  selectedIds.forEach((id) => {
-    const hotspot = hotspotsById.get(id)
-    if (!hotspot) return
+  hotspots.forEach((hotspot) => {
+    if (!selectedIds.has(hotspot.id)) return
     const group = hotspot.group || "default"
-    counts[group] = (counts[group] || 0) + 1
+    countsByGroup[group] = (countsByGroup[group] || 0) + 1
+    labelsByGroup[group] = [...(labelsByGroup[group] || []), hotspot.label || hotspot.id]
   })
-  return counts
+  return { countsByGroup, labelsByGroup }
 }
+
+const buildCountsByGroup = (selectedIds, hotspotsById, counterGroups = [], hotspots = []) =>
+  buildGroupSelectionSummary(
+    selectedIds,
+    hotspots.length > 0 ? hotspots : Array.from(hotspotsById.values()),
+    hotspotsById,
+    counterGroups
+  ).countsByGroup
 
 const buildMapValue = (
   selectedIds,
@@ -708,13 +742,20 @@ const buildMapValue = (
       selectedLabels.push(hotspot.label || hotspot.id)
     }
   })
+  const { countsByGroup, labelsByGroup } = buildGroupSelectionSummary(
+    selectedIds,
+    hotspots,
+    hotspotsById,
+    counterGroups
+  )
 
   return {
     selectedIds: hotspots.filter((hotspot) => selectedIds.has(hotspot.id)).map((hotspot) => hotspot.id),
     selectedLabels,
     selectedCount: selectedLabels.length,
     byHotspot,
-    countsByGroup: buildCountsByGroup(selectedIds, hotspotsById, counterGroups),
+    countsByGroup,
+    labelsByGroup,
     annotations,
     annotationCount: Array.isArray(annotations) ? annotations.length : 0,
     updatedAt: new Date().toISOString(),
@@ -1426,8 +1467,14 @@ const HotspotMapField = ({
     if (mapValue?.countsByGroup && typeof mapValue.countsByGroup === "object") {
       return mapValue.countsByGroup
     }
-    return buildCountsByGroup(selectedIds, hotspotsById, normalizedCounterGroups)
-  }, [hotspotsById, mapValue?.countsByGroup, normalizedCounterGroups, selectedIds])
+    return buildCountsByGroup(selectedIds, hotspotsById, normalizedCounterGroups, normalizedHotspots)
+  }, [
+    hotspotsById,
+    mapValue?.countsByGroup,
+    normalizedCounterGroups,
+    normalizedHotspots,
+    selectedIds,
+  ])
   const summaryGroups = useMemo(() => {
     if (normalizedCounterGroups.length > 0) {
       return normalizedCounterGroups

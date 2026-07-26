@@ -333,6 +333,12 @@ const PastMeasurementField = ({
   docDateFieldPath = "docDate",
   maxHistory = 5,
   autoFillFromHistory = false,
+  // Legacy ^bringforward=NO^. A point-in-time score (Daily Morphine Equivalent
+  // Dose 61848, Opioid Risk Tool 61865) must be re-derived on a new encounter,
+  // never inherited from the previous one, so the prior value is shown as
+  // history but never seeded into the answer. Matches SubformScoring's prop of
+  // the same name, which gates observation defaults the same way.
+  bringForward = true,
   persistenceMode = "formOnly",
   valueType = "TEXT",
   observationDescription,
@@ -350,6 +356,15 @@ const PastMeasurementField = ({
   graphLinkText = "Graph",
   graphHref,
   openGraphInNewTab = true,
+  // Legacy `lkp_field_*` computes rendered a HyperLink! next to the graph link
+  // that copied the most recent value into one or more fields:
+  //   ^fieldname^ -> the measurement itself   (role "value")
+  //   ^textfield^ -> a paired free-text field (role "text")
+  //   ^score^     -> a paired score slot      (role "score")
+  // Postpartum/Prenatal use ^fieldname2^/^score2^, i.e. a second pair, which
+  // this array covers without extra props.
+  pullLinkText = "",
+  pullTargets = [],
   abnormalLow,
   abnormalHigh,
   criticalLow,
@@ -454,11 +469,53 @@ const PastMeasurementField = ({
   ), [codeFilter, commentPath, codePath, commentFilter, datePath, isHistoricalFormValue, sd, unitsPath, valuePath])
 
   const latestHistoryItem = historyItems[0] ?? null
+
+  const normalizedPullTargets = useMemo(() => (
+    (Array.isArray(pullTargets) ? pullTargets : [])
+      .map((target) => {
+        if (!target || typeof target !== "object") return null
+        const targetFieldId = String(target.fieldId || target.targetFieldId || "").trim()
+        if (!targetFieldId) return null
+        const role = String(target.role || "value").trim().toLowerCase()
+        return { fieldId: targetFieldId, role: role === "text" || role === "score" ? role : "value" }
+      })
+      .filter(Boolean)
+  ), [pullTargets])
+
+  const canPullLatest = (
+    !readOnly &&
+    !disabled &&
+    normalizedPullTargets.length > 0 &&
+    Boolean(latestHistoryItem)
+  )
+
+  const pullLatestIntoTargets = () => {
+    if (!canPullLatest) return
+    setFormData(produce((draft) => {
+      if (!draft.field) {
+        draft.field = { data: {}, status: {}, history: [] }
+      }
+      if (!draft.field.data || typeof draft.field.data !== "object") {
+        draft.field.data = {}
+      }
+      normalizedPullTargets.forEach((target) => {
+        const value = target.role === "score"
+          ? Number(stringifyValue(latestHistoryItem?.valueText))
+          : target.role === "text"
+            ? stringifyValue(latestHistoryItem?.comment ?? latestHistoryItem?.valueText ?? "")
+            : stringifyValue(latestHistoryItem?.valueText ?? "")
+        // A score slot only accepts a number; a non-numeric history value is
+        // skipped rather than written as NaN.
+        if (target.role === "score" && !Number.isFinite(value)) return
+        draft.field.data[target.fieldId] = value
+      })
+    }))
+  }
   const resolvedCurrentValue = isHistoricalFormValue
     ? latestHistoryItem?.valueText ?? ""
     : hasMeaningfulValue(storedValue)
       ? storedValue
-      : linkedObservationItem?.valueText ?? (autoFillFromHistory ? latestHistoryItem?.valueText : "") ?? ""
+      : linkedObservationItem?.valueText ?? (autoFillFromHistory && bringForward ? latestHistoryItem?.valueText : "") ?? ""
   const valueIsDate = displayFormat === "date" || (
     displayFormat === "auto" &&
     isNonEmptyString(valuePath) &&
@@ -607,7 +664,7 @@ const PastMeasurementField = ({
     if (!latestHistoryItem?.valueText) return
     if (isHistoricalFormValue && storedValue === latestHistoryItem.valueText) return
     if (!isHistoricalFormValue) {
-      if (!autoFillFromHistory) return
+      if (!autoFillFromHistory || !bringForward) return
       if (hasMeaningfulValue(storedValue)) return
       if (linkedObservationItem?.valueText) return
     }
@@ -622,7 +679,7 @@ const PastMeasurementField = ({
       if (!isHistoricalFormValue && hasMeaningfulValue(draft.field.data[effectiveFieldId])) return
       draft.field.data[effectiveFieldId] = latestHistoryItem.valueText
     }))
-  }, [autoFillFromHistory, effectiveFieldId, isHistoricalFormValue, latestHistoryItem, linkedObservationItem, setFormData, storedValue])
+  }, [autoFillFromHistory, bringForward, effectiveFieldId, isHistoricalFormValue, latestHistoryItem, linkedObservationItem, setFormData, storedValue])
 
   const handleValueChange = (event, nextValue) => {
     if (!effectiveFieldId) return
@@ -729,6 +786,11 @@ const PastMeasurementField = ({
               }}
             >
               <Stack horizontal verticalAlign="center" tokens={{ childrenGap: 8 }} styles={{ root: { flexWrap: "wrap" } }}>
+                {canPullLatest ? (
+                  <Link onClick={pullLatestIntoTargets}>
+                    {pullLinkText || "Use last"}
+                  </Link>
+                ) : null}
                 {isNonEmptyString(graphLinkText) ? (
                   isNonEmptyString(graphHref) ? (
                     <Link

@@ -1227,6 +1227,209 @@ const AuthorshipField = ({
   )
 }
 `,
+  './BulkSetField/index.jsx': `const { useEffect, useMemo } = React
+const { Checkbox, DefaultButton, MessageBar, MessageBarType, PrimaryButton, Stack, Text } = Fluent
+
+/**
+ * Section-level control that writes one value into a list of enrolled questions.
+ *
+ * This reproduces two legacy MOIS Dynamic Form behaviours that share a single
+ * shape — one control setting N fields at once:
+ *
+ *   str_action_default   "Apply defaults to All"  (54 controls across 10 forms)
+ *     Each enrolled question carries its own default, so every row supplies a
+ *     \`value\`.
+ *
+ *   str_action_noredflag "No Red Flags" / "Likely Negative"  (5 controls)
+ *     Every enrolled question is asserted to the same negative answer, so rows
+ *     omit \`value\` and fall back to \`assertValue\`. Legacy paired this with a
+ *     warning driven by
+ *       IF (str_action_noredflag = 'Y' and (str_field_0001 = 'Y' or ...), 1, 0)
+ *     which is the \`contradictionMode\` prop here.
+ *
+ * The control persists its own answer (legacy records carry fids and store
+ * ^on^/^off^ values such as Y/N or YES/NO), so \`controlFieldId\` is a real field.
+ * Prior values captured for reversal live in field.status — the session channel
+ * used by FormSessionRuntime and SubformScoring — so they are never written to
+ * the patient record.
+ */
+const normalizeBulkTargets = (targets, assertValue) => {
+  if (!Array.isArray(targets)) return []
+  return targets
+    .map((target) => {
+      if (!target || typeof target !== "object") return null
+      const fieldId = String(target.fieldId || target.targetFieldId || "").trim()
+      if (!fieldId) return null
+      const raw = target.value !== undefined && target.value !== null && target.value !== ""
+        ? target.value
+        : assertValue
+      if (raw === undefined || raw === null || raw === "") return null
+      return { fieldId, value: String(raw) }
+    })
+    .filter(Boolean)
+}
+
+const isBlankAnswer = (value) => (
+  value === undefined ||
+  value === null ||
+  value === "" ||
+  (Array.isArray(value) && value.length === 0)
+)
+
+const comparableAnswer = (value) => {
+  if (value === undefined || value === null) return ""
+  if (typeof value === "object") {
+    return String(value.value ?? value.code ?? value.display ?? value.text ?? "")
+  }
+  return String(value)
+}
+
+function BulkSetField({
+  id = "bulkSetField",
+  controlFieldId,
+  label = "Apply defaults to All",
+  helpText = "",
+  affordance = "checkbox",
+  buttonType = "default",
+  applyLabel = "",
+  targets = [],
+  assertValue = "",
+  onValue = "Y",
+  offValue = "N",
+  onlyFillEmpty = false,
+  reversible = true,
+  contradictionMode = "warn",
+  contradictionMessage = "Some answers below no longer match this selection.",
+  readOnly = false,
+  disabled = false,
+}) {
+  const [fd, setFd] = useActiveData()
+  const effectiveControlFieldId = controlFieldId || id
+  const fieldData = fd?.field?.data ?? {}
+  const isDisabled = readOnly || disabled
+
+  const normalizedTargets = useMemo(
+    () => normalizeBulkTargets(targets, assertValue),
+    [targets, assertValue]
+  )
+
+  const isApplied = comparableAnswer(fieldData[effectiveControlFieldId]) === String(onValue)
+
+  const contradictedFieldIds = useMemo(() => {
+    if (!isApplied || contradictionMode === "off") return []
+    return normalizedTargets
+      .filter((target) => comparableAnswer(fieldData[target.fieldId]) !== target.value)
+      .map((target) => target.fieldId)
+  }, [contradictionMode, fieldData, isApplied, normalizedTargets])
+
+  const writeControl = (draft, value) => {
+    if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
+    if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
+    if (!draft.field.status || typeof draft.field.status !== "object") draft.field.status = {}
+    if (!draft.formData || typeof draft.formData !== "object") draft.formData = {}
+    draft.field.data[effectiveControlFieldId] = value
+    draft.formData[effectiveControlFieldId] = value
+  }
+
+  const apply = () => {
+    if (isDisabled) return
+    setFd((draft) => {
+      writeControl(draft, onValue)
+      const previous = {}
+      normalizedTargets.forEach((target) => {
+        const current = draft.field.data[target.fieldId]
+        if (onlyFillEmpty && !isBlankAnswer(current)) return
+        previous[target.fieldId] = current === undefined ? null : current
+        draft.field.data[target.fieldId] = target.value
+        draft.formData[target.fieldId] = target.value
+      })
+      draft.field.status[effectiveControlFieldId] = { appliedPrevious: previous }
+    })
+  }
+
+  const unapply = () => {
+    if (isDisabled) return
+    setFd((draft) => {
+      writeControl(draft, offValue)
+      const previous = reversible
+        ? draft.field.status?.[effectiveControlFieldId]?.appliedPrevious
+        : null
+      if (previous && typeof previous === "object") {
+        Object.entries(previous).forEach(([fieldId, value]) => {
+          if (value === null) {
+            delete draft.field.data[fieldId]
+            delete draft.formData[fieldId]
+            return
+          }
+          draft.field.data[fieldId] = value
+          draft.formData[fieldId] = value
+        })
+      }
+      if (draft.field.status) delete draft.field.status[effectiveControlFieldId]
+    })
+  }
+
+  // Legacy showed a warning banner and left the answers alone; "clear-control"
+  // is the stricter reading where the assertion retracts itself once it is
+  // contradicted. There is no submission-blocking channel at this layer.
+  const shouldClearControl = contradictionMode === "clear-control" && contradictedFieldIds.length > 0
+  useEffect(() => {
+    if (!shouldClearControl || isDisabled) return
+    setFd((draft) => {
+      writeControl(draft, offValue)
+      if (draft.field.status) delete draft.field.status[effectiveControlFieldId]
+    })
+    // writeControl closes over effectiveControlFieldId, which is in the deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shouldClearControl, isDisabled, offValue, effectiveControlFieldId])
+
+  const showWarning = contradictionMode === "warn" && contradictedFieldIds.length > 0
+  const ButtonComponent = buttonType === "primary" ? PrimaryButton : DefaultButton
+
+  return (
+    <div
+      data-field-id={effectiveControlFieldId}
+      data-component="BulkSetField"
+      style={{ margin: "8px 10px" }}
+    >
+      <Stack tokens={{ childrenGap: 6 }}>
+        {affordance === "button" ? (
+          <Stack horizontal verticalAlign="center" tokens={{ childrenGap: 8 }} wrap>
+            <ButtonComponent
+              text={applyLabel || label}
+              disabled={isDisabled}
+              onClick={isApplied && reversible ? unapply : apply}
+            />
+            {isApplied ? (
+              <Text variant="small" styles={{ root: { color: "#605e5c" } }}>
+                Applied to {normalizedTargets.length} question
+                {normalizedTargets.length === 1 ? "" : "s"}
+              </Text>
+            ) : null}
+          </Stack>
+        ) : (
+          <Checkbox
+            label={label}
+            checked={isApplied}
+            disabled={isDisabled}
+            onChange={(_, checked) => (checked ? apply() : unapply())}
+          />
+        )}
+        {helpText ? (
+          <Text variant="small" styles={{ root: { color: "#605e5c" } }}>
+            {helpText}
+          </Text>
+        ) : null}
+        {showWarning ? (
+          <MessageBar messageBarType={MessageBarType.warning} isMultiline={false}>
+            {contradictionMessage}
+          </MessageBar>
+        ) : null}
+      </Stack>
+    </div>
+  )
+}
+`,
   './ChartRecordTable/index.jsx': `
 if (typeof ChartRecordTable === "undefined") {
   window.ChartRecordTable = null
@@ -3278,6 +3481,12 @@ const ComputedField = ({
   readOnly,
   showInterpretation = false,
   interpretation,
+  // Legacy calculators (BPI Severity/Interference/Relief, PEG, DLQI) pair
+  //   IF (IsNull(...), 'Incomplete', '')
+  // with mirrored visible expressions so a partial total never shows and never
+  // persists. "compute-anyway" is the default so existing forms are unchanged.
+  incompleteBehavior = "compute-anyway",
+  incompleteText = "Incomplete",
 }) => {
   const [fd, setFd] = useActiveData()
   const valuesByFieldId = fd?.field?.data || {}
@@ -3294,23 +3503,35 @@ const ComputedField = ({
     [computedValue, precision]
   )
 
+  const isIncomplete = useMemo(
+    () => (
+      incompleteBehavior !== "compute-anyway" &&
+      !_hasAllReferencedValues(expression, valuesByFieldId)
+    ),
+    [expression, incompleteBehavior, valuesByFieldId]
+  )
+
   const storedValue = useMemo(() => {
+    // A partial total must not reach the patient record, so an incomplete
+    // calculation persists null regardless of which incomplete style is used.
+    if (isIncomplete) return null
     if (typeof roundedValue === "string" || typeof roundedValue === "boolean") return roundedValue
     if (!Number.isFinite(roundedValue)) return null
     if (resultType === "text") {
       return _toDisplayValue(roundedValue, precision, "text")
     }
     return roundedValue
-  }, [precision, resultType, roundedValue])
+  }, [isIncomplete, precision, resultType, roundedValue])
 
   const displayValue = useMemo(() => {
+    if (isIncomplete) return incompleteBehavior === "show-text" ? incompleteText : ""
     // String/boolean results (e.g. iif chains returning "LOW"/"HIGH") must
     // render, not just persist — Number.isFinite alone blanked them.
     if (typeof roundedValue === "string") return roundedValue
     if (typeof roundedValue === "boolean") return String(roundedValue)
     if (!Number.isFinite(roundedValue)) return ""
     return _toDisplayValue(roundedValue, precision, resultType)
-  }, [precision, resultType, roundedValue])
+  }, [incompleteBehavior, incompleteText, isIncomplete, precision, resultType, roundedValue])
 
   const currentValue = valuesByFieldId?.[fieldId]
   const enteredDisplayValue = _toEditableComputedValue(currentValue)
@@ -3399,6 +3620,10 @@ const ComputedField = ({
       draft.field.data.__computedFieldState = stateContainer
     })
   }
+
+  // Legacy hid the score control outright until every item was answered. All
+  // hooks above have already run, so bailing out here is safe.
+  if (isIncomplete && incompleteBehavior === "hide") return null
 
   return (
     <div>
@@ -14624,6 +14849,19 @@ const UpdateContext = (fd, id, values) => {
  * - Optional multi-counter summary using counterGroups
  * - Backward compatible fallback summary using hotspot.group values
  *
+ * Stored value shape (read by observation/formData templates as
+ * \`{{fieldId.path}}\`, e.g. \`{{tender_joints.countsByGroup.CDAI_SDAI}}\`):
+ * {
+ *   selectedIds: string[],
+ *   selectedLabels: string[],
+ *   selectedCount: number,
+ *   byHotspot: { [hotspotId]: boolean },
+ *   countsByGroup: { [groupId]: number },
+ *   labelsByGroup: { [groupId]: string[] },
+ *   annotations: [...], annotationCount: number,
+ *   updatedAt: string
+ * }
+ *
  * Hotspot config shape:
  * {
  *   id: string,
@@ -15277,34 +15515,55 @@ const injectFieldFillValuesIntoSvg = (
   }
 }
 
-const buildCountsByGroup = (selectedIds, hotspotsById, counterGroups = []) => {
+/**
+ * Per-group selection summary: how many hotspots of each counter group are
+ * selected, and which ones. Counts and labels are built together so a report
+ * can never disagree with the count published beside it.
+ *
+ * Labels follow hotspot order (not the group's authored id order) so a group
+ * report reads the same way as selectedLabels.
+ */
+const buildGroupSelectionSummary = (selectedIds, hotspots, hotspotsById, counterGroups = []) => {
+  const countsByGroup = {}
+  const labelsByGroup = {}
+
   if (Array.isArray(counterGroups) && counterGroups.length > 0) {
-    const counts = {}
     counterGroups.forEach((group) => {
       const groupId = normalizeString(group.id, "")
       if (!groupId) return
-      const assignedHotspotIds = Array.isArray(group.hotspotIds) ? group.hotspotIds : []
-      let count = 0
-      assignedHotspotIds.forEach((hotspotId) => {
-        if (!hotspotsById.has(hotspotId)) return
-        if (selectedIds.has(hotspotId)) {
-          count += 1
-        }
+      const assignedHotspotIds = new Set(
+        (Array.isArray(group.hotspotIds) ? group.hotspotIds : []).filter((hotspotId) =>
+          hotspotsById.has(hotspotId)
+        )
+      )
+      const labels = []
+      hotspots.forEach((hotspot) => {
+        if (!assignedHotspotIds.has(hotspot.id)) return
+        if (!selectedIds.has(hotspot.id)) return
+        labels.push(hotspot.label || hotspot.id)
       })
-      counts[groupId] = count
+      countsByGroup[groupId] = labels.length
+      labelsByGroup[groupId] = labels
     })
-    return counts
+    return { countsByGroup, labelsByGroup }
   }
 
-  const counts = {}
-  selectedIds.forEach((id) => {
-    const hotspot = hotspotsById.get(id)
-    if (!hotspot) return
+  hotspots.forEach((hotspot) => {
+    if (!selectedIds.has(hotspot.id)) return
     const group = hotspot.group || "default"
-    counts[group] = (counts[group] || 0) + 1
+    countsByGroup[group] = (countsByGroup[group] || 0) + 1
+    labelsByGroup[group] = [...(labelsByGroup[group] || []), hotspot.label || hotspot.id]
   })
-  return counts
+  return { countsByGroup, labelsByGroup }
 }
+
+const buildCountsByGroup = (selectedIds, hotspotsById, counterGroups = [], hotspots = []) =>
+  buildGroupSelectionSummary(
+    selectedIds,
+    hotspots.length > 0 ? hotspots : Array.from(hotspotsById.values()),
+    hotspotsById,
+    counterGroups
+  ).countsByGroup
 
 const buildMapValue = (
   selectedIds,
@@ -15322,13 +15581,20 @@ const buildMapValue = (
       selectedLabels.push(hotspot.label || hotspot.id)
     }
   })
+  const { countsByGroup, labelsByGroup } = buildGroupSelectionSummary(
+    selectedIds,
+    hotspots,
+    hotspotsById,
+    counterGroups
+  )
 
   return {
     selectedIds: hotspots.filter((hotspot) => selectedIds.has(hotspot.id)).map((hotspot) => hotspot.id),
     selectedLabels,
     selectedCount: selectedLabels.length,
     byHotspot,
-    countsByGroup: buildCountsByGroup(selectedIds, hotspotsById, counterGroups),
+    countsByGroup,
+    labelsByGroup,
     annotations,
     annotationCount: Array.isArray(annotations) ? annotations.length : 0,
     updatedAt: new Date().toISOString(),
@@ -16040,8 +16306,14 @@ const HotspotMapField = ({
     if (mapValue?.countsByGroup && typeof mapValue.countsByGroup === "object") {
       return mapValue.countsByGroup
     }
-    return buildCountsByGroup(selectedIds, hotspotsById, normalizedCounterGroups)
-  }, [hotspotsById, mapValue?.countsByGroup, normalizedCounterGroups, selectedIds])
+    return buildCountsByGroup(selectedIds, hotspotsById, normalizedCounterGroups, normalizedHotspots)
+  }, [
+    hotspotsById,
+    mapValue?.countsByGroup,
+    normalizedCounterGroups,
+    normalizedHotspots,
+    selectedIds,
+  ])
   const summaryGroups = useMemo(() => {
     if (normalizedCounterGroups.length > 0) {
       return normalizedCounterGroups
@@ -20617,6 +20889,12 @@ const PastMeasurementField = ({
   docDateFieldPath = "docDate",
   maxHistory = 5,
   autoFillFromHistory = false,
+  // Legacy ^bringforward=NO^. A point-in-time score (Daily Morphine Equivalent
+  // Dose 61848, Opioid Risk Tool 61865) must be re-derived on a new encounter,
+  // never inherited from the previous one, so the prior value is shown as
+  // history but never seeded into the answer. Matches SubformScoring's prop of
+  // the same name, which gates observation defaults the same way.
+  bringForward = true,
   persistenceMode = "formOnly",
   valueType = "TEXT",
   observationDescription,
@@ -20634,6 +20912,15 @@ const PastMeasurementField = ({
   graphLinkText = "Graph",
   graphHref,
   openGraphInNewTab = true,
+  // Legacy \`lkp_field_*\` computes rendered a HyperLink! next to the graph link
+  // that copied the most recent value into one or more fields:
+  //   ^fieldname^ -> the measurement itself   (role "value")
+  //   ^textfield^ -> a paired free-text field (role "text")
+  //   ^score^     -> a paired score slot      (role "score")
+  // Postpartum/Prenatal use ^fieldname2^/^score2^, i.e. a second pair, which
+  // this array covers without extra props.
+  pullLinkText = "",
+  pullTargets = [],
   abnormalLow,
   abnormalHigh,
   criticalLow,
@@ -20738,11 +21025,53 @@ const PastMeasurementField = ({
   ), [codeFilter, commentPath, codePath, commentFilter, datePath, isHistoricalFormValue, sd, unitsPath, valuePath])
 
   const latestHistoryItem = historyItems[0] ?? null
+
+  const normalizedPullTargets = useMemo(() => (
+    (Array.isArray(pullTargets) ? pullTargets : [])
+      .map((target) => {
+        if (!target || typeof target !== "object") return null
+        const targetFieldId = String(target.fieldId || target.targetFieldId || "").trim()
+        if (!targetFieldId) return null
+        const role = String(target.role || "value").trim().toLowerCase()
+        return { fieldId: targetFieldId, role: role === "text" || role === "score" ? role : "value" }
+      })
+      .filter(Boolean)
+  ), [pullTargets])
+
+  const canPullLatest = (
+    !readOnly &&
+    !disabled &&
+    normalizedPullTargets.length > 0 &&
+    Boolean(latestHistoryItem)
+  )
+
+  const pullLatestIntoTargets = () => {
+    if (!canPullLatest) return
+    setFormData(produce((draft) => {
+      if (!draft.field) {
+        draft.field = { data: {}, status: {}, history: [] }
+      }
+      if (!draft.field.data || typeof draft.field.data !== "object") {
+        draft.field.data = {}
+      }
+      normalizedPullTargets.forEach((target) => {
+        const value = target.role === "score"
+          ? Number(stringifyValue(latestHistoryItem?.valueText))
+          : target.role === "text"
+            ? stringifyValue(latestHistoryItem?.comment ?? latestHistoryItem?.valueText ?? "")
+            : stringifyValue(latestHistoryItem?.valueText ?? "")
+        // A score slot only accepts a number; a non-numeric history value is
+        // skipped rather than written as NaN.
+        if (target.role === "score" && !Number.isFinite(value)) return
+        draft.field.data[target.fieldId] = value
+      })
+    }))
+  }
   const resolvedCurrentValue = isHistoricalFormValue
     ? latestHistoryItem?.valueText ?? ""
     : hasMeaningfulValue(storedValue)
       ? storedValue
-      : linkedObservationItem?.valueText ?? (autoFillFromHistory ? latestHistoryItem?.valueText : "") ?? ""
+      : linkedObservationItem?.valueText ?? (autoFillFromHistory && bringForward ? latestHistoryItem?.valueText : "") ?? ""
   const valueIsDate = displayFormat === "date" || (
     displayFormat === "auto" &&
     isNonEmptyString(valuePath) &&
@@ -20891,7 +21220,7 @@ const PastMeasurementField = ({
     if (!latestHistoryItem?.valueText) return
     if (isHistoricalFormValue && storedValue === latestHistoryItem.valueText) return
     if (!isHistoricalFormValue) {
-      if (!autoFillFromHistory) return
+      if (!autoFillFromHistory || !bringForward) return
       if (hasMeaningfulValue(storedValue)) return
       if (linkedObservationItem?.valueText) return
     }
@@ -20906,7 +21235,7 @@ const PastMeasurementField = ({
       if (!isHistoricalFormValue && hasMeaningfulValue(draft.field.data[effectiveFieldId])) return
       draft.field.data[effectiveFieldId] = latestHistoryItem.valueText
     }))
-  }, [autoFillFromHistory, effectiveFieldId, isHistoricalFormValue, latestHistoryItem, linkedObservationItem, setFormData, storedValue])
+  }, [autoFillFromHistory, bringForward, effectiveFieldId, isHistoricalFormValue, latestHistoryItem, linkedObservationItem, setFormData, storedValue])
 
   const handleValueChange = (event, nextValue) => {
     if (!effectiveFieldId) return
@@ -21013,6 +21342,11 @@ const PastMeasurementField = ({
               }}
             >
               <Stack horizontal verticalAlign="center" tokens={{ childrenGap: 8 }} styles={{ root: { flexWrap: "wrap" } }}>
+                {canPullLatest ? (
+                  <Link onClick={pullLatestIntoTargets}>
+                    {pullLinkText || "Use last"}
+                  </Link>
+                ) : null}
                 {isNonEmptyString(graphLinkText) ? (
                   isNonEmptyString(graphHref) ? (
                     <Link
@@ -29978,6 +30312,32 @@ export const componentIdentities: Record<string, any> = {
     "description": "Single clinical value with a per-author lock (field-level authorship); read-only to other users once claimed",
     "category": "Clinical",
     "version": "1.0.0"
+  },
+  'BulkSetField': {
+    "name": "BulkSetField",
+    "title": "Bulk Set Field",
+    "description": "Section-level checkbox or button that writes one value into a list of enrolled questions, with an optional contradiction warning.",
+    "version": {
+      "major": 1,
+      "minor": 0,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "Northern Health",
+    "author": "Northern Health",
+    "publisher": "Northern Health",
+    "globalIdentifier": "",
+    "requiredFormViewerVersion": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "requiredMoisVersion": {
+      "major": 2,
+      "minor": 28,
+      "patch": 10
+    },
+    "components": []
   },
   'ChartRecordTable': {
     "name": "ChartRecordTable",

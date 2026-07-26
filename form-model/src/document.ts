@@ -332,6 +332,10 @@ export interface ParsedField {
     | "always-calculated"
     | "calculated-until-overridden"
     | "suggested-calculation";
+  /** What to do before every referenced input has a value. Defaults to "compute-anyway". */
+  computedIncompleteBehavior?: "compute-anyway" | "show-text" | "hide";
+  /** Text shown in place of the total when computedIncompleteBehavior is "show-text". */
+  computedIncompleteText?: string;
   computedShowInterpretation?: boolean;
   computedInterpretation?: {
     label?: string;

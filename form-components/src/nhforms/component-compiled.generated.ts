@@ -1205,6 +1205,203 @@ const AuthorshipField = ({
     }
   }, lockInfo.note) : null);
 };`,
+  './BulkSetField/index.jsx': `const {
+  useEffect,
+  useMemo
+} = React;
+const {
+  Checkbox,
+  DefaultButton,
+  MessageBar,
+  MessageBarType,
+  PrimaryButton,
+  Stack,
+  Text
+} = Fluent;
+
+/**
+ * Section-level control that writes one value into a list of enrolled questions.
+ *
+ * This reproduces two legacy MOIS Dynamic Form behaviours that share a single
+ * shape — one control setting N fields at once:
+ *
+ *   str_action_default   "Apply defaults to All"  (54 controls across 10 forms)
+ *     Each enrolled question carries its own default, so every row supplies a
+ *     \`value\`.
+ *
+ *   str_action_noredflag "No Red Flags" / "Likely Negative"  (5 controls)
+ *     Every enrolled question is asserted to the same negative answer, so rows
+ *     omit \`value\` and fall back to \`assertValue\`. Legacy paired this with a
+ *     warning driven by
+ *       IF (str_action_noredflag = 'Y' and (str_field_0001 = 'Y' or ...), 1, 0)
+ *     which is the \`contradictionMode\` prop here.
+ *
+ * The control persists its own answer (legacy records carry fids and store
+ * ^on^/^off^ values such as Y/N or YES/NO), so \`controlFieldId\` is a real field.
+ * Prior values captured for reversal live in field.status — the session channel
+ * used by FormSessionRuntime and SubformScoring — so they are never written to
+ * the patient record.
+ */
+const normalizeBulkTargets = (targets, assertValue) => {
+  if (!Array.isArray(targets)) return [];
+  return targets.map(target => {
+    if (!target || typeof target !== "object") return null;
+    const fieldId = String(target.fieldId || target.targetFieldId || "").trim();
+    if (!fieldId) return null;
+    const raw = target.value !== undefined && target.value !== null && target.value !== "" ? target.value : assertValue;
+    if (raw === undefined || raw === null || raw === "") return null;
+    return {
+      fieldId,
+      value: String(raw)
+    };
+  }).filter(Boolean);
+};
+const isBlankAnswer = value => value === undefined || value === null || value === "" || Array.isArray(value) && value.length === 0;
+const comparableAnswer = value => {
+  if (value === undefined || value === null) return "";
+  if (typeof value === "object") {
+    return String(value.value ?? value.code ?? value.display ?? value.text ?? "");
+  }
+  return String(value);
+};
+function BulkSetField({
+  id = "bulkSetField",
+  controlFieldId,
+  label = "Apply defaults to All",
+  helpText = "",
+  affordance = "checkbox",
+  buttonType = "default",
+  applyLabel = "",
+  targets = [],
+  assertValue = "",
+  onValue = "Y",
+  offValue = "N",
+  onlyFillEmpty = false,
+  reversible = true,
+  contradictionMode = "warn",
+  contradictionMessage = "Some answers below no longer match this selection.",
+  readOnly = false,
+  disabled = false
+}) {
+  const [fd, setFd] = useActiveData();
+  const effectiveControlFieldId = controlFieldId || id;
+  const fieldData = fd?.field?.data ?? {};
+  const isDisabled = readOnly || disabled;
+  const normalizedTargets = useMemo(() => normalizeBulkTargets(targets, assertValue), [targets, assertValue]);
+  const isApplied = comparableAnswer(fieldData[effectiveControlFieldId]) === String(onValue);
+  const contradictedFieldIds = useMemo(() => {
+    if (!isApplied || contradictionMode === "off") return [];
+    return normalizedTargets.filter(target => comparableAnswer(fieldData[target.fieldId]) !== target.value).map(target => target.fieldId);
+  }, [contradictionMode, fieldData, isApplied, normalizedTargets]);
+  const writeControl = (draft, value) => {
+    if (!draft.field) draft.field = {
+      data: {},
+      status: {},
+      history: []
+    };
+    if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {};
+    if (!draft.field.status || typeof draft.field.status !== "object") draft.field.status = {};
+    if (!draft.formData || typeof draft.formData !== "object") draft.formData = {};
+    draft.field.data[effectiveControlFieldId] = value;
+    draft.formData[effectiveControlFieldId] = value;
+  };
+  const apply = () => {
+    if (isDisabled) return;
+    setFd(draft => {
+      writeControl(draft, onValue);
+      const previous = {};
+      normalizedTargets.forEach(target => {
+        const current = draft.field.data[target.fieldId];
+        if (onlyFillEmpty && !isBlankAnswer(current)) return;
+        previous[target.fieldId] = current === undefined ? null : current;
+        draft.field.data[target.fieldId] = target.value;
+        draft.formData[target.fieldId] = target.value;
+      });
+      draft.field.status[effectiveControlFieldId] = {
+        appliedPrevious: previous
+      };
+    });
+  };
+  const unapply = () => {
+    if (isDisabled) return;
+    setFd(draft => {
+      writeControl(draft, offValue);
+      const previous = reversible ? draft.field.status?.[effectiveControlFieldId]?.appliedPrevious : null;
+      if (previous && typeof previous === "object") {
+        Object.entries(previous).forEach(([fieldId, value]) => {
+          if (value === null) {
+            delete draft.field.data[fieldId];
+            delete draft.formData[fieldId];
+            return;
+          }
+          draft.field.data[fieldId] = value;
+          draft.formData[fieldId] = value;
+        });
+      }
+      if (draft.field.status) delete draft.field.status[effectiveControlFieldId];
+    });
+  };
+
+  // Legacy showed a warning banner and left the answers alone; "clear-control"
+  // is the stricter reading where the assertion retracts itself once it is
+  // contradicted. There is no submission-blocking channel at this layer.
+  const shouldClearControl = contradictionMode === "clear-control" && contradictedFieldIds.length > 0;
+  useEffect(() => {
+    if (!shouldClearControl || isDisabled) return;
+    setFd(draft => {
+      writeControl(draft, offValue);
+      if (draft.field.status) delete draft.field.status[effectiveControlFieldId];
+    });
+    // writeControl closes over effectiveControlFieldId, which is in the deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shouldClearControl, isDisabled, offValue, effectiveControlFieldId]);
+  const showWarning = contradictionMode === "warn" && contradictedFieldIds.length > 0;
+  const ButtonComponent = buttonType === "primary" ? PrimaryButton : DefaultButton;
+  return /*#__PURE__*/React.createElement("div", {
+    "data-field-id": effectiveControlFieldId,
+    "data-component": "BulkSetField",
+    style: {
+      margin: "8px 10px"
+    }
+  }, /*#__PURE__*/React.createElement(Stack, {
+    tokens: {
+      childrenGap: 6
+    }
+  }, affordance === "button" ? /*#__PURE__*/React.createElement(Stack, {
+    horizontal: true,
+    verticalAlign: "center",
+    tokens: {
+      childrenGap: 8
+    },
+    wrap: true
+  }, /*#__PURE__*/React.createElement(ButtonComponent, {
+    text: applyLabel || label,
+    disabled: isDisabled,
+    onClick: isApplied && reversible ? unapply : apply
+  }), isApplied ? /*#__PURE__*/React.createElement(Text, {
+    variant: "small",
+    styles: {
+      root: {
+        color: "#605e5c"
+      }
+    }
+  }, "Applied to ", normalizedTargets.length, " question", normalizedTargets.length === 1 ? "" : "s") : null) : /*#__PURE__*/React.createElement(Checkbox, {
+    label: label,
+    checked: isApplied,
+    disabled: isDisabled,
+    onChange: (_, checked) => checked ? apply() : unapply()
+  }), helpText ? /*#__PURE__*/React.createElement(Text, {
+    variant: "small",
+    styles: {
+      root: {
+        color: "#605e5c"
+      }
+    }
+  }, helpText) : null, showWarning ? /*#__PURE__*/React.createElement(MessageBar, {
+    messageBarType: MessageBarType.warning,
+    isMultiline: false
+  }, contradictionMessage) : null));
+}`,
   './ChartRecordTable/index.jsx': `function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 if (typeof ChartRecordTable === "undefined") {
   window.ChartRecordTable = null;
@@ -3443,7 +3640,13 @@ const ComputedField = ({
   required = false,
   readOnly,
   showInterpretation = false,
-  interpretation
+  interpretation,
+  // Legacy calculators (BPI Severity/Interference/Relief, PEG, DLQI) pair
+  //   IF (IsNull(...), 'Incomplete', '')
+  // with mirrored visible expressions so a partial total never shows and never
+  // persists. "compute-anyway" is the default so existing forms are unchanged.
+  incompleteBehavior = "compute-anyway",
+  incompleteText = "Incomplete"
 }) => {
   const [fd, setFd] = useActiveData();
   const valuesByFieldId = fd?.field?.data || {};
@@ -3451,22 +3654,27 @@ const ComputedField = ({
   const isOverridden = _computedFieldIsOverridden(valuesByFieldId, fieldId);
   const computedValue = useMemo(() => _evaluateComputedExpression(expression, valuesByFieldId, fieldId), [expression, fieldId, valuesByFieldId]);
   const roundedValue = useMemo(() => _roundComputedValue(computedValue, precision), [computedValue, precision]);
+  const isIncomplete = useMemo(() => incompleteBehavior !== "compute-anyway" && !_hasAllReferencedValues(expression, valuesByFieldId), [expression, incompleteBehavior, valuesByFieldId]);
   const storedValue = useMemo(() => {
+    // A partial total must not reach the patient record, so an incomplete
+    // calculation persists null regardless of which incomplete style is used.
+    if (isIncomplete) return null;
     if (typeof roundedValue === "string" || typeof roundedValue === "boolean") return roundedValue;
     if (!Number.isFinite(roundedValue)) return null;
     if (resultType === "text") {
       return _toDisplayValue(roundedValue, precision, "text");
     }
     return roundedValue;
-  }, [precision, resultType, roundedValue]);
+  }, [isIncomplete, precision, resultType, roundedValue]);
   const displayValue = useMemo(() => {
+    if (isIncomplete) return incompleteBehavior === "show-text" ? incompleteText : "";
     // String/boolean results (e.g. iif chains returning "LOW"/"HIGH") must
     // render, not just persist — Number.isFinite alone blanked them.
     if (typeof roundedValue === "string") return roundedValue;
     if (typeof roundedValue === "boolean") return String(roundedValue);
     if (!Number.isFinite(roundedValue)) return "";
     return _toDisplayValue(roundedValue, precision, resultType);
-  }, [precision, resultType, roundedValue]);
+  }, [incompleteBehavior, incompleteText, isIncomplete, precision, resultType, roundedValue]);
   const currentValue = valuesByFieldId?.[fieldId];
   const enteredDisplayValue = _toEditableComputedValue(currentValue);
   const renderedValue = policy === "always-calculated" ? displayValue : enteredDisplayValue;
@@ -3545,6 +3753,10 @@ const ComputedField = ({
       draft.field.data.__computedFieldState = stateContainer;
     });
   };
+
+  // Legacy hid the score control outright until every item was answered. All
+  // hooks above have already run, so bailing out here is safe.
+  if (isIncomplete && incompleteBehavior === "hide") return null;
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(TextArea, {
     fieldId: fieldId,
     label: label,
@@ -14345,6 +14557,19 @@ const UpdateContext = (fd, id, values) => {
  * - Optional multi-counter summary using counterGroups
  * - Backward compatible fallback summary using hotspot.group values
  *
+ * Stored value shape (read by observation/formData templates as
+ * \`{{fieldId.path}}\`, e.g. \`{{tender_joints.countsByGroup.CDAI_SDAI}}\`):
+ * {
+ *   selectedIds: string[],
+ *   selectedLabels: string[],
+ *   selectedCount: number,
+ *   byHotspot: { [hotspotId]: boolean },
+ *   countsByGroup: { [groupId]: number },
+ *   labelsByGroup: { [groupId]: string[] },
+ *   annotations: [...], annotationCount: number,
+ *   updatedAt: string
+ * }
+ *
  * Hotspot config shape:
  * {
  *   id: string,
@@ -14882,33 +15107,49 @@ const injectFieldFillValuesIntoSvg = (markup, numberFields, valuesByFieldId = {}
     return ensureResponsiveSvg(input, viewBoxMarginPercent);
   }
 };
-const buildCountsByGroup = (selectedIds, hotspotsById, counterGroups = []) => {
+
+/**
+ * Per-group selection summary: how many hotspots of each counter group are
+ * selected, and which ones. Counts and labels are built together so a report
+ * can never disagree with the count published beside it.
+ *
+ * Labels follow hotspot order (not the group's authored id order) so a group
+ * report reads the same way as selectedLabels.
+ */
+const buildGroupSelectionSummary = (selectedIds, hotspots, hotspotsById, counterGroups = []) => {
+  const countsByGroup = {};
+  const labelsByGroup = {};
   if (Array.isArray(counterGroups) && counterGroups.length > 0) {
-    const counts = {};
     counterGroups.forEach(group => {
       const groupId = normalizeString(group.id, "");
       if (!groupId) return;
-      const assignedHotspotIds = Array.isArray(group.hotspotIds) ? group.hotspotIds : [];
-      let count = 0;
-      assignedHotspotIds.forEach(hotspotId => {
-        if (!hotspotsById.has(hotspotId)) return;
-        if (selectedIds.has(hotspotId)) {
-          count += 1;
-        }
+      const assignedHotspotIds = new Set((Array.isArray(group.hotspotIds) ? group.hotspotIds : []).filter(hotspotId => hotspotsById.has(hotspotId)));
+      const labels = [];
+      hotspots.forEach(hotspot => {
+        if (!assignedHotspotIds.has(hotspot.id)) return;
+        if (!selectedIds.has(hotspot.id)) return;
+        labels.push(hotspot.label || hotspot.id);
       });
-      counts[groupId] = count;
+      countsByGroup[groupId] = labels.length;
+      labelsByGroup[groupId] = labels;
     });
-    return counts;
+    return {
+      countsByGroup,
+      labelsByGroup
+    };
   }
-  const counts = {};
-  selectedIds.forEach(id => {
-    const hotspot = hotspotsById.get(id);
-    if (!hotspot) return;
+  hotspots.forEach(hotspot => {
+    if (!selectedIds.has(hotspot.id)) return;
     const group = hotspot.group || "default";
-    counts[group] = (counts[group] || 0) + 1;
+    countsByGroup[group] = (countsByGroup[group] || 0) + 1;
+    labelsByGroup[group] = [...(labelsByGroup[group] || []), hotspot.label || hotspot.id];
   });
-  return counts;
+  return {
+    countsByGroup,
+    labelsByGroup
+  };
 };
+const buildCountsByGroup = (selectedIds, hotspotsById, counterGroups = [], hotspots = []) => buildGroupSelectionSummary(selectedIds, hotspots.length > 0 ? hotspots : Array.from(hotspotsById.values()), hotspotsById, counterGroups).countsByGroup;
 const buildMapValue = (selectedIds, hotspots, hotspotsById, counterGroups = [], annotations = []) => {
   const byHotspot = {};
   const selectedLabels = [];
@@ -14919,12 +15160,17 @@ const buildMapValue = (selectedIds, hotspots, hotspotsById, counterGroups = [], 
       selectedLabels.push(hotspot.label || hotspot.id);
     }
   });
+  const {
+    countsByGroup,
+    labelsByGroup
+  } = buildGroupSelectionSummary(selectedIds, hotspots, hotspotsById, counterGroups);
   return {
     selectedIds: hotspots.filter(hotspot => selectedIds.has(hotspot.id)).map(hotspot => hotspot.id),
     selectedLabels,
     selectedCount: selectedLabels.length,
     byHotspot,
-    countsByGroup: buildCountsByGroup(selectedIds, hotspotsById, counterGroups),
+    countsByGroup,
+    labelsByGroup,
     annotations,
     annotationCount: Array.isArray(annotations) ? annotations.length : 0,
     updatedAt: new Date().toISOString()
@@ -15428,8 +15674,8 @@ const HotspotMapField = ({
     if (mapValue?.countsByGroup && typeof mapValue.countsByGroup === "object") {
       return mapValue.countsByGroup;
     }
-    return buildCountsByGroup(selectedIds, hotspotsById, normalizedCounterGroups);
-  }, [hotspotsById, mapValue?.countsByGroup, normalizedCounterGroups, selectedIds]);
+    return buildCountsByGroup(selectedIds, hotspotsById, normalizedCounterGroups, normalizedHotspots);
+  }, [hotspotsById, mapValue?.countsByGroup, normalizedCounterGroups, normalizedHotspots, selectedIds]);
   const summaryGroups = useMemo(() => {
     if (normalizedCounterGroups.length > 0) {
       return normalizedCounterGroups.filter(group => group.showCounter !== false).map(group => ({
@@ -22256,6 +22502,12 @@ const PastMeasurementField = ({
   docDateFieldPath = "docDate",
   maxHistory = 5,
   autoFillFromHistory = false,
+  // Legacy ^bringforward=NO^. A point-in-time score (Daily Morphine Equivalent
+  // Dose 61848, Opioid Risk Tool 61865) must be re-derived on a new encounter,
+  // never inherited from the previous one, so the prior value is shown as
+  // history but never seeded into the answer. Matches SubformScoring's prop of
+  // the same name, which gates observation defaults the same way.
+  bringForward = true,
   persistenceMode = "formOnly",
   valueType = "TEXT",
   observationDescription,
@@ -22273,6 +22525,15 @@ const PastMeasurementField = ({
   graphLinkText = "Graph",
   graphHref,
   openGraphInNewTab = true,
+  // Legacy \`lkp_field_*\` computes rendered a HyperLink! next to the graph link
+  // that copied the most recent value into one or more fields:
+  //   ^fieldname^ -> the measurement itself   (role "value")
+  //   ^textfield^ -> a paired free-text field (role "text")
+  //   ^score^     -> a paired score slot      (role "score")
+  // Postpartum/Prenatal use ^fieldname2^/^score2^, i.e. a second pair, which
+  // this array covers without extra props.
+  pullLinkText = "",
+  pullTargets = [],
   abnormalLow,
   abnormalHigh,
   criticalLow,
@@ -22347,7 +22608,40 @@ const PastMeasurementField = ({
     applyDocumentDateFilter: false
   })[0] ?? null, [codeFilter, commentPath, codePath, commentFilter, datePath, isHistoricalFormValue, sd, unitsPath, valuePath]);
   const latestHistoryItem = historyItems[0] ?? null;
-  const resolvedCurrentValue = isHistoricalFormValue ? latestHistoryItem?.valueText ?? "" : hasMeaningfulValue(storedValue) ? storedValue : linkedObservationItem?.valueText ?? (autoFillFromHistory ? latestHistoryItem?.valueText : "") ?? "";
+  const normalizedPullTargets = useMemo(() => (Array.isArray(pullTargets) ? pullTargets : []).map(target => {
+    if (!target || typeof target !== "object") return null;
+    const targetFieldId = String(target.fieldId || target.targetFieldId || "").trim();
+    if (!targetFieldId) return null;
+    const role = String(target.role || "value").trim().toLowerCase();
+    return {
+      fieldId: targetFieldId,
+      role: role === "text" || role === "score" ? role : "value"
+    };
+  }).filter(Boolean), [pullTargets]);
+  const canPullLatest = !readOnly && !disabled && normalizedPullTargets.length > 0 && Boolean(latestHistoryItem);
+  const pullLatestIntoTargets = () => {
+    if (!canPullLatest) return;
+    setFormData(produce(draft => {
+      if (!draft.field) {
+        draft.field = {
+          data: {},
+          status: {},
+          history: []
+        };
+      }
+      if (!draft.field.data || typeof draft.field.data !== "object") {
+        draft.field.data = {};
+      }
+      normalizedPullTargets.forEach(target => {
+        const value = target.role === "score" ? Number(stringifyValue(latestHistoryItem?.valueText)) : target.role === "text" ? stringifyValue(latestHistoryItem?.comment ?? latestHistoryItem?.valueText ?? "") : stringifyValue(latestHistoryItem?.valueText ?? "");
+        // A score slot only accepts a number; a non-numeric history value is
+        // skipped rather than written as NaN.
+        if (target.role === "score" && !Number.isFinite(value)) return;
+        draft.field.data[target.fieldId] = value;
+      });
+    }));
+  };
+  const resolvedCurrentValue = isHistoricalFormValue ? latestHistoryItem?.valueText ?? "" : hasMeaningfulValue(storedValue) ? storedValue : linkedObservationItem?.valueText ?? (autoFillFromHistory && bringForward ? latestHistoryItem?.valueText : "") ?? "";
   const valueIsDate = displayFormat === "date" || displayFormat === "auto" && isNonEmptyString(valuePath) && valuePath === datePath;
   const displayedCurrentValue = valueIsDate ? formatDate(resolvedCurrentValue) : stringifyValue(resolvedCurrentValue);
   const numericCurrentValue = Number(stringifyValue(resolvedCurrentValue));
@@ -22451,7 +22745,7 @@ const PastMeasurementField = ({
     if (!latestHistoryItem?.valueText) return;
     if (isHistoricalFormValue && storedValue === latestHistoryItem.valueText) return;
     if (!isHistoricalFormValue) {
-      if (!autoFillFromHistory) return;
+      if (!autoFillFromHistory || !bringForward) return;
       if (hasMeaningfulValue(storedValue)) return;
       if (linkedObservationItem?.valueText) return;
     }
@@ -22469,7 +22763,7 @@ const PastMeasurementField = ({
       if (!isHistoricalFormValue && hasMeaningfulValue(draft.field.data[effectiveFieldId])) return;
       draft.field.data[effectiveFieldId] = latestHistoryItem.valueText;
     }));
-  }, [autoFillFromHistory, effectiveFieldId, isHistoricalFormValue, latestHistoryItem, linkedObservationItem, setFormData, storedValue]);
+  }, [autoFillFromHistory, bringForward, effectiveFieldId, isHistoricalFormValue, latestHistoryItem, linkedObservationItem, setFormData, storedValue]);
   const handleValueChange = (event, nextValue) => {
     if (!effectiveFieldId) return;
     if (readOnly || disabled) return;
@@ -22589,7 +22883,9 @@ const PastMeasurementField = ({
         flexWrap: "wrap"
       }
     }
-  }, isNonEmptyString(graphLinkText) ? isNonEmptyString(graphHref) ? /*#__PURE__*/React.createElement(Link, {
+  }, canPullLatest ? /*#__PURE__*/React.createElement(Link, {
+    onClick: pullLatestIntoTargets
+  }, pullLinkText || "Use last") : null, isNonEmptyString(graphLinkText) ? isNonEmptyString(graphHref) ? /*#__PURE__*/React.createElement(Link, {
     href: graphHref,
     target: openGraphInNewTab ? "_blank" : undefined,
     rel: openGraphInNewTab ? "noopener noreferrer" : undefined
@@ -31629,11 +31925,12 @@ export const componentDefinedNames: Record<string, string[]> = {
   './AssessmentScoringTable/index.jsx': ["AssessmentScoringTable","getFieldValue","hasValue","inputStyle","labelCellStyle","number","numberOrBlank","raw","renderRow","scoreRows","setScore","sum","tableStyle","total","value","valueCellStyle"],
   './AttestationSignOff/index.jsx': ["AttestationSignOff","cleaned","current","deriveInitials","flatTargets","getCurrentActorName","initials","key","name","nestedTargets","next","normalizeInitialsName","normalizeRoleOptions","normalizeTargets","parts","roleOptions","row","sd","signatureFieldId","signatureValue","signedAt","source","table","text","updateValue","value"],
   './AuthorshipField/index.jsx': ["AuthorshipField","DEFAULT_WINDOW_HOURS","_defaultPolicy","_nhAuth","_normalizeFieldOptions","actor","actorFrom","addHoursIso","base","buildKey","c","changed","ck","claim","claims","commitSave","commitValue","componentId","current","d","data","editableUntil","effectiveFieldId","euDate","existing","expired","fieldData","formatTimestamp","isNonEmpty","isOwner","keepStatus","key","label","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","nextStatus","nhAuth","normalizeStore","now","nowIso","numeric","optionList","ownerId","ownerName","ownerRefresh","pad2","pending","policy","policyAppliesToAction","prepareSave","query","raw","readOnly","readStore","release","renderInput","resolveNow","sameActor","sd","section","store","text","trimmed","ts","untilSelf","value","windowHours"],
+  './BulkSetField/index.jsx': ["BulkSetField","ButtonComponent","apply","comparableAnswer","contradictedFieldIds","current","effectiveControlFieldId","fieldData","fieldId","isApplied","isBlankAnswer","isDisabled","normalizeBulkTargets","normalizedTargets","previous","raw","shouldClearControl","showWarning","unapply","writeControl"],
   './ChartRecordTable/index.jsx': ["ChartRecordTable","_chartRecordTableActiveConnections","_chartRecordTableActivePlannedActions","_chartRecordTableGenericColumns","_chartRecordTableGenericEntryColumns","_chartRecordTablePresets","_chartRecordTableSorts","_chartRecordTableStartDateDesc","byType","preset","resolvedChartColumns","resolvedEntryColumns","resolvedFieldId","resolvedFilterPred","resolvedId","resolvedLabel","resolvedListCompare","resolvedMoisModule","resolvedSelectionType","resolvedSourceId","resolvedSourceMap"],
   './CodedObservationChoiceField/index.jsx': ["CodedObservationChoiceField","candidates","checklistOptions","code","codedChoicePayloadsEqual","codings","commentValue","componentId","container","createdBy","currentPayload","display","effectiveFieldId","effectiveRenderAs","effectiveSelectionType","findExistingObservationId","formatCodedChoiceReport","fromContext","handleFindCodeChange","isMultiple","match","nextGroup","normalizeCodedChoiceOptions","normalizeSelectedCodings","oldId","option","options","report","sd","selectOptions","selectedValue","setCodedChoicePayload","stripVolatileCodedChoicePayloadFields","value","values","writeCodedChoiceValue"],
   './CommonSchemaDefn/index.jsx': ["NameBlockFields","active","commonSchemaDefn","formHistorySchema","makeCodedObsUpdates","makeObsUpdatesFromVs","makeTextObsUpdates","makeValueSetOptions","nameBlockSchema","newDco","oldObs","oldObsId","options","selectAll","startDateDesc","valueSet","vso","ynuaOptions"],
   './CompactBooleanField/index.jsx': ["BooleanLabelPresets","CompactBooleanChecklist","CompactBooleanChecklistSchema","CompactBooleanField","CompactBooleanFieldSchema","CompactBooleanGroup","CompactChoiceField","CompactChoiceFieldMultiSchema","CompactChoiceFieldSchema","OptionButtons","YesNoButtons","baseContainerStyle","buttonStyle","checkboxWrapperRef","choiceContent","commitValue","containerStyle","currentData","currentValue","data","decodePDFHex","decoded","fieldContent","getBooleanLabels","getButtonStyles","getCardContainerStyles","getFieldContainerStyles","getWidthStyle","handleChange","handleCheckboxChange","handleClick","handleNoClick","handleYesClick","input","isDarkMode","isDisabled","isHorizontal","isLast","isLeftLabel","isMultiple","isSelected","labelStyle","lastRowStyle","newValues","noButtonStyle","normalizeValue","normalized","normalizedValue","noteStyle","prevDecoded","rowStyle","selected","selectedValues","setFormData","sizeStyles","theme","themeLabelMaxWidth","themeLabelMinWidth","titleStyle","values","widthMap","yesButtonStyle"],
-  './ComputedField/index.jsx': ["ComputedField","_COMPUTED_REF_PATTERN","_MS_PER_DAY","_calendarDayNumber","_computedFieldIsOverridden","_computedFieldState","_contains","_countTrue","_daysSince","_escapeRegExp","_evaluateComputedExpression","_extractComputedReferences","_floor","_getInterpretationRange","_hasAllReferencedValues","_hasValue","_iif","_isDateOnlyValue","_isSafeComputedExpression","_max","_min","_mod","_monthsSince","_normalizeCalculationPolicy","_numericExtrema","_replaceBareReferencesOutsideQuotes","_round","_roundComputedValue","_score","_shouldApplyComputedValue","_stripQuotedStrings","_toComparableValue","_toDateValue","_toDisplayValue","_toEditableComputedValue","_toNumericValue","bareRefs","bracketedRefs","canEdit","canShowInterpretation","candidate","computedValue","currentValue","cursor","date","dateOnly","digits","direct","displayValue","enteredDisplayValue","externallyReadOnly","factor","interpretationRange","interpretationValue","isOverridden","markOverridden","max","min","months","nextSegment","numeric","numericDivisor","numericPrecision","numericValues","parsed","passesMax","passesMin","policy","prepared","previousState","reference","refs","renderedValue","replaceInSegment","replaced","result","rounded","roundedValue","start","state","stateContainer","stateMatches","storedValue","stringPattern","strippedExpression","tail","trimmed","uniqueBareRefs","uniqueBracketedRefs","unwrappedExpression","useCalculatedValue","valueMatches","valuesByFieldId"],
+  './ComputedField/index.jsx': ["ComputedField","_COMPUTED_REF_PATTERN","_MS_PER_DAY","_calendarDayNumber","_computedFieldIsOverridden","_computedFieldState","_contains","_countTrue","_daysSince","_escapeRegExp","_evaluateComputedExpression","_extractComputedReferences","_floor","_getInterpretationRange","_hasAllReferencedValues","_hasValue","_iif","_isDateOnlyValue","_isSafeComputedExpression","_max","_min","_mod","_monthsSince","_normalizeCalculationPolicy","_numericExtrema","_replaceBareReferencesOutsideQuotes","_round","_roundComputedValue","_score","_shouldApplyComputedValue","_stripQuotedStrings","_toComparableValue","_toDateValue","_toDisplayValue","_toEditableComputedValue","_toNumericValue","bareRefs","bracketedRefs","canEdit","canShowInterpretation","candidate","computedValue","currentValue","cursor","date","dateOnly","digits","direct","displayValue","enteredDisplayValue","externallyReadOnly","factor","interpretationRange","interpretationValue","isIncomplete","isOverridden","markOverridden","max","min","months","nextSegment","numeric","numericDivisor","numericPrecision","numericValues","parsed","passesMax","passesMin","policy","prepared","previousState","reference","refs","renderedValue","replaceInSegment","replaced","result","rounded","roundedValue","start","state","stateContainer","stateMatches","storedValue","stringPattern","strippedExpression","tail","trimmed","uniqueBareRefs","uniqueBracketedRefs","unwrappedExpression","useCalculatedValue","valueMatches","valuesByFieldId"],
   './ConditionalGroup/index.jsx': ["ConditionalField","ConditionalGroup","ConditionalGroupSchema","ConditionalReadOnly","ControllerLabelPresets","DISABLED_NATIVE_ELEMENTS","LogicGateContext","LogicGateProvider","MAX_SUBGROUP_DEPTH","READ_ONLY_NATIVE_ELEMENTS","allParentsVisible","baseContainerStyle","baseContentStyle","checkChoiceMatch","checkComparisonMatch","checkControllerMatch","childContext","clippedField","cloneWithProtection","conditionMet","containerStyle","contentNode","contentRef","contentStyle","context","contextValue","controllerFieldId","controllerValue","controllerWrapperStyle","createBranchingRule","currentDepth","defaultPadding","depthIndicatorStyle","effectiveValue","evaluateConditionEntries","evaluateConditionEntry","fieldValue","fieldValues","frame","generateConditionalGroupJSX","generateGroup","getControllerValue","groupRect","handleControllerChange","hasMatch","hiddenIndicatorStyle","indent","isDarkMode","isGroupVisible","isVisible","jsx","left","matches","mergeStyles","mode","nestedValue","nextProps","normalizeComparableValue","normalizeComparableValues","normalizeValue","normalized","normalizedOptionValues","orderedRules","override","overrides","parentChain","parentContext","payloads","props","protectedChildren","readControllerValue","rect","reportOverflow","result","right","rule","rules","theme","titleStyle","type","useConditionalVisibility","useIsVisible","useLogicGate","usesDisabledFallback"],
   './Conditions/index.jsx': ["Conditions","ConditionsFields"],
   './Connections/index.jsx': ["CONNECTIONS_SORTS","Connections","ConnectionsFields","SelectActiveConnections","byType","prop","resolvedCompare"],
@@ -31657,7 +31954,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './HealthMaintenanceReview/index.jsx': ["DEFAULT_HEALTH_MAINTENANCE_RULES","HealthMaintenanceReview","ItemCard","STATUS_META","STATUS_ORDER","Sparkline","StatusBadge","SummaryCard","activeRoot","addDays","age","alias","allItems","appendRecord","appliesTo","asOf","base","buckets","buildDueText","buildReviewItem","buildSparklinePath","candidate","candidateKeys","chartNumber","code","codeMatch","codes","coercePositiveInt","collectConditionRecords","collectObservationRecords","collected","collectedDate","computeAge","conditionSpecific","conditions","context","current","date","dateOnly","day","daysBetween","dedupeStrings","deduped","delta","description","descriptionMatch","descriptions","direct","display","dob","dueDate","effectiveRules","effectiveSource","end","explicitDate","family","findObservationHistory","findPathHistory","first","flattenRuleEntries","flattenValues","flattened","formatDate","formatFrequencyLabel","formatValueLabel","frequencyDays","fromAdmin","fromEntry","fromGender","fromSource","gender","general","generalItems","generalSource","groupItemsBySection","healthNumber","history","isActive","isMeaningfulValue","isObject","isRuleApplicable","key","latest","match","matchedConditionGroups","matchesConditionFilters","max","mergeSourceData","merged","meta","middle","min","month","monthDelta","months","next","normalizeConditionRecord","normalizeDate","normalizeGenderValue","normalizeObservationRecord","normalizePathRecord","normalizePatientName","normalizeRuleItem","normalizeRuleSet","normalizeString","normalized","normalizedCodes","normalizedFrequencyDays","normalizedPath","normalizedText","normalizedY","numeric","observationHistory","observations","out","override","parseNumericValue","parsed","parsedRules","parts","path","pathHistory","patient","patientCandidates","patientSex","range","raw","rawConditionGroups","readScopedPathValue","renderHeaderField","resolveDate","resolvePathValue","resolved","resolvedFieldId","resolvedReviewDate","review","ruleSource","scoped","sd","seen","segments","start","status","statusDelta","stringifyValue","stroke","summary","text","textMatch","toArrayOfRecords","toDisplayGender","toPathSegments","trendHistory","trendPoints","triggerSummaryText","trimmed","unitsText","usableHeight","usableWidth","value","valueText","values","x","y","year","years"],
   './HistoricalObservationTable/index.jsx': ["HistoricalObservationTable","current","date","getHistorySource","grouped","historyDateKey","matchedColumn","raw","rows","sd","source","steps"],
   './HonosQuestion/index.jsx': ["CHOICE_FIELD_STYLE","HonosFinalScore","QUESTION_STACK_STYLE","QUESTION_defaultLabelStyle","SCALE_10_LEGENDS","SCALE_10_LEGEND_LOOKUP","SCALE_10_OPTIONS","SCALE_5_LEGENDS","SCALE_5_LEGEND_LOOKUP","SCALE_5_OPTIONS","Scale10","Scale10Legend","Scale5","Scale5Legend","Scale5QuestionList","Scale5SubmitButton","Scale5ToolTip","ScaleLegend","UpdateContext","buildLegendLookupFromOptions","buildTooltipLookup","calculatedTotal","createScaleQuestion","customChoiceOptions","data","description","dropdownStyles","effectiveChoiceOptions","effectiveTooltip","fallbackLookup","fditem","fillAllUnfilledQuestions","finalScoreStyle","generatedTooltip","handleChoiceChanged","handleDropdownChanged","handleKeyUp","i","item","key","keySource","missingRequiredAnswer","missingRequiredDropdown","nextChoiceGroup","normalizeScaleChoiceOptions","numeric","numericValue","option","questionIds","questionStyle","rawValue","rawfditem","renderedChoiceOptions","requiredDropdownQuestionIds","requiredQuestionIds","scoredQuestionIds","seenKeys","selectedOptions","submitDisabled","targetFieldId","text","theme","toFiniteNumber","tooltipList","tooltipLookup","totalScore","value"],
-  './HotspotMapField/index.jsx': ["ANNOTATION_SYMBOL_LABELS","DEFAULT_ANNOTATION_COLOR","DEFAULT_ANNOTATION_SIZE_PERCENT","DEFAULT_ANNOTATION_SYMBOL","DEFAULT_ANNOTATION_SYMBOLS","DEFAULT_INTERACTION_MODE","DEFAULT_MAP_MARGIN_PX","DEFAULT_MAP_MAX_WIDTH","DEFAULT_MAP_MIN_HEIGHT","DEFAULT_MAP_PADDING_PX","DEFAULT_MAP_WIDTH_PERCENT","DEFAULT_MAP_ZOOM_PERCENT","DEFAULT_MARKER_RADIUS","DEFAULT_MARKER_SIZE","DEFAULT_NUMBER_FIELD_WIDTH_PERCENT","DEFAULT_SVG_VIEWBOX_MARGIN_PERCENT","HotspotMapField","annotationDefaultSymbol","annotationPointsToSvgString","annotationSymbols","annotations","append","assignedHotspotIds","baseId","bounds","buildCountsByGroup","buildFallbackPolygon","buildMapValue","byHotspot","centroid","centroidFromPoints","circleAspectRatio","clampPercent","clampSvgViewBoxMarginPercent","clamped","color","commitMapState","commitSelection","compact","count","counterGroups","counts","countsByGroup","createHotspotMapConfig","cx","cy","deltaX","deltaY","displayValue","doc","drawingPointerIdRef","drawingPointsRef","element","elements","ensureResponsiveSvg","ensuredDefault","fallbackList","fieldFillTextLayerIdSet","fieldFillValueMap","fieldId","fields","fill","getHotspotLabelAnchor","getNumberFieldValue","getPointFromEvent","group","groupId","groupLabel","groupsById","half","handleAddAnnotation","handleDrawPointerDown","handleDrawPointerMove","handleDrawPointerUp","handleHotspotKeyDown","handleNumberFieldChange","handleToggleHotspot","hasAnnotations","hasExplicitCounterGroups","hasMapData","hasSelections","hasSvgBackground","height","heightAttr","hotspot","hotspotIdSet","hotspots","hotspotsById","id","ids","importSvgHotspots","injectFieldFillValuesIntoSvg","inlineStyle","input","interactionMode","isDarkMode","isDrawModeActive","isDrawingRef","isFieldFillMode","isSelected","isSymbolModeActive","labelAnchor","map","mapFrameRef","mapFrameStyle","mapValue","marginPercent","markerSize","markup","match","max","min","names","next","nextAnnotations","nextAspectRatio","nextPoints","nextSymbol","nextValue","normalizeAnnotationPoints","normalizeAnnotationSymbol","normalizeAnnotationSymbols","normalizeAnnotationType","normalizeAnnotations","normalizeColor","normalizeCounterGroupId","normalizeCounterGroups","normalizeHotspotPoints","normalizeHotspots","normalizeMapInteractionMode","normalizeNumberFields","normalizeShape","normalizeString","normalized","normalizedAnnotations","normalizedCounterGroups","normalizedHotspot","normalizedHotspots","normalizedId","normalizedNumberFields","normalizedNumeric","normalizedRaw","numberFields","numeric","observer","overlayStyle","overlayViewBox","padX","padY","pair","panelStyle","parseAnnotationSymbol","parseList","parseSvgAspectRatio","parseSvgNumber","parsed","parsedPoints","parsedViewBox","parser","parts","point","points","pointsAttr","pointsToSvgString","previous","projectMapLengthToRenderPercent","projectMapPercentToRenderPercent","projectRenderPercentToMapPercent","r","radius","raw","rawId","rawLabel","rawValue","rect","renderAnnotationModeControls","renderMapFrame","renderSummary","renderedWidth","renderedX","renderedY","resolveAnnotationSymbol","resolveMapInteractionMode","resolved","resolvedAllowedSymbols","resolvedAnnotationDefaultColor","resolvedAnnotationDefaultSymbol","resolvedAnnotationSizePercent","resolvedAnnotationSymbols","resolvedInteractionMode","resolvedMapMarginPx","resolvedMapMaxWidth","resolvedMapMinHeight","resolvedMapPaddingPx","resolvedMapWidthPercent","resolvedMapZoomPercent","resolvedModalMinWidth","responsiveSvg","sanitizeHotspotIds","seen","selectedCount","selectedIds","selectedIdsCsv","selectedLabels","selectedLabelsCsv","serialized","shape","showSymbolPicker","showToolToggle","size","sourceHeight","sourceWidth","step","stroke","strokeWidth","suffix","summaryGroups","supportsAnnotations","supportsDrawAnnotations","supportsSelection","supportsSymbolAnnotations","svg","svgAspectRatio","svgViewBoxMarginPercent","svgViewBoxRenderSize","symbol","symbols","tagName","target","textLayerId","theme","toXPercent","toYPercent","total","trimmed","tspan","type","unique","updateAspectRatio","useSvgLayerTakeover","usedIds","value","vbHeight","vbWidth","vbX","vbY","viewBoxHeight","viewBoxParts","viewBoxRaw","viewBoxWidth","width","widthAttr","widthRaw","x","y","zoomFactor"],
+  './HotspotMapField/index.jsx': ["ANNOTATION_SYMBOL_LABELS","DEFAULT_ANNOTATION_COLOR","DEFAULT_ANNOTATION_SIZE_PERCENT","DEFAULT_ANNOTATION_SYMBOL","DEFAULT_ANNOTATION_SYMBOLS","DEFAULT_INTERACTION_MODE","DEFAULT_MAP_MARGIN_PX","DEFAULT_MAP_MAX_WIDTH","DEFAULT_MAP_MIN_HEIGHT","DEFAULT_MAP_PADDING_PX","DEFAULT_MAP_WIDTH_PERCENT","DEFAULT_MAP_ZOOM_PERCENT","DEFAULT_MARKER_RADIUS","DEFAULT_MARKER_SIZE","DEFAULT_NUMBER_FIELD_WIDTH_PERCENT","DEFAULT_SVG_VIEWBOX_MARGIN_PERCENT","HotspotMapField","annotationDefaultSymbol","annotationPointsToSvgString","annotationSymbols","annotations","append","assignedHotspotIds","baseId","bounds","buildCountsByGroup","buildFallbackPolygon","buildGroupSelectionSummary","buildMapValue","byHotspot","centroid","centroidFromPoints","circleAspectRatio","clampPercent","clampSvgViewBoxMarginPercent","clamped","color","commitMapState","commitSelection","compact","counterGroups","countsByGroup","createHotspotMapConfig","cx","cy","deltaX","deltaY","displayValue","doc","drawingPointerIdRef","drawingPointsRef","element","elements","ensureResponsiveSvg","ensuredDefault","fallbackList","fieldFillTextLayerIdSet","fieldFillValueMap","fieldId","fields","fill","getHotspotLabelAnchor","getNumberFieldValue","getPointFromEvent","group","groupId","groupLabel","groupsById","half","handleAddAnnotation","handleDrawPointerDown","handleDrawPointerMove","handleDrawPointerUp","handleHotspotKeyDown","handleNumberFieldChange","handleToggleHotspot","hasAnnotations","hasExplicitCounterGroups","hasMapData","hasSelections","hasSvgBackground","height","heightAttr","hotspotIdSet","hotspots","hotspotsById","id","ids","importSvgHotspots","injectFieldFillValuesIntoSvg","inlineStyle","input","interactionMode","isDarkMode","isDrawModeActive","isDrawingRef","isFieldFillMode","isSelected","isSymbolModeActive","labelAnchor","labels","labelsByGroup","map","mapFrameRef","mapFrameStyle","mapValue","marginPercent","markerSize","markup","match","max","min","names","next","nextAnnotations","nextAspectRatio","nextPoints","nextSymbol","nextValue","normalizeAnnotationPoints","normalizeAnnotationSymbol","normalizeAnnotationSymbols","normalizeAnnotationType","normalizeAnnotations","normalizeColor","normalizeCounterGroupId","normalizeCounterGroups","normalizeHotspotPoints","normalizeHotspots","normalizeMapInteractionMode","normalizeNumberFields","normalizeShape","normalizeString","normalized","normalizedAnnotations","normalizedCounterGroups","normalizedHotspot","normalizedHotspots","normalizedId","normalizedNumberFields","normalizedNumeric","normalizedRaw","numberFields","numeric","observer","overlayStyle","overlayViewBox","padX","padY","pair","panelStyle","parseAnnotationSymbol","parseList","parseSvgAspectRatio","parseSvgNumber","parsed","parsedPoints","parsedViewBox","parser","parts","point","points","pointsAttr","pointsToSvgString","previous","projectMapLengthToRenderPercent","projectMapPercentToRenderPercent","projectRenderPercentToMapPercent","r","radius","raw","rawId","rawLabel","rawValue","rect","renderAnnotationModeControls","renderMapFrame","renderSummary","renderedWidth","renderedX","renderedY","resolveAnnotationSymbol","resolveMapInteractionMode","resolved","resolvedAllowedSymbols","resolvedAnnotationDefaultColor","resolvedAnnotationDefaultSymbol","resolvedAnnotationSizePercent","resolvedAnnotationSymbols","resolvedInteractionMode","resolvedMapMarginPx","resolvedMapMaxWidth","resolvedMapMinHeight","resolvedMapPaddingPx","resolvedMapWidthPercent","resolvedMapZoomPercent","resolvedModalMinWidth","responsiveSvg","sanitizeHotspotIds","seen","selectedCount","selectedIds","selectedIdsCsv","selectedLabels","selectedLabelsCsv","serialized","shape","showSymbolPicker","showToolToggle","size","sourceHeight","sourceWidth","step","stroke","strokeWidth","suffix","summaryGroups","supportsAnnotations","supportsDrawAnnotations","supportsSelection","supportsSymbolAnnotations","svg","svgAspectRatio","svgViewBoxMarginPercent","svgViewBoxRenderSize","symbol","symbols","tagName","target","textLayerId","theme","toXPercent","toYPercent","total","trimmed","tspan","type","unique","updateAspectRatio","useSvgLayerTakeover","usedIds","value","vbHeight","vbWidth","vbX","vbY","viewBoxHeight","viewBoxParts","viewBoxRaw","viewBoxWidth","width","widthAttr","widthRaw","x","y","zoomFactor"],
   './HttpJsonTestPanel/index.jsx': ["AbortControllerClass","HTTP_JSON_RESULT_EVENT","HttpJsonTestPanel","aborted","body","controller","effectiveEndpointUrl","effectiveOutputId","fetchJson","formatHttpJsonTestResult","handler","key","nextResult","normalizeHttpJsonEndpointUrl","persistHttpJsonTestResult","previous","publishHttpJsonTestResult","readHttpJsonTestBody","requestBody","response","responseText","sd","sendTest","startedAt","statusColor","statusLabel","storedResult","text","timeout","trimmed","url"],
   './InvestigationTabs/index.jsx': ["INVESTIGATION_DEFAULT_TABS","InvestigationTab","InvestigationTabs","activeChildren","activeTab","childArray","childById","childTabId","id","label","normalizeInvestigationTabs","numeric","props","resolvedTabs","selected","source"],
   './LayoutTable/index.jsx': ["LayoutTable","Tag","bareRefs","boundCells","bracketedRefs","candidate","cellStyle","checklistOptions","code","comparableValue","computeLayoutTableCellValue","computedCells","config","date","display","displayValue","effectiveReadOnly","evaluateLayoutTableFormula","extractLayoutTableFormulaRefs","fallback","fieldId","fields","formatLayoutTableComputedValue","formatLayoutTableFieldDisplayValue","formatLayoutTableSourceValue","formatOne","formula","getCellDisplayValue","getLayoutTableFieldRawValue","getLayoutTableSourcePaths","getNumericFieldValue","getPathValue","hasLayoutTableSourceValue","id","ids","isCheckedValue","isNoLikeValue","isSafeLayoutTableFormula","isYesLikeValue","jsExpression","label","labelProp","layoutTableSourceText","match","matched","multiline","nextData","nextValue","normalizeComparableValue","normalizeLayoutTableOptionList","normalized","numeric","optionList","paths","raw","rawValue","refs","renderLayoutTableCellContent","renderLayoutTableField","renderLayoutTableFieldList","renderLayoutTableReadOnlyField","renderLayoutTableResources","renderLayoutTableStampButton","renderLink","resolveLayoutTableSourceValue","resources","root","rounded","rowIsVisible","rule","sd","section","setFieldValue","sharedProps","sourceBoundCells","sourceFieldIds","sourcePaths","strippedExpression","sumMatch","tableData","tableRows","targets","unwrappedExpression","value","values","visibleRows"],
@@ -31672,7 +31969,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './ObservationChart/index.jsx': ["$","$e","$l","$n","$t","A","Ae","Ai","Al","An","B","Be","Bl","Bt","C","Ce","Ci","Cl","Ct","D","De","Di","Dl","Dn","Dt","E","El","En","F","Fe","Ft","G","Gt","H","He","Hi","Hl","Ht","I","Ii","Il","It","J","Je","Jl","Jn","Jt","Ke","Kl","Kn","Kt","L","Li","Ll","Lt","M","Mn","Mt","N","Nl","O","OBSERVATION_CHART_PALETTE","OBSERVATION_CHART_STYLE_ID","ObservationChart","Ol","Ot","P","Pe","Pi","Pl","Pn","Q","Qn","Qt","R","Re","Ri","Rt","S","Sn","St","T","Tn","Tt","UPlotCssText","UPlotLib","Ut","Vl","Vt","W","We","Wi","Wl","Wt","X","Xl","Xn","Xt","Y","Ye","Yi","Yl","Yt","Z","Zl","Zn","Zt","_","_i","_l","_n","_t","a","ai","at","b","be","bi","bl","bn","bt","buildChartPayload","buildChartPayloadFromObservations","buildChartPayloadFromRows","buildSeriesDefinitions","buildUPlotOptions","c","candidate","chartPayload","chartSeries","ci","codeCandidates","coerceNumber","coercePositiveInt","container","containerRef","current","d","data","dataKey","day","di","direct","document","dt","e","ee","effectiveHeight","effectiveTitle","ei","el","en","ensureObservationChartStyles","entryCode","entryDescription","et","f","fi","finalizeChartRows","formatDate","frameStyle","fromPatient","fromQueryResult","ft","g","gi","gn","gt","h","hi","hl","ht","i","ie","ii","includes","isNonEmptyString","isRecord","it","jl","jt","k","keys","ki","kn","kt","l","ll","ln","m","match","matchesObservationSeries","maxPoints","mi","mode","month","mt","n","ne","ni","normalizeString","normalizeStringArray","normalized","normalizedCodePath","normalizedCodes","normalizedDateOnly","normalizedDescriptionPath","nt","numericDate","numericValue","o","observationCodes","oi","p","parseDateValue","parseMeasurementValue","parseNumericValue","parsed","parsedDateOnly","patientPath","plot","plotRef","pt","qe","qn","qt","r","rawValue","renderWidth","resizeChart","resizeObserver","resolveMoisValue","resolvePathValue","root","rowIndex","rowMap","s","sd","segments","self","seriesDefs","seriesPointSize","seriesShowsPoints","showAxes","showGrid","showLegend","showPoints","single","singleCode","sortedRows","sourceItems","sourcePath","stringifyValue","style","summaryParts","t","target","te","text","timeValue","timestamp","tl","tn","toPathSegments","trimmed","tt","u","uPlot","units","v","value","valueText","ve","vi","vl","vn","vt","w","wi","window","wl","wn","wrapperStyle","wt","xKey","xValues","xi","xl","xn","xt","y","year","yi","yn","yt","z","ze","zi","zl","zn"],
   './ObservationPanelEditor/index.jsx': ["DEFAULT_WINDOW_HOURS","ObservationPanelEditor","actor","actorFrom","addHoursIso","authorshipPolicy","buildKey","c","changed","ck","claim","claims","codeSet","commitSave","componentId","computedTotals","container","createdBy","current","currentActorName","currentPayload","d","data","dcoUpdates","editableUntil","effectiveFieldId","euDate","existing","expired","fieldData","formatTimestamp","getCurrentActorName","getNhAuth","getPanelValue","grouped","hasValue","historyRows","isNonEmpty","isOwner","keepStatus","key","label","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","maxHistory","next","nextGroup","nextStatus","nhAuth","normalizePanelRows","normalizePanelTotals","normalizeStore","now","nowIso","numeric","oldObs","optionList","ownerId","ownerName","ownerRefresh","pad2","panelDateKey","payloadsEqual","pending","policyAppliesToAction","prepareSave","raw","readStore","release","resolveNow","rootValue","rowDefs","rowLockInfo","rowReadOnly","sameActor","sd","section","setPanelPayload","setRowValue","source","sourceIds","store","stripVolatilePayloadFields","toNumericValue","totalDefs","ts","untilSelf","value","windowHours"],
   './Occupations/index.jsx': ["Occupations","OccupationsFields"],
-  './PastMeasurementField/index.jsx': ["PastMeasurementField","abnormalFlag","abnormalHighValue","abnormalLowValue","candidate","candidates","codeFilter","coercePositiveInt","commentFilter","componentId","container","createdBy","criticalHighValue","criticalLowValue","current","currentPayload","day","direct","displayedCurrentValue","documentDate","effectiveFieldId","effectiveHistorySize","effectiveLabelPosition","effectiveMeasurementSize","entryCode","entryComment","entryDate","entryUnits","entryValue","explicitValue","fieldData","flagCode","flagDisplays","formHistoryItems","formatDate","fromPatient","fromQueryResult","handleValueChange","hasAbnormalHigh","hasAbnormalLow","hasExplicitValue","hasMeaningfulValue","hasNumericCurrentValue","hasRangeMetadata","hasStoredValue","historicalFormRowDate","historyItems","historySummary","index","inputSuffix","isAbnormal","isHistoricalFormValue","isNonEmptyString","key","latestHistoryItem","legacyRangePayload","linkedObservationItem","matchingKey","measurementWidthBySize","month","nextGroup","normalizeObservationItems","normalizedDateOnly","numericCurrentValue","numericExplicitValue","numericTime","observationHistoryItems","oldId","oldObs","optionalString","parseDateValue","parsed","parsedDate","parsedDateOnly","patientPath","payloadsEqual","raw","rawDate","recentHistoryText","resolveHistoricalFormRows","resolveMeasurementContainerStyle","resolveMoisValue","resolvePathValue","resolvedAbnormalHigh","resolvedAbnormalLow","resolvedCriticalHigh","resolvedCriticalLow","resolvedCurrentValue","resolvedUnits","roots","sd","segments","setNestedPayload","shouldReserveHistory","shouldShowHistory","storedValue","stringifyValue","stripVolatilePayloadFields","text","toObservationList","toPathSegments","updatedValue","valueFromHistoricalFormRow","valueIsDate","valueKeys","valuePart","valueText","width","year"],
+  './PastMeasurementField/index.jsx': ["PastMeasurementField","abnormalFlag","abnormalHighValue","abnormalLowValue","canPullLatest","candidate","candidates","codeFilter","coercePositiveInt","commentFilter","componentId","container","createdBy","criticalHighValue","criticalLowValue","current","currentPayload","day","direct","displayedCurrentValue","documentDate","effectiveFieldId","effectiveHistorySize","effectiveLabelPosition","effectiveMeasurementSize","entryCode","entryComment","entryDate","entryUnits","entryValue","explicitValue","fieldData","flagCode","flagDisplays","formHistoryItems","formatDate","fromPatient","fromQueryResult","handleValueChange","hasAbnormalHigh","hasAbnormalLow","hasExplicitValue","hasMeaningfulValue","hasNumericCurrentValue","hasRangeMetadata","hasStoredValue","historicalFormRowDate","historyItems","historySummary","index","inputSuffix","isAbnormal","isHistoricalFormValue","isNonEmptyString","key","latestHistoryItem","legacyRangePayload","linkedObservationItem","matchingKey","measurementWidthBySize","month","nextGroup","normalizeObservationItems","normalizedDateOnly","normalizedPullTargets","numericCurrentValue","numericExplicitValue","numericTime","observationHistoryItems","oldId","oldObs","optionalString","parseDateValue","parsed","parsedDate","parsedDateOnly","patientPath","payloadsEqual","pullLatestIntoTargets","raw","rawDate","recentHistoryText","resolveHistoricalFormRows","resolveMeasurementContainerStyle","resolveMoisValue","resolvePathValue","resolvedAbnormalHigh","resolvedAbnormalLow","resolvedCriticalHigh","resolvedCriticalLow","resolvedCurrentValue","resolvedUnits","role","roots","sd","segments","setNestedPayload","shouldReserveHistory","shouldShowHistory","storedValue","stringifyValue","stripVolatilePayloadFields","targetFieldId","text","toObservationList","toPathSegments","updatedValue","value","valueFromHistoricalFormRow","valueIsDate","valueKeys","valuePart","valueText","width","year"],
   './PatientFileSections/index.jsx': ["PatientFileSections","activeText","addressText","cityLine","compactLines","contactText","countryLine","createdDate","editButtonStyle","encounter","fieldWrapStyle","formatAddress","formatContact","formatDate","getPatientFromData","gridStyle","healthNumber","insuranceBy","insuranceNumber","insuranceText","lines","match","mergeObjects","nextPatient","optionCode","optionDisplay","patient","preferredCode","preferredPhoneOptions","providerName","queryPatient","raw","renderClientDemographics","renderDocumentDetails","renderEncounterDetails","renderTitle","requested","sd","section","sectionTitleStyle","textValue","updateContactText","visibleSections","whiteDropdownStyles","whiteFlexTextFieldStyles","whiteTextFieldStyles","writePatientUpdates"],
   './PatientValueField/index.jsx': ["PatientValueField","age","applyPatientTransform","candidates","coercePatientValue","collectionCandidateValues","collectionItemMatches","computeAgeYears","dob","effectiveFieldId","expected","items","monthDelta","normalizedExpected","now","raw","resolveCollectionItemPath","resolvePatientContextPath","resolved","root","sd","stored","values"],
   './PdfRegenerator/index.jsx': ["PDFLib","PDF_LIB_URL","PdfRegenerator","_base64ToBytes","_buildChoiceComponentIndex","_buildDateComponentIndex","_buildTableReverseIndex","_choiceItemMatches","_choiceItems","_collectCandidates","_decodePdfHex","_downloadBytes","_fillField","_getCheckboxOnStates","_inferBooleanState","_installPdfLibFromSource","_isNonEmptyString","_loadPdfLib","_loadPdfLibFromCdn","_matchMultipleOptions","_matchSingleOption","_normalizeFieldMap","_normalizeToken","_pdfLibPromise","_printBytes","_resolveChoiceComponentValue","_resolveDateComponentValue","_resolveTableCellValue","_resolveValueByPath","_setCheckboxByState","_splitCanonicalDateParts","_statusColor","_toBooleanLike","_toCandidateList","_toText","acro","baseMap","binary","blob","boolValue","booleanStates","buttonDisabled","byRow","bytes","candidate","candidateKeys","candidates","choiceComponentIndex","choiceComponentValue","choiceEntry","clean","cleaned","cleanup","component","components","current","dateComponentIndex","dateComponentValue","dateEntry","diagnosticsText","didFill","direct","doc","existing","filledFieldCount","form","formData","formKeys","fromData","fromPath","fuzzy","handleGeneratePdf","hasMatchingState","i","iframe","includeSet","index","inferredState","inlineSource","installed","isOn","items","knownOptions","left","leftIsFormId","lib","link","map","mapped","match","matches","maybe","maybeDate","maybeTime","nextFileName","normalized","normalizedAction","normalizedCandidate","normalizedOption","normalizedOptionMap","normalizedRequested","offState","onText","onValue","options","otherItem","outputBytes","parts","pathByColumnId","payload","pdfFieldId","pdfFieldName","printWindow","rawValue","renderActionButton","renderButton","requested","resolvePath","resolvedPdfSource","right","rightIsFormId","row","rowIndex","rowMapping","rows","runner","script","sd","segments","selected","selectedCount","set","single","skippedFieldCount","sourceFieldId","sourceId","sourceValue","sourceValues","state","states","strategy","tableEntry","tableId","tableIndex","targetAction","targetState","targetStateName","targetWidget","text","trimmed","url","warningCount","warnings","widgets","withoutSlash"],

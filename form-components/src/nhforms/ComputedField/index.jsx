@@ -335,6 +335,12 @@ const ComputedField = ({
   readOnly,
   showInterpretation = false,
   interpretation,
+  // Legacy calculators (BPI Severity/Interference/Relief, PEG, DLQI) pair
+  //   IF (IsNull(...), 'Incomplete', '')
+  // with mirrored visible expressions so a partial total never shows and never
+  // persists. "compute-anyway" is the default so existing forms are unchanged.
+  incompleteBehavior = "compute-anyway",
+  incompleteText = "Incomplete",
 }) => {
   const [fd, setFd] = useActiveData()
   const valuesByFieldId = fd?.field?.data || {}
@@ -351,23 +357,35 @@ const ComputedField = ({
     [computedValue, precision]
   )
 
+  const isIncomplete = useMemo(
+    () => (
+      incompleteBehavior !== "compute-anyway" &&
+      !_hasAllReferencedValues(expression, valuesByFieldId)
+    ),
+    [expression, incompleteBehavior, valuesByFieldId]
+  )
+
   const storedValue = useMemo(() => {
+    // A partial total must not reach the patient record, so an incomplete
+    // calculation persists null regardless of which incomplete style is used.
+    if (isIncomplete) return null
     if (typeof roundedValue === "string" || typeof roundedValue === "boolean") return roundedValue
     if (!Number.isFinite(roundedValue)) return null
     if (resultType === "text") {
       return _toDisplayValue(roundedValue, precision, "text")
     }
     return roundedValue
-  }, [precision, resultType, roundedValue])
+  }, [isIncomplete, precision, resultType, roundedValue])
 
   const displayValue = useMemo(() => {
+    if (isIncomplete) return incompleteBehavior === "show-text" ? incompleteText : ""
     // String/boolean results (e.g. iif chains returning "LOW"/"HIGH") must
     // render, not just persist — Number.isFinite alone blanked them.
     if (typeof roundedValue === "string") return roundedValue
     if (typeof roundedValue === "boolean") return String(roundedValue)
     if (!Number.isFinite(roundedValue)) return ""
     return _toDisplayValue(roundedValue, precision, resultType)
-  }, [precision, resultType, roundedValue])
+  }, [incompleteBehavior, incompleteText, isIncomplete, precision, resultType, roundedValue])
 
   const currentValue = valuesByFieldId?.[fieldId]
   const enteredDisplayValue = _toEditableComputedValue(currentValue)
@@ -456,6 +474,10 @@ const ComputedField = ({
       draft.field.data.__computedFieldState = stateContainer
     })
   }
+
+  // Legacy hid the score control outright until every item was answered. All
+  // hooks above have already run, so bailing out here is safe.
+  if (isIncomplete && incompleteBehavior === "hide") return null
 
   return (
     <div>

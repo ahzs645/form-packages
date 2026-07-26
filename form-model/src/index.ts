@@ -48,6 +48,19 @@ export type CalculatedValuePolicy =
   | "calculated-until-overridden"
   | "suggested-calculation";
 
+/**
+ * What a calculation does before every referenced input has a value.
+ *
+ * Legacy MOIS calculators (BPI Severity/Interference/Relief, PEG, DLQI) paired
+ * `IF (IsNull(...), 'Incomplete', '')` with mirrored visible expressions so a
+ * partial total neither displayed nor persisted. "compute-anyway" is the
+ * default because it is the behaviour every existing form already relies on.
+ */
+export type IncompleteCalculationBehavior =
+  | "compute-anyway"
+  | "show-text"
+  | "hide";
+
 export interface CalculatedValueConfig {
   id: string;
   label: string;
@@ -56,6 +69,10 @@ export interface CalculatedValueConfig {
   resultType?: "number" | "text";
   /** Controls whether the runtime owns the value, yields after a user edit, or only offers a suggestion. */
   calculationPolicy?: CalculatedValuePolicy;
+  /** What to do before every referenced input has a value. Defaults to "compute-anyway". */
+  incompleteBehavior?: IncompleteCalculationBehavior;
+  /** Text shown in place of the total when incompleteBehavior is "show-text". */
+  incompleteText?: string;
   showInterpretation?: boolean;
   ranges?: CalculatedValueRange[];
   sourceKind?: "computed-field" | "data-entry-calculation" | "scoring-total";
@@ -1287,6 +1304,10 @@ export interface BuilderField {
     resultType?: "number" | "text";
     /** Defaults to always-calculated for backward compatibility. */
     calculationPolicy?: CalculatedValuePolicy;
+    /** What to do before every referenced input has a value. Defaults to "compute-anyway". */
+    incompleteBehavior?: IncompleteCalculationBehavior;
+    /** Text shown in place of the total when incompleteBehavior is "show-text". */
+    incompleteText?: string;
     /** Show a score interpretation after referenced fields have values */
     showInterpretation?: boolean;
     /** Score interpretation ranges or thresholds */
