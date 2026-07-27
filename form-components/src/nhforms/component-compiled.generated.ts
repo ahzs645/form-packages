@@ -2049,7 +2049,9 @@ const reviewMatchesCode = (entry, candidate) => {
   return false;
 };
 const reviewNumber = value => {
-  const parsed = Number(value);
+  const text = reviewToText(value).trim();
+  if (!text) return null;
+  const parsed = Number(text);
   return Number.isFinite(parsed) ? parsed : null;
 };
 
@@ -21902,7 +21904,8 @@ const ObservationChart = ({
   './ObservationEntryGrid/index.jsx': `const {
   useMemo,
   useState,
-  useEffect
+  useEffect,
+  useRef
 } = React;
 const {
   Stack,
@@ -21982,7 +21985,9 @@ const gridCutoffDate = lookback => {
   return cutoff;
 };
 const gridNumber = value => {
-  const parsed = Number(value);
+  const text = gridToText(value).trim();
+  if (!text) return null;
+  const parsed = Number(text);
   return Number.isFinite(parsed) ? parsed : null;
 };
 
@@ -22123,6 +22128,48 @@ const headStyle = {
   lineHeight: "16px"
 };
 const zebraRowBackground = "#faf9f8";
+// MOIS paints unsaved in-grid entries salmon until the form is saved.
+const newRowBackground = "#f8d5c8";
+const inlineDropdownStyles = {
+  root: {
+    minWidth: 150
+  },
+  title: {
+    height: 22,
+    lineHeight: "20px",
+    fontSize: 12,
+    paddingLeft: 6
+  },
+  caretDownWrapper: {
+    height: 22,
+    lineHeight: "22px"
+  }
+};
+const inlineTextFieldStyles = {
+  root: {
+    minWidth: 90
+  },
+  fieldGroup: {
+    height: 22
+  },
+  field: {
+    fontSize: 12,
+    padding: "0 6px"
+  }
+};
+const inlineCodeFieldStyles = {
+  root: {
+    minWidth: 60,
+    maxWidth: 90
+  },
+  fieldGroup: {
+    height: 22
+  },
+  field: {
+    fontSize: 12,
+    padding: "0 6px"
+  }
+};
 const detailLabelStyle = {
   color: "#605e5c",
   whiteSpace: "nowrap",
@@ -22319,9 +22366,10 @@ const ObservationEntryGrid = ({
   const entries = readGridRows(fd, entriesKey);
   const edits = readGridRows(fd, editsKey);
   const [selectedKey, setSelectedKey] = useState(null);
-  // editor: null | { mode: "new", code } | { mode: "correct", observationId, code, description }
-  const [editor, setEditor] = useState(null);
-  const [editorValue, setEditorValue] = useState("");
+  // Per-row uncommitted code text: typing resolves only on Enter/blur so
+  // partial codes ("19") don't prematurely match ("1950" intended).
+  const [codeDrafts, setCodeDrafts] = useState({});
+  const valueFieldRefs = useRef({});
   const editByObservationId = useMemo(() => {
     const map = new Map();
     edits.forEach(edit => {
@@ -22480,26 +22528,6 @@ const ObservationEntryGrid = ({
     }).filter(Boolean);
     setGridNestedPayload(setFormData, componentId, [...newPayload, ...editPayload]);
   }, [codeList, componentId, edits, entries, readOnly, sd, setFormData, source]);
-  const startEntry = code => {
-    if (readOnly) return;
-    setEditor({
-      mode: "new",
-      code: code ?? codeList[0]?.code ?? null
-    });
-    setEditorValue("");
-  };
-  const startCorrection = row => {
-    if (readOnly || row.observationId === null) return;
-    setEditor({
-      mode: "correct",
-      observationId: row.observationId,
-      code: row.code,
-      description: row.description,
-      units: row.units,
-      collectedDateTime: row.collectedDateTime
-    });
-    setEditorValue(row.value);
-  };
   const writeRows = (key, updater) => {
     setFormData(produce(draft => {
       if (!draft.field) draft.field = {
@@ -22512,38 +22540,104 @@ const ObservationEntryGrid = ({
       draft.field.data[key] = updater(current);
     }));
   };
-  const saveEditor = () => {
-    if (!editor) return;
-    const value = gridToText(editorValue).trim();
-    if (!value) return;
-    if (editor.mode === "correct") {
-      const edit = {
-        observationId: editor.observationId,
-        action: "correct",
-        code: editor.code,
-        description: editor.description,
-        units: editor.units,
-        value,
-        collectedDateTime: editor.collectedDateTime
+
+  // MOIS-style New: insert an editable row at the top of the grid — pick the
+  // test and type the value in place. Rows without a code+value never stage.
+  const startEntry = code => {
+    if (readOnly) return;
+    const candidate = code ? codeList.find(item => item.code === code) : null;
+    const rowId = "row-" + Date.now() + "-" + Math.floor(Math.random() * 100000);
+    writeRows(entriesKey, current => [{
+      rowId,
+      code: candidate?.code ?? "",
+      description: candidate?.label ?? "",
+      value: "",
+      units: candidate?.units ?? "",
+      dateTime: getDateTimeString(new Date())
+    }, ...current]);
+    setSelectedKey("entry-" + rowId);
+  };
+  const updateEntry = (rowId, patch) => {
+    writeRows(entriesKey, current => current.map(entry => gridToText(entry.rowId) === rowId ? {
+      ...entry,
+      ...patch
+    } : entry));
+  };
+
+  // Resolve a typed code to a test name: configured codes first (code or
+  // LOINC), then the chart's own observations (newest matching record wins).
+  const resolveEntryCode = raw => {
+    const text = gridToText(raw).trim();
+    if (!text) return {
+      code: "",
+      description: "",
+      units: ""
+    };
+    const lower = text.toLowerCase();
+    const candidate = codeList.find(item => item.code.toLowerCase() === lower || item.loincCode && item.loincCode.toLowerCase() === lower);
+    if (candidate) return {
+      code: candidate.code,
+      description: candidate.label,
+      units: candidate.units
+    };
+    let best = null;
+    let bestTime = -Infinity;
+    source.forEach(entry => {
+      if (!entry || typeof entry !== "object") return;
+      const entryCode = gridToText(entry.observationCode).trim().toLowerCase();
+      const entryLoinc = gridToText(entry.loincCode).trim().toLowerCase();
+      if (entryCode !== lower && entryLoinc !== lower) return;
+      const time = gridParseDate(entry.collectedDateTime)?.getTime() ?? 0;
+      if (time >= bestTime) {
+        best = entry;
+        bestTime = time;
+      }
+    });
+    if (best) {
+      return {
+        code: text,
+        description: gridToText(best.description).trim(),
+        units: gridToText(best.units).trim()
       };
-      writeRows(editsKey, current => [edit, ...current.filter(item => gridNumber(item.observationId) !== editor.observationId)]);
-    } else {
-      const code = gridToText(editor.code).trim();
-      if (!code) return;
-      const candidate = codeList.find(item => item.code === code);
-      const rowId = "row-" + Date.now() + "-" + Math.floor(Math.random() * 100000);
-      writeRows(entriesKey, current => [{
-        rowId,
-        code,
-        description: candidate?.label ?? code,
-        value,
-        units: candidate?.units ?? "",
-        dateTime: getDateTimeString(new Date())
-      }, ...current]);
-      setSelectedKey("entry-" + rowId);
     }
-    setEditor(null);
-    setEditorValue("");
+    return {
+      code: text,
+      description: "",
+      units: ""
+    };
+  };
+  const commitEntryCode = (rowId, raw) => {
+    const resolved = resolveEntryCode(raw);
+    updateEntry(rowId, resolved);
+    setCodeDrafts(current => {
+      const next = {
+        ...current
+      };
+      delete next[rowId];
+      return next;
+    });
+    if (resolved.code) valueFieldRefs.current[rowId]?.focus?.();
+  };
+
+  // Corrections stage immediately at the current value; the row's value cell
+  // becomes editable in place until Undo or save.
+  const startCorrection = row => {
+    if (readOnly || row.observationId === null) return;
+    writeRows(editsKey, current => [{
+      observationId: row.observationId,
+      action: "correct",
+      code: row.code,
+      description: row.description,
+      units: row.units,
+      value: row.value,
+      collectedDateTime: row.collectedDateTime
+    }, ...current.filter(item => gridNumber(item.observationId) !== row.observationId)]);
+  };
+  const updateCorrection = (observationId, value) => {
+    writeRows(editsKey, current => current.map(item => gridNumber(item.observationId) === observationId && item.action === "correct" ? {
+      ...item,
+      value
+    } : item));
   };
   const deleteEntry = rowId => {
     writeRows(entriesKey, current => current.filter(entry => gridToText(entry.rowId) !== rowId));
@@ -22574,15 +22668,11 @@ const ObservationEntryGrid = ({
       const match = withHotkeys.find(item => item.hotkey === key);
       if (!match) return;
       event.preventDefault();
-      setEditor({
-        mode: "new",
-        code: match.code
-      });
-      setEditorValue("");
+      startEntry(match.code);
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [codeList, readOnly]);
+  });
   const allRows = [...entryRows, ...chartRows];
   // MOIS keeps a row selected at all times, so the detail pane and the
   // toolbar's row actions always have a target — default to the newest row.
@@ -22628,56 +22718,7 @@ const ObservationEntryGrid = ({
     tokens: {
       childrenGap: 8
     }
-  }, editor ? /*#__PURE__*/React.createElement("div", {
-    className: "hideonprint",
-    style: {
-      border: "1px solid #d0d0d0",
-      background: "#f3f9fd",
-      padding: "8px 10px"
-    }
-  }, /*#__PURE__*/React.createElement(Stack, {
-    horizontal: true,
-    tokens: {
-      childrenGap: 8
-    },
-    verticalAlign: "end",
-    wrap: true
-  }, editor.mode === "correct" ? /*#__PURE__*/React.createElement(Text, null, "Correcting ", editor.description || editor.code, " (", editor.code, ")") : /*#__PURE__*/React.createElement(Dropdown, {
-    label: "Measurement",
-    selectedKey: editor.code,
-    options: codeList.map(item => ({
-      key: item.code,
-      text: item.label + (item.units ? " (" + item.units + ")" : "")
-    })),
-    onChange: (_event, option) => setEditor({
-      mode: "new",
-      code: option ? String(option.key) : null
-    }),
-    styles: {
-      root: {
-        minWidth: 220
-      }
-    }
-  }), /*#__PURE__*/React.createElement(TextField, {
-    label: "Value",
-    value: editorValue,
-    onChange: (_event, value) => setEditorValue(value ?? ""),
-    styles: {
-      root: {
-        minWidth: 120
-      }
-    }
-  }), /*#__PURE__*/React.createElement(PrimaryButton, {
-    text: editor.mode === "correct" ? "Save correction" : "Add",
-    disabled: !gridToText(editorValue).trim(),
-    onClick: saveEditor
-  }), /*#__PURE__*/React.createElement(DefaultButton, {
-    text: "Cancel",
-    onClick: () => {
-      setEditor(null);
-      setEditorValue("");
-    }
-  }))) : null, allRows.length === 0 ? /*#__PURE__*/React.createElement(Text, {
+  }, allRows.length === 0 ? /*#__PURE__*/React.createElement(Text, {
     variant: "small"
   }, "No measurements found.") : /*#__PURE__*/React.createElement("table", {
     style: {
@@ -22708,7 +22749,7 @@ const ObservationEntryGrid = ({
       onClick: () => setSelectedKey(row.key),
       style: {
         cursor: "pointer",
-        background: row.key === selectedRow?.key ? "#deecf9" : row.fromChart ? rowIndex % 2 === 1 ? zebraRowBackground : undefined : "#eff6fc",
+        background: row.key === selectedRow?.key ? row.fromChart ? "#deecf9" : "#f4b8a4" : row.fromChart ? rowIndex % 2 === 1 ? zebraRowBackground : undefined : newRowBackground,
         ...(pendingDelete ? {
           textDecoration: "line-through",
           color: "#a4262c"
@@ -22726,23 +22767,91 @@ const ObservationEntryGrid = ({
       }
     }, row.orderedBy || "") : null, /*#__PURE__*/React.createElement("td", {
       style: cellStyle
-    }, row.code), /*#__PURE__*/React.createElement("td", {
+    }, !row.fromChart && !readOnly ? /*#__PURE__*/React.createElement(TextField, {
+      placeholder: "Code",
+      value: codeDrafts[row.rowId] ?? gridToText(row.code),
+      autoFocus: !row.code,
+      onChange: (_event, value) => setCodeDrafts(current => ({
+        ...current,
+        [row.rowId]: value ?? ""
+      })),
+      onKeyDown: event => {
+        if (event.key !== "Enter") return;
+        event.preventDefault();
+        commitEntryCode(row.rowId, codeDrafts[row.rowId] ?? row.code);
+      },
+      onBlur: () => {
+        if (codeDrafts[row.rowId] !== undefined) commitEntryCode(row.rowId, codeDrafts[row.rowId]);
+      },
+      styles: inlineCodeFieldStyles
+    }) : row.code), /*#__PURE__*/React.createElement("td", {
       style: {
         ...cellStyle,
         ...gridFlagStyle(displayFlag)
       }
-    }, row.description), /*#__PURE__*/React.createElement("td", {
+    }, !row.fromChart && !readOnly && !row.description ? /*#__PURE__*/React.createElement(Dropdown, {
+      placeholder: "Select test\\u2026",
+      selectedKey: row.code || null,
+      options: codeList.map(item => ({
+        key: item.code,
+        text: item.label + (item.units ? " (" + item.units + ")" : "")
+      })),
+      onChange: (_event, option) => {
+        const nextCode = option ? String(option.key) : "";
+        const candidate = codeList.find(item => item.code === nextCode);
+        setCodeDrafts(current => {
+          const next = {
+            ...current
+          };
+          delete next[row.rowId];
+          return next;
+        });
+        updateEntry(row.rowId, {
+          code: nextCode,
+          description: candidate?.label ?? "",
+          units: candidate?.units ?? ""
+        });
+      },
+      styles: inlineDropdownStyles
+    }) : row.description), /*#__PURE__*/React.createElement("td", {
       style: {
         ...cellStyle,
         ...gridFlagStyle(displayFlag)
       }
-    }, pendingCorrection ? /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
+    }, !row.fromChart && !readOnly ? /*#__PURE__*/React.createElement("span", {
+      style: {
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4
+      }
+    }, /*#__PURE__*/React.createElement(TextField, {
+      value: gridToText(row.value),
+      autoFocus: Boolean(row.code),
+      componentRef: ref => {
+        valueFieldRefs.current[gridToText(row.rowId)] = ref;
+      },
+      onChange: (_event, value) => updateEntry(row.rowId, {
+        value: value ?? ""
+      }),
+      styles: inlineTextFieldStyles
+    }), row.units ? /*#__PURE__*/React.createElement("span", null, row.units) : null) : pendingCorrection ? /*#__PURE__*/React.createElement("span", {
+      style: {
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4
+      }
+    }, /*#__PURE__*/React.createElement("span", {
       style: {
         textDecoration: "line-through",
         color: "#605e5c",
-        marginRight: 6
+        marginRight: 2
       }
-    }, row.value), displayValue, row.units ? " " + row.units : "") : /*#__PURE__*/React.createElement("span", null, row.value, row.units ? " " + row.units : "")), /*#__PURE__*/React.createElement("td", {
+    }, row.value), /*#__PURE__*/React.createElement(TextField, {
+      value: displayValue,
+      autoFocus: true,
+      onChange: (_event, value) => updateCorrection(row.observationId, value ?? ""),
+      styles: inlineTextFieldStyles
+    }), row.units ? /*#__PURE__*/React.createElement("span", null, row.units) : null) : /*#__PURE__*/React.createElement("span", null, row.value, row.units ? " " + row.units : "")), /*#__PURE__*/React.createElement("td", {
       style: {
         ...cellStyle,
         textAlign: "center",
@@ -23489,7 +23598,9 @@ const matchQueryCodeIndex = (entry, codeList) => {
   return -1;
 };
 const queryNumber = value => {
-  const parsed = Number(value);
+  const text = queryToText(value).trim();
+  if (!text) return null;
+  const parsed = Number(text);
   return Number.isFinite(parsed) ? parsed : null;
 };
 
@@ -33628,7 +33739,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './AuthorshipField/index.jsx': ["AuthorshipField","DEFAULT_WINDOW_HOURS","_defaultPolicy","_nhAuth","_normalizeFieldOptions","actor","actorFrom","addHoursIso","base","buildKey","c","changed","ck","claim","claims","commitSave","commitValue","componentId","current","d","data","editableUntil","effectiveFieldId","euDate","existing","expired","fieldData","formatTimestamp","isNonEmpty","isOwner","keepStatus","key","label","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","nextStatus","nhAuth","normalizeStore","now","nowIso","numeric","optionList","ownerId","ownerName","ownerRefresh","pad2","pending","policy","policyAppliesToAction","prepareSave","query","raw","readOnly","readStore","release","renderInput","resolveNow","sameActor","sd","section","store","text","trimmed","ts","untilSelf","value","windowHours"],
   './BulkSetField/index.jsx': ["BulkSetField","ButtonComponent","apply","comparableAnswer","contradictedFieldIds","current","effectiveControlFieldId","fieldData","fieldId","isApplied","isBlankAnswer","isDisabled","normalizeBulkTargets","normalizedTargets","previous","raw","shouldClearControl","showWarning","unapply","writeControl"],
   './ChartRecordTable/index.jsx': ["ChartRecordTable","_chartRecordTableActiveConnections","_chartRecordTableActivePlannedActions","_chartRecordTableGenericColumns","_chartRecordTableGenericEntryColumns","_chartRecordTablePresets","_chartRecordTableSorts","_chartRecordTableStartDateDesc","byType","preset","resolvedChartColumns","resolvedEntryColumns","resolvedFieldId","resolvedFilterPred","resolvedId","resolvedLabel","resolvedListCompare","resolvedMoisModule","resolvedSelectionType","resolvedSourceId","resolvedSourceMap"],
-  './ChartReviewSummary/index.jsx': ["ChartReviewSummary","REVIEW_BLUE","REVIEW_GRAY","REVIEW_INK","REVIEW_RED","ReviewSectionHeading","age","best","bestTime","code","codeList","criticalHigh","criticalLow","current","datePart","doseText","entryCode","entryLoinc","flag","latestByCode","loinc","medications","monthDelta","normalHigh","normalLow","normalizeReviewCodes","now","observations","parsed","patient","problems","raw","reviewAgeYears","reviewArray","reviewDateKey","reviewDisplay","reviewFlagText","reviewGetPath","reviewHeadingStyle","reviewLineStyle","reviewMatchesCode","reviewNumber","reviewParseDate","reviewToText","rows","sd","sex","steps","stopRaw","stopTime","time","units","value"],
+  './ChartReviewSummary/index.jsx': ["ChartReviewSummary","REVIEW_BLUE","REVIEW_GRAY","REVIEW_INK","REVIEW_RED","ReviewSectionHeading","age","best","bestTime","code","codeList","criticalHigh","criticalLow","current","datePart","doseText","entryCode","entryLoinc","flag","latestByCode","loinc","medications","monthDelta","normalHigh","normalLow","normalizeReviewCodes","now","observations","parsed","patient","problems","raw","reviewAgeYears","reviewArray","reviewDateKey","reviewDisplay","reviewFlagText","reviewGetPath","reviewHeadingStyle","reviewLineStyle","reviewMatchesCode","reviewNumber","reviewParseDate","reviewToText","rows","sd","sex","steps","stopRaw","stopTime","text","time","units","value"],
   './CodedObservationChoiceField/index.jsx': ["CodedObservationChoiceField","candidates","checklistOptions","code","codedChoicePayloadsEqual","codings","commentValue","componentId","container","createdBy","currentPayload","display","effectiveFieldId","effectiveRenderAs","effectiveSelectionType","findExistingObservationId","formatCodedChoiceReport","fromContext","handleFindCodeChange","isMultiple","match","nextGroup","normalizeCodedChoiceOptions","normalizeSelectedCodings","oldId","option","options","report","sd","selectOptions","selectedValue","setCodedChoicePayload","stripVolatileCodedChoicePayloadFields","value","values","writeCodedChoiceValue"],
   './CommonSchemaDefn/index.jsx': ["NameBlockFields","active","commonSchemaDefn","formHistorySchema","makeCodedObsUpdates","makeObsUpdatesFromVs","makeTextObsUpdates","makeValueSetOptions","nameBlockSchema","newDco","oldObs","oldObsId","options","selectAll","startDateDesc","valueSet","vso","ynuaOptions"],
   './CompactBooleanField/index.jsx': ["BooleanLabelPresets","CompactBooleanChecklist","CompactBooleanChecklistSchema","CompactBooleanField","CompactBooleanFieldSchema","CompactBooleanGroup","CompactChoiceField","CompactChoiceFieldMultiSchema","CompactChoiceFieldSchema","OptionButtons","YesNoButtons","baseContainerStyle","buttonStyle","checkboxWrapperRef","choiceContent","commitValue","containerStyle","currentData","currentValue","data","decodePDFHex","decoded","fieldContent","getBooleanLabels","getButtonStyles","getCardContainerStyles","getFieldContainerStyles","getWidthStyle","handleChange","handleCheckboxChange","handleClick","handleNoClick","handleYesClick","input","isDarkMode","isDisabled","isHorizontal","isLast","isLeftLabel","isMultiple","isSelected","labelStyle","lastRowStyle","newValues","noButtonStyle","normalizeValue","normalized","normalizedValue","noteStyle","prevDecoded","rowStyle","selected","selectedValues","setFormData","sizeStyles","theme","themeLabelMaxWidth","themeLabelMinWidth","titleStyle","values","widthMap","yesButtonStyle"],
@@ -33669,9 +33780,9 @@ export const componentDefinedNames: Record<string, string[]> = {
   './NarrativeReportBuilder/index.jsx': ["NarrativeReportBuilder","applyNarrative","buildNarrative","componentId","container","currentPayload","formData","generatedText","getFieldValue","getPathValue","key","nextGroup","normalizeTemplateRows","normalizeTextValue","normalizedTemplate","renderTextTemplate","rows","sections","setNarrativePayload","value"],
   './NewTextArea/index.jsx': ["NewTextArea","hideonprint","showonprint","sourceData"],
   './ObservationChart/index.jsx': ["$","$e","$l","$n","$t","A","Ae","Ai","Al","An","B","Be","Bl","Bt","C","Ce","Ci","Cl","Ct","D","De","Di","Dl","Dn","Dt","E","El","En","F","Fe","Ft","G","Gt","H","He","Hi","Hl","Ht","I","Ii","Il","It","J","Je","Jl","Jn","Jt","Ke","Kl","Kn","Kt","L","Li","Ll","Lt","M","Mn","Mt","N","Nl","O","OBSERVATION_CHART_PALETTE","OBSERVATION_CHART_STYLE_ID","ObservationChart","Ol","Ot","P","Pe","Pi","Pl","Pn","Q","Qn","Qt","R","Re","Ri","Rt","S","Sn","St","T","Tn","Tt","UPlotCssText","UPlotLib","Ut","Vl","Vt","W","We","Wi","Wl","Wt","X","Xl","Xn","Xt","Y","Ye","Yi","Yl","Yt","Z","Zl","Zn","Zt","_","_i","_l","_n","_t","a","ai","at","b","be","bi","bl","bn","bt","buildChartPayload","buildChartPayloadFromObservations","buildChartPayloadFromRows","buildSeriesDefinitions","buildUPlotOptions","c","candidate","chartPayload","chartSeries","ci","codeCandidates","coerceNumber","coercePositiveInt","container","containerRef","current","d","data","dataKey","day","di","direct","document","dt","e","ee","effectiveHeight","effectiveTitle","ei","el","en","ensureObservationChartStyles","entryCode","entryDescription","et","f","fi","finalizeChartRows","formatDate","frameStyle","fromPatient","fromQueryResult","ft","g","gi","gn","gt","h","hi","hl","ht","i","ie","ii","includes","isNonEmptyString","isRecord","it","jl","jt","k","keys","ki","kn","kt","l","ll","ln","m","match","matchesObservationSeries","maxPoints","mi","mode","month","mt","n","ne","ni","normalizeString","normalizeStringArray","normalized","normalizedCodePath","normalizedCodes","normalizedDateOnly","normalizedDescriptionPath","nt","numericDate","numericValue","o","observationCodes","oi","p","parseDateValue","parseMeasurementValue","parseNumericValue","parsed","parsedDateOnly","patientPath","plot","plotRef","pt","qe","qn","qt","r","rawValue","renderWidth","resizeChart","resizeObserver","resolveMoisValue","resolvePathValue","root","rowIndex","rowMap","s","sd","segments","self","seriesDefs","seriesPointSize","seriesShowsPoints","showAxes","showGrid","showLegend","showPoints","single","singleCode","sortedRows","sourceItems","sourcePath","stringifyValue","style","summaryParts","t","target","te","text","timeValue","timestamp","tl","tn","toPathSegments","trimmed","tt","u","uPlot","units","v","value","valueText","ve","vi","vl","vn","vt","w","wi","window","wl","wn","wrapperStyle","wt","xKey","xValues","xi","xl","xn","xt","y","year","yi","yn","yt","z","ze","zi","zl","zn"],
-  './ObservationEntryGrid/index.jsx': ["GRID_FLAG_DISPLAYS","GridDetailPane","GridRangeBands","ObservationEntryGrid","abnormalFlag","allRows","amount","best","bestTime","buildGridAbnormalFlag","candidate","cellStyle","cells","centerText","chartRows","classifyGridFlag","code","codeIndex","codeList","componentId","container","createdBy","criticalHigh","criticalLow","current","currentPayload","cutoff","deleteEntry","detailBandLabelStyle","detailLabelStyle","detailValueStyle","displayFlag","displayValue","edit","editByObservationId","editPayload","edits","editsKey","entries","entriesKey","entryCode","entryLoinc","entryRows","explicitFlag","fields","findRangesForCode","flagCode","getGridSource","gridCutoffDate","gridDateKey","gridEntryMatchesCode","gridFlagStyle","gridNumber","gridParseDate","gridPayloadsEqual","gridToText","handleKeyDown","hasBands","hasRanges","headStyle","key","loinc","map","match","newPayload","nextGroup","normalHigh","normalLow","normalizeGridCodes","observationId","parsed","pendingCorrection","pendingDelete","pendingEdit","rangeText","ranges","raw","readGridRows","rowId","rows","saveEditor","sd","selectedPendingEdit","selectedRow","setGridNestedPayload","source","stageChartDelete","startCorrection","startEntry","steps","stored","stripVolatileGridFields","time","undoChartEdit","value","withHotkeys","writeRows","zebraRowBackground"],
+  './ObservationEntryGrid/index.jsx': ["GRID_FLAG_DISPLAYS","GridDetailPane","GridRangeBands","ObservationEntryGrid","abnormalFlag","allRows","amount","best","bestTime","buildGridAbnormalFlag","candidate","cellStyle","cells","centerText","chartRows","classifyGridFlag","code","codeIndex","codeList","commitEntryCode","componentId","container","createdBy","criticalHigh","criticalLow","current","currentPayload","cutoff","deleteEntry","detailBandLabelStyle","detailLabelStyle","detailValueStyle","displayFlag","displayValue","editByObservationId","editPayload","edits","editsKey","entries","entriesKey","entryCode","entryLoinc","entryRows","explicitFlag","fields","findRangesForCode","flagCode","getGridSource","gridCutoffDate","gridDateKey","gridEntryMatchesCode","gridFlagStyle","gridNumber","gridParseDate","gridPayloadsEqual","gridToText","handleKeyDown","hasBands","hasRanges","headStyle","inlineCodeFieldStyles","inlineDropdownStyles","inlineTextFieldStyles","key","loinc","lower","map","match","newPayload","newRowBackground","next","nextCode","nextGroup","normalHigh","normalLow","normalizeGridCodes","observationId","parsed","pendingCorrection","pendingDelete","pendingEdit","rangeText","ranges","raw","readGridRows","resolveEntryCode","resolved","rowId","rows","sd","selectedPendingEdit","selectedRow","setGridNestedPayload","source","stageChartDelete","startCorrection","startEntry","steps","stored","stripVolatileGridFields","text","time","undoChartEdit","updateCorrection","updateEntry","value","valueFieldRefs","withHotkeys","writeRows","zebraRowBackground"],
   './ObservationPanelEditor/index.jsx': ["DEFAULT_WINDOW_HOURS","ObservationPanelEditor","actor","actorFrom","addHoursIso","authorshipPolicy","buildKey","c","changed","ck","claim","claims","codeSet","commitSave","componentId","computedTotals","container","createdBy","current","currentActorName","currentPayload","d","data","dcoUpdates","editableUntil","effectiveFieldId","euDate","existing","expired","fieldData","formatTimestamp","getCurrentActorName","getNhAuth","getPanelValue","grouped","hasValue","historyRows","isNonEmpty","isOwner","keepStatus","key","label","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","maxHistory","next","nextGroup","nextStatus","nhAuth","normalizePanelRows","normalizePanelTotals","normalizeStore","now","nowIso","numeric","oldObs","optionList","ownerId","ownerName","ownerRefresh","pad2","panelDateKey","payloadsEqual","pending","policyAppliesToAction","prepareSave","raw","readStore","release","resolveNow","rootValue","rowDefs","rowLockInfo","rowReadOnly","sameActor","sd","section","setPanelPayload","setRowValue","source","sourceIds","store","stripVolatilePayloadFields","toNumericValue","totalDefs","ts","untilSelf","value","windowHours"],
-  './ObservationQuery/index.jsx': ["ObservationQuery","ObservationQueryLatest","ObservationQueryTable","amount","body","candidate","cell","cellStyle","chartRows","classifyQueryFlag","code","codeIndex","codeList","criticalHigh","criticalLow","current","cutoff","effectiveMaxRows","entryCode","entryLoinc","existing","explicit","getQuerySource","grouped","headerStyle","index","latest","latestByCode","limited","loinc","matchQueryCodeIndex","matches","normalHigh","normalLow","normalizeQueryCodes","parsed","parsedDate","queryCutoffDate","queryDateKey","queryFlagCellStyle","queryLookbackLabel","queryNumber","queryParseDate","queryToText","raw","recentFirst","row","rows","runObservationQuery","sd","series","singular","source","steps","unit","value","windowLabel"],
+  './ObservationQuery/index.jsx': ["ObservationQuery","ObservationQueryLatest","ObservationQueryTable","amount","body","candidate","cell","cellStyle","chartRows","classifyQueryFlag","code","codeIndex","codeList","criticalHigh","criticalLow","current","cutoff","effectiveMaxRows","entryCode","entryLoinc","existing","explicit","getQuerySource","grouped","headerStyle","index","latest","latestByCode","limited","loinc","matchQueryCodeIndex","matches","normalHigh","normalLow","normalizeQueryCodes","parsed","parsedDate","queryCutoffDate","queryDateKey","queryFlagCellStyle","queryLookbackLabel","queryNumber","queryParseDate","queryToText","raw","recentFirst","row","rows","runObservationQuery","sd","series","singular","source","steps","text","unit","value","windowLabel"],
   './Occupations/index.jsx': ["Occupations","OccupationsFields"],
   './PastMeasurementField/index.jsx': ["PastMeasurementField","abnormalFlag","abnormalHighValue","abnormalLowValue","canPullLatest","candidate","candidates","codeFilter","coercePositiveInt","commentFilter","componentId","container","createdBy","criticalHighValue","criticalLowValue","current","currentPayload","day","direct","displayedCurrentValue","documentDate","effectiveFieldId","effectiveHistorySize","effectiveLabelPosition","effectiveMeasurementSize","entryCode","entryComment","entryDate","entryUnits","entryValue","explicitValue","fieldData","flagCode","flagDisplays","formHistoryItems","formatDate","fromPatient","fromQueryResult","handleValueChange","hasAbnormalHigh","hasAbnormalLow","hasExplicitValue","hasMeaningfulValue","hasNumericCurrentValue","hasRangeMetadata","hasStoredValue","historicalFormRowDate","historyItems","historySummary","index","inputSuffix","isAbnormal","isHistoricalFormValue","isNonEmptyString","key","latestHistoryItem","legacyRangePayload","linkedObservationItem","matchingKey","measurementWidthBySize","month","nextGroup","normalizeObservationItems","normalizedDateOnly","normalizedPullTargets","numericCurrentValue","numericExplicitValue","numericTime","observationHistoryItems","oldId","oldObs","optionalString","parseDateValue","parsed","parsedDate","parsedDateOnly","patientPath","payloadsEqual","pullLatestIntoTargets","raw","rawDate","recentHistoryText","resolveHistoricalFormRows","resolveMeasurementContainerStyle","resolveMoisValue","resolvePathValue","resolvedAbnormalHigh","resolvedAbnormalLow","resolvedCriticalHigh","resolvedCriticalLow","resolvedCurrentValue","resolvedUnits","role","roots","sd","segments","setNestedPayload","shouldReserveHistory","shouldShowHistory","storedValue","stringifyValue","stripVolatilePayloadFields","targetFieldId","text","toObservationList","toPathSegments","updatedValue","value","valueFromHistoricalFormRow","valueIsDate","valueKeys","valuePart","valueText","width","year"],
   './PatientFileSections/index.jsx': ["PatientFileSections","activeText","addressText","cityLine","compactLines","contactText","countryLine","createdDate","editButtonStyle","encounter","fieldWrapStyle","formatAddress","formatContact","formatDate","getPatientFromData","gridStyle","healthNumber","insuranceBy","insuranceNumber","insuranceText","lines","match","mergeObjects","nextPatient","optionCode","optionDisplay","patient","preferredCode","preferredPhoneOptions","providerName","queryPatient","raw","renderClientDemographics","renderDocumentDetails","renderEncounterDetails","renderTitle","requested","sd","section","sectionTitleStyle","textValue","updateContactText","visibleSections","whiteDropdownStyles","whiteFlexTextFieldStyles","whiteTextFieldStyles","writePatientUpdates"],

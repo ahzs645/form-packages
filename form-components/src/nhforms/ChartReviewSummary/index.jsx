@@ -91,7 +91,9 @@ const reviewMatchesCode = (entry, candidate) => {
 }
 
 const reviewNumber = (value) => {
-  const parsed = Number(value)
+  const text = reviewToText(value).trim()
+  if (!text) return null
+  const parsed = Number(text)
   return Number.isFinite(parsed) ? parsed : null
 }
 

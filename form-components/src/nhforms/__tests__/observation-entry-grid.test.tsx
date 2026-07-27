@@ -18,6 +18,7 @@ const ActiveDataContext = React.createContext<ActiveTuple>([{ field: { data: {},
 
 let dropdownProps: Record<string, any> | null = null;
 let textFieldProps: Record<string, any> | null = null;
+let codeFieldProps: Record<string, any> | null = null;
 
 const passthrough = ({ children }: { children?: React.ReactNode }) => React.createElement("div", null, children);
 const buttonStub = (props: Record<string, any>) =>
@@ -29,7 +30,12 @@ const FluentStub = {
   Label: ({ children }: { children?: React.ReactNode }) => React.createElement("span", null, children),
   Text: ({ children }: { children?: React.ReactNode }) => React.createElement("span", null, children),
   TextField: (props: Record<string, any>) => {
-    textFieldProps = props;
+    // The in-row code editor is distinguished by its placeholder.
+    if (props.placeholder === "Code") {
+      codeFieldProps = props;
+    } else {
+      textFieldProps = props;
+    }
     return React.createElement("input", { value: props.value ?? "", readOnly: true });
   },
   Dropdown: (props: Record<string, any>) => {
@@ -92,6 +98,7 @@ const OBSERVATIONS = [
 function renderGrid(props: Record<string, unknown>, options?: { observations?: unknown[] }) {
   dropdownProps = null;
   textFieldProps = null;
+  codeFieldProps = null;
   const ObservationEntryGrid = loadGrid({
     patient: { observations: options?.observations ?? OBSERVATIONS },
     userProfile: { identity: { fullName: "WARKENTIN, LISA" } },
@@ -158,6 +165,8 @@ describe("ObservationEntryGrid", () => {
   it("stages new entries as DCO observation updates with computed abnormal flags", () => {
     const harness = renderGrid({ codes: CODES });
 
+    // MOIS-style inline entry: New inserts a grid row, the code is picked and
+    // the value typed in place — no separate editor or Add step.
     clickButton(harness.container, "New");
     act(() => {
       dropdownProps?.onChange?.(null, { key: "951" });
@@ -165,7 +174,6 @@ describe("ObservationEntryGrid", () => {
     act(() => {
       textFieldProps?.onChange?.(null, "12");
     });
-    clickButton(harness.container, "Add");
 
     const data = harness.getState()?.field?.data ?? {};
     const entries = data.measurements_entries;
@@ -185,8 +193,8 @@ describe("ObservationEntryGrid", () => {
       // 12 < rangeVeryLow 14 from the chart's most recent ranged BMI row -> LL.
       abnormalFlag: { code: "LL", display: "Critical low", system: "MOIS-ABNORMALFLAG" },
     });
-    // The staged row also renders in the grid.
-    expect(harness.container.textContent).toContain("12");
+    // The staged row renders in the grid with its in-row editor holding the value.
+    expect(textFieldProps?.value).toBe("12");
     act(() => harness.root.unmount());
   });
 
@@ -200,7 +208,6 @@ describe("ObservationEntryGrid", () => {
     act(() => {
       textFieldProps?.onChange?.(null, "82");
     });
-    clickButton(harness.container, "Add");
     expect(harness.getState()?.field?.data?.measurements_entries).toHaveLength(1);
 
     clickButton(harness.container, "Delete");
@@ -209,24 +216,66 @@ describe("ObservationEntryGrid", () => {
     act(() => harness.root.unmount());
   });
 
-  it("renders quick-entry reminder buttons that prefill the editor", () => {
+  it("renders quick-entry reminder buttons that prefill a new row", () => {
     const harness = renderGrid({ codes: CODES });
 
     expect(harness.container.textContent).toContain("REMINDER");
     clickButton(harness.container, "Weight");
-    expect(dropdownProps?.selectedKey).toBe("22732");
+    expect(harness.getState()?.field?.data?.measurements_entries?.[0]).toMatchObject({
+      code: "22732",
+      description: "Weight",
+    });
     act(() => harness.root.unmount());
+  });
+
+  it("resolves a typed code on Enter — configured codes first, then chart observations", () => {
+    const harness = renderGrid({ codes: CODES });
+
+    // Configured code: 951 -> BMI label.
+    clickButton(harness.container, "New");
+    act(() => {
+      codeFieldProps?.onChange?.(null, "951");
+    });
+    act(() => {
+      codeFieldProps?.onKeyDown?.({ key: "Enter", preventDefault: () => {} });
+    });
+    expect(harness.getState()?.field?.data?.measurements_entries?.[0]).toMatchObject({
+      code: "951",
+      description: "BMI",
+    });
+
+    act(() => harness.root.unmount());
+
+    // Unconfigured code known to the chart: 2010 -> TEMPERATURE from the newest record.
+    const chartHarness = renderGrid({ codes: CODES });
+    clickButton(chartHarness.container, "New");
+    act(() => {
+      codeFieldProps?.onChange?.(null, "2010");
+    });
+    act(() => {
+      codeFieldProps?.onKeyDown?.({ key: "Enter", preventDefault: () => {} });
+    });
+    expect(chartHarness.getState()?.field?.data?.measurements_entries?.[0]).toMatchObject({
+      code: "2010",
+      description: "TEMPERATURE",
+    });
+    act(() => chartHarness.root.unmount());
   });
 
   it("stages chart corrections as status-C updates and supports undo", () => {
     const harness = renderGrid({ codes: CODES, allowChartEdits: true });
 
-    // First chart row (newest) is BMI 5002; correct its value.
+    // First chart row (newest) is BMI 5002; Edit stages the correction at the
+    // current value, then the in-row field updates it.
     clickButton(harness.container, "Edit");
+    expect(harness.getState()?.field?.data?.measurements_edits?.[0]).toMatchObject({
+      observationId: 5002,
+      action: "correct",
+      value: "18.3",
+    });
     act(() => {
       textFieldProps?.onChange?.(null, "25");
     });
-    clickButton(harness.container, "Save correction");
 
     const edits = harness.getState()?.field?.data?.measurements_edits;
     expect(edits).toHaveLength(1);
@@ -241,9 +290,8 @@ describe("ObservationEntryGrid", () => {
       value: "25",
       valueType: "NUMERIC",
     });
-    // Corrected display shows old value struck plus new value.
+    // Corrected display shows the old value struck through beside the editor.
     expect(harness.container.textContent).toContain("18.3");
-    expect(harness.container.textContent).toContain("25");
 
     clickButton(harness.container, "Undo");
     expect(harness.getState()?.field?.data?.measurements_edits).toHaveLength(0);
@@ -283,7 +331,7 @@ describe("ObservationEntryGrid", () => {
     act(() => {
       window.dispatchEvent(new KeyboardEvent("keydown", { key: "w", ctrlKey: true }));
     });
-    expect(dropdownProps?.selectedKey).toBe("22732");
+    expect(harness.getState()?.field?.data?.measurements_entries?.[0]).toMatchObject({ code: "22732" });
 
     // Unmatched keys and bare keypresses do not open the editor.
     const idleHarness = renderGrid({ codes: [{ code: "951", label: "BMI", hotkey: "i" }] });

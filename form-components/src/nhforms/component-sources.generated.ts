@@ -1838,7 +1838,9 @@ const reviewMatchesCode = (entry, candidate) => {
 }
 
 const reviewNumber = (value) => {
-  const parsed = Number(value)
+  const text = reviewToText(value).trim()
+  if (!text) return null
+  const parsed = Number(text)
   return Number.isFinite(parsed) ? parsed : null
 }
 
@@ -20206,7 +20208,7 @@ const ObservationChart = ({
   )
 }
 `,
-  './ObservationEntryGrid/index.jsx': `const { useMemo, useState, useEffect } = React
+  './ObservationEntryGrid/index.jsx': `const { useMemo, useState, useEffect, useRef } = React
 const { Stack, Label, Text, TextField, DefaultButton, PrimaryButton, Dropdown } = Fluent
 
 const gridToText = (value) => {
@@ -20280,7 +20282,9 @@ const gridCutoffDate = (lookback) => {
 }
 
 const gridNumber = (value) => {
-  const parsed = Number(value)
+  const text = gridToText(value).trim()
+  if (!text) return null
+  const parsed = Number(text)
   return Number.isFinite(parsed) ? parsed : null
 }
 
@@ -20407,6 +20411,23 @@ const buildGridAbnormalFlag = (sd, flagCode) => (
 const cellStyle = { border: "1px solid #e1dfdd", padding: "2px 6px", fontSize: 12, lineHeight: "16px" }
 const headStyle = { border: "1px solid #d0d0d0", textAlign: "left", padding: "3px 6px", background: "#f3f2f1", fontSize: 12, lineHeight: "16px" }
 const zebraRowBackground = "#faf9f8"
+// MOIS paints unsaved in-grid entries salmon until the form is saved.
+const newRowBackground = "#f8d5c8"
+const inlineDropdownStyles = {
+  root: { minWidth: 150 },
+  title: { height: 22, lineHeight: "20px", fontSize: 12, paddingLeft: 6 },
+  caretDownWrapper: { height: 22, lineHeight: "22px" },
+}
+const inlineTextFieldStyles = {
+  root: { minWidth: 90 },
+  fieldGroup: { height: 22 },
+  field: { fontSize: 12, padding: "0 6px" },
+}
+const inlineCodeFieldStyles = {
+  root: { minWidth: 60, maxWidth: 90 },
+  fieldGroup: { height: 22 },
+  field: { fontSize: 12, padding: "0 6px" },
+}
 
 const detailLabelStyle = { color: "#605e5c", whiteSpace: "nowrap", paddingRight: 6, textAlign: "right" }
 const detailValueStyle = { paddingRight: 18, minWidth: 110 }
@@ -20533,9 +20554,10 @@ const ObservationEntryGrid = ({
   const entries = readGridRows(fd, entriesKey)
   const edits = readGridRows(fd, editsKey)
   const [selectedKey, setSelectedKey] = useState(null)
-  // editor: null | { mode: "new", code } | { mode: "correct", observationId, code, description }
-  const [editor, setEditor] = useState(null)
-  const [editorValue, setEditorValue] = useState("")
+  // Per-row uncommitted code text: typing resolves only on Enter/blur so
+  // partial codes ("19") don't prematurely match ("1950" intended).
+  const [codeDrafts, setCodeDrafts] = useState({})
+  const valueFieldRefs = useRef({})
 
   const editByObservationId = useMemo(() => {
     const map = new Map()
@@ -20669,25 +20691,6 @@ const ObservationEntryGrid = ({
     setGridNestedPayload(setFormData, componentId, [...newPayload, ...editPayload])
   }, [codeList, componentId, edits, entries, readOnly, sd, setFormData, source])
 
-  const startEntry = (code) => {
-    if (readOnly) return
-    setEditor({ mode: "new", code: code ?? codeList[0]?.code ?? null })
-    setEditorValue("")
-  }
-
-  const startCorrection = (row) => {
-    if (readOnly || row.observationId === null) return
-    setEditor({
-      mode: "correct",
-      observationId: row.observationId,
-      code: row.code,
-      description: row.description,
-      units: row.units,
-      collectedDateTime: row.collectedDateTime,
-    })
-    setEditorValue(row.value)
-  }
-
   const writeRows = (key, updater) => {
     setFormData(produce((draft) => {
       if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
@@ -20697,44 +20700,95 @@ const ObservationEntryGrid = ({
     }))
   }
 
-  const saveEditor = () => {
-    if (!editor) return
-    const value = gridToText(editorValue).trim()
-    if (!value) return
-    if (editor.mode === "correct") {
-      const edit = {
-        observationId: editor.observationId,
-        action: "correct",
-        code: editor.code,
-        description: editor.description,
-        units: editor.units,
-        value,
-        collectedDateTime: editor.collectedDateTime,
+  // MOIS-style New: insert an editable row at the top of the grid — pick the
+  // test and type the value in place. Rows without a code+value never stage.
+  const startEntry = (code) => {
+    if (readOnly) return
+    const candidate = code ? codeList.find((item) => item.code === code) : null
+    const rowId = "row-" + Date.now() + "-" + Math.floor(Math.random() * 100000)
+    writeRows(entriesKey, (current) => [
+      {
+        rowId,
+        code: candidate?.code ?? "",
+        description: candidate?.label ?? "",
+        value: "",
+        units: candidate?.units ?? "",
+        dateTime: getDateTimeString(new Date()),
+      },
+      ...current,
+    ])
+    setSelectedKey("entry-" + rowId)
+  }
+
+  const updateEntry = (rowId, patch) => {
+    writeRows(entriesKey, (current) => current.map((entry) => (
+      gridToText(entry.rowId) === rowId ? { ...entry, ...patch } : entry
+    )))
+  }
+
+  // Resolve a typed code to a test name: configured codes first (code or
+  // LOINC), then the chart's own observations (newest matching record wins).
+  const resolveEntryCode = (raw) => {
+    const text = gridToText(raw).trim()
+    if (!text) return { code: "", description: "", units: "" }
+    const lower = text.toLowerCase()
+    const candidate = codeList.find((item) =>
+      item.code.toLowerCase() === lower || (item.loincCode && item.loincCode.toLowerCase() === lower))
+    if (candidate) return { code: candidate.code, description: candidate.label, units: candidate.units }
+    let best = null
+    let bestTime = -Infinity
+    source.forEach((entry) => {
+      if (!entry || typeof entry !== "object") return
+      const entryCode = gridToText(entry.observationCode).trim().toLowerCase()
+      const entryLoinc = gridToText(entry.loincCode).trim().toLowerCase()
+      if (entryCode !== lower && entryLoinc !== lower) return
+      const time = gridParseDate(entry.collectedDateTime)?.getTime() ?? 0
+      if (time >= bestTime) {
+        best = entry
+        bestTime = time
       }
-      writeRows(editsKey, (current) => [
-        edit,
-        ...current.filter((item) => gridNumber(item.observationId) !== editor.observationId),
-      ])
-    } else {
-      const code = gridToText(editor.code).trim()
-      if (!code) return
-      const candidate = codeList.find((item) => item.code === code)
-      const rowId = "row-" + Date.now() + "-" + Math.floor(Math.random() * 100000)
-      writeRows(entriesKey, (current) => [
-        {
-          rowId,
-          code,
-          description: candidate?.label ?? code,
-          value,
-          units: candidate?.units ?? "",
-          dateTime: getDateTimeString(new Date()),
-        },
-        ...current,
-      ])
-      setSelectedKey("entry-" + rowId)
+    })
+    if (best) {
+      return { code: text, description: gridToText(best.description).trim(), units: gridToText(best.units).trim() }
     }
-    setEditor(null)
-    setEditorValue("")
+    return { code: text, description: "", units: "" }
+  }
+
+  const commitEntryCode = (rowId, raw) => {
+    const resolved = resolveEntryCode(raw)
+    updateEntry(rowId, resolved)
+    setCodeDrafts((current) => {
+      const next = { ...current }
+      delete next[rowId]
+      return next
+    })
+    if (resolved.code) valueFieldRefs.current[rowId]?.focus?.()
+  }
+
+  // Corrections stage immediately at the current value; the row's value cell
+  // becomes editable in place until Undo or save.
+  const startCorrection = (row) => {
+    if (readOnly || row.observationId === null) return
+    writeRows(editsKey, (current) => [
+      {
+        observationId: row.observationId,
+        action: "correct",
+        code: row.code,
+        description: row.description,
+        units: row.units,
+        value: row.value,
+        collectedDateTime: row.collectedDateTime,
+      },
+      ...current.filter((item) => gridNumber(item.observationId) !== row.observationId),
+    ])
+  }
+
+  const updateCorrection = (observationId, value) => {
+    writeRows(editsKey, (current) => current.map((item) => (
+      gridNumber(item.observationId) === observationId && item.action === "correct"
+        ? { ...item, value }
+        : item
+    )))
   }
 
   const deleteEntry = (rowId) => {
@@ -20766,12 +20820,11 @@ const ObservationEntryGrid = ({
       const match = withHotkeys.find((item) => item.hotkey === key)
       if (!match) return
       event.preventDefault()
-      setEditor({ mode: "new", code: match.code })
-      setEditorValue("")
+      startEntry(match.code)
     }
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [codeList, readOnly])
+  })
 
   const allRows = [...entryRows, ...chartRows]
   // MOIS keeps a row selected at all times, so the detail pane and the
@@ -20808,37 +20861,6 @@ const ObservationEntryGrid = ({
       <Stack horizontal tokens={{ childrenGap: 10 }}>
         <Stack.Item grow>
           <Stack tokens={{ childrenGap: 8 }}>
-            {editor ? (
-              <div className="hideonprint" style={{ border: "1px solid #d0d0d0", background: "#f3f9fd", padding: "8px 10px" }}>
-                <Stack horizontal tokens={{ childrenGap: 8 }} verticalAlign="end" wrap>
-                  {editor.mode === "correct" ? (
-                    <Text>
-                      Correcting {editor.description || editor.code} ({editor.code})
-                    </Text>
-                  ) : (
-                    <Dropdown
-                      label="Measurement"
-                      selectedKey={editor.code}
-                      options={codeList.map((item) => ({ key: item.code, text: item.label + (item.units ? " (" + item.units + ")" : "") }))}
-                      onChange={(_event, option) => setEditor({ mode: "new", code: option ? String(option.key) : null })}
-                      styles={{ root: { minWidth: 220 } }}
-                    />
-                  )}
-                  <TextField
-                    label="Value"
-                    value={editorValue}
-                    onChange={(_event, value) => setEditorValue(value ?? "")}
-                    styles={{ root: { minWidth: 120 } }}
-                  />
-                  <PrimaryButton
-                    text={editor.mode === "correct" ? "Save correction" : "Add"}
-                    disabled={!gridToText(editorValue).trim()}
-                    onClick={saveEditor}
-                  />
-                  <DefaultButton text="Cancel" onClick={() => { setEditor(null); setEditorValue("") }} />
-                </Stack>
-              </div>
-            ) : null}
             {allRows.length === 0 ? (
               <Text variant="small">No measurements found.</Text>
             ) : (
@@ -20871,25 +20893,86 @@ const ObservationEntryGrid = ({
                         style={{
                           cursor: "pointer",
                           background: row.key === selectedRow?.key
-                            ? "#deecf9"
+                            ? (row.fromChart ? "#deecf9" : "#f4b8a4")
                             : row.fromChart
                               ? (rowIndex % 2 === 1 ? zebraRowBackground : undefined)
-                              : "#eff6fc",
+                              : newRowBackground,
                           ...(pendingDelete ? { textDecoration: "line-through", color: "#a4262c" } : {}),
                         }}
                       >
                         <td style={{ ...cellStyle, whiteSpace: "nowrap" }}>{row.dateKey}</td>
                         {showOrderedBy ? <td style={{ ...cellStyle, whiteSpace: "nowrap" }}>{row.orderedBy || ""}</td> : null}
-                        <td style={cellStyle}>{row.code}</td>
-                        <td style={{ ...cellStyle, ...gridFlagStyle(displayFlag) }}>{row.description}</td>
+                        <td style={cellStyle}>
+                          {!row.fromChart && !readOnly ? (
+                            <TextField
+                              placeholder="Code"
+                              value={codeDrafts[row.rowId] ?? gridToText(row.code)}
+                              autoFocus={!row.code}
+                              onChange={(_event, value) => setCodeDrafts((current) => ({ ...current, [row.rowId]: value ?? "" }))}
+                              onKeyDown={(event) => {
+                                if (event.key !== "Enter") return
+                                event.preventDefault()
+                                commitEntryCode(row.rowId, codeDrafts[row.rowId] ?? row.code)
+                              }}
+                              onBlur={() => {
+                                if (codeDrafts[row.rowId] !== undefined) commitEntryCode(row.rowId, codeDrafts[row.rowId])
+                              }}
+                              styles={inlineCodeFieldStyles}
+                            />
+                          ) : (
+                            row.code
+                          )}
+                        </td>
                         <td style={{ ...cellStyle, ...gridFlagStyle(displayFlag) }}>
-                          {pendingCorrection ? (
-                            <span>
-                              <span style={{ textDecoration: "line-through", color: "#605e5c", marginRight: 6 }}>
+                          {!row.fromChart && !readOnly && !row.description ? (
+                            <Dropdown
+                              placeholder="Select test…"
+                              selectedKey={row.code || null}
+                              options={codeList.map((item) => ({ key: item.code, text: item.label + (item.units ? " (" + item.units + ")" : "") }))}
+                              onChange={(_event, option) => {
+                                const nextCode = option ? String(option.key) : ""
+                                const candidate = codeList.find((item) => item.code === nextCode)
+                                setCodeDrafts((current) => {
+                                  const next = { ...current }
+                                  delete next[row.rowId]
+                                  return next
+                                })
+                                updateEntry(row.rowId, {
+                                  code: nextCode,
+                                  description: candidate?.label ?? "",
+                                  units: candidate?.units ?? "",
+                                })
+                              }}
+                              styles={inlineDropdownStyles}
+                            />
+                          ) : (
+                            row.description
+                          )}
+                        </td>
+                        <td style={{ ...cellStyle, ...gridFlagStyle(displayFlag) }}>
+                          {!row.fromChart && !readOnly ? (
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                              <TextField
+                                value={gridToText(row.value)}
+                                autoFocus={Boolean(row.code)}
+                                componentRef={(ref) => { valueFieldRefs.current[gridToText(row.rowId)] = ref }}
+                                onChange={(_event, value) => updateEntry(row.rowId, { value: value ?? "" })}
+                                styles={inlineTextFieldStyles}
+                              />
+                              {row.units ? <span>{row.units}</span> : null}
+                            </span>
+                          ) : pendingCorrection ? (
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                              <span style={{ textDecoration: "line-through", color: "#605e5c", marginRight: 2 }}>
                                 {row.value}
                               </span>
-                              {displayValue}
-                              {row.units ? " " + row.units : ""}
+                              <TextField
+                                value={displayValue}
+                                autoFocus
+                                onChange={(_event, value) => updateCorrection(row.observationId, value ?? "")}
+                                styles={inlineTextFieldStyles}
+                              />
+                              {row.units ? <span>{row.units}</span> : null}
                             </span>
                           ) : (
                             <span>
@@ -21640,7 +21723,9 @@ const matchQueryCodeIndex = (entry, codeList) => {
 }
 
 const queryNumber = (value) => {
-  const parsed = Number(value)
+  const text = queryToText(value).trim()
+  if (!text) return null
+  const parsed = Number(text)
   return Number.isFinite(parsed) ? parsed : null
 }
 

@@ -95,7 +95,9 @@ const matchQueryCodeIndex = (entry, codeList) => {
 }
 
 const queryNumber = (value) => {
-  const parsed = Number(value)
+  const text = queryToText(value).trim()
+  if (!text) return null
+  const parsed = Number(text)
   return Number.isFinite(parsed) ? parsed : null
 }
 
