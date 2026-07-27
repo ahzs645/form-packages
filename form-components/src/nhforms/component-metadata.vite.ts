@@ -48,7 +48,7 @@ function getCategory(name: string): NHFormsComponentMetadata['category'] {
   if (name.startsWith('Mse')) {
     return 'MSE';
   }
-  if (['ObservationQuery', 'ObservationEntryGrid', 'HistoricalObservationTable',
+  if (['ObservationQuery', 'ObservationEntryGrid', 'ChartReviewSummary', 'HistoricalObservationTable',
        'ObservationChart', 'FocusedObservationHistory', 'PastMeasurementField'].includes(name)) {
     return 'Investigations';
   }

@@ -295,6 +295,16 @@ describe("ObservationEntryGrid", () => {
     act(() => idleHarness.root.unmount());
   });
 
+  it("keeps the range band strip when the selected row has no ranges, so the pane height stays stable", () => {
+    // 2010 TEMPERATURE carries no range fields; the detail pane must still
+    // render the LL/L/NORMAL RANGE/H/HH strip (empty boxes, like MOIS).
+    const harness = renderGrid({ codes: [{ code: "2010", label: "Temperature" }] });
+    expect(harness.container.textContent).toContain("Ref. Ranges:");
+    expect(harness.container.textContent).toContain("NORMAL RANGE");
+    expect(harness.container.textContent).not.toContain("No reference range on record.");
+    act(() => harness.root.unmount());
+  });
+
   it("hides all entry affordances when readOnly", () => {
     const harness = renderGrid({ codes: CODES, readOnly: true });
 

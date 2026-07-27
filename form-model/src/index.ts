@@ -1166,7 +1166,7 @@ export interface BuilderField {
     | "simpleCodeSelect"
     | "findCode";
   /** Layout of radio/checklist answers inside a SimpleCodeChecklist field. */
-  choiceAnswerLayout?: "vertical" | "responsive" | "columns-2" | "columns-3" | "columns-4";
+  choiceAnswerLayout?: "vertical" | "responsive" | "inline" | "columns-2" | "columns-3" | "columns-4";
   /** MOIS control density for coded selection controls. */
   moisSize?: string;
   /** MOIS per-answer density for radio/checklist controls. */
@@ -1522,6 +1522,8 @@ export interface SectionConfig {
   layoutType?: "grid" | "stacked";
   /** Number of columns per row when in grid layout (1-4, default 2) */
   gridColumns?: 1 | 2 | 3 | 4;
+  /** Draw a MOIS-style separator line between grid rows */
+  rowSeparators?: boolean;
   /** Optional section override; omitted inherits the form-wide question spacing. */
   questionSpacing?: FormQuestionSpacing;
   /** Show a shared scale legend at the top of the section */

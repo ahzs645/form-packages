@@ -85,9 +85,9 @@ const InvestigationTabs = ({
         style={{
           display: "flex",
           alignItems: "stretch",
+          flexWrap: "wrap",
           borderBottom: "1px solid #b8b8b8",
           background: "#eeeeee",
-          overflowX: "auto",
         }}
       >
         {resolvedTabs.map((tab, index) => {

@@ -1745,6 +1745,304 @@ const _chartRecordTablePresets = {
   },
 }
 `,
+  './ChartReviewSummary/index.jsx': `const { useMemo } = React
+const { Stack, Label, Text } = Fluent
+
+// MOIS "Review of Most Recent Values" report colors.
+const REVIEW_BLUE = "#004578"
+const REVIEW_RED = "#a4262c"
+const REVIEW_GRAY = "#8a8886"
+const REVIEW_INK = "#201f1e"
+
+const reviewToText = (value) => {
+  if (value === null || value === undefined) return ""
+  return String(value)
+}
+
+const reviewParseDate = (value) => {
+  const raw = reviewToText(value).trim()
+  if (!raw) return null
+  const parsed = new Date(raw.includes("T") ? raw : raw.replace(/\\./g, "-"))
+  return Number.isNaN(parsed.getTime()) ? null : parsed
+}
+
+// MOIS renders review dates as yyyy.mm.dd.
+const reviewDateKey = (value) => {
+  const raw = reviewToText(value)
+  const datePart = raw.includes("T") ? raw.split("T")[0] : raw
+  return datePart.replace(/-/g, ".")
+}
+
+const reviewGetPath = (sd, path) => {
+  const steps = reviewToText(path).split(".").filter(Boolean)
+  let current = sd
+  for (const step of steps) {
+    if (current && typeof current === "object") {
+      current = current[step]
+    } else {
+      return undefined
+    }
+  }
+  return current
+}
+
+const reviewArray = (value) => (Array.isArray(value) ? value : [])
+
+// Display text for values that may be plain strings or {code, display} objects.
+const reviewDisplay = (value) => {
+  if (value && typeof value === "object") {
+    return reviewToText(value.display ?? value.text ?? value.code).trim()
+  }
+  return reviewToText(value).trim()
+}
+
+const reviewAgeYears = (birthDate) => {
+  const parsed = reviewParseDate(birthDate)
+  if (!parsed) return null
+  const now = new Date()
+  let age = now.getFullYear() - parsed.getFullYear()
+  const monthDelta = now.getMonth() - parsed.getMonth()
+  if (monthDelta < 0 || (monthDelta === 0 && now.getDate() < parsed.getDate())) age -= 1
+  return age >= 0 ? age : null
+}
+
+const normalizeReviewCodes = (codes) => {
+  if (!Array.isArray(codes)) return []
+  return codes
+    .map((entry) => {
+      if (typeof entry === "string") {
+        const code = entry.trim()
+        return code ? { code, label: code, loincCode: "", units: "" } : null
+      }
+      if (!entry || typeof entry !== "object") return null
+      const code = reviewToText(entry.code).trim()
+      if (!code) return null
+      return {
+        code,
+        label: reviewToText(entry.label).trim() || code,
+        loincCode: reviewToText(entry.loincCode).trim(),
+        units: reviewToText(entry.units).trim(),
+      }
+    })
+    .filter(Boolean)
+}
+
+const reviewMatchesCode = (entry, candidate) => {
+  const entryCode = reviewToText(entry?.observationCode).trim().toLowerCase()
+  const entryLoinc = reviewToText(entry?.loincCode).trim().toLowerCase()
+  const code = candidate.code.toLowerCase()
+  const loinc = candidate.loincCode.toLowerCase()
+  if (entryCode && (entryCode === code || (loinc && entryCode === loinc))) return true
+  if (entryLoinc && (entryLoinc === code || (loinc && entryLoinc === loinc))) return true
+  return false
+}
+
+const reviewNumber = (value) => {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+// Explicit abnormal flag first, then the four MOIS bands from the record's own
+// reference ranges — same precedence as ObservationQuery/ObservationEntryGrid.
+const reviewFlagText = (entry, rawValue) => {
+  const flag = entry?.abnormalFlag && typeof entry.abnormalFlag === "object"
+    ? reviewToText(entry.abnormalFlag.code).trim()
+    : reviewToText(entry?.abnormalFlag).trim()
+  if (flag) return flag
+  const value = reviewNumber(rawValue)
+  if (value !== null) {
+    const criticalLow = reviewNumber(entry?.rangeAbsurdLow) ?? reviewNumber(entry?.rangeVeryLow)
+    const criticalHigh = reviewNumber(entry?.rangeAbsurdHigh) ?? reviewNumber(entry?.rangeVeryHigh)
+    const normalLow = reviewNumber(entry?.rangeNormalLow)
+    const normalHigh = reviewNumber(entry?.rangeNormalHigh)
+    if (criticalLow !== null && value < criticalLow) return "LL"
+    if (criticalHigh !== null && value > criticalHigh) return "HH"
+    if (normalLow !== null && value < normalLow) return "L"
+    if (normalHigh !== null && value > normalHigh) return "H"
+  }
+  return "N/A"
+}
+
+const reviewLineStyle = { whiteSpace: "pre-wrap", lineHeight: "17px" }
+const reviewHeadingStyle = { ...reviewLineStyle, fontWeight: 700, color: REVIEW_INK, marginTop: 10 }
+
+const ReviewSectionHeading = ({ children }) => <div style={reviewHeadingStyle}>{children}</div>
+
+const ChartReviewSummary = ({
+  title = "Review of Most Recent Values",
+  showDemographics = true,
+  showProblems = true,
+  problemsTitle = "CURRENT PROBLEM LIST",
+  includeResolvedProblems = false,
+  showMedications = true,
+  medicationsTitle = "CURRENT ACTIVE MEDICATIONS",
+  observationsTitle = "DIABETES",
+  codes = [],
+  sourcePath = "patient",
+  datePath = "collectedDateTime",
+}) => {
+  const sd = useSourceData()
+  const patient = reviewGetPath(sd, sourcePath || "patient") ?? {}
+  const codeList = useMemo(() => normalizeReviewCodes(codes), [codes])
+
+  const age = reviewAgeYears(patient.birthDate ?? patient.dob)
+  const sex = reviewDisplay(patient.administrativeGender ?? patient.gender).toUpperCase()
+
+  const problems = useMemo(() => {
+    const rows = reviewArray(patient.conditions)
+      .filter((entry) => entry && typeof entry === "object")
+      .filter((entry) => includeResolvedProblems || !reviewToText(entry.resolveDate).trim())
+      .map((entry) => ({
+        date: reviewDateKey(entry.startDate),
+        time: reviewParseDate(entry.startDate)?.getTime() ?? 0,
+        name: reviewDisplay(entry.condition).toUpperCase(),
+      }))
+      .filter((entry) => entry.name)
+    rows.sort((left, right) => left.time - right.time)
+    return rows
+  }, [includeResolvedProblems, patient.conditions])
+
+  const medications = useMemo(() => {
+    const now = Date.now()
+    const rows = reviewArray(patient.longTermMedications)
+      .filter((entry) => entry && typeof entry === "object")
+      .map((entry) => {
+        const stopRaw = reviewToText(entry.endDate ?? entry.stopDate).trim()
+        const stopTime = reviewParseDate(stopRaw)?.getTime() ?? null
+        const doseText = reviewToText(entry.doseFrequency).trim() ||
+          [reviewToText(entry.dose).trim(), reviewToText(entry.route).trim(), reviewToText(entry.frequency).trim()]
+            .filter(Boolean)
+            .join(" ")
+        return {
+          start: reviewDateKey(entry.startDate),
+          startTime: reviewParseDate(entry.startDate)?.getTime() ?? 0,
+          stop: reviewDateKey(stopRaw),
+          stopped: stopTime !== null && stopTime < now,
+          name: reviewDisplay(entry.medication).toUpperCase() || reviewDisplay(entry.genericName).toUpperCase(),
+          dose: doseText,
+        }
+      })
+      .filter((entry) => entry.name && !entry.stopped)
+    rows.sort((left, right) => right.startTime - left.startTime)
+    return rows
+  }, [patient.longTermMedications])
+
+  const latestByCode = useMemo(() => {
+    const observations = reviewArray(patient.observations)
+    return codeList.map((candidate) => {
+      let best = null
+      let bestTime = -Infinity
+      observations.forEach((entry) => {
+        if (!entry || typeof entry !== "object") return
+        if (!reviewMatchesCode(entry, candidate)) return
+        const time = reviewParseDate(entry[datePath])?.getTime()
+        if (time === undefined || time === null) return
+        if (time > bestTime) {
+          best = entry
+          bestTime = time
+        }
+      })
+      return { candidate, latest: best }
+    })
+  }, [codeList, datePath, patient.observations])
+
+  return (
+    <Stack tokens={{ childrenGap: 4 }}>
+      {title ? <Label>{title}</Label> : null}
+      <div
+        style={{
+          border: "1px solid #d0d0d0",
+          background: "#ffffff",
+          padding: "10px 14px",
+          fontFamily: '"Consolas", "Menlo", "Courier New", monospace',
+          fontSize: 12,
+          color: REVIEW_INK,
+        }}
+      >
+        {showDemographics ? (
+          <div style={{ ...reviewLineStyle, fontWeight: 700 }}>
+            {"Age = " + (age === null ? "-" : age) + "    SEX = " + (sex || "-")}
+          </div>
+        ) : null}
+
+        {showProblems ? (
+          <div>
+            <ReviewSectionHeading>{problemsTitle}</ReviewSectionHeading>
+            {problems.length === 0 ? (
+              <div style={{ ...reviewLineStyle, color: REVIEW_GRAY }}> None recorded</div>
+            ) : (
+              problems.map((problem, index) => (
+                <div key={index} style={{ ...reviewLineStyle, color: REVIEW_BLUE }}>
+                  {" " + (problem.date || "          ").padEnd(11)} {problem.name}
+                </div>
+              ))
+            )}
+          </div>
+        ) : null}
+
+        {showMedications ? (
+          <div>
+            <ReviewSectionHeading>{medicationsTitle}</ReviewSectionHeading>
+            <div style={{ ...reviewLineStyle, color: REVIEW_BLUE, fontWeight: 700 }}>
+              {" START DATE  STOP DATE"}
+            </div>
+            {medications.length === 0 ? (
+              <div style={{ ...reviewLineStyle, color: REVIEW_GRAY }}> None recorded</div>
+            ) : (
+              medications.map((medication, index) => (
+                <div key={index} style={reviewLineStyle}>
+                  <span style={{ color: REVIEW_BLUE }}>
+                    {" " + (medication.start || "").padEnd(12) + (medication.stop || "").padEnd(12)}
+                  </span>
+                  <span style={{ color: REVIEW_BLUE }}>{medication.name}</span>
+                  {medication.dose ? <span style={{ color: REVIEW_GRAY }}>{" [ " + medication.dose + " ]"}</span> : null}
+                </div>
+              ))
+            )}
+          </div>
+        ) : null}
+
+        {codeList.length > 0 ? (
+          <div>
+            <ReviewSectionHeading>{observationsTitle}</ReviewSectionHeading>
+            {latestByCode.map(({ candidate, latest }, index) => {
+              if (!latest) {
+                return (
+                  <div key={index} style={{ ...reviewLineStyle, color: REVIEW_RED }}>
+                    {" " + candidate.label + " Not Found"}
+                  </div>
+                )
+              }
+              const value = reviewToText(latest.value ?? latest.display ?? latest.report).trim()
+              const units = reviewToText(latest.units).trim() || candidate.units
+              // Date-only records (vaccines, assessments) render as "LABEL - date",
+              // matching how MOIS lists them without a value or flag bracket.
+              if (!value) {
+                return (
+                  <div key={index} style={{ ...reviewLineStyle, color: REVIEW_BLUE }}>
+                    {" " + candidate.label + " - " + reviewDateKey(latest[datePath])}
+                  </div>
+                )
+              }
+              return (
+                <div key={index} style={reviewLineStyle}>
+                  <span style={{ color: REVIEW_BLUE }}>
+                    {" " + candidate.label + " - " + reviewDateKey(latest[datePath]) + " - "}
+                  </span>
+                  <span style={{ color: REVIEW_BLUE, fontWeight: 700 }}>
+                    {value + (units ? " " + units : "")}
+                  </span>
+                  <span style={{ color: REVIEW_GRAY }}>{"  [ " + reviewFlagText(latest, value) + " ]"}</span>
+                </div>
+              )
+            })}
+          </div>
+        ) : null}
+      </div>
+    </Stack>
+  )
+}
+`,
   './CodedObservationChoiceField/index.jsx': `const { useEffect, useMemo } = React
 
 const normalizeCodedChoiceOptions = (optionList, codeSystem, sd) => {
@@ -17113,9 +17411,9 @@ const InvestigationTabs = ({
         style={{
           display: "flex",
           alignItems: "stretch",
+          flexWrap: "wrap",
           borderBottom: "1px solid #b8b8b8",
           background: "#eeeeee",
-          overflowX: "auto",
         }}
       >
         {resolvedTabs.map((tab, index) => {
@@ -20108,36 +20406,103 @@ const buildGridAbnormalFlag = (sd, flagCode) => (
 
 const cellStyle = { border: "1px solid #e1dfdd", padding: "2px 6px", fontSize: 12, lineHeight: "16px" }
 const headStyle = { border: "1px solid #d0d0d0", textAlign: "left", padding: "3px 6px", background: "#f3f2f1", fontSize: 12, lineHeight: "16px" }
-const rowActionStyles = { root: { minWidth: 0, height: 20, padding: "0 6px", fontSize: 11 } }
 const zebraRowBackground = "#faf9f8"
+
+const detailLabelStyle = { color: "#605e5c", whiteSpace: "nowrap", paddingRight: 6, textAlign: "right" }
+const detailValueStyle = { paddingRight: 18, minWidth: 110 }
+const detailBandLabelStyle = { color: "#004578", fontSize: 10, fontWeight: 600, textAlign: "center", padding: "0 6px" }
+
+// MOIS-style reference-range band strip: threshold values in LL/L/H/HH colored
+// cells around the units, band names captioned beneath. Rendered even when the
+// row has no ranges (empty boxes, like MOIS) so the pane height never jumps.
+const GridRangeBands = ({ ranges, centerText }) => {
+  const cells = [
+    { key: "LL", value: gridToText(ranges.rangeAbsurdLow ?? ranges.rangeVeryLow).trim(), style: { background: "#fde7e9" } },
+    { key: "L", value: gridToText(ranges.rangeNormalLow).trim(), style: { background: "#fff4ce" } },
+    { key: "NORMAL RANGE", value: gridToText(centerText).trim(), style: { color: "#605e5c" } },
+    { key: "H", value: gridToText(ranges.rangeNormalHigh).trim(), style: { background: "#fff4ce" } },
+    { key: "HH", value: gridToText(ranges.rangeAbsurdHigh ?? ranges.rangeVeryHigh).trim(), style: { background: "#fde7e9" } },
+  ]
+  return (
+    <table style={{ borderCollapse: "collapse" }}>
+      <tbody>
+        <tr>
+          <td rowSpan={2} style={{ padding: "0 4px", fontWeight: 700 }}>{"<"}</td>
+          {cells.map((cell) => (
+            <td
+              key={cell.key}
+              style={{
+                border: "1px solid #d0d0d0",
+                padding: "1px 10px",
+                minWidth: 52,
+                textAlign: "center",
+                fontSize: 12,
+                ...cell.style,
+              }}
+            >
+              {cell.value || " "}
+            </td>
+          ))}
+          <td rowSpan={2} style={{ padding: "0 4px", fontWeight: 700 }}>{">"}</td>
+        </tr>
+        <tr>
+          {cells.map((cell) => (
+            <td key={cell.key} style={detailBandLabelStyle}>{cell.key}</td>
+          ))}
+        </tr>
+      </tbody>
+    </table>
+  )
+}
 
 const GridDetailPane = ({ row }) => {
   if (!row) return null
   const ranges = row.ranges ?? {}
   const rangeText = gridToText(ranges.referenceRangeText).trim()
-  const bands = [
-    { key: "LL", value: ranges.rangeAbsurdLow ?? ranges.rangeVeryLow },
-    { key: "L", value: ranges.rangeNormalLow },
-    { key: "H", value: ranges.rangeNormalHigh },
-    { key: "HH", value: ranges.rangeAbsurdHigh ?? ranges.rangeVeryHigh },
-  ].filter((band) => gridToText(band.value).trim() !== "")
+  const hasBands = [ranges.rangeAbsurdLow, ranges.rangeVeryLow, ranges.rangeNormalLow, ranges.rangeNormalHigh, ranges.rangeAbsurdHigh, ranges.rangeVeryHigh]
+    .some((value) => gridToText(value).trim() !== "")
+  // Bands show the units in the center; without bands the center carries the
+  // text-only range (or nothing), keeping the strip — and pane height — stable.
+  const centerText = hasBands ? row.units : rangeText
+  const fields = [
+    [
+      { label: "Ordered By", value: row.orderedBy },
+      { label: "Collected By", value: row.collectedBy },
+      { label: "Collect Date", value: row.dateKey },
+    ],
+    [
+      { label: "Category", value: row.observationClass },
+      { label: "LOINC", value: row.loincCode },
+      { label: "Status", value: row.status },
+    ],
+  ]
   return (
-    <div style={{ border: "1px solid #d0d0d0", background: "#faf9f8", padding: "8px 10px", fontSize: 12 }}>
+    <div style={{ border: "1px solid #d0d0d0", background: "#faf9f8", padding: "6px 10px", fontSize: 12 }}>
       <div style={{ fontWeight: 600, marginBottom: 4 }}>
         {row.description || row.code}
+        <span style={{ marginLeft: 8, color: "#605e5c", fontWeight: 400 }}>Code: {row.code}</span>
         {row.flag ? <span style={{ marginLeft: 8, ...gridFlagStyle(row.flag), padding: "0 4px" }}>{row.flag}</span> : null}
       </div>
-      <div>Code: {row.code}{row.units ? "  ·  Units: " + row.units : ""}</div>
-      <div>Collected: {row.dateKey || "-"}</div>
-      {bands.length > 0 ? (
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-start", gap: "2px 24px" }}>
+        <table style={{ borderCollapse: "collapse" }}>
+          <tbody>
+            {fields.map((line, index) => (
+              <tr key={index}>
+                {line.map((field) => (
+                  <React.Fragment key={field.label}>
+                    <td style={detailLabelStyle}>{field.label}:</td>
+                    <td style={detailValueStyle}>{gridToText(field.value).trim() || "-"}</td>
+                  </React.Fragment>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
         <div>
-          Ref. ranges: {bands.map((band) => band.key + " " + gridToText(band.value)).join("  ·  ")}
+          <div style={{ ...detailLabelStyle, textAlign: "left", fontSize: 11 }}>Ref. Ranges:</div>
+          <GridRangeBands ranges={hasBands ? ranges : {}} centerText={centerText} />
         </div>
-      ) : rangeText ? (
-        <div>Ref. range: {rangeText}</div>
-      ) : (
-        <div style={{ color: "#605e5c" }}>No reference range on record.</div>
-      )}
+      </div>
     </div>
   )
 }
@@ -20202,10 +20567,14 @@ const ObservationEntryGrid = ({
         collectedDateTime: gridToText(entry[datePath]),
         time: parsed.getTime(),
         code: gridToText(entry.observationCode).trim(),
+        loincCode: gridToText(entry.loincCode).trim(),
         description: gridToText(entry.description).trim() || (codeIndex >= 0 ? codeList[codeIndex].label : ""),
         value,
         units: gridToText(entry.units).trim(),
         orderedBy: gridToText(entry.orderedBy).trim(),
+        collectedBy: gridToText(entry.collectedBy).trim(),
+        observationClass: gridToText(entry.observationClass).trim(),
+        status: gridToText(entry.status).trim(),
         flag: explicitFlag || classifyGridFlag(entry, value),
         ranges: entry,
         fromChart: true,
@@ -20223,10 +20592,14 @@ const ObservationEntryGrid = ({
       rowId: gridToText(entry.rowId),
       dateKey: gridDateKey(entry.dateTime),
       code: candidate.code,
+      loincCode: candidate.loincCode,
       description: gridToText(entry.description).trim() || candidate.label,
       value: gridToText(entry.value),
       units: gridToText(entry.units).trim() || candidate.units || gridToText(ranges?.units).trim(),
       orderedBy: gridToText(sd?.userProfile?.identity?.fullName).trim(),
+      collectedBy: gridToText(sd?.userProfile?.identity?.fullName).trim(),
+      observationClass: "DCOBS",
+      status: "F",
       flag: classifyGridFlag(ranges, entry.value),
       ranges: ranges ?? {},
       fromChart: false,
@@ -20358,6 +20731,7 @@ const ObservationEntryGrid = ({
         },
         ...current,
       ])
+      setSelectedKey("entry-" + rowId)
     }
     setEditor(null)
     setEditorValue("")
@@ -20400,15 +20774,35 @@ const ObservationEntryGrid = ({
   }, [codeList, readOnly])
 
   const allRows = [...entryRows, ...chartRows]
-  const selectedRow = allRows.find((row) => row.key === selectedKey) ?? null
-  const showActionsColumn = !readOnly
+  // MOIS keeps a row selected at all times, so the detail pane and the
+  // toolbar's row actions always have a target — default to the newest row.
+  const selectedRow = allRows.find((row) => row.key === selectedKey) ?? allRows[0] ?? null
+  const selectedPendingEdit = selectedRow?.fromChart && selectedRow.observationId !== null
+    ? editByObservationId.get(selectedRow.observationId)
+    : null
 
   return (
     <Stack tokens={{ childrenGap: 8 }}>
       <Stack horizontal horizontalAlign="space-between" verticalAlign="center">
         <Label>{title}</Label>
-        {!readOnly && codeList.length > 0 ? (
-          <DefaultButton className="hideonprint" text="New" onClick={() => startEntry(null)} />
+        {!readOnly ? (
+          <Stack horizontal tokens={{ childrenGap: 6 }} className="hideonprint">
+            {codeList.length > 0 ? (
+              <DefaultButton text="New" onClick={() => startEntry(null)} />
+            ) : null}
+            {selectedRow && !selectedRow.fromChart ? (
+              <DefaultButton text="Delete" onClick={() => deleteEntry(selectedRow.rowId)} />
+            ) : null}
+            {selectedRow?.fromChart && selectedPendingEdit ? (
+              <DefaultButton text="Undo" onClick={() => undoChartEdit(selectedRow.observationId)} />
+            ) : null}
+            {selectedRow?.fromChart && !selectedPendingEdit && allowChartEdits && selectedRow.observationId !== null ? (
+              <DefaultButton text="Edit" onClick={() => startCorrection(selectedRow)} />
+            ) : null}
+            {selectedRow?.fromChart && !selectedPendingEdit && allowChartEdits && selectedRow.observationId !== null ? (
+              <DefaultButton text="Delete" onClick={() => stageChartDelete(selectedRow)} />
+            ) : null}
+          </Stack>
         ) : null}
       </Stack>
       <Stack horizontal tokens={{ childrenGap: 10 }}>
@@ -20457,7 +20851,6 @@ const ObservationEntryGrid = ({
                     <th style={headStyle}>Test Name</th>
                     <th style={headStyle}>Value</th>
                     <th style={headStyle}>Flag</th>
-                    {showActionsColumn ? <th style={{ ...headStyle }} className="hideonprint" aria-label="Actions" /> : null}
                   </tr>
                 </thead>
                 <tbody>
@@ -20476,8 +20869,8 @@ const ObservationEntryGrid = ({
                         key={row.key}
                         onClick={() => setSelectedKey(row.key)}
                         style={{
-                          cursor: showDetail ? "pointer" : "default",
-                          background: row.key === selectedKey
+                          cursor: "pointer",
+                          background: row.key === selectedRow?.key
                             ? "#deecf9"
                             : row.fromChart
                               ? (rowIndex % 2 === 1 ? zebraRowBackground : undefined)
@@ -20506,48 +20899,6 @@ const ObservationEntryGrid = ({
                           )}
                         </td>
                         <td style={{ ...cellStyle, textAlign: "center", fontWeight: 700 }}>{displayFlag ?? "-"}</td>
-                        {showActionsColumn ? (
-                          <td style={{ ...cellStyle, whiteSpace: "nowrap" }} className="hideonprint">
-                            {!row.fromChart ? (
-                              <DefaultButton
-                                text="Delete"
-                                onClick={(event) => {
-                                  event.stopPropagation()
-                                  deleteEntry(row.rowId)
-                                }}
-                                styles={rowActionStyles}
-                              />
-                            ) : pendingEdit ? (
-                              <DefaultButton
-                                text="Undo"
-                                onClick={(event) => {
-                                  event.stopPropagation()
-                                  undoChartEdit(row.observationId)
-                                }}
-                                styles={rowActionStyles}
-                              />
-                            ) : allowChartEdits && row.observationId !== null ? (
-                              <span>
-                                <DefaultButton
-                                  text="Edit"
-                                  onClick={(event) => {
-                                    event.stopPropagation()
-                                    startCorrection(row)
-                                  }}
-                                  styles={rowActionStyles}
-                                />
-                                <DefaultButton
-                                  text="Delete"
-                                  onClick={(event) => {
-                                    event.stopPropagation()
-                                    stageChartDelete(row)
-                                  }}
-                                  styles={{ root: { ...rowActionStyles.root, marginLeft: 4 } }}
-                                />
-                              </span>
-                            ) : null}
-                          </td>
-                        ) : null}
                       </tr>
                     )
                   })}
@@ -31502,6 +31853,32 @@ export const componentIdentities: Record<string, any> = {
     "components": [
       "EditableTable"
     ]
+  },
+  'ChartReviewSummary': {
+    "name": "ChartReviewSummary",
+    "title": "Chart Review Summary",
+    "description": "MOIS Review-tab style chart summary report: patient age/sex line, current problem list, current active medications with dose instructions, and a latest-value observation block with red Not Found lines.",
+    "version": {
+      "major": 1,
+      "minor": 0,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "Northern Health",
+    "author": "Codex",
+    "publisher": "Northern Health",
+    "globalIdentifier": "",
+    "requiredFormViewerVersion": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "requiredMoisVersion": {
+      "major": 2,
+      "minor": 28,
+      "patch": 10
+    },
+    "components": []
   },
   'CodedObservationChoiceField': {
     "name": "CodedObservationChoiceField",

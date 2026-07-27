@@ -231,7 +231,7 @@ export interface ParsedField {
     | "simpleCodeSelect"
     | "findCode";
   /** Layout of radio/checklist answers inside a SimpleCodeChecklist field. */
-  choiceAnswerLayout?: "vertical" | "responsive" | "columns-2" | "columns-3" | "columns-4";
+  choiceAnswerLayout?: "vertical" | "responsive" | "inline" | "columns-2" | "columns-3" | "columns-4";
   codeSystem?: string; // MOIS code system (e.g., "MOIS-MARITALSTATUS")
   showOtherOption?: boolean; // Allow "Other" option with custom input
   /** Emit MOIS autoHotKey on coded selects/checklists (keyboard shortcuts). */
@@ -301,6 +301,8 @@ export interface ParsedField {
   linkedAnswerFieldIds?: string[];
   // New field type properties
   textareaRows?: number;
+  /** Explicit MOIS control size for the textarea input, overriding the width-derived size. */
+  moisSize?: string;
   textareaMultiline?: boolean;
   textareaBorderless?: boolean;
   textareaResizable?: boolean;
@@ -543,6 +545,7 @@ export interface ParsedField {
   sectionDefaultCollapsed?: boolean;
   sectionLayoutType?: "grid" | "stacked";
   sectionGridColumns?: 1 | 2 | 3 | 4;
+  sectionRowSeparators?: boolean;
   sectionQuestionSpacing?: "compact" | "standard" | "comfortable" | "spacious";
   childFieldIds?: string[];
   sectionShowScaleLegend?: boolean;

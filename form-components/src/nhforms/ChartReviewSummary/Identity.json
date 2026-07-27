@@ -1,0 +1,26 @@
+{
+  "name": "ChartReviewSummary",
+  "title": "Chart Review Summary",
+  "description": "MOIS Review-tab style chart summary report: patient age/sex line, current problem list, current active medications with dose instructions, and a latest-value observation block with red Not Found lines.",
+  "version": {
+    "major": 1,
+    "minor": 0,
+    "patch": 0
+  },
+  "type": "component",
+  "owner": "Northern Health",
+  "author": "Codex",
+  "publisher": "Northern Health",
+  "globalIdentifier": "",
+  "requiredFormViewerVersion": {
+    "major": 0,
+    "minor": 1,
+    "patch": 0
+  },
+  "requiredMoisVersion": {
+    "major": 2,
+    "minor": 28,
+    "patch": 10
+  },
+  "components": []
+}

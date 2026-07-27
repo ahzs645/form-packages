@@ -1955,6 +1955,303 @@ const _chartRecordTablePresets = {
     }]
   }
 };`,
+  './ChartReviewSummary/index.jsx': `const {
+  useMemo
+} = React;
+const {
+  Stack,
+  Label,
+  Text
+} = Fluent;
+
+// MOIS "Review of Most Recent Values" report colors.
+const REVIEW_BLUE = "#004578";
+const REVIEW_RED = "#a4262c";
+const REVIEW_GRAY = "#8a8886";
+const REVIEW_INK = "#201f1e";
+const reviewToText = value => {
+  if (value === null || value === undefined) return "";
+  return String(value);
+};
+const reviewParseDate = value => {
+  const raw = reviewToText(value).trim();
+  if (!raw) return null;
+  const parsed = new Date(raw.includes("T") ? raw : raw.replace(/\\./g, "-"));
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+// MOIS renders review dates as yyyy.mm.dd.
+const reviewDateKey = value => {
+  const raw = reviewToText(value);
+  const datePart = raw.includes("T") ? raw.split("T")[0] : raw;
+  return datePart.replace(/-/g, ".");
+};
+const reviewGetPath = (sd, path) => {
+  const steps = reviewToText(path).split(".").filter(Boolean);
+  let current = sd;
+  for (const step of steps) {
+    if (current && typeof current === "object") {
+      current = current[step];
+    } else {
+      return undefined;
+    }
+  }
+  return current;
+};
+const reviewArray = value => Array.isArray(value) ? value : [];
+
+// Display text for values that may be plain strings or {code, display} objects.
+const reviewDisplay = value => {
+  if (value && typeof value === "object") {
+    return reviewToText(value.display ?? value.text ?? value.code).trim();
+  }
+  return reviewToText(value).trim();
+};
+const reviewAgeYears = birthDate => {
+  const parsed = reviewParseDate(birthDate);
+  if (!parsed) return null;
+  const now = new Date();
+  let age = now.getFullYear() - parsed.getFullYear();
+  const monthDelta = now.getMonth() - parsed.getMonth();
+  if (monthDelta < 0 || monthDelta === 0 && now.getDate() < parsed.getDate()) age -= 1;
+  return age >= 0 ? age : null;
+};
+const normalizeReviewCodes = codes => {
+  if (!Array.isArray(codes)) return [];
+  return codes.map(entry => {
+    if (typeof entry === "string") {
+      const code = entry.trim();
+      return code ? {
+        code,
+        label: code,
+        loincCode: "",
+        units: ""
+      } : null;
+    }
+    if (!entry || typeof entry !== "object") return null;
+    const code = reviewToText(entry.code).trim();
+    if (!code) return null;
+    return {
+      code,
+      label: reviewToText(entry.label).trim() || code,
+      loincCode: reviewToText(entry.loincCode).trim(),
+      units: reviewToText(entry.units).trim()
+    };
+  }).filter(Boolean);
+};
+const reviewMatchesCode = (entry, candidate) => {
+  const entryCode = reviewToText(entry?.observationCode).trim().toLowerCase();
+  const entryLoinc = reviewToText(entry?.loincCode).trim().toLowerCase();
+  const code = candidate.code.toLowerCase();
+  const loinc = candidate.loincCode.toLowerCase();
+  if (entryCode && (entryCode === code || loinc && entryCode === loinc)) return true;
+  if (entryLoinc && (entryLoinc === code || loinc && entryLoinc === loinc)) return true;
+  return false;
+};
+const reviewNumber = value => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+// Explicit abnormal flag first, then the four MOIS bands from the record's own
+// reference ranges — same precedence as ObservationQuery/ObservationEntryGrid.
+const reviewFlagText = (entry, rawValue) => {
+  const flag = entry?.abnormalFlag && typeof entry.abnormalFlag === "object" ? reviewToText(entry.abnormalFlag.code).trim() : reviewToText(entry?.abnormalFlag).trim();
+  if (flag) return flag;
+  const value = reviewNumber(rawValue);
+  if (value !== null) {
+    const criticalLow = reviewNumber(entry?.rangeAbsurdLow) ?? reviewNumber(entry?.rangeVeryLow);
+    const criticalHigh = reviewNumber(entry?.rangeAbsurdHigh) ?? reviewNumber(entry?.rangeVeryHigh);
+    const normalLow = reviewNumber(entry?.rangeNormalLow);
+    const normalHigh = reviewNumber(entry?.rangeNormalHigh);
+    if (criticalLow !== null && value < criticalLow) return "LL";
+    if (criticalHigh !== null && value > criticalHigh) return "HH";
+    if (normalLow !== null && value < normalLow) return "L";
+    if (normalHigh !== null && value > normalHigh) return "H";
+  }
+  return "N/A";
+};
+const reviewLineStyle = {
+  whiteSpace: "pre-wrap",
+  lineHeight: "17px"
+};
+const reviewHeadingStyle = {
+  ...reviewLineStyle,
+  fontWeight: 700,
+  color: REVIEW_INK,
+  marginTop: 10
+};
+const ReviewSectionHeading = ({
+  children
+}) => /*#__PURE__*/React.createElement("div", {
+  style: reviewHeadingStyle
+}, children);
+const ChartReviewSummary = ({
+  title = "Review of Most Recent Values",
+  showDemographics = true,
+  showProblems = true,
+  problemsTitle = "CURRENT PROBLEM LIST",
+  includeResolvedProblems = false,
+  showMedications = true,
+  medicationsTitle = "CURRENT ACTIVE MEDICATIONS",
+  observationsTitle = "DIABETES",
+  codes = [],
+  sourcePath = "patient",
+  datePath = "collectedDateTime"
+}) => {
+  const sd = useSourceData();
+  const patient = reviewGetPath(sd, sourcePath || "patient") ?? {};
+  const codeList = useMemo(() => normalizeReviewCodes(codes), [codes]);
+  const age = reviewAgeYears(patient.birthDate ?? patient.dob);
+  const sex = reviewDisplay(patient.administrativeGender ?? patient.gender).toUpperCase();
+  const problems = useMemo(() => {
+    const rows = reviewArray(patient.conditions).filter(entry => entry && typeof entry === "object").filter(entry => includeResolvedProblems || !reviewToText(entry.resolveDate).trim()).map(entry => ({
+      date: reviewDateKey(entry.startDate),
+      time: reviewParseDate(entry.startDate)?.getTime() ?? 0,
+      name: reviewDisplay(entry.condition).toUpperCase()
+    })).filter(entry => entry.name);
+    rows.sort((left, right) => left.time - right.time);
+    return rows;
+  }, [includeResolvedProblems, patient.conditions]);
+  const medications = useMemo(() => {
+    const now = Date.now();
+    const rows = reviewArray(patient.longTermMedications).filter(entry => entry && typeof entry === "object").map(entry => {
+      const stopRaw = reviewToText(entry.endDate ?? entry.stopDate).trim();
+      const stopTime = reviewParseDate(stopRaw)?.getTime() ?? null;
+      const doseText = reviewToText(entry.doseFrequency).trim() || [reviewToText(entry.dose).trim(), reviewToText(entry.route).trim(), reviewToText(entry.frequency).trim()].filter(Boolean).join(" ");
+      return {
+        start: reviewDateKey(entry.startDate),
+        startTime: reviewParseDate(entry.startDate)?.getTime() ?? 0,
+        stop: reviewDateKey(stopRaw),
+        stopped: stopTime !== null && stopTime < now,
+        name: reviewDisplay(entry.medication).toUpperCase() || reviewDisplay(entry.genericName).toUpperCase(),
+        dose: doseText
+      };
+    }).filter(entry => entry.name && !entry.stopped);
+    rows.sort((left, right) => right.startTime - left.startTime);
+    return rows;
+  }, [patient.longTermMedications]);
+  const latestByCode = useMemo(() => {
+    const observations = reviewArray(patient.observations);
+    return codeList.map(candidate => {
+      let best = null;
+      let bestTime = -Infinity;
+      observations.forEach(entry => {
+        if (!entry || typeof entry !== "object") return;
+        if (!reviewMatchesCode(entry, candidate)) return;
+        const time = reviewParseDate(entry[datePath])?.getTime();
+        if (time === undefined || time === null) return;
+        if (time > bestTime) {
+          best = entry;
+          bestTime = time;
+        }
+      });
+      return {
+        candidate,
+        latest: best
+      };
+    });
+  }, [codeList, datePath, patient.observations]);
+  return /*#__PURE__*/React.createElement(Stack, {
+    tokens: {
+      childrenGap: 4
+    }
+  }, title ? /*#__PURE__*/React.createElement(Label, null, title) : null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      border: "1px solid #d0d0d0",
+      background: "#ffffff",
+      padding: "10px 14px",
+      fontFamily: '"Consolas", "Menlo", "Courier New", monospace',
+      fontSize: 12,
+      color: REVIEW_INK
+    }
+  }, showDemographics ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...reviewLineStyle,
+      fontWeight: 700
+    }
+  }, "Age = " + (age === null ? "-" : age) + "    SEX = " + (sex || "-")) : null, showProblems ? /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(ReviewSectionHeading, null, problemsTitle), problems.length === 0 ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...reviewLineStyle,
+      color: REVIEW_GRAY
+    }
+  }, " None recorded") : problems.map((problem, index) => /*#__PURE__*/React.createElement("div", {
+    key: index,
+    style: {
+      ...reviewLineStyle,
+      color: REVIEW_BLUE
+    }
+  }, " " + (problem.date || "          ").padEnd(11), " ", problem.name))) : null, showMedications ? /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(ReviewSectionHeading, null, medicationsTitle), /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...reviewLineStyle,
+      color: REVIEW_BLUE,
+      fontWeight: 700
+    }
+  }, " START DATE  STOP DATE"), medications.length === 0 ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...reviewLineStyle,
+      color: REVIEW_GRAY
+    }
+  }, " None recorded") : medications.map((medication, index) => /*#__PURE__*/React.createElement("div", {
+    key: index,
+    style: reviewLineStyle
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: REVIEW_BLUE
+    }
+  }, " " + (medication.start || "").padEnd(12) + (medication.stop || "").padEnd(12)), /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: REVIEW_BLUE
+    }
+  }, medication.name), medication.dose ? /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: REVIEW_GRAY
+    }
+  }, " [ " + medication.dose + " ]") : null))) : null, codeList.length > 0 ? /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(ReviewSectionHeading, null, observationsTitle), latestByCode.map(({
+    candidate,
+    latest
+  }, index) => {
+    if (!latest) {
+      return /*#__PURE__*/React.createElement("div", {
+        key: index,
+        style: {
+          ...reviewLineStyle,
+          color: REVIEW_RED
+        }
+      }, " " + candidate.label + " Not Found");
+    }
+    const value = reviewToText(latest.value ?? latest.display ?? latest.report).trim();
+    const units = reviewToText(latest.units).trim() || candidate.units;
+    // Date-only records (vaccines, assessments) render as "LABEL - date",
+    // matching how MOIS lists them without a value or flag bracket.
+    if (!value) {
+      return /*#__PURE__*/React.createElement("div", {
+        key: index,
+        style: {
+          ...reviewLineStyle,
+          color: REVIEW_BLUE
+        }
+      }, " " + candidate.label + " - " + reviewDateKey(latest[datePath]));
+    }
+    return /*#__PURE__*/React.createElement("div", {
+      key: index,
+      style: reviewLineStyle
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: REVIEW_BLUE
+      }
+    }, " " + candidate.label + " - " + reviewDateKey(latest[datePath]) + " - "), /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: REVIEW_BLUE,
+        fontWeight: 700
+      }
+    }, value + (units ? " " + units : "")), /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: REVIEW_GRAY
+      }
+    }, "  [ " + reviewFlagText(latest, value) + " ]"));
+  })) : null));
+};`,
   './CodedObservationChoiceField/index.jsx': `const {
   useEffect,
   useMemo
@@ -16409,9 +16706,9 @@ const InvestigationTabs = ({
     style: {
       display: "flex",
       alignItems: "stretch",
+      flexWrap: "wrap",
       borderBottom: "1px solid #b8b8b8",
-      background: "#eeeeee",
-      overflowX: "auto"
+      background: "#eeeeee"
     }
   }, resolvedTabs.map((tab, index) => {
     const selected = index === activeIndex;
@@ -21825,39 +22122,128 @@ const headStyle = {
   fontSize: 12,
   lineHeight: "16px"
 };
-const rowActionStyles = {
-  root: {
-    minWidth: 0,
-    height: 20,
-    padding: "0 6px",
-    fontSize: 11
-  }
-};
 const zebraRowBackground = "#faf9f8";
+const detailLabelStyle = {
+  color: "#605e5c",
+  whiteSpace: "nowrap",
+  paddingRight: 6,
+  textAlign: "right"
+};
+const detailValueStyle = {
+  paddingRight: 18,
+  minWidth: 110
+};
+const detailBandLabelStyle = {
+  color: "#004578",
+  fontSize: 10,
+  fontWeight: 600,
+  textAlign: "center",
+  padding: "0 6px"
+};
+
+// MOIS-style reference-range band strip: threshold values in LL/L/H/HH colored
+// cells around the units, band names captioned beneath. Rendered even when the
+// row has no ranges (empty boxes, like MOIS) so the pane height never jumps.
+const GridRangeBands = ({
+  ranges,
+  centerText
+}) => {
+  const cells = [{
+    key: "LL",
+    value: gridToText(ranges.rangeAbsurdLow ?? ranges.rangeVeryLow).trim(),
+    style: {
+      background: "#fde7e9"
+    }
+  }, {
+    key: "L",
+    value: gridToText(ranges.rangeNormalLow).trim(),
+    style: {
+      background: "#fff4ce"
+    }
+  }, {
+    key: "NORMAL RANGE",
+    value: gridToText(centerText).trim(),
+    style: {
+      color: "#605e5c"
+    }
+  }, {
+    key: "H",
+    value: gridToText(ranges.rangeNormalHigh).trim(),
+    style: {
+      background: "#fff4ce"
+    }
+  }, {
+    key: "HH",
+    value: gridToText(ranges.rangeAbsurdHigh ?? ranges.rangeVeryHigh).trim(),
+    style: {
+      background: "#fde7e9"
+    }
+  }];
+  return /*#__PURE__*/React.createElement("table", {
+    style: {
+      borderCollapse: "collapse"
+    }
+  }, /*#__PURE__*/React.createElement("tbody", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("td", {
+    rowSpan: 2,
+    style: {
+      padding: "0 4px",
+      fontWeight: 700
+    }
+  }, "<"), cells.map(cell => /*#__PURE__*/React.createElement("td", {
+    key: cell.key,
+    style: {
+      border: "1px solid #d0d0d0",
+      padding: "1px 10px",
+      minWidth: 52,
+      textAlign: "center",
+      fontSize: 12,
+      ...cell.style
+    }
+  }, cell.value || " ")), /*#__PURE__*/React.createElement("td", {
+    rowSpan: 2,
+    style: {
+      padding: "0 4px",
+      fontWeight: 700
+    }
+  }, ">")), /*#__PURE__*/React.createElement("tr", null, cells.map(cell => /*#__PURE__*/React.createElement("td", {
+    key: cell.key,
+    style: detailBandLabelStyle
+  }, cell.key)))));
+};
 const GridDetailPane = ({
   row
 }) => {
   if (!row) return null;
   const ranges = row.ranges ?? {};
   const rangeText = gridToText(ranges.referenceRangeText).trim();
-  const bands = [{
-    key: "LL",
-    value: ranges.rangeAbsurdLow ?? ranges.rangeVeryLow
+  const hasBands = [ranges.rangeAbsurdLow, ranges.rangeVeryLow, ranges.rangeNormalLow, ranges.rangeNormalHigh, ranges.rangeAbsurdHigh, ranges.rangeVeryHigh].some(value => gridToText(value).trim() !== "");
+  // Bands show the units in the center; without bands the center carries the
+  // text-only range (or nothing), keeping the strip — and pane height — stable.
+  const centerText = hasBands ? row.units : rangeText;
+  const fields = [[{
+    label: "Ordered By",
+    value: row.orderedBy
   }, {
-    key: "L",
-    value: ranges.rangeNormalLow
+    label: "Collected By",
+    value: row.collectedBy
   }, {
-    key: "H",
-    value: ranges.rangeNormalHigh
+    label: "Collect Date",
+    value: row.dateKey
+  }], [{
+    label: "Category",
+    value: row.observationClass
   }, {
-    key: "HH",
-    value: ranges.rangeAbsurdHigh ?? ranges.rangeVeryHigh
-  }].filter(band => gridToText(band.value).trim() !== "");
+    label: "LOINC",
+    value: row.loincCode
+  }, {
+    label: "Status",
+    value: row.status
+  }]];
   return /*#__PURE__*/React.createElement("div", {
     style: {
       border: "1px solid #d0d0d0",
       background: "#faf9f8",
-      padding: "8px 10px",
+      padding: "6px 10px",
       fontSize: 12
     }
   }, /*#__PURE__*/React.createElement("div", {
@@ -21865,17 +22251,47 @@ const GridDetailPane = ({
       fontWeight: 600,
       marginBottom: 4
     }
-  }, row.description || row.code, row.flag ? /*#__PURE__*/React.createElement("span", {
+  }, row.description || row.code, /*#__PURE__*/React.createElement("span", {
+    style: {
+      marginLeft: 8,
+      color: "#605e5c",
+      fontWeight: 400
+    }
+  }, "Code: ", row.code), row.flag ? /*#__PURE__*/React.createElement("span", {
     style: {
       marginLeft: 8,
       ...gridFlagStyle(row.flag),
       padding: "0 4px"
     }
-  }, row.flag) : null), /*#__PURE__*/React.createElement("div", null, "Code: ", row.code, row.units ? "  ·  Units: " + row.units : ""), /*#__PURE__*/React.createElement("div", null, "Collected: ", row.dateKey || "-"), bands.length > 0 ? /*#__PURE__*/React.createElement("div", null, "Ref. ranges: ", bands.map(band => band.key + " " + gridToText(band.value)).join("  ·  ")) : rangeText ? /*#__PURE__*/React.createElement("div", null, "Ref. range: ", rangeText) : /*#__PURE__*/React.createElement("div", {
+  }, row.flag) : null), /*#__PURE__*/React.createElement("div", {
     style: {
-      color: "#605e5c"
+      display: "flex",
+      flexWrap: "wrap",
+      alignItems: "flex-start",
+      gap: "2px 24px"
     }
-  }, "No reference range on record."));
+  }, /*#__PURE__*/React.createElement("table", {
+    style: {
+      borderCollapse: "collapse"
+    }
+  }, /*#__PURE__*/React.createElement("tbody", null, fields.map((line, index) => /*#__PURE__*/React.createElement("tr", {
+    key: index
+  }, line.map(field => /*#__PURE__*/React.createElement(React.Fragment, {
+    key: field.label
+  }, /*#__PURE__*/React.createElement("td", {
+    style: detailLabelStyle
+  }, field.label, ":"), /*#__PURE__*/React.createElement("td", {
+    style: detailValueStyle
+  }, gridToText(field.value).trim() || "-"))))))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...detailLabelStyle,
+      textAlign: "left",
+      fontSize: 11
+    }
+  }, "Ref. Ranges:"), /*#__PURE__*/React.createElement(GridRangeBands, {
+    ranges: hasBands ? ranges : {},
+    centerText: centerText
+  }))));
 };
 const ObservationEntryGrid = ({
   fieldId,
@@ -21933,10 +22349,14 @@ const ObservationEntryGrid = ({
         collectedDateTime: gridToText(entry[datePath]),
         time: parsed.getTime(),
         code: gridToText(entry.observationCode).trim(),
+        loincCode: gridToText(entry.loincCode).trim(),
         description: gridToText(entry.description).trim() || (codeIndex >= 0 ? codeList[codeIndex].label : ""),
         value,
         units: gridToText(entry.units).trim(),
         orderedBy: gridToText(entry.orderedBy).trim(),
+        collectedBy: gridToText(entry.collectedBy).trim(),
+        observationClass: gridToText(entry.observationClass).trim(),
+        status: gridToText(entry.status).trim(),
         flag: explicitFlag || classifyGridFlag(entry, value),
         ranges: entry,
         fromChart: true
@@ -21959,10 +22379,14 @@ const ObservationEntryGrid = ({
       rowId: gridToText(entry.rowId),
       dateKey: gridDateKey(entry.dateTime),
       code: candidate.code,
+      loincCode: candidate.loincCode,
       description: gridToText(entry.description).trim() || candidate.label,
       value: gridToText(entry.value),
       units: gridToText(entry.units).trim() || candidate.units || gridToText(ranges?.units).trim(),
       orderedBy: gridToText(sd?.userProfile?.identity?.fullName).trim(),
+      collectedBy: gridToText(sd?.userProfile?.identity?.fullName).trim(),
+      observationClass: "DCOBS",
+      status: "F",
       flag: classifyGridFlag(ranges, entry.value),
       ranges: ranges ?? {},
       fromChart: false
@@ -22116,6 +22540,7 @@ const ObservationEntryGrid = ({
         units: candidate?.units ?? "",
         dateTime: getDateTimeString(new Date())
       }, ...current]);
+      setSelectedKey("entry-" + rowId);
     }
     setEditor(null);
     setEditorValue("");
@@ -22159,8 +22584,10 @@ const ObservationEntryGrid = ({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [codeList, readOnly]);
   const allRows = [...entryRows, ...chartRows];
-  const selectedRow = allRows.find(row => row.key === selectedKey) ?? null;
-  const showActionsColumn = !readOnly;
+  // MOIS keeps a row selected at all times, so the detail pane and the
+  // toolbar's row actions always have a target — default to the newest row.
+  const selectedRow = allRows.find(row => row.key === selectedKey) ?? allRows[0] ?? null;
+  const selectedPendingEdit = selectedRow?.fromChart && selectedRow.observationId !== null ? editByObservationId.get(selectedRow.observationId) : null;
   return /*#__PURE__*/React.createElement(Stack, {
     tokens: {
       childrenGap: 8
@@ -22169,11 +22596,28 @@ const ObservationEntryGrid = ({
     horizontal: true,
     horizontalAlign: "space-between",
     verticalAlign: "center"
-  }, /*#__PURE__*/React.createElement(Label, null, title), !readOnly && codeList.length > 0 ? /*#__PURE__*/React.createElement(DefaultButton, {
-    className: "hideonprint",
+  }, /*#__PURE__*/React.createElement(Label, null, title), !readOnly ? /*#__PURE__*/React.createElement(Stack, {
+    horizontal: true,
+    tokens: {
+      childrenGap: 6
+    },
+    className: "hideonprint"
+  }, codeList.length > 0 ? /*#__PURE__*/React.createElement(DefaultButton, {
     text: "New",
     onClick: () => startEntry(null)
-  }) : null), /*#__PURE__*/React.createElement(Stack, {
+  }) : null, selectedRow && !selectedRow.fromChart ? /*#__PURE__*/React.createElement(DefaultButton, {
+    text: "Delete",
+    onClick: () => deleteEntry(selectedRow.rowId)
+  }) : null, selectedRow?.fromChart && selectedPendingEdit ? /*#__PURE__*/React.createElement(DefaultButton, {
+    text: "Undo",
+    onClick: () => undoChartEdit(selectedRow.observationId)
+  }) : null, selectedRow?.fromChart && !selectedPendingEdit && allowChartEdits && selectedRow.observationId !== null ? /*#__PURE__*/React.createElement(DefaultButton, {
+    text: "Edit",
+    onClick: () => startCorrection(selectedRow)
+  }) : null, selectedRow?.fromChart && !selectedPendingEdit && allowChartEdits && selectedRow.observationId !== null ? /*#__PURE__*/React.createElement(DefaultButton, {
+    text: "Delete",
+    onClick: () => stageChartDelete(selectedRow)
+  }) : null) : null), /*#__PURE__*/React.createElement(Stack, {
     horizontal: true,
     tokens: {
       childrenGap: 10
@@ -22253,13 +22697,7 @@ const ObservationEntryGrid = ({
     style: headStyle
   }, "Value"), /*#__PURE__*/React.createElement("th", {
     style: headStyle
-  }, "Flag"), showActionsColumn ? /*#__PURE__*/React.createElement("th", {
-    style: {
-      ...headStyle
-    },
-    className: "hideonprint",
-    "aria-label": "Actions"
-  }) : null)), /*#__PURE__*/React.createElement("tbody", null, allRows.map((row, rowIndex) => {
+  }, "Flag"))), /*#__PURE__*/React.createElement("tbody", null, allRows.map((row, rowIndex) => {
     const pendingEdit = row.fromChart && row.observationId !== null ? editByObservationId.get(row.observationId) : null;
     const pendingDelete = pendingEdit?.action === "delete";
     const pendingCorrection = pendingEdit?.action === "correct";
@@ -22269,8 +22707,8 @@ const ObservationEntryGrid = ({
       key: row.key,
       onClick: () => setSelectedKey(row.key),
       style: {
-        cursor: showDetail ? "pointer" : "default",
-        background: row.key === selectedKey ? "#deecf9" : row.fromChart ? rowIndex % 2 === 1 ? zebraRowBackground : undefined : "#eff6fc",
+        cursor: "pointer",
+        background: row.key === selectedRow?.key ? "#deecf9" : row.fromChart ? rowIndex % 2 === 1 ? zebraRowBackground : undefined : "#eff6fc",
         ...(pendingDelete ? {
           textDecoration: "line-through",
           color: "#a4262c"
@@ -22310,46 +22748,7 @@ const ObservationEntryGrid = ({
         textAlign: "center",
         fontWeight: 700
       }
-    }, displayFlag ?? "-"), showActionsColumn ? /*#__PURE__*/React.createElement("td", {
-      style: {
-        ...cellStyle,
-        whiteSpace: "nowrap"
-      },
-      className: "hideonprint"
-    }, !row.fromChart ? /*#__PURE__*/React.createElement(DefaultButton, {
-      text: "Delete",
-      onClick: event => {
-        event.stopPropagation();
-        deleteEntry(row.rowId);
-      },
-      styles: rowActionStyles
-    }) : pendingEdit ? /*#__PURE__*/React.createElement(DefaultButton, {
-      text: "Undo",
-      onClick: event => {
-        event.stopPropagation();
-        undoChartEdit(row.observationId);
-      },
-      styles: rowActionStyles
-    }) : allowChartEdits && row.observationId !== null ? /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement(DefaultButton, {
-      text: "Edit",
-      onClick: event => {
-        event.stopPropagation();
-        startCorrection(row);
-      },
-      styles: rowActionStyles
-    }), /*#__PURE__*/React.createElement(DefaultButton, {
-      text: "Delete",
-      onClick: event => {
-        event.stopPropagation();
-        stageChartDelete(row);
-      },
-      styles: {
-        root: {
-          ...rowActionStyles.root,
-          marginLeft: 4
-        }
-      }
-    })) : null) : null);
+    }, displayFlag ?? "-"));
   }))), showDetail ? /*#__PURE__*/React.createElement(GridDetailPane, {
     row: selectedRow
   }) : null)), !readOnly && showQuickButtons && codeList.length > 0 ? /*#__PURE__*/React.createElement("div", {
@@ -33229,6 +33628,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './AuthorshipField/index.jsx': ["AuthorshipField","DEFAULT_WINDOW_HOURS","_defaultPolicy","_nhAuth","_normalizeFieldOptions","actor","actorFrom","addHoursIso","base","buildKey","c","changed","ck","claim","claims","commitSave","commitValue","componentId","current","d","data","editableUntil","effectiveFieldId","euDate","existing","expired","fieldData","formatTimestamp","isNonEmpty","isOwner","keepStatus","key","label","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","nextStatus","nhAuth","normalizeStore","now","nowIso","numeric","optionList","ownerId","ownerName","ownerRefresh","pad2","pending","policy","policyAppliesToAction","prepareSave","query","raw","readOnly","readStore","release","renderInput","resolveNow","sameActor","sd","section","store","text","trimmed","ts","untilSelf","value","windowHours"],
   './BulkSetField/index.jsx': ["BulkSetField","ButtonComponent","apply","comparableAnswer","contradictedFieldIds","current","effectiveControlFieldId","fieldData","fieldId","isApplied","isBlankAnswer","isDisabled","normalizeBulkTargets","normalizedTargets","previous","raw","shouldClearControl","showWarning","unapply","writeControl"],
   './ChartRecordTable/index.jsx': ["ChartRecordTable","_chartRecordTableActiveConnections","_chartRecordTableActivePlannedActions","_chartRecordTableGenericColumns","_chartRecordTableGenericEntryColumns","_chartRecordTablePresets","_chartRecordTableSorts","_chartRecordTableStartDateDesc","byType","preset","resolvedChartColumns","resolvedEntryColumns","resolvedFieldId","resolvedFilterPred","resolvedId","resolvedLabel","resolvedListCompare","resolvedMoisModule","resolvedSelectionType","resolvedSourceId","resolvedSourceMap"],
+  './ChartReviewSummary/index.jsx': ["ChartReviewSummary","REVIEW_BLUE","REVIEW_GRAY","REVIEW_INK","REVIEW_RED","ReviewSectionHeading","age","best","bestTime","code","codeList","criticalHigh","criticalLow","current","datePart","doseText","entryCode","entryLoinc","flag","latestByCode","loinc","medications","monthDelta","normalHigh","normalLow","normalizeReviewCodes","now","observations","parsed","patient","problems","raw","reviewAgeYears","reviewArray","reviewDateKey","reviewDisplay","reviewFlagText","reviewGetPath","reviewHeadingStyle","reviewLineStyle","reviewMatchesCode","reviewNumber","reviewParseDate","reviewToText","rows","sd","sex","steps","stopRaw","stopTime","time","units","value"],
   './CodedObservationChoiceField/index.jsx': ["CodedObservationChoiceField","candidates","checklistOptions","code","codedChoicePayloadsEqual","codings","commentValue","componentId","container","createdBy","currentPayload","display","effectiveFieldId","effectiveRenderAs","effectiveSelectionType","findExistingObservationId","formatCodedChoiceReport","fromContext","handleFindCodeChange","isMultiple","match","nextGroup","normalizeCodedChoiceOptions","normalizeSelectedCodings","oldId","option","options","report","sd","selectOptions","selectedValue","setCodedChoicePayload","stripVolatileCodedChoicePayloadFields","value","values","writeCodedChoiceValue"],
   './CommonSchemaDefn/index.jsx': ["NameBlockFields","active","commonSchemaDefn","formHistorySchema","makeCodedObsUpdates","makeObsUpdatesFromVs","makeTextObsUpdates","makeValueSetOptions","nameBlockSchema","newDco","oldObs","oldObsId","options","selectAll","startDateDesc","valueSet","vso","ynuaOptions"],
   './CompactBooleanField/index.jsx': ["BooleanLabelPresets","CompactBooleanChecklist","CompactBooleanChecklistSchema","CompactBooleanField","CompactBooleanFieldSchema","CompactBooleanGroup","CompactChoiceField","CompactChoiceFieldMultiSchema","CompactChoiceFieldSchema","OptionButtons","YesNoButtons","baseContainerStyle","buttonStyle","checkboxWrapperRef","choiceContent","commitValue","containerStyle","currentData","currentValue","data","decodePDFHex","decoded","fieldContent","getBooleanLabels","getButtonStyles","getCardContainerStyles","getFieldContainerStyles","getWidthStyle","handleChange","handleCheckboxChange","handleClick","handleNoClick","handleYesClick","input","isDarkMode","isDisabled","isHorizontal","isLast","isLeftLabel","isMultiple","isSelected","labelStyle","lastRowStyle","newValues","noButtonStyle","normalizeValue","normalized","normalizedValue","noteStyle","prevDecoded","rowStyle","selected","selectedValues","setFormData","sizeStyles","theme","themeLabelMaxWidth","themeLabelMinWidth","titleStyle","values","widthMap","yesButtonStyle"],
@@ -33269,7 +33669,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './NarrativeReportBuilder/index.jsx': ["NarrativeReportBuilder","applyNarrative","buildNarrative","componentId","container","currentPayload","formData","generatedText","getFieldValue","getPathValue","key","nextGroup","normalizeTemplateRows","normalizeTextValue","normalizedTemplate","renderTextTemplate","rows","sections","setNarrativePayload","value"],
   './NewTextArea/index.jsx': ["NewTextArea","hideonprint","showonprint","sourceData"],
   './ObservationChart/index.jsx': ["$","$e","$l","$n","$t","A","Ae","Ai","Al","An","B","Be","Bl","Bt","C","Ce","Ci","Cl","Ct","D","De","Di","Dl","Dn","Dt","E","El","En","F","Fe","Ft","G","Gt","H","He","Hi","Hl","Ht","I","Ii","Il","It","J","Je","Jl","Jn","Jt","Ke","Kl","Kn","Kt","L","Li","Ll","Lt","M","Mn","Mt","N","Nl","O","OBSERVATION_CHART_PALETTE","OBSERVATION_CHART_STYLE_ID","ObservationChart","Ol","Ot","P","Pe","Pi","Pl","Pn","Q","Qn","Qt","R","Re","Ri","Rt","S","Sn","St","T","Tn","Tt","UPlotCssText","UPlotLib","Ut","Vl","Vt","W","We","Wi","Wl","Wt","X","Xl","Xn","Xt","Y","Ye","Yi","Yl","Yt","Z","Zl","Zn","Zt","_","_i","_l","_n","_t","a","ai","at","b","be","bi","bl","bn","bt","buildChartPayload","buildChartPayloadFromObservations","buildChartPayloadFromRows","buildSeriesDefinitions","buildUPlotOptions","c","candidate","chartPayload","chartSeries","ci","codeCandidates","coerceNumber","coercePositiveInt","container","containerRef","current","d","data","dataKey","day","di","direct","document","dt","e","ee","effectiveHeight","effectiveTitle","ei","el","en","ensureObservationChartStyles","entryCode","entryDescription","et","f","fi","finalizeChartRows","formatDate","frameStyle","fromPatient","fromQueryResult","ft","g","gi","gn","gt","h","hi","hl","ht","i","ie","ii","includes","isNonEmptyString","isRecord","it","jl","jt","k","keys","ki","kn","kt","l","ll","ln","m","match","matchesObservationSeries","maxPoints","mi","mode","month","mt","n","ne","ni","normalizeString","normalizeStringArray","normalized","normalizedCodePath","normalizedCodes","normalizedDateOnly","normalizedDescriptionPath","nt","numericDate","numericValue","o","observationCodes","oi","p","parseDateValue","parseMeasurementValue","parseNumericValue","parsed","parsedDateOnly","patientPath","plot","plotRef","pt","qe","qn","qt","r","rawValue","renderWidth","resizeChart","resizeObserver","resolveMoisValue","resolvePathValue","root","rowIndex","rowMap","s","sd","segments","self","seriesDefs","seriesPointSize","seriesShowsPoints","showAxes","showGrid","showLegend","showPoints","single","singleCode","sortedRows","sourceItems","sourcePath","stringifyValue","style","summaryParts","t","target","te","text","timeValue","timestamp","tl","tn","toPathSegments","trimmed","tt","u","uPlot","units","v","value","valueText","ve","vi","vl","vn","vt","w","wi","window","wl","wn","wrapperStyle","wt","xKey","xValues","xi","xl","xn","xt","y","year","yi","yn","yt","z","ze","zi","zl","zn"],
-  './ObservationEntryGrid/index.jsx': ["GRID_FLAG_DISPLAYS","GridDetailPane","ObservationEntryGrid","abnormalFlag","allRows","amount","bands","best","bestTime","buildGridAbnormalFlag","candidate","cellStyle","chartRows","classifyGridFlag","code","codeIndex","codeList","componentId","container","createdBy","criticalHigh","criticalLow","current","currentPayload","cutoff","deleteEntry","displayFlag","displayValue","edit","editByObservationId","editPayload","edits","editsKey","entries","entriesKey","entryCode","entryLoinc","entryRows","explicitFlag","findRangesForCode","flagCode","getGridSource","gridCutoffDate","gridDateKey","gridEntryMatchesCode","gridFlagStyle","gridNumber","gridParseDate","gridPayloadsEqual","gridToText","handleKeyDown","hasRanges","headStyle","key","loinc","map","match","newPayload","nextGroup","normalHigh","normalLow","normalizeGridCodes","observationId","parsed","pendingCorrection","pendingDelete","pendingEdit","rangeText","ranges","raw","readGridRows","rowActionStyles","rowId","rows","saveEditor","sd","selectedRow","setGridNestedPayload","showActionsColumn","source","stageChartDelete","startCorrection","startEntry","steps","stored","stripVolatileGridFields","time","undoChartEdit","value","withHotkeys","writeRows","zebraRowBackground"],
+  './ObservationEntryGrid/index.jsx': ["GRID_FLAG_DISPLAYS","GridDetailPane","GridRangeBands","ObservationEntryGrid","abnormalFlag","allRows","amount","best","bestTime","buildGridAbnormalFlag","candidate","cellStyle","cells","centerText","chartRows","classifyGridFlag","code","codeIndex","codeList","componentId","container","createdBy","criticalHigh","criticalLow","current","currentPayload","cutoff","deleteEntry","detailBandLabelStyle","detailLabelStyle","detailValueStyle","displayFlag","displayValue","edit","editByObservationId","editPayload","edits","editsKey","entries","entriesKey","entryCode","entryLoinc","entryRows","explicitFlag","fields","findRangesForCode","flagCode","getGridSource","gridCutoffDate","gridDateKey","gridEntryMatchesCode","gridFlagStyle","gridNumber","gridParseDate","gridPayloadsEqual","gridToText","handleKeyDown","hasBands","hasRanges","headStyle","key","loinc","map","match","newPayload","nextGroup","normalHigh","normalLow","normalizeGridCodes","observationId","parsed","pendingCorrection","pendingDelete","pendingEdit","rangeText","ranges","raw","readGridRows","rowId","rows","saveEditor","sd","selectedPendingEdit","selectedRow","setGridNestedPayload","source","stageChartDelete","startCorrection","startEntry","steps","stored","stripVolatileGridFields","time","undoChartEdit","value","withHotkeys","writeRows","zebraRowBackground"],
   './ObservationPanelEditor/index.jsx': ["DEFAULT_WINDOW_HOURS","ObservationPanelEditor","actor","actorFrom","addHoursIso","authorshipPolicy","buildKey","c","changed","ck","claim","claims","codeSet","commitSave","componentId","computedTotals","container","createdBy","current","currentActorName","currentPayload","d","data","dcoUpdates","editableUntil","effectiveFieldId","euDate","existing","expired","fieldData","formatTimestamp","getCurrentActorName","getNhAuth","getPanelValue","grouped","hasValue","historyRows","isNonEmpty","isOwner","keepStatus","key","label","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","maxHistory","next","nextGroup","nextStatus","nhAuth","normalizePanelRows","normalizePanelTotals","normalizeStore","now","nowIso","numeric","oldObs","optionList","ownerId","ownerName","ownerRefresh","pad2","panelDateKey","payloadsEqual","pending","policyAppliesToAction","prepareSave","raw","readStore","release","resolveNow","rootValue","rowDefs","rowLockInfo","rowReadOnly","sameActor","sd","section","setPanelPayload","setRowValue","source","sourceIds","store","stripVolatilePayloadFields","toNumericValue","totalDefs","ts","untilSelf","value","windowHours"],
   './ObservationQuery/index.jsx': ["ObservationQuery","ObservationQueryLatest","ObservationQueryTable","amount","body","candidate","cell","cellStyle","chartRows","classifyQueryFlag","code","codeIndex","codeList","criticalHigh","criticalLow","current","cutoff","effectiveMaxRows","entryCode","entryLoinc","existing","explicit","getQuerySource","grouped","headerStyle","index","latest","latestByCode","limited","loinc","matchQueryCodeIndex","matches","normalHigh","normalLow","normalizeQueryCodes","parsed","parsedDate","queryCutoffDate","queryDateKey","queryFlagCellStyle","queryLookbackLabel","queryNumber","queryParseDate","queryToText","raw","recentFirst","row","rows","runObservationQuery","sd","series","singular","source","steps","unit","value","windowLabel"],
   './Occupations/index.jsx': ["Occupations","OccupationsFields"],

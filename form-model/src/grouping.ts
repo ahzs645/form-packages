@@ -35,6 +35,8 @@ export interface GroupSummary {
   sectionLayoutType?: "grid" | "stacked";
   /** Number of columns per row when in grid layout (1-4, default 2) */
   gridColumns?: 1 | 2 | 3 | 4;
+  /** Draw a MOIS-style separator line between grid rows */
+  rowSeparators?: boolean;
   /** Optional vertical question-spacing override inherited from the builder section. */
   questionSpacing?: "compact" | "standard" | "comfortable" | "spacious";
   /** Whether the section is collapsible */
