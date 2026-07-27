@@ -16364,11 +16364,23 @@ const InvestigationTabs = ({
   children
 }) => {
   const resolvedTabs = React.useMemo(() => normalizeInvestigationTabs(tabs), [tabs]);
+  const tabRefs = React.useRef([]);
   const [activeIndex, setActiveIndex] = React.useState(() => {
     const numeric = Number(defaultTab);
     if (!Number.isFinite(numeric)) return 0;
     return Math.min(Math.max(Math.trunc(numeric), 0), Math.max(resolvedTabs.length - 1, 0));
   });
+  const handleTabListKeyDown = event => {
+    const count = resolvedTabs.length;
+    if (count === 0) return;
+    let next = null;
+    if (event.key === "ArrowRight") next = (activeIndex + 1) % count;else if (event.key === "ArrowLeft") next = (activeIndex - 1 + count) % count;else if (event.key === "Home") next = 0;else if (event.key === "End") next = count - 1;
+    if (next === null) return;
+    event.preventDefault();
+    setActiveIndex(next);
+    const target = tabRefs.current[next];
+    if (target && typeof target.focus === "function") target.focus();
+  };
   React.useEffect(() => {
     setActiveIndex(current => Math.min(Math.max(current, 0), Math.max(resolvedTabs.length - 1, 0)));
   }, [resolvedTabs.length]);
@@ -16380,11 +16392,6 @@ const InvestigationTabs = ({
     const childTabId = props.tabId ?? props.id ?? index;
     childById.set(childTabId, props.children);
   });
-  const activeTab = resolvedTabs[activeIndex] || resolvedTabs[0] || {
-    id: 0,
-    label: "Tab 1"
-  };
-  const activeChildren = childById.has(activeTab.id) ? childById.get(activeTab.id) : childArray[activeIndex] || childArray[0] || null;
   return /*#__PURE__*/React.createElement("div", {
     "data-nhforms-investigation-tabs": true,
     style: {
@@ -16398,6 +16405,7 @@ const InvestigationTabs = ({
     role: "tablist",
     "aria-label": "Investigation sections",
     className: "hideonprint",
+    onKeyDown: handleTabListKeyDown,
     style: {
       display: "flex",
       alignItems: "stretch",
@@ -16413,6 +16421,10 @@ const InvestigationTabs = ({
       role: "tab",
       "aria-selected": selected,
       "aria-controls": \`investigation-tab-panel-\${index}\`,
+      tabIndex: selected ? 0 : -1,
+      ref: node => {
+        tabRefs.current[index] = node;
+      },
       onClick: () => setActiveIndex(index),
       style: {
         minWidth: 118,
@@ -16442,24 +16454,35 @@ const InvestigationTabs = ({
         color: "#333333"
       }
     }, index + 1) : null);
-  })), /*#__PURE__*/React.createElement("div", {
-    className: "showonprint",
-    style: {
-      display: "none",
-      borderBottom: "1px solid #b8b8b8",
-      background: "#dedbd8",
-      padding: "4px 6px",
-      fontWeight: 700
-    }
-  }, activeTab.label), /*#__PURE__*/React.createElement("div", {
-    id: \`investigation-tab-panel-\${activeIndex}\`,
-    role: "tabpanel",
-    "aria-label": activeTab.label,
-    style: {
-      minHeight: 420,
-      background: "#ffffff"
-    }
-  }, activeChildren));
+  })), resolvedTabs.map((tab, index) => {
+    const isActive = index === activeIndex;
+    const panelChildren = childById.has(tab.id) ? childById.get(tab.id) : childArray[index] ?? (isActive ? childArray[0] ?? null : null);
+    return /*#__PURE__*/React.createElement(React.Fragment, {
+      key: String(tab.id)
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "showonprint",
+      style: {
+        display: "none",
+        borderBottom: "1px solid #b8b8b8",
+        background: "#dedbd8",
+        padding: "4px 6px",
+        fontWeight: 700
+      }
+    }, tab.label), /*#__PURE__*/React.createElement("div", {
+      id: \`investigation-tab-panel-\${index}\`,
+      role: "tabpanel",
+      "aria-label": tab.label,
+      "aria-hidden": isActive ? undefined : "true",
+      className: isActive ? undefined : "showonprint",
+      style: {
+        minHeight: isActive ? 420 : 0,
+        background: "#ffffff",
+        ...(isActive ? {} : {
+          display: "none"
+        })
+      }
+    }, panelChildren));
+  }));
 };`,
   './LayoutTable/index.jsx': `function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 const normalizeLayoutTableOptionList = optionList => {
@@ -21579,6 +21602,782 @@ const ObservationChart = ({
     }
   }, chartPayload.summaryText) : null);
 };`,
+  './ObservationEntryGrid/index.jsx': `const {
+  useMemo,
+  useState,
+  useEffect
+} = React;
+const {
+  Stack,
+  Label,
+  Text,
+  TextField,
+  DefaultButton,
+  PrimaryButton,
+  Dropdown
+} = Fluent;
+const gridToText = value => {
+  if (value === null || value === undefined) return "";
+  return String(value);
+};
+const gridDateKey = value => {
+  const raw = gridToText(value);
+  return raw.includes("T") ? raw.split("T")[0] : raw;
+};
+const gridParseDate = value => {
+  const raw = gridToText(value).trim();
+  if (!raw) return null;
+  const parsed = new Date(raw.includes("T") ? raw : raw.replace(/\\./g, "-"));
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+const getGridSource = (sd, sourcePath) => {
+  if (!sourcePath) return sd?.patient?.observations ?? [];
+  const steps = gridToText(sourcePath).split(".").filter(Boolean);
+  let current = sd;
+  for (const step of steps) {
+    if (current && typeof current === "object") {
+      current = current[step];
+    } else {
+      return [];
+    }
+  }
+  return Array.isArray(current) ? current : [];
+};
+const normalizeGridCodes = codes => {
+  if (!Array.isArray(codes)) return [];
+  return codes.map(entry => {
+    if (typeof entry === "string") {
+      const code = entry.trim();
+      return code ? {
+        code,
+        label: code,
+        loincCode: "",
+        units: "",
+        hotkey: ""
+      } : null;
+    }
+    if (!entry || typeof entry !== "object") return null;
+    const code = gridToText(entry.code).trim();
+    if (!code) return null;
+    return {
+      code,
+      label: gridToText(entry.label).trim() || code,
+      loincCode: gridToText(entry.loincCode).trim(),
+      units: gridToText(entry.units).trim(),
+      hotkey: gridToText(entry.hotkey).trim().slice(0, 1).toLowerCase()
+    };
+  }).filter(Boolean);
+};
+const gridCutoffDate = lookback => {
+  if (!lookback || typeof lookback !== "object") return null;
+  const amount = Math.floor(Number(lookback.amount));
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+  const cutoff = new Date();
+  if (lookback.unit === "days") {
+    cutoff.setDate(cutoff.getDate() - amount);
+  } else if (lookback.unit === "years") {
+    cutoff.setFullYear(cutoff.getFullYear() - amount);
+  } else if (lookback.unit === "months") {
+    cutoff.setMonth(cutoff.getMonth() - amount);
+  } else {
+    return null;
+  }
+  return cutoff;
+};
+const gridNumber = value => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+// Same four MOIS bands as PastMeasurementField's save path: absurd/very
+// ranges -> LL/HH outrank the normal range -> L/H.
+const classifyGridFlag = (ranges, rawValue) => {
+  const value = gridNumber(rawValue);
+  if (value === null || !ranges) return null;
+  const criticalLow = gridNumber(ranges.rangeAbsurdLow) ?? gridNumber(ranges.rangeVeryLow);
+  const criticalHigh = gridNumber(ranges.rangeAbsurdHigh) ?? gridNumber(ranges.rangeVeryHigh);
+  const normalLow = gridNumber(ranges.rangeNormalLow);
+  const normalHigh = gridNumber(ranges.rangeNormalHigh);
+  if (criticalLow !== null && value < criticalLow) return "LL";
+  if (criticalHigh !== null && value > criticalHigh) return "HH";
+  if (normalLow !== null && value < normalLow) return "L";
+  if (normalHigh !== null && value > normalHigh) return "H";
+  return null;
+};
+const gridFlagStyle = flag => {
+  if (flag === "LL" || flag === "HH") {
+    return {
+      background: "#fde7e9",
+      color: "#a4262c",
+      fontWeight: 600
+    };
+  }
+  if (flag === "L" || flag === "H") {
+    return {
+      background: "#fff4ce"
+    };
+  }
+  return {};
+};
+const gridEntryMatchesCode = (entry, candidate) => {
+  const entryCode = gridToText(entry?.observationCode).trim().toLowerCase();
+  const entryLoinc = gridToText(entry?.loincCode).trim().toLowerCase();
+  const code = candidate.code.toLowerCase();
+  const loinc = candidate.loincCode.toLowerCase();
+  if (entryCode && (entryCode === code || loinc && entryCode === loinc)) return true;
+  if (entryLoinc && (entryLoinc === code || loinc && entryLoinc === loinc)) return true;
+  return false;
+};
+const stripVolatileGridFields = payload => {
+  if (!Array.isArray(payload)) return payload;
+  return payload.map(entry => {
+    if (!entry || typeof entry !== "object") return entry;
+    const {
+      collectedDateTime,
+      ...rest
+    } = entry;
+    return rest;
+  });
+};
+const gridPayloadsEqual = (left, right) => JSON.stringify(stripVolatileGridFields(left ?? null)) === JSON.stringify(stripVolatileGridFields(right ?? null));
+
+// setFormData must receive a produce()-wrapped recipe (raw React setter in the
+// real MOIS runtime) — same contract as PastMeasurementField.
+const setGridNestedPayload = (setFormData, componentId, payload) => {
+  setFormData(produce(draft => {
+    if (!draft.field) draft.field = {
+      data: {},
+      status: {},
+      history: []
+    };
+    if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {};
+    const container = draft.field.data.__componentPayloads ?? {};
+    const nextGroup = container.dcoUpdatesByComponent ?? {};
+    const currentPayload = nextGroup[componentId];
+    if (gridPayloadsEqual(currentPayload, payload)) {
+      return;
+    }
+    if (payload == null || Array.isArray(payload) && payload.length === 0) {
+      delete nextGroup[componentId];
+    } else {
+      nextGroup[componentId] = payload;
+    }
+    container.dcoUpdatesByComponent = nextGroup;
+    draft.field.data.__componentPayloads = container;
+  }));
+};
+const readGridRows = (fd, key) => {
+  const stored = fd?.field?.data?.[key];
+  return Array.isArray(stored) ? stored.filter(entry => entry && typeof entry === "object") : [];
+};
+
+// Ranges for flag classification come from the most recent chart observation
+// carrying range metadata for the same code — the code config itself has none.
+const findRangesForCode = (source, candidate) => {
+  let best = null;
+  let bestTime = -Infinity;
+  source.forEach(entry => {
+    if (!entry || typeof entry !== "object") return;
+    if (!gridEntryMatchesCode(entry, candidate)) return;
+    const hasRanges = [entry.rangeNormalLow, entry.rangeNormalHigh, entry.rangeVeryLow, entry.rangeVeryHigh, entry.rangeAbsurdLow, entry.rangeAbsurdHigh].some(value => gridToText(value).trim() !== "");
+    if (!hasRanges) return;
+    const parsed = gridParseDate(entry.collectedDateTime);
+    const time = parsed ? parsed.getTime() : 0;
+    if (time >= bestTime) {
+      best = entry;
+      bestTime = time;
+    }
+  });
+  if (!best) return null;
+  return {
+    rangeNormalLow: best.rangeNormalLow,
+    rangeNormalHigh: best.rangeNormalHigh,
+    rangeVeryLow: best.rangeVeryLow,
+    rangeVeryHigh: best.rangeVeryHigh,
+    rangeAbsurdLow: best.rangeAbsurdLow,
+    rangeAbsurdHigh: best.rangeAbsurdHigh,
+    referenceRangeText: best.referenceRangeText,
+    units: best.units
+  };
+};
+const GRID_FLAG_DISPLAYS = {
+  LL: "Critical low",
+  L: "Low",
+  H: "High",
+  HH: "Critical high"
+};
+const buildGridAbnormalFlag = (sd, flagCode) => flagCode ? {
+  code: flagCode,
+  display: sd?.optionLists?.["MOIS-ABNORMALFLAG"]?.[flagCode] ?? GRID_FLAG_DISPLAYS[flagCode],
+  system: "MOIS-ABNORMALFLAG"
+} : null;
+const cellStyle = {
+  border: "1px solid #e1dfdd",
+  padding: "5px 6px",
+  fontSize: 12
+};
+const headStyle = {
+  border: "1px solid #d0d0d0",
+  textAlign: "left",
+  padding: "5px 6px",
+  background: "#f3f2f1",
+  fontSize: 12
+};
+const rowActionStyles = {
+  root: {
+    minWidth: 0,
+    height: 24,
+    padding: "0 8px",
+    fontSize: 11
+  }
+};
+const GridDetailPane = ({
+  row
+}) => {
+  if (!row) return null;
+  const ranges = row.ranges ?? {};
+  const rangeText = gridToText(ranges.referenceRangeText).trim();
+  const bands = [{
+    key: "LL",
+    value: ranges.rangeAbsurdLow ?? ranges.rangeVeryLow
+  }, {
+    key: "L",
+    value: ranges.rangeNormalLow
+  }, {
+    key: "H",
+    value: ranges.rangeNormalHigh
+  }, {
+    key: "HH",
+    value: ranges.rangeAbsurdHigh ?? ranges.rangeVeryHigh
+  }].filter(band => gridToText(band.value).trim() !== "");
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      border: "1px solid #d0d0d0",
+      background: "#faf9f8",
+      padding: "8px 10px",
+      fontSize: 12
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 600,
+      marginBottom: 4
+    }
+  }, row.description || row.code, row.flag ? /*#__PURE__*/React.createElement("span", {
+    style: {
+      marginLeft: 8,
+      ...gridFlagStyle(row.flag),
+      padding: "0 4px"
+    }
+  }, row.flag) : null), /*#__PURE__*/React.createElement("div", null, "Code: ", row.code, row.units ? "  ·  Units: " + row.units : ""), /*#__PURE__*/React.createElement("div", null, "Collected: ", row.dateKey || "-"), bands.length > 0 ? /*#__PURE__*/React.createElement("div", null, "Ref. ranges: ", bands.map(band => band.key + " " + gridToText(band.value)).join("  ·  ")) : rangeText ? /*#__PURE__*/React.createElement("div", null, "Ref. range: ", rangeText) : /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: "#605e5c"
+    }
+  }, "No reference range on record."));
+};
+const ObservationEntryGrid = ({
+  fieldId,
+  id,
+  title = "Measurements",
+  codes = [],
+  lookback = null,
+  maxRows = 15,
+  sourcePath = "patient.observations",
+  datePath = "collectedDateTime",
+  showQuickButtons = true,
+  showDetail = true,
+  allowChartEdits = false,
+  readOnly = false
+}) => {
+  const sd = useSourceData();
+  const [fd, setFormData] = useActiveData();
+  const componentId = id || fieldId || "ObservationEntryGrid";
+  const entriesKey = componentId + "_entries";
+  const editsKey = componentId + "_edits";
+  const codeList = useMemo(() => normalizeGridCodes(codes), [codes]);
+  const source = useMemo(() => getGridSource(sd, sourcePath), [sd, sourcePath]);
+  const entries = readGridRows(fd, entriesKey);
+  const edits = readGridRows(fd, editsKey);
+  const [selectedKey, setSelectedKey] = useState(null);
+  // editor: null | { mode: "new", code } | { mode: "correct", observationId, code, description }
+  const [editor, setEditor] = useState(null);
+  const [editorValue, setEditorValue] = useState("");
+  const editByObservationId = useMemo(() => {
+    const map = new Map();
+    edits.forEach(edit => {
+      const observationId = gridNumber(edit.observationId);
+      if (observationId !== null) map.set(observationId, edit);
+    });
+    return map;
+  }, [edits]);
+  const chartRows = useMemo(() => {
+    const cutoff = gridCutoffDate(lookback);
+    const rows = [];
+    source.forEach((entry, index) => {
+      if (!entry || typeof entry !== "object") return;
+      const codeIndex = codeList.length > 0 ? codeList.findIndex(candidate => gridEntryMatchesCode(entry, candidate)) : -1;
+      if (codeList.length > 0 && codeIndex < 0) return;
+      const parsed = gridParseDate(entry[datePath]);
+      if (!parsed) return;
+      if (cutoff && parsed.getTime() < cutoff.getTime()) return;
+      const value = gridToText(entry.value ?? entry.display ?? entry.report ?? "");
+      const explicitFlag = entry.abnormalFlag && typeof entry.abnormalFlag === "object" ? gridToText(entry.abnormalFlag.code).trim() : gridToText(entry.abnormalFlag).trim();
+      rows.push({
+        key: "chart-" + index,
+        observationId: gridNumber(entry.observationId),
+        dateKey: gridDateKey(entry[datePath]),
+        collectedDateTime: gridToText(entry[datePath]),
+        time: parsed.getTime(),
+        code: gridToText(entry.observationCode).trim(),
+        description: gridToText(entry.description).trim() || (codeIndex >= 0 ? codeList[codeIndex].label : ""),
+        value,
+        units: gridToText(entry.units).trim(),
+        flag: explicitFlag || classifyGridFlag(entry, value),
+        ranges: entry,
+        fromChart: true
+      });
+    });
+    rows.sort((left, right) => right.time - left.time);
+    return rows.slice(0, Math.max(1, Math.floor(Number(maxRows)) || 15));
+  }, [codeList, datePath, lookback, maxRows, source]);
+  const entryRows = useMemo(() => entries.map(entry => {
+    const candidate = codeList.find(item => item.code === entry.code) ?? {
+      code: gridToText(entry.code),
+      label: gridToText(entry.description),
+      loincCode: "",
+      units: "",
+      hotkey: ""
+    };
+    const ranges = findRangesForCode(source, candidate);
+    return {
+      key: "entry-" + gridToText(entry.rowId),
+      rowId: gridToText(entry.rowId),
+      dateKey: gridDateKey(entry.dateTime),
+      code: candidate.code,
+      description: gridToText(entry.description).trim() || candidate.label,
+      value: gridToText(entry.value),
+      units: gridToText(entry.units).trim() || candidate.units || gridToText(ranges?.units).trim(),
+      flag: classifyGridFlag(ranges, entry.value),
+      ranges: ranges ?? {},
+      fromChart: false
+    };
+  }), [codeList, entries, source]);
+
+  // Stage in-form rows as new DCOBS observations (id 0 / status F), chart
+  // corrections as status C on the original id, and chart deletions as
+  // negative ids — the generated form's save path flattens them into
+  // DCOUpdates.
+  useEffect(() => {
+    if (readOnly) return;
+    const createdBy = sd?.userProfile?.identity?.fullName;
+    const newPayload = entries.filter(entry => gridToText(entry.value).trim() !== "" && gridToText(entry.code).trim() !== "").map(entry => {
+      const candidate = codeList.find(item => item.code === entry.code) ?? {
+        code: gridToText(entry.code),
+        label: gridToText(entry.description),
+        loincCode: "",
+        units: "",
+        hotkey: ""
+      };
+      const ranges = findRangesForCode(source, candidate);
+      const value = gridToText(entry.value).trim();
+      const flagCode = classifyGridFlag(ranges, value);
+      const abnormalFlag = buildGridAbnormalFlag(sd, flagCode);
+      return {
+        observationId: 0,
+        observationCode: candidate.code,
+        observationClass: "DCOBS",
+        value,
+        valueType: gridNumber(value) !== null ? "NUMERIC" : "TEXT",
+        status: "F",
+        description: gridToText(entry.description).trim() || candidate.label || "Measurement",
+        units: gridToText(entry.units).trim() || candidate.units || gridToText(ranges?.units).trim(),
+        ...(candidate.loincCode ? {
+          loincCode: candidate.loincCode
+        } : {}),
+        ...(createdBy ? {
+          orderedBy: createdBy,
+          collectedBy: createdBy
+        } : {}),
+        collectedDateTime: gridToText(entry.dateTime) || getDateTimeString(new Date()),
+        ...(ranges && gridToText(ranges.rangeNormalLow).trim() !== "" ? {
+          rangeNormalLow: gridToText(ranges.rangeNormalLow)
+        } : {}),
+        ...(ranges && gridToText(ranges.rangeNormalHigh).trim() !== "" ? {
+          rangeNormalHigh: gridToText(ranges.rangeNormalHigh)
+        } : {}),
+        ...(abnormalFlag ? {
+          abnormalFlag
+        } : {})
+      };
+    });
+    const editPayload = edits.map(edit => {
+      const observationId = gridNumber(edit.observationId);
+      if (observationId === null || observationId <= 0) return null;
+      if (edit.action === "delete") {
+        return {
+          observationId: -observationId
+        };
+      }
+      const value = gridToText(edit.value).trim();
+      if (!value) return null;
+      const candidate = codeList.find(item => item.code === edit.code) ?? {
+        code: gridToText(edit.code),
+        label: gridToText(edit.description),
+        loincCode: "",
+        units: "",
+        hotkey: ""
+      };
+      const ranges = findRangesForCode(source, candidate);
+      const flagCode = classifyGridFlag(ranges, value);
+      const abnormalFlag = buildGridAbnormalFlag(sd, flagCode);
+      return {
+        observationId,
+        observationCode: candidate.code,
+        observationClass: "DCOBS",
+        value,
+        valueType: gridNumber(value) !== null ? "NUMERIC" : "TEXT",
+        status: "C",
+        description: gridToText(edit.description).trim() || candidate.label || "Measurement",
+        units: gridToText(edit.units).trim() || candidate.units || gridToText(ranges?.units).trim(),
+        ...(createdBy ? {
+          collectedBy: createdBy
+        } : {}),
+        collectedDateTime: gridToText(edit.collectedDateTime) || getDateTimeString(new Date()),
+        ...(abnormalFlag ? {
+          abnormalFlag
+        } : {})
+      };
+    }).filter(Boolean);
+    setGridNestedPayload(setFormData, componentId, [...newPayload, ...editPayload]);
+  }, [codeList, componentId, edits, entries, readOnly, sd, setFormData, source]);
+  const startEntry = code => {
+    if (readOnly) return;
+    setEditor({
+      mode: "new",
+      code: code ?? codeList[0]?.code ?? null
+    });
+    setEditorValue("");
+  };
+  const startCorrection = row => {
+    if (readOnly || row.observationId === null) return;
+    setEditor({
+      mode: "correct",
+      observationId: row.observationId,
+      code: row.code,
+      description: row.description,
+      units: row.units,
+      collectedDateTime: row.collectedDateTime
+    });
+    setEditorValue(row.value);
+  };
+  const writeRows = (key, updater) => {
+    setFormData(produce(draft => {
+      if (!draft.field) draft.field = {
+        data: {},
+        status: {},
+        history: []
+      };
+      if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {};
+      const current = Array.isArray(draft.field.data[key]) ? draft.field.data[key] : [];
+      draft.field.data[key] = updater(current);
+    }));
+  };
+  const saveEditor = () => {
+    if (!editor) return;
+    const value = gridToText(editorValue).trim();
+    if (!value) return;
+    if (editor.mode === "correct") {
+      const edit = {
+        observationId: editor.observationId,
+        action: "correct",
+        code: editor.code,
+        description: editor.description,
+        units: editor.units,
+        value,
+        collectedDateTime: editor.collectedDateTime
+      };
+      writeRows(editsKey, current => [edit, ...current.filter(item => gridNumber(item.observationId) !== editor.observationId)]);
+    } else {
+      const code = gridToText(editor.code).trim();
+      if (!code) return;
+      const candidate = codeList.find(item => item.code === code);
+      const rowId = "row-" + Date.now() + "-" + Math.floor(Math.random() * 100000);
+      writeRows(entriesKey, current => [{
+        rowId,
+        code,
+        description: candidate?.label ?? code,
+        value,
+        units: candidate?.units ?? "",
+        dateTime: getDateTimeString(new Date())
+      }, ...current]);
+    }
+    setEditor(null);
+    setEditorValue("");
+  };
+  const deleteEntry = rowId => {
+    writeRows(entriesKey, current => current.filter(entry => gridToText(entry.rowId) !== rowId));
+    if (selectedKey === "entry-" + rowId) setSelectedKey(null);
+  };
+  const stageChartDelete = row => {
+    if (row.observationId === null) return;
+    writeRows(editsKey, current => [{
+      observationId: row.observationId,
+      action: "delete",
+      code: row.code,
+      description: row.description
+    }, ...current.filter(item => gridNumber(item.observationId) !== row.observationId)]);
+  };
+  const undoChartEdit = observationId => {
+    writeRows(editsKey, current => current.filter(item => gridNumber(item.observationId) !== observationId));
+  };
+
+  // MOIS-parity quick-entry shortcuts (BP ctrl+b, Weight ctrl+w, ...): each
+  // configured hotkey starts a prefilled new entry.
+  useEffect(() => {
+    if (readOnly) return undefined;
+    const withHotkeys = codeList.filter(item => item.hotkey);
+    if (withHotkeys.length === 0) return undefined;
+    const handleKeyDown = event => {
+      if (!event.ctrlKey || event.metaKey || event.altKey) return;
+      const key = gridToText(event.key).toLowerCase();
+      const match = withHotkeys.find(item => item.hotkey === key);
+      if (!match) return;
+      event.preventDefault();
+      setEditor({
+        mode: "new",
+        code: match.code
+      });
+      setEditorValue("");
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [codeList, readOnly]);
+  const allRows = [...entryRows, ...chartRows];
+  const selectedRow = allRows.find(row => row.key === selectedKey) ?? null;
+  const showActionsColumn = !readOnly;
+  return /*#__PURE__*/React.createElement(Stack, {
+    tokens: {
+      childrenGap: 8
+    }
+  }, /*#__PURE__*/React.createElement(Stack, {
+    horizontal: true,
+    horizontalAlign: "space-between",
+    verticalAlign: "center"
+  }, /*#__PURE__*/React.createElement(Label, null, title), !readOnly && codeList.length > 0 ? /*#__PURE__*/React.createElement(DefaultButton, {
+    className: "hideonprint",
+    text: "New",
+    onClick: () => startEntry(null)
+  }) : null), /*#__PURE__*/React.createElement(Stack, {
+    horizontal: true,
+    tokens: {
+      childrenGap: 10
+    }
+  }, /*#__PURE__*/React.createElement(Stack.Item, {
+    grow: true
+  }, /*#__PURE__*/React.createElement(Stack, {
+    tokens: {
+      childrenGap: 8
+    }
+  }, editor ? /*#__PURE__*/React.createElement("div", {
+    className: "hideonprint",
+    style: {
+      border: "1px solid #d0d0d0",
+      background: "#f3f9fd",
+      padding: "8px 10px"
+    }
+  }, /*#__PURE__*/React.createElement(Stack, {
+    horizontal: true,
+    tokens: {
+      childrenGap: 8
+    },
+    verticalAlign: "end",
+    wrap: true
+  }, editor.mode === "correct" ? /*#__PURE__*/React.createElement(Text, null, "Correcting ", editor.description || editor.code, " (", editor.code, ")") : /*#__PURE__*/React.createElement(Dropdown, {
+    label: "Measurement",
+    selectedKey: editor.code,
+    options: codeList.map(item => ({
+      key: item.code,
+      text: item.label + (item.units ? " (" + item.units + ")" : "")
+    })),
+    onChange: (_event, option) => setEditor({
+      mode: "new",
+      code: option ? String(option.key) : null
+    }),
+    styles: {
+      root: {
+        minWidth: 220
+      }
+    }
+  }), /*#__PURE__*/React.createElement(TextField, {
+    label: "Value",
+    value: editorValue,
+    onChange: (_event, value) => setEditorValue(value ?? ""),
+    styles: {
+      root: {
+        minWidth: 120
+      }
+    }
+  }), /*#__PURE__*/React.createElement(PrimaryButton, {
+    text: editor.mode === "correct" ? "Save correction" : "Add",
+    disabled: !gridToText(editorValue).trim(),
+    onClick: saveEditor
+  }), /*#__PURE__*/React.createElement(DefaultButton, {
+    text: "Cancel",
+    onClick: () => {
+      setEditor(null);
+      setEditorValue("");
+    }
+  }))) : null, allRows.length === 0 ? /*#__PURE__*/React.createElement(Text, {
+    variant: "small"
+  }, "No measurements found.") : /*#__PURE__*/React.createElement("table", {
+    style: {
+      width: "100%",
+      borderCollapse: "collapse",
+      border: "1px solid #d0d0d0"
+    }
+  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", {
+    style: headStyle
+  }, "Collected"), /*#__PURE__*/React.createElement("th", {
+    style: headStyle
+  }, "Code"), /*#__PURE__*/React.createElement("th", {
+    style: headStyle
+  }, "Test Name"), /*#__PURE__*/React.createElement("th", {
+    style: headStyle
+  }, "Value"), /*#__PURE__*/React.createElement("th", {
+    style: headStyle
+  }, "Flag"), showActionsColumn ? /*#__PURE__*/React.createElement("th", {
+    style: {
+      ...headStyle
+    },
+    className: "hideonprint",
+    "aria-label": "Actions"
+  }) : null)), /*#__PURE__*/React.createElement("tbody", null, allRows.map(row => {
+    const pendingEdit = row.fromChart && row.observationId !== null ? editByObservationId.get(row.observationId) : null;
+    const pendingDelete = pendingEdit?.action === "delete";
+    const pendingCorrection = pendingEdit?.action === "correct";
+    const displayValue = pendingCorrection ? gridToText(pendingEdit.value) : row.value;
+    const displayFlag = pendingCorrection ? classifyGridFlag(row.ranges, displayValue) ?? row.flag : row.flag;
+    return /*#__PURE__*/React.createElement("tr", {
+      key: row.key,
+      onClick: () => setSelectedKey(row.key),
+      style: {
+        cursor: showDetail ? "pointer" : "default",
+        background: row.key === selectedKey ? "#deecf9" : row.fromChart ? undefined : "#eff6fc",
+        ...(pendingDelete ? {
+          textDecoration: "line-through",
+          color: "#a4262c"
+        } : {})
+      }
+    }, /*#__PURE__*/React.createElement("td", {
+      style: {
+        ...cellStyle,
+        whiteSpace: "nowrap"
+      }
+    }, row.dateKey), /*#__PURE__*/React.createElement("td", {
+      style: cellStyle
+    }, row.code), /*#__PURE__*/React.createElement("td", {
+      style: {
+        ...cellStyle,
+        ...gridFlagStyle(displayFlag)
+      }
+    }, row.description), /*#__PURE__*/React.createElement("td", {
+      style: {
+        ...cellStyle,
+        ...gridFlagStyle(displayFlag)
+      }
+    }, pendingCorrection ? /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
+      style: {
+        textDecoration: "line-through",
+        color: "#605e5c",
+        marginRight: 6
+      }
+    }, row.value), displayValue, row.units ? " " + row.units : "") : /*#__PURE__*/React.createElement("span", null, row.value, row.units ? " " + row.units : "")), /*#__PURE__*/React.createElement("td", {
+      style: {
+        ...cellStyle,
+        textAlign: "center",
+        fontWeight: 700
+      }
+    }, displayFlag ?? "-"), showActionsColumn ? /*#__PURE__*/React.createElement("td", {
+      style: {
+        ...cellStyle,
+        whiteSpace: "nowrap"
+      },
+      className: "hideonprint"
+    }, !row.fromChart ? /*#__PURE__*/React.createElement(DefaultButton, {
+      text: "Delete",
+      onClick: event => {
+        event.stopPropagation();
+        deleteEntry(row.rowId);
+      },
+      styles: rowActionStyles
+    }) : pendingEdit ? /*#__PURE__*/React.createElement(DefaultButton, {
+      text: "Undo",
+      onClick: event => {
+        event.stopPropagation();
+        undoChartEdit(row.observationId);
+      },
+      styles: rowActionStyles
+    }) : allowChartEdits && row.observationId !== null ? /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement(DefaultButton, {
+      text: "Edit",
+      onClick: event => {
+        event.stopPropagation();
+        startCorrection(row);
+      },
+      styles: rowActionStyles
+    }), /*#__PURE__*/React.createElement(DefaultButton, {
+      text: "Delete",
+      onClick: event => {
+        event.stopPropagation();
+        stageChartDelete(row);
+      },
+      styles: {
+        root: {
+          ...rowActionStyles.root,
+          marginLeft: 4
+        }
+      }
+    })) : null) : null);
+  }))), showDetail ? /*#__PURE__*/React.createElement(GridDetailPane, {
+    row: selectedRow
+  }) : null)), !readOnly && showQuickButtons && codeList.length > 0 ? /*#__PURE__*/React.createElement("div", {
+    className: "hideonprint",
+    style: {
+      border: "1px solid #d0d0d0",
+      background: "#faf9f8",
+      padding: "8px",
+      minWidth: 130
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 700,
+      fontSize: 12,
+      textAlign: "center",
+      marginBottom: 6
+    }
+  }, "REMINDER"), /*#__PURE__*/React.createElement(Stack, {
+    tokens: {
+      childrenGap: 6
+    }
+  }, codeList.map(item => /*#__PURE__*/React.createElement("div", {
+    key: item.code,
+    style: {
+      textAlign: "center"
+    }
+  }, /*#__PURE__*/React.createElement(DefaultButton, {
+    text: item.label,
+    onClick: () => startEntry(item.code),
+    styles: {
+      root: {
+        width: "100%"
+      }
+    }
+  }), item.hotkey ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: "#605e5c",
+      marginTop: 2
+    }
+  }, "(ctrl + ", item.hotkey, ")") : null)))) : null));
+};`,
   './ObservationPanelEditor/index.jsx': `/**
  * __nhAuth — self-contained field/row authorship runtime for NHForms components.
  *
@@ -22174,6 +22973,384 @@ const ObservationPanelEditor = ({
     key: entry.date,
     variant: "small"
   }, entry.date, ": ", rowDefs.concat(totalDefs).map(item => \`\${item.label} \${entry[item.observationCode] ?? "-"}\`).join(" | ")))) : null);
+};`,
+  './ObservationQuery/index.jsx': `const {
+  useMemo
+} = React;
+const {
+  Stack,
+  Label,
+  Text
+} = Fluent;
+const queryToText = value => {
+  if (value === null || value === undefined) return "";
+  return String(value);
+};
+const queryDateKey = value => {
+  const raw = queryToText(value);
+  return raw.includes("T") ? raw.split("T")[0] : raw;
+};
+const queryParseDate = value => {
+  const raw = queryToText(value).trim();
+  if (!raw) return null;
+  const parsed = new Date(raw.includes("T") ? raw : raw.replace(/\\./g, "-"));
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+const getQuerySource = (sd, sourcePath) => {
+  if (!sourcePath) return sd?.patient?.observations ?? [];
+  const steps = queryToText(sourcePath).split(".").filter(Boolean);
+  let current = sd;
+  for (const step of steps) {
+    if (current && typeof current === "object") {
+      current = current[step];
+    } else {
+      return [];
+    }
+  }
+  return Array.isArray(current) ? current : [];
+};
+const normalizeQueryCodes = codes => {
+  if (!Array.isArray(codes)) return [];
+  return codes.map(entry => {
+    if (typeof entry === "string") {
+      const code = entry.trim();
+      return code ? {
+        code,
+        label: code,
+        loincCode: "",
+        units: ""
+      } : null;
+    }
+    if (!entry || typeof entry !== "object") return null;
+    const code = queryToText(entry.code).trim();
+    if (!code) return null;
+    return {
+      code,
+      label: queryToText(entry.label).trim() || code,
+      loincCode: queryToText(entry.loincCode).trim(),
+      units: queryToText(entry.units).trim()
+    };
+  }).filter(Boolean);
+};
+
+// Cutoff for a {amount, unit} lookback window, anchored at "now". Returns null
+// when the window is unset or invalid so callers fall back to full history.
+const queryCutoffDate = lookback => {
+  if (!lookback || typeof lookback !== "object") return null;
+  const amount = Math.floor(Number(lookback.amount));
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+  const cutoff = new Date();
+  if (lookback.unit === "days") {
+    cutoff.setDate(cutoff.getDate() - amount);
+  } else if (lookback.unit === "years") {
+    cutoff.setFullYear(cutoff.getFullYear() - amount);
+  } else if (lookback.unit === "months") {
+    cutoff.setMonth(cutoff.getMonth() - amount);
+  } else {
+    return null;
+  }
+  return cutoff;
+};
+const queryLookbackLabel = lookback => {
+  const amount = Math.floor(Number(lookback?.amount));
+  if (!Number.isFinite(amount) || amount <= 0) return "";
+  const unit = lookback.unit === "days" || lookback.unit === "months" || lookback.unit === "years" ? lookback.unit : null;
+  if (!unit) return "";
+  const singular = {
+    days: "day",
+    months: "month",
+    years: "year"
+  }[unit];
+  return "Last " + amount + " " + (amount === 1 ? singular : unit);
+};
+const matchQueryCodeIndex = (entry, codeList) => {
+  const entryCode = queryToText(entry?.observationCode).trim().toLowerCase();
+  const entryLoinc = queryToText(entry?.loincCode).trim().toLowerCase();
+  for (let index = 0; index < codeList.length; index += 1) {
+    const candidate = codeList[index];
+    const code = candidate.code.toLowerCase();
+    const loinc = candidate.loincCode.toLowerCase();
+    if (entryCode && (entryCode === code || loinc && entryCode === loinc)) return index;
+    if (entryLoinc && (entryLoinc === code || loinc && entryLoinc === loinc)) return index;
+  }
+  return -1;
+};
+const queryNumber = value => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+// Four MOIS abnormal bands: critical LL/HH (absurd/very ranges) outrank L/H
+// (normal range) — mirrors the PastMeasurementField save-path classification.
+const classifyQueryFlag = (entry, rawValue) => {
+  const explicit = entry?.abnormalFlag && typeof entry.abnormalFlag === "object" ? queryToText(entry.abnormalFlag.code).trim() : queryToText(entry?.abnormalFlag).trim();
+  if (explicit) return explicit;
+  const value = queryNumber(rawValue);
+  if (value === null) return "";
+  const criticalLow = queryNumber(entry?.rangeAbsurdLow) ?? queryNumber(entry?.rangeVeryLow);
+  const criticalHigh = queryNumber(entry?.rangeAbsurdHigh) ?? queryNumber(entry?.rangeVeryHigh);
+  const normalLow = queryNumber(entry?.rangeNormalLow);
+  const normalHigh = queryNumber(entry?.rangeNormalHigh);
+  if (criticalLow !== null && value < criticalLow) return "LL";
+  if (criticalHigh !== null && value > criticalHigh) return "HH";
+  if (normalLow !== null && value < normalLow) return "L";
+  if (normalHigh !== null && value > normalHigh) return "H";
+  return "";
+};
+const queryFlagCellStyle = flag => {
+  if (flag === "LL" || flag === "HH") {
+    return {
+      background: "#fde7e9",
+      color: "#a4262c",
+      fontWeight: 600
+    };
+  }
+  if (flag === "L" || flag === "H") {
+    return {
+      background: "#fff4ce"
+    };
+  }
+  return {};
+};
+
+// Executes the declarative query: match codes, apply the lookback cutoff, and
+// return matches tagged with their code index, parsed date, and abnormal flag.
+const runObservationQuery = (sd, {
+  sourcePath,
+  datePath,
+  codeList,
+  lookback
+}) => {
+  const source = getQuerySource(sd, sourcePath);
+  const cutoff = queryCutoffDate(lookback);
+  const matches = [];
+  source.forEach(entry => {
+    if (!entry || typeof entry !== "object") return;
+    const codeIndex = matchQueryCodeIndex(entry, codeList);
+    if (codeIndex < 0) return;
+    const parsedDate = queryParseDate(entry[datePath]);
+    if (!parsedDate) return;
+    if (cutoff && parsedDate.getTime() < cutoff.getTime()) return;
+    const value = entry.value ?? entry.display ?? entry.report ?? "";
+    matches.push({
+      codeIndex,
+      dateKey: queryDateKey(entry[datePath]),
+      time: parsedDate.getTime(),
+      value: queryToText(value),
+      units: queryToText(entry.units).trim() || codeList[codeIndex].units,
+      flag: classifyQueryFlag(entry, value)
+    });
+  });
+  return matches;
+};
+const ObservationQueryTable = ({
+  codeList,
+  matches,
+  maxRows,
+  sort
+}) => {
+  const grouped = new Map();
+  matches.forEach(match => {
+    if (!match.dateKey) return;
+    const row = grouped.get(match.dateKey) ?? {
+      date: match.dateKey,
+      cells: {}
+    };
+    const existing = row.cells[match.codeIndex];
+    if (!existing || match.time >= existing.time) {
+      row.cells[match.codeIndex] = match;
+    }
+    grouped.set(match.dateKey, row);
+  });
+  // Always keep the most recent N dates; \`sort\` only controls display order.
+  const recentFirst = Array.from(grouped.values()).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  const limited = recentFirst.slice(0, Math.max(1, maxRows));
+  const rows = sort === "oldest" ? limited.slice().reverse() : limited;
+  if (rows.length === 0) {
+    return /*#__PURE__*/React.createElement(Text, {
+      variant: "small"
+    }, "No observations found for this query.");
+  }
+  const headerStyle = {
+    border: "1px solid #d0d0d0",
+    textAlign: "left",
+    padding: "6px",
+    background: "#f3f2f1"
+  };
+  return /*#__PURE__*/React.createElement("table", {
+    style: {
+      width: "100%",
+      borderCollapse: "collapse",
+      border: "1px solid #d0d0d0"
+    }
+  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", {
+    style: headerStyle
+  }, "Date"), codeList.map((code, index) => /*#__PURE__*/React.createElement("th", {
+    key: index,
+    style: headerStyle
+  }, code.label)))), /*#__PURE__*/React.createElement("tbody", null, rows.map(row => /*#__PURE__*/React.createElement("tr", {
+    key: row.date
+  }, /*#__PURE__*/React.createElement("td", {
+    style: {
+      border: "1px solid #e1dfdd",
+      padding: "6px",
+      whiteSpace: "nowrap"
+    }
+  }, row.date), codeList.map((code, index) => {
+    const cell = row.cells[index];
+    const cellStyle = {
+      border: "1px solid #e1dfdd",
+      padding: "6px",
+      ...(cell ? queryFlagCellStyle(cell.flag) : {})
+    };
+    return /*#__PURE__*/React.createElement("td", {
+      key: index,
+      style: cellStyle
+    }, cell ? /*#__PURE__*/React.createElement("span", null, cell.value, cell.units ? " " + cell.units : "", cell.flag ? /*#__PURE__*/React.createElement("span", {
+      style: {
+        marginLeft: 8,
+        fontWeight: 700
+      }
+    }, cell.flag) : null) : "-");
+  })))));
+};
+const ObservationQueryLatest = ({
+  codeList,
+  matches
+}) => {
+  const latestByCode = new Map();
+  matches.forEach(match => {
+    const existing = latestByCode.get(match.codeIndex);
+    if (!existing || match.time > existing.time) {
+      latestByCode.set(match.codeIndex, match);
+    }
+  });
+  return /*#__PURE__*/React.createElement("table", {
+    style: {
+      width: "100%",
+      borderCollapse: "collapse"
+    }
+  }, /*#__PURE__*/React.createElement("tbody", null, codeList.map((code, index) => {
+    const latest = latestByCode.get(index);
+    if (!latest) {
+      return /*#__PURE__*/React.createElement("tr", {
+        key: index
+      }, /*#__PURE__*/React.createElement("td", {
+        style: {
+          padding: "3px 6px",
+          color: "#a4262c",
+          fontWeight: 600
+        },
+        colSpan: 3
+      }, code.label, " Not Found"));
+    }
+    return /*#__PURE__*/React.createElement("tr", {
+      key: index
+    }, /*#__PURE__*/React.createElement("td", {
+      style: {
+        padding: "3px 6px",
+        color: "#004578"
+      }
+    }, code.label), /*#__PURE__*/React.createElement("td", {
+      style: {
+        padding: "3px 6px",
+        whiteSpace: "nowrap"
+      }
+    }, latest.dateKey), /*#__PURE__*/React.createElement("td", {
+      style: {
+        padding: "3px 6px",
+        fontWeight: 600,
+        ...queryFlagCellStyle(latest.flag)
+      }
+    }, latest.value, latest.units ? " " + latest.units : "", latest.flag ? /*#__PURE__*/React.createElement("span", {
+      style: {
+        marginLeft: 8
+      }
+    }, latest.flag) : null));
+  })));
+};
+const ObservationQuery = ({
+  title = "Observation Query",
+  display = "table",
+  codes = [],
+  lookback = null,
+  maxRows = 10,
+  sort = "newest",
+  sourcePath = "patient.observations",
+  datePath = "collectedDateTime",
+  chartHeight = 240
+}) => {
+  const sd = useSourceData();
+  const codeList = useMemo(() => normalizeQueryCodes(codes), [codes]);
+  const matches = useMemo(() => runObservationQuery(sd, {
+    sourcePath,
+    datePath,
+    codeList,
+    lookback
+  }), [codeList, datePath, lookback, sd, sourcePath]);
+  const windowLabel = queryLookbackLabel(lookback);
+  const effectiveMaxRows = Math.max(1, Math.floor(Number(maxRows)) || 10);
+  if (codeList.length === 0) {
+    return /*#__PURE__*/React.createElement(Stack, {
+      tokens: {
+        childrenGap: 6
+      }
+    }, /*#__PURE__*/React.createElement(Label, null, title), /*#__PURE__*/React.createElement(Text, {
+      variant: "small"
+    }, "No observations selected for this query yet."));
+  }
+  let body = null;
+  if (display === "latest") {
+    body = /*#__PURE__*/React.createElement(ObservationQueryLatest, {
+      codeList: codeList,
+      matches: matches
+    });
+  } else if (display === "chart") {
+    if (typeof ObservationChart === "function") {
+      const chartRows = matches.filter(match => queryNumber(match.value) !== null || /^\\d/.test(match.value)).map(match => ({
+        date: new Date(match.time).toISOString(),
+        ["c" + match.codeIndex]: match.value,
+        units: match.units
+      }));
+      const series = codeList.map((code, index) => ({
+        label: code.label,
+        dataKey: "c" + index,
+        parser: "number"
+      }));
+      body = /*#__PURE__*/React.createElement(ObservationChart, {
+        data: chartRows,
+        series: series,
+        maxPoints: effectiveMaxRows,
+        height: chartHeight,
+        showLegend: true
+      });
+    } else {
+      body = /*#__PURE__*/React.createElement(Text, {
+        variant: "small"
+      }, "Chart display requires the ObservationChart component.");
+    }
+  } else {
+    body = /*#__PURE__*/React.createElement(ObservationQueryTable, {
+      codeList: codeList,
+      matches: matches,
+      maxRows: effectiveMaxRows,
+      sort: sort
+    });
+  }
+  return /*#__PURE__*/React.createElement(Stack, {
+    tokens: {
+      childrenGap: 6
+    }
+  }, /*#__PURE__*/React.createElement(Stack, {
+    horizontal: true,
+    horizontalAlign: "space-between",
+    verticalAlign: "center"
+  }, /*#__PURE__*/React.createElement(Label, null, title), windowLabel ? /*#__PURE__*/React.createElement(Text, {
+    variant: "small",
+    style: {
+      color: "#605e5c"
+    }
+  }, windowLabel) : null), body);
 };`,
   './Occupations/index.jsx': `/**
  * Display a list of patient's employers and occupations. By default, it will
@@ -28253,6 +29430,102 @@ const _resolveObservationTemplate = (template, values) => String(template || "")
   const direct = values && Object.prototype.hasOwnProperty.call(values, fieldPath) ? values[fieldPath] : _resolvePathValue(values, fieldPath);
   return _stringifyObservationValue(direct);
 });
+
+// Report-body formats. Mirrors REPORT_ITEM_FORMATS in @webforms/form-model —
+// this bundle is executed as standalone source by MOIS and cannot import it, so
+// the two are pinned together by subform-observation-report.test.ts. A workflow
+// report over top-level fields offers the same formats, so either surface can
+// produce the same body.
+const _REPORT_ITEM_FORMATS = {
+  promptAnswer: {
+    value: "answer",
+    separator: ": ",
+    indent: ""
+  },
+  promptScore: {
+    value: "score",
+    separator: " : ",
+    indent: "    "
+  }
+};
+const _findQuestionOptionForAnswer = (question, sharedOptions, answer) => {
+  const options = _resolveQuestionOptions(question, sharedOptions);
+  if (!Array.isArray(options) || options.length === 0) return null;
+  const candidates = Array.from(_collectScoreCandidates(answer));
+  if (candidates.length === 0) return null;
+  for (const candidate of candidates) {
+    const match = options.find(option => String(option?.key) === String(candidate));
+    if (match) return match;
+  }
+  const normalized = candidates.map(candidate => _normalizeScoreToken(candidate));
+  return options.find(option => normalized.includes(_normalizeScoreToken(option?.key))) ?? null;
+};
+const _resolveDataEntryDisplayValue = (field, value) => {
+  const raw = _stringifyObservationValue(value);
+  if (!raw) return "";
+  const scaleOptions = Array.isArray(field?.scaleOptions) ? field.scaleOptions : [];
+  const scaleMatch = scaleOptions.find(option => String(option?.value) === raw);
+  if (scaleMatch) return String(scaleMatch.description || scaleMatch.label || raw);
+  const options = Array.isArray(field?.options) ? field.options : [];
+  const optionMatch = options.find(option => typeof option === "object" && option !== null ? [option.key, option.id, option.value].some(candidate => String(candidate) === raw) : String(option) === raw);
+  if (optionMatch && typeof optionMatch === "object") {
+    return String(optionMatch.text || optionMatch.label || optionMatch.description || raw);
+  }
+  return raw;
+};
+
+/**
+ * Build the report body from the subform's own items, one line each. Items with
+ * no answer are skipped, so a partially completed subform reports what it has
+ * rather than a column of empty prompts.
+ */
+const _buildFormattedObservationReport = (output, context) => {
+  const spec = _REPORT_ITEM_FORMATS[output?.reportFormat] || _REPORT_ITEM_FORMATS.promptAnswer;
+  const printScore = spec.value === "score";
+  const {
+    separator,
+    indent
+  } = spec;
+  const lines = [];
+  const heading = typeof output?.reportHeading === "string" ? output.reportHeading.trim() : "";
+  if (heading) lines.push(heading);
+  for (const question of context?.questions || []) {
+    if (!question) continue;
+    const answer = context?.answers?.[question.id];
+    if (answer === undefined || answer === null || answer === "") continue;
+    const label = String(question.label || question.id || "").trim();
+    if (!label) continue;
+    const score = _getScoreFromValue(answer, context?.scoreMap?.get?.(question.id));
+    let printed;
+    if (printScore) {
+      printed = score === null || score === undefined ? _stringifyObservationValue(answer) : String(score);
+    } else {
+      const option = _findQuestionOptionForAnswer(question, context?.sharedOptions, answer);
+      printed = String(option?.text || option?.label || "") || _stringifyObservationValue(answer);
+    }
+    if (!printed) continue;
+    lines.push(\`\${indent}\${label}\${separator}\${printed}\`);
+  }
+  for (const field of context?.dataEntryFields || []) {
+    if (!field || _isHeadingField(field)) continue;
+    // dataEntryValues is keyed by the literal field id, dots and all, so try a
+    // direct hit before walking the id as a path.
+    const values = context?.dataEntryValues;
+    const value = values && Object.prototype.hasOwnProperty.call(values, field.id) ? values[field.id] : _getValueAtPath(values, field.id);
+    const label = String(field.label || field.id || "").trim();
+    if (!label) continue;
+    const printed = printScore ? _stringifyObservationValue(value) : _resolveDataEntryDisplayValue(field, value);
+    if (!printed) continue;
+    lines.push(\`\${indent}\${label}\${separator}\${printed}\`);
+  }
+  return lines.length > 0 ? lines.join("\\n") : "";
+};
+const _buildSubformObservationReport = (output, context) => {
+  if (_REPORT_ITEM_FORMATS[output?.reportFormat]) {
+    return _buildFormattedObservationReport(output, context);
+  }
+  return output?.reportTemplate ? _resolveObservationTemplate(output.reportTemplate, context?.allValues) : "";
+};
 const _buildSubformObservationUpdates = (outputs, context) => {
   if (!Array.isArray(outputs) || outputs.length === 0) return [];
   const allValues = {
@@ -28278,7 +29551,10 @@ const _buildSubformObservationUpdates = (outputs, context) => {
         observationId: -oldId
       }] : [];
     }
-    const report = output.reportTemplate ? _resolveObservationTemplate(output.reportTemplate, allValues) : "";
+    const report = _buildSubformObservationReport(output, {
+      ...context,
+      allValues
+    });
     return [{
       observationId: oldId,
       observationCode: String(output.observationCode),
@@ -29586,6 +30862,12 @@ const SubformScoringInner = ({
       calculatedExpressions,
       calculatedTotals,
       dataEntryValues,
+      // Itemized report formats print labels, so the emit site needs the
+      // question/field definitions, not just their answers.
+      questions: config.questions,
+      sharedOptions: config.sharedOptions,
+      scoreMap,
+      dataEntryFields,
       formData: fd?.field?.data,
       sd
     });
@@ -29605,7 +30887,7 @@ const SubformScoringInner = ({
       _recordSubformActionPayload(preparedSession.setFormData, id, actionPayload);
     }
     return preparedSession.getFormData();
-  }, [answers, calculatedExpressions, calculatedTotals, dataEntryFields, dataEntryValueRoot, dataEntryValues, fd, formDataOutputs, id, observationOutputs, sd]);
+  }, [answers, calculatedExpressions, calculatedTotals, config.questions, config.sharedOptions, dataEntryFields, dataEntryValueRoot, dataEntryValues, fd, formDataOutputs, id, observationOutputs, scoreMap, sd]);
   const showItems = useMemo(() => {
     if (Array.isArray(summaryConfig.showItems) && summaryConfig.showItems.length > 0) {
       return summaryConfig.showItems;
@@ -31956,7 +33238,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './HonosQuestion/index.jsx': ["CHOICE_FIELD_STYLE","HonosFinalScore","QUESTION_STACK_STYLE","QUESTION_defaultLabelStyle","SCALE_10_LEGENDS","SCALE_10_LEGEND_LOOKUP","SCALE_10_OPTIONS","SCALE_5_LEGENDS","SCALE_5_LEGEND_LOOKUP","SCALE_5_OPTIONS","Scale10","Scale10Legend","Scale5","Scale5Legend","Scale5QuestionList","Scale5SubmitButton","Scale5ToolTip","ScaleLegend","UpdateContext","buildLegendLookupFromOptions","buildTooltipLookup","calculatedTotal","createScaleQuestion","customChoiceOptions","data","description","dropdownStyles","effectiveChoiceOptions","effectiveTooltip","fallbackLookup","fditem","fillAllUnfilledQuestions","finalScoreStyle","generatedTooltip","handleChoiceChanged","handleDropdownChanged","handleKeyUp","i","item","key","keySource","missingRequiredAnswer","missingRequiredDropdown","nextChoiceGroup","normalizeScaleChoiceOptions","numeric","numericValue","option","questionIds","questionStyle","rawValue","rawfditem","renderedChoiceOptions","requiredDropdownQuestionIds","requiredQuestionIds","scoredQuestionIds","seenKeys","selectedOptions","submitDisabled","targetFieldId","text","theme","toFiniteNumber","tooltipList","tooltipLookup","totalScore","value"],
   './HotspotMapField/index.jsx': ["ANNOTATION_SYMBOL_LABELS","DEFAULT_ANNOTATION_COLOR","DEFAULT_ANNOTATION_SIZE_PERCENT","DEFAULT_ANNOTATION_SYMBOL","DEFAULT_ANNOTATION_SYMBOLS","DEFAULT_INTERACTION_MODE","DEFAULT_MAP_MARGIN_PX","DEFAULT_MAP_MAX_WIDTH","DEFAULT_MAP_MIN_HEIGHT","DEFAULT_MAP_PADDING_PX","DEFAULT_MAP_WIDTH_PERCENT","DEFAULT_MAP_ZOOM_PERCENT","DEFAULT_MARKER_RADIUS","DEFAULT_MARKER_SIZE","DEFAULT_NUMBER_FIELD_WIDTH_PERCENT","DEFAULT_SVG_VIEWBOX_MARGIN_PERCENT","HotspotMapField","annotationDefaultSymbol","annotationPointsToSvgString","annotationSymbols","annotations","append","assignedHotspotIds","baseId","bounds","buildCountsByGroup","buildFallbackPolygon","buildGroupSelectionSummary","buildMapValue","byHotspot","centroid","centroidFromPoints","circleAspectRatio","clampPercent","clampSvgViewBoxMarginPercent","clamped","color","commitMapState","commitSelection","compact","counterGroups","countsByGroup","createHotspotMapConfig","cx","cy","deltaX","deltaY","displayValue","doc","drawingPointerIdRef","drawingPointsRef","element","elements","ensureResponsiveSvg","ensuredDefault","fallbackList","fieldFillTextLayerIdSet","fieldFillValueMap","fieldId","fields","fill","getHotspotLabelAnchor","getNumberFieldValue","getPointFromEvent","group","groupId","groupLabel","groupsById","half","handleAddAnnotation","handleDrawPointerDown","handleDrawPointerMove","handleDrawPointerUp","handleHotspotKeyDown","handleNumberFieldChange","handleToggleHotspot","hasAnnotations","hasExplicitCounterGroups","hasMapData","hasSelections","hasSvgBackground","height","heightAttr","hotspotIdSet","hotspots","hotspotsById","id","ids","importSvgHotspots","injectFieldFillValuesIntoSvg","inlineStyle","input","interactionMode","isDarkMode","isDrawModeActive","isDrawingRef","isFieldFillMode","isSelected","isSymbolModeActive","labelAnchor","labels","labelsByGroup","map","mapFrameRef","mapFrameStyle","mapValue","marginPercent","markerSize","markup","match","max","min","names","next","nextAnnotations","nextAspectRatio","nextPoints","nextSymbol","nextValue","normalizeAnnotationPoints","normalizeAnnotationSymbol","normalizeAnnotationSymbols","normalizeAnnotationType","normalizeAnnotations","normalizeColor","normalizeCounterGroupId","normalizeCounterGroups","normalizeHotspotPoints","normalizeHotspots","normalizeMapInteractionMode","normalizeNumberFields","normalizeShape","normalizeString","normalized","normalizedAnnotations","normalizedCounterGroups","normalizedHotspot","normalizedHotspots","normalizedId","normalizedNumberFields","normalizedNumeric","normalizedRaw","numberFields","numeric","observer","overlayStyle","overlayViewBox","padX","padY","pair","panelStyle","parseAnnotationSymbol","parseList","parseSvgAspectRatio","parseSvgNumber","parsed","parsedPoints","parsedViewBox","parser","parts","point","points","pointsAttr","pointsToSvgString","previous","projectMapLengthToRenderPercent","projectMapPercentToRenderPercent","projectRenderPercentToMapPercent","r","radius","raw","rawId","rawLabel","rawValue","rect","renderAnnotationModeControls","renderMapFrame","renderSummary","renderedWidth","renderedX","renderedY","resolveAnnotationSymbol","resolveMapInteractionMode","resolved","resolvedAllowedSymbols","resolvedAnnotationDefaultColor","resolvedAnnotationDefaultSymbol","resolvedAnnotationSizePercent","resolvedAnnotationSymbols","resolvedInteractionMode","resolvedMapMarginPx","resolvedMapMaxWidth","resolvedMapMinHeight","resolvedMapPaddingPx","resolvedMapWidthPercent","resolvedMapZoomPercent","resolvedModalMinWidth","responsiveSvg","sanitizeHotspotIds","seen","selectedCount","selectedIds","selectedIdsCsv","selectedLabels","selectedLabelsCsv","serialized","shape","showSymbolPicker","showToolToggle","size","sourceHeight","sourceWidth","step","stroke","strokeWidth","suffix","summaryGroups","supportsAnnotations","supportsDrawAnnotations","supportsSelection","supportsSymbolAnnotations","svg","svgAspectRatio","svgViewBoxMarginPercent","svgViewBoxRenderSize","symbol","symbols","tagName","target","textLayerId","theme","toXPercent","toYPercent","total","trimmed","tspan","type","unique","updateAspectRatio","useSvgLayerTakeover","usedIds","value","vbHeight","vbWidth","vbX","vbY","viewBoxHeight","viewBoxParts","viewBoxRaw","viewBoxWidth","width","widthAttr","widthRaw","x","y","zoomFactor"],
   './HttpJsonTestPanel/index.jsx': ["AbortControllerClass","HTTP_JSON_RESULT_EVENT","HttpJsonTestPanel","aborted","body","controller","effectiveEndpointUrl","effectiveOutputId","fetchJson","formatHttpJsonTestResult","handler","key","nextResult","normalizeHttpJsonEndpointUrl","persistHttpJsonTestResult","previous","publishHttpJsonTestResult","readHttpJsonTestBody","requestBody","response","responseText","sd","sendTest","startedAt","statusColor","statusLabel","storedResult","text","timeout","trimmed","url"],
-  './InvestigationTabs/index.jsx': ["INVESTIGATION_DEFAULT_TABS","InvestigationTab","InvestigationTabs","activeChildren","activeTab","childArray","childById","childTabId","id","label","normalizeInvestigationTabs","numeric","props","resolvedTabs","selected","source"],
+  './InvestigationTabs/index.jsx': ["INVESTIGATION_DEFAULT_TABS","InvestigationTab","InvestigationTabs","childArray","childById","childTabId","count","handleTabListKeyDown","id","isActive","label","next","normalizeInvestigationTabs","numeric","panelChildren","props","resolvedTabs","selected","source","tabRefs","target"],
   './LayoutTable/index.jsx': ["LayoutTable","Tag","bareRefs","boundCells","bracketedRefs","candidate","cellStyle","checklistOptions","code","comparableValue","computeLayoutTableCellValue","computedCells","config","date","display","displayValue","effectiveReadOnly","evaluateLayoutTableFormula","extractLayoutTableFormulaRefs","fallback","fieldId","fields","formatLayoutTableComputedValue","formatLayoutTableFieldDisplayValue","formatLayoutTableSourceValue","formatOne","formula","getCellDisplayValue","getLayoutTableFieldRawValue","getLayoutTableSourcePaths","getNumericFieldValue","getPathValue","hasLayoutTableSourceValue","id","ids","isCheckedValue","isNoLikeValue","isSafeLayoutTableFormula","isYesLikeValue","jsExpression","label","labelProp","layoutTableSourceText","match","matched","multiline","nextData","nextValue","normalizeComparableValue","normalizeLayoutTableOptionList","normalized","numeric","optionList","paths","raw","rawValue","refs","renderLayoutTableCellContent","renderLayoutTableField","renderLayoutTableFieldList","renderLayoutTableReadOnlyField","renderLayoutTableResources","renderLayoutTableStampButton","renderLink","resolveLayoutTableSourceValue","resources","root","rounded","rowIsVisible","rule","sd","section","setFieldValue","sharedProps","sourceBoundCells","sourceFieldIds","sourcePaths","strippedExpression","sumMatch","tableData","tableRows","targets","unwrappedExpression","value","values","visibleRows"],
   './LongTermMedications/index.jsx': ["LongTermMedications","LongTermMedicationsFields"],
   './MirthListenerUtility/index.jsx': ["AbortControllerClass","MIRTH_UTILITY_DEFAULT_SITES","MIRTH_UTILITY_PAYLOAD_MODES","MIRTH_UTILITY_SEND_METHODS","MirthListenerUtility","aborted","baseResult","body","canBeacon","controller","fetchJson","finishSend","form","initialSiteId","methodInfo","mirthUtilityBuildTemplate","mirthUtilityFormatBody","mirthUtilityNormalizeUrl","mirthUtilityParseBody","mirthUtilityPersistResult","mirthUtilitySelectStyle","parsed","payloadIssue","queued","resetPayload","response","responseText","sd","selectedSite","signAndSend","siteList","stampPayload","stamped","startedAt","statusColor","statusLabel","storedResult","targetUrl","text","timeout","timeoutMs","trimmed","url","xhr","xhrResult"],
@@ -31967,7 +33249,9 @@ export const componentDefinedNames: Record<string, string[]> = {
   './NarrativeReportBuilder/index.jsx': ["NarrativeReportBuilder","applyNarrative","buildNarrative","componentId","container","currentPayload","formData","generatedText","getFieldValue","getPathValue","key","nextGroup","normalizeTemplateRows","normalizeTextValue","normalizedTemplate","renderTextTemplate","rows","sections","setNarrativePayload","value"],
   './NewTextArea/index.jsx': ["NewTextArea","hideonprint","showonprint","sourceData"],
   './ObservationChart/index.jsx': ["$","$e","$l","$n","$t","A","Ae","Ai","Al","An","B","Be","Bl","Bt","C","Ce","Ci","Cl","Ct","D","De","Di","Dl","Dn","Dt","E","El","En","F","Fe","Ft","G","Gt","H","He","Hi","Hl","Ht","I","Ii","Il","It","J","Je","Jl","Jn","Jt","Ke","Kl","Kn","Kt","L","Li","Ll","Lt","M","Mn","Mt","N","Nl","O","OBSERVATION_CHART_PALETTE","OBSERVATION_CHART_STYLE_ID","ObservationChart","Ol","Ot","P","Pe","Pi","Pl","Pn","Q","Qn","Qt","R","Re","Ri","Rt","S","Sn","St","T","Tn","Tt","UPlotCssText","UPlotLib","Ut","Vl","Vt","W","We","Wi","Wl","Wt","X","Xl","Xn","Xt","Y","Ye","Yi","Yl","Yt","Z","Zl","Zn","Zt","_","_i","_l","_n","_t","a","ai","at","b","be","bi","bl","bn","bt","buildChartPayload","buildChartPayloadFromObservations","buildChartPayloadFromRows","buildSeriesDefinitions","buildUPlotOptions","c","candidate","chartPayload","chartSeries","ci","codeCandidates","coerceNumber","coercePositiveInt","container","containerRef","current","d","data","dataKey","day","di","direct","document","dt","e","ee","effectiveHeight","effectiveTitle","ei","el","en","ensureObservationChartStyles","entryCode","entryDescription","et","f","fi","finalizeChartRows","formatDate","frameStyle","fromPatient","fromQueryResult","ft","g","gi","gn","gt","h","hi","hl","ht","i","ie","ii","includes","isNonEmptyString","isRecord","it","jl","jt","k","keys","ki","kn","kt","l","ll","ln","m","match","matchesObservationSeries","maxPoints","mi","mode","month","mt","n","ne","ni","normalizeString","normalizeStringArray","normalized","normalizedCodePath","normalizedCodes","normalizedDateOnly","normalizedDescriptionPath","nt","numericDate","numericValue","o","observationCodes","oi","p","parseDateValue","parseMeasurementValue","parseNumericValue","parsed","parsedDateOnly","patientPath","plot","plotRef","pt","qe","qn","qt","r","rawValue","renderWidth","resizeChart","resizeObserver","resolveMoisValue","resolvePathValue","root","rowIndex","rowMap","s","sd","segments","self","seriesDefs","seriesPointSize","seriesShowsPoints","showAxes","showGrid","showLegend","showPoints","single","singleCode","sortedRows","sourceItems","sourcePath","stringifyValue","style","summaryParts","t","target","te","text","timeValue","timestamp","tl","tn","toPathSegments","trimmed","tt","u","uPlot","units","v","value","valueText","ve","vi","vl","vn","vt","w","wi","window","wl","wn","wrapperStyle","wt","xKey","xValues","xi","xl","xn","xt","y","year","yi","yn","yt","z","ze","zi","zl","zn"],
+  './ObservationEntryGrid/index.jsx': ["GRID_FLAG_DISPLAYS","GridDetailPane","ObservationEntryGrid","abnormalFlag","allRows","amount","bands","best","bestTime","buildGridAbnormalFlag","candidate","cellStyle","chartRows","classifyGridFlag","code","codeIndex","codeList","componentId","container","createdBy","criticalHigh","criticalLow","current","currentPayload","cutoff","deleteEntry","displayFlag","displayValue","edit","editByObservationId","editPayload","edits","editsKey","entries","entriesKey","entryCode","entryLoinc","entryRows","explicitFlag","findRangesForCode","flagCode","getGridSource","gridCutoffDate","gridDateKey","gridEntryMatchesCode","gridFlagStyle","gridNumber","gridParseDate","gridPayloadsEqual","gridToText","handleKeyDown","hasRanges","headStyle","key","loinc","map","match","newPayload","nextGroup","normalHigh","normalLow","normalizeGridCodes","observationId","parsed","pendingCorrection","pendingDelete","pendingEdit","rangeText","ranges","raw","readGridRows","rowActionStyles","rowId","rows","saveEditor","sd","selectedRow","setGridNestedPayload","showActionsColumn","source","stageChartDelete","startCorrection","startEntry","steps","stored","stripVolatileGridFields","time","undoChartEdit","value","withHotkeys","writeRows"],
   './ObservationPanelEditor/index.jsx': ["DEFAULT_WINDOW_HOURS","ObservationPanelEditor","actor","actorFrom","addHoursIso","authorshipPolicy","buildKey","c","changed","ck","claim","claims","codeSet","commitSave","componentId","computedTotals","container","createdBy","current","currentActorName","currentPayload","d","data","dcoUpdates","editableUntil","effectiveFieldId","euDate","existing","expired","fieldData","formatTimestamp","getCurrentActorName","getNhAuth","getPanelValue","grouped","hasValue","historyRows","isNonEmpty","isOwner","keepStatus","key","label","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","maxHistory","next","nextGroup","nextStatus","nhAuth","normalizePanelRows","normalizePanelTotals","normalizeStore","now","nowIso","numeric","oldObs","optionList","ownerId","ownerName","ownerRefresh","pad2","panelDateKey","payloadsEqual","pending","policyAppliesToAction","prepareSave","raw","readStore","release","resolveNow","rootValue","rowDefs","rowLockInfo","rowReadOnly","sameActor","sd","section","setPanelPayload","setRowValue","source","sourceIds","store","stripVolatilePayloadFields","toNumericValue","totalDefs","ts","untilSelf","value","windowHours"],
+  './ObservationQuery/index.jsx': ["ObservationQuery","ObservationQueryLatest","ObservationQueryTable","amount","body","candidate","cell","cellStyle","chartRows","classifyQueryFlag","code","codeIndex","codeList","criticalHigh","criticalLow","current","cutoff","effectiveMaxRows","entryCode","entryLoinc","existing","explicit","getQuerySource","grouped","headerStyle","index","latest","latestByCode","limited","loinc","matchQueryCodeIndex","matches","normalHigh","normalLow","normalizeQueryCodes","parsed","parsedDate","queryCutoffDate","queryDateKey","queryFlagCellStyle","queryLookbackLabel","queryNumber","queryParseDate","queryToText","raw","recentFirst","row","rows","runObservationQuery","sd","series","singular","source","steps","unit","value","windowLabel"],
   './Occupations/index.jsx': ["Occupations","OccupationsFields"],
   './PastMeasurementField/index.jsx': ["PastMeasurementField","abnormalFlag","abnormalHighValue","abnormalLowValue","canPullLatest","candidate","candidates","codeFilter","coercePositiveInt","commentFilter","componentId","container","createdBy","criticalHighValue","criticalLowValue","current","currentPayload","day","direct","displayedCurrentValue","documentDate","effectiveFieldId","effectiveHistorySize","effectiveLabelPosition","effectiveMeasurementSize","entryCode","entryComment","entryDate","entryUnits","entryValue","explicitValue","fieldData","flagCode","flagDisplays","formHistoryItems","formatDate","fromPatient","fromQueryResult","handleValueChange","hasAbnormalHigh","hasAbnormalLow","hasExplicitValue","hasMeaningfulValue","hasNumericCurrentValue","hasRangeMetadata","hasStoredValue","historicalFormRowDate","historyItems","historySummary","index","inputSuffix","isAbnormal","isHistoricalFormValue","isNonEmptyString","key","latestHistoryItem","legacyRangePayload","linkedObservationItem","matchingKey","measurementWidthBySize","month","nextGroup","normalizeObservationItems","normalizedDateOnly","normalizedPullTargets","numericCurrentValue","numericExplicitValue","numericTime","observationHistoryItems","oldId","oldObs","optionalString","parseDateValue","parsed","parsedDate","parsedDateOnly","patientPath","payloadsEqual","pullLatestIntoTargets","raw","rawDate","recentHistoryText","resolveHistoricalFormRows","resolveMeasurementContainerStyle","resolveMoisValue","resolvePathValue","resolvedAbnormalHigh","resolvedAbnormalLow","resolvedCriticalHigh","resolvedCriticalLow","resolvedCurrentValue","resolvedUnits","role","roots","sd","segments","setNestedPayload","shouldReserveHistory","shouldShowHistory","storedValue","stringifyValue","stripVolatilePayloadFields","targetFieldId","text","toObservationList","toPathSegments","updatedValue","value","valueFromHistoricalFormRow","valueIsDate","valueKeys","valuePart","valueText","width","year"],
   './PatientFileSections/index.jsx': ["PatientFileSections","activeText","addressText","cityLine","compactLines","contactText","countryLine","createdDate","editButtonStyle","encounter","fieldWrapStyle","formatAddress","formatContact","formatDate","getPatientFromData","gridStyle","healthNumber","insuranceBy","insuranceNumber","insuranceText","lines","match","mergeObjects","nextPatient","optionCode","optionDisplay","patient","preferredCode","preferredPhoneOptions","providerName","queryPatient","raw","renderClientDemographics","renderDocumentDetails","renderEncounterDetails","renderTitle","requested","sd","section","sectionTitleStyle","textValue","updateContactText","visibleSections","whiteDropdownStyles","whiteFlexTextFieldStyles","whiteTextFieldStyles","writePatientUpdates"],
@@ -31983,7 +33267,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './ServiceEpisodes/index.jsx': ["ServiceEpisodes","ServiceEpisodesFields","activeServiceEpisodes","startDateDesc"],
   './ServiceRequests/index.jsx': ["ServiceRequests","ServiceRequestsFields","activeServiceRequests","orderDateDesc"],
   './SignaturePad/index.jsx': ["B","D","L","O","SignaturePad","SignaturePadLib","T","U","W","_","__exports","a","c","canvas","canvasRef","container","containerRef","containerStyle","dataUrl","define","e","exports","f","h","handleClear","handleEndStroke","i","k","l","m","module","o","p","pad","padRef","r","ratio","readOnlyImageStyle","resizeCanvas","s","savedDataUrl","t","theme","u","width","y"],
-  './SubformScoring/index.jsx': ["AnswerSummaryItem","CalculationSummaryItem","DataFieldSummaryItem","DataInterpretationSummaryItem","FormSessionProvider","InterpretationSummaryItem","MOIS_WRITE_ID_FALLBACK_PATHS","MOIS_WRITE_MUTATIONS","MOIS_WRITE_MUTATION_KEYS","ProgressSummaryItem","ScoreSummaryItem","SubformScoring","SubformScoringInner","_LOCAL_INPUT_STYLE","_LOCAL_RADIO_GROUP_STYLE","_LOCAL_TEXTAREA_STYLE","__SubformScoringSessionContext","__cloneSubformScoringSessionValue","_buildDataEntryRenderGroups","_buildDataEntrySnapshot","_buildMappedPayload","_buildScaleLegendSignature","_buildScaleOptions","_buildScoreMap","_buildSubformFormDataWrites","_buildSubformObservationUpdates","_collectScoreCandidates","_computeMorphineEquivalent","_createPreparedSessionSetter","_evaluateDataEntryVisibility","_evaluateExpression","_formatBounds","_formatCalculatorDisplayValue","_formatNumericValue","_getInterpretation","_getScoreFromValue","_getSelectableOptionNumericValue","_getValueAtPath","_isHeadingField","_isInRange","_isMeaningfulValue","_isScaleChoiceSelected","_isSelectableOptionSelected","_latestObservationDefault","_normalizeChartPreferenceValue","_normalizeScoreToken","_normalizeSelectableOptions","_optionMatchesValue","_recordSubformActionPayload","_resolveChecklistOptions","_resolveFieldDefaultValue","_resolveFieldEmptyNumericValue","_resolveFieldWidthBasis","_resolveObservationTemplate","_resolvePathValue","_resolveQuestionOptions","_resolveSelectableBinaryOptions","_resolveWriteActionId","_serializeSelectableValue","_setSubformFormDataOutputs","_setSubformObservationPayloads","_setValueAtPath","_stringifyObservationValue","_toDisplayValue","_toNumericValue","_toPathSegments","_usesStructuredSelectableOptions","abs","action","actionPayload","aliases","allValues","allVars","answer","answerScore","answerableFields","answered","answers","aspect","barBg","barFill","baseDose","baseEquivalentDoseMg","baseEquivalentDoseRaw","basis","binding","boundedPrecision","buttonRowStyle","cadFieldId","calc","calculatedExpressions","calculatedTotals","calculation","calculatorFields","candidate","candidateKeys","candidatePaths","candidates","ceil","checked","checkedFromConfig","checkedOption","checklist","cloneFormSessionState","code","columnTemplate","commentsField","commonProps","componentPayloads","computedFallback","configuredField","container","containerStyle","controlLabel","controllerId","conversions","createdBy","current","currentSignature","cursor","dataEntryAction","dataEntryCalculations","dataEntryCalculatorConfig","dataEntryFieldById","dataEntryFields","dataEntryRenderGroups","dataEntrySnapshot","dataEntryValues","dateField","day","defaultValue","defaults","description","dialogContentProps","dialogMinWidth","dialogTitle","direct","displayText","displayValue","dose","doseColumnLabel","effectiveInitialData","entry","equivalentColumnLabel","equivalentDose","equivalentDoseMg","evaluated","explicitDefault","expressionVars","extracted","factor","fallbackOptions","field","fieldExists","fields","fieldsForProgress","floor","flushMatrixBuffer","formDataWrites","formatted","fromCalculation","functionNames","generatedIndex","generatedVars","getCalculationConfig","getDataEntryFieldConfig","getQuestionConfig","getTotalConfig","groups","handleCommitToParent","handleOpenChange","hasAnyAnswers","hasAnyRowValue","hasExternalDataEntryStore","hasRequiredId","history","iif","inputFieldId","inputType","inputValue","interpretation","isComplete","isDarkMode","isDataEntryMode","isDialogOpen","isHeading","isMatrixCandidate","isMorphineCalculatorMode","key","label","labelStyle","latest","left","leftDate","map","matched","matchedOption","matrixBuffer","matrixGroupId","max","meetsMax","meetsMin","meqCalculationId","meqDisplay","meqValue","mergeFormSessionState","min","minSymbol","mod","modalProps","month","next","nextGroup","nextKey","nextOption","nextRaw","nextState","nextValue","normalize","normalized","normalizedButtonIconName","normalizedOptionMap","normalizedOptions","normalizedSessionData","normalizedType","normalizedValues","numeric","numericValue","numericValues","observationDefault","observationRows","observations","oldId","oldObservation","option","optionList","optionMap","optionScoreMap","optionTokens","optionValue","options","parsed","payload","payloadMap","pendingDefaults","places","precision","precisionRaw","prepareCompletionState","prepared","preparedSession","prevIndex","previousEntry","previousField","previousScaleSignature","progress","providedOptions","question","questionOptions","questionsById","rawConfig","rawOptions","rawRows","rawType","rawValue","renderBloodGlucoseReadingEditor","renderDataEntryField","renderDataEntryScaleMatrix","renderMorphineCalculator","renderNumberInput","renderStyle","renderSummaryItem","replacement","report","required","requiredFields","resolved","resolvedId","resolvedScore","response","result","resultColumnLabel","results","right","rightDate","root","round","rowId","rowLabels","rowValues","rows","rule","runMutation","runtime","scaleOptions","scopedSetter","score","scoreMap","sd","segments","selected","selectedOption","selectedWithSetter","sessionContext","sessionSetFormData","sessionState","setDataEntryValue","setDialogOpen","setFormData","shouldClose","shouldHideButtonIcon","shouldUseDefaultButtonIcon","showCalculationsInModal","showItems","showLegend","showLegendForScale","signature","snapshot","source","sourceRoot","step","style","summaryContainerStyle","summaryItemsStyle","summaryLayout","target","termQuestionId","text","theme","today","token","tokenMatches","total","totalCalculationId","totalFallback","totalFromCalculation","totalLabel","totalValue","totals","triggerButtonIconProps","trimmed","uncheckedFromConfig","uncheckedOption","uniqueTokens","usFieldId","useBloodGlucoseReadingLayout","useFormSessionData","useRadio","useToggleSwitch","value","variableFieldIds","variables","vars","writeDefinition","writeKey","writeMutationRunners","year"],
+  './SubformScoring/index.jsx': ["AnswerSummaryItem","CalculationSummaryItem","DataFieldSummaryItem","DataInterpretationSummaryItem","FormSessionProvider","InterpretationSummaryItem","MOIS_WRITE_ID_FALLBACK_PATHS","MOIS_WRITE_MUTATIONS","MOIS_WRITE_MUTATION_KEYS","ProgressSummaryItem","ScoreSummaryItem","SubformScoring","SubformScoringInner","_LOCAL_INPUT_STYLE","_LOCAL_RADIO_GROUP_STYLE","_LOCAL_TEXTAREA_STYLE","_REPORT_ITEM_FORMATS","__SubformScoringSessionContext","__cloneSubformScoringSessionValue","_buildDataEntryRenderGroups","_buildDataEntrySnapshot","_buildFormattedObservationReport","_buildMappedPayload","_buildScaleLegendSignature","_buildScaleOptions","_buildScoreMap","_buildSubformFormDataWrites","_buildSubformObservationReport","_buildSubformObservationUpdates","_collectScoreCandidates","_computeMorphineEquivalent","_createPreparedSessionSetter","_evaluateDataEntryVisibility","_evaluateExpression","_findQuestionOptionForAnswer","_formatBounds","_formatCalculatorDisplayValue","_formatNumericValue","_getInterpretation","_getScoreFromValue","_getSelectableOptionNumericValue","_getValueAtPath","_isHeadingField","_isInRange","_isMeaningfulValue","_isScaleChoiceSelected","_isSelectableOptionSelected","_latestObservationDefault","_normalizeChartPreferenceValue","_normalizeScoreToken","_normalizeSelectableOptions","_optionMatchesValue","_recordSubformActionPayload","_resolveChecklistOptions","_resolveDataEntryDisplayValue","_resolveFieldDefaultValue","_resolveFieldEmptyNumericValue","_resolveFieldWidthBasis","_resolveObservationTemplate","_resolvePathValue","_resolveQuestionOptions","_resolveSelectableBinaryOptions","_resolveWriteActionId","_serializeSelectableValue","_setSubformFormDataOutputs","_setSubformObservationPayloads","_setValueAtPath","_stringifyObservationValue","_toDisplayValue","_toNumericValue","_toPathSegments","_usesStructuredSelectableOptions","abs","action","actionPayload","aliases","allValues","allVars","answer","answerScore","answerableFields","answered","answers","aspect","barBg","barFill","baseDose","baseEquivalentDoseMg","baseEquivalentDoseRaw","basis","binding","boundedPrecision","buttonRowStyle","cadFieldId","calc","calculatedExpressions","calculatedTotals","calculation","calculatorFields","candidate","candidateKeys","candidatePaths","candidates","ceil","checked","checkedFromConfig","checkedOption","checklist","cloneFormSessionState","code","columnTemplate","commentsField","commonProps","componentPayloads","computedFallback","configuredField","container","containerStyle","controlLabel","controllerId","conversions","createdBy","current","currentSignature","cursor","dataEntryAction","dataEntryCalculations","dataEntryCalculatorConfig","dataEntryFieldById","dataEntryFields","dataEntryRenderGroups","dataEntrySnapshot","dataEntryValues","dateField","day","defaultValue","defaults","description","dialogContentProps","dialogMinWidth","dialogTitle","direct","displayText","displayValue","dose","doseColumnLabel","effectiveInitialData","entry","equivalentColumnLabel","equivalentDose","equivalentDoseMg","evaluated","explicitDefault","expressionVars","extracted","factor","fallbackOptions","field","fieldExists","fields","fieldsForProgress","floor","flushMatrixBuffer","formDataWrites","formatted","fromCalculation","functionNames","generatedIndex","generatedVars","getCalculationConfig","getDataEntryFieldConfig","getQuestionConfig","getTotalConfig","groups","handleCommitToParent","handleOpenChange","hasAnyAnswers","hasAnyRowValue","hasExternalDataEntryStore","hasRequiredId","heading","history","iif","inputFieldId","inputType","inputValue","interpretation","isComplete","isDarkMode","isDataEntryMode","isDialogOpen","isHeading","isMatrixCandidate","isMorphineCalculatorMode","key","label","labelStyle","latest","left","leftDate","lines","map","match","matched","matchedOption","matrixBuffer","matrixGroupId","max","meetsMax","meetsMin","meqCalculationId","meqDisplay","meqValue","mergeFormSessionState","min","minSymbol","mod","modalProps","month","next","nextGroup","nextKey","nextOption","nextRaw","nextState","nextValue","normalize","normalized","normalizedButtonIconName","normalizedOptionMap","normalizedOptions","normalizedSessionData","normalizedType","normalizedValues","numeric","numericValue","numericValues","observationDefault","observationRows","observations","oldId","oldObservation","option","optionList","optionMap","optionMatch","optionScoreMap","optionTokens","optionValue","options","parsed","payload","payloadMap","pendingDefaults","places","precision","precisionRaw","prepareCompletionState","prepared","preparedSession","prevIndex","previousEntry","previousField","previousScaleSignature","printScore","printed","progress","providedOptions","question","questionOptions","questionsById","raw","rawConfig","rawOptions","rawRows","rawType","rawValue","renderBloodGlucoseReadingEditor","renderDataEntryField","renderDataEntryScaleMatrix","renderMorphineCalculator","renderNumberInput","renderStyle","renderSummaryItem","replacement","report","required","requiredFields","resolved","resolvedId","resolvedScore","response","result","resultColumnLabel","results","right","rightDate","root","round","rowId","rowLabels","rowValues","rows","rule","runMutation","runtime","scaleMatch","scaleOptions","scopedSetter","score","scoreMap","sd","segments","selected","selectedOption","selectedWithSetter","sessionContext","sessionSetFormData","sessionState","setDataEntryValue","setDialogOpen","setFormData","shouldClose","shouldHideButtonIcon","shouldUseDefaultButtonIcon","showCalculationsInModal","showItems","showLegend","showLegendForScale","signature","snapshot","source","sourceRoot","spec","step","style","summaryContainerStyle","summaryItemsStyle","summaryLayout","target","termQuestionId","text","theme","today","token","tokenMatches","total","totalCalculationId","totalFallback","totalFromCalculation","totalLabel","totalValue","totals","triggerButtonIconProps","trimmed","uncheckedFromConfig","uncheckedOption","uniqueTokens","usFieldId","useBloodGlucoseReadingLayout","useFormSessionData","useRadio","useToggleSwitch","value","values","variableFieldIds","variables","vars","writeDefinition","writeKey","writeMutationRunners","year"],
   './UnsavedChangesGuard/index.jsx': ["ButtonComponent","DCOUpdates","DEFAULT_WINDOW_HOURS","UnsavedChangesGuard","actionItems","actor","actorFrom","addHoursIso","baselineRef","buildDefaultSavePayload","buildDefaultSubmitPayload","buildKey","c","changed","ck","claim","claims","closeWindow","collectComponentPayloads","collectDomFieldValues","commitSave","componentPayload","confirmUnloadActive","current","d","data","dcoGroups","disabled","domFieldValues","editableUntil","euDate","existing","expired","field","fieldData","fieldId","footerActionItems","footerActions","formData","formatTimestamp","guardSkipsWhenSigned","handleAction","handler","hasLifecycleSignals","host","inputType","isNonEmpty","isOwner","isSettling","isSigned","isSubmitAction","keepStatus","key","label","lifecycle","linkedPanels","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","markSaved","mergeFieldValuesIntoState","narratives","nextStatus","nextValue","nhAuthCommitSave","nhAuthPrepareSave","normalizeFooterActions","normalizeGuardActions","normalizeGuardValue","normalizeStore","now","nowIso","ownerId","ownerName","ownerRefresh","pad2","panelUpdates","panels","payload","payloads","pending","persistAction","persistFd","policyAppliesToAction","prepareSave","prepared","primaryAction","promptText","raw","readStore","release","renderFooterAction","resolveNow","sameActor","saveSettleRef","savedWebform","sd","secondaryActions","serializeGuardValue","store","stripComponentPayloads","submitSd","success","tagName","trackedSnapshot","trackedValue","ts","untilSelf","useHostConfirmUnload","values","warmupRef","webformGroups","webformUpdate","windowHours"],
   './UseChangeWatch/index.jsx': ["_defaultCompare","_normalizeWatchOptions","baselineRef","compare","delayCount","dirtyRef","disabled","forcedDirtyRef","isDirty","normalizedOptions","onDirtyChange","renderCountRef","setChanged","useChangeWatch"],
   './ValueSetObservationField/index.jsx': ["ValueSetObservationField","checklistOptions","commentValue","componentId","container","createdBy","currentPayload","effectiveFieldId","fromContext","handleChange","key","nextGroup","normalizeObservationOptions","oldId","oldObs","options","payloadsEqual","report","sd","selectedCode","selectedDisplay","selectedValue","setNestedPayload","stripVolatilePayloadFields"],

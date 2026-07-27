@@ -544,6 +544,108 @@ const _resolveObservationTemplate = (template, values) => String(template || "")
   }
 )
 
+// Report-body formats. Mirrors REPORT_ITEM_FORMATS in @webforms/form-model —
+// this bundle is executed as standalone source by MOIS and cannot import it, so
+// the two are pinned together by subform-observation-report.test.ts. A workflow
+// report over top-level fields offers the same formats, so either surface can
+// produce the same body.
+const _REPORT_ITEM_FORMATS = {
+  promptAnswer: { value: "answer", separator: ": ", indent: "" },
+  promptScore: { value: "score", separator: " : ", indent: "    " },
+}
+
+const _findQuestionOptionForAnswer = (question, sharedOptions, answer) => {
+  const options = _resolveQuestionOptions(question, sharedOptions)
+  if (!Array.isArray(options) || options.length === 0) return null
+  const candidates = Array.from(_collectScoreCandidates(answer))
+  if (candidates.length === 0) return null
+  for (const candidate of candidates) {
+    const match = options.find((option) => String(option?.key) === String(candidate))
+    if (match) return match
+  }
+  const normalized = candidates.map((candidate) => _normalizeScoreToken(candidate))
+  return options.find((option) => normalized.includes(_normalizeScoreToken(option?.key))) ?? null
+}
+
+const _resolveDataEntryDisplayValue = (field, value) => {
+  const raw = _stringifyObservationValue(value)
+  if (!raw) return ""
+  const scaleOptions = Array.isArray(field?.scaleOptions) ? field.scaleOptions : []
+  const scaleMatch = scaleOptions.find((option) => String(option?.value) === raw)
+  if (scaleMatch) return String(scaleMatch.description || scaleMatch.label || raw)
+  const options = Array.isArray(field?.options) ? field.options : []
+  const optionMatch = options.find((option) => (
+    typeof option === "object" && option !== null
+      ? [option.key, option.id, option.value].some((candidate) => String(candidate) === raw)
+      : String(option) === raw
+  ))
+  if (optionMatch && typeof optionMatch === "object") {
+    return String(optionMatch.text || optionMatch.label || optionMatch.description || raw)
+  }
+  return raw
+}
+
+/**
+ * Build the report body from the subform's own items, one line each. Items with
+ * no answer are skipped, so a partially completed subform reports what it has
+ * rather than a column of empty prompts.
+ */
+const _buildFormattedObservationReport = (output, context) => {
+  const spec = _REPORT_ITEM_FORMATS[output?.reportFormat] || _REPORT_ITEM_FORMATS.promptAnswer
+  const printScore = spec.value === "score"
+  const { separator, indent } = spec
+  const lines = []
+
+  const heading = typeof output?.reportHeading === "string" ? output.reportHeading.trim() : ""
+  if (heading) lines.push(heading)
+
+  for (const question of context?.questions || []) {
+    if (!question) continue
+    const answer = context?.answers?.[question.id]
+    if (answer === undefined || answer === null || answer === "") continue
+    const label = String(question.label || question.id || "").trim()
+    if (!label) continue
+    const score = _getScoreFromValue(answer, context?.scoreMap?.get?.(question.id))
+    let printed
+    if (printScore) {
+      printed = score === null || score === undefined ? _stringifyObservationValue(answer) : String(score)
+    } else {
+      const option = _findQuestionOptionForAnswer(question, context?.sharedOptions, answer)
+      printed = String(option?.text || option?.label || "") || _stringifyObservationValue(answer)
+    }
+    if (!printed) continue
+    lines.push(`${indent}${label}${separator}${printed}`)
+  }
+
+  for (const field of context?.dataEntryFields || []) {
+    if (!field || _isHeadingField(field)) continue
+    // dataEntryValues is keyed by the literal field id, dots and all, so try a
+    // direct hit before walking the id as a path.
+    const values = context?.dataEntryValues
+    const value = values && Object.prototype.hasOwnProperty.call(values, field.id)
+      ? values[field.id]
+      : _getValueAtPath(values, field.id)
+    const label = String(field.label || field.id || "").trim()
+    if (!label) continue
+    const printed = printScore
+      ? _stringifyObservationValue(value)
+      : _resolveDataEntryDisplayValue(field, value)
+    if (!printed) continue
+    lines.push(`${indent}${label}${separator}${printed}`)
+  }
+
+  return lines.length > 0 ? lines.join("\n") : ""
+}
+
+const _buildSubformObservationReport = (output, context) => {
+  if (_REPORT_ITEM_FORMATS[output?.reportFormat]) {
+    return _buildFormattedObservationReport(output, context)
+  }
+  return output?.reportTemplate
+    ? _resolveObservationTemplate(output.reportTemplate, context?.allValues)
+    : ""
+}
+
 const _buildSubformObservationUpdates = (outputs, context) => {
   if (!Array.isArray(outputs) || outputs.length === 0) return []
   const allValues = {
@@ -576,9 +678,7 @@ const _buildSubformObservationUpdates = (outputs, context) => {
       return output.deleteWhenEmpty && oldId ? [{ observationId: -oldId }] : []
     }
 
-    const report = output.reportTemplate
-      ? _resolveObservationTemplate(output.reportTemplate, allValues)
-      : ""
+    const report = _buildSubformObservationReport(output, { ...context, allValues })
     return [{
       observationId: oldId,
       observationCode: String(output.observationCode),
@@ -1988,6 +2088,12 @@ const SubformScoringInner = ({
       calculatedExpressions,
       calculatedTotals,
       dataEntryValues,
+      // Itemized report formats print labels, so the emit site needs the
+      // question/field definitions, not just their answers.
+      questions: config.questions,
+      sharedOptions: config.sharedOptions,
+      scoreMap,
+      dataEntryFields,
       formData: fd?.field?.data,
       sd,
     })
@@ -2007,7 +2113,7 @@ const SubformScoringInner = ({
       _recordSubformActionPayload(preparedSession.setFormData, id, actionPayload)
     }
     return preparedSession.getFormData()
-  }, [answers, calculatedExpressions, calculatedTotals, dataEntryFields, dataEntryValueRoot, dataEntryValues, fd, formDataOutputs, id, observationOutputs, sd])
+  }, [answers, calculatedExpressions, calculatedTotals, config.questions, config.sharedOptions, dataEntryFields, dataEntryValueRoot, dataEntryValues, fd, formDataOutputs, id, observationOutputs, scoreMap, sd])
 
   const showItems = useMemo(() => {
     if (Array.isArray(summaryConfig.showItems) && summaryConfig.showItems.length > 0) {

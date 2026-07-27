@@ -1,5 +1,6 @@
 import type { BoundingBox, ParsedField } from "./document";
 import type { GroupSummary } from "./grouping";
+import type { ReportItemFormat } from "./report-formats";
 import type {
   BuilderField,
   CalculatedValueConfig,
@@ -785,6 +786,15 @@ export interface MoisSubformObservationOutput {
   totalId?: string;
   valueTemplate?: string;
   reportTemplate?: string;
+  /**
+   * Builds the report body from the subform's own items, one line each, in the
+   * named shape. Omit (or use `"custom"`) to author the body by hand in
+   * `reportTemplate` instead. The same formats are available to workflow
+   * reports, so both surfaces can produce identical bodies.
+   */
+  reportFormat?: "custom" | ReportItemFormat;
+  /** Heading line above a formatted body. Omit for no heading. */
+  reportHeading?: string;
   units?: string;
   deleteWhenEmpty?: boolean;
 }

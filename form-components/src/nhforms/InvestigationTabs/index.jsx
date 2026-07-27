@@ -31,11 +31,27 @@ const InvestigationTabs = ({
   children,
 }) => {
   const resolvedTabs = React.useMemo(() => normalizeInvestigationTabs(tabs), [tabs])
+  const tabRefs = React.useRef([])
   const [activeIndex, setActiveIndex] = React.useState(() => {
     const numeric = Number(defaultTab)
     if (!Number.isFinite(numeric)) return 0
     return Math.min(Math.max(Math.trunc(numeric), 0), Math.max(resolvedTabs.length - 1, 0))
   })
+
+  const handleTabListKeyDown = (event) => {
+    const count = resolvedTabs.length
+    if (count === 0) return
+    let next = null
+    if (event.key === "ArrowRight") next = (activeIndex + 1) % count
+    else if (event.key === "ArrowLeft") next = (activeIndex - 1 + count) % count
+    else if (event.key === "Home") next = 0
+    else if (event.key === "End") next = count - 1
+    if (next === null) return
+    event.preventDefault()
+    setActiveIndex(next)
+    const target = tabRefs.current[next]
+    if (target && typeof target.focus === "function") target.focus()
+  }
 
   React.useEffect(() => {
     setActiveIndex((current) => Math.min(Math.max(current, 0), Math.max(resolvedTabs.length - 1, 0)))
@@ -49,12 +65,6 @@ const InvestigationTabs = ({
     const childTabId = props.tabId ?? props.id ?? index
     childById.set(childTabId, props.children)
   })
-
-  const activeTab = resolvedTabs[activeIndex] || resolvedTabs[0] || { id: 0, label: "Tab 1" }
-  const activeChildren =
-    childById.has(activeTab.id)
-      ? childById.get(activeTab.id)
-      : childArray[activeIndex] || childArray[0] || null
 
   return (
     <div
@@ -71,6 +81,7 @@ const InvestigationTabs = ({
         role="tablist"
         aria-label="Investigation sections"
         className="hideonprint"
+        onKeyDown={handleTabListKeyDown}
         style={{
           display: "flex",
           alignItems: "stretch",
@@ -88,6 +99,8 @@ const InvestigationTabs = ({
               role="tab"
               aria-selected={selected}
               aria-controls={`investigation-tab-panel-${index}`}
+              tabIndex={selected ? 0 : -1}
+              ref={(node) => { tabRefs.current[index] = node }}
               onClick={() => setActiveIndex(index)}
               style={{
                 minWidth: 118,
@@ -114,29 +127,44 @@ const InvestigationTabs = ({
           )
         })}
       </div>
-      <div
-        className="showonprint"
-        style={{
-          display: "none",
-          borderBottom: "1px solid #b8b8b8",
-          background: "#dedbd8",
-          padding: "4px 6px",
-          fontWeight: 700,
-        }}
-      >
-        {activeTab.label}
-      </div>
-      <div
-        id={`investigation-tab-panel-${activeIndex}`}
-        role="tabpanel"
-        aria-label={activeTab.label}
-        style={{
-          minHeight: 420,
-          background: "#ffffff",
-        }}
-      >
-        {activeChildren}
-      </div>
+      {resolvedTabs.map((tab, index) => {
+        const isActive = index === activeIndex
+        const panelChildren = childById.has(tab.id)
+          ? childById.get(tab.id)
+          : childArray[index] ?? (isActive ? childArray[0] ?? null : null)
+        return (
+          <React.Fragment key={String(tab.id)}>
+            {/* Print includes every tab in order, each under its own label
+                bar; on screen only the active panel is visible. */}
+            <div
+              className="showonprint"
+              style={{
+                display: "none",
+                borderBottom: "1px solid #b8b8b8",
+                background: "#dedbd8",
+                padding: "4px 6px",
+                fontWeight: 700,
+              }}
+            >
+              {tab.label}
+            </div>
+            <div
+              id={`investigation-tab-panel-${index}`}
+              role="tabpanel"
+              aria-label={tab.label}
+              aria-hidden={isActive ? undefined : "true"}
+              className={isActive ? undefined : "showonprint"}
+              style={{
+                minHeight: isActive ? 420 : 0,
+                background: "#ffffff",
+                ...(isActive ? {} : { display: "none" }),
+              }}
+            >
+              {panelChildren}
+            </div>
+          </React.Fragment>
+        )
+      })}
     </div>
   )
 }

@@ -6,8 +6,16 @@
 import { BUILDER_FIELD_TYPES } from "./field-types";
 import type { BoundingBox, FieldPrefillValue, WidgetGeometry } from "./document";
 import type { BuilderInvestigationTab } from "./investigation-tabs";
+import type { ReportItemFormat } from "./report-formats";
 
 export { BUILDER_FIELD_TYPES } from "./field-types";
+export {
+  REPORT_ITEM_FORMATS,
+  REPORT_ITEM_FORMAT_IDS,
+  isReportItemFormat,
+  resolveReportItemFormat,
+} from "./report-formats";
+export type { ReportItemFormat, ReportItemFormatSpec } from "./report-formats";
 
 export interface MoisNavigationTarget {
   moisModule: string;
@@ -248,6 +256,13 @@ export interface BuilderWorkflowReportDefinition extends BuilderWorkflowBaseDefi
   sectionSpacing?: "compact" | "spaced";
   /** Prompt layout: "inline" = `Label: value` (default); "indented" = label line, value indented on the next line, blank line after (legacy MSE style; multi-selects render as `- item` bullets). */
   valueLayout?: "inline" | "indented";
+  /**
+   * Shape of each inline prompt line — the same formats a subform observation
+   * output offers, so a report and a subform can emit identical bodies.
+   * Defaults to `promptAnswer` (`Prompt: value`). Ignored when
+   * `valueLayout` is "indented", which has its own two-line shape.
+   */
+  itemFormat?: ReportItemFormat;
 }
 
 export type BuilderWorkflowOutputKind =

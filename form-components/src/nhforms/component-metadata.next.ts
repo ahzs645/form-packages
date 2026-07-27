@@ -29,7 +29,7 @@ export interface NHFormsComponentMetadata {
   /** Source code (raw JSX) */
   sourceCode: string;
   /** Category derived from component name patterns */
-  category: 'HoNOS' | 'MSE' | 'Lists' | 'Demographics' | 'Tables' | 'Other';
+  category: 'HoNOS' | 'MSE' | 'Lists' | 'Demographics' | 'Tables' | 'Investigations' | 'Other';
 }
 
 /**
@@ -41,6 +41,10 @@ function getCategory(name: string): NHFormsComponentMetadata['category'] {
   }
   if (name.startsWith('Mse')) {
     return 'MSE';
+  }
+  if (['ObservationQuery', 'ObservationEntryGrid', 'HistoricalObservationTable',
+       'ObservationChart', 'FocusedObservationHistory', 'PastMeasurementField'].includes(name)) {
+    return 'Investigations';
   }
   if (['Allergies', 'Conditions', 'Goals', 'LongTermMedications', 'ServiceEpisodes',
        'ServiceRequests', 'Connections', 'Occupations', 'EducationHistory',
@@ -87,7 +91,7 @@ function loadAllMetadata(): NHFormsComponentMetadata[] {
   // Sort by category then by name
   components.sort((a, b) => {
     if (a.category !== b.category) {
-      const categoryOrder = ['HoNOS', 'MSE', 'Lists', 'Demographics', 'Tables', 'Other'];
+      const categoryOrder = ['HoNOS', 'MSE', 'Lists', 'Demographics', 'Tables', 'Investigations', 'Other'];
       return categoryOrder.indexOf(a.category) - categoryOrder.indexOf(b.category);
     }
     return a.name.localeCompare(b.name);
