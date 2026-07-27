@@ -176,7 +176,7 @@ const ObservationQueryTable = ({ codeList, matches, maxRows, sort }) => {
     return <Text variant="small">No observations found for this query.</Text>
   }
 
-  const headerStyle = { border: "1px solid #d0d0d0", textAlign: "left", padding: "6px", background: "#f3f2f1" }
+  const headerStyle = { border: "1px solid #d0d0d0", textAlign: "left", padding: "3px 6px", background: "#f3f2f1", fontSize: 12, lineHeight: "16px" }
   return (
     <table style={{ width: "100%", borderCollapse: "collapse", border: "1px solid #d0d0d0" }}>
       <thead>
@@ -190,10 +190,10 @@ const ObservationQueryTable = ({ codeList, matches, maxRows, sort }) => {
       <tbody>
         {rows.map((row) => (
           <tr key={row.date}>
-            <td style={{ border: "1px solid #e1dfdd", padding: "6px", whiteSpace: "nowrap" }}>{row.date}</td>
+            <td style={{ border: "1px solid #e1dfdd", padding: "2px 6px", fontSize: 12, lineHeight: "16px", whiteSpace: "nowrap" }}>{row.date}</td>
             {codeList.map((code, index) => {
               const cell = row.cells[index]
-              const cellStyle = { border: "1px solid #e1dfdd", padding: "6px", ...(cell ? queryFlagCellStyle(cell.flag) : {}) }
+              const cellStyle = { border: "1px solid #e1dfdd", padding: "2px 6px", fontSize: 12, lineHeight: "16px", ...(cell ? queryFlagCellStyle(cell.flag) : {}) }
               return (
                 <td key={index} style={cellStyle}>
                   {cell ? (

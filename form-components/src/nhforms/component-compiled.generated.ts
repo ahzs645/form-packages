@@ -21813,24 +21813,27 @@ const buildGridAbnormalFlag = (sd, flagCode) => flagCode ? {
 } : null;
 const cellStyle = {
   border: "1px solid #e1dfdd",
-  padding: "5px 6px",
-  fontSize: 12
+  padding: "2px 6px",
+  fontSize: 12,
+  lineHeight: "16px"
 };
 const headStyle = {
   border: "1px solid #d0d0d0",
   textAlign: "left",
-  padding: "5px 6px",
+  padding: "3px 6px",
   background: "#f3f2f1",
-  fontSize: 12
+  fontSize: 12,
+  lineHeight: "16px"
 };
 const rowActionStyles = {
   root: {
     minWidth: 0,
-    height: 24,
-    padding: "0 8px",
+    height: 20,
+    padding: "0 6px",
     fontSize: 11
   }
 };
+const zebraRowBackground = "#faf9f8";
 const GridDetailPane = ({
   row
 }) => {
@@ -21885,6 +21888,8 @@ const ObservationEntryGrid = ({
   datePath = "collectedDateTime",
   showQuickButtons = true,
   showDetail = true,
+  showOrderedBy = true,
+  filterByCodes = true,
   allowChartEdits = false,
   readOnly = false
 }) => {
@@ -21915,7 +21920,7 @@ const ObservationEntryGrid = ({
     source.forEach((entry, index) => {
       if (!entry || typeof entry !== "object") return;
       const codeIndex = codeList.length > 0 ? codeList.findIndex(candidate => gridEntryMatchesCode(entry, candidate)) : -1;
-      if (codeList.length > 0 && codeIndex < 0) return;
+      if (filterByCodes && codeList.length > 0 && codeIndex < 0) return;
       const parsed = gridParseDate(entry[datePath]);
       if (!parsed) return;
       if (cutoff && parsed.getTime() < cutoff.getTime()) return;
@@ -21931,6 +21936,7 @@ const ObservationEntryGrid = ({
         description: gridToText(entry.description).trim() || (codeIndex >= 0 ? codeList[codeIndex].label : ""),
         value,
         units: gridToText(entry.units).trim(),
+        orderedBy: gridToText(entry.orderedBy).trim(),
         flag: explicitFlag || classifyGridFlag(entry, value),
         ranges: entry,
         fromChart: true
@@ -21938,7 +21944,7 @@ const ObservationEntryGrid = ({
     });
     rows.sort((left, right) => right.time - left.time);
     return rows.slice(0, Math.max(1, Math.floor(Number(maxRows)) || 15));
-  }, [codeList, datePath, lookback, maxRows, source]);
+  }, [codeList, datePath, filterByCodes, lookback, maxRows, source]);
   const entryRows = useMemo(() => entries.map(entry => {
     const candidate = codeList.find(item => item.code === entry.code) ?? {
       code: gridToText(entry.code),
@@ -21956,11 +21962,12 @@ const ObservationEntryGrid = ({
       description: gridToText(entry.description).trim() || candidate.label,
       value: gridToText(entry.value),
       units: gridToText(entry.units).trim() || candidate.units || gridToText(ranges?.units).trim(),
+      orderedBy: gridToText(sd?.userProfile?.identity?.fullName).trim(),
       flag: classifyGridFlag(ranges, entry.value),
       ranges: ranges ?? {},
       fromChart: false
     };
-  }), [codeList, entries, source]);
+  }), [codeList, entries, sd, source]);
 
   // Stage in-form rows as new DCOBS observations (id 0 / status F), chart
   // corrections as status C on the original id, and chart deletions as
@@ -22236,7 +22243,9 @@ const ObservationEntryGrid = ({
     }
   }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", {
     style: headStyle
-  }, "Collected"), /*#__PURE__*/React.createElement("th", {
+  }, "Collected"), showOrderedBy ? /*#__PURE__*/React.createElement("th", {
+    style: headStyle
+  }, "Ordered By") : null, /*#__PURE__*/React.createElement("th", {
     style: headStyle
   }, "Code"), /*#__PURE__*/React.createElement("th", {
     style: headStyle
@@ -22250,7 +22259,7 @@ const ObservationEntryGrid = ({
     },
     className: "hideonprint",
     "aria-label": "Actions"
-  }) : null)), /*#__PURE__*/React.createElement("tbody", null, allRows.map(row => {
+  }) : null)), /*#__PURE__*/React.createElement("tbody", null, allRows.map((row, rowIndex) => {
     const pendingEdit = row.fromChart && row.observationId !== null ? editByObservationId.get(row.observationId) : null;
     const pendingDelete = pendingEdit?.action === "delete";
     const pendingCorrection = pendingEdit?.action === "correct";
@@ -22261,7 +22270,7 @@ const ObservationEntryGrid = ({
       onClick: () => setSelectedKey(row.key),
       style: {
         cursor: showDetail ? "pointer" : "default",
-        background: row.key === selectedKey ? "#deecf9" : row.fromChart ? undefined : "#eff6fc",
+        background: row.key === selectedKey ? "#deecf9" : row.fromChart ? rowIndex % 2 === 1 ? zebraRowBackground : undefined : "#eff6fc",
         ...(pendingDelete ? {
           textDecoration: "line-through",
           color: "#a4262c"
@@ -22272,7 +22281,12 @@ const ObservationEntryGrid = ({
         ...cellStyle,
         whiteSpace: "nowrap"
       }
-    }, row.dateKey), /*#__PURE__*/React.createElement("td", {
+    }, row.dateKey), showOrderedBy ? /*#__PURE__*/React.createElement("td", {
+      style: {
+        ...cellStyle,
+        whiteSpace: "nowrap"
+      }
+    }, row.orderedBy || "") : null, /*#__PURE__*/React.createElement("td", {
       style: cellStyle
     }, row.code), /*#__PURE__*/React.createElement("td", {
       style: {
@@ -23174,8 +23188,10 @@ const ObservationQueryTable = ({
   const headerStyle = {
     border: "1px solid #d0d0d0",
     textAlign: "left",
-    padding: "6px",
-    background: "#f3f2f1"
+    padding: "3px 6px",
+    background: "#f3f2f1",
+    fontSize: 12,
+    lineHeight: "16px"
   };
   return /*#__PURE__*/React.createElement("table", {
     style: {
@@ -23193,14 +23209,18 @@ const ObservationQueryTable = ({
   }, /*#__PURE__*/React.createElement("td", {
     style: {
       border: "1px solid #e1dfdd",
-      padding: "6px",
+      padding: "2px 6px",
+      fontSize: 12,
+      lineHeight: "16px",
       whiteSpace: "nowrap"
     }
   }, row.date), codeList.map((code, index) => {
     const cell = row.cells[index];
     const cellStyle = {
       border: "1px solid #e1dfdd",
-      padding: "6px",
+      padding: "2px 6px",
+      fontSize: 12,
+      lineHeight: "16px",
       ...(cell ? queryFlagCellStyle(cell.flag) : {})
     };
     return /*#__PURE__*/React.createElement("td", {
@@ -33249,7 +33269,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './NarrativeReportBuilder/index.jsx': ["NarrativeReportBuilder","applyNarrative","buildNarrative","componentId","container","currentPayload","formData","generatedText","getFieldValue","getPathValue","key","nextGroup","normalizeTemplateRows","normalizeTextValue","normalizedTemplate","renderTextTemplate","rows","sections","setNarrativePayload","value"],
   './NewTextArea/index.jsx': ["NewTextArea","hideonprint","showonprint","sourceData"],
   './ObservationChart/index.jsx': ["$","$e","$l","$n","$t","A","Ae","Ai","Al","An","B","Be","Bl","Bt","C","Ce","Ci","Cl","Ct","D","De","Di","Dl","Dn","Dt","E","El","En","F","Fe","Ft","G","Gt","H","He","Hi","Hl","Ht","I","Ii","Il","It","J","Je","Jl","Jn","Jt","Ke","Kl","Kn","Kt","L","Li","Ll","Lt","M","Mn","Mt","N","Nl","O","OBSERVATION_CHART_PALETTE","OBSERVATION_CHART_STYLE_ID","ObservationChart","Ol","Ot","P","Pe","Pi","Pl","Pn","Q","Qn","Qt","R","Re","Ri","Rt","S","Sn","St","T","Tn","Tt","UPlotCssText","UPlotLib","Ut","Vl","Vt","W","We","Wi","Wl","Wt","X","Xl","Xn","Xt","Y","Ye","Yi","Yl","Yt","Z","Zl","Zn","Zt","_","_i","_l","_n","_t","a","ai","at","b","be","bi","bl","bn","bt","buildChartPayload","buildChartPayloadFromObservations","buildChartPayloadFromRows","buildSeriesDefinitions","buildUPlotOptions","c","candidate","chartPayload","chartSeries","ci","codeCandidates","coerceNumber","coercePositiveInt","container","containerRef","current","d","data","dataKey","day","di","direct","document","dt","e","ee","effectiveHeight","effectiveTitle","ei","el","en","ensureObservationChartStyles","entryCode","entryDescription","et","f","fi","finalizeChartRows","formatDate","frameStyle","fromPatient","fromQueryResult","ft","g","gi","gn","gt","h","hi","hl","ht","i","ie","ii","includes","isNonEmptyString","isRecord","it","jl","jt","k","keys","ki","kn","kt","l","ll","ln","m","match","matchesObservationSeries","maxPoints","mi","mode","month","mt","n","ne","ni","normalizeString","normalizeStringArray","normalized","normalizedCodePath","normalizedCodes","normalizedDateOnly","normalizedDescriptionPath","nt","numericDate","numericValue","o","observationCodes","oi","p","parseDateValue","parseMeasurementValue","parseNumericValue","parsed","parsedDateOnly","patientPath","plot","plotRef","pt","qe","qn","qt","r","rawValue","renderWidth","resizeChart","resizeObserver","resolveMoisValue","resolvePathValue","root","rowIndex","rowMap","s","sd","segments","self","seriesDefs","seriesPointSize","seriesShowsPoints","showAxes","showGrid","showLegend","showPoints","single","singleCode","sortedRows","sourceItems","sourcePath","stringifyValue","style","summaryParts","t","target","te","text","timeValue","timestamp","tl","tn","toPathSegments","trimmed","tt","u","uPlot","units","v","value","valueText","ve","vi","vl","vn","vt","w","wi","window","wl","wn","wrapperStyle","wt","xKey","xValues","xi","xl","xn","xt","y","year","yi","yn","yt","z","ze","zi","zl","zn"],
-  './ObservationEntryGrid/index.jsx': ["GRID_FLAG_DISPLAYS","GridDetailPane","ObservationEntryGrid","abnormalFlag","allRows","amount","bands","best","bestTime","buildGridAbnormalFlag","candidate","cellStyle","chartRows","classifyGridFlag","code","codeIndex","codeList","componentId","container","createdBy","criticalHigh","criticalLow","current","currentPayload","cutoff","deleteEntry","displayFlag","displayValue","edit","editByObservationId","editPayload","edits","editsKey","entries","entriesKey","entryCode","entryLoinc","entryRows","explicitFlag","findRangesForCode","flagCode","getGridSource","gridCutoffDate","gridDateKey","gridEntryMatchesCode","gridFlagStyle","gridNumber","gridParseDate","gridPayloadsEqual","gridToText","handleKeyDown","hasRanges","headStyle","key","loinc","map","match","newPayload","nextGroup","normalHigh","normalLow","normalizeGridCodes","observationId","parsed","pendingCorrection","pendingDelete","pendingEdit","rangeText","ranges","raw","readGridRows","rowActionStyles","rowId","rows","saveEditor","sd","selectedRow","setGridNestedPayload","showActionsColumn","source","stageChartDelete","startCorrection","startEntry","steps","stored","stripVolatileGridFields","time","undoChartEdit","value","withHotkeys","writeRows"],
+  './ObservationEntryGrid/index.jsx': ["GRID_FLAG_DISPLAYS","GridDetailPane","ObservationEntryGrid","abnormalFlag","allRows","amount","bands","best","bestTime","buildGridAbnormalFlag","candidate","cellStyle","chartRows","classifyGridFlag","code","codeIndex","codeList","componentId","container","createdBy","criticalHigh","criticalLow","current","currentPayload","cutoff","deleteEntry","displayFlag","displayValue","edit","editByObservationId","editPayload","edits","editsKey","entries","entriesKey","entryCode","entryLoinc","entryRows","explicitFlag","findRangesForCode","flagCode","getGridSource","gridCutoffDate","gridDateKey","gridEntryMatchesCode","gridFlagStyle","gridNumber","gridParseDate","gridPayloadsEqual","gridToText","handleKeyDown","hasRanges","headStyle","key","loinc","map","match","newPayload","nextGroup","normalHigh","normalLow","normalizeGridCodes","observationId","parsed","pendingCorrection","pendingDelete","pendingEdit","rangeText","ranges","raw","readGridRows","rowActionStyles","rowId","rows","saveEditor","sd","selectedRow","setGridNestedPayload","showActionsColumn","source","stageChartDelete","startCorrection","startEntry","steps","stored","stripVolatileGridFields","time","undoChartEdit","value","withHotkeys","writeRows","zebraRowBackground"],
   './ObservationPanelEditor/index.jsx': ["DEFAULT_WINDOW_HOURS","ObservationPanelEditor","actor","actorFrom","addHoursIso","authorshipPolicy","buildKey","c","changed","ck","claim","claims","codeSet","commitSave","componentId","computedTotals","container","createdBy","current","currentActorName","currentPayload","d","data","dcoUpdates","editableUntil","effectiveFieldId","euDate","existing","expired","fieldData","formatTimestamp","getCurrentActorName","getNhAuth","getPanelValue","grouped","hasValue","historyRows","isNonEmpty","isOwner","keepStatus","key","label","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","maxHistory","next","nextGroup","nextStatus","nhAuth","normalizePanelRows","normalizePanelTotals","normalizeStore","now","nowIso","numeric","oldObs","optionList","ownerId","ownerName","ownerRefresh","pad2","panelDateKey","payloadsEqual","pending","policyAppliesToAction","prepareSave","raw","readStore","release","resolveNow","rootValue","rowDefs","rowLockInfo","rowReadOnly","sameActor","sd","section","setPanelPayload","setRowValue","source","sourceIds","store","stripVolatilePayloadFields","toNumericValue","totalDefs","ts","untilSelf","value","windowHours"],
   './ObservationQuery/index.jsx': ["ObservationQuery","ObservationQueryLatest","ObservationQueryTable","amount","body","candidate","cell","cellStyle","chartRows","classifyQueryFlag","code","codeIndex","codeList","criticalHigh","criticalLow","current","cutoff","effectiveMaxRows","entryCode","entryLoinc","existing","explicit","getQuerySource","grouped","headerStyle","index","latest","latestByCode","limited","loinc","matchQueryCodeIndex","matches","normalHigh","normalLow","normalizeQueryCodes","parsed","parsedDate","queryCutoffDate","queryDateKey","queryFlagCellStyle","queryLookbackLabel","queryNumber","queryParseDate","queryToText","raw","recentFirst","row","rows","runObservationQuery","sd","series","singular","source","steps","unit","value","windowLabel"],
   './Occupations/index.jsx': ["Occupations","OccupationsFields"],

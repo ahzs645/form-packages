@@ -196,9 +196,10 @@ const buildGridAbnormalFlag = (sd, flagCode) => (
     : null
 )
 
-const cellStyle = { border: "1px solid #e1dfdd", padding: "5px 6px", fontSize: 12 }
-const headStyle = { border: "1px solid #d0d0d0", textAlign: "left", padding: "5px 6px", background: "#f3f2f1", fontSize: 12 }
-const rowActionStyles = { root: { minWidth: 0, height: 24, padding: "0 8px", fontSize: 11 } }
+const cellStyle = { border: "1px solid #e1dfdd", padding: "2px 6px", fontSize: 12, lineHeight: "16px" }
+const headStyle = { border: "1px solid #d0d0d0", textAlign: "left", padding: "3px 6px", background: "#f3f2f1", fontSize: 12, lineHeight: "16px" }
+const rowActionStyles = { root: { minWidth: 0, height: 20, padding: "0 6px", fontSize: 11 } }
+const zebraRowBackground = "#faf9f8"
 
 const GridDetailPane = ({ row }) => {
   if (!row) return null
@@ -242,6 +243,8 @@ const ObservationEntryGrid = ({
   datePath = "collectedDateTime",
   showQuickButtons = true,
   showDetail = true,
+  showOrderedBy = true,
+  filterByCodes = true,
   allowChartEdits = false,
   readOnly = false,
 }) => {
@@ -274,7 +277,7 @@ const ObservationEntryGrid = ({
     source.forEach((entry, index) => {
       if (!entry || typeof entry !== "object") return
       const codeIndex = codeList.length > 0 ? codeList.findIndex((candidate) => gridEntryMatchesCode(entry, candidate)) : -1
-      if (codeList.length > 0 && codeIndex < 0) return
+      if (filterByCodes && codeList.length > 0 && codeIndex < 0) return
       const parsed = gridParseDate(entry[datePath])
       if (!parsed) return
       if (cutoff && parsed.getTime() < cutoff.getTime()) return
@@ -292,6 +295,7 @@ const ObservationEntryGrid = ({
         description: gridToText(entry.description).trim() || (codeIndex >= 0 ? codeList[codeIndex].label : ""),
         value,
         units: gridToText(entry.units).trim(),
+        orderedBy: gridToText(entry.orderedBy).trim(),
         flag: explicitFlag || classifyGridFlag(entry, value),
         ranges: entry,
         fromChart: true,
@@ -299,7 +303,7 @@ const ObservationEntryGrid = ({
     })
     rows.sort((left, right) => right.time - left.time)
     return rows.slice(0, Math.max(1, Math.floor(Number(maxRows)) || 15))
-  }, [codeList, datePath, lookback, maxRows, source])
+  }, [codeList, datePath, filterByCodes, lookback, maxRows, source])
 
   const entryRows = useMemo(() => entries.map((entry) => {
     const candidate = codeList.find((item) => item.code === entry.code) ?? { code: gridToText(entry.code), label: gridToText(entry.description), loincCode: "", units: "", hotkey: "" }
@@ -312,11 +316,12 @@ const ObservationEntryGrid = ({
       description: gridToText(entry.description).trim() || candidate.label,
       value: gridToText(entry.value),
       units: gridToText(entry.units).trim() || candidate.units || gridToText(ranges?.units).trim(),
+      orderedBy: gridToText(sd?.userProfile?.identity?.fullName).trim(),
       flag: classifyGridFlag(ranges, entry.value),
       ranges: ranges ?? {},
       fromChart: false,
     }
-  }), [codeList, entries, source])
+  }), [codeList, entries, sd, source])
 
   // Stage in-form rows as new DCOBS observations (id 0 / status F), chart
   // corrections as status C on the original id, and chart deletions as
@@ -537,6 +542,7 @@ const ObservationEntryGrid = ({
                 <thead>
                   <tr>
                     <th style={headStyle}>Collected</th>
+                    {showOrderedBy ? <th style={headStyle}>Ordered By</th> : null}
                     <th style={headStyle}>Code</th>
                     <th style={headStyle}>Test Name</th>
                     <th style={headStyle}>Value</th>
@@ -545,7 +551,7 @@ const ObservationEntryGrid = ({
                   </tr>
                 </thead>
                 <tbody>
-                  {allRows.map((row) => {
+                  {allRows.map((row, rowIndex) => {
                     const pendingEdit = row.fromChart && row.observationId !== null
                       ? editByObservationId.get(row.observationId)
                       : null
@@ -561,11 +567,16 @@ const ObservationEntryGrid = ({
                         onClick={() => setSelectedKey(row.key)}
                         style={{
                           cursor: showDetail ? "pointer" : "default",
-                          background: row.key === selectedKey ? "#deecf9" : row.fromChart ? undefined : "#eff6fc",
+                          background: row.key === selectedKey
+                            ? "#deecf9"
+                            : row.fromChart
+                              ? (rowIndex % 2 === 1 ? zebraRowBackground : undefined)
+                              : "#eff6fc",
                           ...(pendingDelete ? { textDecoration: "line-through", color: "#a4262c" } : {}),
                         }}
                       >
                         <td style={{ ...cellStyle, whiteSpace: "nowrap" }}>{row.dateKey}</td>
+                        {showOrderedBy ? <td style={{ ...cellStyle, whiteSpace: "nowrap" }}>{row.orderedBy || ""}</td> : null}
                         <td style={cellStyle}>{row.code}</td>
                         <td style={{ ...cellStyle, ...gridFlagStyle(displayFlag) }}>{row.description}</td>
                         <td style={{ ...cellStyle, ...gridFlagStyle(displayFlag) }}>
