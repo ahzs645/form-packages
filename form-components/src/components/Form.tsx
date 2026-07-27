@@ -8,6 +8,7 @@
 
 import React from 'react';
 import { Stack } from '@fluentui/react';
+import { useTheme } from '../context/MoisContext';
 
 /** Lock policy type */
 export type LockPolicy = 'document' | 'encounter' | 'patient';
@@ -56,9 +57,13 @@ export const Form: React.FC<FormProps> = ({
   paddingTop = 0,
   section = { readOnlyOptions: { borderless: false } },
 }) => {
+  const theme = useTheme();
+
   return (
     <div>
+      {/* SMOIS Form spreads the theme stack defaults before applying its width style. */}
       <Stack
+        {...theme.mois.defaultStackProps}
         style={{
           maxWidth,
           margin: 'auto',

@@ -7,6 +7,7 @@
 import React, { createContext, useContext, useState, ReactNode } from 'react';
 import { Stack, Icon, Link, Text, Breadcrumb, IBreadcrumbItem } from '@fluentui/react';
 import { usePageSelect } from './PageSelect';
+import { Linear } from '../controls/Linear';
 
 // Page context for managing active page
 interface PageContextValue {
@@ -40,8 +41,6 @@ export interface PageSelectorProps {
 
 // Container styles
 const containerStyle: React.CSSProperties = {
-  maxWidth: '950px',
-  margin: 'auto',
   paddingTop: 0,
   paddingBottom: 0,
 };
@@ -206,23 +205,21 @@ export const Page: React.FC<PageProps> = ({
     if (pageSelectContext.selectedPage !== pageId) {
       return null;
     }
+    // Fidelity: the SMOIS bundle renders Page content through Linear directly.
+    // The native 950px maximum belongs to Form, not to each Page.
     return (
-      <div>
-        <Stack style={containerStyle} {...linearLayoutProps}>
-          {children}
-        </Stack>
-      </div>
+      <Linear {...linearLayoutProps}>
+        {children}
+      </Linear>
     );
   }
 
   // If no context, render standalone with children
   if (!context) {
     return (
-      <div>
-        <Stack style={containerStyle} {...linearLayoutProps}>
-          {children}
-        </Stack>
-      </div>
+      <Linear {...linearLayoutProps}>
+        {children}
+      </Linear>
     );
   }
 
@@ -232,11 +229,9 @@ export const Page: React.FC<PageProps> = ({
   }
 
   return (
-    <div>
-      <Stack style={containerStyle} {...linearLayoutProps}>
-        {children}
-      </Stack>
-    </div>
+    <Linear {...linearLayoutProps}>
+      {children}
+    </Linear>
   );
 };
 
