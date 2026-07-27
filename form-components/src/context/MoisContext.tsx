@@ -137,6 +137,13 @@ export interface SourceData {
     apiServer: string;
   };
   optionLists: Record<string, CodeListItem[]>;
+  /**
+   * Preview/runtime-supplied equivalents of lists loaded by MOIS through
+   * GET /api/MemoryCode/<system>. Real MOIS owns this cache internally; the
+   * preview injects local extracts here so components use the same
+   * useCodeList(system) contract in both environments.
+   */
+  memoryCodeLists?: Record<string, CodeListItem[]>;
   lifecycleState: {
     isLoading: boolean;
     isPrinting: boolean;
@@ -1271,7 +1278,9 @@ export function useCodeList(system: string): CodeListItem[] {
   const sourceData = useSourceData();
   const normalizedSystem = system?.trim() || '';
   const strict = isStrictMemoryCodePreview(sourceData);
-  const resolved = mockCodeLists[normalizedSystem];
+  const resolved =
+    sourceData.memoryCodeLists?.[normalizedSystem] ??
+    mockCodeLists[normalizedSystem];
 
   useEffect(() => {
     if (resolved || !normalizedSystem) return;

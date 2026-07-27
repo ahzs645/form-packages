@@ -1,5 +1,5 @@
 const { useMemo, useState, useEffect, useRef } = React
-const { Stack, Label, Text, TextField, DefaultButton, PrimaryButton, Dropdown } = Fluent
+const { Stack, Label, Text, TextField, DefaultButton, PrimaryButton } = Fluent
 
 const gridToText = (value) => {
   if (value === null || value === undefined) return ""
@@ -203,13 +203,13 @@ const headStyle = { border: "1px solid #d0d0d0", textAlign: "left", padding: "3p
 const zebraRowBackground = "#faf9f8"
 // MOIS paints unsaved in-grid entries salmon until the form is saved.
 const newRowBackground = "#f8d5c8"
-const inlineDropdownStyles = {
-  root: { minWidth: 150 },
-  title: { height: 22, lineHeight: "20px", fontSize: 12, paddingLeft: 6 },
-  caretDownWrapper: { height: 22, lineHeight: "22px" },
-}
 const inlineTextFieldStyles = {
   root: { minWidth: 90 },
+  fieldGroup: { height: 22 },
+  field: { fontSize: 12, padding: "0 6px" },
+}
+const inlineNameFieldStyles = {
+  root: { minWidth: 150 },
   fieldGroup: { height: 22 },
   field: { fontSize: 12, padding: "0 6px" },
 }
@@ -331,11 +331,16 @@ const ObservationEntryGrid = ({
   showDetail = true,
   showOrderedBy = true,
   filterByCodes = true,
+  codeLookupSystem = "MOIS-LABCODE",
   allowChartEdits = false,
   readOnly = false,
 }) => {
   const sd = useSourceData()
   const [fd, setFormData] = useActiveData()
+  // MOIS-LABCODE is a real MemoryCode system. Preview injects the local
+  // tlp_lab_code extract into the same useCodeList contract; exported forms
+  // resolve it through the host's MemoryCode REST endpoint.
+  const lookupCodeList = useCodeList(codeLookupSystem || "", sd)
   const componentId = id || fieldId || "ObservationEntryGrid"
   const entriesKey = componentId + "_entries"
   const editsKey = componentId + "_edits"
@@ -347,6 +352,7 @@ const ObservationEntryGrid = ({
   // Per-row uncommitted code text: typing resolves only on Enter/blur so
   // partial codes ("19") don't prematurely match ("1950" intended).
   const [codeDrafts, setCodeDrafts] = useState({})
+  const testNameFieldRefs = useRef({})
   const valueFieldRefs = useRef({})
 
   const editByObservationId = useMemo(() => {
@@ -517,7 +523,9 @@ const ObservationEntryGrid = ({
   }
 
   // Resolve a typed code to a test name: configured codes first (code or
-  // LOINC), then the chart's own observations (newest matching record wins).
+  // LOINC), then the chart's own observations (newest matching record wins),
+  // then MOIS-LABCODE through the host's MemoryCode connection. Unknown codes
+  // remain valid and can be described manually in the editable Test Name cell.
   const resolveEntryCode = (raw) => {
     const text = gridToText(raw).trim()
     if (!text) return { code: "", description: "", units: "" }
@@ -541,6 +549,23 @@ const ObservationEntryGrid = ({
     if (best) {
       return { code: text, description: gridToText(best.description).trim(), units: gridToText(best.units).trim() }
     }
+    if (codeLookupSystem) {
+      const lookupEntry = (Array.isArray(lookupCodeList) ? lookupCodeList : []).find((entry) => (
+        (
+          gridToText(entry?.code).trim().toLowerCase() === lower ||
+          gridToText(entry?.loincCode).trim().toLowerCase() === lower ||
+          gridToText(entry?.labCode).trim().toLowerCase() === lower
+        ) &&
+        gridToText(entry?.display).trim()
+      ))
+      if (lookupEntry) {
+        return {
+          code: gridToText(lookupEntry.code).trim() || text,
+          description: gridToText(lookupEntry.display).trim(),
+          units: gridToText(lookupEntry.units).trim(),
+        }
+      }
+    }
     return { code: text, description: "", units: "" }
   }
 
@@ -552,7 +577,12 @@ const ObservationEntryGrid = ({
       delete next[rowId]
       return next
     })
-    if (resolved.code) valueFieldRefs.current[rowId]?.focus?.()
+    if (!resolved.code) return
+    if (resolved.description) {
+      valueFieldRefs.current[rowId]?.focus?.()
+    } else {
+      testNameFieldRefs.current[rowId]?.focus?.()
+    }
   }
 
   // Corrections stage immediately at the current value; the row's value cell
@@ -630,9 +660,7 @@ const ObservationEntryGrid = ({
         <Label>{title}</Label>
         {!readOnly ? (
           <Stack horizontal tokens={{ childrenGap: 6 }} className="hideonprint">
-            {codeList.length > 0 ? (
-              <DefaultButton text="New" onClick={() => startEntry(null)} />
-            ) : null}
+            <DefaultButton text="New" onClick={() => startEntry(null)} />
             {selectedRow && !selectedRow.fromChart ? (
               <DefaultButton text="Delete" onClick={() => deleteEntry(selectedRow.rowId)} />
             ) : null}
@@ -714,26 +742,18 @@ const ObservationEntryGrid = ({
                           )}
                         </td>
                         <td style={{ ...cellStyle, ...gridFlagStyle(displayFlag) }}>
-                          {!row.fromChart && !readOnly && !row.description ? (
-                            <Dropdown
-                              placeholder="Select test…"
-                              selectedKey={row.code || null}
-                              options={codeList.map((item) => ({ key: item.code, text: item.label + (item.units ? " (" + item.units + ")" : "") }))}
-                              onChange={(_event, option) => {
-                                const nextCode = option ? String(option.key) : ""
-                                const candidate = codeList.find((item) => item.code === nextCode)
-                                setCodeDrafts((current) => {
-                                  const next = { ...current }
-                                  delete next[row.rowId]
-                                  return next
-                                })
-                                updateEntry(row.rowId, {
-                                  code: nextCode,
-                                  description: candidate?.label ?? "",
-                                  units: candidate?.units ?? "",
-                                })
+                          {!row.fromChart && !readOnly ? (
+                            <TextField
+                              placeholder="Test name"
+                              value={gridToText(row.description)}
+                              componentRef={(ref) => { testNameFieldRefs.current[gridToText(row.rowId)] = ref }}
+                              onChange={(_event, value) => updateEntry(row.rowId, { description: value ?? "" })}
+                              onKeyDown={(event) => {
+                                if (event.key !== "Enter") return
+                                event.preventDefault()
+                                valueFieldRefs.current[gridToText(row.rowId)]?.focus?.()
                               }}
-                              styles={inlineDropdownStyles}
+                              styles={inlineNameFieldStyles}
                             />
                           ) : (
                             row.description
@@ -743,6 +763,7 @@ const ObservationEntryGrid = ({
                           {!row.fromChart && !readOnly ? (
                             <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
                               <TextField
+                                placeholder="Value"
                                 value={gridToText(row.value)}
                                 autoFocus={Boolean(row.code)}
                                 componentRef={(ref) => { valueFieldRefs.current[gridToText(row.rowId)] = ref }}
@@ -757,6 +778,7 @@ const ObservationEntryGrid = ({
                                 {row.value}
                               </span>
                               <TextField
+                                placeholder="Value"
                                 value={displayValue}
                                 autoFocus
                                 onChange={(_event, value) => updateCorrection(row.observationId, value ?? "")}

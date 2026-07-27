@@ -16,9 +16,9 @@ const source = fs.readFileSync(path.join(NH, "ObservationEntryGrid", "index.jsx"
 type ActiveTuple = [any, (updater: any) => void];
 const ActiveDataContext = React.createContext<ActiveTuple>([{ field: { data: {}, status: {}, history: [] } }, () => {}]);
 
-let dropdownProps: Record<string, any> | null = null;
-let textFieldProps: Record<string, any> | null = null;
 let codeFieldProps: Record<string, any> | null = null;
+let testNameFieldProps: Record<string, any> | null = null;
+let valueFieldProps: Record<string, any> | null = null;
 
 const passthrough = ({ children }: { children?: React.ReactNode }) => React.createElement("div", null, children);
 const buttonStub = (props: Record<string, any>) =>
@@ -30,17 +30,14 @@ const FluentStub = {
   Label: ({ children }: { children?: React.ReactNode }) => React.createElement("span", null, children),
   Text: ({ children }: { children?: React.ReactNode }) => React.createElement("span", null, children),
   TextField: (props: Record<string, any>) => {
-    // The in-row code editor is distinguished by its placeholder.
     if (props.placeholder === "Code") {
       codeFieldProps = props;
+    } else if (props.placeholder === "Test name") {
+      testNameFieldProps = props;
     } else {
-      textFieldProps = props;
+      valueFieldProps = props;
     }
     return React.createElement("input", { value: props.value ?? "", readOnly: true });
-  },
-  Dropdown: (props: Record<string, any>) => {
-    dropdownProps = props;
-    return React.createElement("div", { "data-dropdown": "true" }, String(props.selectedKey ?? ""));
   },
   DefaultButton: buttonStub,
   PrimaryButton: buttonStub,
@@ -55,16 +52,27 @@ function loadGrid(sourceData: Record<string, unknown>): React.ComponentType<any>
     "Fluent",
     "useSourceData",
     "useActiveData",
+    "useCodeList",
     "produce",
     "getDateTimeString",
     `${compiled};\nreturn { ObservationEntryGrid };`
   );
   const useActiveData = () => React.useContext(ActiveDataContext);
+  // MemoryCode stub mirroring GET /api/MemoryCode/MOIS-LABCODE. The preview
+  // adapts the local tlp_lab_code extract into this same list shape.
+  const useCodeList = (system: string) =>
+    system === "MOIS-LABCODE"
+      ? [
+          { code: "1988", display: "CARDIAC RISK FRAMINGHAM", system, labCode: "CRF", units: "%" },
+          { code: "2013", display: "MINI MENTAL STATUS EXAM", system },
+        ]
+      : [];
   return factory(
     React,
     FluentStub,
     () => sourceData,
     useActiveData,
+    useCodeList,
     produce,
     (date: Date) => date.toISOString()
   ).ObservationEntryGrid;
@@ -96,9 +104,9 @@ const OBSERVATIONS = [
 ];
 
 function renderGrid(props: Record<string, unknown>, options?: { observations?: unknown[] }) {
-  dropdownProps = null;
-  textFieldProps = null;
   codeFieldProps = null;
+  testNameFieldProps = null;
+  valueFieldProps = null;
   const ObservationEntryGrid = loadGrid({
     patient: { observations: options?.observations ?? OBSERVATIONS },
     userProfile: { identity: { fullName: "WARKENTIN, LISA" } },
@@ -165,14 +173,17 @@ describe("ObservationEntryGrid", () => {
   it("stages new entries as DCO observation updates with computed abnormal flags", () => {
     const harness = renderGrid({ codes: CODES });
 
-    // MOIS-style inline entry: New inserts a grid row, the code is picked and
-    // the value typed in place — no separate editor or Add step.
+    // MOIS-style inline entry: New inserts a grid row, then code, test name,
+    // and value remain editable in place — no separate editor or Add step.
     clickButton(harness.container, "New");
     act(() => {
-      dropdownProps?.onChange?.(null, { key: "951" });
+      codeFieldProps?.onChange?.(null, "951");
     });
     act(() => {
-      textFieldProps?.onChange?.(null, "12");
+      codeFieldProps?.onKeyDown?.({ key: "Enter", preventDefault: () => {} });
+    });
+    act(() => {
+      valueFieldProps?.onChange?.(null, "12");
     });
 
     const data = harness.getState()?.field?.data ?? {};
@@ -194,7 +205,9 @@ describe("ObservationEntryGrid", () => {
       abnormalFlag: { code: "LL", display: "Critical low", system: "MOIS-ABNORMALFLAG" },
     });
     // The staged row renders in the grid with its in-row editor holding the value.
-    expect(textFieldProps?.value).toBe("12");
+    expect(testNameFieldProps?.value).toBe("BMI");
+    expect(valueFieldProps?.value).toBe("12");
+    expect(harness.container.querySelector("[data-dropdown]")).toBeNull();
     act(() => harness.root.unmount());
   });
 
@@ -203,10 +216,13 @@ describe("ObservationEntryGrid", () => {
 
     clickButton(harness.container, "New");
     act(() => {
-      dropdownProps?.onChange?.(null, { key: "22732" });
+      codeFieldProps?.onChange?.(null, "22732");
     });
     act(() => {
-      textFieldProps?.onChange?.(null, "82");
+      codeFieldProps?.onKeyDown?.({ key: "Enter", preventDefault: () => {} });
+    });
+    act(() => {
+      valueFieldProps?.onChange?.(null, "82");
     });
     expect(harness.getState()?.field?.data?.measurements_entries).toHaveLength(1);
 
@@ -260,6 +276,80 @@ describe("ObservationEntryGrid", () => {
       description: "TEMPERATURE",
     });
     act(() => chartHarness.root.unmount());
+
+    // Code known only to MOIS-LABCODE, matched through the local extract's
+    // lab-code alias and canonicalized to the observation code.
+    const catalogHarness = renderGrid({ codes: CODES });
+    clickButton(catalogHarness.container, "New");
+    act(() => {
+      codeFieldProps?.onChange?.(null, "crf");
+    });
+    act(() => {
+      codeFieldProps?.onKeyDown?.({ key: "Enter", preventDefault: () => {} });
+    });
+    expect(catalogHarness.getState()?.field?.data?.measurements_entries?.[0]).toMatchObject({
+      code: "1988",
+      description: "CARDIAC RISK FRAMINGHAM",
+      units: "%",
+    });
+    act(() => catalogHarness.root.unmount());
+
+    // Default MemoryCode system lookup (real MOIS:
+    // GET /api/MemoryCode/MOIS-LABCODE).
+    const memoryCodeHarness = renderGrid({ codes: CODES });
+    clickButton(memoryCodeHarness.container, "New");
+    act(() => {
+      codeFieldProps?.onChange?.(null, "2013");
+    });
+    act(() => {
+      codeFieldProps?.onKeyDown?.({ key: "Enter", preventDefault: () => {} });
+    });
+    expect(memoryCodeHarness.getState()?.field?.data?.measurements_entries?.[0]).toMatchObject({
+      code: "2013",
+      description: "MINI MENTAL STATUS EXAM",
+    });
+    act(() => memoryCodeHarness.root.unmount());
+  });
+
+  it("accepts an unknown code and lets the author enter a free-text test name and value", () => {
+    const harness = renderGrid({ codes: [] });
+
+    // New remains available even when there are no configured quick codes.
+    clickButton(harness.container, "New");
+    act(() => {
+      codeFieldProps?.onChange?.(null, "LOCAL-UNLISTED");
+    });
+    act(() => {
+      codeFieldProps?.onKeyDown?.({ key: "Enter", preventDefault: () => {} });
+    });
+    expect(harness.getState()?.field?.data?.measurements_entries?.[0]).toMatchObject({
+      code: "LOCAL-UNLISTED",
+      description: "",
+      units: "",
+    });
+
+    act(() => {
+      testNameFieldProps?.onChange?.(null, "Locally defined assessment");
+      valueFieldProps?.onChange?.(null, "Indeterminate");
+    });
+
+    const entry = harness.getState()?.field?.data?.measurements_entries?.[0];
+    expect(entry).toMatchObject({
+      code: "LOCAL-UNLISTED",
+      description: "Locally defined assessment",
+      value: "Indeterminate",
+    });
+    const payload = harness.getState()?.field?.data?.__componentPayloads?.dcoUpdatesByComponent?.measurements;
+    expect(payload?.[0]).toMatchObject({
+      observationId: 0,
+      observationCode: "LOCAL-UNLISTED",
+      description: "Locally defined assessment",
+      value: "Indeterminate",
+      valueType: "TEXT",
+      status: "F",
+    });
+    expect(payload?.[0].abnormalFlag).toBeUndefined();
+    act(() => harness.root.unmount());
   });
 
   it("stages chart corrections as status-C updates and supports undo", () => {
@@ -274,7 +364,7 @@ describe("ObservationEntryGrid", () => {
       value: "18.3",
     });
     act(() => {
-      textFieldProps?.onChange?.(null, "25");
+      valueFieldProps?.onChange?.(null, "25");
     });
 
     const edits = harness.getState()?.field?.data?.measurements_edits;
