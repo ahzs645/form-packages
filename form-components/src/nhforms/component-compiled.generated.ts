@@ -26846,6 +26846,7 @@ const {
  * - options: Array<{ value: number, label: string, description?: string }> - Scale options
  * - showLegend: boolean - Whether to show the legend row above
  * - showInlineLabels: boolean - Whether to show inline option labels beside radio controls
+ * - showEndpointLabels: boolean - Whether to show first/last descriptions beneath the scale
  * - showTooltip: boolean - Whether to show the row tooltip when descriptions exist
  * - tooltipMode: "all" | "option" - Whether tooltips show all definitions or only the hovered option
  * - required: boolean - Whether the field is required
@@ -26977,6 +26978,49 @@ const ScaleFieldTooltip = ({
     }
   }, opt.value), /*#__PURE__*/React.createElement(StackItem, null, opt.description || opt.label))));
 };
+const ScaleFieldEndpointLabels = ({
+  options,
+  textColor
+}) => {
+  if (!options || options.length === 0) return null;
+  const firstDescription = options[0]?.description;
+  const lastDescription = options.length > 1 ? options[options.length - 1]?.description : null;
+  if (!firstDescription && !lastDescription) return null;
+  return /*#__PURE__*/React.createElement(Stack, {
+    horizontal: true,
+    style: {
+      minWidth: _getInlineMinWidth(options.length),
+      marginTop: 2
+    }
+  }, /*#__PURE__*/React.createElement(StackItem, {
+    disableShrink: true,
+    styles: LABEL_COLUMN_STYLE
+  }, /*#__PURE__*/React.createElement("span", {
+    "aria-hidden": "true"
+  }, "\\xA0")), /*#__PURE__*/React.createElement(StackItem, {
+    grow: true
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      justifyContent: "space-between",
+      gap: 16,
+      padding: "0px 6px 2px 6px",
+      color: textColor,
+      fontSize: 11,
+      lineHeight: "15px"
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      maxWidth: "45%",
+      textAlign: "left"
+    }
+  }, firstDescription), /*#__PURE__*/React.createElement("span", {
+    style: {
+      maxWidth: "45%",
+      textAlign: "right"
+    }
+  }, lastDescription))));
+};
 
 // Main ScaleField component
 const ScaleField = ({
@@ -26985,6 +27029,7 @@ const ScaleField = ({
   options,
   showLegend = false,
   showInlineLabels = true,
+  showEndpointLabels = false,
   showTooltip = false,
   tooltipMode = "all",
   required = false,
@@ -27119,12 +27164,16 @@ const ScaleField = ({
         options: scaleOptions
       })
     }
-  }, fieldContent) : fieldContent));
+  }, fieldContent) : fieldContent, showEndpointLabels && /*#__PURE__*/React.createElement(ScaleFieldEndpointLabels, {
+    options: scaleOptions,
+    textColor: theme.semanticColors.bodySubtext
+  })));
 };
 
 // Export for use in forms
 ScaleField.Legend = ScaleFieldLegend;
-ScaleField.Tooltip = ScaleFieldTooltip;`,
+ScaleField.Tooltip = ScaleFieldTooltip;
+ScaleField.EndpointLabels = ScaleFieldEndpointLabels;`,
   './ScoringModule/index.jsx': `/**
  * ScoringModule - A scoring questionnaire component with interpretation
  *
@@ -33805,7 +33854,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './RelationshipStatus/index.jsx': ["RelationshipStatus"],
   './RichMarkdownBlock/index.jsx': ["MarkdownRenderer","RichMarkdownBlock","baseComponents","content","defaultRehypePlugins","defaultRemarkPlugins","effectiveFieldId","extra","extraPlugins","fullWidthStyle","mergedMarkdownProps"],
   './SaveOnClose/index.jsx': ["DEFAULT_WINDOW_HOURS","SaveOnClose","_buildDefaultSavePayload","_nhAuthPrepareSave","_normalizeSaveOnCloseOptions","_stripComponentPayloads","_useChangeAwareDirtyState","actor","actorFrom","addHoursIso","baselineRef","buildKey","c","changed","ck","claim","claims","commitSave","current","d","data","dirtyRef","editableUntil","euDate","existing","expired","fieldData","formatTimestamp","isDirty","isNonEmpty","isOwner","keepStatus","key","label","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","markSaved","nextStatus","normalizeStore","normalizedOptions","now","nowIso","ownerId","ownerName","ownerRefresh","pad2","pending","policyAppliesToAction","prepareSave","prepared","raw","readStore","release","renderCountRef","resolveNow","sameActor","saveData","sd","store","trackedValue","ts","untilSelf","useSaveOnClose","windowHours"],
-  './ScaleField/index.jsx': ["CHOICE_FIELD_STYLE","LABEL_COLUMN_STYLE","LABEL_STYLE","ScaleField","ScaleFieldLegend","ScaleFieldTooltip","_getInlineMinWidth","_renderOptionTooltipContent","choiceGroupStyles","choiceOptions","containerStyle","currentData","fieldContent","handleChange","hasDescriptions","inlineMinWidth","label","legendItemStyle","legendRowStyle","normalizedTooltipMode","scaleOptions","selectedOption","shouldShowAllTooltip","theme"],
+  './ScaleField/index.jsx': ["CHOICE_FIELD_STYLE","LABEL_COLUMN_STYLE","LABEL_STYLE","ScaleField","ScaleFieldEndpointLabels","ScaleFieldLegend","ScaleFieldTooltip","_getInlineMinWidth","_renderOptionTooltipContent","choiceGroupStyles","choiceOptions","containerStyle","currentData","fieldContent","firstDescription","handleChange","hasDescriptions","inlineMinWidth","label","lastDescription","legendItemStyle","legendRowStyle","normalizedTooltipMode","scaleOptions","selectedOption","shouldShowAllTooltip","theme"],
   './ScoringModule/index.jsx': ["CompactScoringQuestion","GroupedChecklistQuestion","GroupedChecklistSection","INTERPRETATION_BOX_STYLE","MatrixScoringRow","MatrixScoringTable","QUESTION_CONTAINER_STYLE","ScoringModule","ScoringModuleSchema","ScoringOptionTooltip","ScoringQuestion","ScoringScales","ScoringTotal","TOTAL_CONTAINER_STYLE","_cloneMirrorValue","_getQuestionMirrorFieldIds","_safeSerialize","allEntries","answer","answerScore","answerValue","answered","answers","buildScoreMap","calculatedTotals","candidateKeys","candidates","checked","checkedFromConfig","checkedOption","checklist","checklistUngroupedQuestions","collectScoreCandidates","containerStyle","continuumLabels","countsBySignature","createScoringConfig","createScoringQuestion","createScoringTotal","currentData","direct","effectiveShowProgress","errorContainerStyle","explicitShared","formatBounds","getAnswers","getInterpretation","getScoreFromValue","groupedQuestionIds","handleSelect","handleToggle","hasChanges","hasDescription","headerLabelStyle","headerOptionStyle","headerStyle","ids","interpretation","interpretationStyle","isComplete","isDarkMode","isInRange","keyValue","labelCellStyle","labelStyle","map","matrixQuestionIds","matrixQuestions","matrixSignature","max","maxContinuumLabel","maxSymbol","meetsMax","meetsMin","min","minContinuumLabel","minSymbol","mirrorIds","nextChecked","nextOption","normalizeQuestionIds","normalizeScoreToken","normalizeScoringOption","normalizeScoringOptions","normalizedLayout","normalizedOptionMap","optionCellStyle","optionControl","optionMap","optionScoreMap","options","optionsBySignature","progress","progressStyle","question","questionGroups","questionMirrorEntries","questionOptions","questions","questionsById","resolveChecklistOptions","resolveMatrixOptions","resolveQuestionOptions","resolvedOptions","results","rowStyle","scaleGridStyle","scaleWrapStyle","score","scoreMap","scoreValue","sectionQuestions","selected","serializeOptionSignature","sharedOptions","shouldRenderCompact","shouldRenderGroupedChecklist","shouldRenderMatrix","signature","stackedQuestions","tableStyle","targetIds","termQuestionId","textValue","theme","token","total","totalMirrorEntries","totals","uncheckedFromConfig","uncheckedOption","value","winnerCount","winnerSignature","wrapperStyle"],
   './ServiceEpisodes/index.jsx': ["ServiceEpisodes","ServiceEpisodesFields","activeServiceEpisodes","startDateDesc"],
   './ServiceRequests/index.jsx': ["ServiceRequests","ServiceRequestsFields","activeServiceRequests","orderDateDesc"],

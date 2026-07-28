@@ -25134,6 +25134,7 @@ const {
  * - options: Array<{ value: number, label: string, description?: string }> - Scale options
  * - showLegend: boolean - Whether to show the legend row above
  * - showInlineLabels: boolean - Whether to show inline option labels beside radio controls
+ * - showEndpointLabels: boolean - Whether to show first/last descriptions beneath the scale
  * - showTooltip: boolean - Whether to show the row tooltip when descriptions exist
  * - tooltipMode: "all" | "option" - Whether tooltips show all definitions or only the hovered option
  * - required: boolean - Whether the field is required
@@ -25254,6 +25255,43 @@ const ScaleFieldTooltip = ({ options }) => {
   )
 }
 
+const ScaleFieldEndpointLabels = ({ options, textColor }) => {
+  if (!options || options.length === 0) return null
+  const firstDescription = options[0]?.description
+  const lastDescription = options.length > 1 ? options[options.length - 1]?.description : null
+  if (!firstDescription && !lastDescription) return null
+
+  return (
+    <Stack
+      horizontal
+      style={{
+        minWidth: _getInlineMinWidth(options.length),
+        marginTop: 2,
+      }}
+    >
+      <StackItem disableShrink styles={LABEL_COLUMN_STYLE}>
+        <span aria-hidden="true">&nbsp;</span>
+      </StackItem>
+      <StackItem grow>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            gap: 16,
+            padding: "0px 6px 2px 6px",
+            color: textColor,
+            fontSize: 11,
+            lineHeight: "15px",
+          }}
+        >
+          <span style={{ maxWidth: "45%", textAlign: "left" }}>{firstDescription}</span>
+          <span style={{ maxWidth: "45%", textAlign: "right" }}>{lastDescription}</span>
+        </div>
+      </StackItem>
+    </Stack>
+  )
+}
+
 // Main ScaleField component
 const ScaleField = ({
   fieldId,
@@ -25261,6 +25299,7 @@ const ScaleField = ({
   options,
   showLegend = false,
   showInlineLabels = true,
+  showEndpointLabels = false,
   showTooltip = false,
   tooltipMode = "all",
   required = false,
@@ -25387,6 +25426,12 @@ const ScaleField = ({
             {fieldContent}
           </TooltipHost>
         ) : fieldContent}
+        {showEndpointLabels && (
+          <ScaleFieldEndpointLabels
+            options={scaleOptions}
+            textColor={theme.semanticColors.bodySubtext}
+          />
+        )}
       </div>
     </div>
   )
@@ -25395,6 +25440,7 @@ const ScaleField = ({
 // Export for use in forms
 ScaleField.Legend = ScaleFieldLegend
 ScaleField.Tooltip = ScaleFieldTooltip
+ScaleField.EndpointLabels = ScaleFieldEndpointLabels
 `,
   './ScoringModule/index.jsx': `/**
  * ScoringModule - A scoring questionnaire component with interpretation
