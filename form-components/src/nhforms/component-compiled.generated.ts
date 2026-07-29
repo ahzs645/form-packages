@@ -3924,7 +3924,11 @@ const _toEditableComputedValue = value => {
 const _hasAllReferencedValues = (expression, valuesByFieldId) => {
   const refs = Array.from(String(expression || "").matchAll(_COMPUTED_REF_PATTERN)).map(match => match[1]?.trim() ?? "").filter(Boolean);
   if (refs.length === 0) return true;
-  return Array.from(new Set(refs)).every(ref => _hasValue(valuesByFieldId?.[ref]));
+  // Controls such as ScaleField initialize an object-shaped value before the
+  // user selects an answer. Check the object's comparable value so an empty
+  // { selectedKey: null, value: null, response: null } is still incomplete,
+  // while valid zero-valued answers count as answered.
+  return Array.from(new Set(refs)).every(ref => _hasValue(_toComparableValue(valuesByFieldId?.[ref])));
 };
 const ComputedField = ({
   fieldId,

@@ -35,7 +35,15 @@ function loadComputedField(): React.ComponentType<any> {
   return factory(React, TextArea, useActiveData).ComputedField;
 }
 
-function renderComputedField(calculationPolicy: string) {
+function renderComputedField(
+  calculationPolicy: string,
+  options: {
+    data?: Record<string, unknown>;
+    expression?: string;
+    incompleteBehavior?: string;
+    incompleteText?: string;
+  } = {},
+) {
   const ComputedField = loadComputedField();
   let currentState: any = null;
   let updateState: ((updater: any) => void) | null = null;
@@ -43,7 +51,7 @@ function renderComputedField(calculationPolicy: string) {
   const Harness = () => {
     const [state, setState] = React.useState({
       field: {
-        data: { source: 10, result: null },
+        data: options.data ?? { source: 10, result: null },
         status: {},
         history: [],
       },
@@ -58,8 +66,10 @@ function renderComputedField(calculationPolicy: string) {
       React.createElement(ComputedField, {
         fieldId: "result",
         label: "Result",
-        expression: "source * 2",
+        expression: options.expression ?? "source * 2",
         calculationPolicy,
+        incompleteBehavior: options.incompleteBehavior,
+        incompleteText: options.incompleteText,
       })
     );
   };
@@ -84,6 +94,12 @@ function renderComputedField(calculationPolicy: string) {
         draft.field.data.__computedFieldState.result.overridden = overridden;
       }));
     },
+    setFieldValue: async (fieldId: string, value: unknown) => {
+      await act(async () => updateState!((draft: any) => {
+        draft.field.data[fieldId] = value;
+      }));
+    },
+    getRenderedValue: () => container.querySelector("input")?.getAttribute("value") ?? null,
     unmount: async () => {
       await act(async () => root.unmount());
     },
@@ -119,6 +135,28 @@ describe("ComputedField stored-value synchronization", () => {
     const harness = renderComputedField("suggested-calculation");
     await harness.render();
     expect(harness.getState().field.data.result).toBeNull();
+    await harness.unmount();
+  });
+
+  it("shows incomplete text for empty scale values, then displays the total once all scales are answered", async () => {
+    const emptyScaleValue = { selectedKey: null, value: null, response: null };
+    const harness = renderComputedField("always-calculated", {
+      data: { q1: emptyScaleValue, q2: emptyScaleValue, result: null },
+      expression: "[q1] + [q2]",
+      incompleteBehavior: "show-text",
+      incompleteText: "Complete all questions to calculate",
+    });
+
+    await harness.render();
+    expect(harness.getRenderedValue()).toBe("Complete all questions to calculate");
+    expect(harness.getState().field.data.result).toBeNull();
+
+    await harness.setFieldValue("q1", { selectedKey: "0", value: 0, response: "0" });
+    expect(harness.getRenderedValue()).toBe("Complete all questions to calculate");
+
+    await harness.setFieldValue("q2", { selectedKey: "4", value: 4, response: "4" });
+    expect(harness.getRenderedValue()).toBe("4");
+    expect(harness.getState().field.data.result).toBe(4);
     await harness.unmount();
   });
 });
