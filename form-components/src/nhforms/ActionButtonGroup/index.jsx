@@ -1,3 +1,7 @@
+// Fluent is a NAMESPACE in the real engine's form scope — bare Fluent
+// identifiers are a ReferenceError in production even though preview
+// injects them. Destructure everything this component renders.
+const { ComboBox, DefaultButton, Dialog, DialogFooter, DialogType, Dropdown, Label, PrimaryButton, TextField } = Fluent
 const { useMemo, useState } = React
 
 function ActionButtonGroup({

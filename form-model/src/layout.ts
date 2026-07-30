@@ -280,7 +280,7 @@ export type FormInputType =
 export type TextAreaSize = 'small' | 'medium' | 'large' | 'auto';
 export type LabelPosition = 'top' | 'left' | 'none';
 export type MoisReadBindingPresentation = "editable" | "backing";
-export type MoisReadBindingValueTransform = "exists";
+export type MoisReadBindingValueTransform = "exists" | "address" | "insurance" | "telecom";
 
 export interface MoisReadBinding {
   sourcePath: string;
@@ -476,7 +476,9 @@ function normalizeMoisReadBinding(
     sourcePath,
     presentation,
     hiddenInExport: presentation === "backing",
-    ...(binding?.valueTransform === "exists" ? { valueTransform: "exists" } : {}),
+    ...(["exists", "address", "insurance", "telecom"].includes(String(binding?.valueTransform))
+      ? { valueTransform: binding?.valueTransform }
+      : {}),
   };
 }
 

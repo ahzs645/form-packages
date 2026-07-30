@@ -8,7 +8,11 @@
  */
 
 export const componentModules: Record<string, string> = {
-  './ActionButtonGroup/index.jsx': `const { useMemo, useState } = React
+  './ActionButtonGroup/index.jsx': `// Fluent is a NAMESPACE in the real engine's form scope — bare Fluent
+// identifiers are a ReferenceError in production even though preview
+// injects them. Destructure everything this component renders.
+const { ComboBox, DefaultButton, Dialog, DialogFooter, DialogType, Dropdown, Label, PrimaryButton, TextField } = Fluent
+const { useMemo, useState } = React
 
 function ActionButtonGroup({
   id = "legacyButtonGroup",
@@ -392,7 +396,11 @@ AllergyTable = ({
   )
 }
 `,
-  './AssessmentScoringTable/index.jsx': `const { useMemo, useCallback, useEffect } = React
+  './AssessmentScoringTable/index.jsx': `// Fluent is a NAMESPACE in the real engine's form scope — bare Fluent
+// identifiers are a ReferenceError in production even though preview
+// injects them. Destructure everything this component renders.
+const { Label } = Fluent
+const { useMemo, useCallback, useEffect } = React
 
 const numberOrBlank = (value) => {
   if (value == null || value === "") return ""
@@ -1585,15 +1593,18 @@ const _chartRecordTablePresets = {
   },
   longTermMedications: {
     label: "Long-term medications",
+    // fieldId is the saved form-data key and stays on the legacy name so old
+    // forms keep their data; sourceId is the chart collection to READ and has
+    // to be the engine's own name (fullChart returns longTermMedications).
     fieldId: "longTermMedicationOrders",
-    sourceId: "longTermMedicationOrders",
+    sourceId: "longTermMedications",
     selectText: "Select relevant medications",
     reportedLabel: "Medication changes reported on this form",
     addButtonText: "+ Add medication",
     emptyStateText: "No medication changes reported",
     uniqueBy: ["medication"],
     columns: [
-      { id: "longTermMedicationOrderId", type: "key" },
+      { id: "longTermMedicationId", type: "key" },
       { title: "Start", id: "startDate", type: "date" },
       { title: "End", id: "endDate", type: "date" },
       { title: "Medication", id: "medication", type: "string" },
@@ -1630,8 +1641,9 @@ const _chartRecordTablePresets = {
   },
   connections: {
     label: "Patient Connections",
+    // Saved-data key stays legacy; the chart read uses the engine's collection.
     fieldId: "connectedResources",
-    sourceId: "connectedResources",
+    sourceId: "connections",
     selectText: "Select connections",
     filterPred: _chartRecordTableActiveConnections,
     columns: [
@@ -1656,15 +1668,19 @@ const _chartRecordTablePresets = {
   },
   plannedActions: {
     label: "Planned actions",
+    // The engine's collection is \`actions\`; there is no \`plannedActions\` key on
+    // the chart. Columns follow what fullChart actually selects for it, which
+    // is notably sparser than the sibling collections: no record id, no
+    // startDate, and no responsibility/participant field.
+    fieldId: "plannedActions",
+    sourceId: "actions",
     selectText: "Select actions",
     selectionType: "multiple",
     filterPred: _chartRecordTableActivePlannedActions,
     columns: [
-      { id: "plannedActionId", type: "key" },
-      { title: "Start", id: "startDate", type: "date" },
-      { title: "End", id: "endDate", type: "date" },
       { title: "Action", id: "action", type: "string" },
-      { title: "Participant(s)", id: "responsibility", type: "string", size: "small" },
+      { title: "Detail", id: "detail", type: "string", size: "large" },
+      { title: "End", id: "endDate", type: "date" },
       { title: "Completed", id: "completedDate", type: "date" },
       { id: "isCompleted", type: "hidden" },
     ],
@@ -5029,7 +5045,11 @@ const SelectActiveConnections = cr => (!cr.stopDate)
 
 const ConnectionsFields = "connectionId startDate stopDate connectionType {code display system} name"
 `,
-  './ConversionField/index.jsx': `const { useCallback, useMemo, useRef } = React
+  './ConversionField/index.jsx': `// Fluent is a NAMESPACE in the real engine's form scope — bare Fluent
+// identifiers are a ReferenceError in production even though preview
+// injects them. Destructure everything this component renders.
+const { DefaultButton, TextField } = Fluent
+const { useCallback, useMemo, useRef } = React
 
 const _conversionPathSegments = (path) =>
   String(path || "")
@@ -5350,7 +5370,11 @@ function CustomJsxBlock({
 }
 
 `,
-  './DentalWeightConverter/index.jsx': `const { useCallback, useMemo, useRef } = React
+  './DentalWeightConverter/index.jsx': `// Fluent is a NAMESPACE in the real engine's form scope — bare Fluent
+// identifiers are a ReferenceError in production even though preview
+// injects them. Destructure everything this component renders.
+const { DefaultButton, TextField } = Fluent
+const { useCallback, useMemo, useRef } = React
 
 const _sanitizeDentalWeight = (value) => {
   const text = String(value ?? "")
@@ -8626,7 +8650,13 @@ const FindCodeSelectBase = ({
 }
 
 const FindCodeSelectWithCodeList = (props) => {
-  const codeListFromContext = useCodeList(props.codeSystem || '')
+  // useCodeList takes (codeSystem, sourceData) in the real engine, and
+  // dereferences the second argument on its first statement
+  // (\`t.useAppSettings().memoryCodeLists\`). Calling it with one argument
+  // throws on first render in production; our preview shim tolerates it,
+  // so this only ever surfaced on a live instance.
+  const sd = useSourceData()
+  const codeListFromContext = useCodeList(props.codeSystem || '', sd)
   return <FindCodeSelectBase {...props} fallbackItems={codeListFromContext} />
 }
 
@@ -9490,7 +9520,11 @@ const GoalsFields = "goalId startDate endDate goal expectedOutcome detail"
   return <RuntimeSubformScoring {...props} />
 }
 `,
-  './HFC_PT_ASMT_PatientAssessment/index.jsx': `
+  './HFC_PT_ASMT_PatientAssessment/index.jsx': `// Fluent is a NAMESPACE in the real engine's form scope — bare Fluent
+// identifiers are a ReferenceError in production even though preview
+// injects them. Destructure everything this component renders.
+const { DefaultButton, Link } = Fluent
+
 
 const HFC_PT_ASMT_PatientAssessment = () => {
 
@@ -12141,7 +12175,7 @@ const getListSelectionColumns = (
     
 
 `,
-  './HFC_PT_ASMT_SnapShot/index.jsx': `const {Checkbox, ChoiceGroup, PrimaryButton} = Fluent
+  './HFC_PT_ASMT_SnapShot/index.jsx': `const { Checkbox, ChoiceGroup, DefaultButton, PrimaryButton } = Fluent
 const {useEffect} = React
 
 const defaultFollowUpAppts = () => ({
@@ -17511,7 +17545,12 @@ const InvestigationTabs = ({
   )
 }
 `,
-  './LayoutTable/index.jsx': `const normalizeLayoutTableOptionList = (optionList) => {
+  './LayoutTable/index.jsx': `// Fluent is a NAMESPACE in the real engine's form scope — bare Fluent
+// identifiers are a ReferenceError in production even though preview
+// injects them. Destructure everything this component renders.
+const { Checkbox } = Fluent
+
+const normalizeLayoutTableOptionList = (optionList) => {
   if (!Array.isArray(optionList)) return []
   return optionList
     .map((option) => {
@@ -22894,7 +22933,7 @@ const PastMeasurementField = ({
 }
 `,
   './PatientFileSections/index.jsx': `const { useCallback, useMemo } = React
-const { Dropdown, IconButton } = Fluent
+const { Dropdown, IconButton, TextField } = Fluent
 
 const textValue = (value, fallback = "") => {
   if (value == null) return fallback
@@ -27710,6 +27749,22 @@ const MOIS_WRITE_MUTATIONS = {
     idVariable: "patientId",
     buildVariables: (patientId, payload) => ({ patientId, prescriptionLog: payload }),
   },
+  // addObservation declares only $observation — the patient rides inside
+  // ObservationInput rather than arriving as a variable, so buildVariables
+  // folds the resolved id into the payload. Key set mirrors the engine's own
+  // observation-history editor (MOIS Form Tester 2.30.31).
+  "observation.addObservationHistory": {
+    document: \`mutation addObservationHistory($observation: ObservationInput!) {
+      addObservation(observation: $observation) {
+        observationId
+      }
+    }\`,
+    idVariable: "patientId",
+    injectContextIdInto: "patientId",
+    buildVariables: (patientId, payload) => ({
+      observation: { observationId: 0, status: "F", ...payload, patientId },
+    }),
+  },
 }
 
 const MOIS_WRITE_MUTATION_KEYS = Object.keys(MOIS_WRITE_MUTATIONS)
@@ -28906,8 +28961,16 @@ const SubformScoringInner = ({
   // (rules-of-hooks safe); the executor picks the runner by action key.
   const writeMutationRunners = {}
   for (const writeKey of MOIS_WRITE_MUTATION_KEYS) {
+    // The engine's useMutation destructures its options argument unguarded
+    // (\`l = c.options; b = l.auth\`) and then reads b.jwToken / b.apiServer, so
+    // omitting it throws the moment a write action fires. operationName is what
+    // MOIS logs the call as; without it the engine records "See event name".
     // eslint-disable-next-line react-hooks/rules-of-hooks
-    writeMutationRunners[writeKey] = useMutation(MOIS_WRITE_MUTATIONS[writeKey].document)[0]
+    writeMutationRunners[writeKey] = useMutation(
+      MOIS_WRITE_MUTATIONS[writeKey].document,
+      { auth: sd?.auth, operationName: writeKey },
+      sd?.errorDispatch
+    )[0]
   }
   const theme = useTheme()
   const isDarkMode = theme?.isInverted || false
@@ -30515,9 +30578,13 @@ const SubformScoringInner = ({
                     mutation: dataEntryAction.mutation,
                     ...variables,
                   }
+                  // When the id is folded into the payload there is no id
+                  // variable to inspect, so check the resolved id instead.
                   const hasRequiredId =
                     writeDefinition.requiresId === false ||
-                    Boolean(variables[writeDefinition.idVariable])
+                    (writeDefinition.injectContextIdInto
+                      ? Boolean(resolvedId)
+                      : Boolean(variables[writeDefinition.idVariable]))
                   if (runMutation && hasRequiredId && Object.keys(payload).length > 0) {
                     try {
                       await runMutation(variables)

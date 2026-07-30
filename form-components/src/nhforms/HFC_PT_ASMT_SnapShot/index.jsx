@@ -1,4 +1,4 @@
-const {Checkbox, ChoiceGroup, PrimaryButton} = Fluent
+const { Checkbox, ChoiceGroup, DefaultButton, PrimaryButton } = Fluent
 const {useEffect} = React
 
 const defaultFollowUpAppts = () => ({

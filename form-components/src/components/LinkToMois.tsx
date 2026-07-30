@@ -22,36 +22,80 @@ export interface LinkToMoisProps {
   title?: string;
 }
 
-// Module name to object type mapping
-const MODULE_TO_OBJECT_TYPE: Record<string, string> = {
-  'ADVERSE_EVENTS': 'AdverseEvent',
-  'CHARTACTION': 'ChartAction',
-  'CHARTBARRIER': 'ChartBarrier',
-  'CHARTMAR': 'ChartMar',
-  'CHARTNEED': 'ChartNeed',
-  'CHARTPREFERENCE': 'ChartPreference',
-  'CHARTRESOURCE': 'ChartResource',
+/**
+ * Module name to the MOIS record table the engine navigates to, mirroring the
+ * engine's own LinkToMois map (MOIS Form Tester 2.30.31, verified against
+ * data/mois-engine-manifest.json).
+ *
+ * The key set is the contract: the engine looks the uppercased module name up
+ * in this exact map and warns "Missing or unexpected module name in
+ * LinkToMois" for anything else, leaving the link inert. Do not add
+ * speculative modules — SERVICE_EPISODES and SERVICE_REQUESTS were previously
+ * listed here by symmetry with the fullChart query collections of the same
+ * name, but MOIS has no such modules and both rendered dead links.
+ *
+ * A null value means the module supports navigation but has no per-record
+ * target, so no objectType/objectId pair is built.
+ */
+const MODULE_TO_OBJECT_TYPE: Record<string, string | null> = {
+  'ADVERSE_EVENTS': 'tdt_adverse_event',
+  'CHARTACTION': 'tdt_action',
+  'CHARTBARRIER': 'tdt_chart_barrier',
+  'CHARTMAR': 'tdt_mar',
+  'CHARTNEED': 'tdt_need',
+  'CHARTPREFERENCE': 'tdt_chart_preference',
+  'CHARTRESOURCE': 'tdt_chart_resource',
+  'CHARTRISK': 'tdt_risk',
+  'CONSULTS': 'tdt_consult',
+  'DEMOGRAPHICS': null,
+  'DETERHEALTH': null,
+  'DOCUMENT': 'tdt_document',
+  'ENCOUNTERS': 'tdt_encounter',
+  'FACILITY ADMISSIONS': 'tdt_admission',
+  'FAMILY HISTORY': 'tdt_family_hx',
+  'GOALS': 'tdt_goal',
+  'HEALTH ISSUE': 'tdt_health_issue',
+  'IMAGING': 'tdt_image',
+  'INTERVENTIONS': 'tdt_intervention',
+  'LONG TERM MEDS': 'tdt_medication_lt',
+  'MEASUREMENTS': 'tdt_measure',
+  'MESSAGE': 'tdt_message',
+  'ORDERS': 'tdt_order',
+  'PRESCRIPTION': 'tdt_prescription',
+  'PROCEDURES': 'tdt_procedure',
+  'REACTION_RISKS': 'tdt_reaction_risk',
+  'SOCIAL HISTORY': 'tdt_social_hx',
+};
+
+/** Author-facing labels; the engine's map carries table names, not display text. */
+const MODULE_LABELS: Record<string, string> = {
+  'ADVERSE_EVENTS': 'Adverse Event',
+  'CHARTACTION': 'Chart Action',
+  'CHARTBARRIER': 'Chart Barrier',
+  'CHARTMAR': 'Chart MAR',
+  'CHARTNEED': 'Chart Need',
+  'CHARTPREFERENCE': 'Chart Preference',
+  'CHARTRESOURCE': 'Chart Resource',
+  'CHARTRISK': 'Chart Risk',
   'CONSULTS': 'Consult',
   'DEMOGRAPHICS': 'Demographics',
-  'DETERHEALTH': 'DeterHealth',
+  'DETERHEALTH': 'Determinants of Health',
   'DOCUMENT': 'Document',
   'ENCOUNTERS': 'Encounter',
-  'FACILITY ADMISSIONS': 'FacilityAdmission',
-  'FAMILY HISTORY': 'FamilyHistory',
+  'FACILITY ADMISSIONS': 'Facility Admission',
+  'FAMILY HISTORY': 'Family History',
   'GOALS': 'Goal',
-  'HEALTH ISSUE': 'HealthIssue',
+  'HEALTH ISSUE': 'Health Issue',
   'IMAGING': 'Imaging',
   'INTERVENTIONS': 'Intervention',
-  'LONG TERM MEDS': 'LongTermMed',
+  'LONG TERM MEDS': 'Long Term Med',
   'MEASUREMENTS': 'Measurement',
   'MESSAGE': 'Message',
   'ORDERS': 'Order',
   'PRESCRIPTION': 'Prescription',
   'PROCEDURES': 'Procedure',
-  'REACTION_RISKS': 'ReactionRisk',
-  'SERVICE_EPISODES': 'ServiceEpisode',
-  'SERVICE_REQUESTS': 'ServiceRequest',
-  'SOCIAL HISTORY': 'SocialHistory',
+  'REACTION_RISKS': 'Reaction Risk',
+  'SOCIAL HISTORY': 'Social History',
 };
 
 const PREVIEW_ONLY_MODULES = new Set([
@@ -59,15 +103,9 @@ const PREVIEW_ONLY_MODULES = new Set([
   'WEBFORM_TEST',
 ]);
 
-function objectTypeToLabel(value: string): string {
-  return value.replace(/([a-z0-9])([A-Z])/g, '$1 $2');
-}
-
 // Available chart link modules
 export const MOIS_MODULES = Object.keys(MODULE_TO_OBJECT_TYPE) as readonly string[];
-export const MOIS_MODULE_LABELS = Object.fromEntries(
-  Object.entries(MODULE_TO_OBJECT_TYPE).map(([moduleName, objectType]) => [moduleName, objectTypeToLabel(objectType)])
-) as Record<string, string>;
+export const MOIS_MODULE_LABELS: Record<string, string> = MODULE_LABELS;
 
 export type MoisModule = keyof typeof MODULE_TO_OBJECT_TYPE;
 

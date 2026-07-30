@@ -153,15 +153,18 @@ const _chartRecordTablePresets = {
   },
   longTermMedications: {
     label: "Long-term medications",
+    // fieldId is the saved form-data key and stays on the legacy name so old
+    // forms keep their data; sourceId is the chart collection to READ and has
+    // to be the engine's own name (fullChart returns longTermMedications).
     fieldId: "longTermMedicationOrders",
-    sourceId: "longTermMedicationOrders",
+    sourceId: "longTermMedications",
     selectText: "Select relevant medications",
     reportedLabel: "Medication changes reported on this form",
     addButtonText: "+ Add medication",
     emptyStateText: "No medication changes reported",
     uniqueBy: ["medication"],
     columns: [
-      { id: "longTermMedicationOrderId", type: "key" },
+      { id: "longTermMedicationId", type: "key" },
       { title: "Start", id: "startDate", type: "date" },
       { title: "End", id: "endDate", type: "date" },
       { title: "Medication", id: "medication", type: "string" },
@@ -198,8 +201,9 @@ const _chartRecordTablePresets = {
   },
   connections: {
     label: "Patient Connections",
+    // Saved-data key stays legacy; the chart read uses the engine's collection.
     fieldId: "connectedResources",
-    sourceId: "connectedResources",
+    sourceId: "connections",
     selectText: "Select connections",
     filterPred: _chartRecordTableActiveConnections,
     columns: [
@@ -224,15 +228,19 @@ const _chartRecordTablePresets = {
   },
   plannedActions: {
     label: "Planned actions",
+    // The engine's collection is `actions`; there is no `plannedActions` key on
+    // the chart. Columns follow what fullChart actually selects for it, which
+    // is notably sparser than the sibling collections: no record id, no
+    // startDate, and no responsibility/participant field.
+    fieldId: "plannedActions",
+    sourceId: "actions",
     selectText: "Select actions",
     selectionType: "multiple",
     filterPred: _chartRecordTableActivePlannedActions,
     columns: [
-      { id: "plannedActionId", type: "key" },
-      { title: "Start", id: "startDate", type: "date" },
-      { title: "End", id: "endDate", type: "date" },
       { title: "Action", id: "action", type: "string" },
-      { title: "Participant(s)", id: "responsibility", type: "string", size: "small" },
+      { title: "Detail", id: "detail", type: "string", size: "large" },
+      { title: "End", id: "endDate", type: "date" },
       { title: "Completed", id: "completedDate", type: "date" },
       { id: "isCompleted", type: "hidden" },
     ],

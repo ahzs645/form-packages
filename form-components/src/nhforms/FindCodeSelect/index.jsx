@@ -542,7 +542,13 @@ const FindCodeSelectBase = ({
 }
 
 const FindCodeSelectWithCodeList = (props) => {
-  const codeListFromContext = useCodeList(props.codeSystem || '')
+  // useCodeList takes (codeSystem, sourceData) in the real engine, and
+  // dereferences the second argument on its first statement
+  // (`t.useAppSettings().memoryCodeLists`). Calling it with one argument
+  // throws on first render in production; our preview shim tolerates it,
+  // so this only ever surfaced on a live instance.
+  const sd = useSourceData()
+  const codeListFromContext = useCodeList(props.codeSystem || '', sd)
   return <FindCodeSelectBase {...props} fallbackItems={codeListFromContext} />
 }
 

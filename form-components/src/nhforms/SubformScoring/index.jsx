@@ -465,6 +465,22 @@ const MOIS_WRITE_MUTATIONS = {
     idVariable: "patientId",
     buildVariables: (patientId, payload) => ({ patientId, prescriptionLog: payload }),
   },
+  // addObservation declares only $observation — the patient rides inside
+  // ObservationInput rather than arriving as a variable, so buildVariables
+  // folds the resolved id into the payload. Key set mirrors the engine's own
+  // observation-history editor (MOIS Form Tester 2.30.31).
+  "observation.addObservationHistory": {
+    document: `mutation addObservationHistory($observation: ObservationInput!) {
+      addObservation(observation: $observation) {
+        observationId
+      }
+    }`,
+    idVariable: "patientId",
+    injectContextIdInto: "patientId",
+    buildVariables: (patientId, payload) => ({
+      observation: { observationId: 0, status: "F", ...payload, patientId },
+    }),
+  },
 }
 
 const MOIS_WRITE_MUTATION_KEYS = Object.keys(MOIS_WRITE_MUTATIONS)
@@ -1661,8 +1677,16 @@ const SubformScoringInner = ({
   // (rules-of-hooks safe); the executor picks the runner by action key.
   const writeMutationRunners = {}
   for (const writeKey of MOIS_WRITE_MUTATION_KEYS) {
+    // The engine's useMutation destructures its options argument unguarded
+    // (`l = c.options; b = l.auth`) and then reads b.jwToken / b.apiServer, so
+    // omitting it throws the moment a write action fires. operationName is what
+    // MOIS logs the call as; without it the engine records "See event name".
     // eslint-disable-next-line react-hooks/rules-of-hooks
-    writeMutationRunners[writeKey] = useMutation(MOIS_WRITE_MUTATIONS[writeKey].document)[0]
+    writeMutationRunners[writeKey] = useMutation(
+      MOIS_WRITE_MUTATIONS[writeKey].document,
+      { auth: sd?.auth, operationName: writeKey },
+      sd?.errorDispatch
+    )[0]
   }
   const theme = useTheme()
   const isDarkMode = theme?.isInverted || false
@@ -3270,9 +3294,13 @@ const SubformScoringInner = ({
                     mutation: dataEntryAction.mutation,
                     ...variables,
                   }
+                  // When the id is folded into the payload there is no id
+                  // variable to inspect, so check the resolved id instead.
                   const hasRequiredId =
                     writeDefinition.requiresId === false ||
-                    Boolean(variables[writeDefinition.idVariable])
+                    (writeDefinition.injectContextIdInto
+                      ? Boolean(resolvedId)
+                      : Boolean(variables[writeDefinition.idVariable]))
                   if (runMutation && hasRequiredId && Object.keys(payload).length > 0) {
                     try {
                       await runMutation(variables)

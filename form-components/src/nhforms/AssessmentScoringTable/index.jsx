@@ -1,3 +1,7 @@
+// Fluent is a NAMESPACE in the real engine's form scope — bare Fluent
+// identifiers are a ReferenceError in production even though preview
+// injects them. Destructure everything this component renders.
+const { Label } = Fluent
 const { useMemo, useCallback, useEffect } = React
 
 const numberOrBlank = (value) => {

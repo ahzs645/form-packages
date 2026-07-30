@@ -9,7 +9,21 @@
  */
 
 export const compiledComponentModules: Record<string, string> = {
-  './ActionButtonGroup/index.jsx': `const {
+  './ActionButtonGroup/index.jsx': `// Fluent is a NAMESPACE in the real engine's form scope — bare Fluent
+// identifiers are a ReferenceError in production even though preview
+// injects them. Destructure everything this component renders.
+const {
+  ComboBox,
+  DefaultButton,
+  Dialog,
+  DialogFooter,
+  DialogType,
+  Dropdown,
+  Label,
+  PrimaryButton,
+  TextField
+} = Fluent;
+const {
   useMemo,
   useState
 } = React;
@@ -371,7 +385,13 @@ AllergyTable = ({
     chartPlaceholder: chartPlaceholder
   }, props));
 };`,
-  './AssessmentScoringTable/index.jsx': `const {
+  './AssessmentScoringTable/index.jsx': `// Fluent is a NAMESPACE in the real engine's form scope — bare Fluent
+// identifiers are a ReferenceError in production even though preview
+// injects them. Destructure everything this component renders.
+const {
+  Label
+} = Fluent;
+const {
   useMemo,
   useCallback,
   useEffect
@@ -1608,15 +1628,18 @@ const _chartRecordTablePresets = {
   },
   longTermMedications: {
     label: "Long-term medications",
+    // fieldId is the saved form-data key and stays on the legacy name so old
+    // forms keep their data; sourceId is the chart collection to READ and has
+    // to be the engine's own name (fullChart returns longTermMedications).
     fieldId: "longTermMedicationOrders",
-    sourceId: "longTermMedicationOrders",
+    sourceId: "longTermMedications",
     selectText: "Select relevant medications",
     reportedLabel: "Medication changes reported on this form",
     addButtonText: "+ Add medication",
     emptyStateText: "No medication changes reported",
     uniqueBy: ["medication"],
     columns: [{
-      id: "longTermMedicationOrderId",
+      id: "longTermMedicationId",
       type: "key"
     }, {
       title: "Start",
@@ -1710,8 +1733,9 @@ const _chartRecordTablePresets = {
   },
   connections: {
     label: "Patient Connections",
+    // Saved-data key stays legacy; the chart read uses the engine's collection.
     fieldId: "connectedResources",
-    sourceId: "connectedResources",
+    sourceId: "connections",
     selectText: "Select connections",
     filterPred: _chartRecordTableActiveConnections,
     columns: [{
@@ -1763,29 +1787,28 @@ const _chartRecordTablePresets = {
   },
   plannedActions: {
     label: "Planned actions",
+    // The engine's collection is \`actions\`; there is no \`plannedActions\` key on
+    // the chart. Columns follow what fullChart actually selects for it, which
+    // is notably sparser than the sibling collections: no record id, no
+    // startDate, and no responsibility/participant field.
+    fieldId: "plannedActions",
+    sourceId: "actions",
     selectText: "Select actions",
     selectionType: "multiple",
     filterPred: _chartRecordTableActivePlannedActions,
     columns: [{
-      id: "plannedActionId",
-      type: "key"
-    }, {
-      title: "Start",
-      id: "startDate",
-      type: "date"
-    }, {
-      title: "End",
-      id: "endDate",
-      type: "date"
-    }, {
       title: "Action",
       id: "action",
       type: "string"
     }, {
-      title: "Participant(s)",
-      id: "responsibility",
+      title: "Detail",
+      id: "detail",
       type: "string",
-      size: "small"
+      size: "large"
+    }, {
+      title: "End",
+      id: "endDate",
+      type: "date"
     }, {
       title: "Completed",
       id: "completedDate",
@@ -5126,7 +5149,14 @@ const connectionsColumns = [{
 }];
 const SelectActiveConnections = cr => !cr.stopDate;
 const ConnectionsFields = "connectionId startDate stopDate connectionType {code display system} name";`,
-  './ConversionField/index.jsx': `const {
+  './ConversionField/index.jsx': `// Fluent is a NAMESPACE in the real engine's form scope — bare Fluent
+// identifiers are a ReferenceError in production even though preview
+// injects them. Destructure everything this component renders.
+const {
+  DefaultButton,
+  TextField
+} = Fluent;
+const {
   useCallback,
   useMemo,
   useRef
@@ -5439,7 +5469,14 @@ function CustomJsxBlock({
     }
   }, label) : null, displaySource || "Custom JSX source will render in the MOIS export.");
 }`,
-  './DentalWeightConverter/index.jsx': `const {
+  './DentalWeightConverter/index.jsx': `// Fluent is a NAMESPACE in the real engine's form scope — bare Fluent
+// identifiers are a ReferenceError in production even though preview
+// injects them. Destructure everything this component renders.
+const {
+  DefaultButton,
+  TextField
+} = Fluent;
+const {
   useCallback,
   useMemo,
   useRef
@@ -8381,7 +8418,13 @@ const FindCodeSelectBase = ({
   }, searchPrompt)), showChildren && children);
 };
 const FindCodeSelectWithCodeList = props => {
-  const codeListFromContext = useCodeList(props.codeSystem || '');
+  // useCodeList takes (codeSystem, sourceData) in the real engine, and
+  // dereferences the second argument on its first statement
+  // (\`t.useAppSettings().memoryCodeLists\`). Calling it with one argument
+  // throws on first render in production; our preview shim tolerates it,
+  // so this only ever surfaced on a live instance.
+  const sd = useSourceData();
+  const codeListFromContext = useCodeList(props.codeSystem || '', sd);
   return /*#__PURE__*/React.createElement(FindCodeSelectBase, _extends({}, props, {
     fallbackItems: codeListFromContext
   }));
@@ -9231,7 +9274,14 @@ const GoalsFields = "goalId startDate endDate goal expectedOutcome detail";`,
   const RuntimeSubformScoring = typeof window !== "undefined" && window.__nhformsRegistry__?.SubformScoring || SubformScoring;
   return /*#__PURE__*/React.createElement(RuntimeSubformScoring, props);
 };`,
-  './HFC_PT_ASMT_PatientAssessment/index.jsx': `const HFC_PT_ASMT_PatientAssessment = () => {
+  './HFC_PT_ASMT_PatientAssessment/index.jsx': `// Fluent is a NAMESPACE in the real engine's form scope — bare Fluent
+// identifiers are a ReferenceError in production even though preview
+// injects them. Destructure everything this component renders.
+const {
+  DefaultButton,
+  Link
+} = Fluent;
+const HFC_PT_ASMT_PatientAssessment = () => {
   const [phq9vis, setphq9vis] = React.useState(false);
   const [fd, setFd] = useActiveData();
   const sd = useSourceData();
@@ -9288,18 +9338,15 @@ const GoalsFields = "goalId startDate endDate goal expectedOutcome detail";`,
   /*  const _onupdate = (con,field) =>{
        const curvalue = con.target.value
        const newval =con.nativeEvent.data
-  
-       
-  
-       
+         
+         
        if (!isNaN(curvalue) || ((newval ==="." && !field.includes("BP"))&&!curvalue.includes("."))||((field.includes("BP") && newval==="/") &&!curvalue.includes("/"))) {
            
-  
-               const fieldData = {
+                 const fieldData = {
                    ...fd.field.data,
                    [\`\${field}\`]:\`\${curvalue}\`
                }
-                 handleChange(fieldData);
+                handleChange(fieldData);
            
        }
    } */
@@ -9320,7 +9367,7 @@ const GoalsFields = "goalId startDate endDate goal expectedOutcome detail";`,
           ...fd.field.data,
           PHQ9Questionnaire:{...PHQ9Quest}
       }
-        fd.field.data.PHQ9Questionnaire?
+       fd.field.data.PHQ9Questionnaire?
           null
       :
          handleChange(fieldData); 
@@ -12076,6 +12123,7 @@ const asciiCompare = (a, b) => a < b ? +1 : a > b ? -1 : 0;`,
   './HFC_PT_ASMT_SnapShot/index.jsx': `const {
   Checkbox,
   ChoiceGroup,
+  DefaultButton,
   PrimaryButton
 } = Fluent;
 const {
@@ -12305,10 +12353,10 @@ const HFC_PT_ASMT_SnapShot = props => {
     if (a.startDate && !a.endDate){
         return -1;
     }
-      if (b.startDate > a.startDate && !a.endDate) {
+     if (b.startDate > a.startDate && !a.endDate) {
         return +1;
     }
-      if (a.startDate > b.startDate && a.endDate) {
+     if (a.startDate > b.startDate && a.endDate) {
         return -1;
     } */
 
@@ -16796,6 +16844,12 @@ const InvestigationTabs = ({
   }));
 };`,
   './LayoutTable/index.jsx': `function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
+// Fluent is a NAMESPACE in the real engine's form scope — bare Fluent
+// identifiers are a ReferenceError in production even though preview
+// injects them. Destructure everything this component renders.
+const {
+  Checkbox
+} = Fluent;
 const normalizeLayoutTableOptionList = optionList => {
   if (!Array.isArray(optionList)) return [];
   return optionList.map(option => {
@@ -24652,7 +24706,8 @@ const PastMeasurementField = ({
 } = React;
 const {
   Dropdown,
-  IconButton
+  IconButton,
+  TextField
 } = Fluent;
 const textValue = (value, fallback = "") => {
   if (value == null) return fallback;
@@ -29960,6 +30015,27 @@ const MOIS_WRITE_MUTATIONS = {
       patientId,
       prescriptionLog: payload
     })
+  },
+  // addObservation declares only $observation — the patient rides inside
+  // ObservationInput rather than arriving as a variable, so buildVariables
+  // folds the resolved id into the payload. Key set mirrors the engine's own
+  // observation-history editor (MOIS Form Tester 2.30.31).
+  "observation.addObservationHistory": {
+    document: \`mutation addObservationHistory($observation: ObservationInput!) {
+      addObservation(observation: $observation) {
+        observationId
+      }
+    }\`,
+    idVariable: "patientId",
+    injectContextIdInto: "patientId",
+    buildVariables: (patientId, payload) => ({
+      observation: {
+        observationId: 0,
+        status: "F",
+        ...payload,
+        patientId
+      }
+    })
   }
 };
 const MOIS_WRITE_MUTATION_KEYS = Object.keys(MOIS_WRITE_MUTATIONS);
@@ -31106,8 +31182,15 @@ const SubformScoringInner = ({
   // (rules-of-hooks safe); the executor picks the runner by action key.
   const writeMutationRunners = {};
   for (const writeKey of MOIS_WRITE_MUTATION_KEYS) {
+    // The engine's useMutation destructures its options argument unguarded
+    // (\`l = c.options; b = l.auth\`) and then reads b.jwToken / b.apiServer, so
+    // omitting it throws the moment a write action fires. operationName is what
+    // MOIS logs the call as; without it the engine records "See event name".
     // eslint-disable-next-line react-hooks/rules-of-hooks
-    writeMutationRunners[writeKey] = useMutation(MOIS_WRITE_MUTATIONS[writeKey].document)[0];
+    writeMutationRunners[writeKey] = useMutation(MOIS_WRITE_MUTATIONS[writeKey].document, {
+      auth: sd?.auth,
+      operationName: writeKey
+    }, sd?.errorDispatch)[0];
   }
   const theme = useTheme();
   const isDarkMode = theme?.isInverted || false;
@@ -32597,7 +32680,9 @@ const SubformScoringInner = ({
             mutation: dataEntryAction.mutation,
             ...variables
           };
-          const hasRequiredId = writeDefinition.requiresId === false || Boolean(variables[writeDefinition.idVariable]);
+          // When the id is folded into the payload there is no id
+          // variable to inspect, so check the resolved id instead.
+          const hasRequiredId = writeDefinition.requiresId === false || (writeDefinition.injectContextIdInto ? Boolean(resolvedId) : Boolean(variables[writeDefinition.idVariable]));
           if (runMutation && hasRequiredId && Object.keys(payload).length > 0) {
             try {
               await runMutation(variables);

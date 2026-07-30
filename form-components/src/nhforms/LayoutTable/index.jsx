@@ -1,3 +1,8 @@
+// Fluent is a NAMESPACE in the real engine's form scope — bare Fluent
+// identifiers are a ReferenceError in production even though preview
+// injects them. Destructure everything this component renders.
+const { Checkbox } = Fluent
+
 const normalizeLayoutTableOptionList = (optionList) => {
   if (!Array.isArray(optionList)) return []
   return optionList
