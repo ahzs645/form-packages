@@ -1,3 +1,5 @@
+import type { HiddenAnswerPolicy } from "./index";
+
 export type ComponentKind =
   | "text"
   | "number"
@@ -98,11 +100,7 @@ export interface TableColumn {
       | { id?: string; kind: "answer"; path: string }
     >;
   } | null;
-  visibility?: {
-    type: "always" | "filled" | "equals" | "gt" | "lt";
-    controllerId?: string;
-    value?: string;
-  } | null;
+  visibility?: ParsedFieldVisibility | null;
   moisTargetId?: string | null;
   stampConfig?: {
     sourcePath?: string;
@@ -207,6 +205,21 @@ export type FieldPrefillValue =
   | null
   | FieldPrefillValue[]
   | { [key: string]: FieldPrefillValue };
+
+export interface ParsedFieldVisibilityCondition {
+  type: "filled" | "not-filled" | "equals" | "not-equals" | "gt" | "gte" | "lt" | "lte";
+  controllerId: string;
+  value?: string;
+}
+
+export interface ParsedFieldVisibility {
+  type: "always" | ParsedFieldVisibilityCondition["type"];
+  controllerId?: string;
+  value?: string;
+  match?: "all" | "any";
+  additionalConditions?: ParsedFieldVisibilityCondition[];
+  hiddenAnswerPolicy?: HiddenAnswerPolicy;
+}
 
 export interface ParsedField {
   id: string;
@@ -455,11 +468,7 @@ export interface ParsedField {
   // Inline show-when rule (builder field visibility editor). The exporter
   // synthesizes a fieldLinkRule from it (renderJsx) — without this the rule
   // was preview-only.
-  visibility?: {
-    type: "always" | "filled" | "equals" | "gt" | "lt";
-    controllerId?: string;
-    value?: string;
-  } | null;
+  visibility?: ParsedFieldVisibility | null;
 
   // Direct MOIS output mapping authored in the builder.
   moisOutput?: {

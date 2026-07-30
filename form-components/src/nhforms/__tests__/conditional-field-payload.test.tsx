@@ -19,7 +19,9 @@ import { fileURLToPath } from "node:url";
 import * as Babel from "@babel/standalone";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { produce } from "immer";
+import { produce, type Draft } from "immer";
+
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const NH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const source = fs.readFileSync(path.join(NH, "ConditionalGroup", "index.jsx"), "utf8");
@@ -31,10 +33,52 @@ const FluentStub = new Proxy(
   }
 );
 
-type ActiveTuple = [any, (updater: any) => void];
-const ActiveDataContext = React.createContext<ActiveTuple>([{}, () => {}]);
+interface CodeAnswer {
+  code: string;
+  display?: string;
+  system?: string;
+}
 
-function loadConditionalField(): React.ComponentType<any> {
+interface ChartPayload {
+  observationCode: string;
+  value: string;
+  description?: string;
+}
+
+interface ComponentPayloads {
+  dcoUpdatesByComponent: Record<string, ChartPayload[]>;
+  webformUpdatesByComponent?: Record<string, unknown>;
+}
+
+interface FieldData extends Record<string, unknown> {
+  veteranStatus?: CodeAnswer;
+  veteranServiceCategory?: CodeAnswer;
+  somethingElse?: string;
+  __componentPayloads: ComponentPayloads;
+}
+
+interface ActiveData {
+  field: {
+    data: FieldData;
+    status: Record<string, unknown>;
+    history: unknown[];
+  };
+}
+
+type ActiveTuple = [ActiveData, React.Dispatch<React.SetStateAction<ActiveData>>];
+
+interface ConditionalFieldProps {
+  fieldId?: string;
+  mode?: string;
+  controllerFieldId?: string;
+  optionValues?: string[];
+  hiddenAnswerPolicy?: "preserve" | "clear";
+  children?: React.ReactNode;
+}
+
+const ActiveDataContext = React.createContext<ActiveTuple>([makeInitialState(), () => undefined]);
+
+function loadConditionalField(): React.ComponentType<ConditionalFieldProps> {
   const compiled = Babel.transform(source, { presets: ["react"], filename: "index.jsx" }).code ?? "";
   // Same bare-global contract as the MOIS runtime: React/Fluent/useActiveData/produce.
   // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func
@@ -47,10 +91,13 @@ function loadConditionalField(): React.ComponentType<any> {
     `${compiled};\nreturn { ConditionalField };`
   );
   const useActiveData = () => React.useContext(ActiveDataContext);
-  return factory(React, FluentStub, useActiveData, () => ({}), produce).ConditionalField;
+  const loaded = factory(React, FluentStub, useActiveData, () => ({}), produce) as {
+    ConditionalField: React.ComponentType<ConditionalFieldProps>;
+  };
+  return loaded.ConditionalField;
 }
 
-function makeInitialState() {
+function makeInitialState(): ActiveData {
   return {
     field: {
       data: {
@@ -71,15 +118,18 @@ function makeInitialState() {
   };
 }
 
-function renderHarness(ConditionalField: React.ComponentType<any>) {
-  let currentState: any = null;
-  let setter: ((updater: any) => void) | null = null;
+function renderHarness(
+  ConditionalField: React.ComponentType<ConditionalFieldProps>,
+  hiddenAnswerPolicy: ConditionalFieldProps["hiddenAnswerPolicy"] = "preserve"
+) {
+  let currentState: ActiveData | null = null;
+  let setter: React.Dispatch<React.SetStateAction<ActiveData>> | null = null;
 
   const Harness: React.FC = () => {
     const [state, setState] = React.useState(makeInitialState);
     currentState = state;
     // Real MOIS hands back the RAW React setter; components produce()-wrap recipes.
-    setter = (updater: any) => setState((prev: any) => (typeof updater === "function" ? updater(prev) : updater));
+    setter = setState;
     return React.createElement(
       ActiveDataContext.Provider,
       { value: [state, setter] },
@@ -90,6 +140,7 @@ function renderHarness(ConditionalField: React.ComponentType<any>) {
           mode: "controller",
           controllerFieldId: "veteranStatus",
           optionValues: ["Y"],
+          hiddenAnswerPolicy,
         },
         React.createElement("span", { "data-testid": "gated-child" }, "Category picker")
       )
@@ -104,20 +155,23 @@ function renderHarness(ConditionalField: React.ComponentType<any>) {
   });
   return {
     container,
-    root,
-    getState: () => currentState,
-    setActiveData: (updater: any) => act(() => setter!(updater)),
+    unmount: () => act(() => root.unmount()),
+    getState: () => {
+      if (!currentState) throw new Error("Harness did not render");
+      return currentState;
+    },
+    setActiveData: (updater: React.SetStateAction<ActiveData>) => act(() => setter!(updater)),
   };
 }
 
-describe("ConditionalField staged-payload withdrawal", () => {
+describe("ConditionalField hidden-field handling", () => {
   it("keeps the child and payload while the controller matches", () => {
     const ConditionalField = loadConditionalField();
     const harness = renderHarness(ConditionalField);
 
     expect(harness.container.querySelector("[data-testid='gated-child']")).not.toBeNull();
     expect(harness.getState().field.data.__componentPayloads.dcoUpdatesByComponent.veteranServiceCategory).toBeTruthy();
-    harness.root.unmount();
+    harness.unmount();
   });
 
   it("clears ONLY the hidden field's staged payload when the controller flips", () => {
@@ -125,7 +179,7 @@ describe("ConditionalField staged-payload withdrawal", () => {
     const harness = renderHarness(ConditionalField);
 
     harness.setActiveData(
-      produce((draft: any) => {
+      produce((draft: Draft<ActiveData>) => {
         draft.field.data.veteranStatus = { code: "N", display: "No", system: "VALUESET:YES.NO.NOTASKED" };
       })
     );
@@ -139,7 +193,24 @@ describe("ConditionalField staged-payload withdrawal", () => {
     expect(payloads.unrelatedField).toEqual([{ observationCode: "99999", value: "X" }]);
     // The field VALUE survives (legacy kept formdata too; only the write is withdrawn).
     expect(harness.getState().field.data.veteranServiceCategory).toEqual({ code: "B", display: "Category B" });
-    harness.root.unmount();
+    harness.unmount();
+  });
+
+  it("clears the hidden field value when the clear policy is selected", () => {
+    const ConditionalField = loadConditionalField();
+    const harness = renderHarness(ConditionalField, "clear");
+
+    harness.setActiveData(
+      produce((draft: Draft<ActiveData>) => {
+        draft.field.data.veteranStatus = { code: "N", display: "No", system: "VALUESET:YES.NO.NOTASKED" };
+      })
+    );
+
+    expect(harness.getState().field.data.veteranServiceCategory).toBeUndefined();
+    expect(harness.getState().field.data.__componentPayloads.dcoUpdatesByComponent.unrelatedField).toEqual([
+      { observationCode: "99999", value: "X" },
+    ]);
+    harness.unmount();
   });
 
   it("does not loop or crash when hidden with nothing staged", () => {
@@ -147,19 +218,19 @@ describe("ConditionalField staged-payload withdrawal", () => {
     const harness = renderHarness(ConditionalField);
 
     harness.setActiveData(
-      produce((draft: any) => {
+      produce((draft: Draft<ActiveData>) => {
         draft.field.data.veteranStatus = { code: "N" };
       })
     );
     // Second unrelated update while still hidden — effect must stay a no-op.
     harness.setActiveData(
-      produce((draft: any) => {
+      produce((draft: Draft<ActiveData>) => {
         draft.field.data.somethingElse = "x";
       })
     );
     const payloads = harness.getState().field.data.__componentPayloads.dcoUpdatesByComponent;
     expect(payloads.veteranServiceCategory).toBeUndefined();
     expect(harness.getState().field.data.somethingElse).toBe("x");
-    harness.root.unmount();
+    harness.unmount();
   });
 });

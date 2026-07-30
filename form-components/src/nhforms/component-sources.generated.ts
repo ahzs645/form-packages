@@ -4626,6 +4626,7 @@ const ConditionalReadOnly = ({
  * @param {string[]} [props.optionValues] - Option values to match (for choice fields)
  * @param {boolean} [props.invertMatch=false] - Invert the match (show when NOT matching)
  * @param {boolean} [props.showWhenNull=false] - Show content when controller value is null/undefined (for hide rules)
+ * @param {'preserve' | 'clear'} [props.hiddenAnswerPolicy='preserve'] - Whether a hidden field's answer is retained
  * @param {Object} [props.containerStyle] - Style overrides for wrapper
  * @param {Object} [props.containerProps] - Props to pass to wrapper
  * @param {React.ReactNode} props.children - Field content
@@ -4642,6 +4643,7 @@ const ConditionalField = ({
   match = 'all',
   invertMatch = false,
   showWhenNull = false,
+  hiddenAnswerPolicy = 'preserve',
   containerStyle,
   containerProps = {},
   children,
@@ -4682,6 +4684,7 @@ const ConditionalField = ({
       return parentContext.isGroupVisible(parentId)
     })
   }
+  const wasVisibleRef = useRef(isVisible)
 
   // Hiding a field must also withdraw its STAGED chart writes. Observation /
   // narrative components stage payloads in __componentPayloads keyed by field
@@ -4694,8 +4697,13 @@ const ConditionalField = ({
   // Previously-SAVED chart observations stay untouched — hiding withdraws the
   // pending write, it does not delete history (legacy parity).
   useEffect(() => {
+    const becameHidden = wasVisibleRef.current && !isVisible
+    wasVisibleRef.current = isVisible
     if (isVisible || !fieldId) return
     setFormData(produce((draft) => {
+      if (becameHidden && hiddenAnswerPolicy === 'clear' && draft?.field?.data) {
+        delete draft.field.data[fieldId]
+      }
       const payloads = draft?.field?.data?.__componentPayloads
       if (!payloads) return
       if (payloads.dcoUpdatesByComponent && payloads.dcoUpdatesByComponent[fieldId] !== undefined) {
@@ -4705,7 +4713,7 @@ const ConditionalField = ({
         delete payloads.webformUpdatesByComponent[fieldId]
       }
     }))
-  }, [isVisible, fieldId, setFormData])
+  }, [isVisible, fieldId, hiddenAnswerPolicy, setFormData])
 
   if (!isVisible) {
     return null

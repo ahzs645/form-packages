@@ -4731,6 +4731,7 @@ const ConditionalReadOnly = ({
  * @param {string[]} [props.optionValues] - Option values to match (for choice fields)
  * @param {boolean} [props.invertMatch=false] - Invert the match (show when NOT matching)
  * @param {boolean} [props.showWhenNull=false] - Show content when controller value is null/undefined (for hide rules)
+ * @param {'preserve' | 'clear'} [props.hiddenAnswerPolicy='preserve'] - Whether a hidden field's answer is retained
  * @param {Object} [props.containerStyle] - Style overrides for wrapper
  * @param {Object} [props.containerProps] - Props to pass to wrapper
  * @param {React.ReactNode} props.children - Field content
@@ -4747,6 +4748,7 @@ const ConditionalField = ({
   match = 'all',
   invertMatch = false,
   showWhenNull = false,
+  hiddenAnswerPolicy = 'preserve',
   containerStyle,
   containerProps = {},
   children,
@@ -4784,6 +4786,7 @@ const ConditionalField = ({
       return parentContext.isGroupVisible(parentId);
     });
   }
+  const wasVisibleRef = useRef(isVisible);
 
   // Hiding a field must also withdraw its STAGED chart writes. Observation /
   // narrative components stage payloads in __componentPayloads keyed by field
@@ -4796,8 +4799,13 @@ const ConditionalField = ({
   // Previously-SAVED chart observations stay untouched — hiding withdraws the
   // pending write, it does not delete history (legacy parity).
   useEffect(() => {
+    const becameHidden = wasVisibleRef.current && !isVisible;
+    wasVisibleRef.current = isVisible;
     if (isVisible || !fieldId) return;
     setFormData(produce(draft => {
+      if (becameHidden && hiddenAnswerPolicy === 'clear' && draft?.field?.data) {
+        delete draft.field.data[fieldId];
+      }
       const payloads = draft?.field?.data?.__componentPayloads;
       if (!payloads) return;
       if (payloads.dcoUpdatesByComponent && payloads.dcoUpdatesByComponent[fieldId] !== undefined) {
@@ -4807,7 +4815,7 @@ const ConditionalField = ({
         delete payloads.webformUpdatesByComponent[fieldId];
       }
     }));
-  }, [isVisible, fieldId, setFormData]);
+  }, [isVisible, fieldId, hiddenAnswerPolicy, setFormData]);
   if (!isVisible) {
     return null;
   }
@@ -33805,7 +33813,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './CommonSchemaDefn/index.jsx': ["NameBlockFields","active","commonSchemaDefn","formHistorySchema","makeCodedObsUpdates","makeObsUpdatesFromVs","makeTextObsUpdates","makeValueSetOptions","nameBlockSchema","newDco","oldObs","oldObsId","options","selectAll","startDateDesc","valueSet","vso","ynuaOptions"],
   './CompactBooleanField/index.jsx': ["BooleanLabelPresets","CompactBooleanChecklist","CompactBooleanChecklistSchema","CompactBooleanField","CompactBooleanFieldSchema","CompactBooleanGroup","CompactChoiceField","CompactChoiceFieldMultiSchema","CompactChoiceFieldSchema","OptionButtons","YesNoButtons","baseContainerStyle","buttonStyle","checkboxWrapperRef","choiceContent","commitValue","containerStyle","currentData","currentValue","data","decodePDFHex","decoded","fieldContent","getBooleanLabels","getButtonStyles","getCardContainerStyles","getFieldContainerStyles","getWidthStyle","handleChange","handleCheckboxChange","handleClick","handleNoClick","handleYesClick","input","isDarkMode","isDisabled","isHorizontal","isLast","isLeftLabel","isMultiple","isSelected","labelStyle","lastRowStyle","newValues","noButtonStyle","normalizeValue","normalized","normalizedValue","noteStyle","prevDecoded","rowStyle","selected","selectedValues","setFormData","sizeStyles","theme","themeLabelMaxWidth","themeLabelMinWidth","titleStyle","values","widthMap","yesButtonStyle"],
   './ComputedField/index.jsx': ["ComputedField","_COMPUTED_REF_PATTERN","_MS_PER_DAY","_calendarDayNumber","_computedFieldIsOverridden","_computedFieldState","_contains","_countTrue","_daysSince","_escapeRegExp","_evaluateComputedExpression","_extractComputedReferences","_floor","_getInterpretationRange","_hasAllReferencedValues","_hasValue","_iif","_isDateOnlyValue","_isSafeComputedExpression","_max","_min","_mod","_monthsSince","_normalizeCalculationPolicy","_numericExtrema","_replaceBareReferencesOutsideQuotes","_round","_roundComputedValue","_score","_shouldApplyComputedValue","_stripQuotedStrings","_toComparableValue","_toDateValue","_toDisplayValue","_toEditableComputedValue","_toNumericValue","bareRefs","bracketedRefs","canEdit","canShowInterpretation","candidate","computedValue","currentValue","cursor","date","dateOnly","digits","direct","displayValue","enteredDisplayValue","externallyReadOnly","factor","interpretationRange","interpretationValue","isIncomplete","isOverridden","markOverridden","max","min","months","nextSegment","numeric","numericDivisor","numericPrecision","numericValues","parsed","passesMax","passesMin","policy","prepared","previousState","reference","refs","renderedValue","replaceInSegment","replaced","result","rounded","roundedValue","start","state","stateContainer","stateMatches","storedValue","stringPattern","strippedExpression","tail","trimmed","uniqueBareRefs","uniqueBracketedRefs","unwrappedExpression","useCalculatedValue","valueMatches","valuesByFieldId"],
-  './ConditionalGroup/index.jsx': ["ConditionalField","ConditionalGroup","ConditionalGroupSchema","ConditionalReadOnly","ControllerLabelPresets","DISABLED_NATIVE_ELEMENTS","LogicGateContext","LogicGateProvider","MAX_SUBGROUP_DEPTH","READ_ONLY_NATIVE_ELEMENTS","allParentsVisible","baseContainerStyle","baseContentStyle","checkChoiceMatch","checkComparisonMatch","checkControllerMatch","childContext","clippedField","cloneWithProtection","conditionMet","containerStyle","contentNode","contentRef","contentStyle","context","contextValue","controllerFieldId","controllerValue","controllerWrapperStyle","createBranchingRule","currentDepth","defaultPadding","depthIndicatorStyle","effectiveValue","evaluateConditionEntries","evaluateConditionEntry","fieldValue","fieldValues","frame","generateConditionalGroupJSX","generateGroup","getControllerValue","groupRect","handleControllerChange","hasMatch","hiddenIndicatorStyle","indent","isDarkMode","isGroupVisible","isVisible","jsx","left","matches","mergeStyles","mode","nestedValue","nextProps","normalizeComparableValue","normalizeComparableValues","normalizeValue","normalized","normalizedOptionValues","orderedRules","override","overrides","parentChain","parentContext","payloads","props","protectedChildren","readControllerValue","rect","reportOverflow","result","right","rule","rules","theme","titleStyle","type","useConditionalVisibility","useIsVisible","useLogicGate","usesDisabledFallback"],
+  './ConditionalGroup/index.jsx': ["ConditionalField","ConditionalGroup","ConditionalGroupSchema","ConditionalReadOnly","ControllerLabelPresets","DISABLED_NATIVE_ELEMENTS","LogicGateContext","LogicGateProvider","MAX_SUBGROUP_DEPTH","READ_ONLY_NATIVE_ELEMENTS","allParentsVisible","baseContainerStyle","baseContentStyle","becameHidden","checkChoiceMatch","checkComparisonMatch","checkControllerMatch","childContext","clippedField","cloneWithProtection","conditionMet","containerStyle","contentNode","contentRef","contentStyle","context","contextValue","controllerFieldId","controllerValue","controllerWrapperStyle","createBranchingRule","currentDepth","defaultPadding","depthIndicatorStyle","effectiveValue","evaluateConditionEntries","evaluateConditionEntry","fieldValue","fieldValues","frame","generateConditionalGroupJSX","generateGroup","getControllerValue","groupRect","handleControllerChange","hasMatch","hiddenIndicatorStyle","indent","isDarkMode","isGroupVisible","isVisible","jsx","left","matches","mergeStyles","mode","nestedValue","nextProps","normalizeComparableValue","normalizeComparableValues","normalizeValue","normalized","normalizedOptionValues","orderedRules","override","overrides","parentChain","parentContext","payloads","props","protectedChildren","readControllerValue","rect","reportOverflow","result","right","rule","rules","theme","titleStyle","type","useConditionalVisibility","useIsVisible","useLogicGate","usesDisabledFallback","wasVisibleRef"],
   './Conditions/index.jsx': ["Conditions","ConditionsFields"],
   './Connections/index.jsx': ["CONNECTIONS_SORTS","Connections","ConnectionsFields","SelectActiveConnections","byType","prop","resolvedCompare"],
   './ConversionField/index.jsx': ["ConversionField","ConversionFieldSchema","_asPositiveNumber","_asPrecision","_conversionPathSegments","_normalizeConversionRows","_readConversionPath","_readConversionValue","_sanitizeConversionNumber","activeFrom","activeTo","canUseFrom","canUseTo","char","clearValues","convertRow","current","fromValue","hasAnyValue","hasDecimal","index","lastEdited","lastEditedRef","next","nextValue","normalizedFromFieldId","normalizedToFieldId","parsed","parsedFrom","parsedTo","pathValue","rows","segments","setConversionValues","source","sourceFieldId","text","toValue","updateValue","updates"],

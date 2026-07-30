@@ -681,7 +681,16 @@ export interface BuilderLayoutTableConfig {
   quickNavTarget?: string;
 }
 
-export type BuilderVisibilityType = "always" | "filled" | "equals" | "gt" | "lt";
+export type BuilderVisibilityType =
+  | "always"
+  | "filled"
+  | "not-filled"
+  | "equals"
+  | "not-equals"
+  | "gt"
+  | "gte"
+  | "lt"
+  | "lte";
 export type BuilderValidationRuleType =
   | "required"
   | "minLength"
@@ -695,10 +704,31 @@ export type BuilderValidationRuleType =
 export type BuilderValidationListMode = "allowlist" | "denylist";
 export type BuilderValidationListMatch = "domain" | "address";
 
+export interface BuilderVisibilityCondition {
+  type: Exclude<BuilderVisibilityType, "always">;
+  controllerId: string;
+  value?: string;
+}
+
+/**
+ * How an existing answer is handled when its visibility rule hides the field.
+ * - 'preserve': Keep the answer while the field is hidden
+ * - 'clear': Remove the answer when the field becomes hidden
+ * Future warn/prevent variants would govern the visibility change itself, not
+ * the hidden field's data.
+ */
+export type HiddenAnswerPolicy = "preserve" | "clear";
+
 export interface BuilderVisibilityRule {
   type: BuilderVisibilityType;
   controllerId?: string;
   value?: string;
+  /** How the primary + additional conditions combine. Default "all". */
+  match?: "all" | "any";
+  /** Extra conditions beyond the primary one (flat, no nesting). */
+  additionalConditions?: BuilderVisibilityCondition[];
+  /** How to handle an existing answer when this rule hides the field. Default: 'preserve'. */
+  hiddenAnswerPolicy?: HiddenAnswerPolicy;
 }
 
 export interface BuilderValidationRule {
@@ -1693,6 +1723,11 @@ export interface FieldLinkRule {
   additionalConditions?: Array<{ controllerFieldId: string; condition: FieldLinkCondition }>;
   /** How the primary + additional conditions combine. Default "all". */
   conditionMatch?: "all" | "any";
+  /**
+   * How a synthesized inline-visibility rule handles an existing answer when
+   * it hides its target. Default: 'preserve'.
+   */
+  hiddenAnswerPolicy?: HiddenAnswerPolicy;
   /** The field(s) affected by this rule */
   targetFieldIds: string[];
   /** What happens when condition is met */
