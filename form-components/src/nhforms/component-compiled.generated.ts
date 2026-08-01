@@ -8654,6 +8654,474 @@ const firstNationsStatusSchema = {
     type: ["string", "null"]
   }
 };`,
+  './FlowSheet/index.jsx': `const {
+  useMemo,
+  useState
+} = React;
+const {
+  Stack,
+  Label,
+  Text,
+  PrimaryButton,
+  Dialog,
+  DialogType,
+  DialogFooter
+} = Fluent;
+const flowToText = value => {
+  if (value === null || value === undefined) return "";
+  return String(value);
+};
+const flowDateKey = value => {
+  const raw = flowToText(value);
+  return raw.includes("T") ? raw.split("T")[0] : raw;
+};
+const flowParseDate = value => {
+  const raw = flowToText(value).trim();
+  if (!raw) return null;
+  const parsed = new Date(raw.includes("T") ? raw : raw.replace(/[./]/g, "-"));
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+// Display text for values that may be plain strings or {code, display} objects.
+const flowDisplay = value => {
+  if (value && typeof value === "object") {
+    return flowToText(value.display ?? value.text ?? value.code).trim();
+  }
+  return flowToText(value).trim();
+};
+
+// Day-precision timestamp so medication ranges compare cleanly against column dates.
+const flowDayTime = value => {
+  const parsed = flowParseDate(flowDateKey(value));
+  return parsed ? parsed.getTime() : null;
+};
+
+// MOIS renders dates with dot separators (2024.11.21).
+const flowDisplayDate = dateKey => flowToText(dateKey).replace(/-/g, ".");
+const flowGetPath = (sd, path, fallback) => {
+  const steps = flowToText(path || fallback).split(".").filter(Boolean);
+  let current = sd;
+  for (const step of steps) {
+    if (current && typeof current === "object") {
+      current = current[step];
+    } else {
+      return [];
+    }
+  }
+  return Array.isArray(current) ? current : [];
+};
+
+// A row whose code is all dashes is a MOIS-style "----" separator element.
+const flowIsSeparatorEntry = entry => {
+  if (entry && typeof entry === "object" && entry.kind === "separator") return true;
+  const code = typeof entry === "string" ? entry : flowToText(entry?.code);
+  return /^-+$/.test(code.trim());
+};
+const flowNormalizeRows = rows => {
+  if (!Array.isArray(rows)) return [];
+  return rows.map(entry => {
+    if (flowIsSeparatorEntry(entry)) {
+      return {
+        kind: "separator",
+        label: typeof entry === "object" ? flowToText(entry.label).trim() : ""
+      };
+    }
+    if (typeof entry === "string") {
+      const code = entry.trim();
+      return code ? {
+        kind: "observation",
+        code,
+        label: code,
+        loincCode: "",
+        units: ""
+      } : null;
+    }
+    if (!entry || typeof entry !== "object") return null;
+    const code = flowToText(entry.code).trim();
+    if (!code) return null;
+    const label = flowToText(entry.label).trim() || code;
+    const units = flowToText(entry.units).trim();
+    return {
+      kind: "observation",
+      code,
+      label: units ? label + " (" + units + ")" : label,
+      loincCode: flowToText(entry.loincCode).trim(),
+      units
+    };
+  }).filter(Boolean);
+};
+const flowCutoffDate = lookback => {
+  if (!lookback || typeof lookback !== "object") return null;
+  const amount = Math.floor(Number(lookback.amount));
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+  const cutoff = new Date();
+  if (lookback.unit === "days") {
+    cutoff.setDate(cutoff.getDate() - amount);
+  } else if (lookback.unit === "years") {
+    cutoff.setFullYear(cutoff.getFullYear() - amount);
+  } else if (lookback.unit === "months") {
+    cutoff.setMonth(cutoff.getMonth() - amount);
+  } else {
+    return null;
+  }
+  return cutoff;
+};
+const flowMatchesRow = (entry, row) => {
+  const entryCode = flowToText(entry?.observationCode).trim().toLowerCase();
+  const entryLoinc = flowToText(entry?.loincCode).trim().toLowerCase();
+  const code = row.code.toLowerCase();
+  const loinc = row.loincCode.toLowerCase();
+  if (entryCode && (entryCode === code || loinc && entryCode === loinc)) return true;
+  if (entryLoinc && (entryLoinc === code || loinc && entryLoinc === loinc)) return true;
+  return false;
+};
+const flowNumber = value => {
+  const text = flowToText(value).trim();
+  if (!text) return null;
+  const parsed = Number(text);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+// Four MOIS abnormal bands: critical LL/HH (absurd/very ranges) outrank L/H.
+const flowClassifyFlag = (entry, rawValue) => {
+  const explicit = entry?.abnormalFlag && typeof entry.abnormalFlag === "object" ? flowToText(entry.abnormalFlag.code).trim() : flowToText(entry?.abnormalFlag).trim();
+  if (explicit) return explicit;
+  const value = flowNumber(rawValue);
+  if (value === null) return "";
+  const criticalLow = flowNumber(entry?.rangeAbsurdLow) ?? flowNumber(entry?.rangeVeryLow);
+  const criticalHigh = flowNumber(entry?.rangeAbsurdHigh) ?? flowNumber(entry?.rangeVeryHigh);
+  const normalLow = flowNumber(entry?.rangeNormalLow);
+  const normalHigh = flowNumber(entry?.rangeNormalHigh);
+  if (criticalLow !== null && value < criticalLow) return "LL";
+  if (criticalHigh !== null && value > criticalHigh) return "HH";
+  if (normalLow !== null && value < normalLow) return "L";
+  if (normalHigh !== null && value > normalHigh) return "H";
+  return "";
+};
+const flowFlagCellStyle = flag => {
+  if (flag === "LL" || flag === "HH") {
+    return {
+      background: "#fde7e9",
+      color: "#a4262c",
+      fontWeight: 600
+    };
+  }
+  if (flag === "L" || flag === "H") {
+    return {
+      background: "#fff4ce"
+    };
+  }
+  return {};
+};
+
+// Collect matched observations per row and the distinct date columns they land on.
+const flowRunQuery = (sd, {
+  sourcePath,
+  datePath,
+  rows,
+  lookback
+}) => {
+  const source = flowGetPath(sd, sourcePath, "patient.observations");
+  const cutoff = flowCutoffDate(lookback);
+  const observationRows = rows.filter(row => row.kind === "observation");
+  const cellsByRow = observationRows.map(() => new Map());
+  const dateKeys = new Set();
+  source.forEach(entry => {
+    if (!entry || typeof entry !== "object") return;
+    const parsedDate = flowParseDate(entry[datePath]);
+    if (!parsedDate) return;
+    if (cutoff && parsedDate.getTime() < cutoff.getTime()) return;
+    observationRows.forEach((row, rowIndex) => {
+      if (!flowMatchesRow(entry, row)) return;
+      const dateKey = flowDateKey(entry[datePath]);
+      if (!dateKey) return;
+      const value = flowToText(entry.value ?? entry.display ?? entry.report ?? "");
+      const existing = cellsByRow[rowIndex].get(dateKey);
+      if (existing && existing.time >= parsedDate.getTime()) return;
+      cellsByRow[rowIndex].set(dateKey, {
+        time: parsedDate.getTime(),
+        value,
+        flag: flowClassifyFlag(entry, value)
+      });
+      dateKeys.add(dateKey);
+    });
+  });
+  return {
+    cellsByRow,
+    dateKeys
+  };
+};
+const flowNormalizeMedications = (source, lookback) => {
+  const cutoff = flowCutoffDate(lookback);
+  const meds = source.filter(entry => entry && typeof entry === "object").map(entry => {
+    const name = flowDisplay(entry.medication).toUpperCase() || flowDisplay(entry.genericName).toUpperCase();
+    const startTime = flowDayTime(entry.startDate);
+    const stopRaw = flowToText(entry.endDate ?? entry.stopDate).trim();
+    const stopTime = stopRaw ? flowDayTime(stopRaw) : null;
+    return {
+      name,
+      doseFrequency: flowDisplay(entry.doseFrequency),
+      startTime,
+      stopTime
+    };
+  }).filter(entry => entry.name && entry.startTime !== null)
+  // A course fully stopped before the lookback window never draws a bar; drop it.
+  .filter(entry => !cutoff || entry.stopTime === null || entry.stopTime >= cutoff.getTime());
+  meds.sort((left, right) => left.name.localeCompare(right.name) || left.startTime - right.startTime);
+  return meds;
+};
+const FLOW_CELL_STYLE = {
+  border: "1px solid #e1dfdd",
+  padding: "2px 6px",
+  fontSize: 12,
+  lineHeight: "16px",
+  whiteSpace: "nowrap",
+  textAlign: "center",
+  minWidth: 74
+};
+const FLOW_LABEL_CELL_STYLE = {
+  border: "1px solid #e1dfdd",
+  padding: "2px 6px",
+  fontSize: 12,
+  lineHeight: "16px",
+  whiteSpace: "nowrap",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  maxWidth: 230,
+  minWidth: 230,
+  position: "sticky",
+  left: 0,
+  background: "#ffffff",
+  zIndex: 1
+};
+const FlowSheetGrid = ({
+  rows,
+  cellsByRow,
+  columns,
+  medications,
+  medicationsLabel,
+  showFlags,
+  maxHeight
+}) => {
+  const headerStyle = {
+    border: "1px solid #d0d0d0",
+    padding: "3px 6px",
+    background: "#c7d9f2",
+    fontSize: 12,
+    lineHeight: "16px",
+    whiteSpace: "nowrap",
+    position: "sticky",
+    top: 0,
+    zIndex: 2,
+    textAlign: "center"
+  };
+  let observationIndex = -1;
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      overflow: "auto",
+      maxHeight,
+      border: "1px solid #d0d0d0"
+    }
+  }, /*#__PURE__*/React.createElement("table", {
+    style: {
+      borderCollapse: "separate",
+      borderSpacing: 0,
+      width: "100%"
+    }
+  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", {
+    style: {
+      ...headerStyle,
+      ...FLOW_LABEL_CELL_STYLE,
+      background: "#c7d9f2",
+      zIndex: 3,
+      textAlign: "left"
+    }
+  }, "Element / Date"), columns.map(dateKey => /*#__PURE__*/React.createElement("th", {
+    key: dateKey,
+    style: headerStyle
+  }, flowDisplayDate(dateKey))))), /*#__PURE__*/React.createElement("tbody", null, rows.map((row, rowIndex) => {
+    if (row.kind === "separator") {
+      return /*#__PURE__*/React.createElement("tr", {
+        key: "separator-" + rowIndex
+      }, /*#__PURE__*/React.createElement("td", {
+        style: {
+          ...FLOW_LABEL_CELL_STYLE,
+          color: "#605e5c"
+        }
+      }, row.label || "----"), columns.map(dateKey => /*#__PURE__*/React.createElement("td", {
+        key: dateKey,
+        style: FLOW_CELL_STYLE
+      })));
+    }
+    observationIndex += 1;
+    const cells = cellsByRow[observationIndex];
+    return /*#__PURE__*/React.createElement("tr", {
+      key: "observation-" + rowIndex
+    }, /*#__PURE__*/React.createElement("td", {
+      style: FLOW_LABEL_CELL_STYLE,
+      title: row.label
+    }, row.label), columns.map(dateKey => {
+      const cell = cells.get(dateKey);
+      const cellStyle = {
+        ...FLOW_CELL_STYLE,
+        ...(cell && showFlags ? flowFlagCellStyle(cell.flag) : {})
+      };
+      return /*#__PURE__*/React.createElement("td", {
+        key: dateKey,
+        style: cellStyle
+      }, cell ? cell.value + (showFlags && cell.flag ? " " + cell.flag : "") : "");
+    }));
+  }), medications.length > 0 ? /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("td", {
+    style: {
+      ...FLOW_LABEL_CELL_STYLE,
+      fontWeight: 600,
+      paddingTop: 8
+    }
+  }, medicationsLabel), columns.map(dateKey => /*#__PURE__*/React.createElement("td", {
+    key: dateKey,
+    style: FLOW_CELL_STYLE
+  }))) : null, medications.map((med, medIndex) => /*#__PURE__*/React.createElement("tr", {
+    key: "medication-" + medIndex
+  }, /*#__PURE__*/React.createElement("td", {
+    style: FLOW_LABEL_CELL_STYLE,
+    title: med.name + (med.doseFrequency ? " — " + med.doseFrequency : "")
+  }, med.name), columns.map(dateKey => {
+    const columnTime = flowDayTime(dateKey);
+    const active = columnTime !== null && med.startTime <= columnTime && (med.stopTime === null || med.stopTime >= columnTime);
+    if (!active) return /*#__PURE__*/React.createElement("td", {
+      key: dateKey,
+      style: FLOW_CELL_STYLE
+    });
+    return /*#__PURE__*/React.createElement("td", {
+      key: dateKey,
+      style: {
+        ...FLOW_CELL_STYLE,
+        background: "#1a5c94",
+        color: "#ffffff",
+        fontWeight: 700,
+        letterSpacing: 1
+      }
+    }, "========");
+  }))))));
+};
+const FlowSheet = ({
+  title = "Flow Sheet",
+  rows = [],
+  showMedications = true,
+  medicationsLabel = "LONG TERM MEDICATIONS",
+  medicationPath = "patient.longTermMedications",
+  sourcePath = "patient.observations",
+  datePath = "collectedDateTime",
+  lookback = null,
+  maxColumns = 13,
+  showFlags = true,
+  openInModal = false,
+  modalButtonText = "Open Flow Sheet",
+  modalTitle = "",
+  modalMinWidth = 980
+}) => {
+  const sd = useSourceData();
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const rowList = useMemo(() => flowNormalizeRows(rows), [rows]);
+  const {
+    cellsByRow,
+    dateKeys
+  } = useMemo(() => flowRunQuery(sd, {
+    sourcePath,
+    datePath,
+    rows: rowList,
+    lookback
+  }), [datePath, lookback, rowList, sd, sourcePath]);
+  const medications = useMemo(() => {
+    if (!showMedications) return [];
+    return flowNormalizeMedications(flowGetPath(sd, medicationPath, "patient.longTermMedications"), lookback);
+  }, [lookback, medicationPath, sd, showMedications]);
+
+  // Keep the most recent N dates but display oldest -> newest like MOIS.
+  const columns = useMemo(() => {
+    const limit = Math.max(1, Math.floor(Number(maxColumns)) || 13);
+    return Array.from(dateKeys).sort().slice(-limit);
+  }, [dateKeys, maxColumns]);
+  const hasObservationRows = rowList.some(row => row.kind === "observation");
+  if (!hasObservationRows && medications.length === 0) {
+    return /*#__PURE__*/React.createElement(Stack, {
+      tokens: {
+        childrenGap: 6
+      }
+    }, /*#__PURE__*/React.createElement(Label, null, title), /*#__PURE__*/React.createElement(Text, {
+      variant: "small"
+    }, "No flow sheet rows configured yet."));
+  }
+  const rangeLabel = columns.length > 0 ? "DATE RANGE: " + flowDisplayDate(columns[0]) + " TO " + flowDisplayDate(columns[columns.length - 1]) : "";
+  const renderSheet = maxHeight => {
+    if (columns.length === 0) {
+      return /*#__PURE__*/React.createElement(Text, {
+        variant: "small"
+      }, "No chart observations matched this flow sheet.");
+    }
+    return /*#__PURE__*/React.createElement(FlowSheetGrid, {
+      rows: rowList,
+      cellsByRow: cellsByRow,
+      columns: columns,
+      medications: medications,
+      medicationsLabel: medicationsLabel,
+      showFlags: showFlags !== false,
+      maxHeight: maxHeight
+    });
+  };
+  const header = /*#__PURE__*/React.createElement(Stack, {
+    horizontal: true,
+    horizontalAlign: "space-between",
+    verticalAlign: "center"
+  }, /*#__PURE__*/React.createElement(Label, null, title), rangeLabel ? /*#__PURE__*/React.createElement(Text, {
+    variant: "small",
+    style: {
+      color: "#605e5c"
+    }
+  }, rangeLabel) : null);
+  if (openInModal) {
+    const resolvedMinWidth = Math.max(480, Number(modalMinWidth) || 980);
+    return /*#__PURE__*/React.createElement(Stack, {
+      tokens: {
+        childrenGap: 6
+      }
+    }, header, /*#__PURE__*/React.createElement(Stack, {
+      horizontal: true
+    }, /*#__PURE__*/React.createElement(PrimaryButton, {
+      text: modalButtonText || "Open Flow Sheet",
+      onClick: () => setIsModalOpen(true)
+    })), /*#__PURE__*/React.createElement(Dialog, {
+      hidden: !isModalOpen,
+      onDismiss: () => setIsModalOpen(false),
+      dialogContentProps: {
+        type: DialogType.largeHeader,
+        title: modalTitle || title || "Flow Sheet"
+      },
+      minWidth: Math.min(resolvedMinWidth, typeof window !== "undefined" ? window.innerWidth - 48 : resolvedMinWidth),
+      maxWidth: "96vw",
+      modalProps: {
+        isBlocking: false
+      }
+    }, /*#__PURE__*/React.createElement(Stack, {
+      tokens: {
+        childrenGap: 6
+      }
+    }, rangeLabel ? /*#__PURE__*/React.createElement(Text, {
+      variant: "small",
+      style: {
+        color: "#605e5c"
+      }
+    }, rangeLabel) : null, renderSheet("70vh")), /*#__PURE__*/React.createElement(DialogFooter, null, /*#__PURE__*/React.createElement(PrimaryButton, {
+      text: "Done",
+      onClick: () => setIsModalOpen(false)
+    }))));
+  }
+  return /*#__PURE__*/React.createElement(Stack, {
+    tokens: {
+      childrenGap: 6
+    }
+  }, header, renderSheet(420));
+};`,
   './FocusedObservationHistory/index.jsx': `const {
   useEffect,
   useMemo,
@@ -33914,6 +34382,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './FieldStampButton/index.jsx': ["ButtonComponent","FieldStampButton","buildContext","clearStamp","context","effectiveStampFieldId","fallback","fieldData","fieldId","isDisabled","isSigned","normalizeStampTargets","normalizeStampValue","normalizedTargets","raw","resolveLiteralValue","resolvePathValue","sd","signedAt","signedAtText","sourcePath","stamp","stampRecord","statusText","value","written"],
   './FindCodeSelect/index.jsx': ["CONTROL_KEY_TOKENS","FindCodeSelect","FindCodeSelectBase","FindCodeSelectWithCodeList","FindCodeSelectWithSourceLookup","aliasSets","aliases","boundValue","candidateKeys","candidates","clearTargets","code","codeListFromContext","combinedStyles","comboSelectedKey","currentValues","customSources","defaultComboStyles","defaultGetCandidates","defaultMapCandidateSavedValue","defaultRenderSelected","directKeys","effectiveFieldId","effectiveLabelPosition","fallback","fallbackItems","filteringActive","fluentLabel","freeText","freeTextItem","getItemKey","getSizeStyles","handleChange","handleInputValueChange","handleKeyDown","handlePendingValueChanged","hasExplicitOptionList","hasLookupSelection","hasSearchText","hasSourceLookup","hidden","i","idx","isDeleteKey","isEmpty","isKeyboardToken","isMultiSelect","item","items","key","keys","leftKey","mapped","match","matchingKey","nextValues","normalizeLookupName","normalizeOption","normalizeSelectedValues","normalized","normalizedLabel","optionList","optionLists","options","rawKey","renderCandidateOption","resolveItems","resolveLookupPath","rightKey","sameSelectedItem","sd","sectionLayout","seen","segments","selected","selectedCode","selectedItem","selectedItems","selectedKey","selectedKeySet","selectedKeys","shouldSelect","shouldSuppressLayoutItemLabel","showChildren","sizeMap","sizeStyles","sourceEntries","sourceItems","sourceLookupItems","storedValue","targets","text","valueForLookupTarget","withoutItem","wrapperStyle"],
   './FirstNationsStatus/index.jsx': ["FirstNationsStatus","connections","ethnicity","firstNationsStatusPatientFields","firstNationsStatusSchema","hasReserveName","races","reserveConnection","reserveName","selfId"],
+  './FlowSheet/index.jsx': ["FLOW_CELL_STYLE","FLOW_LABEL_CELL_STYLE","FlowSheet","FlowSheetGrid","active","amount","cell","cellStyle","cells","cellsByRow","code","columnTime","columns","criticalHigh","criticalLow","current","cutoff","dateKey","dateKeys","entryCode","entryLoinc","existing","explicit","flowClassifyFlag","flowCutoffDate","flowDateKey","flowDayTime","flowDisplay","flowDisplayDate","flowFlagCellStyle","flowGetPath","flowIsSeparatorEntry","flowMatchesRow","flowNormalizeMedications","flowNormalizeRows","flowNumber","flowParseDate","flowRunQuery","flowToText","hasObservationRows","header","headerStyle","label","limit","loinc","medications","meds","name","normalHigh","normalLow","observationIndex","observationRows","parsed","parsedDate","rangeLabel","raw","renderSheet","resolvedMinWidth","rowList","sd","source","startTime","steps","stopRaw","stopTime","text","units","value"],
   './FocusedObservationHistory/index.jsx': ["FocusedObservationHistory","activeWatchField","candidate","current","date","day","direct","effectiveObservationCode","effectiveObservationComment","effectiveTitle","formatDate","getFocusedFieldId","handleBlur","handleFocus","hasFocusTarget","host","isTrackedFieldFocused","isVisible","items","month","normalizeItems","normalizedWatchFields","parseDate","parsed","parsedDate","pathSegments","patientPath","raw","resolveMoisValue","resolvePath","rows","sd","textValue","year"],
   './FormContextHeader/index.jsx': ["FormContextHeader","FormContextHeaderSchema","appointmentDateTime","code","date","display","encounter","legacyContextDate","legacyContextDateTime","legacyContextText","legacyContextVisitCode","legacyFieldWrap","legacySmallFieldWrap","legacyTextStyles","match","providerName","raw","renderReadOnlyField","sd","section","values"],
   './FormSessionRuntime/index.jsx': ["FormSessionContext","FormSessionProvider","__cloneSessionValue","__getSessionContext","applySessionUpdate","cloneFormSessionState","contextValue","formData","mergeFormSessionState","normalizeSessionState","normalized","normalizedSessionData","result","root","selectedSessionData","selectedSessionDataWithSetter","sessionContext","sessionDataWithSetter","sessionScopedSetter","sessionSetFormData","setFormData","target","useFormSessionData"],
