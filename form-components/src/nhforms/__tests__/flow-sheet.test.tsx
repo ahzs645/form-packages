@@ -154,6 +154,69 @@ describe("FlowSheet", () => {
     act(() => harness.root.unmount());
   });
 
+  it("renders placed medication rows in element order with one row per matched course", () => {
+    const harness = renderFlowSheet({
+      rows: [
+        { kind: "medication", match: "WARFARIN", label: "Warfarin" },
+        { code: "1950", label: "Blood Pressure" },
+      ],
+      medicationsMode: "selected",
+    });
+    const bodyRows = Array.from(harness.container.querySelectorAll("tbody tr"));
+    const labels = bodyRows.map((row) => row.querySelector("td")?.textContent ?? "");
+
+    // Placed medication row renders before the BP row, labeled per config.
+    expect(labels[0]).toBe("Warfarin");
+    expect(labels[1]).toContain("Blood Pressure");
+    expect(bodyRows[0].textContent).toContain("========");
+    // Selected mode: no auto bottom section, unmatched meds stay hidden.
+    expect(harness.container.textContent).not.toContain("LONG TERM MEDICATIONS");
+    expect(harness.container.textContent).not.toContain("BERBERINE");
+    act(() => harness.root.unmount());
+  });
+
+  it("keeps unmatched placed medication rows visible as empty recall rows", () => {
+    const harness = renderFlowSheet({
+      rows: [
+        { kind: "medication", match: "INSULIN", label: "Insulin" },
+        { code: "1950", label: "Blood Pressure" },
+      ],
+      medicationsMode: "selected",
+    });
+    const firstRow = harness.container.querySelector("tbody tr");
+    expect(firstRow?.textContent).toContain("Insulin");
+    expect(firstRow?.textContent).not.toContain("========");
+    act(() => harness.root.unmount());
+  });
+
+  it("does not repeat courses matched by placed rows in the all-medications section", () => {
+    const harness = renderFlowSheet({
+      rows: [
+        { kind: "medication", match: "WARFARIN", label: "Warfarin" },
+        { code: "1950", label: "Blood Pressure" },
+      ],
+      medicationsMode: "all",
+    });
+    const text = harness.container.textContent ?? "";
+    // Bottom section still lists the others...
+    expect(text).toContain("LONG TERM MEDICATIONS");
+    expect(text).toContain("BERBERINE 500MG");
+    // ...but the matched warfarin course only appears as the placed row.
+    expect(text).not.toContain("APO-WARFARIN 1 MG TABLET");
+    expect(text).toContain("Warfarin");
+    act(() => harness.root.unmount());
+  });
+
+  it("appends dose frequency to medication labels when showMedicationDose is set", () => {
+    const harness = renderFlowSheet({
+      rows: [{ kind: "medication", match: "WARFARIN", label: "Warfarin" }],
+      medicationsMode: "selected",
+      showMedicationDose: true,
+    });
+    expect(harness.container.textContent).toContain("Warfarin — 1 TAB ORAL DAILY");
+    act(() => harness.root.unmount());
+  });
+
   it("prompts for configuration when no rows are set and meds are hidden", () => {
     const harness = renderFlowSheet({ rows: [], showMedications: false });
     expect(harness.container.textContent).toContain("No flow sheet rows configured yet.");

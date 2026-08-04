@@ -62,6 +62,11 @@ const flowNormalizeRows = (rows) => {
       if (flowIsSeparatorEntry(entry)) {
         return { kind: "separator", label: typeof entry === "object" ? flowToText(entry.label).trim() : "" }
       }
+      if (entry && typeof entry === "object" && entry.kind === "medication") {
+        const match = flowToText(entry.match).trim()
+        if (!match) return null
+        return { kind: "medication", match, label: flowToText(entry.label).trim() || match }
+      }
       if (typeof entry === "string") {
         const code = entry.trim()
         return code ? { kind: "observation", code, label: code, loincCode: "", units: "" } : null
@@ -186,9 +191,16 @@ const flowNormalizeMedications = (source, lookback) => {
       const startTime = flowDayTime(entry.startDate)
       const stopRaw = flowToText(entry.endDate ?? entry.stopDate).trim()
       const stopTime = stopRaw ? flowDayTime(stopRaw) : null
+      const doseFrequency =
+        flowDisplay(entry.doseFrequency) ||
+        [flowDisplay(entry.dose), flowDisplay(entry.route), flowDisplay(entry.frequency)]
+          .filter(Boolean)
+          .join(" ")
       return {
         name,
-        doseFrequency: flowDisplay(entry.doseFrequency),
+        genericName: flowDisplay(entry.genericName).toUpperCase(),
+        atcCode: flowDisplay(entry.atcCode).toUpperCase(),
+        doseFrequency,
         startTime,
         stopTime,
       }
@@ -199,6 +211,17 @@ const flowNormalizeMedications = (source, lookback) => {
   meds.sort((left, right) => left.name.localeCompare(right.name) || left.startTime - right.startTime)
   return meds
 }
+
+// A configured medication row matches a course by name/generic substring or ATC prefix.
+const flowMedicationMatches = (med, match) => {
+  const needle = flowToText(match).trim().toUpperCase()
+  if (!needle) return false
+  if (med.name.includes(needle) || med.genericName.includes(needle)) return true
+  return Boolean(med.atcCode && med.atcCode.startsWith(needle))
+}
+
+const flowMedicationRowLabel = (label, med, showDose) =>
+  showDose && med?.doseFrequency ? label + " — " + med.doseFrequency : label
 
 const FLOW_CELL_STYLE = {
   border: "1px solid #e1dfdd",
@@ -226,7 +249,41 @@ const FLOW_LABEL_CELL_STYLE = {
   zIndex: 1,
 }
 
-const FlowSheetGrid = ({ rows, cellsByRow, columns, medications, medicationsLabel, showFlags, maxHeight }) => {
+const FlowMedicationBarCells = ({ med, columns }) =>
+  columns.map((dateKey) => {
+    const columnTime = flowDayTime(dateKey)
+    const active =
+      columnTime !== null &&
+      med.startTime <= columnTime &&
+      (med.stopTime === null || med.stopTime >= columnTime)
+    if (!active) return <td key={dateKey} style={FLOW_CELL_STYLE} />
+    return (
+      <td
+        key={dateKey}
+        style={{
+          ...FLOW_CELL_STYLE,
+          background: "#1a5c94",
+          color: "#ffffff",
+          fontWeight: 700,
+          letterSpacing: 1,
+        }}
+      >
+        ========
+      </td>
+    )
+  })
+
+const FlowSheetGrid = ({
+  rows,
+  cellsByRow,
+  medRowCourses,
+  columns,
+  medications,
+  medicationsLabel,
+  showFlags,
+  showDose,
+  maxHeight,
+}) => {
   const headerStyle = {
     border: "1px solid #d0d0d0",
     padding: "3px 6px",
@@ -267,6 +324,39 @@ const FlowSheetGrid = ({ rows, cellsByRow, columns, medications, medicationsLabe
                 </tr>
               )
             }
+            if (row.kind === "medication") {
+              const courses = medRowCourses[rowIndex] ?? []
+              if (courses.length === 0) {
+                // Keep the configured row visible as a recall cue even when the
+                // chart carries no matching course.
+                return (
+                  <tr key={"medication-row-" + rowIndex}>
+                    <td style={FLOW_LABEL_CELL_STYLE} title={row.label + " — no matching chart medication"}>
+                      {row.label}
+                    </td>
+                    {columns.map((dateKey) => (
+                      <td key={dateKey} style={FLOW_CELL_STYLE} />
+                    ))}
+                  </tr>
+                )
+              }
+              // MOIS parity: every matched course keeps its own row of bars.
+              return (
+                <React.Fragment key={"medication-row-" + rowIndex}>
+                  {courses.map((med, courseIndex) => (
+                    <tr key={"medication-row-" + rowIndex + "-" + courseIndex}>
+                      <td
+                        style={FLOW_LABEL_CELL_STYLE}
+                        title={med.name + (med.doseFrequency ? " — " + med.doseFrequency : "")}
+                      >
+                        {flowMedicationRowLabel(row.label, med, showDose)}
+                      </td>
+                      <FlowMedicationBarCells med={med} columns={columns} />
+                    </tr>
+                  ))}
+                </React.Fragment>
+              )
+            }
             observationIndex += 1
             const cells = cellsByRow[observationIndex]
             return (
@@ -297,30 +387,9 @@ const FlowSheetGrid = ({ rows, cellsByRow, columns, medications, medicationsLabe
           {medications.map((med, medIndex) => (
             <tr key={"medication-" + medIndex}>
               <td style={FLOW_LABEL_CELL_STYLE} title={med.name + (med.doseFrequency ? " — " + med.doseFrequency : "")}>
-                {med.name}
+                {flowMedicationRowLabel(med.name, med, showDose)}
               </td>
-              {columns.map((dateKey) => {
-                const columnTime = flowDayTime(dateKey)
-                const active =
-                  columnTime !== null &&
-                  med.startTime <= columnTime &&
-                  (med.stopTime === null || med.stopTime >= columnTime)
-                if (!active) return <td key={dateKey} style={FLOW_CELL_STYLE} />
-                return (
-                  <td
-                    key={dateKey}
-                    style={{
-                      ...FLOW_CELL_STYLE,
-                      background: "#1a5c94",
-                      color: "#ffffff",
-                      fontWeight: 700,
-                      letterSpacing: 1,
-                    }}
-                  >
-                    ========
-                  </td>
-                )
-              })}
+              <FlowMedicationBarCells med={med} columns={columns} />
             </tr>
           ))}
         </tbody>
@@ -333,6 +402,8 @@ const FlowSheet = ({
   title = "Flow Sheet",
   rows = [],
   showMedications = true,
+  medicationsMode = "",
+  showMedicationDose = false,
   medicationsLabel = "LONG TERM MEDICATIONS",
   medicationPath = "patient.longTermMedications",
   sourcePath = "patient.observations",
@@ -349,15 +420,45 @@ const FlowSheet = ({
   const [isModalOpen, setIsModalOpen] = useState(false)
   const rowList = useMemo(() => flowNormalizeRows(rows), [rows])
 
+  // Modes: "all" appends every chart course below the elements (matched placed
+  // rows are not repeated), "selected" shows only placed medication rows,
+  // "none" hides medications entirely. Legacy boolean maps onto all/none.
+  const resolvedMedicationsMode =
+    medicationsMode === "all" || medicationsMode === "selected" || medicationsMode === "none"
+      ? medicationsMode
+      : showMedications === false
+        ? "none"
+        : "all"
+
   const { cellsByRow, dateKeys } = useMemo(
     () => flowRunQuery(sd, { sourcePath, datePath, rows: rowList, lookback }),
     [datePath, lookback, rowList, sd, sourcePath]
   )
 
-  const medications = useMemo(() => {
-    if (!showMedications) return []
+  const allMedications = useMemo(() => {
+    if (resolvedMedicationsMode === "none") return []
     return flowNormalizeMedications(flowGetPath(sd, medicationPath, "patient.longTermMedications"), lookback)
-  }, [lookback, medicationPath, sd, showMedications])
+  }, [lookback, medicationPath, resolvedMedicationsMode, sd])
+
+  // Expand each placed medication row into its matching chart courses, and
+  // collect what the bottom "all others" section still needs to show.
+  const { medRowCourses, medications } = useMemo(() => {
+    const courses = {}
+    const matched = new Set()
+    rowList.forEach((row, rowIndex) => {
+      if (row.kind !== "medication") return
+      const matches = resolvedMedicationsMode === "none"
+        ? []
+        : allMedications.filter((med) => flowMedicationMatches(med, row.match))
+      courses[rowIndex] = matches
+      matches.forEach((med) => matched.add(med))
+    })
+    const remaining =
+      resolvedMedicationsMode === "all"
+        ? allMedications.filter((med) => !matched.has(med))
+        : []
+    return { medRowCourses: courses, medications: remaining }
+  }, [allMedications, resolvedMedicationsMode, rowList])
 
   // Keep the most recent N dates but display oldest -> newest like MOIS.
   const columns = useMemo(() => {
@@ -365,7 +466,7 @@ const FlowSheet = ({
     return Array.from(dateKeys).sort().slice(-limit)
   }, [dateKeys, maxColumns])
 
-  const hasObservationRows = rowList.some((row) => row.kind === "observation")
+  const hasObservationRows = rowList.some((row) => row.kind === "observation" || row.kind === "medication")
   if (!hasObservationRows && medications.length === 0) {
     return (
       <Stack tokens={{ childrenGap: 6 }}>
@@ -388,10 +489,12 @@ const FlowSheet = ({
       <FlowSheetGrid
         rows={rowList}
         cellsByRow={cellsByRow}
+        medRowCourses={medRowCourses}
         columns={columns}
         medications={medications}
         medicationsLabel={medicationsLabel}
         showFlags={showFlags !== false}
+        showDose={showMedicationDose === true}
         maxHeight={maxHeight}
       />
     )

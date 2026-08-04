@@ -728,9 +728,11 @@ export const defaultSourceData: SourceData = {
         collectedDateTime: '2023-06-15T10:30:00',
       },
     ],
-    plannedActions: [
-      { plannedActionId: 900101, startDate: '2026-04-22', endDate: '2026-07-22', action: 'Review home blood pressure log', responsibility: 'Patient, Primary Care Provider', completedDate: null, isCompleted: { code: 'N', display: 'No', system: 'MOIS-YESNO' } },
-      { plannedActionId: 900102, startDate: '2026-03-11', endDate: '2026-09-11', action: 'Repeat HbA1c and urine ACR', responsibility: 'Primary Care Provider', completedDate: null, isCompleted: { code: 'N', display: 'No', system: 'MOIS-YESNO' } },
+    // Field shape matches the engine's fullChart `actions` selection: no record
+    // id, no startDate, no responsibility — those never come back from MOIS.
+    actions: [
+      { action: 'Review home blood pressure log', detail: 'Patient, Primary Care Provider', endDate: '2026-07-22', encounterId: 700001, completedDate: null, isCompleted: { code: 'N', display: 'No', system: 'MOIS-YESNO' } },
+      { action: 'Repeat HbA1c and urine ACR', detail: 'Primary Care Provider', endDate: '2026-09-11', encounterId: 700002, completedDate: null, isCompleted: { code: 'N', display: 'No', system: 'MOIS-YESNO' } },
     ],
     serviceEpisodes: [
       { serviceEpisodeId: 910101, startDate: '2025-10-01', endDate: null, note: '', service: { code: 'CDM', display: 'Chronic Disease Management', system: 'MOIS-SERVICE' }, serviceMrp: { code: '500007', display: 'PRACTITIONER, GENERAL', system: 'MOIS.USER' } },
@@ -955,9 +957,11 @@ export const defaultSourceData: SourceData = {
             collectedDateTime: '2023-06-15T10:30:00',
           },
         ],
-        plannedActions: [
-          { plannedActionId: 900101, startDate: '2026-04-22', endDate: '2026-07-22', action: 'Review home blood pressure log', responsibility: 'Patient, Primary Care Provider', completedDate: null, isCompleted: { code: 'N', display: 'No', system: 'MOIS-YESNO' } },
-          { plannedActionId: 900102, startDate: '2026-03-11', endDate: '2026-09-11', action: 'Repeat HbA1c and urine ACR', responsibility: 'Primary Care Provider', completedDate: null, isCompleted: { code: 'N', display: 'No', system: 'MOIS-YESNO' } },
+        // Field shape matches the engine's fullChart `actions` selection: no record
+        // id, no startDate, no responsibility — those never come back from MOIS.
+        actions: [
+          { action: 'Review home blood pressure log', detail: 'Patient, Primary Care Provider', endDate: '2026-07-22', encounterId: 700001, completedDate: null, isCompleted: { code: 'N', display: 'No', system: 'MOIS-YESNO' } },
+          { action: 'Repeat HbA1c and urine ACR', detail: 'Primary Care Provider', endDate: '2026-09-11', encounterId: 700002, completedDate: null, isCompleted: { code: 'N', display: 'No', system: 'MOIS-YESNO' } },
         ],
         serviceEpisodes: [
           { serviceEpisodeId: 910101, startDate: '2025-10-01', endDate: null, service: { code: 'CDM', display: 'Chronic Disease Management', system: 'MOIS-SERVICE' }, serviceMrp: { code: '500007', display: 'PRACTITIONER, GENERAL', system: 'MOIS.USER' } },

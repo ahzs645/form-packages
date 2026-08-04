@@ -8726,6 +8726,15 @@ const flowNormalizeRows = rows => {
         label: typeof entry === "object" ? flowToText(entry.label).trim() : ""
       };
     }
+    if (entry && typeof entry === "object" && entry.kind === "medication") {
+      const match = flowToText(entry.match).trim();
+      if (!match) return null;
+      return {
+        kind: "medication",
+        match,
+        label: flowToText(entry.label).trim() || match
+      };
+    }
     if (typeof entry === "string") {
       const code = entry.trim();
       return code ? {
@@ -8858,9 +8867,12 @@ const flowNormalizeMedications = (source, lookback) => {
     const startTime = flowDayTime(entry.startDate);
     const stopRaw = flowToText(entry.endDate ?? entry.stopDate).trim();
     const stopTime = stopRaw ? flowDayTime(stopRaw) : null;
+    const doseFrequency = flowDisplay(entry.doseFrequency) || [flowDisplay(entry.dose), flowDisplay(entry.route), flowDisplay(entry.frequency)].filter(Boolean).join(" ");
     return {
       name,
-      doseFrequency: flowDisplay(entry.doseFrequency),
+      genericName: flowDisplay(entry.genericName).toUpperCase(),
+      atcCode: flowDisplay(entry.atcCode).toUpperCase(),
+      doseFrequency,
       startTime,
       stopTime
     };
@@ -8870,6 +8882,15 @@ const flowNormalizeMedications = (source, lookback) => {
   meds.sort((left, right) => left.name.localeCompare(right.name) || left.startTime - right.startTime);
   return meds;
 };
+
+// A configured medication row matches a course by name/generic substring or ATC prefix.
+const flowMedicationMatches = (med, match) => {
+  const needle = flowToText(match).trim().toUpperCase();
+  if (!needle) return false;
+  if (med.name.includes(needle) || med.genericName.includes(needle)) return true;
+  return Boolean(med.atcCode && med.atcCode.startsWith(needle));
+};
+const flowMedicationRowLabel = (label, med, showDose) => showDose && med?.doseFrequency ? label + " — " + med.doseFrequency : label;
 const FLOW_CELL_STYLE = {
   border: "1px solid #e1dfdd",
   padding: "2px 6px",
@@ -8894,13 +8915,36 @@ const FLOW_LABEL_CELL_STYLE = {
   background: "#ffffff",
   zIndex: 1
 };
+const FlowMedicationBarCells = ({
+  med,
+  columns
+}) => columns.map(dateKey => {
+  const columnTime = flowDayTime(dateKey);
+  const active = columnTime !== null && med.startTime <= columnTime && (med.stopTime === null || med.stopTime >= columnTime);
+  if (!active) return /*#__PURE__*/React.createElement("td", {
+    key: dateKey,
+    style: FLOW_CELL_STYLE
+  });
+  return /*#__PURE__*/React.createElement("td", {
+    key: dateKey,
+    style: {
+      ...FLOW_CELL_STYLE,
+      background: "#1a5c94",
+      color: "#ffffff",
+      fontWeight: 700,
+      letterSpacing: 1
+    }
+  }, "========");
+});
 const FlowSheetGrid = ({
   rows,
   cellsByRow,
+  medRowCourses,
   columns,
   medications,
   medicationsLabel,
   showFlags,
+  showDose,
   maxHeight
 }) => {
   const headerStyle = {
@@ -8953,6 +8997,34 @@ const FlowSheetGrid = ({
         style: FLOW_CELL_STYLE
       })));
     }
+    if (row.kind === "medication") {
+      const courses = medRowCourses[rowIndex] ?? [];
+      if (courses.length === 0) {
+        // Keep the configured row visible as a recall cue even when the
+        // chart carries no matching course.
+        return /*#__PURE__*/React.createElement("tr", {
+          key: "medication-row-" + rowIndex
+        }, /*#__PURE__*/React.createElement("td", {
+          style: FLOW_LABEL_CELL_STYLE,
+          title: row.label + " — no matching chart medication"
+        }, row.label), columns.map(dateKey => /*#__PURE__*/React.createElement("td", {
+          key: dateKey,
+          style: FLOW_CELL_STYLE
+        })));
+      }
+      // MOIS parity: every matched course keeps its own row of bars.
+      return /*#__PURE__*/React.createElement(React.Fragment, {
+        key: "medication-row-" + rowIndex
+      }, courses.map((med, courseIndex) => /*#__PURE__*/React.createElement("tr", {
+        key: "medication-row-" + rowIndex + "-" + courseIndex
+      }, /*#__PURE__*/React.createElement("td", {
+        style: FLOW_LABEL_CELL_STYLE,
+        title: med.name + (med.doseFrequency ? " — " + med.doseFrequency : "")
+      }, flowMedicationRowLabel(row.label, med, showDose)), /*#__PURE__*/React.createElement(FlowMedicationBarCells, {
+        med: med,
+        columns: columns
+      }))));
+    }
     observationIndex += 1;
     const cells = cellsByRow[observationIndex];
     return /*#__PURE__*/React.createElement("tr", {
@@ -8985,29 +9057,17 @@ const FlowSheetGrid = ({
   }, /*#__PURE__*/React.createElement("td", {
     style: FLOW_LABEL_CELL_STYLE,
     title: med.name + (med.doseFrequency ? " — " + med.doseFrequency : "")
-  }, med.name), columns.map(dateKey => {
-    const columnTime = flowDayTime(dateKey);
-    const active = columnTime !== null && med.startTime <= columnTime && (med.stopTime === null || med.stopTime >= columnTime);
-    if (!active) return /*#__PURE__*/React.createElement("td", {
-      key: dateKey,
-      style: FLOW_CELL_STYLE
-    });
-    return /*#__PURE__*/React.createElement("td", {
-      key: dateKey,
-      style: {
-        ...FLOW_CELL_STYLE,
-        background: "#1a5c94",
-        color: "#ffffff",
-        fontWeight: 700,
-        letterSpacing: 1
-      }
-    }, "========");
+  }, flowMedicationRowLabel(med.name, med, showDose)), /*#__PURE__*/React.createElement(FlowMedicationBarCells, {
+    med: med,
+    columns: columns
   }))))));
 };
 const FlowSheet = ({
   title = "Flow Sheet",
   rows = [],
   showMedications = true,
+  medicationsMode = "",
+  showMedicationDose = false,
   medicationsLabel = "LONG TERM MEDICATIONS",
   medicationPath = "patient.longTermMedications",
   sourcePath = "patient.observations",
@@ -9023,6 +9083,11 @@ const FlowSheet = ({
   const sd = useSourceData();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const rowList = useMemo(() => flowNormalizeRows(rows), [rows]);
+
+  // Modes: "all" appends every chart course below the elements (matched placed
+  // rows are not repeated), "selected" shows only placed medication rows,
+  // "none" hides medications entirely. Legacy boolean maps onto all/none.
+  const resolvedMedicationsMode = medicationsMode === "all" || medicationsMode === "selected" || medicationsMode === "none" ? medicationsMode : showMedications === false ? "none" : "all";
   const {
     cellsByRow,
     dateKeys
@@ -9032,17 +9097,38 @@ const FlowSheet = ({
     rows: rowList,
     lookback
   }), [datePath, lookback, rowList, sd, sourcePath]);
-  const medications = useMemo(() => {
-    if (!showMedications) return [];
+  const allMedications = useMemo(() => {
+    if (resolvedMedicationsMode === "none") return [];
     return flowNormalizeMedications(flowGetPath(sd, medicationPath, "patient.longTermMedications"), lookback);
-  }, [lookback, medicationPath, sd, showMedications]);
+  }, [lookback, medicationPath, resolvedMedicationsMode, sd]);
+
+  // Expand each placed medication row into its matching chart courses, and
+  // collect what the bottom "all others" section still needs to show.
+  const {
+    medRowCourses,
+    medications
+  } = useMemo(() => {
+    const courses = {};
+    const matched = new Set();
+    rowList.forEach((row, rowIndex) => {
+      if (row.kind !== "medication") return;
+      const matches = resolvedMedicationsMode === "none" ? [] : allMedications.filter(med => flowMedicationMatches(med, row.match));
+      courses[rowIndex] = matches;
+      matches.forEach(med => matched.add(med));
+    });
+    const remaining = resolvedMedicationsMode === "all" ? allMedications.filter(med => !matched.has(med)) : [];
+    return {
+      medRowCourses: courses,
+      medications: remaining
+    };
+  }, [allMedications, resolvedMedicationsMode, rowList]);
 
   // Keep the most recent N dates but display oldest -> newest like MOIS.
   const columns = useMemo(() => {
     const limit = Math.max(1, Math.floor(Number(maxColumns)) || 13);
     return Array.from(dateKeys).sort().slice(-limit);
   }, [dateKeys, maxColumns]);
-  const hasObservationRows = rowList.some(row => row.kind === "observation");
+  const hasObservationRows = rowList.some(row => row.kind === "observation" || row.kind === "medication");
   if (!hasObservationRows && medications.length === 0) {
     return /*#__PURE__*/React.createElement(Stack, {
       tokens: {
@@ -9062,10 +9148,12 @@ const FlowSheet = ({
     return /*#__PURE__*/React.createElement(FlowSheetGrid, {
       rows: rowList,
       cellsByRow: cellsByRow,
+      medRowCourses: medRowCourses,
       columns: columns,
       medications: medications,
       medicationsLabel: medicationsLabel,
       showFlags: showFlags !== false,
+      showDose: showMedicationDose === true,
       maxHeight: maxHeight
     });
   };
@@ -34382,7 +34470,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './FieldStampButton/index.jsx': ["ButtonComponent","FieldStampButton","buildContext","clearStamp","context","effectiveStampFieldId","fallback","fieldData","fieldId","isDisabled","isSigned","normalizeStampTargets","normalizeStampValue","normalizedTargets","raw","resolveLiteralValue","resolvePathValue","sd","signedAt","signedAtText","sourcePath","stamp","stampRecord","statusText","value","written"],
   './FindCodeSelect/index.jsx': ["CONTROL_KEY_TOKENS","FindCodeSelect","FindCodeSelectBase","FindCodeSelectWithCodeList","FindCodeSelectWithSourceLookup","aliasSets","aliases","boundValue","candidateKeys","candidates","clearTargets","code","codeListFromContext","combinedStyles","comboSelectedKey","currentValues","customSources","defaultComboStyles","defaultGetCandidates","defaultMapCandidateSavedValue","defaultRenderSelected","directKeys","effectiveFieldId","effectiveLabelPosition","fallback","fallbackItems","filteringActive","fluentLabel","freeText","freeTextItem","getItemKey","getSizeStyles","handleChange","handleInputValueChange","handleKeyDown","handlePendingValueChanged","hasExplicitOptionList","hasLookupSelection","hasSearchText","hasSourceLookup","hidden","i","idx","isDeleteKey","isEmpty","isKeyboardToken","isMultiSelect","item","items","key","keys","leftKey","mapped","match","matchingKey","nextValues","normalizeLookupName","normalizeOption","normalizeSelectedValues","normalized","normalizedLabel","optionList","optionLists","options","rawKey","renderCandidateOption","resolveItems","resolveLookupPath","rightKey","sameSelectedItem","sd","sectionLayout","seen","segments","selected","selectedCode","selectedItem","selectedItems","selectedKey","selectedKeySet","selectedKeys","shouldSelect","shouldSuppressLayoutItemLabel","showChildren","sizeMap","sizeStyles","sourceEntries","sourceItems","sourceLookupItems","storedValue","targets","text","valueForLookupTarget","withoutItem","wrapperStyle"],
   './FirstNationsStatus/index.jsx': ["FirstNationsStatus","connections","ethnicity","firstNationsStatusPatientFields","firstNationsStatusSchema","hasReserveName","races","reserveConnection","reserveName","selfId"],
-  './FlowSheet/index.jsx': ["FLOW_CELL_STYLE","FLOW_LABEL_CELL_STYLE","FlowSheet","FlowSheetGrid","active","amount","cell","cellStyle","cells","cellsByRow","code","columnTime","columns","criticalHigh","criticalLow","current","cutoff","dateKey","dateKeys","entryCode","entryLoinc","existing","explicit","flowClassifyFlag","flowCutoffDate","flowDateKey","flowDayTime","flowDisplay","flowDisplayDate","flowFlagCellStyle","flowGetPath","flowIsSeparatorEntry","flowMatchesRow","flowNormalizeMedications","flowNormalizeRows","flowNumber","flowParseDate","flowRunQuery","flowToText","hasObservationRows","header","headerStyle","label","limit","loinc","medications","meds","name","normalHigh","normalLow","observationIndex","observationRows","parsed","parsedDate","rangeLabel","raw","renderSheet","resolvedMinWidth","rowList","sd","source","startTime","steps","stopRaw","stopTime","text","units","value"],
+  './FlowSheet/index.jsx': ["FLOW_CELL_STYLE","FLOW_LABEL_CELL_STYLE","FlowMedicationBarCells","FlowSheet","FlowSheetGrid","active","allMedications","amount","cell","cellStyle","cells","cellsByRow","code","columnTime","columns","courses","criticalHigh","criticalLow","current","cutoff","dateKey","dateKeys","doseFrequency","entryCode","entryLoinc","existing","explicit","flowClassifyFlag","flowCutoffDate","flowDateKey","flowDayTime","flowDisplay","flowDisplayDate","flowFlagCellStyle","flowGetPath","flowIsSeparatorEntry","flowMatchesRow","flowMedicationMatches","flowMedicationRowLabel","flowNormalizeMedications","flowNormalizeRows","flowNumber","flowParseDate","flowRunQuery","flowToText","hasObservationRows","header","headerStyle","label","limit","loinc","match","matched","matches","meds","name","needle","normalHigh","normalLow","observationIndex","observationRows","parsed","parsedDate","rangeLabel","raw","remaining","renderSheet","resolvedMedicationsMode","resolvedMinWidth","rowList","sd","source","startTime","steps","stopRaw","stopTime","text","units","value"],
   './FocusedObservationHistory/index.jsx': ["FocusedObservationHistory","activeWatchField","candidate","current","date","day","direct","effectiveObservationCode","effectiveObservationComment","effectiveTitle","formatDate","getFocusedFieldId","handleBlur","handleFocus","hasFocusTarget","host","isTrackedFieldFocused","isVisible","items","month","normalizeItems","normalizedWatchFields","parseDate","parsed","parsedDate","pathSegments","patientPath","raw","resolveMoisValue","resolvePath","rows","sd","textValue","year"],
   './FormContextHeader/index.jsx': ["FormContextHeader","FormContextHeaderSchema","appointmentDateTime","code","date","display","encounter","legacyContextDate","legacyContextDateTime","legacyContextText","legacyContextVisitCode","legacyFieldWrap","legacySmallFieldWrap","legacyTextStyles","match","providerName","raw","renderReadOnlyField","sd","section","values"],
   './FormSessionRuntime/index.jsx': ["FormSessionContext","FormSessionProvider","__cloneSessionValue","__getSessionContext","applySessionUpdate","cloneFormSessionState","contextValue","formData","mergeFormSessionState","normalizeSessionState","normalized","normalizedSessionData","result","root","selectedSessionData","selectedSessionDataWithSetter","sessionContext","sessionDataWithSetter","sessionScopedSetter","sessionSetFormData","setFormData","target","useFormSessionData"],
