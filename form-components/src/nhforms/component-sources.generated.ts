@@ -8907,6 +8907,14 @@ const flowDisplay = (value) => {
   return flowToText(value).trim()
 }
 
+// Code text for coded values: prefer the code over the human display.
+const flowCodeOf = (value) => {
+  if (value && typeof value === "object") {
+    return flowToText(value.code ?? value.display).trim()
+  }
+  return flowToText(value).trim()
+}
+
 // Day-precision timestamp so medication ranges compare cleanly against column dates.
 const flowDayTime = (value) => {
   const parsed = flowParseDate(flowDateKey(value))
@@ -9080,10 +9088,13 @@ const flowNormalizeMedications = (source, lookback) => {
       return {
         name,
         genericName: flowDisplay(entry.genericName).toUpperCase(),
-        atcCode: flowDisplay(entry.atcCode).toUpperCase(),
+        atcCode: flowCodeOf(entry.atcCode).toUpperCase(),
+        atcDisplay: flowDisplay(entry.atcCode).toUpperCase(),
         doseFrequency,
         startTime,
         stopTime,
+        startKey: flowDateKey(flowToText(entry.startDate)),
+        stopKey: stopRaw ? flowDateKey(stopRaw) : "",
       }
     })
     .filter((entry) => entry.name && entry.startTime !== null)
@@ -9093,11 +9104,13 @@ const flowNormalizeMedications = (source, lookback) => {
   return meds
 }
 
-// A configured medication row matches a course by name/generic substring or ATC prefix.
+// A configured medication row matches a course by name/generic/ATC-class
+// substring, or by ATC code prefix (e.g. "C09" catches every ACE inhibitor).
 const flowMedicationMatches = (med, match) => {
   const needle = flowToText(match).trim().toUpperCase()
   if (!needle) return false
   if (med.name.includes(needle) || med.genericName.includes(needle)) return true
+  if (med.atcDisplay && med.atcDisplay.includes(needle)) return true
   return Boolean(med.atcCode && med.atcCode.startsWith(needle))
 }
 
@@ -9341,11 +9354,22 @@ const FlowSheet = ({
     return { medRowCourses: courses, medications: remaining }
   }, [allMedications, resolvedMedicationsMode, rowList])
 
-  // Keep the most recent N dates but display oldest -> newest like MOIS.
+  // Keep the most recent N dates but display oldest -> newest like MOIS. A
+  // medications-only sheet has no observation dates, so fall back to the
+  // course start/stop dates as the column axis.
   const columns = useMemo(() => {
     const limit = Math.max(1, Math.floor(Number(maxColumns)) || 13)
-    return Array.from(dateKeys).sort().slice(-limit)
-  }, [dateKeys, maxColumns])
+    let keys = Array.from(dateKeys)
+    if (keys.length === 0) {
+      const medKeys = new Set()
+      allMedications.forEach((med) => {
+        if (med.startKey) medKeys.add(med.startKey)
+        if (med.stopKey) medKeys.add(med.stopKey)
+      })
+      keys = Array.from(medKeys)
+    }
+    return keys.sort().slice(-limit)
+  }, [allMedications, dateKeys, maxColumns])
 
   const hasObservationRows = rowList.some((row) => row.kind === "observation" || row.kind === "medication")
   if (!hasObservationRows && medications.length === 0) {

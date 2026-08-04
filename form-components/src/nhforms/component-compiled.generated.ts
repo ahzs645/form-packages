@@ -8690,6 +8690,14 @@ const flowDisplay = value => {
   return flowToText(value).trim();
 };
 
+// Code text for coded values: prefer the code over the human display.
+const flowCodeOf = value => {
+  if (value && typeof value === "object") {
+    return flowToText(value.code ?? value.display).trim();
+  }
+  return flowToText(value).trim();
+};
+
 // Day-precision timestamp so medication ranges compare cleanly against column dates.
 const flowDayTime = value => {
   const parsed = flowParseDate(flowDateKey(value));
@@ -8871,10 +8879,13 @@ const flowNormalizeMedications = (source, lookback) => {
     return {
       name,
       genericName: flowDisplay(entry.genericName).toUpperCase(),
-      atcCode: flowDisplay(entry.atcCode).toUpperCase(),
+      atcCode: flowCodeOf(entry.atcCode).toUpperCase(),
+      atcDisplay: flowDisplay(entry.atcCode).toUpperCase(),
       doseFrequency,
       startTime,
-      stopTime
+      stopTime,
+      startKey: flowDateKey(flowToText(entry.startDate)),
+      stopKey: stopRaw ? flowDateKey(stopRaw) : ""
     };
   }).filter(entry => entry.name && entry.startTime !== null)
   // A course fully stopped before the lookback window never draws a bar; drop it.
@@ -8883,11 +8894,13 @@ const flowNormalizeMedications = (source, lookback) => {
   return meds;
 };
 
-// A configured medication row matches a course by name/generic substring or ATC prefix.
+// A configured medication row matches a course by name/generic/ATC-class
+// substring, or by ATC code prefix (e.g. "C09" catches every ACE inhibitor).
 const flowMedicationMatches = (med, match) => {
   const needle = flowToText(match).trim().toUpperCase();
   if (!needle) return false;
   if (med.name.includes(needle) || med.genericName.includes(needle)) return true;
+  if (med.atcDisplay && med.atcDisplay.includes(needle)) return true;
   return Boolean(med.atcCode && med.atcCode.startsWith(needle));
 };
 const flowMedicationRowLabel = (label, med, showDose) => showDose && med?.doseFrequency ? label + " — " + med.doseFrequency : label;
@@ -9123,11 +9136,22 @@ const FlowSheet = ({
     };
   }, [allMedications, resolvedMedicationsMode, rowList]);
 
-  // Keep the most recent N dates but display oldest -> newest like MOIS.
+  // Keep the most recent N dates but display oldest -> newest like MOIS. A
+  // medications-only sheet has no observation dates, so fall back to the
+  // course start/stop dates as the column axis.
   const columns = useMemo(() => {
     const limit = Math.max(1, Math.floor(Number(maxColumns)) || 13);
-    return Array.from(dateKeys).sort().slice(-limit);
-  }, [dateKeys, maxColumns]);
+    let keys = Array.from(dateKeys);
+    if (keys.length === 0) {
+      const medKeys = new Set();
+      allMedications.forEach(med => {
+        if (med.startKey) medKeys.add(med.startKey);
+        if (med.stopKey) medKeys.add(med.stopKey);
+      });
+      keys = Array.from(medKeys);
+    }
+    return keys.sort().slice(-limit);
+  }, [allMedications, dateKeys, maxColumns]);
   const hasObservationRows = rowList.some(row => row.kind === "observation" || row.kind === "medication");
   if (!hasObservationRows && medications.length === 0) {
     return /*#__PURE__*/React.createElement(Stack, {
@@ -34470,7 +34494,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './FieldStampButton/index.jsx': ["ButtonComponent","FieldStampButton","buildContext","clearStamp","context","effectiveStampFieldId","fallback","fieldData","fieldId","isDisabled","isSigned","normalizeStampTargets","normalizeStampValue","normalizedTargets","raw","resolveLiteralValue","resolvePathValue","sd","signedAt","signedAtText","sourcePath","stamp","stampRecord","statusText","value","written"],
   './FindCodeSelect/index.jsx': ["CONTROL_KEY_TOKENS","FindCodeSelect","FindCodeSelectBase","FindCodeSelectWithCodeList","FindCodeSelectWithSourceLookup","aliasSets","aliases","boundValue","candidateKeys","candidates","clearTargets","code","codeListFromContext","combinedStyles","comboSelectedKey","currentValues","customSources","defaultComboStyles","defaultGetCandidates","defaultMapCandidateSavedValue","defaultRenderSelected","directKeys","effectiveFieldId","effectiveLabelPosition","fallback","fallbackItems","filteringActive","fluentLabel","freeText","freeTextItem","getItemKey","getSizeStyles","handleChange","handleInputValueChange","handleKeyDown","handlePendingValueChanged","hasExplicitOptionList","hasLookupSelection","hasSearchText","hasSourceLookup","hidden","i","idx","isDeleteKey","isEmpty","isKeyboardToken","isMultiSelect","item","items","key","keys","leftKey","mapped","match","matchingKey","nextValues","normalizeLookupName","normalizeOption","normalizeSelectedValues","normalized","normalizedLabel","optionList","optionLists","options","rawKey","renderCandidateOption","resolveItems","resolveLookupPath","rightKey","sameSelectedItem","sd","sectionLayout","seen","segments","selected","selectedCode","selectedItem","selectedItems","selectedKey","selectedKeySet","selectedKeys","shouldSelect","shouldSuppressLayoutItemLabel","showChildren","sizeMap","sizeStyles","sourceEntries","sourceItems","sourceLookupItems","storedValue","targets","text","valueForLookupTarget","withoutItem","wrapperStyle"],
   './FirstNationsStatus/index.jsx': ["FirstNationsStatus","connections","ethnicity","firstNationsStatusPatientFields","firstNationsStatusSchema","hasReserveName","races","reserveConnection","reserveName","selfId"],
-  './FlowSheet/index.jsx': ["FLOW_CELL_STYLE","FLOW_LABEL_CELL_STYLE","FlowMedicationBarCells","FlowSheet","FlowSheetGrid","active","allMedications","amount","cell","cellStyle","cells","cellsByRow","code","columnTime","columns","courses","criticalHigh","criticalLow","current","cutoff","dateKey","dateKeys","doseFrequency","entryCode","entryLoinc","existing","explicit","flowClassifyFlag","flowCutoffDate","flowDateKey","flowDayTime","flowDisplay","flowDisplayDate","flowFlagCellStyle","flowGetPath","flowIsSeparatorEntry","flowMatchesRow","flowMedicationMatches","flowMedicationRowLabel","flowNormalizeMedications","flowNormalizeRows","flowNumber","flowParseDate","flowRunQuery","flowToText","hasObservationRows","header","headerStyle","label","limit","loinc","match","matched","matches","meds","name","needle","normalHigh","normalLow","observationIndex","observationRows","parsed","parsedDate","rangeLabel","raw","remaining","renderSheet","resolvedMedicationsMode","resolvedMinWidth","rowList","sd","source","startTime","steps","stopRaw","stopTime","text","units","value"],
+  './FlowSheet/index.jsx': ["FLOW_CELL_STYLE","FLOW_LABEL_CELL_STYLE","FlowMedicationBarCells","FlowSheet","FlowSheetGrid","active","allMedications","amount","cell","cellStyle","cells","cellsByRow","code","columnTime","columns","courses","criticalHigh","criticalLow","current","cutoff","dateKey","dateKeys","doseFrequency","entryCode","entryLoinc","existing","explicit","flowClassifyFlag","flowCodeOf","flowCutoffDate","flowDateKey","flowDayTime","flowDisplay","flowDisplayDate","flowFlagCellStyle","flowGetPath","flowIsSeparatorEntry","flowMatchesRow","flowMedicationMatches","flowMedicationRowLabel","flowNormalizeMedications","flowNormalizeRows","flowNumber","flowParseDate","flowRunQuery","flowToText","hasObservationRows","header","headerStyle","keys","label","limit","loinc","match","matched","matches","medKeys","meds","name","needle","normalHigh","normalLow","observationIndex","observationRows","parsed","parsedDate","rangeLabel","raw","remaining","renderSheet","resolvedMedicationsMode","resolvedMinWidth","rowList","sd","source","startTime","steps","stopRaw","stopTime","text","units","value"],
   './FocusedObservationHistory/index.jsx': ["FocusedObservationHistory","activeWatchField","candidate","current","date","day","direct","effectiveObservationCode","effectiveObservationComment","effectiveTitle","formatDate","getFocusedFieldId","handleBlur","handleFocus","hasFocusTarget","host","isTrackedFieldFocused","isVisible","items","month","normalizeItems","normalizedWatchFields","parseDate","parsed","parsedDate","pathSegments","patientPath","raw","resolveMoisValue","resolvePath","rows","sd","textValue","year"],
   './FormContextHeader/index.jsx': ["FormContextHeader","FormContextHeaderSchema","appointmentDateTime","code","date","display","encounter","legacyContextDate","legacyContextDateTime","legacyContextText","legacyContextVisitCode","legacyFieldWrap","legacySmallFieldWrap","legacyTextStyles","match","providerName","raw","renderReadOnlyField","sd","section","values"],
   './FormSessionRuntime/index.jsx': ["FormSessionContext","FormSessionProvider","__cloneSessionValue","__getSessionContext","applySessionUpdate","cloneFormSessionState","contextValue","formData","mergeFormSessionState","normalizeSessionState","normalized","normalizedSessionData","result","root","selectedSessionData","selectedSessionDataWithSetter","sessionContext","sessionDataWithSetter","sessionScopedSetter","sessionSetFormData","setFormData","target","useFormSessionData"],

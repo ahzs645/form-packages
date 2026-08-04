@@ -26,6 +26,14 @@ const flowDisplay = (value) => {
   return flowToText(value).trim()
 }
 
+// Code text for coded values: prefer the code over the human display.
+const flowCodeOf = (value) => {
+  if (value && typeof value === "object") {
+    return flowToText(value.code ?? value.display).trim()
+  }
+  return flowToText(value).trim()
+}
+
 // Day-precision timestamp so medication ranges compare cleanly against column dates.
 const flowDayTime = (value) => {
   const parsed = flowParseDate(flowDateKey(value))
@@ -199,7 +207,8 @@ const flowNormalizeMedications = (source, lookback) => {
       return {
         name,
         genericName: flowDisplay(entry.genericName).toUpperCase(),
-        atcCode: flowDisplay(entry.atcCode).toUpperCase(),
+        atcCode: flowCodeOf(entry.atcCode).toUpperCase(),
+        atcDisplay: flowDisplay(entry.atcCode).toUpperCase(),
         doseFrequency,
         startTime,
         stopTime,
@@ -214,11 +223,13 @@ const flowNormalizeMedications = (source, lookback) => {
   return meds
 }
 
-// A configured medication row matches a course by name/generic substring or ATC prefix.
+// A configured medication row matches a course by name/generic/ATC-class
+// substring, or by ATC code prefix (e.g. "C09" catches every ACE inhibitor).
 const flowMedicationMatches = (med, match) => {
   const needle = flowToText(match).trim().toUpperCase()
   if (!needle) return false
   if (med.name.includes(needle) || med.genericName.includes(needle)) return true
+  if (med.atcDisplay && med.atcDisplay.includes(needle)) return true
   return Boolean(med.atcCode && med.atcCode.startsWith(needle))
 }
 

@@ -56,6 +56,16 @@ const MEDICATIONS = [
   },
   { medication: "Berberine 500mg", startDate: "2024-01-01" },
   { medication: "OLD COURSE 10MG", startDate: "2010-01-01", endDate: "2010-06-01" },
+  {
+    medication: { code: "LISINOPRIL", display: "Lisinopril 10mg", system: "MOIS-MEDICATION" },
+    genericName: "Lisinopril",
+    atcCode: { code: "C09AA03", display: "ACE inhibitors", system: "ATC" },
+    dose: "10mg",
+    route: "PO",
+    frequency: "Daily",
+    startDate: "2024-01-01",
+    stopDate: null,
+  },
 ];
 
 function renderFlowSheet(props: Record<string, unknown>, sourceOverrides?: Record<string, unknown>) {
@@ -204,6 +214,23 @@ describe("FlowSheet", () => {
     // ...but the matched warfarin course only appears as the placed row.
     expect(text).not.toContain("APO-WARFARIN 1 MG TABLET");
     expect(text).toContain("Warfarin");
+    act(() => harness.root.unmount());
+  });
+
+  it("matches coded ATC prefixes and composes dose from dose/route/frequency", () => {
+    const harness = renderFlowSheet({
+      rows: [
+        { kind: "medication", match: "C09", label: "ACE Inhibitor" },
+        { code: "1950", label: "Blood Pressure" },
+      ],
+      medicationsMode: "selected",
+      showMedicationDose: true,
+    });
+    const firstRow = harness.container.querySelector("tbody tr");
+    // atcCode {code: "C09AA03"} matches the C09 prefix even though the display
+    // text is "ACE inhibitors"; dose falls back to dose+route+frequency.
+    expect(firstRow?.textContent).toContain("ACE Inhibitor — 10mg PO Daily");
+    expect(firstRow?.textContent).toContain("========");
     act(() => harness.root.unmount());
   });
 
