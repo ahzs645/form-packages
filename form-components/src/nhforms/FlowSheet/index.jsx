@@ -203,6 +203,8 @@ const flowNormalizeMedications = (source, lookback) => {
         doseFrequency,
         startTime,
         stopTime,
+        startKey: flowDateKey(flowToText(entry.startDate)),
+        stopKey: stopRaw ? flowDateKey(stopRaw) : "",
       }
     })
     .filter((entry) => entry.name && entry.startTime !== null)
@@ -460,11 +462,22 @@ const FlowSheet = ({
     return { medRowCourses: courses, medications: remaining }
   }, [allMedications, resolvedMedicationsMode, rowList])
 
-  // Keep the most recent N dates but display oldest -> newest like MOIS.
+  // Keep the most recent N dates but display oldest -> newest like MOIS. A
+  // medications-only sheet has no observation dates, so fall back to the
+  // course start/stop dates as the column axis.
   const columns = useMemo(() => {
     const limit = Math.max(1, Math.floor(Number(maxColumns)) || 13)
-    return Array.from(dateKeys).sort().slice(-limit)
-  }, [dateKeys, maxColumns])
+    let keys = Array.from(dateKeys)
+    if (keys.length === 0) {
+      const medKeys = new Set()
+      allMedications.forEach((med) => {
+        if (med.startKey) medKeys.add(med.startKey)
+        if (med.stopKey) medKeys.add(med.stopKey)
+      })
+      keys = Array.from(medKeys)
+    }
+    return keys.sort().slice(-limit)
+  }, [allMedications, dateKeys, maxColumns])
 
   const hasObservationRows = rowList.some((row) => row.kind === "observation" || row.kind === "medication")
   if (!hasObservationRows && medications.length === 0) {
