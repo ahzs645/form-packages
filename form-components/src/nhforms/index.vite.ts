@@ -70,6 +70,13 @@ const componentModules = import.meta.glob('./**/index.jsx', {
   import: 'default'
 }) as Record<string, string>;
 
+// Identity.json metadata, for dependency-ordered loading (see
+// orderSourcesByDependencies below).
+const componentIdentityModules = import.meta.glob('./**/Identity.json', {
+  eager: true,
+  import: 'default'
+}) as Record<string, { components?: unknown }>;
+
 // Shared authorship runtime (idempotent window.__nhAuth installer). Prepended to
 // any component whose source references `__nhAuth` so the engine runs in the
 // preview the same way the nhforms generator inlines it for Next.js/real MOIS.
@@ -385,6 +392,8 @@ function loadComponentCode(code: string, componentName: string, additionalCompon
     'FormSessionProvider', 'cloneFormSessionState', 'mergeFormSessionState', 'useFormSessionData',
     // InvestigationTabs exports
     'InvestigationTabs', 'InvestigationTab',
+    // ObservationKit helper namespace (observation-family shared kernel)
+    'ObservationKit',
     // SubformScoring exports
     'SubformScoring',
     // PDF regeneration exports
@@ -577,6 +586,32 @@ function applyRegistryModuleAliases(registry: Record<string, any>): void {
   });
 }
 
+/** In-place stable topological sort by Identity.json component dependencies. */
+function orderSourcesByDependencies(sources: Array<{ name: string; code: string }>): void {
+  const byName = new Map(sources.map((source) => [source.name, source]));
+  const dependenciesOf = (name: string): string[] => {
+    const identity = componentIdentityModules[`./${name}/Identity.json`];
+    if (!identity || !Array.isArray(identity.components)) return [];
+    return identity.components.filter((entry): entry is string => typeof entry === 'string');
+  };
+  const ordered: typeof sources = [];
+  const placed = new Set<string>();
+  const visiting = new Set<string>();
+  const visit = (name: string) => {
+    const source = byName.get(name);
+    if (!source || placed.has(name) || visiting.has(name)) return;
+    visiting.add(name);
+    for (const dependency of dependenciesOf(name)) {
+      visit(dependency);
+    }
+    visiting.delete(name);
+    placed.add(name);
+    ordered.push(source);
+  };
+  for (const source of sources) visit(source.name);
+  sources.splice(0, sources.length, ...ordered);
+}
+
 /**
  * Load all NHForms components with two-pass loading for cross-references
  * Pass 1: Load all components (some may have missing dependencies)
@@ -592,6 +627,15 @@ function loadAllComponents(): Record<string, any> {
       componentSources.push({ name: match[1], code: code as string });
     }
   }
+
+  // Load dependencies (Identity.json "components") before their consumers.
+  // A consumer's pass-2 closure captures whatever registry entry exists when
+  // the consumer itself reloads, so without this ordering a consumer that
+  // reloads before its dependency keeps the dependency's pass-1 closure —
+  // which cannot resolve ITS dependencies (e.g. HistoricalObservationTable ->
+  // ObservationQuery -> ObservationKit). Stable DFS: unrelated components
+  // keep their original relative order; cycles fall back to that order too.
+  orderSourcesByDependencies(componentSources);
 
   // Pass 1: Load all components without cross-references
   for (const { name, code } of componentSources) {

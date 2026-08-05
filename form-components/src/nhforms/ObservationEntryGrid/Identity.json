@@ -4,7 +4,7 @@
   "description": "MOIS Investigation-tab style measurements grid: browse chart observations with abnormal flags and reference-range detail, add new measurements with quick-entry reminder buttons, staged as DCO observation updates on save.",
   "version": {
     "major": 1,
-    "minor": 1,
+    "minor": 2,
     "patch": 0
   },
   "type": "component",
@@ -22,5 +22,7 @@
     "minor": 28,
     "patch": 10
   },
-  "components": []
+  "components": [
+    "ObservationKit"
+  ]
 }

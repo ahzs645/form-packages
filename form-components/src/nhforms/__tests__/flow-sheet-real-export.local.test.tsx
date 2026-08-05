@@ -17,6 +17,10 @@ const EXPORT_XML = path.join(os.homedir(), "Downloads", "MOIS_REF_10000076", "00
 
 const NH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const source = fs.readFileSync(path.join(NH, "FlowSheet", "index.jsx"), "utf8");
+// FlowSheet depends on the ObservationKit helper module (shared engine scope
+// at runtime); concatenate it ahead of the component source like the export
+// bundle does.
+const kitSource = fs.readFileSync(path.join(NH, "ObservationKit", "index.jsx"), "utf8");
 
 const passthrough = ({ children }: { children?: React.ReactNode }) => React.createElement("div", null, children);
 const FluentStub = {
@@ -37,7 +41,7 @@ describe.skipIf(!fs.existsSync(EXPORT_XML))("FlowSheet against MOIS_REF_10000076
     expect(patient.observations.length).toBeGreaterThan(100);
     expect(patient.longTermMedications.length).toBeGreaterThan(10);
 
-    const compiled = Babel.transform(source, { presets: ["react"], filename: "index.jsx" }).code ?? "";
+    const compiled = Babel.transform(`${kitSource}\n${source}`, { presets: ["react"], filename: "index.jsx" }).code ?? "";
     // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func
     const factory = new Function("React", "Fluent", "useSourceData", `${compiled};\nreturn { FlowSheet };`);
     const FlowSheet = factory(React, FluentStub, () => ({ patient })).FlowSheet;

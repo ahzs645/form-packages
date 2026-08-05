@@ -4,8 +4,8 @@
   "description": "Author-defined observation query: picked codes, a past-time cutoff, row limit, and sort, displayed as a date-grouped table, latest-value summary, or trend chart.",
   "version": {
     "major": 1,
-    "minor": 0,
-    "patch": 1
+    "minor": 1,
+    "patch": 0
   },
   "type": "component",
   "owner": "Northern Health",
@@ -22,5 +22,8 @@
     "minor": 28,
     "patch": 10
   },
-  "components": ["ObservationChart"]
+  "components": [
+    "ObservationChart",
+    "ObservationKit"
+  ]
 }

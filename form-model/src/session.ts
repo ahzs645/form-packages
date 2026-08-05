@@ -70,6 +70,7 @@ export interface SessionWorkflowSnapshot {
   paginationEnabled: boolean;
   pageCount: number;
   pageNames?: string[];
+  pagePrintLabels?: (string | null)[];
   formPresentation?: BuilderFormPresentation;
   investigationTabs?: BuilderInvestigationTab[];
   investigationTabAssignments?: Record<string, string | null>;

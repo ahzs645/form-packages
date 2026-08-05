@@ -1,65 +1,15 @@
 const { useMemo, useState } = React
 const { Stack, Label, Text, PrimaryButton, Dialog, DialogType, DialogFooter } = Fluent
 
-const flowToText = (value) => {
-  if (value === null || value === undefined) return ""
-  return String(value)
-}
-
-const flowDateKey = (value) => {
-  const raw = flowToText(value)
-  return raw.includes("T") ? raw.split("T")[0] : raw
-}
-
-const flowParseDate = (value) => {
-  const raw = flowToText(value).trim()
-  if (!raw) return null
-  const parsed = new Date(raw.includes("T") ? raw : raw.replace(/[./]/g, "-"))
-  return Number.isNaN(parsed.getTime()) ? null : parsed
-}
-
-// Display text for values that may be plain strings or {code, display} objects.
-const flowDisplay = (value) => {
-  if (value && typeof value === "object") {
-    return flowToText(value.display ?? value.text ?? value.code).trim()
-  }
-  return flowToText(value).trim()
-}
-
-// Code text for coded values: prefer the code over the human display.
-const flowCodeOf = (value) => {
-  if (value && typeof value === "object") {
-    return flowToText(value.code ?? value.display).trim()
-  }
-  return flowToText(value).trim()
-}
-
-// Day-precision timestamp so medication ranges compare cleanly against column dates.
-const flowDayTime = (value) => {
-  const parsed = flowParseDate(flowDateKey(value))
-  return parsed ? parsed.getTime() : null
-}
-
-// MOIS renders dates with dot separators (2024.11.21).
-const flowDisplayDate = (dateKey) => flowToText(dateKey).replace(/-/g, ".")
-
-const flowGetPath = (sd, path, fallback) => {
-  const steps = flowToText(path || fallback).split(".").filter(Boolean)
-  let current = sd
-  for (const step of steps) {
-    if (current && typeof current === "object") {
-      current = current[step]
-    } else {
-      return []
-    }
-  }
-  return Array.isArray(current) ? current : []
-}
+// Date/path/code-matching/abnormal-flag primitives live in the shared
+// ObservationKit helper module (declared in Identity.json). ObservationKit is
+// referenced only inside function bodies because component files load in no
+// guaranteed order.
 
 // A row whose code is all dashes is a MOIS-style "----" separator element.
 const flowIsSeparatorEntry = (entry) => {
   if (entry && typeof entry === "object" && entry.kind === "separator") return true
-  const code = typeof entry === "string" ? entry : flowToText(entry?.code)
+  const code = typeof entry === "string" ? entry : ObservationKit.toText(entry?.code)
   return /^-+$/.test(code.trim())
 }
 
@@ -68,120 +18,56 @@ const flowNormalizeRows = (rows) => {
   return rows
     .map((entry) => {
       if (flowIsSeparatorEntry(entry)) {
-        return { kind: "separator", label: typeof entry === "object" ? flowToText(entry.label).trim() : "" }
+        return { kind: "separator", label: typeof entry === "object" ? ObservationKit.toText(entry.label).trim() : "" }
       }
       if (entry && typeof entry === "object" && entry.kind === "medication") {
-        const match = flowToText(entry.match).trim()
+        const match = ObservationKit.toText(entry.match).trim()
         if (!match) return null
-        return { kind: "medication", match, label: flowToText(entry.label).trim() || match }
+        return { kind: "medication", match, label: ObservationKit.toText(entry.label).trim() || match }
       }
       if (typeof entry === "string") {
         const code = entry.trim()
         return code ? { kind: "observation", code, label: code, loincCode: "", units: "" } : null
       }
       if (!entry || typeof entry !== "object") return null
-      const code = flowToText(entry.code).trim()
+      const code = ObservationKit.toText(entry.code).trim()
       if (!code) return null
-      const label = flowToText(entry.label).trim() || code
-      const units = flowToText(entry.units).trim()
+      const label = ObservationKit.toText(entry.label).trim() || code
+      const units = ObservationKit.toText(entry.units).trim()
       return {
         kind: "observation",
         code,
         label: units ? label + " (" + units + ")" : label,
-        loincCode: flowToText(entry.loincCode).trim(),
+        loincCode: ObservationKit.toText(entry.loincCode).trim(),
         units,
       }
     })
     .filter(Boolean)
 }
 
-const flowCutoffDate = (lookback) => {
-  if (!lookback || typeof lookback !== "object") return null
-  const amount = Math.floor(Number(lookback.amount))
-  if (!Number.isFinite(amount) || amount <= 0) return null
-  const cutoff = new Date()
-  if (lookback.unit === "days") {
-    cutoff.setDate(cutoff.getDate() - amount)
-  } else if (lookback.unit === "years") {
-    cutoff.setFullYear(cutoff.getFullYear() - amount)
-  } else if (lookback.unit === "months") {
-    cutoff.setMonth(cutoff.getMonth() - amount)
-  } else {
-    return null
-  }
-  return cutoff
-}
-
-const flowMatchesRow = (entry, row) => {
-  const entryCode = flowToText(entry?.observationCode).trim().toLowerCase()
-  const entryLoinc = flowToText(entry?.loincCode).trim().toLowerCase()
-  const code = row.code.toLowerCase()
-  const loinc = row.loincCode.toLowerCase()
-  if (entryCode && (entryCode === code || (loinc && entryCode === loinc))) return true
-  if (entryLoinc && (entryLoinc === code || (loinc && entryLoinc === loinc))) return true
-  return false
-}
-
-const flowNumber = (value) => {
-  const text = flowToText(value).trim()
-  if (!text) return null
-  const parsed = Number(text)
-  return Number.isFinite(parsed) ? parsed : null
-}
-
-// Four MOIS abnormal bands: critical LL/HH (absurd/very ranges) outrank L/H.
-const flowClassifyFlag = (entry, rawValue) => {
-  const explicit =
-    entry?.abnormalFlag && typeof entry.abnormalFlag === "object"
-      ? flowToText(entry.abnormalFlag.code).trim()
-      : flowToText(entry?.abnormalFlag).trim()
-  if (explicit) return explicit
-  const value = flowNumber(rawValue)
-  if (value === null) return ""
-  const criticalLow = flowNumber(entry?.rangeAbsurdLow) ?? flowNumber(entry?.rangeVeryLow)
-  const criticalHigh = flowNumber(entry?.rangeAbsurdHigh) ?? flowNumber(entry?.rangeVeryHigh)
-  const normalLow = flowNumber(entry?.rangeNormalLow)
-  const normalHigh = flowNumber(entry?.rangeNormalHigh)
-  if (criticalLow !== null && value < criticalLow) return "LL"
-  if (criticalHigh !== null && value > criticalHigh) return "HH"
-  if (normalLow !== null && value < normalLow) return "L"
-  if (normalHigh !== null && value > normalHigh) return "H"
-  return ""
-}
-
-const flowFlagCellStyle = (flag) => {
-  if (flag === "LL" || flag === "HH") {
-    return { background: "#fde7e9", color: "#a4262c", fontWeight: 600 }
-  }
-  if (flag === "L" || flag === "H") {
-    return { background: "#fff4ce" }
-  }
-  return {}
-}
-
 // Collect matched observations per row and the distinct date columns they land on.
 const flowRunQuery = (sd, { sourcePath, datePath, rows, lookback }) => {
-  const source = flowGetPath(sd, sourcePath, "patient.observations")
-  const cutoff = flowCutoffDate(lookback)
+  const source = ObservationKit.getPath(sd, sourcePath, "patient.observations")
+  const cutoff = ObservationKit.cutoffDate(lookback)
   const observationRows = rows.filter((row) => row.kind === "observation")
   const cellsByRow = observationRows.map(() => new Map())
   const dateKeys = new Set()
   source.forEach((entry) => {
     if (!entry || typeof entry !== "object") return
-    const parsedDate = flowParseDate(entry[datePath])
+    const parsedDate = ObservationKit.parseDate(entry[datePath])
     if (!parsedDate) return
     if (cutoff && parsedDate.getTime() < cutoff.getTime()) return
     observationRows.forEach((row, rowIndex) => {
-      if (!flowMatchesRow(entry, row)) return
-      const dateKey = flowDateKey(entry[datePath])
+      if (!ObservationKit.matchesCode(entry, row)) return
+      const dateKey = ObservationKit.dateKey(entry[datePath])
       if (!dateKey) return
-      const value = flowToText(entry.value ?? entry.display ?? entry.report ?? "")
+      const value = ObservationKit.extractValue(entry)
       const existing = cellsByRow[rowIndex].get(dateKey)
       if (existing && existing.time >= parsedDate.getTime()) return
       cellsByRow[rowIndex].set(dateKey, {
         time: parsedDate.getTime(),
         value,
-        flag: flowClassifyFlag(entry, value),
+        flag: ObservationKit.classifyFlag(entry, value),
       })
       dateKeys.add(dateKey)
     })
@@ -190,30 +76,30 @@ const flowRunQuery = (sd, { sourcePath, datePath, rows, lookback }) => {
 }
 
 const flowNormalizeMedications = (source, lookback) => {
-  const cutoff = flowCutoffDate(lookback)
+  const cutoff = ObservationKit.cutoffDate(lookback)
   const meds = source
     .filter((entry) => entry && typeof entry === "object")
     .map((entry) => {
       const name =
-        flowDisplay(entry.medication).toUpperCase() || flowDisplay(entry.genericName).toUpperCase()
-      const startTime = flowDayTime(entry.startDate)
-      const stopRaw = flowToText(entry.endDate ?? entry.stopDate).trim()
-      const stopTime = stopRaw ? flowDayTime(stopRaw) : null
+        ObservationKit.displayText(entry.medication).toUpperCase() || ObservationKit.displayText(entry.genericName).toUpperCase()
+      const startTime = ObservationKit.dayTime(entry.startDate)
+      const stopRaw = ObservationKit.toText(entry.endDate ?? entry.stopDate).trim()
+      const stopTime = stopRaw ? ObservationKit.dayTime(stopRaw) : null
       const doseFrequency =
-        flowDisplay(entry.doseFrequency) ||
-        [flowDisplay(entry.dose), flowDisplay(entry.route), flowDisplay(entry.frequency)]
+        ObservationKit.displayText(entry.doseFrequency) ||
+        [ObservationKit.displayText(entry.dose), ObservationKit.displayText(entry.route), ObservationKit.displayText(entry.frequency)]
           .filter(Boolean)
           .join(" ")
       return {
         name,
-        genericName: flowDisplay(entry.genericName).toUpperCase(),
-        atcCode: flowCodeOf(entry.atcCode).toUpperCase(),
-        atcDisplay: flowDisplay(entry.atcCode).toUpperCase(),
+        genericName: ObservationKit.displayText(entry.genericName).toUpperCase(),
+        atcCode: ObservationKit.codeText(entry.atcCode).toUpperCase(),
+        atcDisplay: ObservationKit.displayText(entry.atcCode).toUpperCase(),
         doseFrequency,
         startTime,
         stopTime,
-        startKey: flowDateKey(flowToText(entry.startDate)),
-        stopKey: stopRaw ? flowDateKey(stopRaw) : "",
+        startKey: ObservationKit.dateKey(ObservationKit.toText(entry.startDate)),
+        stopKey: stopRaw ? ObservationKit.dateKey(stopRaw) : "",
       }
     })
     .filter((entry) => entry.name && entry.startTime !== null)
@@ -226,7 +112,7 @@ const flowNormalizeMedications = (source, lookback) => {
 // A configured medication row matches a course by name/generic/ATC-class
 // substring, or by ATC code prefix (e.g. "C09" catches every ACE inhibitor).
 const flowMedicationMatches = (med, match) => {
-  const needle = flowToText(match).trim().toUpperCase()
+  const needle = ObservationKit.toText(match).trim().toUpperCase()
   if (!needle) return false
   if (med.name.includes(needle) || med.genericName.includes(needle)) return true
   if (med.atcDisplay && med.atcDisplay.includes(needle)) return true
@@ -264,7 +150,7 @@ const FLOW_LABEL_CELL_STYLE = {
 
 const FlowMedicationBarCells = ({ med, columns }) =>
   columns.map((dateKey) => {
-    const columnTime = flowDayTime(dateKey)
+    const columnTime = ObservationKit.dayTime(dateKey)
     const active =
       columnTime !== null &&
       med.startTime <= columnTime &&
@@ -320,7 +206,7 @@ const FlowSheetGrid = ({
             </th>
             {columns.map((dateKey) => (
               <th key={dateKey} style={headerStyle}>
-                {flowDisplayDate(dateKey)}
+                {ObservationKit.displayDate(dateKey)}
               </th>
             ))}
           </tr>
@@ -379,7 +265,7 @@ const FlowSheetGrid = ({
                 </td>
                 {columns.map((dateKey) => {
                   const cell = cells.get(dateKey)
-                  const cellStyle = { ...FLOW_CELL_STYLE, ...(cell && showFlags ? flowFlagCellStyle(cell.flag) : {}) }
+                  const cellStyle = { ...FLOW_CELL_STYLE, ...(cell && showFlags ? ObservationKit.flagCellStyle(cell.flag) : {}) }
                   return (
                     <td key={dateKey} style={cellStyle}>
                       {cell ? cell.value + (showFlags && cell.flag ? " " + cell.flag : "") : ""}
@@ -450,7 +336,7 @@ const FlowSheet = ({
 
   const allMedications = useMemo(() => {
     if (resolvedMedicationsMode === "none") return []
-    return flowNormalizeMedications(flowGetPath(sd, medicationPath, "patient.longTermMedications"), lookback)
+    return flowNormalizeMedications(ObservationKit.getPath(sd, medicationPath, "patient.longTermMedications"), lookback)
   }, [lookback, medicationPath, resolvedMedicationsMode, sd])
 
   // Expand each placed medication row into its matching chart courses, and
@@ -502,7 +388,7 @@ const FlowSheet = ({
 
   const rangeLabel =
     columns.length > 0
-      ? "DATE RANGE: " + flowDisplayDate(columns[0]) + " TO " + flowDisplayDate(columns[columns.length - 1])
+      ? "DATE RANGE: " + ObservationKit.displayDate(columns[0]) + " TO " + ObservationKit.displayDate(columns[columns.length - 1])
       : ""
 
   const renderSheet = (maxHeight) => {

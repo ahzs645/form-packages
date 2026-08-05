@@ -12,6 +12,10 @@ import { produce } from "immer";
 
 const NH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const source = fs.readFileSync(path.join(NH, "ObservationEntryGrid", "index.jsx"), "utf8");
+// ObservationEntryGrid depends on the ObservationKit helper module (shared
+// engine scope at runtime); concatenate it ahead of the component source like
+// the export bundle does.
+const kitSource = fs.readFileSync(path.join(NH, "ObservationKit", "index.jsx"), "utf8");
 
 type ActiveTuple = [any, (updater: any) => void];
 const ActiveDataContext = React.createContext<ActiveTuple>([{ field: { data: {}, status: {}, history: [] } }, () => {}]);
@@ -44,7 +48,7 @@ const FluentStub = {
 };
 
 function loadGrid(sourceData: Record<string, unknown>): React.ComponentType<any> {
-  const compiled = Babel.transform(source, { presets: ["react"], filename: "index.jsx" }).code ?? "";
+  const compiled = Babel.transform(`${kitSource}\n${source}`, { presets: ["react"], filename: "index.jsx" }).code ?? "";
   // Same bare-global contract used by the injected NHForms runtime.
   // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func
   const factory = new Function(

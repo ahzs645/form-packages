@@ -6526,7 +6526,7 @@ const _buildSubformFieldFromColumn = column => {
       return withCommon({
         id: fieldId,
         label,
-        type: "date",
+        type: column.withTime ? "datetime" : "date",
         placeholder: column.placeholder,
         required: column.required === true
       });
@@ -7193,7 +7193,7 @@ EditableTable = ({
   const currentRowCount = isModalMode ? displayRows.length : currentRows.length;
   const remaining = Number.isFinite(effectiveMaxRows) ? Math.max(0, effectiveMaxRows - currentRowCount) : Number.POSITIVE_INFINITY;
   const shouldShowActions = !isLocked && (allowEditRows || allowDeleteRows);
-  const renderEditorInput = (row, rowIndex, column, onValueChange, inline, rowReadOnly = false, onStampColumn = null, rowLockState = null) => {
+  const renderEditorControl = (row, rowIndex, column, onValueChange, inline, rowReadOnly = false, onStampColumn = null, rowLockState = null) => {
     const value = _getValueAtPath(row, column.dataPath || column.id);
     const realRowReadOnly = !!rowLockState?.authorship?.locked;
     const localStampLocked = !!rowLockState?.localStamp?.locked;
@@ -7236,6 +7236,18 @@ EditableTable = ({
           disabled: effectiveReadOnly
         });
       case "date":
+        // withTime columns persist the engine's getDateTimeString shape
+        // (YYYY-MM-DDTHH:mm) rather than a bare date.
+        if (column.withTime) {
+          return /*#__PURE__*/React.createElement(DateTimeSelect, {
+            inline: inline,
+            value: value || "",
+            onChange: newValue => onValueChange(rowIndex, column.id, newValue || ""),
+            placeholder: column.placeholder || "Select date and time",
+            readOnly: effectiveReadOnly,
+            disabled: effectiveReadOnly
+          });
+        }
         return /*#__PURE__*/React.createElement(DateSelect, {
           inline: inline,
           value: value || "",
@@ -7336,6 +7348,26 @@ EditableTable = ({
           disabled: effectiveReadOnly
         });
     }
+  };
+
+  // Inline cells render live Fluent controls, which print as empty boxed inputs
+  // and make a patient-facing handout unreadable. Mirror the formatted value as
+  // print-only text and drop the control on paper — the same split the legacy
+  // NHForms tables did by hand. The inline \`display: none\` keeps the mirror
+  // hidden when a host page ships no print stylesheet; the print rule's
+  // \`!important\` overrides it. Dialog editors (inline === false) never print.
+  const renderEditorInput = (row, rowIndex, column, onValueChange, inline, rowReadOnly = false, onStampColumn = null, rowLockState = null) => {
+    const control = renderEditorControl(row, rowIndex, column, onValueChange, inline, rowReadOnly, onStampColumn, rowLockState);
+    if (!inline) return control;
+    return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
+      className: "showonprint",
+      style: {
+        display: "none",
+        whiteSpace: "pre-wrap"
+      }
+    }, _formatCellValue(row, column) || " "), /*#__PURE__*/React.createElement("div", {
+      className: "hideonprint"
+    }, control));
   };
   const containerStyle = showBackground ? {
     padding: "16px",
@@ -7600,6 +7632,7 @@ EditableTable = ({
       }
     }, rowLock.note))));
   })))), allowAddRows && !isLocked && remaining > 0 && /*#__PURE__*/React.createElement(Stack, {
+    className: "hideonprint",
     horizontal: true,
     verticalAlign: "center",
     tokens: {
@@ -8729,62 +8762,16 @@ const {
   DialogType,
   DialogFooter
 } = Fluent;
-const flowToText = value => {
-  if (value === null || value === undefined) return "";
-  return String(value);
-};
-const flowDateKey = value => {
-  const raw = flowToText(value);
-  return raw.includes("T") ? raw.split("T")[0] : raw;
-};
-const flowParseDate = value => {
-  const raw = flowToText(value).trim();
-  if (!raw) return null;
-  const parsed = new Date(raw.includes("T") ? raw : raw.replace(/[./]/g, "-"));
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
-};
 
-// Display text for values that may be plain strings or {code, display} objects.
-const flowDisplay = value => {
-  if (value && typeof value === "object") {
-    return flowToText(value.display ?? value.text ?? value.code).trim();
-  }
-  return flowToText(value).trim();
-};
-
-// Code text for coded values: prefer the code over the human display.
-const flowCodeOf = value => {
-  if (value && typeof value === "object") {
-    return flowToText(value.code ?? value.display).trim();
-  }
-  return flowToText(value).trim();
-};
-
-// Day-precision timestamp so medication ranges compare cleanly against column dates.
-const flowDayTime = value => {
-  const parsed = flowParseDate(flowDateKey(value));
-  return parsed ? parsed.getTime() : null;
-};
-
-// MOIS renders dates with dot separators (2024.11.21).
-const flowDisplayDate = dateKey => flowToText(dateKey).replace(/-/g, ".");
-const flowGetPath = (sd, path, fallback) => {
-  const steps = flowToText(path || fallback).split(".").filter(Boolean);
-  let current = sd;
-  for (const step of steps) {
-    if (current && typeof current === "object") {
-      current = current[step];
-    } else {
-      return [];
-    }
-  }
-  return Array.isArray(current) ? current : [];
-};
+// Date/path/code-matching/abnormal-flag primitives live in the shared
+// ObservationKit helper module (declared in Identity.json). ObservationKit is
+// referenced only inside function bodies because component files load in no
+// guaranteed order.
 
 // A row whose code is all dashes is a MOIS-style "----" separator element.
 const flowIsSeparatorEntry = entry => {
   if (entry && typeof entry === "object" && entry.kind === "separator") return true;
-  const code = typeof entry === "string" ? entry : flowToText(entry?.code);
+  const code = typeof entry === "string" ? entry : ObservationKit.toText(entry?.code);
   return /^-+$/.test(code.trim());
 };
 const flowNormalizeRows = rows => {
@@ -8793,16 +8780,16 @@ const flowNormalizeRows = rows => {
     if (flowIsSeparatorEntry(entry)) {
       return {
         kind: "separator",
-        label: typeof entry === "object" ? flowToText(entry.label).trim() : ""
+        label: typeof entry === "object" ? ObservationKit.toText(entry.label).trim() : ""
       };
     }
     if (entry && typeof entry === "object" && entry.kind === "medication") {
-      const match = flowToText(entry.match).trim();
+      const match = ObservationKit.toText(entry.match).trim();
       if (!match) return null;
       return {
         kind: "medication",
         match,
-        label: flowToText(entry.label).trim() || match
+        label: ObservationKit.toText(entry.label).trim() || match
       };
     }
     if (typeof entry === "string") {
@@ -8816,81 +8803,18 @@ const flowNormalizeRows = rows => {
       } : null;
     }
     if (!entry || typeof entry !== "object") return null;
-    const code = flowToText(entry.code).trim();
+    const code = ObservationKit.toText(entry.code).trim();
     if (!code) return null;
-    const label = flowToText(entry.label).trim() || code;
-    const units = flowToText(entry.units).trim();
+    const label = ObservationKit.toText(entry.label).trim() || code;
+    const units = ObservationKit.toText(entry.units).trim();
     return {
       kind: "observation",
       code,
       label: units ? label + " (" + units + ")" : label,
-      loincCode: flowToText(entry.loincCode).trim(),
+      loincCode: ObservationKit.toText(entry.loincCode).trim(),
       units
     };
   }).filter(Boolean);
-};
-const flowCutoffDate = lookback => {
-  if (!lookback || typeof lookback !== "object") return null;
-  const amount = Math.floor(Number(lookback.amount));
-  if (!Number.isFinite(amount) || amount <= 0) return null;
-  const cutoff = new Date();
-  if (lookback.unit === "days") {
-    cutoff.setDate(cutoff.getDate() - amount);
-  } else if (lookback.unit === "years") {
-    cutoff.setFullYear(cutoff.getFullYear() - amount);
-  } else if (lookback.unit === "months") {
-    cutoff.setMonth(cutoff.getMonth() - amount);
-  } else {
-    return null;
-  }
-  return cutoff;
-};
-const flowMatchesRow = (entry, row) => {
-  const entryCode = flowToText(entry?.observationCode).trim().toLowerCase();
-  const entryLoinc = flowToText(entry?.loincCode).trim().toLowerCase();
-  const code = row.code.toLowerCase();
-  const loinc = row.loincCode.toLowerCase();
-  if (entryCode && (entryCode === code || loinc && entryCode === loinc)) return true;
-  if (entryLoinc && (entryLoinc === code || loinc && entryLoinc === loinc)) return true;
-  return false;
-};
-const flowNumber = value => {
-  const text = flowToText(value).trim();
-  if (!text) return null;
-  const parsed = Number(text);
-  return Number.isFinite(parsed) ? parsed : null;
-};
-
-// Four MOIS abnormal bands: critical LL/HH (absurd/very ranges) outrank L/H.
-const flowClassifyFlag = (entry, rawValue) => {
-  const explicit = entry?.abnormalFlag && typeof entry.abnormalFlag === "object" ? flowToText(entry.abnormalFlag.code).trim() : flowToText(entry?.abnormalFlag).trim();
-  if (explicit) return explicit;
-  const value = flowNumber(rawValue);
-  if (value === null) return "";
-  const criticalLow = flowNumber(entry?.rangeAbsurdLow) ?? flowNumber(entry?.rangeVeryLow);
-  const criticalHigh = flowNumber(entry?.rangeAbsurdHigh) ?? flowNumber(entry?.rangeVeryHigh);
-  const normalLow = flowNumber(entry?.rangeNormalLow);
-  const normalHigh = flowNumber(entry?.rangeNormalHigh);
-  if (criticalLow !== null && value < criticalLow) return "LL";
-  if (criticalHigh !== null && value > criticalHigh) return "HH";
-  if (normalLow !== null && value < normalLow) return "L";
-  if (normalHigh !== null && value > normalHigh) return "H";
-  return "";
-};
-const flowFlagCellStyle = flag => {
-  if (flag === "LL" || flag === "HH") {
-    return {
-      background: "#fde7e9",
-      color: "#a4262c",
-      fontWeight: 600
-    };
-  }
-  if (flag === "L" || flag === "H") {
-    return {
-      background: "#fff4ce"
-    };
-  }
-  return {};
 };
 
 // Collect matched observations per row and the distinct date columns they land on.
@@ -8900,27 +8824,27 @@ const flowRunQuery = (sd, {
   rows,
   lookback
 }) => {
-  const source = flowGetPath(sd, sourcePath, "patient.observations");
-  const cutoff = flowCutoffDate(lookback);
+  const source = ObservationKit.getPath(sd, sourcePath, "patient.observations");
+  const cutoff = ObservationKit.cutoffDate(lookback);
   const observationRows = rows.filter(row => row.kind === "observation");
   const cellsByRow = observationRows.map(() => new Map());
   const dateKeys = new Set();
   source.forEach(entry => {
     if (!entry || typeof entry !== "object") return;
-    const parsedDate = flowParseDate(entry[datePath]);
+    const parsedDate = ObservationKit.parseDate(entry[datePath]);
     if (!parsedDate) return;
     if (cutoff && parsedDate.getTime() < cutoff.getTime()) return;
     observationRows.forEach((row, rowIndex) => {
-      if (!flowMatchesRow(entry, row)) return;
-      const dateKey = flowDateKey(entry[datePath]);
+      if (!ObservationKit.matchesCode(entry, row)) return;
+      const dateKey = ObservationKit.dateKey(entry[datePath]);
       if (!dateKey) return;
-      const value = flowToText(entry.value ?? entry.display ?? entry.report ?? "");
+      const value = ObservationKit.extractValue(entry);
       const existing = cellsByRow[rowIndex].get(dateKey);
       if (existing && existing.time >= parsedDate.getTime()) return;
       cellsByRow[rowIndex].set(dateKey, {
         time: parsedDate.getTime(),
         value,
-        flag: flowClassifyFlag(entry, value)
+        flag: ObservationKit.classifyFlag(entry, value)
       });
       dateKeys.add(dateKey);
     });
@@ -8931,23 +8855,23 @@ const flowRunQuery = (sd, {
   };
 };
 const flowNormalizeMedications = (source, lookback) => {
-  const cutoff = flowCutoffDate(lookback);
+  const cutoff = ObservationKit.cutoffDate(lookback);
   const meds = source.filter(entry => entry && typeof entry === "object").map(entry => {
-    const name = flowDisplay(entry.medication).toUpperCase() || flowDisplay(entry.genericName).toUpperCase();
-    const startTime = flowDayTime(entry.startDate);
-    const stopRaw = flowToText(entry.endDate ?? entry.stopDate).trim();
-    const stopTime = stopRaw ? flowDayTime(stopRaw) : null;
-    const doseFrequency = flowDisplay(entry.doseFrequency) || [flowDisplay(entry.dose), flowDisplay(entry.route), flowDisplay(entry.frequency)].filter(Boolean).join(" ");
+    const name = ObservationKit.displayText(entry.medication).toUpperCase() || ObservationKit.displayText(entry.genericName).toUpperCase();
+    const startTime = ObservationKit.dayTime(entry.startDate);
+    const stopRaw = ObservationKit.toText(entry.endDate ?? entry.stopDate).trim();
+    const stopTime = stopRaw ? ObservationKit.dayTime(stopRaw) : null;
+    const doseFrequency = ObservationKit.displayText(entry.doseFrequency) || [ObservationKit.displayText(entry.dose), ObservationKit.displayText(entry.route), ObservationKit.displayText(entry.frequency)].filter(Boolean).join(" ");
     return {
       name,
-      genericName: flowDisplay(entry.genericName).toUpperCase(),
-      atcCode: flowCodeOf(entry.atcCode).toUpperCase(),
-      atcDisplay: flowDisplay(entry.atcCode).toUpperCase(),
+      genericName: ObservationKit.displayText(entry.genericName).toUpperCase(),
+      atcCode: ObservationKit.codeText(entry.atcCode).toUpperCase(),
+      atcDisplay: ObservationKit.displayText(entry.atcCode).toUpperCase(),
       doseFrequency,
       startTime,
       stopTime,
-      startKey: flowDateKey(flowToText(entry.startDate)),
-      stopKey: stopRaw ? flowDateKey(stopRaw) : ""
+      startKey: ObservationKit.dateKey(ObservationKit.toText(entry.startDate)),
+      stopKey: stopRaw ? ObservationKit.dateKey(stopRaw) : ""
     };
   }).filter(entry => entry.name && entry.startTime !== null)
   // A course fully stopped before the lookback window never draws a bar; drop it.
@@ -8959,7 +8883,7 @@ const flowNormalizeMedications = (source, lookback) => {
 // A configured medication row matches a course by name/generic/ATC-class
 // substring, or by ATC code prefix (e.g. "C09" catches every ACE inhibitor).
 const flowMedicationMatches = (med, match) => {
-  const needle = flowToText(match).trim().toUpperCase();
+  const needle = ObservationKit.toText(match).trim().toUpperCase();
   if (!needle) return false;
   if (med.name.includes(needle) || med.genericName.includes(needle)) return true;
   if (med.atcDisplay && med.atcDisplay.includes(needle)) return true;
@@ -8994,7 +8918,7 @@ const FlowMedicationBarCells = ({
   med,
   columns
 }) => columns.map(dateKey => {
-  const columnTime = flowDayTime(dateKey);
+  const columnTime = ObservationKit.dayTime(dateKey);
   const active = columnTime !== null && med.startTime <= columnTime && (med.stopTime === null || med.stopTime >= columnTime);
   if (!active) return /*#__PURE__*/React.createElement("td", {
     key: dateKey,
@@ -9058,7 +8982,7 @@ const FlowSheetGrid = ({
   }, "Element / Date"), columns.map(dateKey => /*#__PURE__*/React.createElement("th", {
     key: dateKey,
     style: headerStyle
-  }, flowDisplayDate(dateKey))))), /*#__PURE__*/React.createElement("tbody", null, rows.map((row, rowIndex) => {
+  }, ObservationKit.displayDate(dateKey))))), /*#__PURE__*/React.createElement("tbody", null, rows.map((row, rowIndex) => {
     if (row.kind === "separator") {
       return /*#__PURE__*/React.createElement("tr", {
         key: "separator-" + rowIndex
@@ -9111,7 +9035,7 @@ const FlowSheetGrid = ({
       const cell = cells.get(dateKey);
       const cellStyle = {
         ...FLOW_CELL_STYLE,
-        ...(cell && showFlags ? flowFlagCellStyle(cell.flag) : {})
+        ...(cell && showFlags ? ObservationKit.flagCellStyle(cell.flag) : {})
       };
       return /*#__PURE__*/React.createElement("td", {
         key: dateKey,
@@ -9174,7 +9098,7 @@ const FlowSheet = ({
   }), [datePath, lookback, rowList, sd, sourcePath]);
   const allMedications = useMemo(() => {
     if (resolvedMedicationsMode === "none") return [];
-    return flowNormalizeMedications(flowGetPath(sd, medicationPath, "patient.longTermMedications"), lookback);
+    return flowNormalizeMedications(ObservationKit.getPath(sd, medicationPath, "patient.longTermMedications"), lookback);
   }, [lookback, medicationPath, resolvedMedicationsMode, sd]);
 
   // Expand each placed medication row into its matching chart courses, and
@@ -9224,7 +9148,7 @@ const FlowSheet = ({
       variant: "small"
     }, "No flow sheet rows configured yet."));
   }
-  const rangeLabel = columns.length > 0 ? "DATE RANGE: " + flowDisplayDate(columns[0]) + " TO " + flowDisplayDate(columns[columns.length - 1]) : "";
+  const rangeLabel = columns.length > 0 ? "DATE RANGE: " + ObservationKit.displayDate(columns[0]) + " TO " + ObservationKit.displayDate(columns[columns.length - 1]) : "";
   const renderSheet = maxHeight => {
     if (columns.length === 0) {
       return /*#__PURE__*/React.createElement(Text, {
@@ -14892,31 +14816,15 @@ const HealthMaintenanceReview = ({
     onClick: () => setIsOpen(false)
   })))));
 };`,
-  './HistoricalObservationTable/index.jsx': `const {
-  useMemo
-} = React;
-const {
-  Stack,
-  Label,
-  Text
-} = Fluent;
-const historyDateKey = value => {
-  const raw = String(value ?? "");
-  return raw.includes("T") ? raw.split("T")[0] : raw;
-};
-const getHistorySource = (sd, sourcePath) => {
-  if (!sourcePath) return sd?.patient?.observations ?? [];
-  const steps = String(sourcePath).split(".").filter(Boolean);
-  let current = sd;
-  for (const step of steps) {
-    if (current && typeof current === "object") {
-      current = current[step];
-    } else {
-      return [];
-    }
-  }
-  return Array.isArray(current) ? current : [];
-};
+  './HistoricalObservationTable/index.jsx': `// Legacy date-grouped history table, now a thin preset over ObservationQuery's
+// table display. Kept for saved forms and the history-table preset library
+// (data/history-table-library), which keep configuring it by columns.
+//
+// Column config maps onto query codes: the "date" column is implicit
+// (ObservationQuery always leads with the date), every other column with an
+// observationCode becomes a picked code. Matching gains ObservationQuery's
+// case-insensitive code/LOINC comparison, and cells gain units + abnormal
+// flags — both strict upgrades over the old exact-code, value-only table.
 const HistoricalObservationTable = ({
   title = "Historical Observations",
   sourcePath = "patient.observations",
@@ -14924,66 +14832,19 @@ const HistoricalObservationTable = ({
   columns = [],
   maxRows = 10
 }) => {
-  const sd = useSourceData();
-  const rows = useMemo(() => {
-    const source = getHistorySource(sd, sourcePath);
-    const grouped = new Map();
-    source.forEach(entry => {
-      const date = historyDateKey(entry?.[datePath]);
-      if (!date) return;
-      const current = grouped.get(date) ?? {
-        date
-      };
-      let matchedColumn = false;
-      columns.forEach(column => {
-        if (column.type === "date") return;
-        if (column.observationCode && entry?.observationCode === column.observationCode) {
-          current[column.id] = entry.value ?? entry.display ?? entry.report ?? "";
-          matchedColumn = true;
-        }
-      });
-      if (matchedColumn) {
-        grouped.set(date, current);
-      }
-    });
-    return Array.from(grouped.values()).sort((a, b) => String(b.date).localeCompare(String(a.date))).slice(0, maxRows);
-  }, [columns, datePath, maxRows, sd, sourcePath]);
-  if (rows.length === 0) {
-    return /*#__PURE__*/React.createElement(Stack, {
-      tokens: {
-        childrenGap: 6
-      }
-    }, /*#__PURE__*/React.createElement(Label, null, title), /*#__PURE__*/React.createElement(Text, {
-      variant: "small"
-    }, "No historical observations found."));
-  }
-  return /*#__PURE__*/React.createElement(Stack, {
-    tokens: {
-      childrenGap: 6
-    }
-  }, /*#__PURE__*/React.createElement(Label, null, title), /*#__PURE__*/React.createElement("table", {
-    style: {
-      width: "100%",
-      borderCollapse: "collapse",
-      border: "1px solid #d0d0d0"
-    }
-  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, columns.map(column => /*#__PURE__*/React.createElement("th", {
-    key: column.id,
-    style: {
-      border: "1px solid #d0d0d0",
-      textAlign: "left",
-      padding: "6px",
-      background: "#f3f2f1"
-    }
-  }, column.label)))), /*#__PURE__*/React.createElement("tbody", null, rows.map(row => /*#__PURE__*/React.createElement("tr", {
-    key: row.date
-  }, columns.map(column => /*#__PURE__*/React.createElement("td", {
-    key: column.id,
-    style: {
-      border: "1px solid #e1dfdd",
-      padding: "6px"
-    }
-  }, column.type === "date" ? row.date : row[column.id] ?? "-")))))));
+  const codes = (Array.isArray(columns) ? columns : []).filter(column => column && typeof column === "object" && column.type !== "date" && column.observationCode).map(column => ({
+    code: String(column.observationCode),
+    label: String(column.label ?? column.observationCode)
+  }));
+  return /*#__PURE__*/React.createElement(ObservationQuery, {
+    title: title,
+    display: "table",
+    codes: codes,
+    maxRows: maxRows,
+    sort: "newest",
+    sourcePath: sourcePath,
+    datePath: datePath
+  });
 };`,
   './HonosQuestion/index.jsx': `function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 const {
@@ -18461,308 +18322,6 @@ const MirthListenerUtility = ({
     onClick: signAndSend,
     disabled: busy || !targetUrl || Boolean(payloadIssue)
   })));
-};`,
-  './MoisMarkdownBlock/index.jsx': `function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
-const {
-  useMemo
-} = React;
-const defaultRemarkPlugins = typeof remarkGfm === "undefined" ? [] : [remarkGfm];
-const defaultRehypePlugins = typeof rehypeRaw === "undefined" ? [] : [rehypeRaw];
-const MarkdownRenderer = typeof ReactMarkdown === "undefined" ? ({
-  children
-}) => /*#__PURE__*/React.createElement("div", {
-  style: {
-    whiteSpace: "pre-wrap"
-  }
-}, children) : ReactMarkdown;
-
-/**
- * MoisMarkdownBlock
- *
- * A MOIS-aware sibling of RichMarkdownBlock. It renders identically to
- * RichMarkdownBlock EXCEPT that links using the reserved \`mois:\` scheme become
- * an inline LinkToMois chart button instead of a plain anchor:
- *
- *   [](mois:CHARTACTION)            -> just the chart-link icon button
- *   [Open chart](mois:CHARTACTION)  -> "Open chart" text + icon button
- *   [](mois:GOALS/12345)            -> icon button linking to object 12345
- *
- * When the Markdown contains no \`mois:\` links the output is byte-for-byte the
- * same as RichMarkdownBlock, so it can stand in anywhere that block is used.
- * Authored standalone (no runtime dependency on RichMarkdownBlock, which is
- * intentionally left untouched).
- */
-
-const fullWidthStyle = {
-  maxWidth: "none",
-  width: "100%"
-};
-
-// Parse a \`mois:\` link href into a module name + optional object id.
-//   mois:CHARTACTION      -> { moisModule: "CHARTACTION" }
-//   mois://CHARTACTION     -> { moisModule: "CHARTACTION" }
-//   mois:GOALS/12345       -> { moisModule: "GOALS", objectId: 12345 }
-const parseMoisHref = href => {
-  if (typeof href !== "string") return null;
-  const match = href.match(/^mois:(?:\\/\\/)?([^/?#]+)(?:\\/(\\d+))?$/i);
-  if (!match) return null;
-  const moisModule = decodeURIComponent(match[1]).trim();
-  if (!moisModule) return null;
-  const parsedId = match[2] ? Number(match[2]) : undefined;
-  return {
-    moisModule,
-    objectId: Number.isFinite(parsedId) ? parsedId : undefined
-  };
-};
-const urlTransform = value => {
-  if (typeof value === "string" && /^mois:/i.test(value)) return value;
-  if (typeof value !== "string") return "";
-  const colon = value.indexOf(":");
-  const questionMark = value.indexOf("?");
-  const numberSign = value.indexOf("#");
-  const slash = value.indexOf("/");
-  const hasAllowedProtocol = /^(https?|ircs?|mailto|xmpp)$/i.test(value.slice(0, colon));
-  if (colon === -1 || slash !== -1 && colon > slash || questionMark !== -1 && colon > questionMark || numberSign !== -1 && colon > numberSign || hasAllowedProtocol) {
-    return value;
-  }
-  return "";
-};
-const baseComponents = {
-  p: ({
-    children,
-    node,
-    ...props
-  }) => /*#__PURE__*/React.createElement("p", _extends({
-    style: fullWidthStyle
-  }, props), children),
-  div: ({
-    children,
-    node,
-    ...props
-  }) => /*#__PURE__*/React.createElement("div", _extends({
-    style: fullWidthStyle
-  }, props), children),
-  ul: ({
-    children,
-    node,
-    ...props
-  }) => /*#__PURE__*/React.createElement("ul", _extends({
-    style: {
-      ...fullWidthStyle,
-      paddingLeft: 20,
-      marginTop: 2,
-      marginBottom: 2
-    }
-  }, props), children),
-  ol: ({
-    children,
-    node,
-    ...props
-  }) => /*#__PURE__*/React.createElement("ol", _extends({
-    style: {
-      ...fullWidthStyle,
-      paddingLeft: 20,
-      marginTop: 2,
-      marginBottom: 2
-    }
-  }, props), children),
-  li: ({
-    children,
-    node,
-    ...props
-  }) => /*#__PURE__*/React.createElement("li", _extends({
-    style: {
-      marginTop: 0,
-      marginBottom: 2
-    }
-  }, props), children),
-  blockquote: ({
-    children,
-    node,
-    ...props
-  }) => /*#__PURE__*/React.createElement("blockquote", _extends({
-    style: fullWidthStyle
-  }, props), children),
-  pre: ({
-    children,
-    node,
-    ...props
-  }) => /*#__PURE__*/React.createElement("pre", _extends({
-    style: {
-      ...fullWidthStyle,
-      overflow: "auto"
-    }
-  }, props), children),
-  a: ({
-    children,
-    href,
-    node,
-    ...props
-  }) => {
-    const mois = parseMoisHref(href);
-    if (mois) {
-      const hasLabel = React.Children.toArray(children).some(child => !(typeof child === "string" && child.trim() === ""));
-      return /*#__PURE__*/React.createElement("span", {
-        style: {
-          display: "inline-flex",
-          alignItems: "center",
-          gap: 4,
-          verticalAlign: "middle"
-        }
-      }, hasLabel ? /*#__PURE__*/React.createElement("span", null, children) : null, /*#__PURE__*/React.createElement(LinkToMois, {
-        moisModule: mois.moisModule,
-        objectId: mois.objectId,
-        title: \`Open \${mois.moisModule} in MOIS\`
-      }));
-    }
-    return /*#__PURE__*/React.createElement("a", _extends({
-      style: {
-        color: "#005a9e",
-        textDecoration: "underline"
-      },
-      target: "_blank",
-      rel: "noreferrer",
-      href: href
-    }, props), children);
-  },
-  table: ({
-    children,
-    node,
-    ...props
-  }) => /*#__PURE__*/React.createElement("div", {
-    style: {
-      overflowX: "auto",
-      width: "100%",
-      maxWidth: "none"
-    }
-  }, /*#__PURE__*/React.createElement("table", _extends({
-    style: {
-      width: "100%",
-      borderCollapse: "collapse",
-      tableLayout: "fixed",
-      border: "1px solid black"
-    }
-  }, props), children)),
-  thead: ({
-    children,
-    node,
-    ...props
-  }) => /*#__PURE__*/React.createElement("thead", _extends({
-    style: {
-      backgroundColor: "#f3f2f1"
-    }
-  }, props), children),
-  tbody: ({
-    children,
-    node,
-    ...props
-  }) => /*#__PURE__*/React.createElement("tbody", props, children),
-  tr: ({
-    children,
-    node,
-    ...props
-  }) => /*#__PURE__*/React.createElement("tr", _extends({
-    style: {
-      verticalAlign: "top"
-    }
-  }, props), children),
-  th: ({
-    children,
-    node,
-    ...props
-  }) => /*#__PURE__*/React.createElement("th", _extends({
-    style: {
-      border: "1px solid black",
-      padding: "6px 8px",
-      textAlign: "left",
-      verticalAlign: "top",
-      fontWeight: 700
-    }
-  }, props), children),
-  td: ({
-    children,
-    node,
-    ...props
-  }) => /*#__PURE__*/React.createElement("td", _extends({
-    style: {
-      border: "1px solid black",
-      padding: "6px 8px",
-      verticalAlign: "top",
-      whiteSpace: "pre-wrap"
-    }
-  }, props), children)
-};
-const MoisMarkdownBlock = ({
-  id,
-  fieldId,
-  label,
-  labelPosition = "top",
-  size,
-  source,
-  value,
-  height,
-  hidden,
-  disabled,
-  required,
-  note,
-  moisModule,
-  section,
-  placement,
-  layoutId,
-  index,
-  isComplete,
-  borderless = false,
-  style,
-  markdownProps
-}) => {
-  const content = typeof source === "string" ? source : typeof value === "string" ? value : "";
-  const effectiveFieldId = fieldId || id;
-  const mergedMarkdownProps = useMemo(() => {
-    const extra = markdownProps && typeof markdownProps === "object" ? markdownProps : {};
-    const extraPlugins = Array.isArray(extra.remarkPlugins) ? extra.remarkPlugins : [];
-    return {
-      ...extra,
-      urlTransform: extra.urlTransform || urlTransform,
-      remarkPlugins: [...defaultRemarkPlugins, ...extraPlugins],
-      rehypePlugins: [...defaultRehypePlugins, ...(Array.isArray(extra.rehypePlugins) ? extra.rehypePlugins : [])],
-      components: {
-        ...baseComponents,
-        ...(extra.components && typeof extra.components === "object" ? extra.components : {})
-      }
-    };
-  }, [markdownProps]);
-  return /*#__PURE__*/React.createElement(LayoutItem, {
-    disabled: disabled,
-    fieldId: effectiveFieldId,
-    hidden: hidden,
-    id: id,
-    index: index,
-    isComplete: isComplete,
-    isEmpty: !content,
-    label: label,
-    labelPosition: labelPosition,
-    layoutId: layoutId,
-    moisModule: moisModule,
-    note: note,
-    placement: placement,
-    readOnly: true,
-    required: required,
-    section: section,
-    size: size,
-    layoutStyle: style
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "markdown-content",
-    style: {
-      width: "100%",
-      margin: borderless ? "-8px 0 0" : 0,
-      fontFamily: 'Times, "Times New Roman", serif',
-      maxWidth: "none",
-      ...(typeof height === "number" && Number.isFinite(height) && height > 0 ? {
-        height: \`\${Math.round(height)}px\`,
-        overflow: "auto"
-      } : {})
-    }
-  }, /*#__PURE__*/React.createElement(MarkdownRenderer, mergedMarkdownProps, content)));
 };`,
   './MoisModuleLinkList/index.jsx': `const normalizeItems = items => {
   if (!Array.isArray(items)) return [];
@@ -22623,120 +22182,16 @@ const {
   DefaultButton,
   PrimaryButton
 } = Fluent;
-const gridToText = value => {
-  if (value === null || value === undefined) return "";
-  return String(value);
-};
-const gridDateKey = value => {
-  const raw = gridToText(value);
-  return raw.includes("T") ? raw.split("T")[0] : raw;
-};
-const gridParseDate = value => {
-  const raw = gridToText(value).trim();
-  if (!raw) return null;
-  const parsed = new Date(raw.includes("T") ? raw : raw.replace(/\\./g, "-"));
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
-};
-const getGridSource = (sd, sourcePath) => {
-  if (!sourcePath) return sd?.patient?.observations ?? [];
-  const steps = gridToText(sourcePath).split(".").filter(Boolean);
-  let current = sd;
-  for (const step of steps) {
-    if (current && typeof current === "object") {
-      current = current[step];
-    } else {
-      return [];
-    }
-  }
-  return Array.isArray(current) ? current : [];
-};
-const normalizeGridCodes = codes => {
-  if (!Array.isArray(codes)) return [];
-  return codes.map(entry => {
-    if (typeof entry === "string") {
-      const code = entry.trim();
-      return code ? {
-        code,
-        label: code,
-        loincCode: "",
-        units: "",
-        hotkey: ""
-      } : null;
-    }
-    if (!entry || typeof entry !== "object") return null;
-    const code = gridToText(entry.code).trim();
-    if (!code) return null;
-    return {
-      code,
-      label: gridToText(entry.label).trim() || code,
-      loincCode: gridToText(entry.loincCode).trim(),
-      units: gridToText(entry.units).trim(),
-      hotkey: gridToText(entry.hotkey).trim().slice(0, 1).toLowerCase()
-    };
-  }).filter(Boolean);
-};
-const gridCutoffDate = lookback => {
-  if (!lookback || typeof lookback !== "object") return null;
-  const amount = Math.floor(Number(lookback.amount));
-  if (!Number.isFinite(amount) || amount <= 0) return null;
-  const cutoff = new Date();
-  if (lookback.unit === "days") {
-    cutoff.setDate(cutoff.getDate() - amount);
-  } else if (lookback.unit === "years") {
-    cutoff.setFullYear(cutoff.getFullYear() - amount);
-  } else if (lookback.unit === "months") {
-    cutoff.setMonth(cutoff.getMonth() - amount);
-  } else {
-    return null;
-  }
-  return cutoff;
-};
-const gridNumber = value => {
-  const text = gridToText(value).trim();
-  if (!text) return null;
-  const parsed = Number(text);
-  return Number.isFinite(parsed) ? parsed : null;
-};
 
-// Same four MOIS bands as PastMeasurementField's save path: absurd/very
-// ranges -> LL/HH outrank the normal range -> L/H.
-const classifyGridFlag = (ranges, rawValue) => {
-  const value = gridNumber(rawValue);
-  if (value === null || !ranges) return null;
-  const criticalLow = gridNumber(ranges.rangeAbsurdLow) ?? gridNumber(ranges.rangeVeryLow);
-  const criticalHigh = gridNumber(ranges.rangeAbsurdHigh) ?? gridNumber(ranges.rangeVeryHigh);
-  const normalLow = gridNumber(ranges.rangeNormalLow);
-  const normalHigh = gridNumber(ranges.rangeNormalHigh);
-  if (criticalLow !== null && value < criticalLow) return "LL";
-  if (criticalHigh !== null && value > criticalHigh) return "HH";
-  if (normalLow !== null && value < normalLow) return "L";
-  if (normalHigh !== null && value > normalHigh) return "H";
-  return null;
-};
-const gridFlagStyle = flag => {
-  if (flag === "LL" || flag === "HH") {
-    return {
-      background: "#fde7e9",
-      color: "#a4262c",
-      fontWeight: 600
-    };
-  }
-  if (flag === "L" || flag === "H") {
-    return {
-      background: "#fff4ce"
-    };
-  }
-  return {};
-};
-const gridEntryMatchesCode = (entry, candidate) => {
-  const entryCode = gridToText(entry?.observationCode).trim().toLowerCase();
-  const entryLoinc = gridToText(entry?.loincCode).trim().toLowerCase();
-  const code = candidate.code.toLowerCase();
-  const loinc = candidate.loincCode.toLowerCase();
-  if (entryCode && (entryCode === code || loinc && entryCode === loinc)) return true;
-  if (entryLoinc && (entryLoinc === code || loinc && entryLoinc === loinc)) return true;
-  return false;
-};
+// Date/path/code-matching/abnormal-flag primitives live in the shared
+// ObservationKit helper module (declared in Identity.json). ObservationKit is
+// referenced only inside function bodies because component files load in no
+// guaranteed order.
+
+// Grid flag contract is null (not ""), so display code can fall back with
+// \`?? row.flag\` / \`?? "-"\`. Explicit chart abnormalFlags are read separately
+// in chartRows, so this only classifies against range metadata.
+const classifyGridFlag = (ranges, rawValue) => ObservationKit.classifyRanges(ranges, rawValue) || null;
 const stripVolatileGridFields = payload => {
   if (!Array.isArray(payload)) return payload;
   return payload.map(entry => {
@@ -22787,10 +22242,10 @@ const findRangesForCode = (source, candidate) => {
   let bestTime = -Infinity;
   source.forEach(entry => {
     if (!entry || typeof entry !== "object") return;
-    if (!gridEntryMatchesCode(entry, candidate)) return;
-    const hasRanges = [entry.rangeNormalLow, entry.rangeNormalHigh, entry.rangeVeryLow, entry.rangeVeryHigh, entry.rangeAbsurdLow, entry.rangeAbsurdHigh].some(value => gridToText(value).trim() !== "");
+    if (!ObservationKit.matchesCode(entry, candidate)) return;
+    const hasRanges = [entry.rangeNormalLow, entry.rangeNormalHigh, entry.rangeVeryLow, entry.rangeVeryHigh, entry.rangeAbsurdLow, entry.rangeAbsurdHigh].some(value => ObservationKit.toText(value).trim() !== "");
     if (!hasRanges) return;
-    const parsed = gridParseDate(entry.collectedDateTime);
+    const parsed = ObservationKit.parseDate(entry.collectedDateTime);
     const time = parsed ? parsed.getTime() : 0;
     if (time >= bestTime) {
       best = entry;
@@ -22901,31 +22356,31 @@ const GridRangeBands = ({
 }) => {
   const cells = [{
     key: "LL",
-    value: gridToText(ranges.rangeAbsurdLow ?? ranges.rangeVeryLow).trim(),
+    value: ObservationKit.toText(ranges.rangeAbsurdLow ?? ranges.rangeVeryLow).trim(),
     style: {
       background: "#fde7e9"
     }
   }, {
     key: "L",
-    value: gridToText(ranges.rangeNormalLow).trim(),
+    value: ObservationKit.toText(ranges.rangeNormalLow).trim(),
     style: {
       background: "#fff4ce"
     }
   }, {
     key: "NORMAL RANGE",
-    value: gridToText(centerText).trim(),
+    value: ObservationKit.toText(centerText).trim(),
     style: {
       color: "#605e5c"
     }
   }, {
     key: "H",
-    value: gridToText(ranges.rangeNormalHigh).trim(),
+    value: ObservationKit.toText(ranges.rangeNormalHigh).trim(),
     style: {
       background: "#fff4ce"
     }
   }, {
     key: "HH",
-    value: gridToText(ranges.rangeAbsurdHigh ?? ranges.rangeVeryHigh).trim(),
+    value: ObservationKit.toText(ranges.rangeAbsurdHigh ?? ranges.rangeVeryHigh).trim(),
     style: {
       background: "#fde7e9"
     }
@@ -22966,8 +22421,8 @@ const GridDetailPane = ({
 }) => {
   if (!row) return null;
   const ranges = row.ranges ?? {};
-  const rangeText = gridToText(ranges.referenceRangeText).trim();
-  const hasBands = [ranges.rangeAbsurdLow, ranges.rangeVeryLow, ranges.rangeNormalLow, ranges.rangeNormalHigh, ranges.rangeAbsurdHigh, ranges.rangeVeryHigh].some(value => gridToText(value).trim() !== "");
+  const rangeText = ObservationKit.toText(ranges.referenceRangeText).trim();
+  const hasBands = [ranges.rangeAbsurdLow, ranges.rangeVeryLow, ranges.rangeNormalLow, ranges.rangeNormalHigh, ranges.rangeAbsurdHigh, ranges.rangeVeryHigh].some(value => ObservationKit.toText(value).trim() !== "");
   // Bands show the units in the center; without bands the center carries the
   // text-only range (or nothing), keeping the strip — and pane height — stable.
   const centerText = hasBands ? row.units : rangeText;
@@ -23011,7 +22466,7 @@ const GridDetailPane = ({
   }, "Code: ", row.code), row.flag ? /*#__PURE__*/React.createElement("span", {
     style: {
       marginLeft: 8,
-      ...gridFlagStyle(row.flag),
+      ...ObservationKit.flagCellStyle(row.flag),
       padding: "0 4px"
     }
   }, row.flag) : null), /*#__PURE__*/React.createElement("div", {
@@ -23033,7 +22488,7 @@ const GridDetailPane = ({
     style: detailLabelStyle
   }, field.label, ":"), /*#__PURE__*/React.createElement("td", {
     style: detailValueStyle
-  }, gridToText(field.value).trim() || "-"))))))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+  }, ObservationKit.toText(field.value).trim() || "-"))))))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: {
       ...detailLabelStyle,
       textAlign: "left",
@@ -23070,8 +22525,8 @@ const ObservationEntryGrid = ({
   const componentId = id || fieldId || "ObservationEntryGrid";
   const entriesKey = componentId + "_entries";
   const editsKey = componentId + "_edits";
-  const codeList = useMemo(() => normalizeGridCodes(codes), [codes]);
-  const source = useMemo(() => getGridSource(sd, sourcePath), [sd, sourcePath]);
+  const codeList = useMemo(() => ObservationKit.normalizeCodes(codes), [codes]);
+  const source = useMemo(() => ObservationKit.getPath(sd, sourcePath), [sd, sourcePath]);
   const entries = readGridRows(fd, entriesKey);
   const edits = readGridRows(fd, editsKey);
   const [selectedKey, setSelectedKey] = useState(null);
@@ -23083,38 +22538,38 @@ const ObservationEntryGrid = ({
   const editByObservationId = useMemo(() => {
     const map = new Map();
     edits.forEach(edit => {
-      const observationId = gridNumber(edit.observationId);
+      const observationId = ObservationKit.toNumber(edit.observationId);
       if (observationId !== null) map.set(observationId, edit);
     });
     return map;
   }, [edits]);
   const chartRows = useMemo(() => {
-    const cutoff = gridCutoffDate(lookback);
+    const cutoff = ObservationKit.cutoffDate(lookback);
     const rows = [];
     source.forEach((entry, index) => {
       if (!entry || typeof entry !== "object") return;
-      const codeIndex = codeList.length > 0 ? codeList.findIndex(candidate => gridEntryMatchesCode(entry, candidate)) : -1;
+      const codeIndex = codeList.length > 0 ? codeList.findIndex(candidate => ObservationKit.matchesCode(entry, candidate)) : -1;
       if (filterByCodes && codeList.length > 0 && codeIndex < 0) return;
-      const parsed = gridParseDate(entry[datePath]);
+      const parsed = ObservationKit.parseDate(entry[datePath]);
       if (!parsed) return;
       if (cutoff && parsed.getTime() < cutoff.getTime()) return;
-      const value = gridToText(entry.value ?? entry.display ?? entry.report ?? "");
-      const explicitFlag = entry.abnormalFlag && typeof entry.abnormalFlag === "object" ? gridToText(entry.abnormalFlag.code).trim() : gridToText(entry.abnormalFlag).trim();
+      const value = ObservationKit.extractValue(entry);
+      const explicitFlag = entry.abnormalFlag && typeof entry.abnormalFlag === "object" ? ObservationKit.toText(entry.abnormalFlag.code).trim() : ObservationKit.toText(entry.abnormalFlag).trim();
       rows.push({
         key: "chart-" + index,
-        observationId: gridNumber(entry.observationId),
-        dateKey: gridDateKey(entry[datePath]),
-        collectedDateTime: gridToText(entry[datePath]),
+        observationId: ObservationKit.toNumber(entry.observationId),
+        dateKey: ObservationKit.dateKey(entry[datePath]),
+        collectedDateTime: ObservationKit.toText(entry[datePath]),
         time: parsed.getTime(),
-        code: gridToText(entry.observationCode).trim(),
-        loincCode: gridToText(entry.loincCode).trim(),
-        description: gridToText(entry.description).trim() || (codeIndex >= 0 ? codeList[codeIndex].label : ""),
+        code: ObservationKit.toText(entry.observationCode).trim(),
+        loincCode: ObservationKit.toText(entry.loincCode).trim(),
+        description: ObservationKit.toText(entry.description).trim() || (codeIndex >= 0 ? codeList[codeIndex].label : ""),
         value,
-        units: gridToText(entry.units).trim(),
-        orderedBy: gridToText(entry.orderedBy).trim(),
-        collectedBy: gridToText(entry.collectedBy).trim(),
-        observationClass: gridToText(entry.observationClass).trim(),
-        status: gridToText(entry.status).trim(),
+        units: ObservationKit.toText(entry.units).trim(),
+        orderedBy: ObservationKit.toText(entry.orderedBy).trim(),
+        collectedBy: ObservationKit.toText(entry.collectedBy).trim(),
+        observationClass: ObservationKit.toText(entry.observationClass).trim(),
+        status: ObservationKit.toText(entry.status).trim(),
         flag: explicitFlag || classifyGridFlag(entry, value),
         ranges: entry,
         fromChart: true
@@ -23125,24 +22580,24 @@ const ObservationEntryGrid = ({
   }, [codeList, datePath, filterByCodes, lookback, maxRows, source]);
   const entryRows = useMemo(() => entries.map(entry => {
     const candidate = codeList.find(item => item.code === entry.code) ?? {
-      code: gridToText(entry.code),
-      label: gridToText(entry.description),
+      code: ObservationKit.toText(entry.code),
+      label: ObservationKit.toText(entry.description),
       loincCode: "",
       units: "",
       hotkey: ""
     };
     const ranges = findRangesForCode(source, candidate);
     return {
-      key: "entry-" + gridToText(entry.rowId),
-      rowId: gridToText(entry.rowId),
-      dateKey: gridDateKey(entry.dateTime),
+      key: "entry-" + ObservationKit.toText(entry.rowId),
+      rowId: ObservationKit.toText(entry.rowId),
+      dateKey: ObservationKit.dateKey(entry.dateTime),
       code: candidate.code,
       loincCode: candidate.loincCode,
-      description: gridToText(entry.description).trim() || candidate.label,
-      value: gridToText(entry.value),
-      units: gridToText(entry.units).trim() || candidate.units || gridToText(ranges?.units).trim(),
-      orderedBy: gridToText(sd?.userProfile?.identity?.fullName).trim(),
-      collectedBy: gridToText(sd?.userProfile?.identity?.fullName).trim(),
+      description: ObservationKit.toText(entry.description).trim() || candidate.label,
+      value: ObservationKit.toText(entry.value),
+      units: ObservationKit.toText(entry.units).trim() || candidate.units || ObservationKit.toText(ranges?.units).trim(),
+      orderedBy: ObservationKit.toText(sd?.userProfile?.identity?.fullName).trim(),
+      collectedBy: ObservationKit.toText(sd?.userProfile?.identity?.fullName).trim(),
       observationClass: "DCOBS",
       status: "F",
       flag: classifyGridFlag(ranges, entry.value),
@@ -23158,16 +22613,16 @@ const ObservationEntryGrid = ({
   useEffect(() => {
     if (readOnly) return;
     const createdBy = sd?.userProfile?.identity?.fullName;
-    const newPayload = entries.filter(entry => gridToText(entry.value).trim() !== "" && gridToText(entry.code).trim() !== "").map(entry => {
+    const newPayload = entries.filter(entry => ObservationKit.toText(entry.value).trim() !== "" && ObservationKit.toText(entry.code).trim() !== "").map(entry => {
       const candidate = codeList.find(item => item.code === entry.code) ?? {
-        code: gridToText(entry.code),
-        label: gridToText(entry.description),
+        code: ObservationKit.toText(entry.code),
+        label: ObservationKit.toText(entry.description),
         loincCode: "",
         units: "",
         hotkey: ""
       };
       const ranges = findRangesForCode(source, candidate);
-      const value = gridToText(entry.value).trim();
+      const value = ObservationKit.toText(entry.value).trim();
       const flagCode = classifyGridFlag(ranges, value);
       const abnormalFlag = buildGridAbnormalFlag(sd, flagCode);
       return {
@@ -23175,10 +22630,10 @@ const ObservationEntryGrid = ({
         observationCode: candidate.code,
         observationClass: "DCOBS",
         value,
-        valueType: gridNumber(value) !== null ? "NUMERIC" : "TEXT",
+        valueType: ObservationKit.toNumber(value) !== null ? "NUMERIC" : "TEXT",
         status: "F",
-        description: gridToText(entry.description).trim() || candidate.label || "Measurement",
-        units: gridToText(entry.units).trim() || candidate.units || gridToText(ranges?.units).trim(),
+        description: ObservationKit.toText(entry.description).trim() || candidate.label || "Measurement",
+        units: ObservationKit.toText(entry.units).trim() || candidate.units || ObservationKit.toText(ranges?.units).trim(),
         ...(candidate.loincCode ? {
           loincCode: candidate.loincCode
         } : {}),
@@ -23186,12 +22641,12 @@ const ObservationEntryGrid = ({
           orderedBy: createdBy,
           collectedBy: createdBy
         } : {}),
-        collectedDateTime: gridToText(entry.dateTime) || getDateTimeString(new Date()),
-        ...(ranges && gridToText(ranges.rangeNormalLow).trim() !== "" ? {
-          rangeNormalLow: gridToText(ranges.rangeNormalLow)
+        collectedDateTime: ObservationKit.toText(entry.dateTime) || getDateTimeString(new Date()),
+        ...(ranges && ObservationKit.toText(ranges.rangeNormalLow).trim() !== "" ? {
+          rangeNormalLow: ObservationKit.toText(ranges.rangeNormalLow)
         } : {}),
-        ...(ranges && gridToText(ranges.rangeNormalHigh).trim() !== "" ? {
-          rangeNormalHigh: gridToText(ranges.rangeNormalHigh)
+        ...(ranges && ObservationKit.toText(ranges.rangeNormalHigh).trim() !== "" ? {
+          rangeNormalHigh: ObservationKit.toText(ranges.rangeNormalHigh)
         } : {}),
         ...(abnormalFlag ? {
           abnormalFlag
@@ -23199,18 +22654,18 @@ const ObservationEntryGrid = ({
       };
     });
     const editPayload = edits.map(edit => {
-      const observationId = gridNumber(edit.observationId);
+      const observationId = ObservationKit.toNumber(edit.observationId);
       if (observationId === null || observationId <= 0) return null;
       if (edit.action === "delete") {
         return {
           observationId: -observationId
         };
       }
-      const value = gridToText(edit.value).trim();
+      const value = ObservationKit.toText(edit.value).trim();
       if (!value) return null;
       const candidate = codeList.find(item => item.code === edit.code) ?? {
-        code: gridToText(edit.code),
-        label: gridToText(edit.description),
+        code: ObservationKit.toText(edit.code),
+        label: ObservationKit.toText(edit.description),
         loincCode: "",
         units: "",
         hotkey: ""
@@ -23223,14 +22678,14 @@ const ObservationEntryGrid = ({
         observationCode: candidate.code,
         observationClass: "DCOBS",
         value,
-        valueType: gridNumber(value) !== null ? "NUMERIC" : "TEXT",
+        valueType: ObservationKit.toNumber(value) !== null ? "NUMERIC" : "TEXT",
         status: "C",
-        description: gridToText(edit.description).trim() || candidate.label || "Measurement",
-        units: gridToText(edit.units).trim() || candidate.units || gridToText(ranges?.units).trim(),
+        description: ObservationKit.toText(edit.description).trim() || candidate.label || "Measurement",
+        units: ObservationKit.toText(edit.units).trim() || candidate.units || ObservationKit.toText(ranges?.units).trim(),
         ...(createdBy ? {
           collectedBy: createdBy
         } : {}),
-        collectedDateTime: gridToText(edit.collectedDateTime) || getDateTimeString(new Date()),
+        collectedDateTime: ObservationKit.toText(edit.collectedDateTime) || getDateTimeString(new Date()),
         ...(abnormalFlag ? {
           abnormalFlag
         } : {})
@@ -23268,7 +22723,7 @@ const ObservationEntryGrid = ({
     setSelectedKey("entry-" + rowId);
   };
   const updateEntry = (rowId, patch) => {
-    writeRows(entriesKey, current => current.map(entry => gridToText(entry.rowId) === rowId ? {
+    writeRows(entriesKey, current => current.map(entry => ObservationKit.toText(entry.rowId) === rowId ? {
       ...entry,
       ...patch
     } : entry));
@@ -23279,7 +22734,7 @@ const ObservationEntryGrid = ({
   // then MOIS-LABCODE through the host's MemoryCode connection. Unknown codes
   // remain valid and can be described manually in the editable Test Name cell.
   const resolveEntryCode = raw => {
-    const text = gridToText(raw).trim();
+    const text = ObservationKit.toText(raw).trim();
     if (!text) return {
       code: "",
       description: "",
@@ -23296,10 +22751,10 @@ const ObservationEntryGrid = ({
     let bestTime = -Infinity;
     source.forEach(entry => {
       if (!entry || typeof entry !== "object") return;
-      const entryCode = gridToText(entry.observationCode).trim().toLowerCase();
-      const entryLoinc = gridToText(entry.loincCode).trim().toLowerCase();
+      const entryCode = ObservationKit.toText(entry.observationCode).trim().toLowerCase();
+      const entryLoinc = ObservationKit.toText(entry.loincCode).trim().toLowerCase();
       if (entryCode !== lower && entryLoinc !== lower) return;
-      const time = gridParseDate(entry.collectedDateTime)?.getTime() ?? 0;
+      const time = ObservationKit.parseDate(entry.collectedDateTime)?.getTime() ?? 0;
       if (time >= bestTime) {
         best = entry;
         bestTime = time;
@@ -23308,17 +22763,17 @@ const ObservationEntryGrid = ({
     if (best) {
       return {
         code: text,
-        description: gridToText(best.description).trim(),
-        units: gridToText(best.units).trim()
+        description: ObservationKit.toText(best.description).trim(),
+        units: ObservationKit.toText(best.units).trim()
       };
     }
     if (codeLookupSystem) {
-      const lookupEntry = (Array.isArray(lookupCodeList) ? lookupCodeList : []).find(entry => (gridToText(entry?.code).trim().toLowerCase() === lower || gridToText(entry?.loincCode).trim().toLowerCase() === lower || gridToText(entry?.labCode).trim().toLowerCase() === lower) && gridToText(entry?.display).trim());
+      const lookupEntry = (Array.isArray(lookupCodeList) ? lookupCodeList : []).find(entry => (ObservationKit.toText(entry?.code).trim().toLowerCase() === lower || ObservationKit.toText(entry?.loincCode).trim().toLowerCase() === lower || ObservationKit.toText(entry?.labCode).trim().toLowerCase() === lower) && ObservationKit.toText(entry?.display).trim());
       if (lookupEntry) {
         return {
-          code: gridToText(lookupEntry.code).trim() || text,
-          description: gridToText(lookupEntry.display).trim(),
-          units: gridToText(lookupEntry.units).trim()
+          code: ObservationKit.toText(lookupEntry.code).trim() || text,
+          description: ObservationKit.toText(lookupEntry.display).trim(),
+          units: ObservationKit.toText(lookupEntry.units).trim()
         };
       }
     }
@@ -23358,16 +22813,16 @@ const ObservationEntryGrid = ({
       units: row.units,
       value: row.value,
       collectedDateTime: row.collectedDateTime
-    }, ...current.filter(item => gridNumber(item.observationId) !== row.observationId)]);
+    }, ...current.filter(item => ObservationKit.toNumber(item.observationId) !== row.observationId)]);
   };
   const updateCorrection = (observationId, value) => {
-    writeRows(editsKey, current => current.map(item => gridNumber(item.observationId) === observationId && item.action === "correct" ? {
+    writeRows(editsKey, current => current.map(item => ObservationKit.toNumber(item.observationId) === observationId && item.action === "correct" ? {
       ...item,
       value
     } : item));
   };
   const deleteEntry = rowId => {
-    writeRows(entriesKey, current => current.filter(entry => gridToText(entry.rowId) !== rowId));
+    writeRows(entriesKey, current => current.filter(entry => ObservationKit.toText(entry.rowId) !== rowId));
     if (selectedKey === "entry-" + rowId) setSelectedKey(null);
   };
   const stageChartDelete = row => {
@@ -23377,10 +22832,10 @@ const ObservationEntryGrid = ({
       action: "delete",
       code: row.code,
       description: row.description
-    }, ...current.filter(item => gridNumber(item.observationId) !== row.observationId)]);
+    }, ...current.filter(item => ObservationKit.toNumber(item.observationId) !== row.observationId)]);
   };
   const undoChartEdit = observationId => {
-    writeRows(editsKey, current => current.filter(item => gridNumber(item.observationId) !== observationId));
+    writeRows(editsKey, current => current.filter(item => ObservationKit.toNumber(item.observationId) !== observationId));
   };
 
   // MOIS-parity quick-entry shortcuts (BP ctrl+b, Weight ctrl+w, ...): each
@@ -23391,7 +22846,7 @@ const ObservationEntryGrid = ({
     if (withHotkeys.length === 0) return undefined;
     const handleKeyDown = event => {
       if (!event.ctrlKey || event.metaKey || event.altKey) return;
-      const key = gridToText(event.key).toLowerCase();
+      const key = ObservationKit.toText(event.key).toLowerCase();
       const match = withHotkeys.find(item => item.hotkey === key);
       if (!match) return;
       event.preventDefault();
@@ -23469,7 +22924,7 @@ const ObservationEntryGrid = ({
     const pendingEdit = row.fromChart && row.observationId !== null ? editByObservationId.get(row.observationId) : null;
     const pendingDelete = pendingEdit?.action === "delete";
     const pendingCorrection = pendingEdit?.action === "correct";
-    const displayValue = pendingCorrection ? gridToText(pendingEdit.value) : row.value;
+    const displayValue = pendingCorrection ? ObservationKit.toText(pendingEdit.value) : row.value;
     const displayFlag = pendingCorrection ? classifyGridFlag(row.ranges, displayValue) ?? row.flag : row.flag;
     return /*#__PURE__*/React.createElement("tr", {
       key: row.key,
@@ -23496,7 +22951,7 @@ const ObservationEntryGrid = ({
       style: cellStyle
     }, !row.fromChart && !readOnly ? /*#__PURE__*/React.createElement(TextField, {
       placeholder: "Code",
-      value: codeDrafts[row.rowId] ?? gridToText(row.code),
+      value: codeDrafts[row.rowId] ?? ObservationKit.toText(row.code),
       autoFocus: !row.code,
       onChange: (_event, value) => setCodeDrafts(current => ({
         ...current,
@@ -23514,13 +22969,13 @@ const ObservationEntryGrid = ({
     }) : row.code), /*#__PURE__*/React.createElement("td", {
       style: {
         ...cellStyle,
-        ...gridFlagStyle(displayFlag)
+        ...ObservationKit.flagCellStyle(displayFlag)
       }
     }, !row.fromChart && !readOnly ? /*#__PURE__*/React.createElement(TextField, {
       placeholder: "Test name",
-      value: gridToText(row.description),
+      value: ObservationKit.toText(row.description),
       componentRef: ref => {
-        testNameFieldRefs.current[gridToText(row.rowId)] = ref;
+        testNameFieldRefs.current[ObservationKit.toText(row.rowId)] = ref;
       },
       onChange: (_event, value) => updateEntry(row.rowId, {
         description: value ?? ""
@@ -23528,13 +22983,13 @@ const ObservationEntryGrid = ({
       onKeyDown: event => {
         if (event.key !== "Enter") return;
         event.preventDefault();
-        valueFieldRefs.current[gridToText(row.rowId)]?.focus?.();
+        valueFieldRefs.current[ObservationKit.toText(row.rowId)]?.focus?.();
       },
       styles: inlineNameFieldStyles
     }) : row.description), /*#__PURE__*/React.createElement("td", {
       style: {
         ...cellStyle,
-        ...gridFlagStyle(displayFlag)
+        ...ObservationKit.flagCellStyle(displayFlag)
       }
     }, !row.fromChart && !readOnly ? /*#__PURE__*/React.createElement("span", {
       style: {
@@ -23544,10 +22999,10 @@ const ObservationEntryGrid = ({
       }
     }, /*#__PURE__*/React.createElement(TextField, {
       placeholder: "Value",
-      value: gridToText(row.value),
+      value: ObservationKit.toText(row.value),
       autoFocus: Boolean(row.code),
       componentRef: ref => {
-        valueFieldRefs.current[gridToText(row.rowId)] = ref;
+        valueFieldRefs.current[ObservationKit.toText(row.rowId)] = ref;
       },
       onChange: (_event, value) => updateEntry(row.rowId, {
         value: value ?? ""
@@ -23620,6 +23075,219 @@ const ObservationEntryGrid = ({
     }
   }, "(ctrl + ", item.hotkey, ")") : null)))) : null));
 };`,
+  './ObservationKit/index.jsx': `// ObservationKit — shared runtime kernel for the observation-family NHForms
+// components (ObservationQuery, ObservationEntryGrid, FlowSheet,
+// HistoricalObservationTable). Non-rendering helper module in the
+// FormSessionRuntime pattern: it exports a single namespace object so
+// consumers keep one bare identifier in engine scope.
+//
+// Consumers must reference ObservationKit only inside function bodies —
+// component files load in no guaranteed order, so a top-level read of another
+// module's export can run before that module has been evaluated.
+//
+// Real chart observations carry ISO "YYYY-MM-DDTHH:mm:ss" dates (verified
+// against the SMOIS sandbox saved-form DB and mois-import-patient.json);
+// parseDate additionally accepts "."- or "/"-separated day-precision dates
+// that authors feed through custom sourcePaths.
+
+const ObservationKit = (() => {
+  const toText = value => {
+    if (value === null || value === undefined) return "";
+    return String(value);
+  };
+
+  // Display text for values that may be plain strings or {code, display}
+  // coded objects.
+  const displayText = value => {
+    if (value && typeof value === "object") {
+      return toText(value.display ?? value.text ?? value.code).trim();
+    }
+    return toText(value).trim();
+  };
+
+  // Code text for coded values: prefer the code over the human display.
+  const codeText = value => {
+    if (value && typeof value === "object") {
+      return toText(value.code ?? value.display).trim();
+    }
+    return toText(value).trim();
+  };
+  const dateKey = value => {
+    const raw = toText(value);
+    return raw.includes("T") ? raw.split("T")[0] : raw;
+  };
+  const parseDate = value => {
+    const raw = toText(value).trim();
+    if (!raw) return null;
+    const parsed = new Date(raw.includes("T") ? raw : raw.replace(/[./]/g, "-"));
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  };
+
+  // Day-precision timestamp so date-range comparisons ignore time of day.
+  const dayTime = value => {
+    const parsed = parseDate(dateKey(value));
+    return parsed ? parsed.getTime() : null;
+  };
+
+  // MOIS renders dates with dot separators (2024.11.21).
+  const displayDate = key => toText(key).replace(/-/g, ".");
+  const getPath = (sd, path, fallback = "patient.observations") => {
+    const steps = toText(path || fallback).split(".").filter(Boolean);
+    let current = sd;
+    for (const step of steps) {
+      if (current && typeof current === "object") {
+        current = current[step];
+      } else {
+        return [];
+      }
+    }
+    return Array.isArray(current) ? current : [];
+  };
+  const normalizeCodes = codes => {
+    if (!Array.isArray(codes)) return [];
+    return codes.map(entry => {
+      if (typeof entry === "string") {
+        const code = entry.trim();
+        return code ? {
+          code,
+          label: code,
+          loincCode: "",
+          units: "",
+          hotkey: ""
+        } : null;
+      }
+      if (!entry || typeof entry !== "object") return null;
+      const code = toText(entry.code).trim();
+      if (!code) return null;
+      return {
+        code,
+        label: toText(entry.label).trim() || code,
+        loincCode: toText(entry.loincCode).trim(),
+        units: toText(entry.units).trim(),
+        hotkey: toText(entry.hotkey).trim().slice(0, 1).toLowerCase()
+      };
+    }).filter(Boolean);
+  };
+
+  // Cutoff for a {amount, unit} lookback window, anchored at "now". Returns
+  // null when the window is unset or invalid so callers fall back to full
+  // history.
+  const cutoffDate = lookback => {
+    if (!lookback || typeof lookback !== "object") return null;
+    const amount = Math.floor(Number(lookback.amount));
+    if (!Number.isFinite(amount) || amount <= 0) return null;
+    const cutoff = new Date();
+    if (lookback.unit === "days") {
+      cutoff.setDate(cutoff.getDate() - amount);
+    } else if (lookback.unit === "years") {
+      cutoff.setFullYear(cutoff.getFullYear() - amount);
+    } else if (lookback.unit === "months") {
+      cutoff.setMonth(cutoff.getMonth() - amount);
+    } else {
+      return null;
+    }
+    return cutoff;
+  };
+  const lookbackLabel = lookback => {
+    const amount = Math.floor(Number(lookback?.amount));
+    if (!Number.isFinite(amount) || amount <= 0) return "";
+    const unit = lookback.unit === "days" || lookback.unit === "months" || lookback.unit === "years" ? lookback.unit : null;
+    if (!unit) return "";
+    const singular = {
+      days: "day",
+      months: "month",
+      years: "year"
+    }[unit];
+    return "Last " + amount + " " + (amount === 1 ? singular : unit);
+  };
+
+  // A chart entry matches a configured {code, loincCode} candidate when either
+  // of the entry's identifiers equals either of the candidate's,
+  // case-insensitively.
+  const matchesCode = (entry, candidate) => {
+    const entryCode = toText(entry?.observationCode).trim().toLowerCase();
+    const entryLoinc = toText(entry?.loincCode).trim().toLowerCase();
+    const code = toText(candidate?.code).trim().toLowerCase();
+    const loinc = toText(candidate?.loincCode).trim().toLowerCase();
+    if (entryCode && (entryCode === code || loinc && entryCode === loinc)) return true;
+    if (entryLoinc && (entryLoinc === code || loinc && entryLoinc === loinc)) return true;
+    return false;
+  };
+  const matchCodeIndex = (entry, codeList) => {
+    for (let index = 0; index < codeList.length; index += 1) {
+      if (matchesCode(entry, codeList[index])) return index;
+    }
+    return -1;
+  };
+  const toNumber = value => {
+    const text = toText(value).trim();
+    if (!text) return null;
+    const parsed = Number(text);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  const extractValue = entry => toText(entry?.value ?? entry?.display ?? entry?.report ?? "");
+
+  // Four MOIS abnormal bands: critical LL/HH (absurd/very ranges) outrank L/H
+  // (normal range) — mirrors the PastMeasurementField save-path
+  // classification. Returns "" when the value is non-numeric, no ranges are
+  // present, or the value sits inside the normal range.
+  const classifyRanges = (ranges, rawValue) => {
+    const value = toNumber(rawValue);
+    if (value === null || !ranges || typeof ranges !== "object") return "";
+    const criticalLow = toNumber(ranges.rangeAbsurdLow) ?? toNumber(ranges.rangeVeryLow);
+    const criticalHigh = toNumber(ranges.rangeAbsurdHigh) ?? toNumber(ranges.rangeVeryHigh);
+    const normalLow = toNumber(ranges.rangeNormalLow);
+    const normalHigh = toNumber(ranges.rangeNormalHigh);
+    if (criticalLow !== null && value < criticalLow) return "LL";
+    if (criticalHigh !== null && value > criticalHigh) return "HH";
+    if (normalLow !== null && value < normalLow) return "L";
+    if (normalHigh !== null && value > normalHigh) return "H";
+    return "";
+  };
+
+  // Entry-level classification: an explicit chart abnormalFlag wins, then the
+  // entry's own range metadata.
+  const classifyFlag = (entry, rawValue) => {
+    const explicit = entry?.abnormalFlag && typeof entry.abnormalFlag === "object" ? toText(entry.abnormalFlag.code).trim() : toText(entry?.abnormalFlag).trim();
+    if (explicit) return explicit;
+    return classifyRanges(entry, rawValue);
+  };
+  const flagCellStyle = flag => {
+    if (flag === "LL" || flag === "HH") {
+      return {
+        background: "#fde7e9",
+        color: "#a4262c",
+        fontWeight: 600
+      };
+    }
+    if (flag === "L" || flag === "H") {
+      return {
+        background: "#fff4ce"
+      };
+    }
+    return {};
+  };
+  return {
+    toText,
+    displayText,
+    codeText,
+    dateKey,
+    parseDate,
+    dayTime,
+    displayDate,
+    getPath,
+    normalizeCodes,
+    cutoffDate,
+    lookbackLabel,
+    matchesCode,
+    matchCodeIndex,
+    toNumber,
+    extractValue,
+    classifyRanges,
+    classifyFlag,
+    flagCellStyle
+  };
+})();`,
   './ObservationPanelEditor/index.jsx': `/**
  * __nhAuth — self-contained field/row authorship runtime for NHForms components.
  *
@@ -24224,138 +23892,11 @@ const {
   Label,
   Text
 } = Fluent;
-const queryToText = value => {
-  if (value === null || value === undefined) return "";
-  return String(value);
-};
-const queryDateKey = value => {
-  const raw = queryToText(value);
-  return raw.includes("T") ? raw.split("T")[0] : raw;
-};
-const queryParseDate = value => {
-  const raw = queryToText(value).trim();
-  if (!raw) return null;
-  const parsed = new Date(raw.includes("T") ? raw : raw.replace(/\\./g, "-"));
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
-};
-const getQuerySource = (sd, sourcePath) => {
-  if (!sourcePath) return sd?.patient?.observations ?? [];
-  const steps = queryToText(sourcePath).split(".").filter(Boolean);
-  let current = sd;
-  for (const step of steps) {
-    if (current && typeof current === "object") {
-      current = current[step];
-    } else {
-      return [];
-    }
-  }
-  return Array.isArray(current) ? current : [];
-};
-const normalizeQueryCodes = codes => {
-  if (!Array.isArray(codes)) return [];
-  return codes.map(entry => {
-    if (typeof entry === "string") {
-      const code = entry.trim();
-      return code ? {
-        code,
-        label: code,
-        loincCode: "",
-        units: ""
-      } : null;
-    }
-    if (!entry || typeof entry !== "object") return null;
-    const code = queryToText(entry.code).trim();
-    if (!code) return null;
-    return {
-      code,
-      label: queryToText(entry.label).trim() || code,
-      loincCode: queryToText(entry.loincCode).trim(),
-      units: queryToText(entry.units).trim()
-    };
-  }).filter(Boolean);
-};
 
-// Cutoff for a {amount, unit} lookback window, anchored at "now". Returns null
-// when the window is unset or invalid so callers fall back to full history.
-const queryCutoffDate = lookback => {
-  if (!lookback || typeof lookback !== "object") return null;
-  const amount = Math.floor(Number(lookback.amount));
-  if (!Number.isFinite(amount) || amount <= 0) return null;
-  const cutoff = new Date();
-  if (lookback.unit === "days") {
-    cutoff.setDate(cutoff.getDate() - amount);
-  } else if (lookback.unit === "years") {
-    cutoff.setFullYear(cutoff.getFullYear() - amount);
-  } else if (lookback.unit === "months") {
-    cutoff.setMonth(cutoff.getMonth() - amount);
-  } else {
-    return null;
-  }
-  return cutoff;
-};
-const queryLookbackLabel = lookback => {
-  const amount = Math.floor(Number(lookback?.amount));
-  if (!Number.isFinite(amount) || amount <= 0) return "";
-  const unit = lookback.unit === "days" || lookback.unit === "months" || lookback.unit === "years" ? lookback.unit : null;
-  if (!unit) return "";
-  const singular = {
-    days: "day",
-    months: "month",
-    years: "year"
-  }[unit];
-  return "Last " + amount + " " + (amount === 1 ? singular : unit);
-};
-const matchQueryCodeIndex = (entry, codeList) => {
-  const entryCode = queryToText(entry?.observationCode).trim().toLowerCase();
-  const entryLoinc = queryToText(entry?.loincCode).trim().toLowerCase();
-  for (let index = 0; index < codeList.length; index += 1) {
-    const candidate = codeList[index];
-    const code = candidate.code.toLowerCase();
-    const loinc = candidate.loincCode.toLowerCase();
-    if (entryCode && (entryCode === code || loinc && entryCode === loinc)) return index;
-    if (entryLoinc && (entryLoinc === code || loinc && entryLoinc === loinc)) return index;
-  }
-  return -1;
-};
-const queryNumber = value => {
-  const text = queryToText(value).trim();
-  if (!text) return null;
-  const parsed = Number(text);
-  return Number.isFinite(parsed) ? parsed : null;
-};
-
-// Four MOIS abnormal bands: critical LL/HH (absurd/very ranges) outrank L/H
-// (normal range) — mirrors the PastMeasurementField save-path classification.
-const classifyQueryFlag = (entry, rawValue) => {
-  const explicit = entry?.abnormalFlag && typeof entry.abnormalFlag === "object" ? queryToText(entry.abnormalFlag.code).trim() : queryToText(entry?.abnormalFlag).trim();
-  if (explicit) return explicit;
-  const value = queryNumber(rawValue);
-  if (value === null) return "";
-  const criticalLow = queryNumber(entry?.rangeAbsurdLow) ?? queryNumber(entry?.rangeVeryLow);
-  const criticalHigh = queryNumber(entry?.rangeAbsurdHigh) ?? queryNumber(entry?.rangeVeryHigh);
-  const normalLow = queryNumber(entry?.rangeNormalLow);
-  const normalHigh = queryNumber(entry?.rangeNormalHigh);
-  if (criticalLow !== null && value < criticalLow) return "LL";
-  if (criticalHigh !== null && value > criticalHigh) return "HH";
-  if (normalLow !== null && value < normalLow) return "L";
-  if (normalHigh !== null && value > normalHigh) return "H";
-  return "";
-};
-const queryFlagCellStyle = flag => {
-  if (flag === "LL" || flag === "HH") {
-    return {
-      background: "#fde7e9",
-      color: "#a4262c",
-      fontWeight: 600
-    };
-  }
-  if (flag === "L" || flag === "H") {
-    return {
-      background: "#fff4ce"
-    };
-  }
-  return {};
-};
+// Date/path/code-matching/abnormal-flag primitives live in the shared
+// ObservationKit helper module (declared in Identity.json). ObservationKit is
+// referenced only inside function bodies because component files load in no
+// guaranteed order.
 
 // Executes the declarative query: match codes, apply the lookback cutoff, and
 // return matches tagged with their code index, parsed date, and abnormal flag.
@@ -24365,24 +23906,24 @@ const runObservationQuery = (sd, {
   codeList,
   lookback
 }) => {
-  const source = getQuerySource(sd, sourcePath);
-  const cutoff = queryCutoffDate(lookback);
+  const source = ObservationKit.getPath(sd, sourcePath);
+  const cutoff = ObservationKit.cutoffDate(lookback);
   const matches = [];
   source.forEach(entry => {
     if (!entry || typeof entry !== "object") return;
-    const codeIndex = matchQueryCodeIndex(entry, codeList);
+    const codeIndex = ObservationKit.matchCodeIndex(entry, codeList);
     if (codeIndex < 0) return;
-    const parsedDate = queryParseDate(entry[datePath]);
+    const parsedDate = ObservationKit.parseDate(entry[datePath]);
     if (!parsedDate) return;
     if (cutoff && parsedDate.getTime() < cutoff.getTime()) return;
-    const value = entry.value ?? entry.display ?? entry.report ?? "";
+    const value = ObservationKit.extractValue(entry);
     matches.push({
       codeIndex,
-      dateKey: queryDateKey(entry[datePath]),
+      dateKey: ObservationKit.dateKey(entry[datePath]),
       time: parsedDate.getTime(),
-      value: queryToText(value),
-      units: queryToText(entry.units).trim() || codeList[codeIndex].units,
-      flag: classifyQueryFlag(entry, value)
+      value,
+      units: ObservationKit.toText(entry.units).trim() || codeList[codeIndex].units,
+      flag: ObservationKit.classifyFlag(entry, value)
     });
   });
   return matches;
@@ -24451,7 +23992,7 @@ const ObservationQueryTable = ({
       padding: "2px 6px",
       fontSize: 12,
       lineHeight: "16px",
-      ...(cell ? queryFlagCellStyle(cell.flag) : {})
+      ...(cell ? ObservationKit.flagCellStyle(cell.flag) : {})
     };
     return /*#__PURE__*/React.createElement("td", {
       key: index,
@@ -24510,7 +24051,7 @@ const ObservationQueryLatest = ({
       style: {
         padding: "3px 6px",
         fontWeight: 600,
-        ...queryFlagCellStyle(latest.flag)
+        ...ObservationKit.flagCellStyle(latest.flag)
       }
     }, latest.value, latest.units ? " " + latest.units : "", latest.flag ? /*#__PURE__*/React.createElement("span", {
       style: {
@@ -24531,14 +24072,14 @@ const ObservationQuery = ({
   chartHeight = 240
 }) => {
   const sd = useSourceData();
-  const codeList = useMemo(() => normalizeQueryCodes(codes), [codes]);
+  const codeList = useMemo(() => ObservationKit.normalizeCodes(codes), [codes]);
   const matches = useMemo(() => runObservationQuery(sd, {
     sourcePath,
     datePath,
     codeList,
     lookback
   }), [codeList, datePath, lookback, sd, sourcePath]);
-  const windowLabel = queryLookbackLabel(lookback);
+  const windowLabel = ObservationKit.lookbackLabel(lookback);
   const effectiveMaxRows = Math.max(1, Math.floor(Number(maxRows)) || 10);
   if (codeList.length === 0) {
     return /*#__PURE__*/React.createElement(Stack, {
@@ -24557,7 +24098,7 @@ const ObservationQuery = ({
     });
   } else if (display === "chart") {
     if (typeof ObservationChart === "function") {
-      const chartRows = matches.filter(match => queryNumber(match.value) !== null || /^\\d/.test(match.value)).map(match => ({
+      const chartRows = matches.filter(match => ObservationKit.toNumber(match.value) !== null || /^\\d/.test(match.value)).map(match => ({
         date: new Date(match.time).toISOString(),
         ["c" + match.codeIndex]: match.value,
         units: match.units
@@ -26831,34 +26372,322 @@ const RelationshipStatus = ({
 const {
   useMemo
 } = React;
-const defaultRemarkPlugins = typeof remarkGfm === "undefined" ? [] : [remarkGfm];
-const defaultRehypePlugins = typeof rehypeRaw === "undefined" ? [] : [rehypeRaw];
-const MarkdownRenderer = typeof ReactMarkdown === "undefined" ? ({
-  children
-}) => /*#__PURE__*/React.createElement("div", {
-  style: {
-    whiteSpace: "pre-wrap"
-  }
-}, children) : ReactMarkdown;
+
+/**
+ * RichMarkdownBlock
+ *
+ * Read-only markdown display for imported builder rich text. Renders inline
+ * MOIS chart links written with the reserved \`mois:\` scheme as LinkToMois
+ * buttons:
+ *
+ *   [](mois:CHARTACTION)            -> just the chart-link icon button
+ *   [Open chart](mois:CHARTACTION)  -> "Open chart" text + icon button
+ *   [](mois:GOALS/12345)            -> icon button linking to object 12345
+ *
+ * (Supersedes the former MoisMarkdownBlock, which was a copy of this file with
+ * the \`mois:\` link handling added. One component now covers both.)
+ *
+ * ---------------------------------------------------------------------------
+ * Why this file does not just call ReactMarkdown
+ * ---------------------------------------------------------------------------
+ * The MOIS form engine evaluates every component with a fixed scope:
+ *
+ *   Function("React","Fabric","Fluent","MoisControl","MoisFunction",
+ *            "MoisActions","MoisHooks","Mois")
+ *
+ * \`ReactMarkdown\`, \`remarkGfm\` and \`rehypeRaw\` are NOT in it (see
+ * data/mois-engine-manifest.json — \`Markdown\` is a control, ReactMarkdown is
+ * not). Only the local preview injects them, so a component that reaches for
+ * them bare looks perfect in preview and silently degrades on a real instance.
+ * The engine also ships react-markdown 7, which predates \`urlTransform\`, so
+ * the \`mois:\` scheme would be stripped by the default URI sanitiser before any
+ * custom \`a\` renderer could see it.
+ *
+ * This component therefore:
+ *   - rewrites \`](mois:X)\` to \`](#mois:X)\` in the source, a fragment URL every
+ *     react-markdown version passes through untouched, so no version-specific
+ *     \`urlTransform\` / \`transformLinkUri\` prop is needed;
+ *   - renders through the engine's own \`Markdown\` control when ReactMarkdown
+ *     is absent (i.e. on a real MOIS instance);
+ *   - parses GFM tables itself when \`remarkGfm\` is absent, so tables render on
+ *     MOIS instead of falling through as literal pipe characters.
+ *
+ * Known limitation: raw HTML in the markdown needs \`rehypeRaw\`, which the
+ * engine does not provide. It is dropped on MOIS, exactly as the engine's own
+ * \`Markdown\` control drops it.
+ */
+
+const HAS_REACT_MARKDOWN = typeof ReactMarkdown !== "undefined";
+const HAS_REMARK_GFM = typeof remarkGfm !== "undefined";
+const HAS_REHYPE_RAW = typeof rehypeRaw !== "undefined";
+const defaultRemarkPlugins = HAS_REMARK_GFM ? [remarkGfm] : [];
+const defaultRehypePlugins = HAS_REHYPE_RAW ? [rehypeRaw] : [];
 const fullWidthStyle = {
   maxWidth: "none",
   width: "100%"
 };
+const linkStyle = {
+  color: "#005a9e",
+  textDecoration: "underline"
+};
+const moisLinkWrapperStyle = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 4,
+  verticalAlign: "middle"
+};
+
+// ---------------------------------------------------------------------------
+// MOIS chart links
+// ---------------------------------------------------------------------------
+
+/**
+ * react-markdown 7 (MOIS) and 9+ (preview) both sanitise unknown URL schemes,
+ * and they disagree on the prop name for overriding that. Both, however, leave
+ * a URL whose first character is \`#\` alone, so the reserved scheme travels as
+ * a fragment and is unpacked in the \`a\` renderer below.
+ */
+const normalizeMoisLinks = text => typeof text === "string" ? text.replace(/\\]\\(\\s*mois:/gi, "](#mois:") : "";
+
+// Parse a MOIS link href into a module name + optional object id.
+//   #mois:CHARTACTION   -> { moisModule: "CHARTACTION" }
+//   mois://CHARTACTION  -> { moisModule: "CHARTACTION" }
+//   #mois:GOALS/12345   -> { moisModule: "GOALS", objectId: 12345 }
+const parseMoisHref = href => {
+  if (typeof href !== "string") return null;
+  const match = href.match(/^#?mois:(?:\\/\\/)?([^/?#]+)(?:\\/(\\d+))?$/i);
+  if (!match) return null;
+  const moisModule = decodeURIComponent(match[1]).trim();
+  if (!moisModule) return null;
+  const parsedId = match[2] ? Number(match[2]) : undefined;
+  return {
+    moisModule,
+    objectId: Number.isFinite(parsedId) ? parsedId : undefined
+  };
+};
+const hasVisibleChildren = children => React.Children.toArray(children).some(child => !(typeof child === "string" && child.trim() === ""));
+const renderMoisLink = (mois, children, key) => /*#__PURE__*/React.createElement("span", {
+  key: key,
+  style: moisLinkWrapperStyle
+}, hasVisibleChildren(children) ? /*#__PURE__*/React.createElement("span", null, children) : null, /*#__PURE__*/React.createElement(LinkToMois, {
+  moisModule: mois.moisModule,
+  objectId: mois.objectId,
+  title: \`Open \${mois.moisModule} in MOIS\`
+}));
+
+// ---------------------------------------------------------------------------
+// GFM table fallback (engine has no remark-gfm)
+// ---------------------------------------------------------------------------
+
+const tableWrapperStyle = {
+  overflowX: "auto",
+  width: "100%",
+  maxWidth: "none"
+};
+const tableStyle = {
+  width: "100%",
+  borderCollapse: "collapse",
+  tableLayout: "fixed",
+  border: "1px solid black"
+};
+const theadStyle = {
+  backgroundColor: "#f3f2f1"
+};
+const trStyle = {
+  verticalAlign: "top"
+};
+const thStyle = {
+  border: "1px solid black",
+  padding: "6px 8px",
+  textAlign: "left",
+  verticalAlign: "top",
+  fontWeight: 700
+};
+const tdStyle = {
+  border: "1px solid black",
+  padding: "6px 8px",
+  verticalAlign: "top",
+  whiteSpace: "pre-wrap"
+};
+
+/** Split one table row into cells, honouring \`\\|\` escapes. */
+const splitTableRow = line => {
+  const trimmed = String(line).trim().replace(/^\\|/, "").replace(/\\|$/, "");
+  const cells = [];
+  let current = "";
+  for (let i = 0; i < trimmed.length; i += 1) {
+    const char = trimmed[i];
+    if (char === "\\\\" && trimmed[i + 1] === "|") {
+      current += "|";
+      i += 1;
+      continue;
+    }
+    if (char === "|") {
+      cells.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+  cells.push(current.trim());
+  return cells;
+};
+const isTableDelimiterRow = line => {
+  if (typeof line !== "string" || line.indexOf("-") === -1) return false;
+  const cells = splitTableRow(line);
+  return cells.length > 0 && cells.every(cell => /^:?-+:?$/.test(cell));
+};
+const cellAlignment = cell => {
+  const startsWithColon = cell.charAt(0) === ":";
+  const endsWithColon = cell.charAt(cell.length - 1) === ":";
+  if (startsWithColon && endsWithColon) return "center";
+  if (endsWithColon) return "right";
+  if (startsWithColon) return "left";
+  return undefined;
+};
+
+/**
+ * Split markdown into plain segments and GFM table blocks. Only used when
+ * remark-gfm is unavailable; with the plugin present the tables are left in
+ * the source so react-markdown parses them exactly as it always has.
+ */
+const splitMarkdownSegments = text => {
+  const lines = String(text).split("\\n");
+  const segments = [];
+  let buffer = [];
+  const flush = () => {
+    if (buffer.length === 0) return;
+    segments.push({
+      kind: "markdown",
+      text: buffer.join("\\n")
+    });
+    buffer = [];
+  };
+  let inFence = false;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const next = lines[index + 1];
+    if (/^\\s*(\`\`\`|~~~)/.test(line)) inFence = !inFence;
+    // A pipe table inside a fenced code block is sample text, not a table.
+    if (!inFence && line.indexOf("|") !== -1 && isTableDelimiterRow(next)) {
+      const header = splitTableRow(line);
+      const align = splitTableRow(next).map(cellAlignment);
+      const rows = [];
+      let cursor = index + 2;
+      for (; cursor < lines.length; cursor += 1) {
+        const rowLine = lines[cursor];
+        if (!rowLine.trim() || rowLine.indexOf("|") === -1) break;
+        rows.push(splitTableRow(rowLine));
+      }
+      flush();
+      segments.push({
+        kind: "table",
+        header,
+        align,
+        rows
+      });
+      index = cursor - 1;
+      continue;
+    }
+    buffer.push(line);
+  }
+  flush();
+  return segments;
+};
+
+/**
+ * Minimal inline renderer for table cells. The engine cannot parse the cell
+ * content for us (no remark-gfm means the table never becomes an AST), and
+ * nesting one \`Markdown\` control per cell would be far heavier than the four
+ * marks that actually appear in imported rich text.
+ */
+const INLINE_PATTERN = /\`([^\`]+)\`|\\[([^\\]]*)\\]\\(([^)\\s]+)\\)|\\*\\*([^*]+)\\*\\*|__([^_]+)__|\\*([^*]+)\\*/g;
+const renderInlineMarkdown = (text, keyPrefix) => {
+  const source = typeof text === "string" ? text : "";
+  const nodes = [];
+  let lastIndex = 0;
+  let match;
+  INLINE_PATTERN.lastIndex = 0;
+  while ((match = INLINE_PATTERN.exec(source)) !== null) {
+    if (match.index > lastIndex) nodes.push(source.slice(lastIndex, match.index));
+    const key = \`\${keyPrefix}-\${match.index}\`;
+    if (match[1] != null) {
+      nodes.push(/*#__PURE__*/React.createElement("code", {
+        key: key
+      }, match[1]));
+    } else if (match[3] != null) {
+      const mois = parseMoisHref(match[3]);
+      nodes.push(mois ? renderMoisLink(mois, match[2], key) : /*#__PURE__*/React.createElement("a", {
+        key: key,
+        style: linkStyle,
+        href: match[3],
+        target: "_blank",
+        rel: "noreferrer"
+      }, match[2]));
+    } else if (match[4] != null || match[5] != null) {
+      nodes.push(/*#__PURE__*/React.createElement("strong", {
+        key: key
+      }, match[4] != null ? match[4] : match[5]));
+    } else {
+      nodes.push(/*#__PURE__*/React.createElement("em", {
+        key: key
+      }, match[6]));
+    }
+    lastIndex = INLINE_PATTERN.lastIndex;
+  }
+  if (lastIndex < source.length) nodes.push(source.slice(lastIndex));
+  return nodes;
+};
+const renderTableSegment = (segment, key) => /*#__PURE__*/React.createElement("div", {
+  key: key,
+  style: tableWrapperStyle
+}, /*#__PURE__*/React.createElement("table", {
+  style: tableStyle
+}, /*#__PURE__*/React.createElement("thead", {
+  style: theadStyle
+}, /*#__PURE__*/React.createElement("tr", {
+  style: trStyle
+}, segment.header.map((cell, cellIndex) => /*#__PURE__*/React.createElement("th", {
+  key: cellIndex,
+  style: {
+    ...thStyle,
+    textAlign: segment.align[cellIndex] || "left"
+  }
+}, renderInlineMarkdown(cell, \`h\${cellIndex}\`))))), /*#__PURE__*/React.createElement("tbody", null, segment.rows.map((row, rowIndex) => /*#__PURE__*/React.createElement("tr", {
+  key: rowIndex,
+  style: trStyle
+}, segment.header.map((_, cellIndex) => /*#__PURE__*/React.createElement("td", {
+  key: cellIndex,
+  style: {
+    ...tdStyle,
+    textAlign: segment.align[cellIndex] || undefined
+  }
+}, renderInlineMarkdown(row[cellIndex], \`r\${rowIndex}c\${cellIndex}\`))))))));
+
+// ---------------------------------------------------------------------------
+// Renderer overrides shared by both rendering paths
+// ---------------------------------------------------------------------------
+
+// \`node\` is react-markdown's AST handle. Spreading it onto a DOM element makes
+// React warn about an unknown prop, so every renderer drops it explicitly.
 const baseComponents = {
   p: ({
     children,
+    node,
     ...props
   }) => /*#__PURE__*/React.createElement("p", _extends({
     style: fullWidthStyle
   }, props), children),
   div: ({
     children,
+    node,
     ...props
   }) => /*#__PURE__*/React.createElement("div", _extends({
     style: fullWidthStyle
   }, props), children),
   ul: ({
     children,
+    node,
     ...props
   }) => /*#__PURE__*/React.createElement("ul", _extends({
     style: {
@@ -26870,6 +26699,7 @@ const baseComponents = {
   }, props), children),
   ol: ({
     children,
+    node,
     ...props
   }) => /*#__PURE__*/React.createElement("ol", _extends({
     style: {
@@ -26881,6 +26711,7 @@ const baseComponents = {
   }, props), children),
   li: ({
     children,
+    node,
     ...props
   }) => /*#__PURE__*/React.createElement("li", _extends({
     style: {
@@ -26888,14 +26719,21 @@ const baseComponents = {
       marginBottom: 2
     }
   }, props), children),
+  // MOIS does not support strikethrough; its own Markdown control renders the
+  // tildes literally, and so do we, in both environments.
+  del: ({
+    children
+  }) => /*#__PURE__*/React.createElement("span", null, "~~", children, "~~"),
   blockquote: ({
     children,
+    node,
     ...props
   }) => /*#__PURE__*/React.createElement("blockquote", _extends({
     style: fullWidthStyle
   }, props), children),
   pre: ({
     children,
+    node,
     ...props
   }) => /*#__PURE__*/React.createElement("pre", _extends({
     style: {
@@ -26905,75 +26743,88 @@ const baseComponents = {
   }, props), children),
   a: ({
     children,
+    href,
+    node,
     ...props
-  }) => /*#__PURE__*/React.createElement("a", _extends({
-    style: {
-      color: "#005a9e",
-      textDecoration: "underline"
-    },
-    target: "_blank",
-    rel: "noreferrer"
-  }, props), children),
+  }) => {
+    const mois = parseMoisHref(href);
+    if (mois) return renderMoisLink(mois, children);
+    return /*#__PURE__*/React.createElement("a", _extends({
+      style: linkStyle,
+      target: "_blank",
+      rel: "noreferrer",
+      href: href
+    }, props), children);
+  },
   table: ({
     children,
+    node,
     ...props
   }) => /*#__PURE__*/React.createElement("div", {
-    style: {
-      overflowX: "auto",
-      width: "100%",
-      maxWidth: "none"
-    }
+    style: tableWrapperStyle
   }, /*#__PURE__*/React.createElement("table", _extends({
-    style: {
-      width: "100%",
-      borderCollapse: "collapse",
-      tableLayout: "fixed",
-      border: "1px solid black"
-    }
+    style: tableStyle
   }, props), children)),
   thead: ({
     children,
+    node,
     ...props
   }) => /*#__PURE__*/React.createElement("thead", _extends({
-    style: {
-      backgroundColor: "#f3f2f1"
-    }
+    style: theadStyle
   }, props), children),
   tbody: ({
     children,
+    node,
     ...props
   }) => /*#__PURE__*/React.createElement("tbody", props, children),
   tr: ({
     children,
+    node,
     ...props
   }) => /*#__PURE__*/React.createElement("tr", _extends({
-    style: {
-      verticalAlign: "top"
-    }
+    style: trStyle
   }, props), children),
   th: ({
     children,
+    node,
     ...props
   }) => /*#__PURE__*/React.createElement("th", _extends({
-    style: {
-      border: "1px solid black",
-      padding: "6px 8px",
-      textAlign: "left",
-      verticalAlign: "top",
-      fontWeight: 700
-    }
+    style: thStyle
   }, props), children),
   td: ({
     children,
+    node,
     ...props
   }) => /*#__PURE__*/React.createElement("td", _extends({
-    style: {
-      border: "1px solid black",
-      padding: "6px 8px",
-      verticalAlign: "top",
-      whiteSpace: "pre-wrap"
-    }
+    style: tdStyle
   }, props), children)
+};
+
+/**
+ * One markdown segment. Preview has ReactMarkdown in scope and keeps using it;
+ * the engine does not, and falls back to its own \`Markdown\` control, which is
+ * the only markdown renderer guaranteed to exist on a real instance.
+ */
+// Held behind a local binding rather than used as a bare \`<ReactMarkdown>\` tag:
+// the identifier is not in the engine's form scope, and the export-time scope
+// check should keep flagging it for components that reach for it unguarded.
+const PreviewMarkdownRenderer = HAS_REACT_MARKDOWN ? ReactMarkdown : null;
+const MarkdownSegment = ({
+  text,
+  markdownProps
+}) => {
+  if (PreviewMarkdownRenderer) {
+    return /*#__PURE__*/React.createElement(PreviewMarkdownRenderer, markdownProps, text);
+  }
+  return /*#__PURE__*/React.createElement(Markdown, {
+    source: text,
+    readOnly: true,
+    borderless: true,
+    label: "",
+    labelPosition: "none",
+    size: "100%",
+    markdownProps: markdownProps
+  });
 };
 const RichMarkdownBlock = ({
   id,
@@ -26998,7 +26849,8 @@ const RichMarkdownBlock = ({
   style,
   markdownProps
 }) => {
-  const content = typeof source === "string" ? source : typeof value === "string" ? value : "";
+  const rawContent = typeof source === "string" ? source : typeof value === "string" ? value : "";
+  const content = normalizeMoisLinks(rawContent);
   const effectiveFieldId = fieldId || id;
   const mergedMarkdownProps = useMemo(() => {
     const extra = markdownProps && typeof markdownProps === "object" ? markdownProps : {};
@@ -27013,6 +26865,14 @@ const RichMarkdownBlock = ({
       }
     };
   }, [markdownProps]);
+  const segments = useMemo(() => HAS_REMARK_GFM ? [{
+    kind: "markdown",
+    text: content
+  }] : splitMarkdownSegments(content), [content]);
+
+  // The engine's \`Markdown\` control pulls its content up by 8px; cancel that
+  // out so the block sits where it does with ReactMarkdown.
+  const marginTop = (borderless ? -8 : 0) + (HAS_REACT_MARKDOWN ? 0 : 8);
   return /*#__PURE__*/React.createElement(LayoutItem, {
     disabled: disabled,
     fieldId: effectiveFieldId,
@@ -27036,7 +26896,7 @@ const RichMarkdownBlock = ({
     className: "markdown-content",
     style: {
       width: "100%",
-      margin: borderless ? "-8px 0 0" : 0,
+      margin: \`\${marginTop}px 0 0\`,
       fontFamily: 'Times, "Times New Roman", serif',
       maxWidth: "none",
       ...(typeof height === "number" && Number.isFinite(height) && height > 0 ? {
@@ -27044,7 +26904,11 @@ const RichMarkdownBlock = ({
         overflow: "auto"
       } : {})
     }
-  }, /*#__PURE__*/React.createElement(MarkdownRenderer, mergedMarkdownProps, content)));
+  }, segments.map((segment, segmentIndex) => segment.kind === "table" ? renderTableSegment(segment, segmentIndex) : segment.text.trim() ? /*#__PURE__*/React.createElement(MarkdownSegment, {
+    key: segmentIndex,
+    text: segment.text,
+    markdownProps: mergedMarkdownProps
+  }) : null)));
 };`,
   './SaveOnClose/index.jsx': `/**
  * __nhAuth — self-contained field/row authorship runtime for NHForms components.
@@ -34550,13 +34414,13 @@ export const componentDefinedNames: Record<string, string[]> = {
   './ConversionField/index.jsx': ["ConversionField","ConversionFieldSchema","_asPositiveNumber","_asPrecision","_conversionPathSegments","_normalizeConversionRows","_readConversionPath","_readConversionValue","_sanitizeConversionNumber","activeFrom","activeTo","canUseFrom","canUseTo","char","clearValues","convertRow","current","fromValue","hasAnyValue","hasDecimal","index","lastEdited","lastEditedRef","next","nextValue","normalizedFromFieldId","normalizedToFieldId","parsed","parsedFrom","parsedTo","pathValue","rows","segments","setConversionValues","source","sourceFieldId","text","toValue","updateValue","updates"],
   './CustomJsxBlock/index.jsx': ["CustomJsxBlock","displaySource","raw"],
   './DentalWeightConverter/index.jsx': ["DentalWeightConverter","DentalWeightConverterSchema","_positiveNumber","_readDentalField","_sanitizeDentalWeight","cellStyle","clearWeights","convertWeights","data","disabled","factor","fieldWrapperStyle","fixedPrecision","kgValue","kilograms","lastEdited","lastEditedRef","lbValue","nextValue","numeric","parsed","parts","pounds","setDentalValues","text","updateWeight"],
-  './EditableTable/index.jsx': ["ButtonComponent","DEFAULT_WINDOW_HOURS","EditableTable","EditableTableSchema","_addDaysToDateValue","_applyComputedColumns","_applyDefaultValuesToRow","_applyRowProcessingConfig","_buildRowsFromSourceFields","_buildSubformFieldFromColumn","_cloneRow","_coerceNumberCellValue","_computeTemplateColumnValue","_evaluateColumnVisibility","_formatCellValue","_formatLocalDate","_formatProcessedNumber","_getDefaultCellValue","_getLocalStampLock","_getValueAtPath","_hasPersistedAuthorshipClaim","_hasStampedLockValue","_isMeaningfulValue","_isRowEmpty","_makeEmptyRow","_normalizeChoiceOptions","_normalizeInitialRowCount","_normalizeInitialRows","_normalizeMirroredCellValue","_normalizeNumberConfig","_normalizeRows","_normalizeSourceCellValue","_normalizeStampCellValue","_normalizeTableColumns","_normalizeUniqueToken","_normalizeValidationMessage","_normalizeZeroLikeValue","_resolveFieldDefaultValue","_resolveLiteralValue","_resolvePathValue","_resolveStampCellValue","_rowContentSignature","_setValueAtPath","_sortRowsByPath","_stampColumnLocksRow","_stringifyValue","_toFiniteNumber","_toPathSegments","_todayDateValue","_validateRowWithConfig","actor","actorFrom","addHoursIso","addInlineRow","authorshipEnabled","authorshipHeaderCellStyle","authorshipPolicy","bodyCellStyle","buildKey","buildRowContext","c","cadNumber","cadPath","cadPrecision","canDeleteInline","canResign","canSaveAndAddNext","candidate","changed","ck","claim","claims","closeDialog","column","columns","commitRows","commitSave","computed","config","configMessage","containerStyle","controllerId","copy","count","createTableColumns","current","currentRowCount","currentRows","currentValue","customMessage","customResult","d","data","date","defaultSubformDataEntryConfig","deletedRow","disabledStamp","displayRows","displayValue","draftLocalStampLock","draftLockState","dropdownOptions","duplicateIndex","editableUntil","effectiveMaxRows","effectiveReadOnly","euDate","existing","existingRows","expired","explicitRowIndexes","explicitRowMapping","factor","fallback","fieldData","fieldId","first","formatTimestamp","getRowLock","getRows","getSourceFieldId","hasMeaningfulRows","hasMeaningfulValue","hasStampedValue","hasValue","headerCellStyle","headerRowStyle","id","index","inferredRowCount","initialRowCount","initialSeedRows","isDarkMode","isEmpty","isLocked","isModalMode","isNonEmpty","isOwner","isVertical","keepStatus","key","label","lastMeaningfulRowIndex","left","leftDate","leftValue","localStampLock","localStampLocked","lockColumns","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","makeDraftRow","match","message","mirroredFieldIds","modalColumns","modalEditorConfig","modalEditorType","nextDate","nextDraft","nextRow","nextRows","nextStatus","nextValue","nhAuth","normalizeStore","normalizedConfig","normalizedRow","normalizedValue","now","nowIso","numberConfig","numericValue","omitEmptyLines","onBeforeSaveRow","onRowDeleted","onRowSaved","onRowsChange","openCreateDialog","openEditDialog","owner","ownerId","ownerName","ownerRefresh","pad2","pairCadPrecision","pairFactor","pairPrefer","pairUsPrecision","pairs","parsed","path","paths","pending","policyAppliesToAction","prefer","prepareSave","processingConfig","raw","rawCad","rawKey","rawUs","rawValue","readStore","realRowReadOnly","release","remaining","removeRowAt","renderEditorInput","renderRowAuthorshipStatus","renderVerticalTable","rendered","requireAnyGroups","requiredPaths","resolveNow","resolvedFactor","resolvedRow","right","rightDate","rightValue","row","rowIndex","rowLock","rowLockState","rowNumberCellStyle","rowNumberHeaderStyle","rowReadOnly","rows","rowsForVerticalLayout","rule","safeFactor","safePrecision","sameActor","saveAndAddNextConfig","saveAndAddNextLabel","saveDraftRow","saved","savedAt","savedRowIndex","sd","section","seededRows","segments","selectionType","setRows","shouldShowActions","shouldToggleLocalLock","showRowAuthorshipColumn","sign","signedAt","sortedRows","sourceColumn","sourceFieldId","sourcePath","sourceSeedRows","spinButtonProps","stampCanUnlockLocalRow","stampCell","stampConfig","stampDraftCell","stampPath","stampedValue","store","subformModalConfig","tableColumns","tableContainerStyle","tableStyle","text","theme","thisStampLocksRow","transformedRow","trimTrailingZero","trimmed","ts","untilSelf","updateCell","updateDraftCell","updateDraftValueAtPath","usNumber","usPath","usPrecision","usesSubformEditor","validateResolvedRow","validateRow","validationConfig","validationError","value","verticalBodyCellStyle","verticalLabelCellStyle","visibility","windowHours","withCommon","zeroIsEmpty"],
+  './EditableTable/index.jsx': ["ButtonComponent","DEFAULT_WINDOW_HOURS","EditableTable","EditableTableSchema","_addDaysToDateValue","_applyComputedColumns","_applyDefaultValuesToRow","_applyRowProcessingConfig","_buildRowsFromSourceFields","_buildSubformFieldFromColumn","_cloneRow","_coerceNumberCellValue","_computeTemplateColumnValue","_evaluateColumnVisibility","_formatCellValue","_formatLocalDate","_formatProcessedNumber","_getDefaultCellValue","_getLocalStampLock","_getValueAtPath","_hasPersistedAuthorshipClaim","_hasStampedLockValue","_isMeaningfulValue","_isRowEmpty","_makeEmptyRow","_normalizeChoiceOptions","_normalizeInitialRowCount","_normalizeInitialRows","_normalizeMirroredCellValue","_normalizeNumberConfig","_normalizeRows","_normalizeSourceCellValue","_normalizeStampCellValue","_normalizeTableColumns","_normalizeUniqueToken","_normalizeValidationMessage","_normalizeZeroLikeValue","_resolveFieldDefaultValue","_resolveLiteralValue","_resolvePathValue","_resolveStampCellValue","_rowContentSignature","_setValueAtPath","_sortRowsByPath","_stampColumnLocksRow","_stringifyValue","_toFiniteNumber","_toPathSegments","_todayDateValue","_validateRowWithConfig","actor","actorFrom","addHoursIso","addInlineRow","authorshipEnabled","authorshipHeaderCellStyle","authorshipPolicy","bodyCellStyle","buildKey","buildRowContext","c","cadNumber","cadPath","cadPrecision","canDeleteInline","canResign","canSaveAndAddNext","candidate","changed","ck","claim","claims","closeDialog","column","columns","commitRows","commitSave","computed","config","configMessage","containerStyle","control","controllerId","copy","count","createTableColumns","current","currentRowCount","currentRows","currentValue","customMessage","customResult","d","data","date","defaultSubformDataEntryConfig","deletedRow","disabledStamp","displayRows","displayValue","draftLocalStampLock","draftLockState","dropdownOptions","duplicateIndex","editableUntil","effectiveMaxRows","effectiveReadOnly","euDate","existing","existingRows","expired","explicitRowIndexes","explicitRowMapping","factor","fallback","fieldData","fieldId","first","formatTimestamp","getRowLock","getRows","getSourceFieldId","hasMeaningfulRows","hasMeaningfulValue","hasStampedValue","hasValue","headerCellStyle","headerRowStyle","id","index","inferredRowCount","initialRowCount","initialSeedRows","isDarkMode","isEmpty","isLocked","isModalMode","isNonEmpty","isOwner","isVertical","keepStatus","key","label","lastMeaningfulRowIndex","left","leftDate","leftValue","localStampLock","localStampLocked","lockColumns","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","makeDraftRow","match","message","mirroredFieldIds","modalColumns","modalEditorConfig","modalEditorType","nextDate","nextDraft","nextRow","nextRows","nextStatus","nextValue","nhAuth","normalizeStore","normalizedConfig","normalizedRow","normalizedValue","now","nowIso","numberConfig","numericValue","omitEmptyLines","onBeforeSaveRow","onRowDeleted","onRowSaved","onRowsChange","openCreateDialog","openEditDialog","owner","ownerId","ownerName","ownerRefresh","pad2","pairCadPrecision","pairFactor","pairPrefer","pairUsPrecision","pairs","parsed","path","paths","pending","policyAppliesToAction","prefer","prepareSave","processingConfig","raw","rawCad","rawKey","rawUs","rawValue","readStore","realRowReadOnly","release","remaining","removeRowAt","renderEditorControl","renderEditorInput","renderRowAuthorshipStatus","renderVerticalTable","rendered","requireAnyGroups","requiredPaths","resolveNow","resolvedFactor","resolvedRow","right","rightDate","rightValue","row","rowIndex","rowLock","rowLockState","rowNumberCellStyle","rowNumberHeaderStyle","rowReadOnly","rows","rowsForVerticalLayout","rule","safeFactor","safePrecision","sameActor","saveAndAddNextConfig","saveAndAddNextLabel","saveDraftRow","saved","savedAt","savedRowIndex","sd","section","seededRows","segments","selectionType","setRows","shouldShowActions","shouldToggleLocalLock","showRowAuthorshipColumn","sign","signedAt","sortedRows","sourceColumn","sourceFieldId","sourcePath","sourceSeedRows","spinButtonProps","stampCanUnlockLocalRow","stampCell","stampConfig","stampDraftCell","stampPath","stampedValue","store","subformModalConfig","tableColumns","tableContainerStyle","tableStyle","text","theme","thisStampLocksRow","transformedRow","trimTrailingZero","trimmed","ts","untilSelf","updateCell","updateDraftCell","updateDraftValueAtPath","usNumber","usPath","usPrecision","usesSubformEditor","validateResolvedRow","validateRow","validationConfig","validationError","value","verticalBodyCellStyle","verticalLabelCellStyle","visibility","windowHours","withCommon","zeroIsEmpty"],
   './EducationHistory/index.jsx': ["EducationHistory","EducationHistoryFields"],
   './Ethnicity/index.jsx': ["Ethnicity","firstNationEthnicityCodes","firstNationsEthnicityReferenceSet"],
   './FieldStampButton/index.jsx': ["ButtonComponent","FieldStampButton","buildContext","clearStamp","context","effectiveStampFieldId","fallback","fieldData","fieldId","isDisabled","isSigned","normalizeStampTargets","normalizeStampValue","normalizedTargets","raw","resolveLiteralValue","resolvePathValue","sd","signedAt","signedAtText","sourcePath","stamp","stampRecord","statusText","value","written"],
   './FindCodeSelect/index.jsx': ["CONTROL_KEY_TOKENS","FindCodeSelect","FindCodeSelectBase","FindCodeSelectWithCodeList","FindCodeSelectWithFieldBinding","FindCodeSelectWithSourceLookup","aliasSets","aliases","boundValue","candidateKeys","candidates","clearTargets","code","codeListFromContext","combinedStyles","comboSelectedKey","currentValues","customSources","defaultComboStyles","defaultGetCandidates","defaultMapCandidateSavedValue","defaultRenderSelected","directKeys","effectiveFieldId","effectiveLabelPosition","entries","fallback","fallbackItems","filteringActive","fluentLabel","freeText","freeTextItem","getItemKey","getSizeStyles","handleChange","handleInputValueChange","handleKeyDown","handlePendingValueChanged","hasExplicitOptionList","hasSearchText","hasSelectionValue","hasSourceLookup","hidden","i","idx","isDeleteKey","isEmpty","isKeyboardToken","isMultiSelect","item","itemForStoredValue","items","key","keys","leftKey","mapped","match","matchingKey","nextValues","normalizeLookupName","normalizeOption","normalizeSelectedValues","normalized","normalizedLabel","optionList","optionLists","options","rawKey","renderCandidateOption","resolveItems","resolveLookupPath","rightKey","sameSelectedItem","sd","sectionLayout","seen","segments","selected","selectedCode","selectedItem","selectedItems","selectedKey","selectedKeySet","selectedKeys","shouldSelect","shouldSuppressLayoutItemLabel","showChildren","sizeMap","sizeStyles","sourceEntries","sourceItems","sourceLookupItems","storableSelection","storedSelectionToValue","storedValue","targets","text","valueForLookupTarget","withoutItem","wrapperStyle"],
   './FirstNationsStatus/index.jsx': ["FirstNationsStatus","connections","ethnicity","firstNationsStatusPatientFields","firstNationsStatusSchema","hasReserveName","races","reserveConnection","reserveName","selfId"],
-  './FlowSheet/index.jsx': ["FLOW_CELL_STYLE","FLOW_LABEL_CELL_STYLE","FlowMedicationBarCells","FlowSheet","FlowSheetGrid","active","allMedications","amount","cell","cellStyle","cells","cellsByRow","code","columnTime","columns","courses","criticalHigh","criticalLow","current","cutoff","dateKey","dateKeys","doseFrequency","entryCode","entryLoinc","existing","explicit","flowClassifyFlag","flowCodeOf","flowCutoffDate","flowDateKey","flowDayTime","flowDisplay","flowDisplayDate","flowFlagCellStyle","flowGetPath","flowIsSeparatorEntry","flowMatchesRow","flowMedicationMatches","flowMedicationRowLabel","flowNormalizeMedications","flowNormalizeRows","flowNumber","flowParseDate","flowRunQuery","flowToText","hasObservationRows","header","headerStyle","keys","label","limit","loinc","match","matched","matches","medKeys","meds","name","needle","normalHigh","normalLow","observationIndex","observationRows","parsed","parsedDate","rangeLabel","raw","remaining","renderSheet","resolvedMedicationsMode","resolvedMinWidth","rowList","sd","source","startTime","steps","stopRaw","stopTime","text","units","value"],
+  './FlowSheet/index.jsx': ["FLOW_CELL_STYLE","FLOW_LABEL_CELL_STYLE","FlowMedicationBarCells","FlowSheet","FlowSheetGrid","active","allMedications","cell","cellStyle","cells","cellsByRow","code","columnTime","columns","courses","cutoff","dateKey","dateKeys","doseFrequency","existing","flowIsSeparatorEntry","flowMedicationMatches","flowMedicationRowLabel","flowNormalizeMedications","flowNormalizeRows","flowRunQuery","hasObservationRows","header","headerStyle","keys","label","limit","match","matched","matches","medKeys","meds","name","needle","observationIndex","observationRows","parsedDate","rangeLabel","remaining","renderSheet","resolvedMedicationsMode","resolvedMinWidth","rowList","sd","source","startTime","stopRaw","stopTime","units","value"],
   './FocusedObservationHistory/index.jsx': ["FocusedObservationHistory","activeWatchField","candidate","current","date","day","direct","effectiveObservationCode","effectiveObservationComment","effectiveTitle","formatDate","getFocusedFieldId","handleBlur","handleFocus","hasFocusTarget","host","isTrackedFieldFocused","isVisible","items","month","normalizeItems","normalizedWatchFields","parseDate","parsed","parsedDate","pathSegments","patientPath","raw","resolveMoisValue","resolvePath","rows","sd","textValue","year"],
   './FormContextHeader/index.jsx': ["FormContextHeader","FormContextHeaderSchema","appointmentDateTime","code","date","display","encounter","legacyContextDate","legacyContextDateTime","legacyContextText","legacyContextVisitCode","legacyFieldWrap","legacySmallFieldWrap","legacyTextStyles","match","providerName","raw","renderReadOnlyField","sd","section","values"],
   './FormSessionRuntime/index.jsx': ["FormSessionContext","FormSessionProvider","__cloneSessionValue","__getSessionContext","applySessionUpdate","cloneFormSessionState","contextValue","formData","mergeFormSessionState","normalizeSessionState","normalized","normalizedSessionData","result","root","selectedSessionData","selectedSessionDataWithSetter","sessionContext","sessionDataWithSetter","sessionScopedSetter","sessionSetFormData","setFormData","target","useFormSessionData"],
@@ -34566,7 +34430,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './HFC_PT_ASMT_PatientSummary/index.jsx': ["ConditionsSortDesc","ConnectionEditSubForm","EFHistory","EFcols","HFC_PT_ASMT_PatientSummary","TestResult","acol","allergiesCols","asciiCompare","bcol","code","connectionMutation","connectionTemplate","connectionTypeCode","currentConnection","defaultProviderType","defaultProviderTypeLookup","finalSourceMap","getLastRead","getListSelectionColumns","gridRows","handleCreateConnection","handleEditConnection","healthIssuesCols","isInitialMount","labs","latestCollectedFirst","lookupSelectedProviderType","ltRXcols","providerTypes","result","savedValueMapper","sd","sortStartDateDesc"],
   './HFC_PT_ASMT_SnapShot/index.jsx': ["EndDateToTop","HFC_PT_ASMT_SnapShot","RadioSelectGroup","StartDatetoTop","_AddAppt","_handlecheckchange","_onChoiceChange","_removeAppt","appts","checkBoxStyles","codesys","defaultFollowUpAppts","fieldData","followUpList","handleStateChange","newAppt","newitem","optionList","optionlist","optlist","reminder","sd","snapdate","sortStartDatethenEndDateDesc","tableCellStyle","tableStyle"],
   './HealthMaintenanceReview/index.jsx': ["DEFAULT_HEALTH_MAINTENANCE_RULES","HealthMaintenanceReview","ItemCard","STATUS_META","STATUS_ORDER","Sparkline","StatusBadge","SummaryCard","activeRoot","addDays","age","alias","allItems","appendRecord","appliesTo","asOf","base","buckets","buildDueText","buildReviewItem","buildSparklinePath","candidate","candidateKeys","chartNumber","code","codeMatch","codes","coercePositiveInt","collectConditionRecords","collectObservationRecords","collected","collectedDate","computeAge","conditionSpecific","conditions","context","current","date","dateOnly","day","daysBetween","dedupeStrings","deduped","delta","description","descriptionMatch","descriptions","direct","display","dob","dueDate","effectiveRules","effectiveSource","end","explicitDate","family","findObservationHistory","findPathHistory","first","flattenRuleEntries","flattenValues","flattened","formatDate","formatFrequencyLabel","formatValueLabel","frequencyDays","fromAdmin","fromEntry","fromGender","fromSource","gender","general","generalItems","generalSource","groupItemsBySection","healthNumber","history","isActive","isMeaningfulValue","isObject","isRuleApplicable","key","latest","match","matchedConditionGroups","matchesConditionFilters","max","mergeSourceData","merged","meta","middle","min","month","monthDelta","months","next","normalizeConditionRecord","normalizeDate","normalizeGenderValue","normalizeObservationRecord","normalizePathRecord","normalizePatientName","normalizeRuleItem","normalizeRuleSet","normalizeString","normalized","normalizedCodes","normalizedFrequencyDays","normalizedPath","normalizedText","normalizedY","numeric","observationHistory","observations","out","override","parseNumericValue","parsed","parsedRules","parts","path","pathHistory","patient","patientCandidates","patientSex","range","raw","rawConditionGroups","readScopedPathValue","renderHeaderField","resolveDate","resolvePathValue","resolved","resolvedFieldId","resolvedReviewDate","review","ruleSource","scoped","sd","seen","segments","start","status","statusDelta","stringifyValue","stroke","summary","text","textMatch","toArrayOfRecords","toDisplayGender","toPathSegments","trendHistory","trendPoints","triggerSummaryText","trimmed","unitsText","usableHeight","usableWidth","value","valueText","values","x","y","year","years"],
-  './HistoricalObservationTable/index.jsx': ["HistoricalObservationTable","current","date","getHistorySource","grouped","historyDateKey","matchedColumn","raw","rows","sd","source","steps"],
+  './HistoricalObservationTable/index.jsx': ["HistoricalObservationTable","codes"],
   './HonosQuestion/index.jsx': ["CHOICE_FIELD_STYLE","HonosFinalScore","QUESTION_STACK_STYLE","QUESTION_defaultLabelStyle","SCALE_10_LEGENDS","SCALE_10_LEGEND_LOOKUP","SCALE_10_OPTIONS","SCALE_5_LEGENDS","SCALE_5_LEGEND_LOOKUP","SCALE_5_OPTIONS","Scale10","Scale10Legend","Scale5","Scale5Legend","Scale5QuestionList","Scale5SubmitButton","Scale5ToolTip","ScaleLegend","UpdateContext","buildLegendLookupFromOptions","buildTooltipLookup","calculatedTotal","createScaleQuestion","customChoiceOptions","data","description","dropdownStyles","effectiveChoiceOptions","effectiveTooltip","fallbackLookup","fditem","fillAllUnfilledQuestions","finalScoreStyle","generatedTooltip","handleChoiceChanged","handleDropdownChanged","handleKeyUp","i","item","key","keySource","missingRequiredAnswer","missingRequiredDropdown","nextChoiceGroup","normalizeScaleChoiceOptions","numeric","numericValue","option","questionIds","questionStyle","rawValue","rawfditem","renderedChoiceOptions","requiredDropdownQuestionIds","requiredQuestionIds","scoredQuestionIds","seenKeys","selectedOptions","submitDisabled","targetFieldId","text","theme","toFiniteNumber","tooltipList","tooltipLookup","totalScore","value"],
   './HotspotMapField/index.jsx': ["ANNOTATION_SYMBOL_LABELS","DEFAULT_ANNOTATION_COLOR","DEFAULT_ANNOTATION_SIZE_PERCENT","DEFAULT_ANNOTATION_SYMBOL","DEFAULT_ANNOTATION_SYMBOLS","DEFAULT_INTERACTION_MODE","DEFAULT_MAP_MARGIN_PX","DEFAULT_MAP_MAX_WIDTH","DEFAULT_MAP_MIN_HEIGHT","DEFAULT_MAP_PADDING_PX","DEFAULT_MAP_WIDTH_PERCENT","DEFAULT_MAP_ZOOM_PERCENT","DEFAULT_MARKER_RADIUS","DEFAULT_MARKER_SIZE","DEFAULT_NUMBER_FIELD_WIDTH_PERCENT","DEFAULT_SVG_VIEWBOX_MARGIN_PERCENT","HotspotMapField","annotationDefaultSymbol","annotationPointsToSvgString","annotationSymbols","annotations","append","assignedHotspotIds","baseId","bounds","buildCountsByGroup","buildFallbackPolygon","buildGroupSelectionSummary","buildMapValue","byHotspot","centroid","centroidFromPoints","circleAspectRatio","clampPercent","clampSvgViewBoxMarginPercent","clamped","color","commitMapState","commitSelection","compact","counterGroups","countsByGroup","createHotspotMapConfig","cx","cy","deltaX","deltaY","displayValue","doc","drawingPointerIdRef","drawingPointsRef","element","elements","ensureResponsiveSvg","ensuredDefault","fallbackList","fieldFillTextLayerIdSet","fieldFillValueMap","fieldId","fields","fill","getHotspotLabelAnchor","getNumberFieldValue","getPointFromEvent","group","groupId","groupLabel","groupsById","half","handleAddAnnotation","handleDrawPointerDown","handleDrawPointerMove","handleDrawPointerUp","handleHotspotKeyDown","handleNumberFieldChange","handleToggleHotspot","hasAnnotations","hasExplicitCounterGroups","hasMapData","hasSelections","hasSvgBackground","height","heightAttr","hotspotIdSet","hotspots","hotspotsById","id","ids","importSvgHotspots","injectFieldFillValuesIntoSvg","inlineStyle","input","interactionMode","isDarkMode","isDrawModeActive","isDrawingRef","isFieldFillMode","isSelected","isSymbolModeActive","labelAnchor","labels","labelsByGroup","map","mapFrameRef","mapFrameStyle","mapValue","marginPercent","markerSize","markup","match","max","min","names","next","nextAnnotations","nextAspectRatio","nextPoints","nextSymbol","nextValue","normalizeAnnotationPoints","normalizeAnnotationSymbol","normalizeAnnotationSymbols","normalizeAnnotationType","normalizeAnnotations","normalizeColor","normalizeCounterGroupId","normalizeCounterGroups","normalizeHotspotPoints","normalizeHotspots","normalizeMapInteractionMode","normalizeNumberFields","normalizeShape","normalizeString","normalized","normalizedAnnotations","normalizedCounterGroups","normalizedHotspot","normalizedHotspots","normalizedId","normalizedNumberFields","normalizedNumeric","normalizedRaw","numberFields","numeric","observer","overlayStyle","overlayViewBox","padX","padY","pair","panelStyle","parseAnnotationSymbol","parseList","parseSvgAspectRatio","parseSvgNumber","parsed","parsedPoints","parsedViewBox","parser","parts","point","points","pointsAttr","pointsToSvgString","previous","projectMapLengthToRenderPercent","projectMapPercentToRenderPercent","projectRenderPercentToMapPercent","r","radius","raw","rawId","rawLabel","rawValue","rect","renderAnnotationModeControls","renderMapFrame","renderSummary","renderedWidth","renderedX","renderedY","resolveAnnotationSymbol","resolveMapInteractionMode","resolved","resolvedAllowedSymbols","resolvedAnnotationDefaultColor","resolvedAnnotationDefaultSymbol","resolvedAnnotationSizePercent","resolvedAnnotationSymbols","resolvedInteractionMode","resolvedMapMarginPx","resolvedMapMaxWidth","resolvedMapMinHeight","resolvedMapPaddingPx","resolvedMapWidthPercent","resolvedMapZoomPercent","resolvedModalMinWidth","responsiveSvg","sanitizeHotspotIds","seen","selectedCount","selectedIds","selectedIdsCsv","selectedLabels","selectedLabelsCsv","serialized","shape","showSymbolPicker","showToolToggle","size","sourceHeight","sourceWidth","step","stroke","strokeWidth","suffix","summaryGroups","supportsAnnotations","supportsDrawAnnotations","supportsSelection","supportsSymbolAnnotations","svg","svgAspectRatio","svgViewBoxMarginPercent","svgViewBoxRenderSize","symbol","symbols","tagName","target","textLayerId","theme","toXPercent","toYPercent","total","trimmed","tspan","type","unique","updateAspectRatio","useSvgLayerTakeover","usedIds","value","vbHeight","vbWidth","vbX","vbY","viewBoxHeight","viewBoxParts","viewBoxRaw","viewBoxWidth","width","widthAttr","widthRaw","x","y","zoomFactor"],
   './HttpJsonTestPanel/index.jsx': ["AbortControllerClass","HTTP_JSON_RESULT_EVENT","HttpJsonTestPanel","aborted","body","controller","effectiveEndpointUrl","effectiveOutputId","fetchJson","formatHttpJsonTestResult","handler","key","nextResult","normalizeHttpJsonEndpointUrl","persistHttpJsonTestResult","previous","publishHttpJsonTestResult","readHttpJsonTestBody","requestBody","response","responseText","sd","sendTest","startedAt","statusColor","statusLabel","storedResult","text","timeout","trimmed","url"],
@@ -34574,16 +34438,16 @@ export const componentDefinedNames: Record<string, string[]> = {
   './LayoutTable/index.jsx': ["LayoutTable","Tag","bareRefs","boundCells","bracketedRefs","candidate","cellStyle","checklistOptions","code","comparableValue","computeLayoutTableCellValue","computedCells","config","date","display","displayValue","effectiveReadOnly","evaluateLayoutTableFormula","extractLayoutTableFormulaRefs","fallback","fieldId","fields","formatLayoutTableComputedValue","formatLayoutTableFieldDisplayValue","formatLayoutTableSourceValue","formatOne","formula","getCellDisplayValue","getLayoutTableFieldRawValue","getLayoutTableSourcePaths","getNumericFieldValue","getPathValue","hasLayoutTableSourceValue","id","ids","isCheckedValue","isNoLikeValue","isSafeLayoutTableFormula","isYesLikeValue","jsExpression","label","labelProp","layoutTableSourceText","match","matched","multiline","nextData","nextValue","normalizeComparableValue","normalizeLayoutTableOptionList","normalized","numeric","optionList","paths","raw","rawValue","refs","renderLayoutTableCellContent","renderLayoutTableField","renderLayoutTableFieldList","renderLayoutTableReadOnlyField","renderLayoutTableResources","renderLayoutTableStampButton","renderLink","resolveLayoutTableSourceValue","resources","root","rounded","rowIsVisible","rule","sd","section","setFieldValue","sharedProps","sourceBoundCells","sourceFieldIds","sourcePaths","strippedExpression","sumMatch","tableData","tableRows","targets","unwrappedExpression","value","values","visibleRows"],
   './LongTermMedications/index.jsx': ["LongTermMedications","LongTermMedicationsFields"],
   './MirthListenerUtility/index.jsx': ["AbortControllerClass","MIRTH_UTILITY_DEFAULT_SITES","MIRTH_UTILITY_PAYLOAD_MODES","MIRTH_UTILITY_SEND_METHODS","MirthListenerUtility","aborted","baseResult","body","canBeacon","controller","fetchJson","finishSend","form","initialSiteId","methodInfo","mirthUtilityBuildTemplate","mirthUtilityFormatBody","mirthUtilityNormalizeUrl","mirthUtilityParseBody","mirthUtilityPersistResult","mirthUtilitySelectStyle","parsed","payloadIssue","queued","resetPayload","response","responseText","sd","selectedSite","signAndSend","siteList","stampPayload","stamped","startedAt","statusColor","statusLabel","storedResult","targetUrl","text","timeout","timeoutMs","trimmed","url","xhr","xhrResult"],
-  './MoisMarkdownBlock/index.jsx': ["MarkdownRenderer","MoisMarkdownBlock","baseComponents","colon","content","defaultRehypePlugins","defaultRemarkPlugins","effectiveFieldId","extra","extraPlugins","fullWidthStyle","hasAllowedProtocol","hasLabel","match","mergedMarkdownProps","mois","moisModule","numberSign","parseMoisHref","parsedId","questionMark","slash","urlTransform"],
   './MoisModuleLinkList/index.jsx': ["MoisModuleLinkList","label","moisModule","normalizeItems","normalizedItems","source"],
   './MoisPatientReviewLink/index.jsx': ["MoisPatientReviewLink","active","buildResourceFieldId","checked","draftActive","fromProps","handleCheckedChange","hasExplicitId","idPart","item","linkElement","nextValue","normalizeChecked","normalizeFieldId","normalizeResourceIdPart","normalizeResourceItem","normalized","renderAsTable","resolvedFieldId","resourceItems"],
   './MultiTargetChoiceField/index.jsx': ["MultiTargetChoiceField","anyOn","applyForces","asArray","codeOf","computeToggledData","current","currentArr","data","effectiveFieldId","evalCondition","force","gridStyle","has","hasValue","isEmptyValue","left","normalizeChoiceValues","normalizeComparable","opt","optionChecked","optionVisible","right","rule","target","toCoding","toggle","triggers"],
   './NarrativeReportBuilder/index.jsx': ["NarrativeReportBuilder","applyNarrative","buildNarrative","componentId","container","currentPayload","formData","generatedText","getFieldValue","getPathValue","key","nextGroup","normalizeTemplateRows","normalizeTextValue","normalizedTemplate","renderTextTemplate","rows","sections","setNarrativePayload","value"],
   './NewTextArea/index.jsx': ["NewTextArea","hideonprint","showonprint","sourceData"],
   './ObservationChart/index.jsx': ["$","$e","$l","$n","$t","A","Ae","Ai","Al","An","B","Be","Bl","Bt","C","Ce","Ci","Cl","Ct","D","De","Di","Dl","Dn","Dt","E","El","En","F","Fe","Ft","G","Gt","H","He","Hi","Hl","Ht","I","Ii","Il","It","J","Je","Jl","Jn","Jt","Ke","Kl","Kn","Kt","L","Li","Ll","Lt","M","Mn","Mt","N","Nl","O","OBSERVATION_CHART_PALETTE","OBSERVATION_CHART_STYLE_ID","ObservationChart","Ol","Ot","P","Pe","Pi","Pl","Pn","Q","Qn","Qt","R","Re","Ri","Rt","S","Sn","St","T","Tn","Tt","UPlotCssText","UPlotLib","Ut","Vl","Vt","W","We","Wi","Wl","Wt","X","Xl","Xn","Xt","Y","Ye","Yi","Yl","Yt","Z","Zl","Zn","Zt","_","_i","_l","_n","_t","a","ai","at","b","be","bi","bl","bn","bt","buildChartPayload","buildChartPayloadFromObservations","buildChartPayloadFromRows","buildSeriesDefinitions","buildUPlotOptions","c","candidate","chartPayload","chartSeries","ci","codeCandidates","coerceNumber","coercePositiveInt","container","containerRef","current","d","data","dataKey","day","di","direct","document","dt","e","ee","effectiveHeight","effectiveTitle","ei","el","en","ensureObservationChartStyles","entryCode","entryDescription","et","f","fi","finalizeChartRows","formatDate","frameStyle","fromPatient","fromQueryResult","ft","g","gi","gn","gt","h","hi","hl","ht","i","ie","ii","includes","isNonEmptyString","isRecord","it","jl","jt","k","keys","ki","kn","kt","l","ll","ln","m","match","matchesObservationSeries","maxPoints","mi","mode","month","mt","n","ne","ni","normalizeString","normalizeStringArray","normalized","normalizedCodePath","normalizedCodes","normalizedDateOnly","normalizedDescriptionPath","nt","numericDate","numericValue","o","observationCodes","oi","p","parseDateValue","parseMeasurementValue","parseNumericValue","parsed","parsedDateOnly","patientPath","plot","plotRef","pt","qe","qn","qt","r","rawValue","renderWidth","resizeChart","resizeObserver","resolveMoisValue","resolvePathValue","root","rowIndex","rowMap","s","sd","segments","self","seriesDefs","seriesPointSize","seriesShowsPoints","showAxes","showGrid","showLegend","showPoints","single","singleCode","sortedRows","sourceItems","sourcePath","stringifyValue","style","summaryParts","t","target","te","text","timeValue","timestamp","tl","tn","toPathSegments","trimmed","tt","u","uPlot","units","v","value","valueText","ve","vi","vl","vn","vt","w","wi","window","wl","wn","wrapperStyle","wt","xKey","xValues","xi","xl","xn","xt","y","year","yi","yn","yt","z","ze","zi","zl","zn"],
-  './ObservationEntryGrid/index.jsx': ["GRID_FLAG_DISPLAYS","GridDetailPane","GridRangeBands","ObservationEntryGrid","abnormalFlag","allRows","amount","best","bestTime","buildGridAbnormalFlag","candidate","cellStyle","cells","centerText","chartRows","classifyGridFlag","code","codeIndex","codeList","commitEntryCode","componentId","container","createdBy","criticalHigh","criticalLow","current","currentPayload","cutoff","deleteEntry","detailBandLabelStyle","detailLabelStyle","detailValueStyle","displayFlag","displayValue","editByObservationId","editPayload","edits","editsKey","entries","entriesKey","entryCode","entryLoinc","entryRows","explicitFlag","fields","findRangesForCode","flagCode","getGridSource","gridCutoffDate","gridDateKey","gridEntryMatchesCode","gridFlagStyle","gridNumber","gridParseDate","gridPayloadsEqual","gridToText","handleKeyDown","hasBands","hasRanges","headStyle","inlineCodeFieldStyles","inlineNameFieldStyles","inlineTextFieldStyles","key","loinc","lookupCodeList","lookupEntry","lower","map","match","newPayload","newRowBackground","next","nextGroup","normalHigh","normalLow","normalizeGridCodes","observationId","parsed","pendingCorrection","pendingDelete","pendingEdit","rangeText","ranges","raw","readGridRows","resolveEntryCode","resolved","rowId","rows","sd","selectedPendingEdit","selectedRow","setGridNestedPayload","source","stageChartDelete","startCorrection","startEntry","steps","stored","stripVolatileGridFields","testNameFieldRefs","text","time","undoChartEdit","updateCorrection","updateEntry","value","valueFieldRefs","withHotkeys","writeRows","zebraRowBackground"],
+  './ObservationEntryGrid/index.jsx': ["GRID_FLAG_DISPLAYS","GridDetailPane","GridRangeBands","ObservationEntryGrid","abnormalFlag","allRows","best","bestTime","buildGridAbnormalFlag","candidate","cellStyle","cells","centerText","chartRows","classifyGridFlag","codeIndex","codeList","commitEntryCode","componentId","container","createdBy","current","currentPayload","cutoff","deleteEntry","detailBandLabelStyle","detailLabelStyle","detailValueStyle","displayFlag","displayValue","editByObservationId","editPayload","edits","editsKey","entries","entriesKey","entryCode","entryLoinc","entryRows","explicitFlag","fields","findRangesForCode","flagCode","gridPayloadsEqual","handleKeyDown","hasBands","hasRanges","headStyle","inlineCodeFieldStyles","inlineNameFieldStyles","inlineTextFieldStyles","key","lookupCodeList","lookupEntry","lower","map","match","newPayload","newRowBackground","next","nextGroup","observationId","parsed","pendingCorrection","pendingDelete","pendingEdit","rangeText","ranges","readGridRows","resolveEntryCode","resolved","rowId","rows","sd","selectedPendingEdit","selectedRow","setGridNestedPayload","source","stageChartDelete","startCorrection","startEntry","stored","stripVolatileGridFields","testNameFieldRefs","text","time","undoChartEdit","updateCorrection","updateEntry","value","valueFieldRefs","withHotkeys","writeRows","zebraRowBackground"],
+  './ObservationKit/index.jsx': ["ObservationKit","amount","classifyFlag","classifyRanges","code","codeText","criticalHigh","criticalLow","current","cutoff","cutoffDate","dateKey","dayTime","displayDate","displayText","entryCode","entryLoinc","explicit","extractValue","flagCellStyle","getPath","index","loinc","lookbackLabel","matchCodeIndex","matchesCode","normalHigh","normalLow","normalizeCodes","parseDate","parsed","raw","singular","steps","text","toNumber","toText","unit","value"],
   './ObservationPanelEditor/index.jsx': ["DEFAULT_WINDOW_HOURS","ObservationPanelEditor","actor","actorFrom","addHoursIso","authorshipPolicy","buildKey","c","changed","ck","claim","claims","codeSet","commitSave","componentId","computedTotals","container","createdBy","current","currentActorName","currentPayload","d","data","dcoUpdates","editableUntil","effectiveFieldId","euDate","existing","expired","fieldData","formatTimestamp","getCurrentActorName","getNhAuth","getPanelValue","grouped","hasValue","historyRows","isNonEmpty","isOwner","keepStatus","key","label","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","maxHistory","next","nextGroup","nextStatus","nhAuth","normalizePanelRows","normalizePanelTotals","normalizeStore","now","nowIso","numeric","oldObs","optionList","ownerId","ownerName","ownerRefresh","pad2","panelDateKey","payloadsEqual","pending","policyAppliesToAction","prepareSave","raw","readStore","release","resolveNow","rootValue","rowDefs","rowLockInfo","rowReadOnly","sameActor","sd","section","setPanelPayload","setRowValue","source","sourceIds","store","stripVolatilePayloadFields","toNumericValue","totalDefs","ts","untilSelf","value","windowHours"],
-  './ObservationQuery/index.jsx': ["ObservationQuery","ObservationQueryLatest","ObservationQueryTable","amount","body","candidate","cell","cellStyle","chartRows","classifyQueryFlag","code","codeIndex","codeList","criticalHigh","criticalLow","current","cutoff","effectiveMaxRows","entryCode","entryLoinc","existing","explicit","getQuerySource","grouped","headerStyle","index","latest","latestByCode","limited","loinc","matchQueryCodeIndex","matches","normalHigh","normalLow","normalizeQueryCodes","parsed","parsedDate","queryCutoffDate","queryDateKey","queryFlagCellStyle","queryLookbackLabel","queryNumber","queryParseDate","queryToText","raw","recentFirst","row","rows","runObservationQuery","sd","series","singular","source","steps","text","unit","value","windowLabel"],
+  './ObservationQuery/index.jsx': ["ObservationQuery","ObservationQueryLatest","ObservationQueryTable","body","cell","cellStyle","chartRows","codeIndex","codeList","cutoff","effectiveMaxRows","existing","grouped","headerStyle","latest","latestByCode","limited","matches","parsedDate","recentFirst","row","rows","runObservationQuery","sd","series","source","value","windowLabel"],
   './Occupations/index.jsx': ["Occupations","OccupationsFields"],
   './PastMeasurementField/index.jsx': ["PastMeasurementField","abnormalFlag","abnormalHighValue","abnormalLowValue","canPullLatest","candidate","candidates","codeFilter","coercePositiveInt","commentFilter","componentId","container","createdBy","criticalHighValue","criticalLowValue","current","currentPayload","day","direct","displayedCurrentValue","documentDate","effectiveFieldId","effectiveHistorySize","effectiveLabelPosition","effectiveMeasurementSize","entryCode","entryComment","entryDate","entryUnits","entryValue","explicitValue","fieldData","flagCode","flagDisplays","formHistoryItems","formatDate","fromPatient","fromQueryResult","handleValueChange","hasAbnormalHigh","hasAbnormalLow","hasExplicitValue","hasMeaningfulValue","hasNumericCurrentValue","hasRangeMetadata","hasStoredValue","historicalFormRowDate","historyItems","historySummary","index","inputSuffix","isAbnormal","isHistoricalFormValue","isNonEmptyString","key","latestHistoryItem","legacyRangePayload","linkedObservationItem","matchingKey","measurementWidthBySize","month","nextGroup","normalizeObservationItems","normalizedDateOnly","normalizedPullTargets","numericCurrentValue","numericExplicitValue","numericTime","observationHistoryItems","oldId","oldObs","optionalString","parseDateValue","parsed","parsedDate","parsedDateOnly","patientPath","payloadsEqual","pullLatestIntoTargets","raw","rawDate","recentHistoryText","resolveHistoricalFormRows","resolveMeasurementContainerStyle","resolveMoisValue","resolvePathValue","resolvedAbnormalHigh","resolvedAbnormalLow","resolvedCriticalHigh","resolvedCriticalLow","resolvedCurrentValue","resolvedUnits","role","roots","sd","segments","setNestedPayload","shouldReserveHistory","shouldShowHistory","storedValue","stringifyValue","stripVolatilePayloadFields","targetFieldId","text","toObservationList","toPathSegments","updatedValue","value","valueFromHistoricalFormRow","valueIsDate","valueKeys","valuePart","valueText","width","year"],
   './PatientFileSections/index.jsx': ["PatientFileSections","activeText","addressText","cityLine","compactLines","contactText","countryLine","createdDate","editButtonStyle","encounter","fieldWrapStyle","formatAddress","formatContact","formatDate","getPatientFromData","gridStyle","healthNumber","insuranceBy","insuranceNumber","insuranceText","lines","match","mergeObjects","nextPatient","optionCode","optionDisplay","patient","preferredCode","preferredPhoneOptions","providerName","queryPatient","raw","renderClientDemographics","renderDocumentDetails","renderEncounterDetails","renderTitle","requested","sd","section","sectionTitleStyle","textValue","updateContactText","visibleSections","whiteDropdownStyles","whiteFlexTextFieldStyles","whiteTextFieldStyles","writePatientUpdates"],
@@ -34592,7 +34456,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './PlannedActions/index.jsx': ["PlannedActions","PlannedActionsFields","plannedActionsActiveOnly","plannedActionsColumns"],
   './ReferralSource/index.jsx': ["ReferralSource","codeSystem","defaultValue","optionList","referralValueSet","sd"],
   './RelationshipStatus/index.jsx': ["RelationshipStatus"],
-  './RichMarkdownBlock/index.jsx': ["MarkdownRenderer","RichMarkdownBlock","baseComponents","content","defaultRehypePlugins","defaultRemarkPlugins","effectiveFieldId","extra","extraPlugins","fullWidthStyle","mergedMarkdownProps"],
+  './RichMarkdownBlock/index.jsx': ["HAS_REACT_MARKDOWN","HAS_REHYPE_RAW","HAS_REMARK_GFM","INLINE_PATTERN","MarkdownSegment","PreviewMarkdownRenderer","RichMarkdownBlock","align","baseComponents","buffer","cellAlignment","cells","char","content","current","cursor","defaultRehypePlugins","defaultRemarkPlugins","effectiveFieldId","endsWithColon","extra","extraPlugins","flush","fullWidthStyle","hasVisibleChildren","header","i","inFence","index","isTableDelimiterRow","key","lastIndex","line","lines","linkStyle","marginTop","match","mergedMarkdownProps","mois","moisLinkWrapperStyle","moisModule","next","nodes","normalizeMoisLinks","parseMoisHref","parsedId","rawContent","renderInlineMarkdown","renderMoisLink","renderTableSegment","rowLine","rows","segments","source","splitMarkdownSegments","splitTableRow","startsWithColon","tableStyle","tableWrapperStyle","tdStyle","thStyle","theadStyle","trStyle","trimmed"],
   './SaveOnClose/index.jsx': ["DEFAULT_WINDOW_HOURS","SaveOnClose","_buildDefaultSavePayload","_nhAuthPrepareSave","_normalizeSaveOnCloseOptions","_stripComponentPayloads","_useChangeAwareDirtyState","actor","actorFrom","addHoursIso","baselineRef","buildKey","c","changed","ck","claim","claims","commitSave","current","d","data","dirtyRef","editableUntil","euDate","existing","expired","fieldData","formatTimestamp","isDirty","isNonEmpty","isOwner","keepStatus","key","label","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","markSaved","nextStatus","normalizeStore","normalizedOptions","now","nowIso","ownerId","ownerName","ownerRefresh","pad2","pending","policyAppliesToAction","prepareSave","prepared","raw","readStore","release","renderCountRef","resolveNow","sameActor","saveData","sd","store","trackedValue","ts","untilSelf","useSaveOnClose","windowHours"],
   './ScaleField/index.jsx': ["CHOICE_FIELD_STYLE","LABEL_COLUMN_STYLE","LABEL_STYLE","ScaleField","ScaleFieldEndpointLabels","ScaleFieldLegend","ScaleFieldTooltip","_getInlineMinWidth","_renderOptionTooltipContent","choiceGroupStyles","choiceOptions","containerStyle","currentData","fieldContent","firstDescription","handleChange","hasDescriptions","inlineMinWidth","label","lastDescription","legendItemStyle","legendRowStyle","normalizedTooltipMode","scaleOptions","selectedOption","shouldShowAllTooltip","theme"],
   './ScoringModule/index.jsx': ["CompactScoringQuestion","GroupedChecklistQuestion","GroupedChecklistSection","INTERPRETATION_BOX_STYLE","MatrixScoringRow","MatrixScoringTable","QUESTION_CONTAINER_STYLE","ScoringModule","ScoringModuleSchema","ScoringOptionTooltip","ScoringQuestion","ScoringScales","ScoringTotal","TOTAL_CONTAINER_STYLE","_cloneMirrorValue","_getQuestionMirrorFieldIds","_safeSerialize","allEntries","answer","answerScore","answerValue","answered","answers","buildScoreMap","calculatedTotals","candidateKeys","candidates","checked","checkedFromConfig","checkedOption","checklist","checklistUngroupedQuestions","collectScoreCandidates","containerStyle","continuumLabels","countsBySignature","createScoringConfig","createScoringQuestion","createScoringTotal","currentData","direct","effectiveShowProgress","errorContainerStyle","explicitShared","formatBounds","getAnswers","getInterpretation","getScoreFromValue","groupedQuestionIds","handleSelect","handleToggle","hasChanges","hasDescription","headerLabelStyle","headerOptionStyle","headerStyle","ids","interpretation","interpretationStyle","isComplete","isDarkMode","isInRange","keyValue","labelCellStyle","labelStyle","map","matrixQuestionIds","matrixQuestions","matrixSignature","max","maxContinuumLabel","maxSymbol","meetsMax","meetsMin","min","minContinuumLabel","minSymbol","mirrorIds","nextChecked","nextOption","normalizeQuestionIds","normalizeScoreToken","normalizeScoringOption","normalizeScoringOptions","normalizedLayout","normalizedOptionMap","optionCellStyle","optionControl","optionMap","optionScoreMap","options","optionsBySignature","progress","progressStyle","question","questionGroups","questionMirrorEntries","questionOptions","questions","questionsById","resolveChecklistOptions","resolveMatrixOptions","resolveQuestionOptions","resolvedOptions","results","rowStyle","scaleGridStyle","scaleWrapStyle","score","scoreMap","scoreValue","sectionQuestions","selected","serializeOptionSignature","sharedOptions","shouldRenderCompact","shouldRenderGroupedChecklist","shouldRenderMatrix","signature","stackedQuestions","tableStyle","targetIds","termQuestionId","textValue","theme","token","total","totalMirrorEntries","totals","uncheckedFromConfig","uncheckedOption","value","winnerCount","winnerSignature","wrapperStyle"],
@@ -34603,4 +34467,89 @@ export const componentDefinedNames: Record<string, string[]> = {
   './UnsavedChangesGuard/index.jsx': ["ButtonComponent","DCOUpdates","DEFAULT_WINDOW_HOURS","UnsavedChangesGuard","actionItems","actor","actorFrom","addHoursIso","baselineRef","buildDefaultSavePayload","buildDefaultSubmitPayload","buildKey","c","changed","ck","claim","claims","closeWindow","collectComponentPayloads","collectDomFieldValues","commitSave","componentPayload","confirmUnloadActive","current","d","data","dcoGroups","disabled","domFieldValues","editableUntil","euDate","existing","expired","field","fieldData","fieldId","footerActionItems","footerActions","formData","formatTimestamp","guardSkipsWhenSigned","handleAction","handler","hasLifecycleSignals","host","inputType","isNonEmpty","isOwner","isSettling","isSigned","isSubmitAction","keepStatus","key","label","lifecycle","linkedPanels","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","markSaved","mergeFieldValuesIntoState","narratives","nextStatus","nextValue","nhAuthCommitSave","nhAuthPrepareSave","normalizeFooterActions","normalizeGuardActions","normalizeGuardValue","normalizeStore","now","nowIso","ownerId","ownerName","ownerRefresh","pad2","panelUpdates","panels","payload","payloads","pending","persistAction","persistFd","policyAppliesToAction","prepareSave","prepared","primaryAction","promptText","raw","readStore","release","renderFooterAction","resolveNow","sameActor","saveSettleRef","savedWebform","sd","secondaryActions","serializeGuardValue","store","stripComponentPayloads","submitSd","success","tagName","trackedSnapshot","trackedValue","ts","untilSelf","useHostConfirmUnload","values","warmupRef","webformGroups","webformUpdate","windowHours"],
   './UseChangeWatch/index.jsx': ["_defaultCompare","_normalizeWatchOptions","baselineRef","compare","delayCount","dirtyRef","disabled","forcedDirtyRef","isDirty","normalizedOptions","onDirtyChange","renderCountRef","setChanged","useChangeWatch"],
   './ValueSetObservationField/index.jsx': ["ValueSetObservationField","checklistOptions","commentValue","componentId","container","createdBy","currentPayload","effectiveFieldId","fromContext","handleChange","key","nextGroup","normalizeObservationOptions","oldId","oldObs","options","payloadsEqual","report","sd","selectedCode","selectedDisplay","selectedValue","setNestedPayload","stripVolatilePayloadFields"],
+};
+
+/**
+ * Identity.json "components" dependencies per module (only entries that are
+ * themselves NHForms modules). Used by the loaders to order two-pass loading
+ * so a dependency is (re)loaded before its consumers — a consumer's pass-2
+ * closure captures whatever registry entry exists at its own load time, so
+ * unordered loading leaves consumers holding stale pass-1 closures of any
+ * dependency that reloads after them (e.g. HistoricalObservationTable ->
+ * ObservationQuery -> ObservationKit).
+ */
+export const componentDependencies: Record<string, string[]> = {
+  './ActionButtonGroup/index.jsx': [],
+  './AliasIdList/index.jsx': [],
+  './Allergies/index.jsx': [],
+  './AllergyTable/index.jsx': ["ChartRecordTable"],
+  './AssessmentScoringTable/index.jsx': [],
+  './AttestationSignOff/index.jsx': [],
+  './AuthorshipField/index.jsx': [],
+  './BulkSetField/index.jsx': [],
+  './ChartRecordTable/index.jsx': ["EditableTable"],
+  './ChartReviewSummary/index.jsx': [],
+  './CodedObservationChoiceField/index.jsx': [],
+  './CommonSchemaDefn/index.jsx': [],
+  './CompactBooleanField/index.jsx': [],
+  './ComputedField/index.jsx': [],
+  './ConditionalGroup/index.jsx': [],
+  './Conditions/index.jsx': [],
+  './Connections/index.jsx': [],
+  './ConversionField/index.jsx': [],
+  './CustomJsxBlock/index.jsx': [],
+  './DentalWeightConverter/index.jsx': [],
+  './EditableTable/index.jsx': [],
+  './EducationHistory/index.jsx': [],
+  './Ethnicity/index.jsx': [],
+  './FieldStampButton/index.jsx': [],
+  './FindCodeSelect/index.jsx': [],
+  './FirstNationsStatus/index.jsx': ["Ethnicity"],
+  './FlowSheet/index.jsx': ["ObservationKit"],
+  './FocusedObservationHistory/index.jsx': [],
+  './FormContextHeader/index.jsx': [],
+  './FormSessionRuntime/index.jsx': [],
+  './Goals/index.jsx': [],
+  './HFC_PHQ_Subform/index.jsx': ["ConversionField","FormSessionRuntime","HotspotMapField","ScoringModule","ScaleField","SubformScoring"],
+  './HFC_PT_ASMT_PatientAssessment/index.jsx': [],
+  './HFC_PT_ASMT_PatientSummary/index.jsx': ["ReferralSource","ServiceRequests"],
+  './HFC_PT_ASMT_SnapShot/index.jsx': [],
+  './HealthMaintenanceReview/index.jsx': [],
+  './HistoricalObservationTable/index.jsx': ["ObservationQuery"],
+  './HonosQuestion/index.jsx': [],
+  './HotspotMapField/index.jsx': [],
+  './HttpJsonTestPanel/index.jsx': [],
+  './InvestigationTabs/index.jsx': [],
+  './LayoutTable/index.jsx': ["FieldStampButton"],
+  './LongTermMedications/index.jsx': [],
+  './MirthListenerUtility/index.jsx': [],
+  './MoisModuleLinkList/index.jsx': [],
+  './MoisPatientReviewLink/index.jsx': [],
+  './MultiTargetChoiceField/index.jsx': [],
+  './NarrativeReportBuilder/index.jsx': [],
+  './NewTextArea/index.jsx': [],
+  './ObservationChart/index.jsx': [],
+  './ObservationEntryGrid/index.jsx': ["ObservationKit"],
+  './ObservationKit/index.jsx': [],
+  './ObservationPanelEditor/index.jsx': [],
+  './ObservationQuery/index.jsx': ["ObservationChart","ObservationKit"],
+  './Occupations/index.jsx': [],
+  './PastMeasurementField/index.jsx': [],
+  './PatientFileSections/index.jsx': [],
+  './PatientValueField/index.jsx': [],
+  './PdfRegenerator/index.jsx': [],
+  './PlannedActions/index.jsx': [],
+  './ReferralSource/index.jsx': [],
+  './RelationshipStatus/index.jsx': [],
+  './RichMarkdownBlock/index.jsx': [],
+  './SaveOnClose/index.jsx': [],
+  './ScaleField/index.jsx': [],
+  './ScoringModule/index.jsx': ["FormSessionRuntime"],
+  './ServiceEpisodes/index.jsx': [],
+  './ServiceRequests/index.jsx': [],
+  './SignaturePad/index.jsx': [],
+  './SubformScoring/index.jsx': ["ConversionField","FormSessionRuntime","HotspotMapField","ScoringModule","ScaleField"],
+  './UnsavedChangesGuard/index.jsx': [],
+  './UseChangeWatch/index.jsx': [],
+  './ValueSetObservationField/index.jsx': [],
 };

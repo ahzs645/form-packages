@@ -75,7 +75,7 @@ const WRAP_SANDBOX_COMPONENTS = process.env.NODE_ENV !== 'production';
 // Import pre-transpiled component sources (Next.js doesn't support Vite's import.meta.glob).
 // Transpilation happens at generation time so @babel/standalone stays out of this
 // bundle and off the main thread. Regenerate with: node scripts/generate-nhforms-sources.js
-import { compiledComponentModules, componentDefinedNames } from './component-compiled.generated';
+import { compiledComponentModules, componentDefinedNames, componentDependencies } from './component-compiled.generated';
 
 // Shared utility functions used across NHForms components (from CommonSchemaDefn)
 const selectAll = () => true;
@@ -388,6 +388,8 @@ function loadComponentCode(
     'FormSessionProvider', 'cloneFormSessionState', 'mergeFormSessionState', 'useFormSessionData',
     // InvestigationTabs exports
     'InvestigationTabs', 'InvestigationTab',
+    // ObservationKit helper namespace (observation-family shared kernel)
+    'ObservationKit',
     // SubformScoring exports
     'SubformScoring',
     // PDF regeneration exports
@@ -562,6 +564,27 @@ function applyRegistryModuleAliases(registry: Record<string, any>): void {
   });
 }
 
+/** In-place stable topological sort by Identity.json component dependencies. */
+function orderSourcesByDependencies(sources: Array<{ name: string; code: string; definedNames: ReadonlySet<string> }>): void {
+  const byName = new Map(sources.map((source) => [source.name, source]));
+  const ordered: typeof sources = [];
+  const placed = new Set<string>();
+  const visiting = new Set<string>();
+  const visit = (name: string) => {
+    const source = byName.get(name);
+    if (!source || placed.has(name) || visiting.has(name)) return;
+    visiting.add(name);
+    for (const dependency of componentDependencies[`./${name}/index.jsx`] ?? []) {
+      visit(dependency);
+    }
+    visiting.delete(name);
+    placed.add(name);
+    ordered.push(source);
+  };
+  for (const source of sources) visit(source.name);
+  sources.splice(0, sources.length, ...ordered);
+}
+
 /**
  * Load all NHForms components with two-pass loading for cross-references
  * Pass 1: Load all components (some may have missing dependencies)
@@ -581,6 +604,15 @@ function loadAllComponents(): Record<string, any> {
       });
     }
   }
+
+  // Load dependencies (Identity.json "components") before their consumers.
+  // A consumer's pass-2 closure captures whatever registry entry exists when
+  // the consumer itself reloads, so without this ordering a consumer that
+  // reloads before its dependency keeps the dependency's pass-1 closure —
+  // which cannot resolve ITS dependencies (e.g. HistoricalObservationTable ->
+  // ObservationQuery -> ObservationKit). Stable DFS: unrelated components
+  // keep their original relative order; cycles fall back to that order too.
+  orderSourcesByDependencies(componentSources);
 
   // Pass 1: Load all components without cross-references
   // Record each component's own exports (before cross-references pollute the scope)

@@ -7,8 +7,10 @@
  * renders `~~x~~` literally). To keep WYSIWYG output MOIS-safe we unwrap any
  * strikethrough back to plain text on serialise.
  *
- * Raw HTML and GFM tables are intentionally left untouched — `RichMarkdownBlock`
- * renders them via `remark-gfm` + `rehype-raw`.
+ * GFM tables are intentionally left untouched — `RichMarkdownBlock` parses them
+ * itself on MOIS (the engine ships no `remark-gfm`) and through the plugin in
+ * preview. Raw HTML survives serialisation but only renders in preview: the
+ * engine has no `rehype-raw`, so a real instance drops it.
  */
 export function sanitizeMoisMarkdown(markdown: string): string {
   if (!markdown) return markdown;

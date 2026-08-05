@@ -660,7 +660,7 @@ const _buildSubformFieldFromColumn = (column) => {
       return withCommon({
         id: fieldId,
         label,
-        type: "date",
+        type: column.withTime ? "datetime" : "date",
         placeholder: column.placeholder,
         required: column.required === true,
       })
@@ -1368,7 +1368,7 @@ EditableTable = ({
     : Number.POSITIVE_INFINITY
   const shouldShowActions = !isLocked && (allowEditRows || allowDeleteRows)
 
-  const renderEditorInput = (row, rowIndex, column, onValueChange, inline, rowReadOnly = false, onStampColumn = null, rowLockState = null) => {
+  const renderEditorControl = (row, rowIndex, column, onValueChange, inline, rowReadOnly = false, onStampColumn = null, rowLockState = null) => {
     const value = _getValueAtPath(row, column.dataPath || column.id)
     const realRowReadOnly = !!rowLockState?.authorship?.locked
     const localStampLocked = !!rowLockState?.localStamp?.locked
@@ -1421,6 +1421,20 @@ EditableTable = ({
         )
 
       case "date":
+        // withTime columns persist the engine's getDateTimeString shape
+        // (YYYY-MM-DDTHH:mm) rather than a bare date.
+        if (column.withTime) {
+          return (
+            <DateTimeSelect
+              inline={inline}
+              value={value || ""}
+              onChange={(newValue) => onValueChange(rowIndex, column.id, newValue || "")}
+              placeholder={column.placeholder || "Select date and time"}
+              readOnly={effectiveReadOnly}
+              disabled={effectiveReadOnly}
+            />
+          )
+        }
         return (
           <DateSelect
             inline={inline}
@@ -1535,6 +1549,25 @@ EditableTable = ({
           />
         )
     }
+  }
+
+  // Inline cells render live Fluent controls, which print as empty boxed inputs
+  // and make a patient-facing handout unreadable. Mirror the formatted value as
+  // print-only text and drop the control on paper — the same split the legacy
+  // NHForms tables did by hand. The inline `display: none` keeps the mirror
+  // hidden when a host page ships no print stylesheet; the print rule's
+  // `!important` overrides it. Dialog editors (inline === false) never print.
+  const renderEditorInput = (row, rowIndex, column, onValueChange, inline, rowReadOnly = false, onStampColumn = null, rowLockState = null) => {
+    const control = renderEditorControl(row, rowIndex, column, onValueChange, inline, rowReadOnly, onStampColumn, rowLockState)
+    if (!inline) return control
+    return (
+      <>
+        <span className="showonprint" style={{ display: "none", whiteSpace: "pre-wrap" }}>
+          {_formatCellValue(row, column) || " "}
+        </span>
+        <div className="hideonprint">{control}</div>
+      </>
+    )
   }
 
   const containerStyle = showBackground ? {
@@ -1829,7 +1862,7 @@ EditableTable = ({
       </div>
 
       {allowAddRows && !isLocked && remaining > 0 && (
-        <Stack horizontal verticalAlign="center" tokens={{ childrenGap: 12 }} style={{ marginTop: "12px" }}>
+        <Stack className="hideonprint" horizontal verticalAlign="center" tokens={{ childrenGap: 12 }} style={{ marginTop: "12px" }}>
           <DefaultButton
             text={addButtonText}
             onClick={isModalMode ? openCreateDialog : addInlineRow}

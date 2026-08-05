@@ -71,6 +71,8 @@ export interface TableColumn {
   type: "text" | "number" | "date" | "time" | "choice" | "booleanYesNo" | "checkbox" | "stampButton";
   booleanLabels?: { on: string; off: string } | null;
   prefill?: FieldPrefillValue;
+  /** Date columns only: pair the date picker with a time input (DateTimeSelect). */
+  withTime?: boolean;
   useToggleSwitch?: boolean;
   numberConfig?: {
     typeNumber: "number" | "decimal" | "year";
@@ -228,6 +230,8 @@ export interface ParsedField {
   rawType: string;
   required: boolean;
   lockWhenSectionComplete?: boolean;
+  /** Lock once the MOIS record is SIGNED. Defaults on; set false to opt out. */
+  lockWhenSigned?: boolean;
   lockWhen?: {
     field: string;
     operator?: "truthy" | "equals" | "notEquals";
@@ -260,6 +264,8 @@ export interface ParsedField {
       value: number;
       label: string;
       description?: string;
+      /** Stored answer key when it differs from the score. See BuilderField.scaleConfig. */
+      key?: string;
     }>;
     [key: string]: unknown;
   } | null;
@@ -404,6 +410,8 @@ export interface ParsedField {
     value: number;
     label: string;
     description?: string;
+    /** Stored answer key when it differs from the score. See BuilderField.scaleConfig. */
+    key?: string;
   }>;
 
   // Matrix field properties

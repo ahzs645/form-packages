@@ -1,25 +1,12 @@
-const { useMemo } = React
-const { Stack, Label, Text } = Fluent
-
-const historyDateKey = (value) => {
-  const raw = String(value ?? "")
-  return raw.includes("T") ? raw.split("T")[0] : raw
-}
-
-const getHistorySource = (sd, sourcePath) => {
-  if (!sourcePath) return sd?.patient?.observations ?? []
-  const steps = String(sourcePath).split(".").filter(Boolean)
-  let current = sd
-  for (const step of steps) {
-    if (current && typeof current === "object") {
-      current = current[step]
-    } else {
-      return []
-    }
-  }
-  return Array.isArray(current) ? current : []
-}
-
+// Legacy date-grouped history table, now a thin preset over ObservationQuery's
+// table display. Kept for saved forms and the history-table preset library
+// (data/history-table-library), which keep configuring it by columns.
+//
+// Column config maps onto query codes: the "date" column is implicit
+// (ObservationQuery always leads with the date), every other column with an
+// observationCode becomes a picked code. Matching gains ObservationQuery's
+// case-insensitive code/LOINC comparison, and cells gain units + abnormal
+// flags — both strict upgrades over the old exact-code, value-only table.
 const HistoricalObservationTable = ({
   title = "Historical Observations",
   sourcePath = "patient.observations",
@@ -27,63 +14,22 @@ const HistoricalObservationTable = ({
   columns = [],
   maxRows = 10,
 }) => {
-  const sd = useSourceData()
-  const rows = useMemo(() => {
-    const source = getHistorySource(sd, sourcePath)
-    const grouped = new Map()
-    source.forEach((entry) => {
-      const date = historyDateKey(entry?.[datePath])
-      if (!date) return
-      const current = grouped.get(date) ?? { date }
-      let matchedColumn = false
-      columns.forEach((column) => {
-        if (column.type === "date") return
-        if (column.observationCode && entry?.observationCode === column.observationCode) {
-          current[column.id] = entry.value ?? entry.display ?? entry.report ?? ""
-          matchedColumn = true
-        }
-      })
-      if (matchedColumn) {
-        grouped.set(date, current)
-      }
-    })
-    return Array.from(grouped.values()).sort((a, b) => String(b.date).localeCompare(String(a.date))).slice(0, maxRows)
-  }, [columns, datePath, maxRows, sd, sourcePath])
-
-  if (rows.length === 0) {
-    return (
-      <Stack tokens={{ childrenGap: 6 }}>
-        <Label>{title}</Label>
-        <Text variant="small">No historical observations found.</Text>
-      </Stack>
-    )
-  }
+  const codes = (Array.isArray(columns) ? columns : [])
+    .filter((column) => column && typeof column === "object" && column.type !== "date" && column.observationCode)
+    .map((column) => ({
+      code: String(column.observationCode),
+      label: String(column.label ?? column.observationCode),
+    }))
 
   return (
-    <Stack tokens={{ childrenGap: 6 }}>
-      <Label>{title}</Label>
-      <table style={{ width: "100%", borderCollapse: "collapse", border: "1px solid #d0d0d0" }}>
-        <thead>
-          <tr>
-            {columns.map((column) => (
-              <th key={column.id} style={{ border: "1px solid #d0d0d0", textAlign: "left", padding: "6px", background: "#f3f2f1" }}>
-                {column.label}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr key={row.date}>
-              {columns.map((column) => (
-                <td key={column.id} style={{ border: "1px solid #e1dfdd", padding: "6px" }}>
-                  {column.type === "date" ? row.date : row[column.id] ?? "-"}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </Stack>
+    <ObservationQuery
+      title={title}
+      display="table"
+      codes={codes}
+      maxRows={maxRows}
+      sort="newest"
+      sourcePath={sourcePath}
+      datePath={datePath}
+    />
   )
 }

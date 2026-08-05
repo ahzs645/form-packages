@@ -1,7 +1,7 @@
 {
   "name": "RichMarkdownBlock",
   "title": "Rich Markdown Block",
-  "description": "Read-only markdown display with GitHub-flavored markdown table support for imported builder rich text",
+  "description": "Read-only markdown display with GitHub-flavored table support that renders inline MOIS chart links (mois: scheme) as LinkToMois buttons",
   "category": "Display",
-  "version": "1.0.0"
+  "version": "1.1.0"
 }

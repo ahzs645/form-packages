@@ -1,118 +1,15 @@
 const { useMemo, useState, useEffect, useRef } = React
 const { Stack, Label, Text, TextField, DefaultButton, PrimaryButton } = Fluent
 
-const gridToText = (value) => {
-  if (value === null || value === undefined) return ""
-  return String(value)
-}
+// Date/path/code-matching/abnormal-flag primitives live in the shared
+// ObservationKit helper module (declared in Identity.json). ObservationKit is
+// referenced only inside function bodies because component files load in no
+// guaranteed order.
 
-const gridDateKey = (value) => {
-  const raw = gridToText(value)
-  return raw.includes("T") ? raw.split("T")[0] : raw
-}
-
-const gridParseDate = (value) => {
-  const raw = gridToText(value).trim()
-  if (!raw) return null
-  const parsed = new Date(raw.includes("T") ? raw : raw.replace(/\./g, "-"))
-  return Number.isNaN(parsed.getTime()) ? null : parsed
-}
-
-const getGridSource = (sd, sourcePath) => {
-  if (!sourcePath) return sd?.patient?.observations ?? []
-  const steps = gridToText(sourcePath).split(".").filter(Boolean)
-  let current = sd
-  for (const step of steps) {
-    if (current && typeof current === "object") {
-      current = current[step]
-    } else {
-      return []
-    }
-  }
-  return Array.isArray(current) ? current : []
-}
-
-const normalizeGridCodes = (codes) => {
-  if (!Array.isArray(codes)) return []
-  return codes
-    .map((entry) => {
-      if (typeof entry === "string") {
-        const code = entry.trim()
-        return code ? { code, label: code, loincCode: "", units: "", hotkey: "" } : null
-      }
-      if (!entry || typeof entry !== "object") return null
-      const code = gridToText(entry.code).trim()
-      if (!code) return null
-      return {
-        code,
-        label: gridToText(entry.label).trim() || code,
-        loincCode: gridToText(entry.loincCode).trim(),
-        units: gridToText(entry.units).trim(),
-        hotkey: gridToText(entry.hotkey).trim().slice(0, 1).toLowerCase(),
-      }
-    })
-    .filter(Boolean)
-}
-
-const gridCutoffDate = (lookback) => {
-  if (!lookback || typeof lookback !== "object") return null
-  const amount = Math.floor(Number(lookback.amount))
-  if (!Number.isFinite(amount) || amount <= 0) return null
-  const cutoff = new Date()
-  if (lookback.unit === "days") {
-    cutoff.setDate(cutoff.getDate() - amount)
-  } else if (lookback.unit === "years") {
-    cutoff.setFullYear(cutoff.getFullYear() - amount)
-  } else if (lookback.unit === "months") {
-    cutoff.setMonth(cutoff.getMonth() - amount)
-  } else {
-    return null
-  }
-  return cutoff
-}
-
-const gridNumber = (value) => {
-  const text = gridToText(value).trim()
-  if (!text) return null
-  const parsed = Number(text)
-  return Number.isFinite(parsed) ? parsed : null
-}
-
-// Same four MOIS bands as PastMeasurementField's save path: absurd/very
-// ranges -> LL/HH outrank the normal range -> L/H.
-const classifyGridFlag = (ranges, rawValue) => {
-  const value = gridNumber(rawValue)
-  if (value === null || !ranges) return null
-  const criticalLow = gridNumber(ranges.rangeAbsurdLow) ?? gridNumber(ranges.rangeVeryLow)
-  const criticalHigh = gridNumber(ranges.rangeAbsurdHigh) ?? gridNumber(ranges.rangeVeryHigh)
-  const normalLow = gridNumber(ranges.rangeNormalLow)
-  const normalHigh = gridNumber(ranges.rangeNormalHigh)
-  if (criticalLow !== null && value < criticalLow) return "LL"
-  if (criticalHigh !== null && value > criticalHigh) return "HH"
-  if (normalLow !== null && value < normalLow) return "L"
-  if (normalHigh !== null && value > normalHigh) return "H"
-  return null
-}
-
-const gridFlagStyle = (flag) => {
-  if (flag === "LL" || flag === "HH") {
-    return { background: "#fde7e9", color: "#a4262c", fontWeight: 600 }
-  }
-  if (flag === "L" || flag === "H") {
-    return { background: "#fff4ce" }
-  }
-  return {}
-}
-
-const gridEntryMatchesCode = (entry, candidate) => {
-  const entryCode = gridToText(entry?.observationCode).trim().toLowerCase()
-  const entryLoinc = gridToText(entry?.loincCode).trim().toLowerCase()
-  const code = candidate.code.toLowerCase()
-  const loinc = candidate.loincCode.toLowerCase()
-  if (entryCode && (entryCode === code || (loinc && entryCode === loinc))) return true
-  if (entryLoinc && (entryLoinc === code || (loinc && entryLoinc === loinc))) return true
-  return false
-}
+// Grid flag contract is null (not ""), so display code can fall back with
+// `?? row.flag` / `?? "-"`. Explicit chart abnormalFlags are read separately
+// in chartRows, so this only classifies against range metadata.
+const classifyGridFlag = (ranges, rawValue) => ObservationKit.classifyRanges(ranges, rawValue) || null
 
 const stripVolatileGridFields = (payload) => {
   if (!Array.isArray(payload)) return payload
@@ -162,11 +59,11 @@ const findRangesForCode = (source, candidate) => {
   let bestTime = -Infinity
   source.forEach((entry) => {
     if (!entry || typeof entry !== "object") return
-    if (!gridEntryMatchesCode(entry, candidate)) return
+    if (!ObservationKit.matchesCode(entry, candidate)) return
     const hasRanges = [entry.rangeNormalLow, entry.rangeNormalHigh, entry.rangeVeryLow, entry.rangeVeryHigh, entry.rangeAbsurdLow, entry.rangeAbsurdHigh]
-      .some((value) => gridToText(value).trim() !== "")
+      .some((value) => ObservationKit.toText(value).trim() !== "")
     if (!hasRanges) return
-    const parsed = gridParseDate(entry.collectedDateTime)
+    const parsed = ObservationKit.parseDate(entry.collectedDateTime)
     const time = parsed ? parsed.getTime() : 0
     if (time >= bestTime) {
       best = entry
@@ -228,11 +125,11 @@ const detailBandLabelStyle = { color: "#004578", fontSize: 10, fontWeight: 600, 
 // row has no ranges (empty boxes, like MOIS) so the pane height never jumps.
 const GridRangeBands = ({ ranges, centerText }) => {
   const cells = [
-    { key: "LL", value: gridToText(ranges.rangeAbsurdLow ?? ranges.rangeVeryLow).trim(), style: { background: "#fde7e9" } },
-    { key: "L", value: gridToText(ranges.rangeNormalLow).trim(), style: { background: "#fff4ce" } },
-    { key: "NORMAL RANGE", value: gridToText(centerText).trim(), style: { color: "#605e5c" } },
-    { key: "H", value: gridToText(ranges.rangeNormalHigh).trim(), style: { background: "#fff4ce" } },
-    { key: "HH", value: gridToText(ranges.rangeAbsurdHigh ?? ranges.rangeVeryHigh).trim(), style: { background: "#fde7e9" } },
+    { key: "LL", value: ObservationKit.toText(ranges.rangeAbsurdLow ?? ranges.rangeVeryLow).trim(), style: { background: "#fde7e9" } },
+    { key: "L", value: ObservationKit.toText(ranges.rangeNormalLow).trim(), style: { background: "#fff4ce" } },
+    { key: "NORMAL RANGE", value: ObservationKit.toText(centerText).trim(), style: { color: "#605e5c" } },
+    { key: "H", value: ObservationKit.toText(ranges.rangeNormalHigh).trim(), style: { background: "#fff4ce" } },
+    { key: "HH", value: ObservationKit.toText(ranges.rangeAbsurdHigh ?? ranges.rangeVeryHigh).trim(), style: { background: "#fde7e9" } },
   ]
   return (
     <table style={{ borderCollapse: "collapse" }}>
@@ -269,9 +166,9 @@ const GridRangeBands = ({ ranges, centerText }) => {
 const GridDetailPane = ({ row }) => {
   if (!row) return null
   const ranges = row.ranges ?? {}
-  const rangeText = gridToText(ranges.referenceRangeText).trim()
+  const rangeText = ObservationKit.toText(ranges.referenceRangeText).trim()
   const hasBands = [ranges.rangeAbsurdLow, ranges.rangeVeryLow, ranges.rangeNormalLow, ranges.rangeNormalHigh, ranges.rangeAbsurdHigh, ranges.rangeVeryHigh]
-    .some((value) => gridToText(value).trim() !== "")
+    .some((value) => ObservationKit.toText(value).trim() !== "")
   // Bands show the units in the center; without bands the center carries the
   // text-only range (or nothing), keeping the strip — and pane height — stable.
   const centerText = hasBands ? row.units : rangeText
@@ -292,7 +189,7 @@ const GridDetailPane = ({ row }) => {
       <div style={{ fontWeight: 600, marginBottom: 4 }}>
         {row.description || row.code}
         <span style={{ marginLeft: 8, color: "#605e5c", fontWeight: 400 }}>Code: {row.code}</span>
-        {row.flag ? <span style={{ marginLeft: 8, ...gridFlagStyle(row.flag), padding: "0 4px" }}>{row.flag}</span> : null}
+        {row.flag ? <span style={{ marginLeft: 8, ...ObservationKit.flagCellStyle(row.flag), padding: "0 4px" }}>{row.flag}</span> : null}
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-start", gap: "2px 24px" }}>
         <table style={{ borderCollapse: "collapse" }}>
@@ -302,7 +199,7 @@ const GridDetailPane = ({ row }) => {
                 {line.map((field) => (
                   <React.Fragment key={field.label}>
                     <td style={detailLabelStyle}>{field.label}:</td>
-                    <td style={detailValueStyle}>{gridToText(field.value).trim() || "-"}</td>
+                    <td style={detailValueStyle}>{ObservationKit.toText(field.value).trim() || "-"}</td>
                   </React.Fragment>
                 ))}
               </tr>
@@ -344,8 +241,8 @@ const ObservationEntryGrid = ({
   const componentId = id || fieldId || "ObservationEntryGrid"
   const entriesKey = componentId + "_entries"
   const editsKey = componentId + "_edits"
-  const codeList = useMemo(() => normalizeGridCodes(codes), [codes])
-  const source = useMemo(() => getGridSource(sd, sourcePath), [sd, sourcePath])
+  const codeList = useMemo(() => ObservationKit.normalizeCodes(codes), [codes])
+  const source = useMemo(() => ObservationKit.getPath(sd, sourcePath), [sd, sourcePath])
   const entries = readGridRows(fd, entriesKey)
   const edits = readGridRows(fd, editsKey)
   const [selectedKey, setSelectedKey] = useState(null)
@@ -358,41 +255,41 @@ const ObservationEntryGrid = ({
   const editByObservationId = useMemo(() => {
     const map = new Map()
     edits.forEach((edit) => {
-      const observationId = gridNumber(edit.observationId)
+      const observationId = ObservationKit.toNumber(edit.observationId)
       if (observationId !== null) map.set(observationId, edit)
     })
     return map
   }, [edits])
 
   const chartRows = useMemo(() => {
-    const cutoff = gridCutoffDate(lookback)
+    const cutoff = ObservationKit.cutoffDate(lookback)
     const rows = []
     source.forEach((entry, index) => {
       if (!entry || typeof entry !== "object") return
-      const codeIndex = codeList.length > 0 ? codeList.findIndex((candidate) => gridEntryMatchesCode(entry, candidate)) : -1
+      const codeIndex = codeList.length > 0 ? codeList.findIndex((candidate) => ObservationKit.matchesCode(entry, candidate)) : -1
       if (filterByCodes && codeList.length > 0 && codeIndex < 0) return
-      const parsed = gridParseDate(entry[datePath])
+      const parsed = ObservationKit.parseDate(entry[datePath])
       if (!parsed) return
       if (cutoff && parsed.getTime() < cutoff.getTime()) return
-      const value = gridToText(entry.value ?? entry.display ?? entry.report ?? "")
+      const value = ObservationKit.extractValue(entry)
       const explicitFlag = entry.abnormalFlag && typeof entry.abnormalFlag === "object"
-        ? gridToText(entry.abnormalFlag.code).trim()
-        : gridToText(entry.abnormalFlag).trim()
+        ? ObservationKit.toText(entry.abnormalFlag.code).trim()
+        : ObservationKit.toText(entry.abnormalFlag).trim()
       rows.push({
         key: "chart-" + index,
-        observationId: gridNumber(entry.observationId),
-        dateKey: gridDateKey(entry[datePath]),
-        collectedDateTime: gridToText(entry[datePath]),
+        observationId: ObservationKit.toNumber(entry.observationId),
+        dateKey: ObservationKit.dateKey(entry[datePath]),
+        collectedDateTime: ObservationKit.toText(entry[datePath]),
         time: parsed.getTime(),
-        code: gridToText(entry.observationCode).trim(),
-        loincCode: gridToText(entry.loincCode).trim(),
-        description: gridToText(entry.description).trim() || (codeIndex >= 0 ? codeList[codeIndex].label : ""),
+        code: ObservationKit.toText(entry.observationCode).trim(),
+        loincCode: ObservationKit.toText(entry.loincCode).trim(),
+        description: ObservationKit.toText(entry.description).trim() || (codeIndex >= 0 ? codeList[codeIndex].label : ""),
         value,
-        units: gridToText(entry.units).trim(),
-        orderedBy: gridToText(entry.orderedBy).trim(),
-        collectedBy: gridToText(entry.collectedBy).trim(),
-        observationClass: gridToText(entry.observationClass).trim(),
-        status: gridToText(entry.status).trim(),
+        units: ObservationKit.toText(entry.units).trim(),
+        orderedBy: ObservationKit.toText(entry.orderedBy).trim(),
+        collectedBy: ObservationKit.toText(entry.collectedBy).trim(),
+        observationClass: ObservationKit.toText(entry.observationClass).trim(),
+        status: ObservationKit.toText(entry.status).trim(),
         flag: explicitFlag || classifyGridFlag(entry, value),
         ranges: entry,
         fromChart: true,
@@ -403,19 +300,19 @@ const ObservationEntryGrid = ({
   }, [codeList, datePath, filterByCodes, lookback, maxRows, source])
 
   const entryRows = useMemo(() => entries.map((entry) => {
-    const candidate = codeList.find((item) => item.code === entry.code) ?? { code: gridToText(entry.code), label: gridToText(entry.description), loincCode: "", units: "", hotkey: "" }
+    const candidate = codeList.find((item) => item.code === entry.code) ?? { code: ObservationKit.toText(entry.code), label: ObservationKit.toText(entry.description), loincCode: "", units: "", hotkey: "" }
     const ranges = findRangesForCode(source, candidate)
     return {
-      key: "entry-" + gridToText(entry.rowId),
-      rowId: gridToText(entry.rowId),
-      dateKey: gridDateKey(entry.dateTime),
+      key: "entry-" + ObservationKit.toText(entry.rowId),
+      rowId: ObservationKit.toText(entry.rowId),
+      dateKey: ObservationKit.dateKey(entry.dateTime),
       code: candidate.code,
       loincCode: candidate.loincCode,
-      description: gridToText(entry.description).trim() || candidate.label,
-      value: gridToText(entry.value),
-      units: gridToText(entry.units).trim() || candidate.units || gridToText(ranges?.units).trim(),
-      orderedBy: gridToText(sd?.userProfile?.identity?.fullName).trim(),
-      collectedBy: gridToText(sd?.userProfile?.identity?.fullName).trim(),
+      description: ObservationKit.toText(entry.description).trim() || candidate.label,
+      value: ObservationKit.toText(entry.value),
+      units: ObservationKit.toText(entry.units).trim() || candidate.units || ObservationKit.toText(ranges?.units).trim(),
+      orderedBy: ObservationKit.toText(sd?.userProfile?.identity?.fullName).trim(),
+      collectedBy: ObservationKit.toText(sd?.userProfile?.identity?.fullName).trim(),
       observationClass: "DCOBS",
       status: "F",
       flag: classifyGridFlag(ranges, entry.value),
@@ -432,11 +329,11 @@ const ObservationEntryGrid = ({
     if (readOnly) return
     const createdBy = sd?.userProfile?.identity?.fullName
     const newPayload = entries
-      .filter((entry) => gridToText(entry.value).trim() !== "" && gridToText(entry.code).trim() !== "")
+      .filter((entry) => ObservationKit.toText(entry.value).trim() !== "" && ObservationKit.toText(entry.code).trim() !== "")
       .map((entry) => {
-        const candidate = codeList.find((item) => item.code === entry.code) ?? { code: gridToText(entry.code), label: gridToText(entry.description), loincCode: "", units: "", hotkey: "" }
+        const candidate = codeList.find((item) => item.code === entry.code) ?? { code: ObservationKit.toText(entry.code), label: ObservationKit.toText(entry.description), loincCode: "", units: "", hotkey: "" }
         const ranges = findRangesForCode(source, candidate)
-        const value = gridToText(entry.value).trim()
+        const value = ObservationKit.toText(entry.value).trim()
         const flagCode = classifyGridFlag(ranges, value)
         const abnormalFlag = buildGridAbnormalFlag(sd, flagCode)
         return {
@@ -444,28 +341,28 @@ const ObservationEntryGrid = ({
           observationCode: candidate.code,
           observationClass: "DCOBS",
           value,
-          valueType: gridNumber(value) !== null ? "NUMERIC" : "TEXT",
+          valueType: ObservationKit.toNumber(value) !== null ? "NUMERIC" : "TEXT",
           status: "F",
-          description: gridToText(entry.description).trim() || candidate.label || "Measurement",
-          units: gridToText(entry.units).trim() || candidate.units || gridToText(ranges?.units).trim(),
+          description: ObservationKit.toText(entry.description).trim() || candidate.label || "Measurement",
+          units: ObservationKit.toText(entry.units).trim() || candidate.units || ObservationKit.toText(ranges?.units).trim(),
           ...(candidate.loincCode ? { loincCode: candidate.loincCode } : {}),
           ...(createdBy ? { orderedBy: createdBy, collectedBy: createdBy } : {}),
-          collectedDateTime: gridToText(entry.dateTime) || getDateTimeString(new Date()),
-          ...(ranges && gridToText(ranges.rangeNormalLow).trim() !== "" ? { rangeNormalLow: gridToText(ranges.rangeNormalLow) } : {}),
-          ...(ranges && gridToText(ranges.rangeNormalHigh).trim() !== "" ? { rangeNormalHigh: gridToText(ranges.rangeNormalHigh) } : {}),
+          collectedDateTime: ObservationKit.toText(entry.dateTime) || getDateTimeString(new Date()),
+          ...(ranges && ObservationKit.toText(ranges.rangeNormalLow).trim() !== "" ? { rangeNormalLow: ObservationKit.toText(ranges.rangeNormalLow) } : {}),
+          ...(ranges && ObservationKit.toText(ranges.rangeNormalHigh).trim() !== "" ? { rangeNormalHigh: ObservationKit.toText(ranges.rangeNormalHigh) } : {}),
           ...(abnormalFlag ? { abnormalFlag } : {}),
         }
       })
     const editPayload = edits
       .map((edit) => {
-        const observationId = gridNumber(edit.observationId)
+        const observationId = ObservationKit.toNumber(edit.observationId)
         if (observationId === null || observationId <= 0) return null
         if (edit.action === "delete") {
           return { observationId: -observationId }
         }
-        const value = gridToText(edit.value).trim()
+        const value = ObservationKit.toText(edit.value).trim()
         if (!value) return null
-        const candidate = codeList.find((item) => item.code === edit.code) ?? { code: gridToText(edit.code), label: gridToText(edit.description), loincCode: "", units: "", hotkey: "" }
+        const candidate = codeList.find((item) => item.code === edit.code) ?? { code: ObservationKit.toText(edit.code), label: ObservationKit.toText(edit.description), loincCode: "", units: "", hotkey: "" }
         const ranges = findRangesForCode(source, candidate)
         const flagCode = classifyGridFlag(ranges, value)
         const abnormalFlag = buildGridAbnormalFlag(sd, flagCode)
@@ -474,12 +371,12 @@ const ObservationEntryGrid = ({
           observationCode: candidate.code,
           observationClass: "DCOBS",
           value,
-          valueType: gridNumber(value) !== null ? "NUMERIC" : "TEXT",
+          valueType: ObservationKit.toNumber(value) !== null ? "NUMERIC" : "TEXT",
           status: "C",
-          description: gridToText(edit.description).trim() || candidate.label || "Measurement",
-          units: gridToText(edit.units).trim() || candidate.units || gridToText(ranges?.units).trim(),
+          description: ObservationKit.toText(edit.description).trim() || candidate.label || "Measurement",
+          units: ObservationKit.toText(edit.units).trim() || candidate.units || ObservationKit.toText(ranges?.units).trim(),
           ...(createdBy ? { collectedBy: createdBy } : {}),
-          collectedDateTime: gridToText(edit.collectedDateTime) || getDateTimeString(new Date()),
+          collectedDateTime: ObservationKit.toText(edit.collectedDateTime) || getDateTimeString(new Date()),
           ...(abnormalFlag ? { abnormalFlag } : {}),
         }
       })
@@ -518,7 +415,7 @@ const ObservationEntryGrid = ({
 
   const updateEntry = (rowId, patch) => {
     writeRows(entriesKey, (current) => current.map((entry) => (
-      gridToText(entry.rowId) === rowId ? { ...entry, ...patch } : entry
+      ObservationKit.toText(entry.rowId) === rowId ? { ...entry, ...patch } : entry
     )))
   }
 
@@ -527,7 +424,7 @@ const ObservationEntryGrid = ({
   // then MOIS-LABCODE through the host's MemoryCode connection. Unknown codes
   // remain valid and can be described manually in the editable Test Name cell.
   const resolveEntryCode = (raw) => {
-    const text = gridToText(raw).trim()
+    const text = ObservationKit.toText(raw).trim()
     if (!text) return { code: "", description: "", units: "" }
     const lower = text.toLowerCase()
     const candidate = codeList.find((item) =>
@@ -537,32 +434,32 @@ const ObservationEntryGrid = ({
     let bestTime = -Infinity
     source.forEach((entry) => {
       if (!entry || typeof entry !== "object") return
-      const entryCode = gridToText(entry.observationCode).trim().toLowerCase()
-      const entryLoinc = gridToText(entry.loincCode).trim().toLowerCase()
+      const entryCode = ObservationKit.toText(entry.observationCode).trim().toLowerCase()
+      const entryLoinc = ObservationKit.toText(entry.loincCode).trim().toLowerCase()
       if (entryCode !== lower && entryLoinc !== lower) return
-      const time = gridParseDate(entry.collectedDateTime)?.getTime() ?? 0
+      const time = ObservationKit.parseDate(entry.collectedDateTime)?.getTime() ?? 0
       if (time >= bestTime) {
         best = entry
         bestTime = time
       }
     })
     if (best) {
-      return { code: text, description: gridToText(best.description).trim(), units: gridToText(best.units).trim() }
+      return { code: text, description: ObservationKit.toText(best.description).trim(), units: ObservationKit.toText(best.units).trim() }
     }
     if (codeLookupSystem) {
       const lookupEntry = (Array.isArray(lookupCodeList) ? lookupCodeList : []).find((entry) => (
         (
-          gridToText(entry?.code).trim().toLowerCase() === lower ||
-          gridToText(entry?.loincCode).trim().toLowerCase() === lower ||
-          gridToText(entry?.labCode).trim().toLowerCase() === lower
+          ObservationKit.toText(entry?.code).trim().toLowerCase() === lower ||
+          ObservationKit.toText(entry?.loincCode).trim().toLowerCase() === lower ||
+          ObservationKit.toText(entry?.labCode).trim().toLowerCase() === lower
         ) &&
-        gridToText(entry?.display).trim()
+        ObservationKit.toText(entry?.display).trim()
       ))
       if (lookupEntry) {
         return {
-          code: gridToText(lookupEntry.code).trim() || text,
-          description: gridToText(lookupEntry.display).trim(),
-          units: gridToText(lookupEntry.units).trim(),
+          code: ObservationKit.toText(lookupEntry.code).trim() || text,
+          description: ObservationKit.toText(lookupEntry.display).trim(),
+          units: ObservationKit.toText(lookupEntry.units).trim(),
         }
       }
     }
@@ -599,20 +496,20 @@ const ObservationEntryGrid = ({
         value: row.value,
         collectedDateTime: row.collectedDateTime,
       },
-      ...current.filter((item) => gridNumber(item.observationId) !== row.observationId),
+      ...current.filter((item) => ObservationKit.toNumber(item.observationId) !== row.observationId),
     ])
   }
 
   const updateCorrection = (observationId, value) => {
     writeRows(editsKey, (current) => current.map((item) => (
-      gridNumber(item.observationId) === observationId && item.action === "correct"
+      ObservationKit.toNumber(item.observationId) === observationId && item.action === "correct"
         ? { ...item, value }
         : item
     )))
   }
 
   const deleteEntry = (rowId) => {
-    writeRows(entriesKey, (current) => current.filter((entry) => gridToText(entry.rowId) !== rowId))
+    writeRows(entriesKey, (current) => current.filter((entry) => ObservationKit.toText(entry.rowId) !== rowId))
     if (selectedKey === "entry-" + rowId) setSelectedKey(null)
   }
 
@@ -620,12 +517,12 @@ const ObservationEntryGrid = ({
     if (row.observationId === null) return
     writeRows(editsKey, (current) => [
       { observationId: row.observationId, action: "delete", code: row.code, description: row.description },
-      ...current.filter((item) => gridNumber(item.observationId) !== row.observationId),
+      ...current.filter((item) => ObservationKit.toNumber(item.observationId) !== row.observationId),
     ])
   }
 
   const undoChartEdit = (observationId) => {
-    writeRows(editsKey, (current) => current.filter((item) => gridNumber(item.observationId) !== observationId))
+    writeRows(editsKey, (current) => current.filter((item) => ObservationKit.toNumber(item.observationId) !== observationId))
   }
 
   // MOIS-parity quick-entry shortcuts (BP ctrl+b, Weight ctrl+w, ...): each
@@ -636,7 +533,7 @@ const ObservationEntryGrid = ({
     if (withHotkeys.length === 0) return undefined
     const handleKeyDown = (event) => {
       if (!event.ctrlKey || event.metaKey || event.altKey) return
-      const key = gridToText(event.key).toLowerCase()
+      const key = ObservationKit.toText(event.key).toLowerCase()
       const match = withHotkeys.find((item) => item.hotkey === key)
       if (!match) return
       event.preventDefault()
@@ -700,7 +597,7 @@ const ObservationEntryGrid = ({
                       : null
                     const pendingDelete = pendingEdit?.action === "delete"
                     const pendingCorrection = pendingEdit?.action === "correct"
-                    const displayValue = pendingCorrection ? gridToText(pendingEdit.value) : row.value
+                    const displayValue = pendingCorrection ? ObservationKit.toText(pendingEdit.value) : row.value
                     const displayFlag = pendingCorrection
                       ? classifyGridFlag(row.ranges, displayValue) ?? row.flag
                       : row.flag
@@ -724,7 +621,7 @@ const ObservationEntryGrid = ({
                           {!row.fromChart && !readOnly ? (
                             <TextField
                               placeholder="Code"
-                              value={codeDrafts[row.rowId] ?? gridToText(row.code)}
+                              value={codeDrafts[row.rowId] ?? ObservationKit.toText(row.code)}
                               autoFocus={!row.code}
                               onChange={(_event, value) => setCodeDrafts((current) => ({ ...current, [row.rowId]: value ?? "" }))}
                               onKeyDown={(event) => {
@@ -741,17 +638,17 @@ const ObservationEntryGrid = ({
                             row.code
                           )}
                         </td>
-                        <td style={{ ...cellStyle, ...gridFlagStyle(displayFlag) }}>
+                        <td style={{ ...cellStyle, ...ObservationKit.flagCellStyle(displayFlag) }}>
                           {!row.fromChart && !readOnly ? (
                             <TextField
                               placeholder="Test name"
-                              value={gridToText(row.description)}
-                              componentRef={(ref) => { testNameFieldRefs.current[gridToText(row.rowId)] = ref }}
+                              value={ObservationKit.toText(row.description)}
+                              componentRef={(ref) => { testNameFieldRefs.current[ObservationKit.toText(row.rowId)] = ref }}
                               onChange={(_event, value) => updateEntry(row.rowId, { description: value ?? "" })}
                               onKeyDown={(event) => {
                                 if (event.key !== "Enter") return
                                 event.preventDefault()
-                                valueFieldRefs.current[gridToText(row.rowId)]?.focus?.()
+                                valueFieldRefs.current[ObservationKit.toText(row.rowId)]?.focus?.()
                               }}
                               styles={inlineNameFieldStyles}
                             />
@@ -759,14 +656,14 @@ const ObservationEntryGrid = ({
                             row.description
                           )}
                         </td>
-                        <td style={{ ...cellStyle, ...gridFlagStyle(displayFlag) }}>
+                        <td style={{ ...cellStyle, ...ObservationKit.flagCellStyle(displayFlag) }}>
                           {!row.fromChart && !readOnly ? (
                             <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
                               <TextField
                                 placeholder="Value"
-                                value={gridToText(row.value)}
+                                value={ObservationKit.toText(row.value)}
                                 autoFocus={Boolean(row.code)}
-                                componentRef={(ref) => { valueFieldRefs.current[gridToText(row.rowId)] = ref }}
+                                componentRef={(ref) => { valueFieldRefs.current[ObservationKit.toText(row.rowId)] = ref }}
                                 onChange={(_event, value) => updateEntry(row.rowId, { value: value ?? "" })}
                                 styles={inlineTextFieldStyles}
                               />

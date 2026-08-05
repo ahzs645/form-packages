@@ -4,7 +4,7 @@
   "description": "MOIS-style flow sheet: configured observation elements as rows, chart dates as columns, values with abnormal flags in the cells, and long-term medication courses drawn as date-range bars. Renders inline or behind a button that opens a submodal.",
   "version": {
     "major": 1,
-    "minor": 0,
+    "minor": 1,
     "patch": 0
   },
   "type": "component",
@@ -22,5 +22,7 @@
     "minor": 28,
     "patch": 10
   },
-  "components": []
+  "components": [
+    "ObservationKit"
+  ]
 }

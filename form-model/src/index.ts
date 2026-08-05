@@ -1166,6 +1166,8 @@ export interface BuilderField {
   hidden?: boolean;
   disabled?: boolean;
   lockWhenSectionComplete?: boolean;
+  /** Lock once the MOIS record is SIGNED. Defaults on; set false to opt out. */
+  lockWhenSigned?: boolean;
   lockWhen?: BuilderLockWhenRule | null;
   width?: FieldWidth;
   labelPosition?: "top" | "left" | "none";
@@ -1246,6 +1248,8 @@ export interface BuilderField {
       type: BuilderTableColumnType;
       booleanLabels?: { on: string; off: string } | null;
       prefill?: FieldPrefillValue;
+      /** Date columns only: pair the date picker with a time input (DateTimeSelect). */
+      withTime?: boolean;
       useToggleSwitch?: boolean;
       numberConfig?: {
         typeNumber: "number" | "decimal" | "year";
@@ -1398,6 +1402,13 @@ export interface BuilderField {
       value: number;
       label: string;
       description?: string;
+      /**
+       * Stored answer key when it must differ from the numeric score — HoNOS
+       * "9" (Unknown) stores key "9" but scores 0, and a coded scale built from
+       * a terminology answer list stores the answer code while scoring its
+       * ordinal value. Defaults to `String(value)`.
+       */
+      key?: string;
     }>;
   } | null;
 
@@ -1918,6 +1929,12 @@ export interface BuilderDocument<TLayoutDraft = unknown> {
   paginationEnabled: boolean;
   pageCount: number;
   pageNames?: string[];
+  /**
+   * Per-page "print only this page" button labels, indexed like `pageNames`.
+   * A non-empty string renders the button on that page; null/undefined omits it.
+   * Used for patient-facing handouts that must print without the clinical pages.
+   */
+  pagePrintLabels?: (string | null)[];
   pageAssignments: Record<string, number | null>;
   workflow?: BuilderWorkflowConfig;
 }
@@ -1945,6 +1962,7 @@ export interface BuilderVariant<TLayoutDraft = unknown> {
   paginationEnabled: boolean;
   pageCount: number;
   pageNames?: string[];
+  pagePrintLabels?: (string | null)[];
   pageAssignments: Record<string, number | null>;
   investigationTabs?: BuilderInvestigationTab[];
   investigationTabAssignments?: Record<string, string | null>;
