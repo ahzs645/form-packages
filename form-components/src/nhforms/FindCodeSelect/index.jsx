@@ -204,10 +204,35 @@ const valueForLookupTarget = (selected, targetId, targetLabel, fallback) => {
   return fallback
 }
 
-const hasLookupSelection = (selected) => {
+const hasSelectionValue = (selected) => {
   if (!selected || typeof selected !== 'object') return false
   return [selected.code, selected.key, selected.value, selected.display, selected.text]
     .some((value) => value !== undefined && value !== null && String(value).trim() !== '')
+}
+
+/**
+ * Turn a saved answer back into an item the ComboBox can select. Objects are
+ * already item-shaped; plain strings (prefills, legacy saves, imported data)
+ * are matched against the option list by code or display.
+ */
+const itemForStoredValue = (stored, items) => {
+  if (stored === undefined || stored === null || stored === '') return null
+  if (typeof stored === 'object') return stored
+  const text = String(stored)
+  return items.find((item) => (
+    String(item?.code ?? item?.key ?? '') === text || String(item?.display ?? item?.text ?? '') === text
+  )) ?? { code: null, display: text }
+}
+
+const storedSelectionToValue = (stored, items, isMultiSelect) => {
+  if (!isMultiSelect) return itemForStoredValue(stored, items)
+  const entries = Array.isArray(stored) ? stored : stored ? [stored] : []
+  return entries.map((entry) => itemForStoredValue(entry, items)).filter(Boolean)
+}
+
+const storableSelection = (nextValue, isMultiSelect) => {
+  if (isMultiSelect) return Array.isArray(nextValue) ? nextValue : []
+  return hasSelectionValue(nextValue) ? nextValue : ''
 }
 
 /**
@@ -541,6 +566,48 @@ const FindCodeSelectBase = ({
   )
 }
 
+/**
+ * Bind the selection to `fd.field.data[fieldId]`, the same contract
+ * SimpleCodeSelect follows. FindCodeSelectBase is purely controlled, so without
+ * this the answer lives in local ComboBox state alone: the control looks
+ * answered while computed totals, visibility rules, and the MOIS save payload
+ * all still read the field as empty.
+ */
+const FindCodeSelectWithFieldBinding = ({ fallbackItems = [], ...props }) => {
+  const [fd, setFormData] = useActiveData()
+  const effectiveFieldId = props.fieldId || props.id || ''
+  const isMultiSelect = props.selectionType === 'multiple'
+  const items = useMemo(
+    () => resolveItems(props.optionList, fallbackItems),
+    [props.optionList, fallbackItems]
+  )
+  const storedValue = effectiveFieldId ? fd?.field?.data?.[effectiveFieldId] : undefined
+  const boundValue = useMemo(
+    () => (props.value !== undefined ? props.value : storedSelectionToValue(storedValue, items, isMultiSelect)),
+    [isMultiSelect, items, props.value, storedValue]
+  )
+
+  const handleChange = (nextValue) => {
+    props.onChange?.(nextValue)
+    if (!effectiveFieldId) return
+    setFormData(produce((draft) => {
+      if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
+      if (!draft.field.data || typeof draft.field.data !== 'object') draft.field.data = {}
+      draft.field.data[effectiveFieldId] = storableSelection(nextValue, isMultiSelect)
+    }))
+  }
+
+  return (
+    <FindCodeSelectBase
+      {...props}
+      fieldId={effectiveFieldId}
+      fallbackItems={fallbackItems}
+      value={boundValue}
+      onChange={handleChange}
+    />
+  )
+}
+
 const FindCodeSelectWithCodeList = (props) => {
   // useCodeList takes (codeSystem, sourceData) in the real engine, and
   // dereferences the second argument on its first statement
@@ -549,7 +616,7 @@ const FindCodeSelectWithCodeList = (props) => {
   // so this only ever surfaced on a live instance.
   const sd = useSourceData()
   const codeListFromContext = useCodeList(props.codeSystem || '', sd)
-  return <FindCodeSelectBase {...props} fallbackItems={codeListFromContext} />
+  return <FindCodeSelectWithFieldBinding {...props} fallbackItems={codeListFromContext} />
 }
 
 const FindCodeSelectWithSourceLookup = ({
@@ -596,7 +663,7 @@ const FindCodeSelectWithSourceLookup = ({
       if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
       if (!draft.field.data || typeof draft.field.data !== 'object') draft.field.data = {}
 
-      if (!hasLookupSelection(selected)) {
+      if (!hasSelectionValue(selected)) {
         clearTargets.forEach((targetId) => {
           draft.field.data[targetId] = ''
         })
@@ -647,7 +714,7 @@ const FindCodeSelect = (props) => {
     : Boolean(optionList && typeof optionList === 'object')
 
   if (hasExplicitOptionList) {
-    return <FindCodeSelectBase {...props} fallbackItems={[]} />
+    return <FindCodeSelectWithFieldBinding {...props} fallbackItems={[]} />
   }
 
   return <FindCodeSelectWithCodeList {...props} />

@@ -8129,9 +8129,33 @@ const valueForLookupTarget = (selected, targetId, targetLabel, fallback) => {
   }
   return fallback;
 };
-const hasLookupSelection = selected => {
+const hasSelectionValue = selected => {
   if (!selected || typeof selected !== 'object') return false;
   return [selected.code, selected.key, selected.value, selected.display, selected.text].some(value => value !== undefined && value !== null && String(value).trim() !== '');
+};
+
+/**
+ * Turn a saved answer back into an item the ComboBox can select. Objects are
+ * already item-shaped; plain strings (prefills, legacy saves, imported data)
+ * are matched against the option list by code or display.
+ */
+const itemForStoredValue = (stored, items) => {
+  if (stored === undefined || stored === null || stored === '') return null;
+  if (typeof stored === 'object') return stored;
+  const text = String(stored);
+  return items.find(item => String(item?.code ?? item?.key ?? '') === text || String(item?.display ?? item?.text ?? '') === text) ?? {
+    code: null,
+    display: text
+  };
+};
+const storedSelectionToValue = (stored, items, isMultiSelect) => {
+  if (!isMultiSelect) return itemForStoredValue(stored, items);
+  const entries = Array.isArray(stored) ? stored : stored ? [stored] : [];
+  return entries.map(entry => itemForStoredValue(entry, items)).filter(Boolean);
+};
+const storableSelection = (nextValue, isMultiSelect) => {
+  if (isMultiSelect) return Array.isArray(nextValue) ? nextValue : [];
+  return hasSelectionValue(nextValue) ? nextValue : '';
 };
 
 /**
@@ -8417,6 +8441,44 @@ const FindCodeSelectBase = ({
     }
   }, searchPrompt)), showChildren && children);
 };
+
+/**
+ * Bind the selection to \`fd.field.data[fieldId]\`, the same contract
+ * SimpleCodeSelect follows. FindCodeSelectBase is purely controlled, so without
+ * this the answer lives in local ComboBox state alone: the control looks
+ * answered while computed totals, visibility rules, and the MOIS save payload
+ * all still read the field as empty.
+ */
+const FindCodeSelectWithFieldBinding = ({
+  fallbackItems = [],
+  ...props
+}) => {
+  const [fd, setFormData] = useActiveData();
+  const effectiveFieldId = props.fieldId || props.id || '';
+  const isMultiSelect = props.selectionType === 'multiple';
+  const items = useMemo(() => resolveItems(props.optionList, fallbackItems), [props.optionList, fallbackItems]);
+  const storedValue = effectiveFieldId ? fd?.field?.data?.[effectiveFieldId] : undefined;
+  const boundValue = useMemo(() => props.value !== undefined ? props.value : storedSelectionToValue(storedValue, items, isMultiSelect), [isMultiSelect, items, props.value, storedValue]);
+  const handleChange = nextValue => {
+    props.onChange?.(nextValue);
+    if (!effectiveFieldId) return;
+    setFormData(produce(draft => {
+      if (!draft.field) draft.field = {
+        data: {},
+        status: {},
+        history: []
+      };
+      if (!draft.field.data || typeof draft.field.data !== 'object') draft.field.data = {};
+      draft.field.data[effectiveFieldId] = storableSelection(nextValue, isMultiSelect);
+    }));
+  };
+  return /*#__PURE__*/React.createElement(FindCodeSelectBase, _extends({}, props, {
+    fieldId: effectiveFieldId,
+    fallbackItems: fallbackItems,
+    value: boundValue,
+    onChange: handleChange
+  }));
+};
 const FindCodeSelectWithCodeList = props => {
   // useCodeList takes (codeSystem, sourceData) in the real engine, and
   // dereferences the second argument on its first statement
@@ -8425,7 +8487,7 @@ const FindCodeSelectWithCodeList = props => {
   // so this only ever surfaced on a live instance.
   const sd = useSourceData();
   const codeListFromContext = useCodeList(props.codeSystem || '', sd);
-  return /*#__PURE__*/React.createElement(FindCodeSelectBase, _extends({}, props, {
+  return /*#__PURE__*/React.createElement(FindCodeSelectWithFieldBinding, _extends({}, props, {
     fallbackItems: codeListFromContext
   }));
 };
@@ -8468,7 +8530,7 @@ const FindCodeSelectWithSourceLookup = ({
         history: []
       };
       if (!draft.field.data || typeof draft.field.data !== 'object') draft.field.data = {};
-      if (!hasLookupSelection(selected)) {
+      if (!hasSelectionValue(selected)) {
         clearTargets.forEach(targetId => {
           draft.field.data[targetId] = '';
         });
@@ -8509,7 +8571,7 @@ const FindCodeSelect = props => {
   const optionList = props?.optionList;
   const hasExplicitOptionList = Array.isArray(optionList) ? optionList.length > 0 : Boolean(optionList && typeof optionList === 'object');
   if (hasExplicitOptionList) {
-    return /*#__PURE__*/React.createElement(FindCodeSelectBase, _extends({}, props, {
+    return /*#__PURE__*/React.createElement(FindCodeSelectWithFieldBinding, _extends({}, props, {
       fallbackItems: []
     }));
   }
@@ -34492,7 +34554,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './EducationHistory/index.jsx': ["EducationHistory","EducationHistoryFields"],
   './Ethnicity/index.jsx': ["Ethnicity","firstNationEthnicityCodes","firstNationsEthnicityReferenceSet"],
   './FieldStampButton/index.jsx': ["ButtonComponent","FieldStampButton","buildContext","clearStamp","context","effectiveStampFieldId","fallback","fieldData","fieldId","isDisabled","isSigned","normalizeStampTargets","normalizeStampValue","normalizedTargets","raw","resolveLiteralValue","resolvePathValue","sd","signedAt","signedAtText","sourcePath","stamp","stampRecord","statusText","value","written"],
-  './FindCodeSelect/index.jsx': ["CONTROL_KEY_TOKENS","FindCodeSelect","FindCodeSelectBase","FindCodeSelectWithCodeList","FindCodeSelectWithSourceLookup","aliasSets","aliases","boundValue","candidateKeys","candidates","clearTargets","code","codeListFromContext","combinedStyles","comboSelectedKey","currentValues","customSources","defaultComboStyles","defaultGetCandidates","defaultMapCandidateSavedValue","defaultRenderSelected","directKeys","effectiveFieldId","effectiveLabelPosition","fallback","fallbackItems","filteringActive","fluentLabel","freeText","freeTextItem","getItemKey","getSizeStyles","handleChange","handleInputValueChange","handleKeyDown","handlePendingValueChanged","hasExplicitOptionList","hasLookupSelection","hasSearchText","hasSourceLookup","hidden","i","idx","isDeleteKey","isEmpty","isKeyboardToken","isMultiSelect","item","items","key","keys","leftKey","mapped","match","matchingKey","nextValues","normalizeLookupName","normalizeOption","normalizeSelectedValues","normalized","normalizedLabel","optionList","optionLists","options","rawKey","renderCandidateOption","resolveItems","resolveLookupPath","rightKey","sameSelectedItem","sd","sectionLayout","seen","segments","selected","selectedCode","selectedItem","selectedItems","selectedKey","selectedKeySet","selectedKeys","shouldSelect","shouldSuppressLayoutItemLabel","showChildren","sizeMap","sizeStyles","sourceEntries","sourceItems","sourceLookupItems","storedValue","targets","text","valueForLookupTarget","withoutItem","wrapperStyle"],
+  './FindCodeSelect/index.jsx': ["CONTROL_KEY_TOKENS","FindCodeSelect","FindCodeSelectBase","FindCodeSelectWithCodeList","FindCodeSelectWithFieldBinding","FindCodeSelectWithSourceLookup","aliasSets","aliases","boundValue","candidateKeys","candidates","clearTargets","code","codeListFromContext","combinedStyles","comboSelectedKey","currentValues","customSources","defaultComboStyles","defaultGetCandidates","defaultMapCandidateSavedValue","defaultRenderSelected","directKeys","effectiveFieldId","effectiveLabelPosition","entries","fallback","fallbackItems","filteringActive","fluentLabel","freeText","freeTextItem","getItemKey","getSizeStyles","handleChange","handleInputValueChange","handleKeyDown","handlePendingValueChanged","hasExplicitOptionList","hasSearchText","hasSelectionValue","hasSourceLookup","hidden","i","idx","isDeleteKey","isEmpty","isKeyboardToken","isMultiSelect","item","itemForStoredValue","items","key","keys","leftKey","mapped","match","matchingKey","nextValues","normalizeLookupName","normalizeOption","normalizeSelectedValues","normalized","normalizedLabel","optionList","optionLists","options","rawKey","renderCandidateOption","resolveItems","resolveLookupPath","rightKey","sameSelectedItem","sd","sectionLayout","seen","segments","selected","selectedCode","selectedItem","selectedItems","selectedKey","selectedKeySet","selectedKeys","shouldSelect","shouldSuppressLayoutItemLabel","showChildren","sizeMap","sizeStyles","sourceEntries","sourceItems","sourceLookupItems","storableSelection","storedSelectionToValue","storedValue","targets","text","valueForLookupTarget","withoutItem","wrapperStyle"],
   './FirstNationsStatus/index.jsx': ["FirstNationsStatus","connections","ethnicity","firstNationsStatusPatientFields","firstNationsStatusSchema","hasReserveName","races","reserveConnection","reserveName","selfId"],
   './FlowSheet/index.jsx': ["FLOW_CELL_STYLE","FLOW_LABEL_CELL_STYLE","FlowMedicationBarCells","FlowSheet","FlowSheetGrid","active","allMedications","amount","cell","cellStyle","cells","cellsByRow","code","columnTime","columns","courses","criticalHigh","criticalLow","current","cutoff","dateKey","dateKeys","doseFrequency","entryCode","entryLoinc","existing","explicit","flowClassifyFlag","flowCodeOf","flowCutoffDate","flowDateKey","flowDayTime","flowDisplay","flowDisplayDate","flowFlagCellStyle","flowGetPath","flowIsSeparatorEntry","flowMatchesRow","flowMedicationMatches","flowMedicationRowLabel","flowNormalizeMedications","flowNormalizeRows","flowNumber","flowParseDate","flowRunQuery","flowToText","hasObservationRows","header","headerStyle","keys","label","limit","loinc","match","matched","matches","medKeys","meds","name","needle","normalHigh","normalLow","observationIndex","observationRows","parsed","parsedDate","rangeLabel","raw","remaining","renderSheet","resolvedMedicationsMode","resolvedMinWidth","rowList","sd","source","startTime","steps","stopRaw","stopTime","text","units","value"],
   './FocusedObservationHistory/index.jsx': ["FocusedObservationHistory","activeWatchField","candidate","current","date","day","direct","effectiveObservationCode","effectiveObservationComment","effectiveTitle","formatDate","getFocusedFieldId","handleBlur","handleFocus","hasFocusTarget","host","isTrackedFieldFocused","isVisible","items","month","normalizeItems","normalizedWatchFields","parseDate","parsed","parsedDate","pathSegments","patientPath","raw","resolveMoisValue","resolvePath","rows","sd","textValue","year"],
