@@ -32275,7 +32275,7 @@ export const componentIdentities: Record<string, any> = {
   'AssessmentScoringTable': {
     "name": "AssessmentScoringTable",
     "title": "Assessment Scoring Table",
-    "description": "Renders legacy two-column assessment score tables with bound inputs and calculated totals.",
+    "description": "Legacy runtime retained for saved forms and the Developer Toolkit harness; author new assessment tables with the LayoutTable assessment preset (see component-field-consolidation-plan).",
     "version": {
       "major": 0,
       "minor": 1,
@@ -32449,7 +32449,7 @@ export const componentIdentities: Record<string, any> = {
   'CompactBooleanField': {
     "name": "CompactBooleanField",
     "title": "Compact Boolean Field with Yes/No Buttons",
-    "description": "A compact boolean field component with styled Yes/No buttons, custom label support (e.g., Normal/Abnormal), size variants, and card container styling",
+    "description": "Compact boolean controls stored as true/false. Picker-hidden: authored via the Choice family's Yes/No buttons subtype; runtime retained for saved forms.",
     "version": {
       "major": 1,
       "minor": 0,
@@ -32474,7 +32474,7 @@ export const componentIdentities: Record<string, any> = {
   'ComputedField': {
     "name": "ComputedField",
     "title": "Computed Field",
-    "description": "A read-only formula field that derives its value from other form fields.",
+    "description": "A read-only formula field that derives its value from other form fields. Picker-hidden: authored via the Calculation family's Formula subtype.",
     "version": {
       "major": 1,
       "minor": 0,
@@ -32574,7 +32574,7 @@ export const componentIdentities: Record<string, any> = {
   'ConversionField': {
     "name": "ConversionField",
     "title": "Conversion Field",
-    "description": "Configurable paired-unit converter that stores editable input values in form data.",
+    "description": "Configurable paired-unit converter with editable source and converted values. Picker-hidden: authored via the Calculation family's Unit conversion subtype.",
     "version": {
       "major": 0,
       "minor": 1,

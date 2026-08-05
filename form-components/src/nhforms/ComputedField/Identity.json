@@ -1,7 +1,7 @@
 {
   "name": "ComputedField",
   "title": "Computed Field",
-  "description": "A read-only formula field that derives its value from other form fields.",
+  "description": "A read-only formula field that derives its value from other form fields. Picker-hidden: authored via the Calculation family's Formula subtype.",
   "version": {
     "major": 1,
     "minor": 0,

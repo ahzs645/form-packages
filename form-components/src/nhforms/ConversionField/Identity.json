@@ -1,7 +1,7 @@
 {
   "name": "ConversionField",
   "title": "Conversion Field",
-  "description": "Configurable paired-unit converter that stores editable input values in form data.",
+  "description": "Configurable paired-unit converter with editable source and converted values. Picker-hidden: authored via the Calculation family's Unit conversion subtype.",
   "version": {
     "major": 0,
     "minor": 1,

@@ -1,7 +1,7 @@
 {
   "name": "AssessmentScoringTable",
   "title": "Assessment Scoring Table",
-  "description": "Renders legacy two-column assessment score tables with bound inputs and calculated totals.",
+  "description": "Legacy runtime retained for saved forms and the Developer Toolkit harness; author new assessment tables with the LayoutTable assessment preset (see component-field-consolidation-plan).",
   "version": {
     "major": 0,
     "minor": 1,
