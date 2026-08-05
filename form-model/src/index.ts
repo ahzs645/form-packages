@@ -908,6 +908,12 @@ export interface BuilderLoincPanelMetadata {
   rootCode: string;
   parentCode?: string;
   sequence?: number;
+  /**
+   * The published LOINC name, kept when the imported label dropped a phrase the
+   * whole panel repeated ("Sensory perception Braden Scale" → "Sensory
+   * perception"). Absent when the label is the published one.
+   */
+  publishedName?: string;
   observationId?: string;
   observationRequired?: string;
   entryType?: string;
@@ -1076,7 +1082,8 @@ export interface BuilderFieldSourceContract {
   consolidatedSources?: Array<{
     fieldName: string;
     subformId?: string;
-    role: "history-value" | "history-date" | "history-other" | "graph";
+    /** `date-part`: a legacy Month/Day/Year column folded into one date field. */
+    role: "history-value" | "history-date" | "history-other" | "graph" | "date-part";
     tags: Record<string, string>;
   }>;
   storedOptions?: Array<{

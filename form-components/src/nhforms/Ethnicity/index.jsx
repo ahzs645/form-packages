@@ -12,6 +12,9 @@ const Ethnicity = props => {
   )
 }
 
+// FirstNationsStatus reads both constants below through the shared component
+// scope (its Identity.json declares the Ethnicity dependency); do not remove
+// or rename them without updating FirstNationsStatus.
 const firstNationsEthnicityReferenceSet = [
   { code: "91", display: "First Nations" },
   { code: "92", display: "Inuit" },

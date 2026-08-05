@@ -43,12 +43,10 @@ const textValue = (value) => {
   return ""
 }
 
-const parseDate = (value) => {
-  const raw = textValue(value)
-  if (!raw) return null
-  const parsed = new Date(raw.includes("T") ? raw : raw.replace(/\./g, "-"))
-  return Number.isNaN(parsed.getTime()) ? null : parsed
-}
+// Delegates to ObservationKit so "."- and "/"-separated author dates parse the
+// same way as the rest of the observation family. (The local textValue keeps
+// its deeper coded-object extraction before the parse.)
+const parseDate = (value) => ObservationKit.parseDate(textValue(value))
 
 const formatDate = (value) => {
   const parsed = parseDate(value)

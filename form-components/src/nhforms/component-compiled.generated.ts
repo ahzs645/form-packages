@@ -1983,8 +1983,7 @@ const _chartRecordTablePresets = {
 } = React;
 const {
   Stack,
-  Label,
-  Text
+  Label
 } = Fluent;
 
 // MOIS "Review of Most Recent Values" report colors.
@@ -1992,25 +1991,14 @@ const REVIEW_BLUE = "#004578";
 const REVIEW_RED = "#a4262c";
 const REVIEW_GRAY = "#8a8886";
 const REVIEW_INK = "#201f1e";
-const reviewToText = value => {
-  if (value === null || value === undefined) return "";
-  return String(value);
-};
-const reviewParseDate = value => {
-  const raw = reviewToText(value).trim();
-  if (!raw) return null;
-  const parsed = new Date(raw.includes("T") ? raw : raw.replace(/\\./g, "-"));
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
-};
 
-// MOIS renders review dates as yyyy.mm.dd.
-const reviewDateKey = value => {
-  const raw = reviewToText(value);
-  const datePart = raw.includes("T") ? raw.split("T")[0] : raw;
-  return datePart.replace(/-/g, ".");
-};
-const reviewGetPath = (sd, path) => {
-  const steps = reviewToText(path).split(".").filter(Boolean);
+// Shared text/date/code/flag helpers come from ObservationKit (referenced only
+// inside function bodies — component sources load in no guaranteed order).
+
+// Path walk that can return the patient *object*; ObservationKit.getPath is
+// arrays-only so it does not cover this case.
+const reviewGetObject = (sd, path) => {
+  const steps = String(path ?? "").split(".").filter(Boolean);
   let current = sd;
   for (const step of steps) {
     if (current && typeof current === "object") {
@@ -2022,16 +2010,8 @@ const reviewGetPath = (sd, path) => {
   return current;
 };
 const reviewArray = value => Array.isArray(value) ? value : [];
-
-// Display text for values that may be plain strings or {code, display} objects.
-const reviewDisplay = value => {
-  if (value && typeof value === "object") {
-    return reviewToText(value.display ?? value.text ?? value.code).trim();
-  }
-  return reviewToText(value).trim();
-};
 const reviewAgeYears = birthDate => {
-  const parsed = reviewParseDate(birthDate);
+  const parsed = ObservationKit.parseDate(birthDate);
   if (!parsed) return null;
   const now = new Date();
   let age = now.getFullYear() - parsed.getFullYear();
@@ -2039,63 +2019,9 @@ const reviewAgeYears = birthDate => {
   if (monthDelta < 0 || monthDelta === 0 && now.getDate() < parsed.getDate()) age -= 1;
   return age >= 0 ? age : null;
 };
-const normalizeReviewCodes = codes => {
-  if (!Array.isArray(codes)) return [];
-  return codes.map(entry => {
-    if (typeof entry === "string") {
-      const code = entry.trim();
-      return code ? {
-        code,
-        label: code,
-        loincCode: "",
-        units: ""
-      } : null;
-    }
-    if (!entry || typeof entry !== "object") return null;
-    const code = reviewToText(entry.code).trim();
-    if (!code) return null;
-    return {
-      code,
-      label: reviewToText(entry.label).trim() || code,
-      loincCode: reviewToText(entry.loincCode).trim(),
-      units: reviewToText(entry.units).trim()
-    };
-  }).filter(Boolean);
-};
-const reviewMatchesCode = (entry, candidate) => {
-  const entryCode = reviewToText(entry?.observationCode).trim().toLowerCase();
-  const entryLoinc = reviewToText(entry?.loincCode).trim().toLowerCase();
-  const code = candidate.code.toLowerCase();
-  const loinc = candidate.loincCode.toLowerCase();
-  if (entryCode && (entryCode === code || loinc && entryCode === loinc)) return true;
-  if (entryLoinc && (entryLoinc === code || loinc && entryLoinc === loinc)) return true;
-  return false;
-};
-const reviewNumber = value => {
-  const text = reviewToText(value).trim();
-  if (!text) return null;
-  const parsed = Number(text);
-  return Number.isFinite(parsed) ? parsed : null;
-};
 
-// Explicit abnormal flag first, then the four MOIS bands from the record's own
-// reference ranges — same precedence as ObservationQuery/ObservationEntryGrid.
-const reviewFlagText = (entry, rawValue) => {
-  const flag = entry?.abnormalFlag && typeof entry.abnormalFlag === "object" ? reviewToText(entry.abnormalFlag.code).trim() : reviewToText(entry?.abnormalFlag).trim();
-  if (flag) return flag;
-  const value = reviewNumber(rawValue);
-  if (value !== null) {
-    const criticalLow = reviewNumber(entry?.rangeAbsurdLow) ?? reviewNumber(entry?.rangeVeryLow);
-    const criticalHigh = reviewNumber(entry?.rangeAbsurdHigh) ?? reviewNumber(entry?.rangeVeryHigh);
-    const normalLow = reviewNumber(entry?.rangeNormalLow);
-    const normalHigh = reviewNumber(entry?.rangeNormalHigh);
-    if (criticalLow !== null && value < criticalLow) return "LL";
-    if (criticalHigh !== null && value > criticalHigh) return "HH";
-    if (normalLow !== null && value < normalLow) return "L";
-    if (normalHigh !== null && value > normalHigh) return "H";
-  }
-  return "N/A";
-};
+// MOIS renders review dates as yyyy.mm.dd.
+const reviewDateKey = value => ObservationKit.displayDate(ObservationKit.dateKey(value));
 const reviewLineStyle = {
   whiteSpace: "pre-wrap",
   lineHeight: "17px"
@@ -2125,15 +2051,16 @@ const ChartReviewSummary = ({
   datePath = "collectedDateTime"
 }) => {
   const sd = useSourceData();
-  const patient = reviewGetPath(sd, sourcePath || "patient") ?? {};
-  const codeList = useMemo(() => normalizeReviewCodes(codes), [codes]);
+  const K = ObservationKit;
+  const patient = reviewGetObject(sd, sourcePath || "patient") ?? {};
+  const codeList = useMemo(() => ObservationKit.normalizeCodes(codes), [codes]);
   const age = reviewAgeYears(patient.birthDate ?? patient.dob);
-  const sex = reviewDisplay(patient.administrativeGender ?? patient.gender).toUpperCase();
+  const sex = K.displayText(patient.administrativeGender ?? patient.gender).toUpperCase();
   const problems = useMemo(() => {
-    const rows = reviewArray(patient.conditions).filter(entry => entry && typeof entry === "object").filter(entry => includeResolvedProblems || !reviewToText(entry.resolveDate).trim()).map(entry => ({
+    const rows = reviewArray(patient.conditions).filter(entry => entry && typeof entry === "object").filter(entry => includeResolvedProblems || !ObservationKit.toText(entry.resolveDate).trim()).map(entry => ({
       date: reviewDateKey(entry.startDate),
-      time: reviewParseDate(entry.startDate)?.getTime() ?? 0,
-      name: reviewDisplay(entry.condition).toUpperCase()
+      time: ObservationKit.parseDate(entry.startDate)?.getTime() ?? 0,
+      name: ObservationKit.displayText(entry.condition).toUpperCase()
     })).filter(entry => entry.name);
     rows.sort((left, right) => left.time - right.time);
     return rows;
@@ -2141,15 +2068,15 @@ const ChartReviewSummary = ({
   const medications = useMemo(() => {
     const now = Date.now();
     const rows = reviewArray(patient.longTermMedications).filter(entry => entry && typeof entry === "object").map(entry => {
-      const stopRaw = reviewToText(entry.endDate ?? entry.stopDate).trim();
-      const stopTime = reviewParseDate(stopRaw)?.getTime() ?? null;
-      const doseText = reviewToText(entry.doseFrequency).trim() || [reviewToText(entry.dose).trim(), reviewToText(entry.route).trim(), reviewToText(entry.frequency).trim()].filter(Boolean).join(" ");
+      const stopRaw = ObservationKit.toText(entry.endDate ?? entry.stopDate).trim();
+      const stopTime = ObservationKit.parseDate(stopRaw)?.getTime() ?? null;
+      const doseText = ObservationKit.toText(entry.doseFrequency).trim() || [ObservationKit.toText(entry.dose).trim(), ObservationKit.toText(entry.route).trim(), ObservationKit.toText(entry.frequency).trim()].filter(Boolean).join(" ");
       return {
         start: reviewDateKey(entry.startDate),
-        startTime: reviewParseDate(entry.startDate)?.getTime() ?? 0,
+        startTime: ObservationKit.parseDate(entry.startDate)?.getTime() ?? 0,
         stop: reviewDateKey(stopRaw),
         stopped: stopTime !== null && stopTime < now,
-        name: reviewDisplay(entry.medication).toUpperCase() || reviewDisplay(entry.genericName).toUpperCase(),
+        name: ObservationKit.displayText(entry.medication).toUpperCase() || ObservationKit.displayText(entry.genericName).toUpperCase(),
         dose: doseText
       };
     }).filter(entry => entry.name && !entry.stopped);
@@ -2163,8 +2090,8 @@ const ChartReviewSummary = ({
       let bestTime = -Infinity;
       observations.forEach(entry => {
         if (!entry || typeof entry !== "object") return;
-        if (!reviewMatchesCode(entry, candidate)) return;
-        const time = reviewParseDate(entry[datePath])?.getTime();
+        if (!ObservationKit.matchesCode(entry, candidate)) return;
+        const time = ObservationKit.parseDate(entry[datePath])?.getTime();
         if (time === undefined || time === null) return;
         if (time > bestTime) {
           best = entry;
@@ -2245,8 +2172,8 @@ const ChartReviewSummary = ({
         }
       }, " " + candidate.label + " Not Found");
     }
-    const value = reviewToText(latest.value ?? latest.display ?? latest.report).trim();
-    const units = reviewToText(latest.units).trim() || candidate.units;
+    const value = K.toText(latest.value ?? latest.display ?? latest.report).trim();
+    const units = K.toText(latest.units).trim() || candidate.units;
     // Date-only records (vaccines, assessments) render as "LABEL - date",
     // matching how MOIS lists them without a value or flag bracket.
     if (!value) {
@@ -2274,7 +2201,7 @@ const ChartReviewSummary = ({
       style: {
         color: REVIEW_GRAY
       }
-    }, "  [ " + reviewFlagText(latest, value) + " ]"));
+    }, "  [ " + (K.classifyFlag(latest, value) || "N/A") + " ]"));
   })) : null));
 };`,
   './CodedObservationChoiceField/index.jsx': `const {
@@ -2371,9 +2298,9 @@ const setCodedChoicePayload = (setFormData, componentId, payload) => {
     draft.field.data.__componentPayloads = container;
   }));
 };
-const findExistingObservationId = (sd, observationCode) => {
+const findExistingObservationId = (sd, observationCode, scope = "all") => {
   if (!observationCode) return 0;
-  const candidates = [...(Array.isArray(sd?.webform?.observations) ? sd.webform.observations : []), ...(Array.isArray(sd?.patient?.observations) ? sd.patient.observations : [])];
+  const candidates = [...(Array.isArray(sd?.webform?.observations) ? sd.webform.observations : []), ...(scope === "webform" || !Array.isArray(sd?.patient?.observations) ? [] : sd.patient.observations)];
   const match = candidates.find(item => item?.observationCode === observationCode);
   return Number(match?.observationId ?? 0) || 0;
 };
@@ -2420,7 +2347,11 @@ const CodedObservationChoiceField = ({
   required = false,
   disabled = false,
   multiline = true,
-  multiSaveMode = "joinCodes"
+  multiSaveMode = "joinCodes",
+  // "all" also amends a matching chart observation; "webform" only amends
+  // observations already attached to this form (legacy ValueSetObservationField
+  // behavior — new selections always file as new observations).
+  existingObservationScope = "all"
 }) => {
   const [fd, setFormData] = useActiveData();
   const sd = useSourceData();
@@ -2436,7 +2367,7 @@ const CodedObservationChoiceField = ({
       setCodedChoicePayload(setFormData, componentId, null);
       return;
     }
-    const oldId = findExistingObservationId(sd, observationCode);
+    const oldId = findExistingObservationId(sd, observationCode, existingObservationScope);
     if (codings.length === 0) {
       setCodedChoicePayload(setFormData, componentId, oldId ? [{
         observationId: -oldId
@@ -2464,7 +2395,7 @@ const CodedObservationChoiceField = ({
       collectedBy: createdBy,
       collectedDateTime: getDateTimeString(new Date())
     }]);
-  }, [codings, commentValue, componentId, createdBy, description, label, loincCode, multiSaveMode, observationCode, reportTemplate, sd, setFormData, valueType]);
+  }, [codings, commentValue, componentId, createdBy, description, existingObservationScope, label, loincCode, multiSaveMode, observationCode, reportTemplate, sd, setFormData, valueType]);
   const effectiveRenderAs = renderAs || choiceStyle || "dropdown";
   const isMultiple = selectionType === "multiple" || effectiveRenderAs === "checkbox" || effectiveRenderAs === "multiselect";
   const effectiveSelectionType = isMultiple ? "multiple" : "single";
@@ -7814,6 +7745,10 @@ const Ethnicity = props => {
     optionList: firstNationsEthnicityReferenceSet
   }, props));
 };
+
+// FirstNationsStatus reads both constants below through the shared component
+// scope (its Identity.json declares the Ethnicity dependency); do not remove
+// or rename them without updating FirstNationsStatus.
 const firstNationsEthnicityReferenceSet = [{
   code: "91",
   display: "First Nations"
@@ -9269,12 +9204,11 @@ const textValue = value => {
   }
   return "";
 };
-const parseDate = value => {
-  const raw = textValue(value);
-  if (!raw) return null;
-  const parsed = new Date(raw.includes("T") ? raw : raw.replace(/\\./g, "-"));
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
-};
+
+// Delegates to ObservationKit so "."- and "/"-separated author dates parse the
+// same way as the rest of the observation family. (The local textValue keeps
+// its deeper coded-object extraction before the parse.)
+const parseDate = value => ObservationKit.parseDate(textValue(value));
 const formatDate = value => {
   const parsed = parseDate(value);
   if (!parsed) return textValue(value);
@@ -34184,207 +34118,24 @@ const useChangeWatch = (watchedValue, options = 3) => {
   }, [delayCount, watchedValue, onDirtyChange]);
   return [dirtyRef.current, setChanged];
 };`,
-  './ValueSetObservationField/index.jsx': `const {
-  useEffect,
-  useMemo
-} = React;
-const {
-  Stack,
-  Label,
-  TextField
-} = Fluent;
-const normalizeObservationOptions = (optionList, codeSystem, sd) => {
-  if (Array.isArray(optionList) && optionList.length > 0) {
-    return optionList.map((item, index) => {
-      if (typeof item === "string") {
-        return {
-          key: item,
-          text: item,
-          code: item,
-          display: item,
-          system: codeSystem || ""
-        };
-      }
-      return {
-        key: String(item.code ?? item.key ?? index),
-        text: String(item.display ?? item.text ?? item.code ?? item.key ?? \`Option \${index + 1}\`),
-        code: String(item.code ?? item.key ?? ""),
-        display: String(item.display ?? item.text ?? item.code ?? item.key ?? ""),
-        system: String(item.system ?? codeSystem ?? "")
-      };
-    });
-  }
-  const fromContext = codeSystem ? sd?.optionLists?.[codeSystem] : null;
-  if (Array.isArray(fromContext)) {
-    return fromContext.map((item, index) => ({
-      key: String(item.code ?? item.key ?? index),
-      text: String(item.display ?? item.text ?? item.value ?? item.code ?? item.key ?? ""),
-      code: String(item.code ?? item.key ?? ""),
-      display: String(item.display ?? item.text ?? item.value ?? item.code ?? item.key ?? ""),
-      system: String(item.system ?? codeSystem ?? "")
-    }));
-  }
-  return [];
-};
-const stripVolatilePayloadFields = value => {
-  if (Array.isArray(value)) {
-    return value.map(item => stripVolatilePayloadFields(item));
-  }
-  if (value && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value).filter(([key]) => key !== "collectedDateTime").map(([key, nestedValue]) => [key, stripVolatilePayloadFields(nestedValue)]));
-  }
-  return value;
-};
-const payloadsEqual = (left, right) => JSON.stringify(stripVolatilePayloadFields(left ?? null)) === JSON.stringify(stripVolatilePayloadFields(right ?? null));
-
-// setFormData must receive a produce()-wrapped recipe: the real MOIS runtime
-// hands back the raw React state setter, so a bare mutator would replace the
-// active form data with undefined.
-const setNestedPayload = (setFormData, componentId, payloadType, payload) => {
-  setFormData(produce(draft => {
-    if (!draft.field) draft.field = {
-      data: {},
-      status: {},
-      history: []
-    };
-    if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {};
-    const container = draft.field.data.__componentPayloads ?? {};
-    const key = payloadType === "webform" ? "webformUpdatesByComponent" : "dcoUpdatesByComponent";
-    const nextGroup = container[key] ?? {};
-    const currentPayload = nextGroup[componentId];
-    if (payloadsEqual(currentPayload, payload)) {
-      return;
-    }
-    if (payload == null || Array.isArray(payload) && payload.length === 0) {
-      delete nextGroup[componentId];
-    } else {
-      nextGroup[componentId] = payload;
-    }
-    container[key] = nextGroup;
-    draft.field.data.__componentPayloads = container;
-  }));
-};
+  './ValueSetObservationField/index.jsx': `function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
+// Legacy preset: CodedObservationChoiceField is a strict superset of this
+// component (see lib/coded-choice-field-migration.ts and the component-field
+// consolidation plan). Kept as a thin alias so saved forms keep working;
+// author new fields with CodedObservationChoiceField or a core choice field.
 const ValueSetObservationField = ({
   id,
   fieldId,
   label = "Observation",
-  renderAs = "dropdown",
-  codeSystem = "",
-  optionList = [],
-  observationCode = "",
-  loincCode = "",
-  valueType = "TEXT",
-  description,
-  reportTemplate = "{display}",
-  commentFieldId = "",
-  placeholder = "Select an option",
-  size,
-  optionSize,
-  autoHotKey = false
+  ...props
 }) => {
-  const [fd, setFormData] = useActiveData();
-  const sd = useSourceData();
-  const componentId = id || fieldId || "ValueSetObservationField";
-  const effectiveFieldId = fieldId || componentId;
-  const selectedValue = fd?.field?.data?.[effectiveFieldId] ?? null;
-  const commentValue = commentFieldId ? fd?.field?.data?.[commentFieldId] ?? "" : "";
-  const createdBy = fd?.field?.data?.createdBy ?? sd?.userProfile?.identity?.fullName;
-  const options = useMemo(() => normalizeObservationOptions(optionList, codeSystem, sd), [optionList, codeSystem, sd]);
-  useEffect(() => {
-    if (!observationCode) {
-      setNestedPayload(setFormData, componentId, "dco", null);
-      return;
-    }
-    const selectedCode = selectedValue?.code ?? null;
-    const selectedDisplay = selectedValue?.display ?? selectedValue?.text ?? null;
-    const oldObs = sd?.webform?.observations?.find(item => item.observationCode === observationCode);
-    const oldId = oldObs?.observationId ?? 0;
-    if (!selectedCode && !selectedDisplay) {
-      setNestedPayload(setFormData, componentId, "dco", oldId ? [{
-        observationId: -oldId
-      }] : null);
-      return;
-    }
-    const report = String(reportTemplate || "{display}").replaceAll("{display}", String(selectedDisplay ?? "")).replaceAll("{code}", String(selectedCode ?? "")).replaceAll("{comment}", String(commentValue ?? ""));
-    setNestedPayload(setFormData, componentId, "dco", [{
-      observationId: oldId,
-      observationCode,
-      ...(loincCode ? {
-        loincCode
-      } : {}),
-      observationClass: "DCOBS",
-      value: String(selectedCode ?? selectedDisplay ?? ""),
-      valueType,
-      status: oldId ? "C" : "F",
-      description: description || label,
-      report,
-      units: "",
-      orderedBy: createdBy,
-      collectedBy: createdBy,
-      collectedDateTime: getDateTimeString(new Date())
-    }]);
-  }, [commentValue, componentId, createdBy, description, label, loincCode, observationCode, reportTemplate, sd, selectedValue, setFormData, valueType]);
-  const handleChange = nextValue => {
-    setFormData(produce(draft => {
-      if (!draft.field) draft.field = {
-        data: {},
-        status: {},
-        history: []
-      };
-      if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {};
-      draft.field.data[effectiveFieldId] = nextValue;
-    }));
-  };
-  const checklistOptions = options.map(item => ({
-    key: item.code || item.key,
-    text: item.display || item.text
-  }));
-  return /*#__PURE__*/React.createElement(Stack, {
-    tokens: {
-      childrenGap: 8
-    }
-  }, renderAs === "radio" ? /*#__PURE__*/React.createElement(SimpleCodeChecklist, {
-    fieldId: effectiveFieldId,
+  const RuntimeCodedChoice = typeof window !== "undefined" && window.__nhformsRegistry__?.CodedObservationChoiceField || CodedObservationChoiceField;
+  return /*#__PURE__*/React.createElement(RuntimeCodedChoice, _extends({
+    id: id || fieldId || "ValueSetObservationField",
+    fieldId: fieldId,
     label: label,
-    selectionType: "single",
-    optionList: checklistOptions,
-    multiline: true,
-    size: size,
-    optionSize: optionSize,
-    autoHotKey: autoHotKey
-  }) : renderAs === "findCode" ? /*#__PURE__*/React.createElement(FindCodeSelect, {
-    fieldId: effectiveFieldId,
-    label: label,
-    codeSystem: codeSystem,
-    optionList: options,
-    placeholder: placeholder,
-    size: size,
-    openOnFocus: true,
-    onChange: handleChange,
-    value: selectedValue
-  }) : /*#__PURE__*/React.createElement(SimpleCodeSelect, {
-    fieldId: effectiveFieldId,
-    label: label,
-    selectionType: "single",
-    optionList: checklistOptions,
-    size: size,
-    optionSize: optionSize,
-    autoHotKey: autoHotKey
-  }), commentFieldId ? /*#__PURE__*/React.createElement(TextField, {
-    label: "Comment",
-    value: commentValue ?? "",
-    onChange: (_event, nextValue) => {
-      setFormData(produce(draft => {
-        if (!draft.field) draft.field = {
-          data: {},
-          status: {},
-          history: []
-        };
-        if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {};
-        draft.field.data[commentFieldId] = nextValue ?? "";
-      }));
-    }
-  }) : null);
+    existingObservationScope: "webform"
+  }, props));
 };`,
 };
 
@@ -34403,7 +34154,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './AuthorshipField/index.jsx': ["AuthorshipField","DEFAULT_WINDOW_HOURS","_defaultPolicy","_nhAuth","_normalizeFieldOptions","actor","actorFrom","addHoursIso","base","buildKey","c","changed","ck","claim","claims","commitSave","commitValue","componentId","current","d","data","editableUntil","effectiveFieldId","euDate","existing","expired","fieldData","formatTimestamp","isNonEmpty","isOwner","keepStatus","key","label","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","nextStatus","nhAuth","normalizeStore","now","nowIso","numeric","optionList","ownerId","ownerName","ownerRefresh","pad2","pending","policy","policyAppliesToAction","prepareSave","query","raw","readOnly","readStore","release","renderInput","resolveNow","sameActor","sd","section","store","text","trimmed","ts","untilSelf","value","windowHours"],
   './BulkSetField/index.jsx': ["BulkSetField","ButtonComponent","apply","comparableAnswer","contradictedFieldIds","current","effectiveControlFieldId","fieldData","fieldId","isApplied","isBlankAnswer","isDisabled","normalizeBulkTargets","normalizedTargets","previous","raw","shouldClearControl","showWarning","unapply","writeControl"],
   './ChartRecordTable/index.jsx': ["ChartRecordTable","_chartRecordTableActiveConnections","_chartRecordTableActivePlannedActions","_chartRecordTableGenericColumns","_chartRecordTableGenericEntryColumns","_chartRecordTablePresets","_chartRecordTableSorts","_chartRecordTableStartDateDesc","byType","preset","resolvedChartColumns","resolvedEntryColumns","resolvedFieldId","resolvedFilterPred","resolvedId","resolvedLabel","resolvedListCompare","resolvedMoisModule","resolvedSelectionType","resolvedSourceId","resolvedSourceMap"],
-  './ChartReviewSummary/index.jsx': ["ChartReviewSummary","REVIEW_BLUE","REVIEW_GRAY","REVIEW_INK","REVIEW_RED","ReviewSectionHeading","age","best","bestTime","code","codeList","criticalHigh","criticalLow","current","datePart","doseText","entryCode","entryLoinc","flag","latestByCode","loinc","medications","monthDelta","normalHigh","normalLow","normalizeReviewCodes","now","observations","parsed","patient","problems","raw","reviewAgeYears","reviewArray","reviewDateKey","reviewDisplay","reviewFlagText","reviewGetPath","reviewHeadingStyle","reviewLineStyle","reviewMatchesCode","reviewNumber","reviewParseDate","reviewToText","rows","sd","sex","steps","stopRaw","stopTime","text","time","units","value"],
+  './ChartReviewSummary/index.jsx': ["ChartReviewSummary","K","REVIEW_BLUE","REVIEW_GRAY","REVIEW_INK","REVIEW_RED","ReviewSectionHeading","age","best","bestTime","codeList","current","doseText","latestByCode","medications","monthDelta","now","observations","parsed","patient","problems","reviewAgeYears","reviewArray","reviewDateKey","reviewGetObject","reviewHeadingStyle","reviewLineStyle","rows","sd","sex","steps","stopRaw","stopTime","time","units","value"],
   './CodedObservationChoiceField/index.jsx': ["CodedObservationChoiceField","candidates","checklistOptions","code","codedChoicePayloadsEqual","codings","commentValue","componentId","container","createdBy","currentPayload","display","effectiveFieldId","effectiveRenderAs","effectiveSelectionType","findExistingObservationId","formatCodedChoiceReport","fromContext","handleFindCodeChange","isMultiple","match","nextGroup","normalizeCodedChoiceOptions","normalizeSelectedCodings","oldId","option","options","report","sd","selectOptions","selectedValue","setCodedChoicePayload","stripVolatileCodedChoicePayloadFields","value","values","writeCodedChoiceValue"],
   './CommonSchemaDefn/index.jsx': ["NameBlockFields","active","commonSchemaDefn","formHistorySchema","makeCodedObsUpdates","makeObsUpdatesFromVs","makeTextObsUpdates","makeValueSetOptions","nameBlockSchema","newDco","oldObs","oldObsId","options","selectAll","startDateDesc","valueSet","vso","ynuaOptions"],
   './CompactBooleanField/index.jsx': ["BooleanLabelPresets","CompactBooleanChecklist","CompactBooleanChecklistSchema","CompactBooleanField","CompactBooleanFieldSchema","CompactBooleanGroup","CompactChoiceField","CompactChoiceFieldMultiSchema","CompactChoiceFieldSchema","OptionButtons","YesNoButtons","baseContainerStyle","buttonStyle","checkboxWrapperRef","choiceContent","commitValue","containerStyle","currentData","currentValue","data","decodePDFHex","decoded","fieldContent","getBooleanLabels","getButtonStyles","getCardContainerStyles","getFieldContainerStyles","getWidthStyle","handleChange","handleCheckboxChange","handleClick","handleNoClick","handleYesClick","input","isDarkMode","isDisabled","isHorizontal","isLast","isLeftLabel","isMultiple","isSelected","labelStyle","lastRowStyle","newValues","noButtonStyle","normalizeValue","normalized","normalizedValue","noteStyle","prevDecoded","rowStyle","selected","selectedValues","setFormData","sizeStyles","theme","themeLabelMaxWidth","themeLabelMinWidth","titleStyle","values","widthMap","yesButtonStyle"],
@@ -34421,7 +34172,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './FindCodeSelect/index.jsx': ["CONTROL_KEY_TOKENS","FindCodeSelect","FindCodeSelectBase","FindCodeSelectWithCodeList","FindCodeSelectWithFieldBinding","FindCodeSelectWithSourceLookup","aliasSets","aliases","boundValue","candidateKeys","candidates","clearTargets","code","codeListFromContext","combinedStyles","comboSelectedKey","currentValues","customSources","defaultComboStyles","defaultGetCandidates","defaultMapCandidateSavedValue","defaultRenderSelected","directKeys","effectiveFieldId","effectiveLabelPosition","entries","fallback","fallbackItems","filteringActive","fluentLabel","freeText","freeTextItem","getItemKey","getSizeStyles","handleChange","handleInputValueChange","handleKeyDown","handlePendingValueChanged","hasExplicitOptionList","hasSearchText","hasSelectionValue","hasSourceLookup","hidden","i","idx","isDeleteKey","isEmpty","isKeyboardToken","isMultiSelect","item","itemForStoredValue","items","key","keys","leftKey","mapped","match","matchingKey","nextValues","normalizeLookupName","normalizeOption","normalizeSelectedValues","normalized","normalizedLabel","optionList","optionLists","options","rawKey","renderCandidateOption","resolveItems","resolveLookupPath","rightKey","sameSelectedItem","sd","sectionLayout","seen","segments","selected","selectedCode","selectedItem","selectedItems","selectedKey","selectedKeySet","selectedKeys","shouldSelect","shouldSuppressLayoutItemLabel","showChildren","sizeMap","sizeStyles","sourceEntries","sourceItems","sourceLookupItems","storableSelection","storedSelectionToValue","storedValue","targets","text","valueForLookupTarget","withoutItem","wrapperStyle"],
   './FirstNationsStatus/index.jsx': ["FirstNationsStatus","connections","ethnicity","firstNationsStatusPatientFields","firstNationsStatusSchema","hasReserveName","races","reserveConnection","reserveName","selfId"],
   './FlowSheet/index.jsx': ["FLOW_CELL_STYLE","FLOW_LABEL_CELL_STYLE","FlowMedicationBarCells","FlowSheet","FlowSheetGrid","active","allMedications","cell","cellStyle","cells","cellsByRow","code","columnTime","columns","courses","cutoff","dateKey","dateKeys","doseFrequency","existing","flowIsSeparatorEntry","flowMedicationMatches","flowMedicationRowLabel","flowNormalizeMedications","flowNormalizeRows","flowRunQuery","hasObservationRows","header","headerStyle","keys","label","limit","match","matched","matches","medKeys","meds","name","needle","observationIndex","observationRows","parsedDate","rangeLabel","remaining","renderSheet","resolvedMedicationsMode","resolvedMinWidth","rowList","sd","source","startTime","stopRaw","stopTime","units","value"],
-  './FocusedObservationHistory/index.jsx': ["FocusedObservationHistory","activeWatchField","candidate","current","date","day","direct","effectiveObservationCode","effectiveObservationComment","effectiveTitle","formatDate","getFocusedFieldId","handleBlur","handleFocus","hasFocusTarget","host","isTrackedFieldFocused","isVisible","items","month","normalizeItems","normalizedWatchFields","parseDate","parsed","parsedDate","pathSegments","patientPath","raw","resolveMoisValue","resolvePath","rows","sd","textValue","year"],
+  './FocusedObservationHistory/index.jsx': ["FocusedObservationHistory","activeWatchField","candidate","current","date","day","direct","effectiveObservationCode","effectiveObservationComment","effectiveTitle","formatDate","getFocusedFieldId","handleBlur","handleFocus","hasFocusTarget","host","isTrackedFieldFocused","isVisible","items","month","normalizeItems","normalizedWatchFields","parseDate","parsed","parsedDate","pathSegments","patientPath","resolveMoisValue","resolvePath","rows","sd","textValue","year"],
   './FormContextHeader/index.jsx': ["FormContextHeader","FormContextHeaderSchema","appointmentDateTime","code","date","display","encounter","legacyContextDate","legacyContextDateTime","legacyContextText","legacyContextVisitCode","legacyFieldWrap","legacySmallFieldWrap","legacyTextStyles","match","providerName","raw","renderReadOnlyField","sd","section","values"],
   './FormSessionRuntime/index.jsx': ["FormSessionContext","FormSessionProvider","__cloneSessionValue","__getSessionContext","applySessionUpdate","cloneFormSessionState","contextValue","formData","mergeFormSessionState","normalizeSessionState","normalized","normalizedSessionData","result","root","selectedSessionData","selectedSessionDataWithSetter","sessionContext","sessionDataWithSetter","sessionScopedSetter","sessionSetFormData","setFormData","target","useFormSessionData"],
   './Goals/index.jsx': ["Goals","GoalsFields"],
@@ -34466,7 +34217,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './SubformScoring/index.jsx': ["AnswerSummaryItem","CalculationSummaryItem","DataFieldSummaryItem","DataInterpretationSummaryItem","FormSessionProvider","InterpretationSummaryItem","MOIS_WRITE_ID_FALLBACK_PATHS","MOIS_WRITE_MUTATIONS","MOIS_WRITE_MUTATION_KEYS","ProgressSummaryItem","ScoreSummaryItem","SubformScoring","SubformScoringInner","_LOCAL_INPUT_STYLE","_LOCAL_RADIO_GROUP_STYLE","_LOCAL_TEXTAREA_STYLE","_REPORT_ITEM_FORMATS","__SubformScoringSessionContext","__cloneSubformScoringSessionValue","_buildDataEntryRenderGroups","_buildDataEntrySnapshot","_buildFormattedObservationReport","_buildMappedPayload","_buildScaleLegendSignature","_buildScaleOptions","_buildScoreMap","_buildSubformFormDataWrites","_buildSubformObservationReport","_buildSubformObservationUpdates","_collectScoreCandidates","_computeMorphineEquivalent","_createPreparedSessionSetter","_evaluateDataEntryVisibility","_evaluateExpression","_findQuestionOptionForAnswer","_formatBounds","_formatCalculatorDisplayValue","_formatNumericValue","_getInterpretation","_getScoreFromValue","_getSelectableOptionNumericValue","_getValueAtPath","_isHeadingField","_isInRange","_isMeaningfulValue","_isScaleChoiceSelected","_isSelectableOptionSelected","_latestObservationDefault","_normalizeChartPreferenceValue","_normalizeScoreToken","_normalizeSelectableOptions","_optionMatchesValue","_recordSubformActionPayload","_resolveChecklistOptions","_resolveDataEntryDisplayValue","_resolveFieldDefaultValue","_resolveFieldEmptyNumericValue","_resolveFieldWidthBasis","_resolveObservationTemplate","_resolvePathValue","_resolveQuestionOptions","_resolveSelectableBinaryOptions","_resolveWriteActionId","_serializeSelectableValue","_setSubformFormDataOutputs","_setSubformObservationPayloads","_setValueAtPath","_stringifyObservationValue","_toDisplayValue","_toNumericValue","_toPathSegments","_usesStructuredSelectableOptions","abs","action","actionPayload","aliases","allValues","allVars","answer","answerScore","answerableFields","answered","answers","aspect","barBg","barFill","baseDose","baseEquivalentDoseMg","baseEquivalentDoseRaw","basis","binding","boundedPrecision","buttonRowStyle","cadFieldId","calc","calculatedExpressions","calculatedTotals","calculation","calculatorFields","candidate","candidateKeys","candidatePaths","candidates","ceil","checked","checkedFromConfig","checkedOption","checklist","cloneFormSessionState","code","columnTemplate","commentsField","commonProps","componentPayloads","computedFallback","configuredField","container","containerStyle","controlLabel","controllerId","conversions","createdBy","current","currentSignature","cursor","dataEntryAction","dataEntryCalculations","dataEntryCalculatorConfig","dataEntryFieldById","dataEntryFields","dataEntryRenderGroups","dataEntrySnapshot","dataEntryValues","dateField","day","defaultValue","defaults","description","dialogContentProps","dialogMinWidth","dialogTitle","direct","displayText","displayValue","dose","doseColumnLabel","effectiveInitialData","entry","equivalentColumnLabel","equivalentDose","equivalentDoseMg","evaluated","explicitDefault","expressionVars","extracted","factor","fallbackOptions","field","fieldExists","fields","fieldsForProgress","floor","flushMatrixBuffer","formDataWrites","formatted","fromCalculation","functionNames","generatedIndex","generatedVars","getCalculationConfig","getDataEntryFieldConfig","getQuestionConfig","getTotalConfig","groups","handleCommitToParent","handleOpenChange","hasAnyAnswers","hasAnyRowValue","hasExternalDataEntryStore","hasRequiredId","heading","history","iif","inputFieldId","inputType","inputValue","interpretation","isComplete","isDarkMode","isDataEntryMode","isDialogOpen","isHeading","isMatrixCandidate","isMorphineCalculatorMode","key","label","labelStyle","latest","left","leftDate","lines","map","match","matched","matchedOption","matrixBuffer","matrixGroupId","max","meetsMax","meetsMin","meqCalculationId","meqDisplay","meqValue","mergeFormSessionState","min","minSymbol","mod","modalProps","month","next","nextGroup","nextKey","nextOption","nextRaw","nextState","nextValue","normalize","normalized","normalizedButtonIconName","normalizedOptionMap","normalizedOptions","normalizedSessionData","normalizedType","normalizedValues","numeric","numericValue","numericValues","observationDefault","observationRows","observations","oldId","oldObservation","option","optionList","optionMap","optionMatch","optionScoreMap","optionTokens","optionValue","options","parsed","payload","payloadMap","pendingDefaults","places","precision","precisionRaw","prepareCompletionState","prepared","preparedSession","prevIndex","previousEntry","previousField","previousScaleSignature","printScore","printed","progress","providedOptions","question","questionOptions","questionsById","raw","rawConfig","rawOptions","rawRows","rawType","rawValue","renderBloodGlucoseReadingEditor","renderDataEntryField","renderDataEntryScaleMatrix","renderMorphineCalculator","renderNumberInput","renderStyle","renderSummaryItem","replacement","report","required","requiredFields","resolved","resolvedId","resolvedScore","response","result","resultColumnLabel","results","right","rightDate","root","round","rowId","rowLabels","rowValues","rows","rule","runMutation","runtime","scaleMatch","scaleOptions","scopedSetter","score","scoreMap","sd","segments","selected","selectedOption","selectedWithSetter","sessionContext","sessionSetFormData","sessionState","setDataEntryValue","setDialogOpen","setFormData","shouldClose","shouldHideButtonIcon","shouldUseDefaultButtonIcon","showCalculationsInModal","showItems","showLegend","showLegendForScale","signature","snapshot","source","sourceRoot","spec","step","style","summaryContainerStyle","summaryItemsStyle","summaryLayout","target","termQuestionId","text","theme","today","token","tokenMatches","total","totalCalculationId","totalFallback","totalFromCalculation","totalLabel","totalValue","totals","triggerButtonIconProps","trimmed","uncheckedFromConfig","uncheckedOption","uniqueTokens","usFieldId","useBloodGlucoseReadingLayout","useFormSessionData","useRadio","useToggleSwitch","value","values","variableFieldIds","variables","vars","writeDefinition","writeKey","writeMutationRunners","year"],
   './UnsavedChangesGuard/index.jsx': ["ButtonComponent","DCOUpdates","DEFAULT_WINDOW_HOURS","UnsavedChangesGuard","actionItems","actor","actorFrom","addHoursIso","baselineRef","buildDefaultSavePayload","buildDefaultSubmitPayload","buildKey","c","changed","ck","claim","claims","closeWindow","collectComponentPayloads","collectDomFieldValues","commitSave","componentPayload","confirmUnloadActive","current","d","data","dcoGroups","disabled","domFieldValues","editableUntil","euDate","existing","expired","field","fieldData","fieldId","footerActionItems","footerActions","formData","formatTimestamp","guardSkipsWhenSigned","handleAction","handler","hasLifecycleSignals","host","inputType","isNonEmpty","isOwner","isSettling","isSigned","isSubmitAction","keepStatus","key","label","lifecycle","linkedPanels","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","markSaved","mergeFieldValuesIntoState","narratives","nextStatus","nextValue","nhAuthCommitSave","nhAuthPrepareSave","normalizeFooterActions","normalizeGuardActions","normalizeGuardValue","normalizeStore","now","nowIso","ownerId","ownerName","ownerRefresh","pad2","panelUpdates","panels","payload","payloads","pending","persistAction","persistFd","policyAppliesToAction","prepareSave","prepared","primaryAction","promptText","raw","readStore","release","renderFooterAction","resolveNow","sameActor","saveSettleRef","savedWebform","sd","secondaryActions","serializeGuardValue","store","stripComponentPayloads","submitSd","success","tagName","trackedSnapshot","trackedValue","ts","untilSelf","useHostConfirmUnload","values","warmupRef","webformGroups","webformUpdate","windowHours"],
   './UseChangeWatch/index.jsx': ["_defaultCompare","_normalizeWatchOptions","baselineRef","compare","delayCount","dirtyRef","disabled","forcedDirtyRef","isDirty","normalizedOptions","onDirtyChange","renderCountRef","setChanged","useChangeWatch"],
-  './ValueSetObservationField/index.jsx': ["ValueSetObservationField","checklistOptions","commentValue","componentId","container","createdBy","currentPayload","effectiveFieldId","fromContext","handleChange","key","nextGroup","normalizeObservationOptions","oldId","oldObs","options","payloadsEqual","report","sd","selectedCode","selectedDisplay","selectedValue","setNestedPayload","stripVolatilePayloadFields"],
+  './ValueSetObservationField/index.jsx': ["RuntimeCodedChoice","ValueSetObservationField"],
 };
 
 /**
@@ -34484,11 +34235,11 @@ export const componentDependencies: Record<string, string[]> = {
   './Allergies/index.jsx': [],
   './AllergyTable/index.jsx': ["ChartRecordTable"],
   './AssessmentScoringTable/index.jsx': [],
-  './AttestationSignOff/index.jsx': [],
+  './AttestationSignOff/index.jsx': ["SignaturePad"],
   './AuthorshipField/index.jsx': [],
   './BulkSetField/index.jsx': [],
   './ChartRecordTable/index.jsx': ["EditableTable"],
-  './ChartReviewSummary/index.jsx': [],
+  './ChartReviewSummary/index.jsx': ["ObservationKit"],
   './CodedObservationChoiceField/index.jsx': [],
   './CommonSchemaDefn/index.jsx': [],
   './CompactBooleanField/index.jsx': [],
@@ -34506,7 +34257,7 @@ export const componentDependencies: Record<string, string[]> = {
   './FindCodeSelect/index.jsx': [],
   './FirstNationsStatus/index.jsx': ["Ethnicity"],
   './FlowSheet/index.jsx': ["ObservationKit"],
-  './FocusedObservationHistory/index.jsx': [],
+  './FocusedObservationHistory/index.jsx': ["ObservationKit"],
   './FormContextHeader/index.jsx': [],
   './FormSessionRuntime/index.jsx': [],
   './Goals/index.jsx': [],
@@ -34551,5 +34302,5 @@ export const componentDependencies: Record<string, string[]> = {
   './SubformScoring/index.jsx': ["ConversionField","FormSessionRuntime","HotspotMapField","ScoringModule","ScaleField"],
   './UnsavedChangesGuard/index.jsx': [],
   './UseChangeWatch/index.jsx': [],
-  './ValueSetObservationField/index.jsx': [],
+  './ValueSetObservationField/index.jsx': ["CodedObservationChoiceField"],
 };

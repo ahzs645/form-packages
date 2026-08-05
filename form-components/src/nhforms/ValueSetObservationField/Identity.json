@@ -1,7 +1,10 @@
 {
   "name": "ValueSetObservationField",
   "title": "Value Set Observation Field",
-  "description": "Coded value field that also prepares observation updates for export/save",
+  "description": "Thin legacy preset over CodedObservationChoiceField: coded value field that prepares observation updates for export/save",
   "category": "Clinical",
-  "version": "1.0.0"
+  "version": "1.0.0",
+  "components": [
+    "CodedObservationChoiceField"
+  ]
 }

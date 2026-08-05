@@ -22,5 +22,7 @@
     "minor": 28,
     "patch": 10
   },
-  "components": []
+  "components": [
+    "ObservationKit"
+  ]
 }

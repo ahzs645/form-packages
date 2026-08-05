@@ -10,6 +10,9 @@ import { createRoot, type Root } from "react-dom/client";
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const NH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+// ChartReviewSummary depends on the ObservationKit helper module (shared engine
+// scope at runtime), so the harness concatenates it ahead of the component.
+const kitSource = fs.readFileSync(path.join(NH, "ObservationKit", "index.jsx"), "utf8");
 const source = fs.readFileSync(path.join(NH, "ChartReviewSummary", "index.jsx"), "utf8");
 
 const passthrough = ({ children }: { children?: React.ReactNode }) => React.createElement("div", null, children);
@@ -22,7 +25,7 @@ const FluentStub = {
 };
 
 function loadComponent(sourceData: Record<string, unknown>): React.ComponentType<any> {
-  const compiled = Babel.transform(source, { presets: ["react"], filename: "index.jsx" }).code ?? "";
+  const compiled = Babel.transform(`${kitSource}\n${source}`, { presets: ["react"], filename: "index.jsx" }).code ?? "";
   // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func
   const factory = new Function("React", "Fluent", "useSourceData", `${compiled};\nreturn { ChartReviewSummary };`);
   return factory(React, FluentStub, () => sourceData).ChartReviewSummary;

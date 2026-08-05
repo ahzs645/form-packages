@@ -101,11 +101,13 @@ const setCodedChoicePayload = (setFormData, componentId, payload) => {
   }))
 }
 
-const findExistingObservationId = (sd, observationCode) => {
+const findExistingObservationId = (sd, observationCode, scope = "all") => {
   if (!observationCode) return 0
   const candidates = [
     ...(Array.isArray(sd?.webform?.observations) ? sd.webform.observations : []),
-    ...(Array.isArray(sd?.patient?.observations) ? sd.patient.observations : []),
+    ...(scope === "webform" || !Array.isArray(sd?.patient?.observations)
+      ? []
+      : sd.patient.observations),
   ]
   const match = candidates.find((item) => item?.observationCode === observationCode)
   return Number(match?.observationId ?? 0) || 0
@@ -157,6 +159,10 @@ const CodedObservationChoiceField = ({
   disabled = false,
   multiline = true,
   multiSaveMode = "joinCodes",
+  // "all" also amends a matching chart observation; "webform" only amends
+  // observations already attached to this form (legacy ValueSetObservationField
+  // behavior — new selections always file as new observations).
+  existingObservationScope = "all",
 }) => {
   const [fd, setFormData] = useActiveData()
   const sd = useSourceData()
@@ -176,7 +182,7 @@ const CodedObservationChoiceField = ({
       setCodedChoicePayload(setFormData, componentId, null)
       return
     }
-    const oldId = findExistingObservationId(sd, observationCode)
+    const oldId = findExistingObservationId(sd, observationCode, existingObservationScope)
     if (codings.length === 0) {
       setCodedChoicePayload(setFormData, componentId, oldId ? [{ observationId: -oldId }] : null)
       return
@@ -202,7 +208,7 @@ const CodedObservationChoiceField = ({
       collectedBy: createdBy,
       collectedDateTime: getDateTimeString(new Date()),
     }])
-  }, [codings, commentValue, componentId, createdBy, description, label, loincCode, multiSaveMode, observationCode, reportTemplate, sd, setFormData, valueType])
+  }, [codings, commentValue, componentId, createdBy, description, existingObservationScope, label, loincCode, multiSaveMode, observationCode, reportTemplate, sd, setFormData, valueType])
 
   const effectiveRenderAs = renderAs || choiceStyle || "dropdown"
   const isMultiple =
