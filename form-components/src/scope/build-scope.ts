@@ -441,6 +441,12 @@ const useSaveOnClose = (
   };
 };
 
+// Trigger toast notification via window event (the preview host renders it)
+const triggerToast = (message: string) => {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent('mois-toast', { detail: message }));
+};
+
 /**
  * Build the scope object with all available components and utilities
  */
@@ -745,7 +751,14 @@ export const buildScope = (): Record<string, any> => ({
         recordMoisRuntimeAction(draft, 'saveDraft', data);
       });
     }
+    triggerToast('Draft saved');
     return true;
+  },
+  // Real MOIS passes setChanges so forms can mark the chart container dirty;
+  // the preview has no container, so this only needs to exist to keep the
+  // scope proxy from reporting it as a missing symbol.
+  setChanges: (value?: unknown) => {
+    console.log('setChanges called', value);
   },
   closeForm: (sd?: any, fd?: any) => {
     console.log('closeForm called');
@@ -787,6 +800,7 @@ export const buildScope = (): Record<string, any> => ({
         recordMoisRuntimeAction(draft, 'saveSubmit', data);
       });
     }
+    triggerToast('Submitted');
     return true;
   },
   sign: (reason: string, sd: any, fd?: any) => {
@@ -847,6 +861,7 @@ export const buildScope = (): Record<string, any> => ({
         recordMoisRuntimeAction(draft, 'signSubmit', data);
       });
     }
+    triggerToast('Signed and submitted');
     return true;
   },
   getAuthorshipLockInfo,
