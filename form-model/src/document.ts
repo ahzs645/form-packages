@@ -315,6 +315,8 @@ export interface ParsedField {
   bbox?: BoundingBox;
   widgets?: WidgetGeometry[];
   pdfFieldAliases?: string[];
+  /** AcroForm /MaxLen read from the source PDF text field, when present. */
+  maxLen?: number;
   /** Builder-authored answer sync group. Primary renderers write into every linked answer field id. */
   linkedAnswerGroupId?: string | null;
   linkedAnswerFieldIds?: string[];

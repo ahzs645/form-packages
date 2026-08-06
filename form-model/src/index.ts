@@ -1584,6 +1584,10 @@ export interface SectionConfig {
   }>;
   /** Preset scale type for the legend */
   scaleLegendPreset?: "honos" | "likert5" | "likert7" | "nrs" | "frequency" | "satisfaction" | "severity" | "custom";
+  /** Fill behavior: "collection" repeats the section per MOIS collection record at runtime. */
+  autoFillMode?: "manual" | "collection";
+  /** Optional MOIS collection id backing collection auto-fill. */
+  autoFillCollectionId?: string | null;
   /** Subgroups within this section for visual grouping */
   subgroups?: SectionSubgroup[];
   /** Map of fieldId → subgroupId for assigning fields to subgroups */
