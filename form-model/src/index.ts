@@ -1983,6 +1983,13 @@ export interface BuilderVariantSelectorConfig {
   label: string;
   style: "dropdown" | "buttons";
   displayMode?: "inline" | "changeButton";
+  /**
+   * "per-version": each variant carries its own field set (default, legacy behavior).
+   * "shared": variants are selection labels only — the base document's fields render
+   * once for every version, and the runtime exposes the chosen version to the form
+   * (persisted as builderVariantId/builderVariantLabel in form data).
+   */
+  contentMode?: "per-version" | "shared";
 }
 
 export {
