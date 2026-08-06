@@ -25829,12 +25829,29 @@ const _setCheckboxByState = (field, requestedState, PDFLib) => {
   });
   return true;
 };
-const _fillField = (field, rawValue, sourceFieldId, warnings, PDFLib, booleanStates) => {
+const _fillField = (field, rawValue, sourceFieldId, warnings, PDFLib, booleanStates, desiredMaxLength) => {
   try {
     if (field instanceof PDFLib.PDFTextField) {
       const text = _toText(rawValue);
       if (!text) return false;
+      // pdf-lib throws when the text exceeds the field's /MaxLen. The webform
+      // answer is authoritative here, so lift the limit rather than lose data.
+      const maxLength = field.getMaxLength ? field.getMaxLength() : undefined;
+      if (typeof maxLength === "number" && text.length > maxLength && field.removeMaxLength) {
+        field.removeMaxLength();
+        warnings.push(\`Field \\"\${field.getName()}\\" (\${sourceFieldId}): answer exceeds the PDF's \${maxLength}-character limit; limit removed to keep the full answer.\`);
+      }
       field.setText(text);
+      // Stamp the webform-authored character limit onto the output PDF so the
+      // saved (unflattened) form enforces it. Skipped when the answer already
+      // exceeds the limit — the answer wins over the constraint.
+      if (typeof desiredMaxLength === "number" && desiredMaxLength > 0 && text.length <= desiredMaxLength && field.setMaxLength) {
+        try {
+          field.setMaxLength(desiredMaxLength);
+        } catch {
+          // A combed or otherwise constrained field may reject the limit; keep the text.
+        }
+      }
       return true;
     }
     if (field instanceof PDFLib.PDFRadioGroup) {
@@ -25926,6 +25943,7 @@ const PdfRegenerator = ({
   fieldMap,
   tableSourceMaps,
   booleanFieldStates,
+  fieldMaxLengths,
   dateComponentMaps,
   choiceComponentMaps,
   includeOnlyFieldIds,
@@ -26020,7 +26038,8 @@ const PdfRegenerator = ({
           return;
         }
         const booleanStates = booleanFieldStates ? booleanFieldStates[sourceFieldId] || booleanFieldStates[pdfFieldName] : undefined;
-        const didFill = _fillField(field, rawValue, sourceFieldId, warnings, PDFLib, booleanStates);
+        const desiredMaxLength = fieldMaxLengths ? fieldMaxLengths[sourceFieldId] ?? fieldMaxLengths[pdfFieldName] : undefined;
+        const didFill = _fillField(field, rawValue, sourceFieldId, warnings, PDFLib, booleanStates, desiredMaxLength);
         if (didFill) filledFieldCount += 1;else skippedFieldCount += 1;
       });
       if (flatten) {
@@ -26055,7 +26074,7 @@ const PdfRegenerator = ({
     } finally {
       setIsBusy(false);
     }
-  }, [resolvedPdfSource, fd, fieldMap, tableSourceMaps, booleanFieldStates, dateComponentMaps, choiceComponentMaps, includeOnlyFieldIds, flatten, fileName, onComplete, pdfLibStrategy, pdfLibSource]);
+  }, [resolvedPdfSource, fd, fieldMap, tableSourceMaps, booleanFieldStates, fieldMaxLengths, dateComponentMaps, choiceComponentMaps, includeOnlyFieldIds, flatten, fileName, onComplete, pdfLibStrategy, pdfLibSource]);
   const diagnosticsText = useMemo(() => {
     if (!showDiagnostics) return null;
     if (!_isNonEmptyString(resolvedPdfSource)) return "Waiting for source PDF data.";
@@ -34203,7 +34222,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './PastMeasurementField/index.jsx': ["PastMeasurementField","abnormalFlag","abnormalHighValue","abnormalLowValue","canPullLatest","candidate","candidates","codeFilter","coercePositiveInt","commentFilter","componentId","container","createdBy","criticalHighValue","criticalLowValue","current","currentPayload","day","direct","displayedCurrentValue","documentDate","effectiveFieldId","effectiveHistorySize","effectiveLabelPosition","effectiveMeasurementSize","entryCode","entryComment","entryDate","entryUnits","entryValue","explicitValue","fieldData","flagCode","flagDisplays","formHistoryItems","formatDate","fromPatient","fromQueryResult","handleValueChange","hasAbnormalHigh","hasAbnormalLow","hasExplicitValue","hasMeaningfulValue","hasNumericCurrentValue","hasRangeMetadata","hasStoredValue","historicalFormRowDate","historyItems","historySummary","index","inputSuffix","isAbnormal","isHistoricalFormValue","isNonEmptyString","key","latestHistoryItem","legacyRangePayload","linkedObservationItem","matchingKey","measurementWidthBySize","month","nextGroup","normalizeObservationItems","normalizedDateOnly","normalizedPullTargets","numericCurrentValue","numericExplicitValue","numericTime","observationHistoryItems","oldId","oldObs","optionalString","parseDateValue","parsed","parsedDate","parsedDateOnly","patientPath","payloadsEqual","pullLatestIntoTargets","raw","rawDate","recentHistoryText","resolveHistoricalFormRows","resolveMeasurementContainerStyle","resolveMoisValue","resolvePathValue","resolvedAbnormalHigh","resolvedAbnormalLow","resolvedCriticalHigh","resolvedCriticalLow","resolvedCurrentValue","resolvedUnits","role","roots","sd","segments","setNestedPayload","shouldReserveHistory","shouldShowHistory","storedValue","stringifyValue","stripVolatilePayloadFields","targetFieldId","text","toObservationList","toPathSegments","updatedValue","value","valueFromHistoricalFormRow","valueIsDate","valueKeys","valuePart","valueText","width","year"],
   './PatientFileSections/index.jsx': ["PatientFileSections","activeText","addressText","cityLine","compactLines","contactText","countryLine","createdDate","editButtonStyle","encounter","fieldWrapStyle","formatAddress","formatContact","formatDate","getPatientFromData","gridStyle","healthNumber","insuranceBy","insuranceNumber","insuranceText","lines","match","mergeObjects","nextPatient","optionCode","optionDisplay","patient","preferredCode","preferredPhoneOptions","providerName","queryPatient","raw","renderClientDemographics","renderDocumentDetails","renderEncounterDetails","renderTitle","requested","sd","section","sectionTitleStyle","textValue","updateContactText","visibleSections","whiteDropdownStyles","whiteFlexTextFieldStyles","whiteTextFieldStyles","writePatientUpdates"],
   './PatientValueField/index.jsx': ["PatientValueField","age","applyPatientTransform","candidates","coercePatientValue","collectionCandidateValues","collectionItemMatches","computeAgeYears","dob","effectiveFieldId","expected","items","monthDelta","normalizedExpected","now","raw","resolveCollectionItemPath","resolvePatientContextPath","resolved","root","sd","stored","values"],
-  './PdfRegenerator/index.jsx': ["PDFLib","PDF_LIB_URL","PdfRegenerator","_base64ToBytes","_buildChoiceComponentIndex","_buildDateComponentIndex","_buildTableReverseIndex","_choiceItemMatches","_choiceItems","_collectCandidates","_decodePdfHex","_downloadBytes","_fillField","_getCheckboxOnStates","_inferBooleanState","_installPdfLibFromSource","_isNonEmptyString","_loadPdfLib","_loadPdfLibFromCdn","_matchMultipleOptions","_matchSingleOption","_normalizeFieldMap","_normalizeToken","_pdfLibPromise","_printBytes","_resolveChoiceComponentValue","_resolveDateComponentValue","_resolveTableCellValue","_resolveValueByPath","_setCheckboxByState","_splitCanonicalDateParts","_statusColor","_toBooleanLike","_toCandidateList","_toText","acro","baseMap","binary","blob","boolValue","booleanStates","buttonDisabled","byRow","bytes","candidate","candidateKeys","candidates","choiceComponentIndex","choiceComponentValue","choiceEntry","clean","cleaned","cleanup","component","components","current","dateComponentIndex","dateComponentValue","dateEntry","diagnosticsText","didFill","direct","doc","existing","filledFieldCount","form","formData","formKeys","fromData","fromPath","fuzzy","handleGeneratePdf","hasMatchingState","i","iframe","includeSet","index","inferredState","inlineSource","installed","isOn","items","knownOptions","left","leftIsFormId","lib","link","map","mapped","match","matches","maybe","maybeDate","maybeTime","nextFileName","normalized","normalizedAction","normalizedCandidate","normalizedOption","normalizedOptionMap","normalizedRequested","offState","onText","onValue","options","otherItem","outputBytes","parts","pathByColumnId","payload","pdfFieldId","pdfFieldName","printWindow","rawValue","renderActionButton","renderButton","requested","resolvePath","resolvedPdfSource","right","rightIsFormId","row","rowIndex","rowMapping","rows","runner","script","sd","segments","selected","selectedCount","set","single","skippedFieldCount","sourceFieldId","sourceId","sourceValue","sourceValues","state","states","strategy","tableEntry","tableId","tableIndex","targetAction","targetState","targetStateName","targetWidget","text","trimmed","url","warningCount","warnings","widgets","withoutSlash"],
+  './PdfRegenerator/index.jsx': ["PDFLib","PDF_LIB_URL","PdfRegenerator","_base64ToBytes","_buildChoiceComponentIndex","_buildDateComponentIndex","_buildTableReverseIndex","_choiceItemMatches","_choiceItems","_collectCandidates","_decodePdfHex","_downloadBytes","_fillField","_getCheckboxOnStates","_inferBooleanState","_installPdfLibFromSource","_isNonEmptyString","_loadPdfLib","_loadPdfLibFromCdn","_matchMultipleOptions","_matchSingleOption","_normalizeFieldMap","_normalizeToken","_pdfLibPromise","_printBytes","_resolveChoiceComponentValue","_resolveDateComponentValue","_resolveTableCellValue","_resolveValueByPath","_setCheckboxByState","_splitCanonicalDateParts","_statusColor","_toBooleanLike","_toCandidateList","_toText","acro","baseMap","binary","blob","boolValue","booleanStates","buttonDisabled","byRow","bytes","candidate","candidateKeys","candidates","choiceComponentIndex","choiceComponentValue","choiceEntry","clean","cleaned","cleanup","component","components","current","dateComponentIndex","dateComponentValue","dateEntry","desiredMaxLength","diagnosticsText","didFill","direct","doc","existing","filledFieldCount","form","formData","formKeys","fromData","fromPath","fuzzy","handleGeneratePdf","hasMatchingState","i","iframe","includeSet","index","inferredState","inlineSource","installed","isOn","items","knownOptions","left","leftIsFormId","lib","link","map","mapped","match","matches","maxLength","maybe","maybeDate","maybeTime","nextFileName","normalized","normalizedAction","normalizedCandidate","normalizedOption","normalizedOptionMap","normalizedRequested","offState","onText","onValue","options","otherItem","outputBytes","parts","pathByColumnId","payload","pdfFieldId","pdfFieldName","printWindow","rawValue","renderActionButton","renderButton","requested","resolvePath","resolvedPdfSource","right","rightIsFormId","row","rowIndex","rowMapping","rows","runner","script","sd","segments","selected","selectedCount","set","single","skippedFieldCount","sourceFieldId","sourceId","sourceValue","sourceValues","state","states","strategy","tableEntry","tableId","tableIndex","targetAction","targetState","targetStateName","targetWidget","text","trimmed","url","warningCount","warnings","widgets","withoutSlash"],
   './PlannedActions/index.jsx': ["PlannedActions","PlannedActionsFields","plannedActionsActiveOnly","plannedActionsColumns"],
   './ReferralSource/index.jsx': ["ReferralSource","codeSystem","defaultValue","optionList","referralValueSet","sd"],
   './RelationshipStatus/index.jsx': ["RelationshipStatus"],

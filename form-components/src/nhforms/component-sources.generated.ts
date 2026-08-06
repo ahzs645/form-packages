@@ -24135,12 +24135,36 @@ const _setCheckboxByState = (field, requestedState, PDFLib) => {
   return true
 }
 
-const _fillField = (field, rawValue, sourceFieldId, warnings, PDFLib, booleanStates) => {
+const _fillField = (field, rawValue, sourceFieldId, warnings, PDFLib, booleanStates, desiredMaxLength) => {
   try {
     if (field instanceof PDFLib.PDFTextField) {
       const text = _toText(rawValue)
       if (!text) return false
+      // pdf-lib throws when the text exceeds the field's /MaxLen. The webform
+      // answer is authoritative here, so lift the limit rather than lose data.
+      const maxLength = field.getMaxLength ? field.getMaxLength() : undefined
+      if (typeof maxLength === "number" && text.length > maxLength && field.removeMaxLength) {
+        field.removeMaxLength()
+        warnings.push(
+          \`Field \\"\${field.getName()}\\" (\${sourceFieldId}): answer exceeds the PDF's \${maxLength}-character limit; limit removed to keep the full answer.\`
+        )
+      }
       field.setText(text)
+      // Stamp the webform-authored character limit onto the output PDF so the
+      // saved (unflattened) form enforces it. Skipped when the answer already
+      // exceeds the limit — the answer wins over the constraint.
+      if (
+        typeof desiredMaxLength === "number" &&
+        desiredMaxLength > 0 &&
+        text.length <= desiredMaxLength &&
+        field.setMaxLength
+      ) {
+        try {
+          field.setMaxLength(desiredMaxLength)
+        } catch {
+          // A combed or otherwise constrained field may reject the limit; keep the text.
+        }
+      }
       return true
     }
 
@@ -24244,6 +24268,7 @@ const PdfRegenerator = ({
   fieldMap,
   tableSourceMaps,
   booleanFieldStates,
+  fieldMaxLengths,
   dateComponentMaps,
   choiceComponentMaps,
   includeOnlyFieldIds,
@@ -24352,7 +24377,10 @@ const PdfRegenerator = ({
         const booleanStates = booleanFieldStates
           ? (booleanFieldStates[sourceFieldId] || booleanFieldStates[pdfFieldName])
           : undefined
-        const didFill = _fillField(field, rawValue, sourceFieldId, warnings, PDFLib, booleanStates)
+        const desiredMaxLength = fieldMaxLengths
+          ? (fieldMaxLengths[sourceFieldId] ?? fieldMaxLengths[pdfFieldName])
+          : undefined
+        const didFill = _fillField(field, rawValue, sourceFieldId, warnings, PDFLib, booleanStates, desiredMaxLength)
         if (didFill) filledFieldCount += 1
         else skippedFieldCount += 1
       })
@@ -24392,7 +24420,7 @@ const PdfRegenerator = ({
     } finally {
       setIsBusy(false)
     }
-  }, [resolvedPdfSource, fd, fieldMap, tableSourceMaps, booleanFieldStates, dateComponentMaps, choiceComponentMaps, includeOnlyFieldIds, flatten, fileName, onComplete, pdfLibStrategy, pdfLibSource])
+  }, [resolvedPdfSource, fd, fieldMap, tableSourceMaps, booleanFieldStates, fieldMaxLengths, dateComponentMaps, choiceComponentMaps, includeOnlyFieldIds, flatten, fileName, onComplete, pdfLibStrategy, pdfLibSource])
 
   const diagnosticsText = useMemo(() => {
     if (!showDiagnostics) return null
