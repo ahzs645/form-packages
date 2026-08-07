@@ -881,6 +881,14 @@ export interface BuilderAlayaCareConfig {
    * `client.last_name` or the flat system value `date_of_birth`.
    */
   docmosisDataPath?: string | null;
+  /**
+   * Opt a library-bound chart value back into being asked on the form. A field
+   * attached to a reviewed Patient-profile concept defaults to a template-only
+   * read of the client record, since AlayaCare already holds the value; set this
+   * when the form is the thing that captures it, and the preview prefills the
+   * question from the client record instead of printing over it.
+   */
+  exportAsQuestion?: boolean;
   /** Imported from AlayaCare as read-only because editing support is limited. */
   importReadOnly?: boolean;
   /** Human-readable reason shown in the inspector when importReadOnly is true. */
