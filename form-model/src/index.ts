@@ -1190,6 +1190,16 @@ export interface BuilderField {
   linkedAnswerGroupId?: string | null;
   /** Field IDs that should receive the same answer as this visible field. */
   linkedAnswerFieldIds?: string[];
+  /**
+   * Editor-suggestion ids the author dismissed on this field (see
+   * form-builder/editors/choice-suggestions.ts). A dismissal is a decision
+   * about *this* field — "no, this numeric checklist really is a checklist" —
+   * so it saves with the form rather than living in browser storage, and it
+   * survives reopen/duplicate/share. Authoring metadata only: nothing
+   * downstream of the builder reads it, and a dismissed suggestion stays
+   * applicable — the selection assistant can still run it.
+   */
+  dismissedSuggestionIds?: string[] | null;
 
   // Choice field settings
   // Options accept either a bare label string (legacy) or a structured object
