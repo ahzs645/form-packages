@@ -46,6 +46,7 @@ export interface SubgroupDisplayOptions {
 export type GridColumns = 1 | 2 | 3 | 4;
 export type SubgroupStyle = 'card' | 'flat';
 export type ChildSubgroupStyle = 'card' | 'inline';
+export type SubgroupHeadingPosition = 'top' | 'left';
 export type DisplayOptionsPreset = 'list' | 'compact-cards' | 'wide-grid' | 'custom';
 
 export interface DisplayOptions {
@@ -248,6 +249,18 @@ export function resolveSubgroupDisplayOptions(
   };
 }
 
+/**
+ * Subgroup headings follow the form/section label position unless the subgroup
+ * explicitly overrides it. A hidden field-label default is treated as top so
+ * `showHeading` never becomes an implicit second way to hide the heading.
+ */
+export function resolveSubgroupHeadingPosition(
+  headingPosition: SubgroupHeadingPosition | undefined,
+  labelPosition: LabelPosition
+): SubgroupHeadingPosition {
+  return headingPosition ?? (labelPosition === 'left' ? 'left' : 'top');
+}
+
 export interface SubgroupNode {
   id: string;
   name: string;
@@ -255,6 +268,8 @@ export interface SubgroupNode {
   parentId: string | null;
   createdByAssistant?: boolean;
   showHeading?: boolean;
+  /** Omit to inherit the form design's label position. */
+  headingPosition?: SubgroupHeadingPosition;
   showCard?: boolean; // When false, subgroup renders inline without card borders
 }
 

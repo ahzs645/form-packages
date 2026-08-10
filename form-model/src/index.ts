@@ -967,7 +967,7 @@ export interface BuilderFhirConfig {
   /** FHIR entryFormat display hint. */
   entryFormat?: string;
   /** FHIR answerConstraint code, for example optionsOnly. */
-  answerConstraint?: string;
+  answerConstraint?: "optionsOnly" | "optionsOrType" | "optionsOrString";
   /** Preferred terminology server URI for terminology-backed answers. */
   preferredTerminologyServer?: string;
   /** Full FHIR Questionnaire.item.enableWhen clauses preserved on import. */
@@ -1015,6 +1015,8 @@ export interface BuilderFhirConfig {
   /** Serialized Questionnaire-level metadata, stored on the first imported
    *  root field so it survives ordinary builder JSON/share persistence. */
   questionnaireRoot?: Record<string, unknown>;
+  /** Full imported item used to preserve release- and profile-specific fields. */
+  questionnaireItem?: Record<string, unknown>;
 }
 
 /**
@@ -1553,6 +1555,8 @@ export interface SectionSubgroup {
   id: string;
   name: string;
   showHeading?: boolean;
+  /** Omit to inherit the form design's label position. */
+  headingPosition?: "top" | "left";
   /** Layout type for subgroup rendering (aligned with group-layout) */
   layoutType?: "table" | "grid" | "list";
   /** Parent subgroup id when nesting is used */
