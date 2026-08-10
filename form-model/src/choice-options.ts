@@ -92,7 +92,7 @@ export function toChoiceOptionObject(option: BuilderChoiceOption): BuilderChoice
 /**
  * Collapse an option back to a bare string when it carries no extra data, so we
  * don't bloat saved forms with `{ label }` objects that add nothing. Options
- * with a score/value/description are kept as objects.
+ * with a score/value/description or presentation metadata are kept as objects.
  */
 export function compactChoiceOption(option: BuilderChoiceOption): BuilderChoiceOption {
   if (typeof option === "string") return normalizeOptionLabel(option);
@@ -103,13 +103,27 @@ export function compactChoiceOption(option: BuilderChoiceOption): BuilderChoiceO
   const hasDescription = option.description != null && option.description !== "";
   const hasHotKey = typeof extended.hotKey === "string" && extended.hotKey !== "";
   const hasOrder = typeof extended.order === "number" && Number.isFinite(extended.order);
-  if (!hasValue && !hasScore && !hasDescription && !hasHotKey && !hasOrder) return label;
+  const hasPresentationDepth =
+    typeof option.presentationDepth === "number" && Number.isInteger(option.presentationDepth) && option.presentationDepth >= 0;
+  const hasPresentationParentValue =
+    typeof option.presentationParentValue === "string" && option.presentationParentValue !== "";
+  if (
+    !hasValue &&
+    !hasScore &&
+    !hasDescription &&
+    !hasHotKey &&
+    !hasOrder &&
+    !hasPresentationDepth &&
+    !hasPresentationParentValue
+  ) return label;
   const next: ExtendedChoiceOptionObject = { label };
   if (hasValue) next.value = option.value;
   if (hasScore) next.score = option.score;
   if (hasDescription) next.description = option.description;
   if (hasHotKey) next.hotKey = extended.hotKey;
   if (hasOrder) next.order = extended.order;
+  if (hasPresentationDepth) next.presentationDepth = option.presentationDepth;
+  if (hasPresentationParentValue) next.presentationParentValue = option.presentationParentValue;
   return next;
 }
 

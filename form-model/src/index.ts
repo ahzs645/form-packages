@@ -143,6 +143,7 @@ export interface FhirQuestionnaireAnswerOption {
   valueString?: string;
   valueUri?: string;
   valueCoding?: FhirCoding;
+  valueQuantity?: { value?: number; unit?: string; system?: string; code?: string };
   valueReference?: { reference?: string; display?: string };
 }
 
@@ -160,6 +161,7 @@ export interface FhirQuestionnaireEnableWhen {
   answerQuantity?: { value?: number; unit?: string; system?: string; code?: string };
   answerUri?: string;
   answerReference?: { reference?: string; display?: string };
+  answerAttachment?: { id?: string; contentType?: string; url?: string; title?: string; data?: string };
 }
 
 export interface FhirQuestionnaireInitialValue {
@@ -944,8 +946,10 @@ export interface BuilderFhirConfig {
   linkId?: string;
   /** Original FHIR Questionnaire.item.type. */
   itemType?: string;
-  /** Original FHIR Questionnaire.item.definition canonical element URL. */
+  /** First FHIR Questionnaire.item.definition URL, retained for older callers and the single-value editor. */
   definition?: string;
+  /** All definition URLs. R6 permits more than one; R4/R4B/R5 permit at most one. */
+  definitions?: string[];
   /** FHIR Questionnaire.item.code values such as LOINC question or score codes. */
   code?: BuilderFhirCoding[];
   /** FHIR answerValueSet URI when options are externally defined. */
@@ -1067,6 +1071,13 @@ export interface BuilderChoiceOptionObject {
   score?: number;
   /** Optional helper text shown in option editors. */
   description?: string;
+  /**
+   * Presentation-only nesting inferred from an imported flat option list.
+   * This never implies answer selection or clinical parent/child semantics.
+   */
+  presentationDepth?: number;
+  /** Stored value of the preceding visual parent, for rendering/auditing only. */
+  presentationParentValue?: string;
 }
 
 export type BuilderChoiceOption = string | BuilderChoiceOptionObject;
@@ -1273,6 +1284,8 @@ export interface BuilderField {
       id: string;
       label: string;
       type: BuilderTableColumnType;
+      /** Original FHIR Questionnaire child item for lossless group/table round-trips. */
+      fhirConfig?: BuilderFhirConfig | null;
       booleanLabels?: { on: string; off: string } | null;
       prefill?: FieldPrefillValue;
       /** Date columns only: pair the date picker with a time input (DateTimeSelect). */
@@ -1848,6 +1861,7 @@ export type FormBorderRadius = "none" | "small" | "full";
 export type FormLabelPosition = "top" | "left" | "floating";
 export type FormWidth = "centered" | "full";
 export type FormQuestionSpacing = "compact" | "standard" | "comfortable" | "spacious";
+export type FormHeaderSpacing = "auto" | "compact" | "standard" | "spacious";
 export type FormPresentationStyle = "classic" | "focused";
 export type BuilderFormPresentation = "standard" | "investigation";
 export type CaptchaProvider = "recaptcha" | "hcaptcha" | "none";
@@ -1868,6 +1882,8 @@ export interface FormDesign {
   formWidth: FormWidth;
   /** Vertical spacing between questions. Standard matches the native MOIS 8px field margin. */
   questionSpacing?: FormQuestionSpacing;
+  /** Space below the sticky form header. Automatic adapts to available header navigation. */
+  headerSpacing?: FormHeaderSpacing;
   rtlLayout: boolean;
   uppercaseLabels: boolean;
 
@@ -1929,6 +1945,7 @@ export const defaultFormDesign: FormDesign = {
   showProgressBar: false,
   formWidth: "centered",
   questionSpacing: "standard",
+  headerSpacing: "auto",
   rtlLayout: false,
   uppercaseLabels: false,
   presentationStyle: "classic",

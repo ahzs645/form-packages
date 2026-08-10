@@ -47,6 +47,16 @@ const SENSORY_OPTIONS = [
   { code: "4", display: "No impairment" },
 ];
 
+const HIERARCHICAL_RACE_OPTIONS = [
+  { code: "LA6156-9", display: "Asian", presentationDepth: 0 },
+  {
+    code: "LA10617-1",
+    display: "Japanese",
+    presentationDepth: 1,
+    presentationParentValue: "LA6156-9",
+  },
+];
+
 function renderHarness(props: Record<string, unknown>, data: Record<string, unknown> = {}, codeList: unknown[] = []) {
   comboBoxProps = null;
   let currentState: any = null;
@@ -135,6 +145,34 @@ describe("FindCodeSelect field binding", () => {
       { code: "1", display: "Completely limited" },
       { code: "4", display: "No impairment" },
     ]);
+    act(() => harness.root.unmount());
+  });
+
+  it("indents visual children without selecting their presentation parent", () => {
+    const harness = renderHarness({
+      fieldId: "race",
+      optionList: HIERARCHICAL_RACE_OPTIONS,
+      selectionType: "multiple",
+    });
+
+    const childOption = comboBoxProps?.options.find((option: any) => option.key === "LA10617-1");
+    const renderedChild = comboBoxProps?.onRenderOption?.(childOption);
+    expect(renderedChild.props).toMatchObject({
+      "data-presentation-depth": 1,
+      "data-presentation-parent": "LA6156-9",
+      style: { paddingLeft: 18 },
+    });
+
+    act(() => {
+      comboBoxProps?.onChange?.(null, { ...childOption, selected: true });
+    });
+
+    expect(harness.getData().race).toHaveLength(1);
+    expect(harness.getData().race[0]).toMatchObject({
+      code: "LA10617-1",
+      display: "Japanese",
+    });
+    expect(harness.getData().race.some((answer: any) => answer.code === "LA6156-9")).toBe(false);
     act(() => harness.root.unmount());
   });
 

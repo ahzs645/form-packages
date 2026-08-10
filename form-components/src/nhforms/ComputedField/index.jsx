@@ -119,6 +119,27 @@ const _round = (value, precision = 0) => {
   if (!Number.isFinite(factor) || factor === 0) return null
   return Math.round(numeric * factor) / factor
 }
+const _power = (value, exponent) => {
+  const numeric = _toNumericValue(value)
+  const numericExponent = _toNumericValue(exponent)
+  if (!Number.isFinite(numeric) || !Number.isFinite(numericExponent)) return null
+  const result = numeric ** numericExponent
+  return Number.isFinite(result) ? result : null
+}
+const _ln = (value) => {
+  const numeric = _toNumericValue(value)
+  if (!Number.isFinite(numeric) || numeric <= 0) return null
+  const result = Math.log(numeric)
+  return Number.isFinite(result) ? result : null
+}
+const _exp = (value) => {
+  const numeric = _toNumericValue(value)
+  if (!Number.isFinite(numeric)) return null
+  const result = Math.exp(numeric)
+  return Number.isFinite(result) ? result : null
+}
+const _coalesce = (...values) => values.find((value) => value !== undefined && value !== null && value !== "") ?? null
+const _text = (value) => value == null ? "" : String(value)
 const _numericExtrema = (values, select) => {
   const numericValues = values.flat().map(_toNumericValue)
   if (numericValues.length === 0 || numericValues.some((value) => !Number.isFinite(value))) return null
@@ -175,6 +196,12 @@ const _extractComputedReferences = (expression) => {
 const _stripQuotedStrings = (expression) =>
   String(expression).replace(/"([^"\\]|\\.)*"|'([^'\\]|\\.)*'/g, " ")
 
+const _COMPUTED_NON_FIELD_IDENTIFIERS = new Set([
+  "iif", "score", "contains", "hasValue", "countTrue", "daysSince", "monthsSince",
+  "floor", "mod", "round", "power", "ln", "exp", "coalesce", "text", "min", "max",
+  "Math", "Number", "String", "null", "true", "false",
+])
+
 const _replaceBareReferencesOutsideQuotes = (expression, refs, valuesByFieldId) => {
   let prepared = ""
   let cursor = 0
@@ -182,7 +209,7 @@ const _replaceBareReferencesOutsideQuotes = (expression, refs, valuesByFieldId) 
   const replaceInSegment = (segment) => {
     let nextSegment = segment
     for (const ref of refs) {
-      if (["iif", "score", "contains", "hasValue", "countTrue", "daysSince", "monthsSince", "floor", "mod", "round", "min", "max", "null", "true", "false"].includes(ref)) continue
+      if (_COMPUTED_NON_FIELD_IDENTIFIERS.has(ref)) continue
       const numeric = _toNumericValue(valuesByFieldId?.[ref])
       if (!Number.isFinite(numeric)) return null
       nextSegment = nextSegment.replace(new RegExp(`\\b${_escapeRegExp(ref)}\\b`, "g"), String(numeric))
@@ -242,7 +269,7 @@ const _evaluateComputedExpression = (expression, valuesByFieldId, currentFieldId
   if (prepared === null) return null
 
   try {
-    const result = Function("iif", "score", "contains", "hasValue", "countTrue", "daysSince", "monthsSince", "floor", "mod", "round", "min", "max", `"use strict"; return (${prepared});`)(
+    const result = Function("iif", "score", "contains", "hasValue", "countTrue", "daysSince", "monthsSince", "floor", "mod", "round", "power", "ln", "exp", "coalesce", "text", "min", "max", `"use strict"; return (${prepared});`)(
       _iif,
       _score,
       _contains,
@@ -253,6 +280,11 @@ const _evaluateComputedExpression = (expression, valuesByFieldId, currentFieldId
       _floor,
       _mod,
       _round,
+      _power,
+      _ln,
+      _exp,
+      _coalesce,
+      _text,
       _min,
       _max
     )
@@ -314,9 +346,8 @@ const _toEditableComputedValue = (value) => {
 }
 
 const _hasAllReferencedValues = (expression, valuesByFieldId) => {
-  const refs = Array.from(String(expression || "").matchAll(_COMPUTED_REF_PATTERN))
-    .map((match) => match[1]?.trim() ?? "")
-    .filter(Boolean)
+  const refs = _extractComputedReferences(String(expression || ""))
+    .filter((ref) => !_COMPUTED_NON_FIELD_IDENTIFIERS.has(ref))
   if (refs.length === 0) return true
   // Controls such as ScaleField initialize an object-shaped value before the
   // user selects an answer. Check the object's comparable value so an empty

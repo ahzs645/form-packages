@@ -160,7 +160,14 @@ function namespaceStub(name: string): any {
 const LOAD_COMPONENTS: Record<string, string[]> = {
   AuthorshipField: ["AuthorshipField"],
   ObservationPanelEditor: ["ObservationPanelEditor"],
-  EditableTable: ["EditableTable", "EditableTableSchema", "createTableColumns"],
+  EditableTable: [
+    "EditableTable",
+    "EditableTableSchema",
+    "createTableColumns",
+    "_choiceValueToCoding",
+    "_choiceValueForControl",
+    "_choiceValueForStorage",
+  ],
   UnsavedChangesGuard: ["UnsavedChangesGuard"],
   SaveOnClose: ["SaveOnClose", "useSaveOnClose"],
 };
@@ -222,6 +229,55 @@ describe("authorship components load in the real-MOIS wrapper", () => {
     } finally {
       if (hadWindow) (globalThis as any).window = prevWindow;
       else delete (globalThis as any).window;
+    }
+  });
+
+  it("normalizes stored table choices for single and multiple code selectors", () => {
+    const source = fs.readFileSync(path.join(NH, "EditableTable", "index.jsx"), "utf8");
+    const exportNames = LOAD_COMPONENTS.EditableTable;
+    const assembled =
+      "let Query=null; let InitialData={}; let Schema=null;" + PRELUDE +
+      wrapComponentSource(source, exportNames);
+    const code = Babel.transform(assembled, { presets: ["react", "typescript"], filename: "form.tsx" }).code;
+
+    const previousWindow = (globalThis as any).window;
+    (globalThis as any).window = {};
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func
+      const factory = Function(
+        '"use strict";return (function(React,Fabric,Fluent,MoisControl,MoisFunction,MoisActions,MoisHooks,Mois){' +
+          code +
+          ";return({ toCoding: _choiceValueToCoding, forControl: _choiceValueForControl, forStorage: _choiceValueForStorage })})"
+      )();
+      const result = factory(
+        React,
+        namespaceStub("Fabric"),
+        namespaceStub("Fluent"),
+        namespaceStub("MoisControl"),
+        namespaceStub("MoisFunction"),
+        namespaceStub("MoisHooks"),
+        namespaceStub("MoisActions"),
+        {}
+      );
+      const options = [{ key: "jp", text: "Japanese" }, { key: "kr", text: "Korean" }];
+
+      expect(result.forControl(["jp", "kr"], "multiple", options)).toEqual([
+        { code: "jp", display: "Japanese" },
+        { code: "kr", display: "Korean" },
+      ]);
+      expect(result.forControl({ selectedKey: "jp", response: "Japanese" }, "single", options)).toEqual({
+        code: "jp",
+        display: "Japanese",
+      });
+      expect(result.forControl([], "multiple", options)).toEqual([]);
+      expect(result.forStorage(
+        { code: "kr", display: "Korean" },
+        [{ code: "jp", display: "Japanese" }, { code: "kr", display: "Korean" }],
+        "multiple"
+      )).toEqual(["jp", "kr"]);
+      expect(result.forStorage({ code: "jp", display: "Japanese" }, undefined, "single")).toBe("jp");
+    } finally {
+      (globalThis as any).window = previousWindow;
     }
   });
 });

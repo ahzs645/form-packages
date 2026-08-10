@@ -282,6 +282,10 @@ export interface ParsedField {
     label: string;
     hotKey?: string;
     order?: number;
+    /** Visual nesting only; it does not create selection dependencies. */
+    presentationDepth?: number;
+    /** Stored value of the visual parent; never emitted as an answer implicitly. */
+    presentationParentValue?: string;
   }>;
   /** MOIS control density for coded selects/checklists (`size` prop). */
   choiceSize?: string;

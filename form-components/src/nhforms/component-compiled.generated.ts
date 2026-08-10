@@ -1422,6 +1422,281 @@ function BulkSetField({
     isMultiline: false
   }, contradictionMessage) : null));
 }`,
+  './ChartAttachmentUpload/index.jsx': `const {
+  useMemo,
+  useRef,
+  useState
+} = React;
+const readChartAttachmentResponse = async response => {
+  if (!response || typeof response.text !== "function") return null;
+  let text = "";
+  try {
+    text = await response.text();
+  } catch (_error) {
+    return null;
+  }
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch (_error) {
+    return text.length > 20000 ? \`\${text.slice(0, 20000)}...[truncated]\` : text;
+  }
+};
+const persistChartAttachmentResult = (setFormData, fieldId, result) => {
+  if (!fieldId || typeof setFormData !== "function") return;
+  setFormData(produce(draft => {
+    if (!draft.field) draft.field = {
+      data: {},
+      status: {},
+      history: []
+    };
+    if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {};
+    draft.field.data[fieldId] = result;
+    if (draft.formData && typeof draft.formData === "object") draft.formData[fieldId] = result;
+  }));
+};
+const formatChartAttachmentBytes = value => {
+  const bytes = Number(value);
+  if (!Number.isFinite(bytes) || bytes < 0) return "Unknown size";
+  if (bytes < 1024) return \`\${bytes} B\`;
+  if (bytes < 1024 * 1024) return \`\${(bytes / 1024).toFixed(1)} KB\`;
+  return \`\${(bytes / (1024 * 1024)).toFixed(1)} MB\`;
+};
+
+/**
+ * ChartAttachmentUpload — exported MOIS attachment API diagnostic.
+ *
+ * The file is uploaded immediately to the current patient's chart when the
+ * user presses Upload. File contents are never stored in webform state; only
+ * request/response metadata is persisted under resultFieldId.
+ */
+const ChartAttachmentUpload = ({
+  id,
+  resultFieldId = "chartAttachmentUploadResult",
+  title = "MOIS chart attachment upload test",
+  description = "Choose a small, non-sensitive test file. Upload writes immediately to the current patient's chart.",
+  buttonText = "Upload test attachment",
+  documentTypeCode = "NOTE",
+  documentTypeDisplay = "Note / General Purpose Document",
+  documentTypeSystem = "MOIS-DOCUMENTTYPE",
+  defaultNote = "Uploaded from Webforms attachment API test",
+  accept = "",
+  maxFileSizeBytes = 10 * 1024 * 1024,
+  showResponseBody = true
+}) => {
+  const [fd, setFormData] = useActiveData();
+  const sd = useSourceData();
+  const fileInputRef = useRef(null);
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [note, setNote] = useState(defaultNote);
+  const [busy, setBusy] = useState(false);
+  const storedResult = resultFieldId ? fd?.field?.data?.[resultFieldId] : null;
+  const [result, setResult] = useState(() => storedResult || null);
+  const runtime = useMemo(() => {
+    const appSettings = typeof sd?.useAppSettings === "function" ? sd.useAppSettings() : null;
+    const auth = sd?.auth || appSettings?.auth || {};
+    const userProfile = sd?.userProfile || appSettings?.userProfile || {};
+    const patientId = sd?.formParams?.patientId ?? sd?.patientId ?? sd?.patient?.patientId ?? null;
+    const userProfileId = userProfile?.userProfileId ?? userProfile?.id ?? null;
+    const rawApiServer = String(auth?.apiServer || "").trim();
+    const apiServer = rawApiServer && !rawApiServer.endsWith("/") ? \`\${rawApiServer}/\` : rawApiServer;
+    const endpoint = apiServer && patientId != null && userProfileId != null ? \`\${apiServer}api/attachment/file/\${encodeURIComponent(userProfileId)}/\${encodeURIComponent(patientId)}/\` : "";
+    return {
+      endpoint,
+      patientId,
+      userProfileId,
+      jwToken: auth?.jwToken || ""
+    };
+  }, [sd]);
+  const inputId = \`\${id || resultFieldId || "chart-attachment-upload"}-file\`;
+  const fileTooLarge = Boolean(selectedFile && Number(maxFileSizeBytes) > 0 && selectedFile.size > Number(maxFileSizeBytes));
+  const canUpload = Boolean(selectedFile && runtime.endpoint && runtime.jwToken && !fileTooLarge && !busy);
+  const recordResult = nextResult => {
+    setResult(nextResult);
+    persistChartAttachmentResult(setFormData, resultFieldId, nextResult);
+  };
+  const clearSelection = () => {
+    setSelectedFile(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+  const uploadAttachment = async () => {
+    if (!canUpload || !selectedFile) return;
+    const startedAt = Date.now();
+    const document = {
+      documentId: 0,
+      patientId: Number(runtime.patientId),
+      note: String(note || defaultNote || selectedFile.name),
+      documentType: {
+        code: documentTypeCode,
+        display: documentTypeDisplay,
+        system: documentTypeSystem
+      }
+    };
+    setBusy(true);
+    try {
+      const fetchAttachment = typeof window !== "undefined" && typeof window.fetch === "function" ? window.fetch.bind(window) : null;
+      const FormDataClass = typeof window !== "undefined" ? window.FormData : null;
+      if (!fetchAttachment || !FormDataClass) {
+        throw new Error("Browser fetch/FormData is not available in this MOIS runtime.");
+      }
+      const body = new FormDataClass();
+      body.append("file", selectedFile);
+      body.set("document", JSON.stringify(document));
+      const response = await fetchAttachment(runtime.endpoint, {
+        method: "POST",
+        headers: {
+          Authorization: \`Bearer \${runtime.jwToken}\`
+        },
+        body
+      });
+      const responseBody = await readChartAttachmentResponse(response);
+      const nextResult = {
+        source: "chart-attachment-upload",
+        ok: Boolean(response?.ok),
+        status: response?.status ?? null,
+        statusText: response?.statusText || "",
+        contentType: response?.headers?.get ? response.headers.get("content-type") : null,
+        body: responseBody,
+        endpoint: runtime.endpoint,
+        patientId: runtime.patientId,
+        userProfileId: runtime.userProfileId,
+        file: {
+          name: selectedFile.name,
+          size: selectedFile.size,
+          type: selectedFile.type || "application/octet-stream"
+        },
+        document,
+        receivedAt: new Date().toISOString(),
+        durationMs: Date.now() - startedAt
+      };
+      if (!response?.ok) nextResult.error = \`HTTP \${response?.status || "error"}\${response?.statusText ? \`: \${response.statusText}\` : ""}\`;
+      recordResult(nextResult);
+    } catch (error) {
+      recordResult({
+        source: "chart-attachment-upload",
+        ok: false,
+        status: null,
+        statusText: "",
+        body: null,
+        endpoint: runtime.endpoint,
+        patientId: runtime.patientId,
+        userProfileId: runtime.userProfileId,
+        file: selectedFile ? {
+          name: selectedFile.name,
+          size: selectedFile.size,
+          type: selectedFile.type || "application/octet-stream"
+        } : null,
+        document,
+        error: error?.message || String(error),
+        diagnostic: "No HTTP response was readable. Check MOIS endpoint access, authorization, and runtime network policy.",
+        receivedAt: new Date().toISOString(),
+        durationMs: Date.now() - startedAt
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+  const statusLabel = !result ? "Not tested" : result.ok ? \`Upload succeeded\${result.status ? \` (\${result.status})\` : ""}\` : result.status ? \`Upload failed (\${result.status})\` : "Upload request failed";
+  const statusColor = !result ? "#605e5c" : result.ok ? "#107c10" : "#a4262c";
+  const missingRuntime = [];
+  if (runtime.patientId == null) missingRuntime.push("patient ID");
+  if (runtime.userProfileId == null) missingRuntime.push("user profile ID");
+  if (!runtime.endpoint) missingRuntime.push("MOIS API server");
+  if (!runtime.jwToken) missingRuntime.push("authorization token");
+  return /*#__PURE__*/React.createElement("div", {
+    "data-chart-attachment-upload": id || resultFieldId,
+    style: {
+      border: "1px solid #d2d0ce",
+      padding: 14,
+      background: "#faf9f8"
+    }
+  }, /*#__PURE__*/React.createElement(Fluent.Stack, {
+    tokens: {
+      childrenGap: 10
+    }
+  }, /*#__PURE__*/React.createElement(Fluent.Text, {
+    variant: "mediumPlus",
+    styles: {
+      root: {
+        fontWeight: 600
+      }
+    }
+  }, title), /*#__PURE__*/React.createElement(Fluent.MessageBar, {
+    messageBarType: Fluent.MessageBarType.warning
+  }, description), /*#__PURE__*/React.createElement(Fluent.Text, {
+    variant: "small"
+  }, "Patient ID: ", runtime.patientId ?? "Unavailable", " \\xB7 User profile ID: ", runtime.userProfileId ?? "Unavailable"), /*#__PURE__*/React.createElement(Fluent.Text, {
+    variant: "small",
+    styles: {
+      root: {
+        color: "#605e5c",
+        wordBreak: "break-all"
+      }
+    }
+  }, "Endpoint: ", runtime.endpoint || "Unavailable"), missingRuntime.length > 0 ? /*#__PURE__*/React.createElement(Fluent.MessageBar, {
+    messageBarType: Fluent.MessageBarType.error
+  }, "Cannot upload because the runtime did not provide: ", missingRuntime.join(", "), ".") : null, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    htmlFor: inputId,
+    style: {
+      display: "block",
+      fontWeight: 600,
+      marginBottom: 4
+    }
+  }, "Test file"), /*#__PURE__*/React.createElement("input", {
+    ref: fileInputRef,
+    id: inputId,
+    type: "file",
+    accept: accept || undefined,
+    disabled: busy,
+    onChange: event => setSelectedFile(event?.target?.files?.[0] || null)
+  })), selectedFile ? /*#__PURE__*/React.createElement(Fluent.Text, {
+    variant: "small"
+  }, "Selected: ", selectedFile.name, " (", formatChartAttachmentBytes(selectedFile.size), ", ", selectedFile.type || "unknown type", ")") : null, fileTooLarge ? /*#__PURE__*/React.createElement(Fluent.MessageBar, {
+    messageBarType: Fluent.MessageBarType.error
+  }, "The selected file exceeds this test form's ", formatChartAttachmentBytes(maxFileSizeBytes), " safety limit.") : null, /*#__PURE__*/React.createElement(Fluent.TextField, {
+    label: "Chart document note",
+    value: note,
+    disabled: busy,
+    onChange: (_event, value) => setNote(value || "")
+  }), /*#__PURE__*/React.createElement(Fluent.Stack, {
+    horizontal: true,
+    tokens: {
+      childrenGap: 8
+    }
+  }, /*#__PURE__*/React.createElement(Fluent.PrimaryButton, {
+    text: busy ? "Uploading..." : buttonText,
+    disabled: !canUpload,
+    onClick: uploadAttachment
+  }), /*#__PURE__*/React.createElement(Fluent.DefaultButton, {
+    text: "Clear selection",
+    disabled: !selectedFile || busy,
+    onClick: clearSelection
+  })), /*#__PURE__*/React.createElement("div", {
+    role: "status",
+    "aria-live": "polite",
+    style: {
+      color: statusColor,
+      fontWeight: 600
+    }
+  }, busy ? "Uploading attachment..." : statusLabel, result?.durationMs != null ? \` in \${result.durationMs} ms\` : ""), result?.error ? /*#__PURE__*/React.createElement(Fluent.Text, {
+    styles: {
+      root: {
+        color: "#a4262c"
+      }
+    }
+  }, result.error) : null, result?.diagnostic ? /*#__PURE__*/React.createElement(Fluent.Text, {
+    variant: "small"
+  }, result.diagnostic) : null, showResponseBody && result ? /*#__PURE__*/React.createElement("pre", {
+    style: {
+      margin: 0,
+      maxHeight: 260,
+      overflow: "auto",
+      whiteSpace: "pre-wrap",
+      wordBreak: "break-word",
+      fontSize: 11
+    }
+  }, JSON.stringify(result, null, 2)) : null));
+};`,
   './ChartRecordTable/index.jsx': `function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 if (typeof ChartRecordTable === "undefined") {
   window.ChartRecordTable = null;
@@ -3725,6 +4000,27 @@ const _round = (value, precision = 0) => {
   if (!Number.isFinite(factor) || factor === 0) return null;
   return Math.round(numeric * factor) / factor;
 };
+const _power = (value, exponent) => {
+  const numeric = _toNumericValue(value);
+  const numericExponent = _toNumericValue(exponent);
+  if (!Number.isFinite(numeric) || !Number.isFinite(numericExponent)) return null;
+  const result = numeric ** numericExponent;
+  return Number.isFinite(result) ? result : null;
+};
+const _ln = value => {
+  const numeric = _toNumericValue(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return null;
+  const result = Math.log(numeric);
+  return Number.isFinite(result) ? result : null;
+};
+const _exp = value => {
+  const numeric = _toNumericValue(value);
+  if (!Number.isFinite(numeric)) return null;
+  const result = Math.exp(numeric);
+  return Number.isFinite(result) ? result : null;
+};
+const _coalesce = (...values) => values.find(value => value !== undefined && value !== null && value !== "") ?? null;
+const _text = value => value == null ? "" : String(value);
 const _numericExtrema = (values, select) => {
   const numericValues = values.flat().map(_toNumericValue);
   if (numericValues.length === 0 || numericValues.some(value => !Number.isFinite(value))) return null;
@@ -3771,6 +4067,7 @@ const _extractComputedReferences = expression => {
   return Array.from(new Set([...bracketedRefs, ...bareRefs]));
 };
 const _stripQuotedStrings = expression => String(expression).replace(/"([^"\\\\]|\\\\.)*"|'([^'\\\\]|\\\\.)*'/g, " ");
+const _COMPUTED_NON_FIELD_IDENTIFIERS = new Set(["iif", "score", "contains", "hasValue", "countTrue", "daysSince", "monthsSince", "floor", "mod", "round", "power", "ln", "exp", "coalesce", "text", "min", "max", "Math", "Number", "String", "null", "true", "false"]);
 const _replaceBareReferencesOutsideQuotes = (expression, refs, valuesByFieldId) => {
   let prepared = "";
   let cursor = 0;
@@ -3778,7 +4075,7 @@ const _replaceBareReferencesOutsideQuotes = (expression, refs, valuesByFieldId) 
   const replaceInSegment = segment => {
     let nextSegment = segment;
     for (const ref of refs) {
-      if (["iif", "score", "contains", "hasValue", "countTrue", "daysSince", "monthsSince", "floor", "mod", "round", "min", "max", "null", "true", "false"].includes(ref)) continue;
+      if (_COMPUTED_NON_FIELD_IDENTIFIERS.has(ref)) continue;
       const numeric = _toNumericValue(valuesByFieldId?.[ref]);
       if (!Number.isFinite(numeric)) return null;
       nextSegment = nextSegment.replace(new RegExp(\`\\\\b\${_escapeRegExp(ref)}\\\\b\`, "g"), String(numeric));
@@ -3826,7 +4123,7 @@ const _evaluateComputedExpression = (expression, valuesByFieldId, currentFieldId
   prepared = _replaceBareReferencesOutsideQuotes(prepared, uniqueBareRefs, valuesByFieldId);
   if (prepared === null) return null;
   try {
-    const result = Function("iif", "score", "contains", "hasValue", "countTrue", "daysSince", "monthsSince", "floor", "mod", "round", "min", "max", \`"use strict"; return (\${prepared});\`)(_iif, _score, _contains, _hasValue, _countTrue, _daysSince, _monthsSince, _floor, _mod, _round, _min, _max);
+    const result = Function("iif", "score", "contains", "hasValue", "countTrue", "daysSince", "monthsSince", "floor", "mod", "round", "power", "ln", "exp", "coalesce", "text", "min", "max", \`"use strict"; return (\${prepared});\`)(_iif, _score, _contains, _hasValue, _countTrue, _daysSince, _monthsSince, _floor, _mod, _round, _power, _ln, _exp, _coalesce, _text, _min, _max);
     if (typeof result === "number") return Number.isFinite(result) ? result : null;
     if (typeof result === "string" || typeof result === "boolean") return result;
     return null;
@@ -3876,7 +4173,7 @@ const _toEditableComputedValue = value => {
   return _toComparableValue(value) === value ? String(value) : String(_toComparableValue(value) ?? "");
 };
 const _hasAllReferencedValues = (expression, valuesByFieldId) => {
-  const refs = Array.from(String(expression || "").matchAll(_COMPUTED_REF_PATTERN)).map(match => match[1]?.trim() ?? "").filter(Boolean);
+  const refs = _extractComputedReferences(String(expression || "")).filter(ref => !_COMPUTED_NON_FIELD_IDENTIFIERS.has(ref));
   if (refs.length === 0) return true;
   // Controls such as ScaleField initialize an object-shaped value before the
   // user selects an answer. Check the object's comparable value so an empty
@@ -6305,6 +6602,32 @@ const _normalizeChoiceOptions = (options = []) => {
     return null;
   }).filter(Boolean);
 };
+const _choiceValueToCoding = (value, options = []) => {
+  if (value === undefined || value === null || value === "") return null;
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const code = value.code ?? value.value ?? value.key ?? value.selectedKey;
+    if (code === undefined || code === null || code === "") return null;
+    const display = value.display ?? value.text ?? value.label ?? value.response ?? code;
+    return {
+      code: String(code),
+      display: String(display)
+    };
+  }
+  const code = String(value);
+  const option = options.find(entry => String(entry.key) === code);
+  return {
+    code,
+    display: option?.text || code
+  };
+};
+const _choiceValueForControl = (value, selectionType, options = []) => {
+  if (selectionType === "multiple") {
+    const values = Array.isArray(value) ? value : value ? [value] : [];
+    return values.map(entry => _choiceValueToCoding(entry, options)).filter(Boolean);
+  }
+  return _choiceValueToCoding(value, options) || undefined;
+};
+const _choiceValueForStorage = (coding, codings, selectionType) => selectionType === "multiple" ? (codings || []).map(entry => entry?.code).filter(Boolean) : coding?.code || "";
 const _normalizeValidationMessage = result => {
   if (!result) return null;
   if (typeof result === "string") {
@@ -7195,11 +7518,8 @@ EditableTable = ({
           optionList: column.codeSystem ? undefined : dropdownOptions,
           codeSystem: column.codeSystem || undefined,
           selectionType: selectionType,
-          value: value ? {
-            code: value,
-            display: value
-          } : undefined,
-          onChange: coding => onValueChange(rowIndex, column.id, coding?.code || ""),
+          value: _choiceValueForControl(value, selectionType, dropdownOptions),
+          onChange: (coding, codings) => onValueChange(rowIndex, column.id, _choiceValueForStorage(coding, codings, selectionType)),
           placeholder: column.placeholder || "Select...",
           showOther: column.showOtherOption === true,
           readOnly: effectiveReadOnly,
@@ -8301,10 +8621,20 @@ const FindCodeSelectBase = ({
   };
   const renderCandidateOption = option => {
     if (!option) return null;
-    if (!onRenderCandidate) return /*#__PURE__*/React.createElement(React.Fragment, null, option.text);
     const item = option?.data?.item;
     const idx = option?.data?.index ?? 0;
-    return /*#__PURE__*/React.createElement(React.Fragment, null, onRenderCandidate(item, idx));
+    const rendered = onRenderCandidate ? onRenderCandidate(item, idx) : option.text;
+    const rawDepth = Number(item?.presentationDepth);
+    const presentationDepth = Number.isInteger(rawDepth) && rawDepth > 0 ? Math.min(rawDepth, 8) : 0;
+    if (presentationDepth === 0) return /*#__PURE__*/React.createElement(React.Fragment, null, rendered);
+    return /*#__PURE__*/React.createElement("div", {
+      "data-presentation-depth": presentationDepth,
+      "data-presentation-parent": item?.presentationParentValue || undefined,
+      style: {
+        boxSizing: 'border-box',
+        paddingLeft: presentationDepth * 18
+      }
+    }, rendered);
   };
   const showChildren = !isMultiSelect && selectedValue && conditionalCodes.includes(String(selectedValue?.[codeId] ?? selectedValue?.code ?? ''));
   const isEmpty = isMultiSelect ? (!Array.isArray(selectedValue) || selectedValue.length === 0) && !searchText : !selectedValue && !searchText;
@@ -34172,23 +34502,24 @@ export const componentDefinedNames: Record<string, string[]> = {
   './AttestationSignOff/index.jsx': ["AttestationSignOff","cleaned","current","deriveInitials","flatTargets","getCurrentActorName","initials","key","name","nestedTargets","next","normalizeInitialsName","normalizeRoleOptions","normalizeTargets","parts","roleOptions","row","sd","signatureFieldId","signatureValue","signedAt","source","table","text","updateValue","value"],
   './AuthorshipField/index.jsx': ["AuthorshipField","DEFAULT_WINDOW_HOURS","_defaultPolicy","_nhAuth","_normalizeFieldOptions","actor","actorFrom","addHoursIso","base","buildKey","c","changed","ck","claim","claims","commitSave","commitValue","componentId","current","d","data","editableUntil","effectiveFieldId","euDate","existing","expired","fieldData","formatTimestamp","isNonEmpty","isOwner","keepStatus","key","label","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","nextStatus","nhAuth","normalizeStore","now","nowIso","numeric","optionList","ownerId","ownerName","ownerRefresh","pad2","pending","policy","policyAppliesToAction","prepareSave","query","raw","readOnly","readStore","release","renderInput","resolveNow","sameActor","sd","section","store","text","trimmed","ts","untilSelf","value","windowHours"],
   './BulkSetField/index.jsx': ["BulkSetField","ButtonComponent","apply","comparableAnswer","contradictedFieldIds","current","effectiveControlFieldId","fieldData","fieldId","isApplied","isBlankAnswer","isDisabled","normalizeBulkTargets","normalizedTargets","previous","raw","shouldClearControl","showWarning","unapply","writeControl"],
+  './ChartAttachmentUpload/index.jsx': ["ChartAttachmentUpload","FormDataClass","apiServer","appSettings","auth","body","bytes","canUpload","clearSelection","document","endpoint","fetchAttachment","fileInputRef","fileTooLarge","formatChartAttachmentBytes","inputId","missingRuntime","nextResult","patientId","persistChartAttachmentResult","rawApiServer","readChartAttachmentResponse","recordResult","response","responseBody","runtime","sd","startedAt","statusColor","statusLabel","storedResult","text","uploadAttachment","userProfile","userProfileId"],
   './ChartRecordTable/index.jsx': ["ChartRecordTable","_chartRecordTableActiveConnections","_chartRecordTableActivePlannedActions","_chartRecordTableGenericColumns","_chartRecordTableGenericEntryColumns","_chartRecordTablePresets","_chartRecordTableSorts","_chartRecordTableStartDateDesc","byType","preset","resolvedChartColumns","resolvedEntryColumns","resolvedFieldId","resolvedFilterPred","resolvedId","resolvedLabel","resolvedListCompare","resolvedMoisModule","resolvedSelectionType","resolvedSourceId","resolvedSourceMap"],
   './ChartReviewSummary/index.jsx': ["ChartReviewSummary","K","REVIEW_BLUE","REVIEW_GRAY","REVIEW_INK","REVIEW_RED","ReviewSectionHeading","age","best","bestTime","codeList","current","doseText","latestByCode","medications","monthDelta","now","observations","parsed","patient","problems","reviewAgeYears","reviewArray","reviewDateKey","reviewGetObject","reviewHeadingStyle","reviewLineStyle","rows","sd","sex","steps","stopRaw","stopTime","time","units","value"],
   './CodedObservationChoiceField/index.jsx': ["CodedObservationChoiceField","candidates","checklistOptions","code","codedChoicePayloadsEqual","codings","commentValue","componentId","container","createdBy","currentPayload","display","effectiveFieldId","effectiveRenderAs","effectiveSelectionType","findExistingObservationId","formatCodedChoiceReport","fromContext","handleFindCodeChange","isMultiple","match","nextGroup","normalizeCodedChoiceOptions","normalizeSelectedCodings","oldId","option","options","report","sd","selectOptions","selectedValue","setCodedChoicePayload","stripVolatileCodedChoicePayloadFields","value","values","writeCodedChoiceValue"],
   './CommonSchemaDefn/index.jsx': ["NameBlockFields","active","commonSchemaDefn","formHistorySchema","makeCodedObsUpdates","makeObsUpdatesFromVs","makeTextObsUpdates","makeValueSetOptions","nameBlockSchema","newDco","oldObs","oldObsId","options","selectAll","startDateDesc","valueSet","vso","ynuaOptions"],
   './CompactBooleanField/index.jsx': ["BooleanLabelPresets","CompactBooleanChecklist","CompactBooleanChecklistSchema","CompactBooleanField","CompactBooleanFieldSchema","CompactBooleanGroup","CompactChoiceField","CompactChoiceFieldMultiSchema","CompactChoiceFieldSchema","OptionButtons","YesNoButtons","baseContainerStyle","buttonStyle","checkboxWrapperRef","choiceContent","commitValue","containerStyle","currentData","currentValue","data","decodePDFHex","decoded","fieldContent","getBooleanLabels","getButtonStyles","getCardContainerStyles","getFieldContainerStyles","getWidthStyle","handleChange","handleCheckboxChange","handleClick","handleNoClick","handleYesClick","input","isDarkMode","isDisabled","isHorizontal","isLast","isLeftLabel","isMultiple","isSelected","labelStyle","lastRowStyle","newValues","noButtonStyle","normalizeValue","normalized","normalizedValue","noteStyle","prevDecoded","rowStyle","selected","selectedValues","setFormData","sizeStyles","theme","themeLabelMaxWidth","themeLabelMinWidth","titleStyle","values","widthMap","yesButtonStyle"],
-  './ComputedField/index.jsx': ["ComputedField","_COMPUTED_REF_PATTERN","_MS_PER_DAY","_calendarDayNumber","_computedFieldIsOverridden","_computedFieldState","_contains","_countTrue","_daysSince","_escapeRegExp","_evaluateComputedExpression","_extractComputedReferences","_floor","_getInterpretationRange","_hasAllReferencedValues","_hasValue","_iif","_isDateOnlyValue","_isSafeComputedExpression","_max","_min","_mod","_monthsSince","_normalizeCalculationPolicy","_numericExtrema","_replaceBareReferencesOutsideQuotes","_round","_roundComputedValue","_score","_shouldApplyComputedValue","_stripQuotedStrings","_toComparableValue","_toDateValue","_toDisplayValue","_toEditableComputedValue","_toNumericValue","bareRefs","bracketedRefs","canEdit","canShowInterpretation","candidate","computedValue","currentValue","cursor","date","dateOnly","digits","direct","displayValue","enteredDisplayValue","externallyReadOnly","factor","interpretationRange","interpretationValue","isIncomplete","isOverridden","markOverridden","max","min","months","nextSegment","numeric","numericDivisor","numericPrecision","numericValues","parsed","passesMax","passesMin","policy","prepared","previousState","reference","refs","renderedValue","replaceInSegment","replaced","result","rounded","roundedValue","start","state","stateContainer","stateMatches","storedValue","stringPattern","strippedExpression","tail","trimmed","uniqueBareRefs","uniqueBracketedRefs","unwrappedExpression","useCalculatedValue","valueMatches","valuesByFieldId"],
+  './ComputedField/index.jsx': ["ComputedField","_COMPUTED_NON_FIELD_IDENTIFIERS","_COMPUTED_REF_PATTERN","_MS_PER_DAY","_calendarDayNumber","_coalesce","_computedFieldIsOverridden","_computedFieldState","_contains","_countTrue","_daysSince","_escapeRegExp","_evaluateComputedExpression","_exp","_extractComputedReferences","_floor","_getInterpretationRange","_hasAllReferencedValues","_hasValue","_iif","_isDateOnlyValue","_isSafeComputedExpression","_ln","_max","_min","_mod","_monthsSince","_normalizeCalculationPolicy","_numericExtrema","_power","_replaceBareReferencesOutsideQuotes","_round","_roundComputedValue","_score","_shouldApplyComputedValue","_stripQuotedStrings","_text","_toComparableValue","_toDateValue","_toDisplayValue","_toEditableComputedValue","_toNumericValue","bareRefs","bracketedRefs","canEdit","canShowInterpretation","candidate","computedValue","currentValue","cursor","date","dateOnly","digits","direct","displayValue","enteredDisplayValue","externallyReadOnly","factor","interpretationRange","interpretationValue","isIncomplete","isOverridden","markOverridden","max","min","months","nextSegment","numeric","numericDivisor","numericExponent","numericPrecision","numericValues","parsed","passesMax","passesMin","policy","prepared","previousState","reference","refs","renderedValue","replaceInSegment","replaced","result","rounded","roundedValue","start","state","stateContainer","stateMatches","storedValue","stringPattern","strippedExpression","tail","trimmed","uniqueBareRefs","uniqueBracketedRefs","unwrappedExpression","useCalculatedValue","valueMatches","valuesByFieldId"],
   './ConditionalGroup/index.jsx': ["ConditionalField","ConditionalGroup","ConditionalGroupSchema","ConditionalReadOnly","ControllerLabelPresets","DISABLED_NATIVE_ELEMENTS","LogicGateContext","LogicGateProvider","MAX_SUBGROUP_DEPTH","READ_ONLY_NATIVE_ELEMENTS","allParentsVisible","baseContainerStyle","baseContentStyle","becameHidden","checkChoiceMatch","checkComparisonMatch","checkControllerMatch","childContext","clippedField","cloneWithProtection","conditionMet","containerStyle","contentNode","contentRef","contentStyle","context","contextValue","controllerFieldId","controllerValue","controllerWrapperStyle","createBranchingRule","currentDepth","defaultPadding","depthIndicatorStyle","effectiveValue","evaluateConditionEntries","evaluateConditionEntry","fieldValue","fieldValues","frame","generateConditionalGroupJSX","generateGroup","getControllerValue","groupRect","handleControllerChange","hasMatch","hiddenIndicatorStyle","indent","isDarkMode","isGroupVisible","isVisible","jsx","left","matches","mergeStyles","mode","nestedValue","nextProps","normalizeComparableValue","normalizeComparableValues","normalizeValue","normalized","normalizedOptionValues","orderedRules","override","overrides","parentChain","parentContext","payloads","props","protectedChildren","readControllerValue","rect","reportOverflow","result","right","rule","rules","theme","titleStyle","type","useConditionalVisibility","useIsVisible","useLogicGate","usesDisabledFallback","wasVisibleRef"],
   './Conditions/index.jsx': ["Conditions","ConditionsFields"],
   './Connections/index.jsx': ["CONNECTIONS_SORTS","Connections","ConnectionsFields","SelectActiveConnections","byType","prop","resolvedCompare"],
   './ConversionField/index.jsx': ["ConversionField","ConversionFieldSchema","_asPositiveNumber","_asPrecision","_conversionPathSegments","_normalizeConversionRows","_readConversionPath","_readConversionValue","_sanitizeConversionNumber","activeFrom","activeTo","canUseFrom","canUseTo","char","clearValues","convertRow","current","fromValue","hasAnyValue","hasDecimal","index","lastEdited","lastEditedRef","next","nextValue","normalizedFromFieldId","normalizedToFieldId","parsed","parsedFrom","parsedTo","pathValue","rows","segments","setConversionValues","source","sourceFieldId","text","toValue","updateValue","updates"],
   './CustomJsxBlock/index.jsx': ["CustomJsxBlock","displaySource","raw"],
   './DentalWeightConverter/index.jsx': ["DentalWeightConverter","DentalWeightConverterSchema","_positiveNumber","_readDentalField","_sanitizeDentalWeight","cellStyle","clearWeights","convertWeights","data","disabled","factor","fieldWrapperStyle","fixedPrecision","kgValue","kilograms","lastEdited","lastEditedRef","lbValue","nextValue","numeric","parsed","parts","pounds","setDentalValues","text","updateWeight"],
-  './EditableTable/index.jsx': ["ButtonComponent","DEFAULT_WINDOW_HOURS","EditableTable","EditableTableSchema","_addDaysToDateValue","_applyComputedColumns","_applyDefaultValuesToRow","_applyRowProcessingConfig","_buildRowsFromSourceFields","_buildSubformFieldFromColumn","_cloneRow","_coerceNumberCellValue","_computeTemplateColumnValue","_evaluateColumnVisibility","_formatCellValue","_formatLocalDate","_formatProcessedNumber","_getDefaultCellValue","_getLocalStampLock","_getValueAtPath","_hasPersistedAuthorshipClaim","_hasStampedLockValue","_isMeaningfulValue","_isRowEmpty","_makeEmptyRow","_normalizeChoiceOptions","_normalizeInitialRowCount","_normalizeInitialRows","_normalizeMirroredCellValue","_normalizeNumberConfig","_normalizeRows","_normalizeSourceCellValue","_normalizeStampCellValue","_normalizeTableColumns","_normalizeUniqueToken","_normalizeValidationMessage","_normalizeZeroLikeValue","_resolveFieldDefaultValue","_resolveLiteralValue","_resolvePathValue","_resolveStampCellValue","_rowContentSignature","_setValueAtPath","_sortRowsByPath","_stampColumnLocksRow","_stringifyValue","_toFiniteNumber","_toPathSegments","_todayDateValue","_validateRowWithConfig","actor","actorFrom","addHoursIso","addInlineRow","authorshipEnabled","authorshipHeaderCellStyle","authorshipPolicy","bodyCellStyle","buildKey","buildRowContext","c","cadNumber","cadPath","cadPrecision","canDeleteInline","canResign","canSaveAndAddNext","candidate","changed","ck","claim","claims","closeDialog","column","columns","commitRows","commitSave","computed","config","configMessage","containerStyle","control","controllerId","copy","count","createTableColumns","current","currentRowCount","currentRows","currentValue","customMessage","customResult","d","data","date","defaultSubformDataEntryConfig","deletedRow","disabledStamp","displayRows","displayValue","draftLocalStampLock","draftLockState","dropdownOptions","duplicateIndex","editableUntil","effectiveMaxRows","effectiveReadOnly","euDate","existing","existingRows","expired","explicitRowIndexes","explicitRowMapping","factor","fallback","fieldData","fieldId","first","formatTimestamp","getRowLock","getRows","getSourceFieldId","hasMeaningfulRows","hasMeaningfulValue","hasStampedValue","hasValue","headerCellStyle","headerRowStyle","id","index","inferredRowCount","initialRowCount","initialSeedRows","isDarkMode","isEmpty","isLocked","isModalMode","isNonEmpty","isOwner","isVertical","keepStatus","key","label","lastMeaningfulRowIndex","left","leftDate","leftValue","localStampLock","localStampLocked","lockColumns","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","makeDraftRow","match","message","mirroredFieldIds","modalColumns","modalEditorConfig","modalEditorType","nextDate","nextDraft","nextRow","nextRows","nextStatus","nextValue","nhAuth","normalizeStore","normalizedConfig","normalizedRow","normalizedValue","now","nowIso","numberConfig","numericValue","omitEmptyLines","onBeforeSaveRow","onRowDeleted","onRowSaved","onRowsChange","openCreateDialog","openEditDialog","owner","ownerId","ownerName","ownerRefresh","pad2","pairCadPrecision","pairFactor","pairPrefer","pairUsPrecision","pairs","parsed","path","paths","pending","policyAppliesToAction","prefer","prepareSave","processingConfig","raw","rawCad","rawKey","rawUs","rawValue","readStore","realRowReadOnly","release","remaining","removeRowAt","renderEditorControl","renderEditorInput","renderRowAuthorshipStatus","renderVerticalTable","rendered","requireAnyGroups","requiredPaths","resolveNow","resolvedFactor","resolvedRow","right","rightDate","rightValue","row","rowIndex","rowLock","rowLockState","rowNumberCellStyle","rowNumberHeaderStyle","rowReadOnly","rows","rowsForVerticalLayout","rule","safeFactor","safePrecision","sameActor","saveAndAddNextConfig","saveAndAddNextLabel","saveDraftRow","saved","savedAt","savedRowIndex","sd","section","seededRows","segments","selectionType","setRows","shouldShowActions","shouldToggleLocalLock","showRowAuthorshipColumn","sign","signedAt","sortedRows","sourceColumn","sourceFieldId","sourcePath","sourceSeedRows","spinButtonProps","stampCanUnlockLocalRow","stampCell","stampConfig","stampDraftCell","stampPath","stampedValue","store","subformModalConfig","tableColumns","tableContainerStyle","tableStyle","text","theme","thisStampLocksRow","transformedRow","trimTrailingZero","trimmed","ts","untilSelf","updateCell","updateDraftCell","updateDraftValueAtPath","usNumber","usPath","usPrecision","usesSubformEditor","validateResolvedRow","validateRow","validationConfig","validationError","value","verticalBodyCellStyle","verticalLabelCellStyle","visibility","windowHours","withCommon","zeroIsEmpty"],
+  './EditableTable/index.jsx': ["ButtonComponent","DEFAULT_WINDOW_HOURS","EditableTable","EditableTableSchema","_addDaysToDateValue","_applyComputedColumns","_applyDefaultValuesToRow","_applyRowProcessingConfig","_buildRowsFromSourceFields","_buildSubformFieldFromColumn","_choiceValueForControl","_choiceValueForStorage","_choiceValueToCoding","_cloneRow","_coerceNumberCellValue","_computeTemplateColumnValue","_evaluateColumnVisibility","_formatCellValue","_formatLocalDate","_formatProcessedNumber","_getDefaultCellValue","_getLocalStampLock","_getValueAtPath","_hasPersistedAuthorshipClaim","_hasStampedLockValue","_isMeaningfulValue","_isRowEmpty","_makeEmptyRow","_normalizeChoiceOptions","_normalizeInitialRowCount","_normalizeInitialRows","_normalizeMirroredCellValue","_normalizeNumberConfig","_normalizeRows","_normalizeSourceCellValue","_normalizeStampCellValue","_normalizeTableColumns","_normalizeUniqueToken","_normalizeValidationMessage","_normalizeZeroLikeValue","_resolveFieldDefaultValue","_resolveLiteralValue","_resolvePathValue","_resolveStampCellValue","_rowContentSignature","_setValueAtPath","_sortRowsByPath","_stampColumnLocksRow","_stringifyValue","_toFiniteNumber","_toPathSegments","_todayDateValue","_validateRowWithConfig","actor","actorFrom","addHoursIso","addInlineRow","authorshipEnabled","authorshipHeaderCellStyle","authorshipPolicy","bodyCellStyle","buildKey","buildRowContext","c","cadNumber","cadPath","cadPrecision","canDeleteInline","canResign","canSaveAndAddNext","candidate","changed","ck","claim","claims","closeDialog","code","column","columns","commitRows","commitSave","computed","config","configMessage","containerStyle","control","controllerId","copy","count","createTableColumns","current","currentRowCount","currentRows","currentValue","customMessage","customResult","d","data","date","defaultSubformDataEntryConfig","deletedRow","disabledStamp","display","displayRows","displayValue","draftLocalStampLock","draftLockState","dropdownOptions","duplicateIndex","editableUntil","effectiveMaxRows","effectiveReadOnly","euDate","existing","existingRows","expired","explicitRowIndexes","explicitRowMapping","factor","fallback","fieldData","fieldId","first","formatTimestamp","getRowLock","getRows","getSourceFieldId","hasMeaningfulRows","hasMeaningfulValue","hasStampedValue","hasValue","headerCellStyle","headerRowStyle","id","index","inferredRowCount","initialRowCount","initialSeedRows","isDarkMode","isEmpty","isLocked","isModalMode","isNonEmpty","isOwner","isVertical","keepStatus","key","label","lastMeaningfulRowIndex","left","leftDate","leftValue","localStampLock","localStampLocked","lockColumns","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","makeDraftRow","match","message","mirroredFieldIds","modalColumns","modalEditorConfig","modalEditorType","nextDate","nextDraft","nextRow","nextRows","nextStatus","nextValue","nhAuth","normalizeStore","normalizedConfig","normalizedRow","normalizedValue","now","nowIso","numberConfig","numericValue","omitEmptyLines","onBeforeSaveRow","onRowDeleted","onRowSaved","onRowsChange","openCreateDialog","openEditDialog","option","owner","ownerId","ownerName","ownerRefresh","pad2","pairCadPrecision","pairFactor","pairPrefer","pairUsPrecision","pairs","parsed","path","paths","pending","policyAppliesToAction","prefer","prepareSave","processingConfig","raw","rawCad","rawKey","rawUs","rawValue","readStore","realRowReadOnly","release","remaining","removeRowAt","renderEditorControl","renderEditorInput","renderRowAuthorshipStatus","renderVerticalTable","rendered","requireAnyGroups","requiredPaths","resolveNow","resolvedFactor","resolvedRow","right","rightDate","rightValue","row","rowIndex","rowLock","rowLockState","rowNumberCellStyle","rowNumberHeaderStyle","rowReadOnly","rows","rowsForVerticalLayout","rule","safeFactor","safePrecision","sameActor","saveAndAddNextConfig","saveAndAddNextLabel","saveDraftRow","saved","savedAt","savedRowIndex","sd","section","seededRows","segments","selectionType","setRows","shouldShowActions","shouldToggleLocalLock","showRowAuthorshipColumn","sign","signedAt","sortedRows","sourceColumn","sourceFieldId","sourcePath","sourceSeedRows","spinButtonProps","stampCanUnlockLocalRow","stampCell","stampConfig","stampDraftCell","stampPath","stampedValue","store","subformModalConfig","tableColumns","tableContainerStyle","tableStyle","text","theme","thisStampLocksRow","transformedRow","trimTrailingZero","trimmed","ts","untilSelf","updateCell","updateDraftCell","updateDraftValueAtPath","usNumber","usPath","usPrecision","usesSubformEditor","validateResolvedRow","validateRow","validationConfig","validationError","value","values","verticalBodyCellStyle","verticalLabelCellStyle","visibility","windowHours","withCommon","zeroIsEmpty"],
   './EducationHistory/index.jsx': ["EducationHistory","EducationHistoryFields"],
   './Ethnicity/index.jsx': ["Ethnicity","firstNationEthnicityCodes","firstNationsEthnicityReferenceSet"],
   './FieldStampButton/index.jsx': ["ButtonComponent","FieldStampButton","buildContext","clearStamp","context","effectiveStampFieldId","fallback","fieldData","fieldId","isDisabled","isSigned","normalizeStampTargets","normalizeStampValue","normalizedTargets","raw","resolveLiteralValue","resolvePathValue","sd","signedAt","signedAtText","sourcePath","stamp","stampRecord","statusText","value","written"],
-  './FindCodeSelect/index.jsx': ["CONTROL_KEY_TOKENS","FindCodeSelect","FindCodeSelectBase","FindCodeSelectWithCodeList","FindCodeSelectWithFieldBinding","FindCodeSelectWithSourceLookup","aliasSets","aliases","boundValue","candidateKeys","candidates","clearTargets","code","codeListFromContext","combinedStyles","comboSelectedKey","currentValues","customSources","defaultComboStyles","defaultGetCandidates","defaultMapCandidateSavedValue","defaultRenderSelected","directKeys","effectiveFieldId","effectiveLabelPosition","entries","fallback","fallbackItems","filteringActive","fluentLabel","freeText","freeTextItem","getItemKey","getSizeStyles","handleChange","handleInputValueChange","handleKeyDown","handlePendingValueChanged","hasExplicitOptionList","hasSearchText","hasSelectionValue","hasSourceLookup","hidden","i","idx","isDeleteKey","isEmpty","isKeyboardToken","isMultiSelect","item","itemForStoredValue","items","key","keys","leftKey","mapped","match","matchingKey","nextValues","normalizeLookupName","normalizeOption","normalizeSelectedValues","normalized","normalizedLabel","optionList","optionLists","options","rawKey","renderCandidateOption","resolveItems","resolveLookupPath","rightKey","sameSelectedItem","sd","sectionLayout","seen","segments","selected","selectedCode","selectedItem","selectedItems","selectedKey","selectedKeySet","selectedKeys","shouldSelect","shouldSuppressLayoutItemLabel","showChildren","sizeMap","sizeStyles","sourceEntries","sourceItems","sourceLookupItems","storableSelection","storedSelectionToValue","storedValue","targets","text","valueForLookupTarget","withoutItem","wrapperStyle"],
+  './FindCodeSelect/index.jsx': ["CONTROL_KEY_TOKENS","FindCodeSelect","FindCodeSelectBase","FindCodeSelectWithCodeList","FindCodeSelectWithFieldBinding","FindCodeSelectWithSourceLookup","aliasSets","aliases","boundValue","candidateKeys","candidates","clearTargets","code","codeListFromContext","combinedStyles","comboSelectedKey","currentValues","customSources","defaultComboStyles","defaultGetCandidates","defaultMapCandidateSavedValue","defaultRenderSelected","directKeys","effectiveFieldId","effectiveLabelPosition","entries","fallback","fallbackItems","filteringActive","fluentLabel","freeText","freeTextItem","getItemKey","getSizeStyles","handleChange","handleInputValueChange","handleKeyDown","handlePendingValueChanged","hasExplicitOptionList","hasSearchText","hasSelectionValue","hasSourceLookup","hidden","i","idx","isDeleteKey","isEmpty","isKeyboardToken","isMultiSelect","item","itemForStoredValue","items","key","keys","leftKey","mapped","match","matchingKey","nextValues","normalizeLookupName","normalizeOption","normalizeSelectedValues","normalized","normalizedLabel","optionList","optionLists","options","presentationDepth","rawDepth","rawKey","renderCandidateOption","rendered","resolveItems","resolveLookupPath","rightKey","sameSelectedItem","sd","sectionLayout","seen","segments","selected","selectedCode","selectedItem","selectedItems","selectedKey","selectedKeySet","selectedKeys","shouldSelect","shouldSuppressLayoutItemLabel","showChildren","sizeMap","sizeStyles","sourceEntries","sourceItems","sourceLookupItems","storableSelection","storedSelectionToValue","storedValue","targets","text","valueForLookupTarget","withoutItem","wrapperStyle"],
   './FirstNationsStatus/index.jsx': ["FirstNationsStatus","connections","ethnicity","firstNationsStatusPatientFields","firstNationsStatusSchema","hasReserveName","races","reserveConnection","reserveName","selfId"],
   './FlowSheet/index.jsx': ["FLOW_CELL_STYLE","FLOW_LABEL_CELL_STYLE","FlowMedicationBarCells","FlowSheet","FlowSheetGrid","active","allMedications","cell","cellStyle","cells","cellsByRow","code","columnTime","columns","courses","cutoff","dateKey","dateKeys","doseFrequency","existing","flowIsSeparatorEntry","flowMedicationMatches","flowMedicationRowLabel","flowNormalizeMedications","flowNormalizeRows","flowRunQuery","hasObservationRows","header","headerStyle","keys","label","limit","match","matched","matches","medKeys","meds","name","needle","observationIndex","observationRows","parsedDate","rangeLabel","remaining","renderSheet","resolvedMedicationsMode","resolvedMinWidth","rowList","sd","source","startTime","stopRaw","stopTime","units","value"],
   './FocusedObservationHistory/index.jsx': ["FocusedObservationHistory","activeWatchField","candidate","current","date","day","direct","effectiveObservationCode","effectiveObservationComment","effectiveTitle","formatDate","getFocusedFieldId","handleBlur","handleFocus","hasFocusTarget","host","isTrackedFieldFocused","isVisible","items","month","normalizeItems","normalizedWatchFields","parseDate","parsed","parsedDate","pathSegments","patientPath","resolveMoisValue","resolvePath","rows","sd","textValue","year"],
@@ -34257,6 +34588,7 @@ export const componentDependencies: Record<string, string[]> = {
   './AttestationSignOff/index.jsx': ["SignaturePad"],
   './AuthorshipField/index.jsx': [],
   './BulkSetField/index.jsx': [],
+  './ChartAttachmentUpload/index.jsx': [],
   './ChartRecordTable/index.jsx': ["EditableTable"],
   './ChartReviewSummary/index.jsx': ["ObservationKit"],
   './CodedObservationChoiceField/index.jsx': [],

@@ -450,6 +450,32 @@ const _normalizeChoiceOptions = (options = []) => {
     .filter(Boolean)
 }
 
+const _choiceValueToCoding = (value, options = []) => {
+  if (value === undefined || value === null || value === "") return null
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const code = value.code ?? value.value ?? value.key ?? value.selectedKey
+    if (code === undefined || code === null || code === "") return null
+    const display = value.display ?? value.text ?? value.label ?? value.response ?? code
+    return { code: String(code), display: String(display) }
+  }
+  const code = String(value)
+  const option = options.find((entry) => String(entry.key) === code)
+  return { code, display: option?.text || code }
+}
+
+const _choiceValueForControl = (value, selectionType, options = []) => {
+  if (selectionType === "multiple") {
+    const values = Array.isArray(value) ? value : value ? [value] : []
+    return values.map((entry) => _choiceValueToCoding(entry, options)).filter(Boolean)
+  }
+  return _choiceValueToCoding(value, options) || undefined
+}
+
+const _choiceValueForStorage = (coding, codings, selectionType) =>
+  selectionType === "multiple"
+    ? (codings || []).map((entry) => entry?.code).filter(Boolean)
+    : coding?.code || ""
+
 const _normalizeValidationMessage = (result) => {
   if (!result) return null
   if (typeof result === "string") {
@@ -1458,8 +1484,12 @@ EditableTable = ({
             optionList={column.codeSystem ? undefined : dropdownOptions}
             codeSystem={column.codeSystem || undefined}
             selectionType={selectionType}
-            value={value ? { code: value, display: value } : undefined}
-            onChange={(coding) => onValueChange(rowIndex, column.id, coding?.code || "")}
+            value={_choiceValueForControl(value, selectionType, dropdownOptions)}
+            onChange={(coding, codings) => onValueChange(
+              rowIndex,
+              column.id,
+              _choiceValueForStorage(coding, codings, selectionType)
+            )}
             placeholder={column.placeholder || "Select..."}
             showOther={column.showOtherOption === true}
             readOnly={effectiveReadOnly}

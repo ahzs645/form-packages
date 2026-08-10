@@ -439,10 +439,25 @@ const FindCodeSelectBase = ({
 
   const renderCandidateOption = (option) => {
     if (!option) return null
-    if (!onRenderCandidate) return <>{option.text}</>
     const item = option?.data?.item
     const idx = option?.data?.index ?? 0
-    return <>{onRenderCandidate(item, idx)}</>
+    const rendered = onRenderCandidate ? onRenderCandidate(item, idx) : option.text
+    const rawDepth = Number(item?.presentationDepth)
+    const presentationDepth = Number.isInteger(rawDepth) && rawDepth > 0
+      ? Math.min(rawDepth, 8)
+      : 0
+
+    if (presentationDepth === 0) return <>{rendered}</>
+
+    return (
+      <div
+        data-presentation-depth={presentationDepth}
+        data-presentation-parent={item?.presentationParentValue || undefined}
+        style={{ boxSizing: 'border-box', paddingLeft: presentationDepth * 18 }}
+      >
+        {rendered}
+      </div>
+    )
   }
 
   const showChildren = !isMultiSelect && selectedValue &&

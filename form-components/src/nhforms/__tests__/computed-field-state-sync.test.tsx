@@ -159,4 +159,24 @@ describe("ComputedField stored-value synchronization", () => {
     expect(harness.getState().field.data.result).toBe(4);
     await harness.unmount();
   });
+
+  it("shows incomplete text for bare imported FHIR field references", async () => {
+    const harness = renderComputedField("always-calculated", {
+      data: { q1: undefined, q2: undefined, result: null },
+      expression: "iif(hasValue(q1) || hasValue(q2), q1 + q2, null)",
+      incompleteBehavior: "show-text",
+    });
+
+    await harness.render();
+    expect(harness.getRenderedValue()).toBe("Incomplete");
+    expect(harness.getState().field.data.result).toBeNull();
+
+    await harness.setFieldValue("q1", 2);
+    expect(harness.getRenderedValue()).toBe("Incomplete");
+
+    await harness.setFieldValue("q2", 3);
+    expect(harness.getRenderedValue()).toBe("5");
+    expect(harness.getState().field.data.result).toBe(5);
+    await harness.unmount();
+  });
 });

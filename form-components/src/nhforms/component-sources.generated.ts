@@ -1438,6 +1438,281 @@ function BulkSetField({
   )
 }
 `,
+  './ChartAttachmentUpload/index.jsx': `const { useMemo, useRef, useState } = React
+
+const readChartAttachmentResponse = async (response) => {
+  if (!response || typeof response.text !== "function") return null
+  let text = ""
+  try {
+    text = await response.text()
+  } catch (_error) {
+    return null
+  }
+  if (!text) return null
+  try {
+    return JSON.parse(text)
+  } catch (_error) {
+    return text.length > 20000 ? \`\${text.slice(0, 20000)}...[truncated]\` : text
+  }
+}
+
+const persistChartAttachmentResult = (setFormData, fieldId, result) => {
+  if (!fieldId || typeof setFormData !== "function") return
+  setFormData(produce((draft) => {
+    if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
+    if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
+    draft.field.data[fieldId] = result
+    if (draft.formData && typeof draft.formData === "object") draft.formData[fieldId] = result
+  }))
+}
+
+const formatChartAttachmentBytes = (value) => {
+  const bytes = Number(value)
+  if (!Number.isFinite(bytes) || bytes < 0) return "Unknown size"
+  if (bytes < 1024) return \`\${bytes} B\`
+  if (bytes < 1024 * 1024) return \`\${(bytes / 1024).toFixed(1)} KB\`
+  return \`\${(bytes / (1024 * 1024)).toFixed(1)} MB\`
+}
+
+/**
+ * ChartAttachmentUpload — exported MOIS attachment API diagnostic.
+ *
+ * The file is uploaded immediately to the current patient's chart when the
+ * user presses Upload. File contents are never stored in webform state; only
+ * request/response metadata is persisted under resultFieldId.
+ */
+const ChartAttachmentUpload = ({
+  id,
+  resultFieldId = "chartAttachmentUploadResult",
+  title = "MOIS chart attachment upload test",
+  description = "Choose a small, non-sensitive test file. Upload writes immediately to the current patient's chart.",
+  buttonText = "Upload test attachment",
+  documentTypeCode = "NOTE",
+  documentTypeDisplay = "Note / General Purpose Document",
+  documentTypeSystem = "MOIS-DOCUMENTTYPE",
+  defaultNote = "Uploaded from Webforms attachment API test",
+  accept = "",
+  maxFileSizeBytes = 10 * 1024 * 1024,
+  showResponseBody = true,
+}) => {
+  const [fd, setFormData] = useActiveData()
+  const sd = useSourceData()
+  const fileInputRef = useRef(null)
+  const [selectedFile, setSelectedFile] = useState(null)
+  const [note, setNote] = useState(defaultNote)
+  const [busy, setBusy] = useState(false)
+  const storedResult = resultFieldId ? fd?.field?.data?.[resultFieldId] : null
+  const [result, setResult] = useState(() => storedResult || null)
+
+  const runtime = useMemo(() => {
+    const appSettings = typeof sd?.useAppSettings === "function" ? sd.useAppSettings() : null
+    const auth = sd?.auth || appSettings?.auth || {}
+    const userProfile = sd?.userProfile || appSettings?.userProfile || {}
+    const patientId = sd?.formParams?.patientId ?? sd?.patientId ?? sd?.patient?.patientId ?? null
+    const userProfileId = userProfile?.userProfileId ?? userProfile?.id ?? null
+    const rawApiServer = String(auth?.apiServer || "").trim()
+    const apiServer = rawApiServer && !rawApiServer.endsWith("/") ? \`\${rawApiServer}/\` : rawApiServer
+    const endpoint = apiServer && patientId != null && userProfileId != null
+      ? \`\${apiServer}api/attachment/file/\${encodeURIComponent(userProfileId)}/\${encodeURIComponent(patientId)}/\`
+      : ""
+    return {
+      endpoint,
+      patientId,
+      userProfileId,
+      jwToken: auth?.jwToken || "",
+    }
+  }, [sd])
+
+  const inputId = \`\${id || resultFieldId || "chart-attachment-upload"}-file\`
+  const fileTooLarge = Boolean(
+    selectedFile && Number(maxFileSizeBytes) > 0 && selectedFile.size > Number(maxFileSizeBytes)
+  )
+  const canUpload = Boolean(
+    selectedFile && runtime.endpoint && runtime.jwToken && !fileTooLarge && !busy
+  )
+
+  const recordResult = (nextResult) => {
+    setResult(nextResult)
+    persistChartAttachmentResult(setFormData, resultFieldId, nextResult)
+  }
+
+  const clearSelection = () => {
+    setSelectedFile(null)
+    if (fileInputRef.current) fileInputRef.current.value = ""
+  }
+
+  const uploadAttachment = async () => {
+    if (!canUpload || !selectedFile) return
+    const startedAt = Date.now()
+    const document = {
+      documentId: 0,
+      patientId: Number(runtime.patientId),
+      note: String(note || defaultNote || selectedFile.name),
+      documentType: {
+        code: documentTypeCode,
+        display: documentTypeDisplay,
+        system: documentTypeSystem,
+      },
+    }
+
+    setBusy(true)
+    try {
+      const fetchAttachment = typeof window !== "undefined" && typeof window.fetch === "function"
+        ? window.fetch.bind(window)
+        : null
+      const FormDataClass = typeof window !== "undefined" ? window.FormData : null
+      if (!fetchAttachment || !FormDataClass) {
+        throw new Error("Browser fetch/FormData is not available in this MOIS runtime.")
+      }
+
+      const body = new FormDataClass()
+      body.append("file", selectedFile)
+      body.set("document", JSON.stringify(document))
+      const response = await fetchAttachment(runtime.endpoint, {
+        method: "POST",
+        headers: { Authorization: \`Bearer \${runtime.jwToken}\` },
+        body,
+      })
+      const responseBody = await readChartAttachmentResponse(response)
+      const nextResult = {
+        source: "chart-attachment-upload",
+        ok: Boolean(response?.ok),
+        status: response?.status ?? null,
+        statusText: response?.statusText || "",
+        contentType: response?.headers?.get ? response.headers.get("content-type") : null,
+        body: responseBody,
+        endpoint: runtime.endpoint,
+        patientId: runtime.patientId,
+        userProfileId: runtime.userProfileId,
+        file: {
+          name: selectedFile.name,
+          size: selectedFile.size,
+          type: selectedFile.type || "application/octet-stream",
+        },
+        document,
+        receivedAt: new Date().toISOString(),
+        durationMs: Date.now() - startedAt,
+      }
+      if (!response?.ok) nextResult.error = \`HTTP \${response?.status || "error"}\${response?.statusText ? \`: \${response.statusText}\` : ""}\`
+      recordResult(nextResult)
+    } catch (error) {
+      recordResult({
+        source: "chart-attachment-upload",
+        ok: false,
+        status: null,
+        statusText: "",
+        body: null,
+        endpoint: runtime.endpoint,
+        patientId: runtime.patientId,
+        userProfileId: runtime.userProfileId,
+        file: selectedFile ? {
+          name: selectedFile.name,
+          size: selectedFile.size,
+          type: selectedFile.type || "application/octet-stream",
+        } : null,
+        document,
+        error: error?.message || String(error),
+        diagnostic: "No HTTP response was readable. Check MOIS endpoint access, authorization, and runtime network policy.",
+        receivedAt: new Date().toISOString(),
+        durationMs: Date.now() - startedAt,
+      })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const statusLabel = !result
+    ? "Not tested"
+    : result.ok
+      ? \`Upload succeeded\${result.status ? \` (\${result.status})\` : ""}\`
+      : result.status
+        ? \`Upload failed (\${result.status})\`
+        : "Upload request failed"
+  const statusColor = !result ? "#605e5c" : result.ok ? "#107c10" : "#a4262c"
+  const missingRuntime = []
+  if (runtime.patientId == null) missingRuntime.push("patient ID")
+  if (runtime.userProfileId == null) missingRuntime.push("user profile ID")
+  if (!runtime.endpoint) missingRuntime.push("MOIS API server")
+  if (!runtime.jwToken) missingRuntime.push("authorization token")
+
+  return (
+    <div
+      data-chart-attachment-upload={id || resultFieldId}
+      style={{ border: "1px solid #d2d0ce", padding: 14, background: "#faf9f8" }}
+    >
+      <Fluent.Stack tokens={{ childrenGap: 10 }}>
+        <Fluent.Text variant="mediumPlus" styles={{ root: { fontWeight: 600 } }}>{title}</Fluent.Text>
+        <Fluent.MessageBar messageBarType={Fluent.MessageBarType.warning}>
+          {description}
+        </Fluent.MessageBar>
+        <Fluent.Text variant="small">
+          Patient ID: {runtime.patientId ?? "Unavailable"} · User profile ID: {runtime.userProfileId ?? "Unavailable"}
+        </Fluent.Text>
+        <Fluent.Text variant="small" styles={{ root: { color: "#605e5c", wordBreak: "break-all" } }}>
+          Endpoint: {runtime.endpoint || "Unavailable"}
+        </Fluent.Text>
+        {missingRuntime.length > 0 ? (
+          <Fluent.MessageBar messageBarType={Fluent.MessageBarType.error}>
+            Cannot upload because the runtime did not provide: {missingRuntime.join(", ")}.
+          </Fluent.MessageBar>
+        ) : null}
+        <div>
+          <label htmlFor={inputId} style={{ display: "block", fontWeight: 600, marginBottom: 4 }}>
+            Test file
+          </label>
+          <input
+            ref={fileInputRef}
+            id={inputId}
+            type="file"
+            accept={accept || undefined}
+            disabled={busy}
+            onChange={(event) => setSelectedFile(event?.target?.files?.[0] || null)}
+          />
+        </div>
+        {selectedFile ? (
+          <Fluent.Text variant="small">
+            Selected: {selectedFile.name} ({formatChartAttachmentBytes(selectedFile.size)}, {selectedFile.type || "unknown type"})
+          </Fluent.Text>
+        ) : null}
+        {fileTooLarge ? (
+          <Fluent.MessageBar messageBarType={Fluent.MessageBarType.error}>
+            The selected file exceeds this test form's {formatChartAttachmentBytes(maxFileSizeBytes)} safety limit.
+          </Fluent.MessageBar>
+        ) : null}
+        <Fluent.TextField
+          label="Chart document note"
+          value={note}
+          disabled={busy}
+          onChange={(_event, value) => setNote(value || "")}
+        />
+        <Fluent.Stack horizontal tokens={{ childrenGap: 8 }}>
+          <Fluent.PrimaryButton
+            text={busy ? "Uploading..." : buttonText}
+            disabled={!canUpload}
+            onClick={uploadAttachment}
+          />
+          <Fluent.DefaultButton
+            text="Clear selection"
+            disabled={!selectedFile || busy}
+            onClick={clearSelection}
+          />
+        </Fluent.Stack>
+        <div role="status" aria-live="polite" style={{ color: statusColor, fontWeight: 600 }}>
+          {busy ? "Uploading attachment..." : statusLabel}
+          {result?.durationMs != null ? \` in \${result.durationMs} ms\` : ""}
+        </div>
+        {result?.error ? <Fluent.Text styles={{ root: { color: "#a4262c" } }}>{result.error}</Fluent.Text> : null}
+        {result?.diagnostic ? <Fluent.Text variant="small">{result.diagnostic}</Fluent.Text> : null}
+        {showResponseBody && result ? (
+          <pre style={{ margin: 0, maxHeight: 260, overflow: "auto", whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: 11 }}>
+            {JSON.stringify(result, null, 2)}
+          </pre>
+        ) : null}
+      </Fluent.Stack>
+    </div>
+  )
+}
+`,
   './ChartRecordTable/index.jsx': `
 if (typeof ChartRecordTable === "undefined") {
   window.ChartRecordTable = null
@@ -3516,6 +3791,27 @@ const _round = (value, precision = 0) => {
   if (!Number.isFinite(factor) || factor === 0) return null
   return Math.round(numeric * factor) / factor
 }
+const _power = (value, exponent) => {
+  const numeric = _toNumericValue(value)
+  const numericExponent = _toNumericValue(exponent)
+  if (!Number.isFinite(numeric) || !Number.isFinite(numericExponent)) return null
+  const result = numeric ** numericExponent
+  return Number.isFinite(result) ? result : null
+}
+const _ln = (value) => {
+  const numeric = _toNumericValue(value)
+  if (!Number.isFinite(numeric) || numeric <= 0) return null
+  const result = Math.log(numeric)
+  return Number.isFinite(result) ? result : null
+}
+const _exp = (value) => {
+  const numeric = _toNumericValue(value)
+  if (!Number.isFinite(numeric)) return null
+  const result = Math.exp(numeric)
+  return Number.isFinite(result) ? result : null
+}
+const _coalesce = (...values) => values.find((value) => value !== undefined && value !== null && value !== "") ?? null
+const _text = (value) => value == null ? "" : String(value)
 const _numericExtrema = (values, select) => {
   const numericValues = values.flat().map(_toNumericValue)
   if (numericValues.length === 0 || numericValues.some((value) => !Number.isFinite(value))) return null
@@ -3572,6 +3868,12 @@ const _extractComputedReferences = (expression) => {
 const _stripQuotedStrings = (expression) =>
   String(expression).replace(/"([^"\\\\]|\\\\.)*"|'([^'\\\\]|\\\\.)*'/g, " ")
 
+const _COMPUTED_NON_FIELD_IDENTIFIERS = new Set([
+  "iif", "score", "contains", "hasValue", "countTrue", "daysSince", "monthsSince",
+  "floor", "mod", "round", "power", "ln", "exp", "coalesce", "text", "min", "max",
+  "Math", "Number", "String", "null", "true", "false",
+])
+
 const _replaceBareReferencesOutsideQuotes = (expression, refs, valuesByFieldId) => {
   let prepared = ""
   let cursor = 0
@@ -3579,7 +3881,7 @@ const _replaceBareReferencesOutsideQuotes = (expression, refs, valuesByFieldId) 
   const replaceInSegment = (segment) => {
     let nextSegment = segment
     for (const ref of refs) {
-      if (["iif", "score", "contains", "hasValue", "countTrue", "daysSince", "monthsSince", "floor", "mod", "round", "min", "max", "null", "true", "false"].includes(ref)) continue
+      if (_COMPUTED_NON_FIELD_IDENTIFIERS.has(ref)) continue
       const numeric = _toNumericValue(valuesByFieldId?.[ref])
       if (!Number.isFinite(numeric)) return null
       nextSegment = nextSegment.replace(new RegExp(\`\\\\b\${_escapeRegExp(ref)}\\\\b\`, "g"), String(numeric))
@@ -3639,7 +3941,7 @@ const _evaluateComputedExpression = (expression, valuesByFieldId, currentFieldId
   if (prepared === null) return null
 
   try {
-    const result = Function("iif", "score", "contains", "hasValue", "countTrue", "daysSince", "monthsSince", "floor", "mod", "round", "min", "max", \`"use strict"; return (\${prepared});\`)(
+    const result = Function("iif", "score", "contains", "hasValue", "countTrue", "daysSince", "monthsSince", "floor", "mod", "round", "power", "ln", "exp", "coalesce", "text", "min", "max", \`"use strict"; return (\${prepared});\`)(
       _iif,
       _score,
       _contains,
@@ -3650,6 +3952,11 @@ const _evaluateComputedExpression = (expression, valuesByFieldId, currentFieldId
       _floor,
       _mod,
       _round,
+      _power,
+      _ln,
+      _exp,
+      _coalesce,
+      _text,
       _min,
       _max
     )
@@ -3711,9 +4018,8 @@ const _toEditableComputedValue = (value) => {
 }
 
 const _hasAllReferencedValues = (expression, valuesByFieldId) => {
-  const refs = Array.from(String(expression || "").matchAll(_COMPUTED_REF_PATTERN))
-    .map((match) => match[1]?.trim() ?? "")
-    .filter(Boolean)
+  const refs = _extractComputedReferences(String(expression || ""))
+    .filter((ref) => !_COMPUTED_NON_FIELD_IDENTIFIERS.has(ref))
   if (refs.length === 0) return true
   // Controls such as ScaleField initialize an object-shaped value before the
   // user selects an answer. Check the object's comparable value so an empty
@@ -6293,6 +6599,32 @@ const _normalizeChoiceOptions = (options = []) => {
     .filter(Boolean)
 }
 
+const _choiceValueToCoding = (value, options = []) => {
+  if (value === undefined || value === null || value === "") return null
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const code = value.code ?? value.value ?? value.key ?? value.selectedKey
+    if (code === undefined || code === null || code === "") return null
+    const display = value.display ?? value.text ?? value.label ?? value.response ?? code
+    return { code: String(code), display: String(display) }
+  }
+  const code = String(value)
+  const option = options.find((entry) => String(entry.key) === code)
+  return { code, display: option?.text || code }
+}
+
+const _choiceValueForControl = (value, selectionType, options = []) => {
+  if (selectionType === "multiple") {
+    const values = Array.isArray(value) ? value : value ? [value] : []
+    return values.map((entry) => _choiceValueToCoding(entry, options)).filter(Boolean)
+  }
+  return _choiceValueToCoding(value, options) || undefined
+}
+
+const _choiceValueForStorage = (coding, codings, selectionType) =>
+  selectionType === "multiple"
+    ? (codings || []).map((entry) => entry?.code).filter(Boolean)
+    : coding?.code || ""
+
 const _normalizeValidationMessage = (result) => {
   if (!result) return null
   if (typeof result === "string") {
@@ -7301,8 +7633,12 @@ EditableTable = ({
             optionList={column.codeSystem ? undefined : dropdownOptions}
             codeSystem={column.codeSystem || undefined}
             selectionType={selectionType}
-            value={value ? { code: value, display: value } : undefined}
-            onChange={(coding) => onValueChange(rowIndex, column.id, coding?.code || "")}
+            value={_choiceValueForControl(value, selectionType, dropdownOptions)}
+            onChange={(coding, codings) => onValueChange(
+              rowIndex,
+              column.id,
+              _choiceValueForStorage(coding, codings, selectionType)
+            )}
             placeholder={column.placeholder || "Select..."}
             showOther={column.showOtherOption === true}
             readOnly={effectiveReadOnly}
@@ -8518,10 +8854,25 @@ const FindCodeSelectBase = ({
 
   const renderCandidateOption = (option) => {
     if (!option) return null
-    if (!onRenderCandidate) return <>{option.text}</>
     const item = option?.data?.item
     const idx = option?.data?.index ?? 0
-    return <>{onRenderCandidate(item, idx)}</>
+    const rendered = onRenderCandidate ? onRenderCandidate(item, idx) : option.text
+    const rawDepth = Number(item?.presentationDepth)
+    const presentationDepth = Number.isInteger(rawDepth) && rawDepth > 0
+      ? Math.min(rawDepth, 8)
+      : 0
+
+    if (presentationDepth === 0) return <>{rendered}</>
+
+    return (
+      <div
+        data-presentation-depth={presentationDepth}
+        data-presentation-parent={item?.presentationParentValue || undefined}
+        style={{ boxSizing: 'border-box', paddingLeft: presentationDepth * 18 }}
+      >
+        {rendered}
+      </div>
+    )
   }
 
   const showChildren = !isMultiSelect && selectedValue &&
@@ -32384,6 +32735,19 @@ export const componentIdentities: Record<string, any> = {
       "minor": 28,
       "patch": 10
     },
+    "components": []
+  },
+  'ChartAttachmentUpload': {
+    "name": "ChartAttachmentUpload",
+    "title": "Chart Attachment Upload",
+    "description": "Uploads a user-selected file to the current patient's MOIS chart through the runtime attachment API and displays the response.",
+    "version": {
+      "major": 1,
+      "minor": 0,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "NHForms",
     "components": []
   },
   'ChartRecordTable': {
