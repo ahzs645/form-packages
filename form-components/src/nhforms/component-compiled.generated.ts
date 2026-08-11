@@ -27705,6 +27705,7 @@ const {
  * - showEndpointLabels: boolean - Whether to show first/last descriptions beneath the scale
  * - showTooltip: boolean - Whether to show the row tooltip when descriptions exist
  * - tooltipMode: "all" | "option" - Whether tooltips show all definitions or only the hovered option
+ * - disableHorizontalScroll: boolean - Let a parent provide one shared horizontal scrollbar
  * - required: boolean - Whether the field is required
  * - readOnly: boolean - Whether the field is read-only
  */
@@ -27888,6 +27889,7 @@ const ScaleField = ({
   showEndpointLabels = false,
   showTooltip = false,
   tooltipMode = "all",
+  disableHorizontalScroll = false,
   required = false,
   readOnly = false
 }) => {
@@ -27924,13 +27926,11 @@ const ScaleField = ({
   const choiceOptions = scaleOptions.map(opt => ({
     key: opt.key ?? String(opt.value),
     text: showInlineLabels ? opt.label ?? String(opt.value) : "",
-    title: showTooltip && normalizedTooltipMode === "option" ? opt.description || opt.label : undefined,
     onRenderField: showTooltip && normalizedTooltipMode === "option" && (opt.description || opt.label) ? (optionProps, defaultRender) => /*#__PURE__*/React.createElement(TooltipHost, {
       tooltipProps: {
         onRenderContent: () => _renderOptionTooltipContent(opt.description || opt.label)
       }
     }, /*#__PURE__*/React.createElement("span", {
-      title: opt.description || opt.label,
       style: {
         cursor: "help",
         display: "inline-block"
@@ -28007,7 +28007,7 @@ const ScaleField = ({
   })));
   return /*#__PURE__*/React.createElement("div", {
     style: {
-      overflowX: "auto"
+      overflowX: disableHorizontalScroll ? "visible" : "auto"
     }
   }, showLegend && /*#__PURE__*/React.createElement(ScaleFieldLegend, {
     options: scaleOptions
@@ -31421,6 +31421,8 @@ const _buildScaleLegendSignature = field => {
     legend: String(option.description || option.label || option.value)
   })));
 };
+const _isLoincDataEntryField = field => Array.isArray(field?.fhirConfig?.code) && field.fhirConfig.code.some(coding => coding?.system === "http://loinc.org");
+const _shouldShowDataEntryHelpText = field => Boolean(field?.helpText) && !(_isLoincDataEntryField(field) && String(field.helpText).includes(" · "));
 const _usesStructuredSelectableOptions = field => Array.isArray(field?.options) && field.options.some(option => option && typeof option === "object" && !Array.isArray(option));
 const _getSelectableOptionNumericValue = option => {
   const rawValue = option?.value ?? option?.key ?? null;
@@ -31577,7 +31579,10 @@ const _buildDataEntryRenderGroups = fields => {
     matrixBuffer = null;
   };
   for (const field of fields || []) {
-    const matrixGroupId = typeof field?.matrixGroupId === "string" ? field.matrixGroupId.trim() : "";
+    const configuredMatrixGroupId = typeof field?.matrixGroupId === "string" ? field.matrixGroupId.trim() : "";
+    // LOINC symptom scales use the standard stacked ScaleField presentation,
+    // even if a short-lived generated config persisted a matrixGroupId.
+    const matrixGroupId = _isLoincDataEntryField(field) ? "" : configuredMatrixGroupId;
     const isMatrixCandidate = field?.type === "scale" && matrixGroupId;
     if (!isMatrixCandidate) {
       flushMatrixBuffer();
@@ -31602,7 +31607,33 @@ const _buildDataEntryRenderGroups = fields => {
     };
   }
   flushMatrixBuffer();
-  return groups;
+
+  // LOINC symptom scales remain individual ScaleField rows, but consecutive
+  // rows share one overflow container so horizontal scrolling stays aligned.
+  const stackedGroups = [];
+  let scaleStack = [];
+  const flushScaleStack = () => {
+    if (scaleStack.length === 0) return;
+    if (scaleStack.length === 1) {
+      stackedGroups.push(scaleStack[0]);
+    } else {
+      stackedGroups.push({
+        type: "scaleStack",
+        fields: scaleStack.map(entry => entry.field)
+      });
+    }
+    scaleStack = [];
+  };
+  for (const entry of groups) {
+    if (entry?.type === "field" && entry.field?.type === "scale" && _isLoincDataEntryField(entry.field)) {
+      scaleStack.push(entry);
+      continue;
+    }
+    flushScaleStack();
+    stackedGroups.push(entry);
+  }
+  flushScaleStack();
+  return stackedGroups;
 };
 const _isScaleChoiceSelected = (value, option) => {
   const optionValue = String(option?.value ?? "");
@@ -32493,7 +32524,10 @@ const SubformScoringInner = ({
         options: scaleOptions,
         showLegend: showLegend,
         showInlineLabels: field.showInlineLabels !== false,
-        showTooltip: field.showTooltip === true
+        showEndpointLabels: field.showEndpointLabels === true || field.showEndpointLabels !== false && Boolean(field.minLabel || field.maxLabel),
+        showTooltip: field.showTooltip === true,
+        tooltipMode: field.tooltipMode === "option" ? "option" : "all",
+        disableHorizontalScroll: renderOptions.disableHorizontalScroll === true
       });
     }
     if (field.type === "date") {
@@ -32734,6 +32768,39 @@ const SubformScoringInner = ({
       style: _LOCAL_INPUT_STYLE(isDarkMode)
     }));
   };
+  const renderDataEntryScaleStack = group => {
+    const fields = (Array.isArray(group?.fields) ? group.fields : []).filter(field => _evaluateDataEntryVisibility(field, dataEntryValues));
+    if (fields.length === 0) return null;
+    const stackMinWidth = fields.reduce((widest, field) => {
+      const optionCount = _buildScaleOptions(field).length;
+      return Math.max(widest, Math.max(360, optionCount * 64 + 170));
+    }, 0);
+    return /*#__PURE__*/React.createElement("div", {
+      style: {
+        width: "100%",
+        overflowX: "auto"
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        minWidth: \`\${stackMinWidth}px\`,
+        display: "flex",
+        flexDirection: "column",
+        gap: "4px"
+      }
+    }, fields.map(field => /*#__PURE__*/React.createElement("div", {
+      key: \`stacked-scale-\${field.id}\`
+    }, renderDataEntryField(field, {
+      disableHorizontalScroll: true
+    }), _shouldShowDataEntryHelpText(field) ? /*#__PURE__*/React.createElement(Text, {
+      styles: {
+        root: {
+          fontSize: "12px",
+          color: isDarkMode ? "#a0a0a0" : "#666",
+          marginTop: "2px"
+        }
+      }
+    }, field.helpText) : null))));
+  };
 
   // -------------------------------------------------------------------
   // Scale-matrix renderer
@@ -32792,7 +32859,7 @@ const SubformScoringInner = ({
       }
     }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(Label, {
       required: field.required === true
-    }, field.label), field.helpText ? /*#__PURE__*/React.createElement(Text, {
+    }, field.label), _shouldShowDataEntryHelpText(field) ? /*#__PURE__*/React.createElement(Text, {
       styles: {
         root: {
           fontSize: "12px",
@@ -33226,7 +33293,17 @@ const SubformScoringInner = ({
     gap: "6px"
   };
   const dialogTitle = modalConfig.title || title || "Assessment";
-  const dialogMinWidth = modalConfig.minWidth || 700;
+  const configuredDialogMinWidth = Number(modalConfig.minWidth) || 700;
+  const widestScaleMinWidth = dataEntryFields.reduce((widest, field) => {
+    if (field?.type !== "scale") return widest;
+    const optionCount = _buildScaleOptions(field).length;
+    return Math.max(widest, Math.max(360, optionCount * 64 + 170));
+  }, 0);
+  // ScaleField deliberately keeps its radio options on one row. Give that row
+  // the dialog content padding it needs, but never make the modal wider than
+  // the viewport; small screens retain the existing horizontal scroll escape.
+  const desiredDialogMinWidth = Math.max(configuredDialogMinWidth, widestScaleMinWidth > 0 ? widestScaleMinWidth + 48 : 0);
+  const dialogMinWidth = \`min(\${desiredDialogMinWidth}px, calc(100vw - 48px))\`;
   const showCalculationsInModal = Boolean(modalConfig.showCalculationsInModal) || Boolean(modalConfig.show_calculations_in_modal);
   const dialogContentProps = {
     type: DialogType.largeHeader,
@@ -33288,6 +33365,15 @@ const SubformScoringInner = ({
       rowGap: "10px"
     }
   }, dataEntryRenderGroups.map((entry, index) => {
+    if (entry.type === "scaleStack") {
+      return /*#__PURE__*/React.createElement("div", {
+        key: \`scale-stack-\${index}\`,
+        style: {
+          flex: "1 0 100%",
+          maxWidth: "100%"
+        }
+      }, renderDataEntryScaleStack(entry));
+    }
     if (entry.type === "scaleMatrix") {
       return /*#__PURE__*/React.createElement("div", {
         key: \`matrix-group-\${entry.matrixGroupId || index}\`,
@@ -33330,7 +33416,7 @@ const SubformScoringInner = ({
       style: containerStyle
     }, renderDataEntryField(field, {
       showLegend: showLegendForScale
-    }), field.helpText && !isHeading && /*#__PURE__*/React.createElement(Text, {
+    }), _shouldShowDataEntryHelpText(field) && !isHeading && /*#__PURE__*/React.createElement(Text, {
       styles: {
         root: {
           fontSize: "12px",
@@ -34564,7 +34650,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './ServiceEpisodes/index.jsx': ["ServiceEpisodes","ServiceEpisodesFields","activeServiceEpisodes","startDateDesc"],
   './ServiceRequests/index.jsx': ["ServiceRequests","ServiceRequestsFields","activeServiceRequests","orderDateDesc"],
   './SignaturePad/index.jsx': ["B","D","L","O","SignaturePad","SignaturePadLib","T","U","W","_","__exports","a","c","canvas","canvasRef","container","containerRef","containerStyle","dataUrl","define","e","exports","f","h","handleClear","handleEndStroke","i","k","l","m","module","o","p","pad","padRef","r","ratio","readOnlyImageStyle","resizeCanvas","s","savedDataUrl","t","theme","u","width","y"],
-  './SubformScoring/index.jsx': ["AnswerSummaryItem","CalculationSummaryItem","DataFieldSummaryItem","DataInterpretationSummaryItem","FormSessionProvider","InterpretationSummaryItem","MOIS_WRITE_ID_FALLBACK_PATHS","MOIS_WRITE_MUTATIONS","MOIS_WRITE_MUTATION_KEYS","ProgressSummaryItem","ScoreSummaryItem","SubformScoring","SubformScoringInner","_LOCAL_INPUT_STYLE","_LOCAL_RADIO_GROUP_STYLE","_LOCAL_TEXTAREA_STYLE","_REPORT_ITEM_FORMATS","__SubformScoringSessionContext","__cloneSubformScoringSessionValue","_buildDataEntryRenderGroups","_buildDataEntrySnapshot","_buildFormattedObservationReport","_buildMappedPayload","_buildScaleLegendSignature","_buildScaleOptions","_buildScoreMap","_buildSubformFormDataWrites","_buildSubformObservationReport","_buildSubformObservationUpdates","_collectScoreCandidates","_computeMorphineEquivalent","_createPreparedSessionSetter","_evaluateDataEntryVisibility","_evaluateExpression","_findQuestionOptionForAnswer","_formatBounds","_formatCalculatorDisplayValue","_formatNumericValue","_getInterpretation","_getScoreFromValue","_getSelectableOptionNumericValue","_getValueAtPath","_isHeadingField","_isInRange","_isMeaningfulValue","_isScaleChoiceSelected","_isSelectableOptionSelected","_latestObservationDefault","_normalizeChartPreferenceValue","_normalizeScoreToken","_normalizeSelectableOptions","_optionMatchesValue","_recordSubformActionPayload","_resolveChecklistOptions","_resolveDataEntryDisplayValue","_resolveFieldDefaultValue","_resolveFieldEmptyNumericValue","_resolveFieldWidthBasis","_resolveObservationTemplate","_resolvePathValue","_resolveQuestionOptions","_resolveSelectableBinaryOptions","_resolveWriteActionId","_serializeSelectableValue","_setSubformFormDataOutputs","_setSubformObservationPayloads","_setValueAtPath","_stringifyObservationValue","_toDisplayValue","_toNumericValue","_toPathSegments","_usesStructuredSelectableOptions","abs","action","actionPayload","aliases","allValues","allVars","answer","answerScore","answerableFields","answered","answers","aspect","barBg","barFill","baseDose","baseEquivalentDoseMg","baseEquivalentDoseRaw","basis","binding","boundedPrecision","buttonRowStyle","cadFieldId","calc","calculatedExpressions","calculatedTotals","calculation","calculatorFields","candidate","candidateKeys","candidatePaths","candidates","ceil","checked","checkedFromConfig","checkedOption","checklist","cloneFormSessionState","code","columnTemplate","commentsField","commonProps","componentPayloads","computedFallback","configuredField","container","containerStyle","controlLabel","controllerId","conversions","createdBy","current","currentSignature","cursor","dataEntryAction","dataEntryCalculations","dataEntryCalculatorConfig","dataEntryFieldById","dataEntryFields","dataEntryRenderGroups","dataEntrySnapshot","dataEntryValues","dateField","day","defaultValue","defaults","description","dialogContentProps","dialogMinWidth","dialogTitle","direct","displayText","displayValue","dose","doseColumnLabel","effectiveInitialData","entry","equivalentColumnLabel","equivalentDose","equivalentDoseMg","evaluated","explicitDefault","expressionVars","extracted","factor","fallbackOptions","field","fieldExists","fields","fieldsForProgress","floor","flushMatrixBuffer","formDataWrites","formatted","fromCalculation","functionNames","generatedIndex","generatedVars","getCalculationConfig","getDataEntryFieldConfig","getQuestionConfig","getTotalConfig","groups","handleCommitToParent","handleOpenChange","hasAnyAnswers","hasAnyRowValue","hasExternalDataEntryStore","hasRequiredId","heading","history","iif","inputFieldId","inputType","inputValue","interpretation","isComplete","isDarkMode","isDataEntryMode","isDialogOpen","isHeading","isMatrixCandidate","isMorphineCalculatorMode","key","label","labelStyle","latest","left","leftDate","lines","map","match","matched","matchedOption","matrixBuffer","matrixGroupId","max","meetsMax","meetsMin","meqCalculationId","meqDisplay","meqValue","mergeFormSessionState","min","minSymbol","mod","modalProps","month","next","nextGroup","nextKey","nextOption","nextRaw","nextState","nextValue","normalize","normalized","normalizedButtonIconName","normalizedOptionMap","normalizedOptions","normalizedSessionData","normalizedType","normalizedValues","numeric","numericValue","numericValues","observationDefault","observationRows","observations","oldId","oldObservation","option","optionList","optionMap","optionMatch","optionScoreMap","optionTokens","optionValue","options","parsed","payload","payloadMap","pendingDefaults","places","precision","precisionRaw","prepareCompletionState","prepared","preparedSession","prevIndex","previousEntry","previousField","previousScaleSignature","printScore","printed","progress","providedOptions","question","questionOptions","questionsById","raw","rawConfig","rawOptions","rawRows","rawType","rawValue","renderBloodGlucoseReadingEditor","renderDataEntryField","renderDataEntryScaleMatrix","renderMorphineCalculator","renderNumberInput","renderStyle","renderSummaryItem","replacement","report","required","requiredFields","resolved","resolvedId","resolvedScore","response","result","resultColumnLabel","results","right","rightDate","root","round","rowId","rowLabels","rowValues","rows","rule","runMutation","runtime","scaleMatch","scaleOptions","scopedSetter","score","scoreMap","sd","segments","selected","selectedOption","selectedWithSetter","sessionContext","sessionSetFormData","sessionState","setDataEntryValue","setDialogOpen","setFormData","shouldClose","shouldHideButtonIcon","shouldUseDefaultButtonIcon","showCalculationsInModal","showItems","showLegend","showLegendForScale","signature","snapshot","source","sourceRoot","spec","step","style","summaryContainerStyle","summaryItemsStyle","summaryLayout","target","termQuestionId","text","theme","today","token","tokenMatches","total","totalCalculationId","totalFallback","totalFromCalculation","totalLabel","totalValue","totals","triggerButtonIconProps","trimmed","uncheckedFromConfig","uncheckedOption","uniqueTokens","usFieldId","useBloodGlucoseReadingLayout","useFormSessionData","useRadio","useToggleSwitch","value","values","variableFieldIds","variables","vars","writeDefinition","writeKey","writeMutationRunners","year"],
+  './SubformScoring/index.jsx': ["AnswerSummaryItem","CalculationSummaryItem","DataFieldSummaryItem","DataInterpretationSummaryItem","FormSessionProvider","InterpretationSummaryItem","MOIS_WRITE_ID_FALLBACK_PATHS","MOIS_WRITE_MUTATIONS","MOIS_WRITE_MUTATION_KEYS","ProgressSummaryItem","ScoreSummaryItem","SubformScoring","SubformScoringInner","_LOCAL_INPUT_STYLE","_LOCAL_RADIO_GROUP_STYLE","_LOCAL_TEXTAREA_STYLE","_REPORT_ITEM_FORMATS","__SubformScoringSessionContext","__cloneSubformScoringSessionValue","_buildDataEntryRenderGroups","_buildDataEntrySnapshot","_buildFormattedObservationReport","_buildMappedPayload","_buildScaleLegendSignature","_buildScaleOptions","_buildScoreMap","_buildSubformFormDataWrites","_buildSubformObservationReport","_buildSubformObservationUpdates","_collectScoreCandidates","_computeMorphineEquivalent","_createPreparedSessionSetter","_evaluateDataEntryVisibility","_evaluateExpression","_findQuestionOptionForAnswer","_formatBounds","_formatCalculatorDisplayValue","_formatNumericValue","_getInterpretation","_getScoreFromValue","_getSelectableOptionNumericValue","_getValueAtPath","_isHeadingField","_isInRange","_isLoincDataEntryField","_isMeaningfulValue","_isScaleChoiceSelected","_isSelectableOptionSelected","_latestObservationDefault","_normalizeChartPreferenceValue","_normalizeScoreToken","_normalizeSelectableOptions","_optionMatchesValue","_recordSubformActionPayload","_resolveChecklistOptions","_resolveDataEntryDisplayValue","_resolveFieldDefaultValue","_resolveFieldEmptyNumericValue","_resolveFieldWidthBasis","_resolveObservationTemplate","_resolvePathValue","_resolveQuestionOptions","_resolveSelectableBinaryOptions","_resolveWriteActionId","_serializeSelectableValue","_setSubformFormDataOutputs","_setSubformObservationPayloads","_setValueAtPath","_shouldShowDataEntryHelpText","_stringifyObservationValue","_toDisplayValue","_toNumericValue","_toPathSegments","_usesStructuredSelectableOptions","abs","action","actionPayload","aliases","allValues","allVars","answer","answerScore","answerableFields","answered","answers","aspect","barBg","barFill","baseDose","baseEquivalentDoseMg","baseEquivalentDoseRaw","basis","binding","boundedPrecision","buttonRowStyle","cadFieldId","calc","calculatedExpressions","calculatedTotals","calculation","calculatorFields","candidate","candidateKeys","candidatePaths","candidates","ceil","checked","checkedFromConfig","checkedOption","checklist","cloneFormSessionState","code","columnTemplate","commentsField","commonProps","componentPayloads","computedFallback","configuredDialogMinWidth","configuredField","configuredMatrixGroupId","container","containerStyle","controlLabel","controllerId","conversions","createdBy","current","currentSignature","cursor","dataEntryAction","dataEntryCalculations","dataEntryCalculatorConfig","dataEntryFieldById","dataEntryFields","dataEntryRenderGroups","dataEntrySnapshot","dataEntryValues","dateField","day","defaultValue","defaults","description","desiredDialogMinWidth","dialogContentProps","dialogMinWidth","dialogTitle","direct","displayText","displayValue","dose","doseColumnLabel","effectiveInitialData","entry","equivalentColumnLabel","equivalentDose","equivalentDoseMg","evaluated","explicitDefault","expressionVars","extracted","factor","fallbackOptions","field","fieldExists","fields","fieldsForProgress","floor","flushMatrixBuffer","flushScaleStack","formDataWrites","formatted","fromCalculation","functionNames","generatedIndex","generatedVars","getCalculationConfig","getDataEntryFieldConfig","getQuestionConfig","getTotalConfig","groups","handleCommitToParent","handleOpenChange","hasAnyAnswers","hasAnyRowValue","hasExternalDataEntryStore","hasRequiredId","heading","history","iif","inputFieldId","inputType","inputValue","interpretation","isComplete","isDarkMode","isDataEntryMode","isDialogOpen","isHeading","isMatrixCandidate","isMorphineCalculatorMode","key","label","labelStyle","latest","left","leftDate","lines","map","match","matched","matchedOption","matrixBuffer","matrixGroupId","max","meetsMax","meetsMin","meqCalculationId","meqDisplay","meqValue","mergeFormSessionState","min","minSymbol","mod","modalProps","month","next","nextGroup","nextKey","nextOption","nextRaw","nextState","nextValue","normalize","normalized","normalizedButtonIconName","normalizedOptionMap","normalizedOptions","normalizedSessionData","normalizedType","normalizedValues","numeric","numericValue","numericValues","observationDefault","observationRows","observations","oldId","oldObservation","option","optionCount","optionList","optionMap","optionMatch","optionScoreMap","optionTokens","optionValue","options","parsed","payload","payloadMap","pendingDefaults","places","precision","precisionRaw","prepareCompletionState","prepared","preparedSession","prevIndex","previousEntry","previousField","previousScaleSignature","printScore","printed","progress","providedOptions","question","questionOptions","questionsById","raw","rawConfig","rawOptions","rawRows","rawType","rawValue","renderBloodGlucoseReadingEditor","renderDataEntryField","renderDataEntryScaleMatrix","renderDataEntryScaleStack","renderMorphineCalculator","renderNumberInput","renderStyle","renderSummaryItem","replacement","report","required","requiredFields","resolved","resolvedId","resolvedScore","response","result","resultColumnLabel","results","right","rightDate","root","round","rowId","rowLabels","rowValues","rows","rule","runMutation","runtime","scaleMatch","scaleOptions","scaleStack","scopedSetter","score","scoreMap","sd","segments","selected","selectedOption","selectedWithSetter","sessionContext","sessionSetFormData","sessionState","setDataEntryValue","setDialogOpen","setFormData","shouldClose","shouldHideButtonIcon","shouldUseDefaultButtonIcon","showCalculationsInModal","showItems","showLegend","showLegendForScale","signature","snapshot","source","sourceRoot","spec","stackMinWidth","stackedGroups","step","style","summaryContainerStyle","summaryItemsStyle","summaryLayout","target","termQuestionId","text","theme","today","token","tokenMatches","total","totalCalculationId","totalFallback","totalFromCalculation","totalLabel","totalValue","totals","triggerButtonIconProps","trimmed","uncheckedFromConfig","uncheckedOption","uniqueTokens","usFieldId","useBloodGlucoseReadingLayout","useFormSessionData","useRadio","useToggleSwitch","value","values","variableFieldIds","variables","vars","widestScaleMinWidth","writeDefinition","writeKey","writeMutationRunners","year"],
   './UnsavedChangesGuard/index.jsx': ["ButtonComponent","DCOUpdates","DEFAULT_WINDOW_HOURS","UnsavedChangesGuard","actionItems","actor","actorFrom","addHoursIso","baselineRef","buildDefaultSavePayload","buildDefaultSubmitPayload","buildKey","c","changed","ck","claim","claims","closeWindow","collectComponentPayloads","collectDomFieldValues","commitSave","componentPayload","confirmUnloadActive","current","d","data","dcoGroups","disabled","domFieldValues","editableUntil","euDate","existing","expired","field","fieldData","fieldId","footerActionItems","footerActions","formData","formatTimestamp","guardSkipsWhenSigned","handleAction","handler","hasLifecycleSignals","host","inputType","isNonEmpty","isOwner","isSettling","isSigned","isSubmitAction","keepStatus","key","label","lifecycle","linkedPanels","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","markSaved","mergeFieldValuesIntoState","narratives","nextStatus","nextValue","nhAuthCommitSave","nhAuthPrepareSave","normalizeFooterActions","normalizeGuardActions","normalizeGuardValue","normalizeStore","now","nowIso","ownerId","ownerName","ownerRefresh","pad2","panelUpdates","panels","payload","payloads","pending","persistAction","persistFd","policyAppliesToAction","prepareSave","prepared","primaryAction","promptText","raw","readStore","release","renderFooterAction","resolveNow","sameActor","saveSettleRef","savedWebform","sd","secondaryActions","serializeGuardValue","store","stripComponentPayloads","submitSd","success","tagName","trackedSnapshot","trackedValue","ts","untilSelf","useHostConfirmUnload","values","warmupRef","webformGroups","webformUpdate","windowHours"],
   './UseChangeWatch/index.jsx': ["_defaultCompare","_normalizeWatchOptions","baselineRef","compare","delayCount","dirtyRef","disabled","forcedDirtyRef","isDirty","normalizedOptions","onDirtyChange","renderCountRef","setChanged","useChangeWatch"],
   './ValueSetObservationField/index.jsx': ["RuntimeCodedChoice","ValueSetObservationField"],

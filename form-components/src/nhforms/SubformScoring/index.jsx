@@ -1127,6 +1127,14 @@ const _buildScaleLegendSignature = (field) => {
   )
 }
 
+const _isLoincDataEntryField = (field) =>
+  Array.isArray(field?.fhirConfig?.code) &&
+  field.fhirConfig.code.some((coding) => coding?.system === "http://loinc.org")
+
+const _shouldShowDataEntryHelpText = (field) =>
+  Boolean(field?.helpText) &&
+  !(_isLoincDataEntryField(field) && String(field.helpText).includes(" · "))
+
 const _usesStructuredSelectableOptions = (field) =>
   Array.isArray(field?.options) &&
   field.options.some((option) => option && typeof option === "object" && !Array.isArray(option))
@@ -1336,7 +1344,10 @@ const _buildDataEntryRenderGroups = (fields) => {
   }
 
   for (const field of fields || []) {
-    const matrixGroupId = typeof field?.matrixGroupId === "string" ? field.matrixGroupId.trim() : ""
+    const configuredMatrixGroupId = typeof field?.matrixGroupId === "string" ? field.matrixGroupId.trim() : ""
+    // LOINC symptom scales use the standard stacked ScaleField presentation,
+    // even if a short-lived generated config persisted a matrixGroupId.
+    const matrixGroupId = _isLoincDataEntryField(field) ? "" : configuredMatrixGroupId
     const isMatrixCandidate = field?.type === "scale" && matrixGroupId
 
     if (!isMatrixCandidate) {
@@ -1366,7 +1377,38 @@ const _buildDataEntryRenderGroups = (fields) => {
   }
 
   flushMatrixBuffer()
-  return groups
+
+  // LOINC symptom scales remain individual ScaleField rows, but consecutive
+  // rows share one overflow container so horizontal scrolling stays aligned.
+  const stackedGroups = []
+  let scaleStack = []
+  const flushScaleStack = () => {
+    if (scaleStack.length === 0) return
+    if (scaleStack.length === 1) {
+      stackedGroups.push(scaleStack[0])
+    } else {
+      stackedGroups.push({
+        type: "scaleStack",
+        fields: scaleStack.map((entry) => entry.field),
+      })
+    }
+    scaleStack = []
+  }
+
+  for (const entry of groups) {
+    if (
+      entry?.type === "field" &&
+      entry.field?.type === "scale" &&
+      _isLoincDataEntryField(entry.field)
+    ) {
+      scaleStack.push(entry)
+      continue
+    }
+    flushScaleStack()
+    stackedGroups.push(entry)
+  }
+  flushScaleStack()
+  return stackedGroups
 }
 
 const _isScaleChoiceSelected = (value, option) => {
@@ -2292,7 +2334,13 @@ const SubformScoringInner = ({
           options={scaleOptions}
           showLegend={showLegend}
           showInlineLabels={field.showInlineLabels !== false}
+          showEndpointLabels={
+            field.showEndpointLabels === true ||
+            (field.showEndpointLabels !== false && Boolean(field.minLabel || field.maxLabel))
+          }
           showTooltip={field.showTooltip === true}
+          tooltipMode={field.tooltipMode === "option" ? "option" : "all"}
+          disableHorizontalScroll={renderOptions.disableHorizontalScroll === true}
         />
       )
     }
@@ -2555,6 +2603,34 @@ const SubformScoringInner = ({
     )
   }
 
+  const renderDataEntryScaleStack = (group) => {
+    const fields = (Array.isArray(group?.fields) ? group.fields : [])
+      .filter((field) => _evaluateDataEntryVisibility(field, dataEntryValues))
+    if (fields.length === 0) return null
+
+    const stackMinWidth = fields.reduce((widest, field) => {
+      const optionCount = _buildScaleOptions(field).length
+      return Math.max(widest, Math.max(360, optionCount * 64 + 170))
+    }, 0)
+
+    return (
+      <div style={{ width: "100%", overflowX: "auto" }}>
+        <div style={{ minWidth: `${stackMinWidth}px`, display: "flex", flexDirection: "column", gap: "4px" }}>
+          {fields.map((field) => (
+            <div key={`stacked-scale-${field.id}`}>
+              {renderDataEntryField(field, { disableHorizontalScroll: true })}
+              {_shouldShowDataEntryHelpText(field) ? (
+                <Text styles={{ root: { fontSize: "12px", color: isDarkMode ? "#a0a0a0" : "#666", marginTop: "2px" } }}>
+                  {field.helpText}
+                </Text>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
   // -------------------------------------------------------------------
   // Scale-matrix renderer
   // -------------------------------------------------------------------
@@ -2628,7 +2704,7 @@ const SubformScoringInner = ({
           >
             <div>
               <Label required={field.required === true}>{field.label}</Label>
-              {field.helpText ? (
+              {_shouldShowDataEntryHelpText(field) ? (
                 <Text styles={{ root: { fontSize: "12px", color: isDarkMode ? "#a0a0a0" : "#666", marginTop: "2px" } }}>
                   {field.helpText}
                 </Text>
@@ -3067,7 +3143,20 @@ const SubformScoringInner = ({
     : { display: "flex", flexDirection: "column", gap: "6px" }
 
   const dialogTitle = modalConfig.title || title || "Assessment"
-  const dialogMinWidth = modalConfig.minWidth || 700
+  const configuredDialogMinWidth = Number(modalConfig.minWidth) || 700
+  const widestScaleMinWidth = dataEntryFields.reduce((widest, field) => {
+    if (field?.type !== "scale") return widest
+    const optionCount = _buildScaleOptions(field).length
+    return Math.max(widest, Math.max(360, optionCount * 64 + 170))
+  }, 0)
+  // ScaleField deliberately keeps its radio options on one row. Give that row
+  // the dialog content padding it needs, but never make the modal wider than
+  // the viewport; small screens retain the existing horizontal scroll escape.
+  const desiredDialogMinWidth = Math.max(
+    configuredDialogMinWidth,
+    widestScaleMinWidth > 0 ? widestScaleMinWidth + 48 : 0
+  )
+  const dialogMinWidth = `min(${desiredDialogMinWidth}px, calc(100vw - 48px))`
   const showCalculationsInModal =
     Boolean(modalConfig.showCalculationsInModal) ||
     Boolean(modalConfig.show_calculations_in_modal)
@@ -3134,6 +3223,17 @@ const SubformScoringInner = ({
             ) : dataEntryFields.length > 0 ? (
               <div style={{ display: "flex", flexWrap: "wrap", columnGap: "12px", rowGap: "10px" }}>
                 {dataEntryRenderGroups.map((entry, index) => {
+                  if (entry.type === "scaleStack") {
+                    return (
+                      <div
+                        key={`scale-stack-${index}`}
+                        style={{ flex: "1 0 100%", maxWidth: "100%" }}
+                      >
+                        {renderDataEntryScaleStack(entry)}
+                      </div>
+                    )
+                  }
+
                   if (entry.type === "scaleMatrix") {
                     return (
                       <div
@@ -3171,7 +3271,7 @@ const SubformScoringInner = ({
                   return (
                     <div key={field.id} style={containerStyle}>
                       {renderDataEntryField(field, { showLegend: showLegendForScale })}
-                      {field.helpText && !isHeading && (
+                      {_shouldShowDataEntryHelpText(field) && !isHeading && (
                         <Text styles={{ root: { fontSize: "12px", color: isDarkMode ? "#a0a0a0" : "#666", marginTop: "2px" } }}>
                           {field.helpText}
                         </Text>

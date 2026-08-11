@@ -899,10 +899,14 @@ export interface SubformDataEntryFieldConfig {
   matrixGroupId?: string;
   showLegend?: boolean;
   showInlineLabels?: boolean;
+  showEndpointLabels?: boolean;
+  showTooltip?: boolean;
+  tooltipMode?: "all" | "option";
   scaleOptions?: Array<{
     value: number;
     label: string;
     description?: string;
+    key?: string;
   }>;
   imageUrl?: string;
   imageSvg?: string;
@@ -967,6 +971,14 @@ export interface SubformDataEntryFieldConfig {
   totalCountFieldId?: string;
   selectedIdsFieldId?: string;
   selectedLabelsFieldId?: string;
+  /**
+   * Builder-only projection of this nested entry as a regular field.
+   *
+   * The NHForms runtime continues to read the compact properties above. The
+   * authoring projection retains settings without a compact runtime equivalent
+   * so nested fields can use the shared field inspector without losing data.
+   */
+  builderField?: Partial<BuilderField>;
 }
 
 export interface SubformDataEntryCalculationConfig {
@@ -981,6 +993,8 @@ export interface SubformDataEntryCalculationConfig {
     minInclusive?: boolean;
     maxInclusive?: boolean;
   }>;
+  /** Lossless regular computed-field projection for the shared inspector. */
+  builderField?: Partial<BuilderField>;
 }
 
 export interface SubformDataEntryCalculatorRowConfig {

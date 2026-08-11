@@ -23,6 +23,7 @@ const {
  * - showEndpointLabels: boolean - Whether to show first/last descriptions beneath the scale
  * - showTooltip: boolean - Whether to show the row tooltip when descriptions exist
  * - tooltipMode: "all" | "option" - Whether tooltips show all definitions or only the hovered option
+ * - disableHorizontalScroll: boolean - Let a parent provide one shared horizontal scrollbar
  * - required: boolean - Whether the field is required
  * - readOnly: boolean - Whether the field is read-only
  */
@@ -188,6 +189,7 @@ const ScaleField = ({
   showEndpointLabels = false,
   showTooltip = false,
   tooltipMode = "all",
+  disableHorizontalScroll = false,
   required = false,
   readOnly = false,
 }) => {
@@ -210,7 +212,6 @@ const ScaleField = ({
   const choiceOptions = scaleOptions.map(opt => ({
     key: opt.key ?? String(opt.value),
     text: showInlineLabels ? (opt.label ?? String(opt.value)) : "",
-    title: showTooltip && normalizedTooltipMode === "option" ? (opt.description || opt.label) : undefined,
     onRenderField:
       showTooltip && normalizedTooltipMode === "option" && (opt.description || opt.label)
         ? (optionProps, defaultRender) => (
@@ -219,7 +220,7 @@ const ScaleField = ({
                 onRenderContent: () => _renderOptionTooltipContent(opt.description || opt.label),
               }}
             >
-              <span title={opt.description || opt.label} style={{ cursor: "help", display: "inline-block" }}>
+              <span style={{ cursor: "help", display: "inline-block" }}>
                 {defaultRender ? defaultRender(optionProps) : null}
               </span>
             </TooltipHost>
@@ -298,7 +299,7 @@ const ScaleField = ({
   )
 
   return (
-    <div style={{ overflowX: "auto" }}>
+    <div style={{ overflowX: disableHorizontalScroll ? "visible" : "auto" }}>
       {showLegend && <ScaleFieldLegend options={scaleOptions} />}
 
       <div style={containerStyle}>
