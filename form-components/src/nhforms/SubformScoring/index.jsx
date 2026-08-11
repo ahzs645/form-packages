@@ -1484,33 +1484,35 @@ const _LOCAL_RADIO_GROUP_STYLE = {
 // Summary-view module
 // =====================================================================
 
+const _calculationIncompleteBehavior = (calculation) =>
+  calculation?.incompleteBehavior ||
+  calculation?.builderField?.computedConfig?.incompleteBehavior ||
+  "compute-anyway"
+
+const _calculationIncompleteText = (calculation) =>
+  calculation?.incompleteText ||
+  calculation?.builderField?.computedConfig?.incompleteText ||
+  "Incomplete"
+
+const _calculationPresentationValue = (calculation, value, isComplete) => {
+  if (isComplete) return value
+  return _calculationIncompleteBehavior(calculation) === "show-text"
+    ? _calculationIncompleteText(calculation)
+    : null
+}
+
 const ScoreSummaryItem = ({ total, score, isComplete, isDarkMode }) => {
-  const style = {
-    display: "flex",
-    alignItems: "center",
-    gap: "8px",
-    padding: "6px 12px",
-    borderRadius: "4px",
-    backgroundColor: isDarkMode ? "#1a3a5c" : "#e6f2ff",
-    border: `1px solid ${isDarkMode ? "#2a5a8c" : "#b8d4f0"}`,
-  }
-
-  if (!isComplete) {
-    return (
-      <div style={{ ...style, backgroundColor: isDarkMode ? "#3a3a1a" : "#fff8e6", border: `1px solid ${isDarkMode ? "#5a5a2a" : "#f0e0b8"}` }}>
-        <Text styles={{ root: { fontWeight: 600, fontSize: "13px" } }}>{total.label}:</Text>
-        <Text styles={{ root: { fontSize: "13px", color: isDarkMode ? "#cca050" : "#996600", fontStyle: "italic" } }}>
-          Incomplete
-        </Text>
-      </div>
-    )
-  }
-
+  if (!isComplete && _calculationIncompleteBehavior(total) === "hide") return null
   return (
-    <div style={style}>
-      <Text styles={{ root: { fontWeight: 600, fontSize: "13px" } }}>{total.label}:</Text>
-      <Text styles={{ root: { fontWeight: 700, fontSize: "16px" } }}>{score}</Text>
-    </div>
+    <ComputedField
+      fieldId={total.id}
+      label={total.label}
+      resolvedValue={_calculationPresentationValue(total, score, isComplete)}
+      presentationOnly
+      displayStyle={total.displayStyle || "field"}
+      readOnly
+      isDarkMode={isDarkMode}
+    />
   )
 }
 
@@ -1594,33 +1596,18 @@ const DataFieldSummaryItem = ({ field, value, isDarkMode }) => {
 
 const CalculationSummaryItem = ({ calculation, value, isDarkMode }) => {
   if (!calculation) return null
-
-  const style = {
-    display: "flex",
-    alignItems: "center",
-    gap: "8px",
-    padding: "6px 12px",
-    borderRadius: "4px",
-    backgroundColor: isDarkMode ? "#1a3a5c" : "#e6f2ff",
-    border: `1px solid ${isDarkMode ? "#2a5a8c" : "#b8d4f0"}`,
-  }
-
-  if (value === null || value === undefined) {
-    return (
-      <div style={{ ...style, backgroundColor: isDarkMode ? "#3a3a1a" : "#fff8e6", border: `1px solid ${isDarkMode ? "#5a5a2a" : "#f0e0b8"}` }}>
-        <Text styles={{ root: { fontWeight: 600, fontSize: "13px" } }}>{calculation.label}:</Text>
-        <Text styles={{ root: { fontSize: "13px", color: isDarkMode ? "#cca050" : "#996600", fontStyle: "italic" } }}>
-          Incomplete
-        </Text>
-      </div>
-    )
-  }
-
+  const isComplete = value !== null && value !== undefined
+  if (!isComplete && _calculationIncompleteBehavior(calculation) === "hide") return null
   return (
-    <div style={style}>
-      <Text styles={{ root: { fontWeight: 600, fontSize: "13px" } }}>{calculation.label}:</Text>
-      <Text styles={{ root: { fontWeight: 700, fontSize: "16px" } }}>{value}</Text>
-    </div>
+    <ComputedField
+      fieldId={calculation.id}
+      label={calculation.label}
+      resolvedValue={_calculationPresentationValue(calculation, value, isComplete)}
+      presentationOnly
+      displayStyle={calculation.displayStyle || "field"}
+      readOnly
+      isDarkMode={isDarkMode}
+    />
   )
 }
 
@@ -3296,23 +3283,21 @@ const SubformScoringInner = ({
               }}>
                 {dataEntryCalculations.map((calculation) => {
                   const value = calculatedExpressions[calculation.id]
+                  const isComplete = value !== null && value !== undefined
+                  if (!isComplete && _calculationIncompleteBehavior(calculation) === "hide") {
+                    return null
+                  }
                   return (
-                    <div
+                    <ComputedField
                       key={`modal-calc-${calculation.id}`}
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "baseline",
-                        gap: "12px"
-                      }}
-                    >
-                      <Text styles={{ root: { fontSize: "13px", fontWeight: 700, letterSpacing: "0.02em" } }}>
-                        {calculation.label.toUpperCase()}:
-                      </Text>
-                      <Text styles={{ root: { fontSize: "26px", fontWeight: 700, lineHeight: 1 } }}>
-                        {value ?? "Incomplete"}
-                      </Text>
-                    </div>
+                      fieldId={calculation.id}
+                      label={calculation.label}
+                      resolvedValue={_calculationPresentationValue(calculation, value, isComplete)}
+                      presentationOnly
+                      displayStyle={calculation.displayStyle || "field"}
+                      readOnly
+                      isDarkMode={isDarkMode}
+                    />
                   )
                 })}
               </div>

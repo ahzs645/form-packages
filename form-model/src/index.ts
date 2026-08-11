@@ -56,6 +56,8 @@ export type CalculatedValuePolicy =
   | "calculated-until-overridden"
   | "suggested-calculation";
 
+export type CalculatedValueDisplayStyle = "field" | "compact" | "prominent";
+
 /**
  * What a calculation does before every referenced input has a value.
  *
@@ -75,6 +77,8 @@ export interface CalculatedValueConfig {
   expression: string;
   precision?: number;
   resultType?: "number" | "text";
+  /** Visual presentation shared by regular computed fields and subform totals. */
+  displayStyle?: CalculatedValueDisplayStyle;
   /** Controls whether the runtime owns the value, yields after a user edit, or only offers a suggestion. */
   calculationPolicy?: CalculatedValuePolicy;
   /** What to do before every referenced input has a value. Defaults to "compute-anyway". */
@@ -1391,6 +1395,8 @@ export interface BuilderField {
     precision?: number;
     /** Whether the computed value is stored/rendered as a number or formatted text */
     resultType?: "number" | "text";
+    /** Visual presentation shared by regular computed fields and subform totals. */
+    displayStyle?: CalculatedValueDisplayStyle;
     /** Defaults to always-calculated for backward compatibility. */
     calculationPolicy?: CalculatedValuePolicy;
     /** What to do before every referenced input has a value. Defaults to "compute-anyway". */

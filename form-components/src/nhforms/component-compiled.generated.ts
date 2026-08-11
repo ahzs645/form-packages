@@ -4181,12 +4181,78 @@ const _hasAllReferencedValues = (expression, valuesByFieldId) => {
   // while valid zero-valued answers count as answered.
   return Array.from(new Set(refs)).every(ref => _hasValue(_toComparableValue(valuesByFieldId?.[ref])));
 };
+const _normalizeComputedDisplayStyle = displayStyle => displayStyle === "compact" || displayStyle === "prominent" ? displayStyle : "field";
+const ComputedValuePresentation = ({
+  fieldId,
+  label,
+  value,
+  displayStyle = "field",
+  labelPosition = "left",
+  placeholder = "Calculated automatically",
+  readOnly = true,
+  required = false,
+  size,
+  onChange,
+  isDarkMode = false
+}) => {
+  const normalizedStyle = _normalizeComputedDisplayStyle(displayStyle);
+
+  // Editable calculations retain the regular field control regardless of the
+  // chosen summary style, so override and suggestion policies remain usable.
+  if (normalizedStyle === "field" || readOnly === false) {
+    return /*#__PURE__*/React.createElement(TextArea, {
+      fieldId: fieldId,
+      label: label,
+      value: value,
+      onChange: onChange,
+      labelPosition: labelPosition,
+      placeholder: placeholder,
+      readOnly: readOnly,
+      required: required,
+      size: size
+    });
+  }
+  const isProminent = normalizedStyle === "prominent";
+  const displayValue = value === undefined || value === null || value === "" ? "Incomplete" : String(value);
+  const containerStyle = isProminent ? {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "baseline",
+    gap: "12px",
+    padding: "12px 14px",
+    borderRadius: "6px",
+    border: \`1px solid \${isDarkMode ? "#2a5a8c" : "#b8d4f0"}\`,
+    backgroundColor: isDarkMode ? "#1a3a5c" : "#e6f2ff"
+  } : {
+    display: "flex",
+    alignItems: "baseline",
+    gap: "6px",
+    padding: "4px 0",
+    fontSize: "13px"
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    style: containerStyle
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: isDarkMode ? "#a0a0a0" : "#666666",
+      fontWeight: isProminent ? 600 : 500,
+      flexShrink: 0
+    }
+  }, label, ":"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontWeight: isProminent ? 700 : 400,
+      fontSize: isProminent ? "16px" : "13px",
+      fontStyle: displayValue === "Incomplete" ? "italic" : "normal"
+    }
+  }, displayValue));
+};
 const ComputedField = ({
   fieldId,
   label,
   expression,
   precision,
   resultType = "number",
+  displayStyle = "field",
   calculationPolicy = "always-calculated",
   labelPosition = "left",
   placeholder = "Calculated automatically",
@@ -4200,13 +4266,16 @@ const ComputedField = ({
   // with mirrored visible expressions so a partial total never shows and never
   // persists. "compute-anyway" is the default so existing forms are unchanged.
   incompleteBehavior = "compute-anyway",
-  incompleteText = "Incomplete"
+  incompleteText = "Incomplete",
+  resolvedValue,
+  presentationOnly = false,
+  isDarkMode = false
 }) => {
   const [fd, setFd] = useActiveData();
   const valuesByFieldId = fd?.field?.data || {};
   const policy = _normalizeCalculationPolicy(calculationPolicy);
   const isOverridden = _computedFieldIsOverridden(valuesByFieldId, fieldId);
-  const computedValue = useMemo(() => _evaluateComputedExpression(expression, valuesByFieldId, fieldId), [expression, fieldId, valuesByFieldId]);
+  const computedValue = useMemo(() => presentationOnly ? resolvedValue : _evaluateComputedExpression(expression, valuesByFieldId, fieldId), [expression, fieldId, presentationOnly, resolvedValue, valuesByFieldId]);
   const roundedValue = useMemo(() => _roundComputedValue(computedValue, precision), [computedValue, precision]);
   const isIncomplete = useMemo(() => incompleteBehavior !== "compute-anyway" && !_hasAllReferencedValues(expression, valuesByFieldId), [expression, incompleteBehavior, valuesByFieldId]);
   const storedValue = useMemo(() => {
@@ -4238,6 +4307,7 @@ const ComputedField = ({
   const interpretationValue = policy === "always-calculated" ? roundedValue : _toNumericValue(currentValue);
   const interpretationRange = useMemo(() => canShowInterpretation ? _getInterpretationRange(interpretationValue, interpretation) : null, [canShowInterpretation, interpretation, interpretationValue]);
   useEffect(() => {
+    if (presentationOnly) return;
     if (!fieldId) return;
     if (!_shouldApplyComputedValue(policy, isOverridden)) return;
     setFd(draft => {
@@ -4269,7 +4339,7 @@ const ComputedField = ({
     // persisted value itself so an owned calculation repairs that late seed on
     // the next render. Suggested values and user overrides still opt out through
     // _shouldApplyComputedValue above.
-  }, [currentValue, fieldId, isOverridden, policy, setFd, storedValue]);
+  }, [currentValue, fieldId, isOverridden, policy, presentationOnly, setFd, storedValue]);
   const markOverridden = () => {
     if (!fieldId || !canEdit) return;
     setFd(draft => {
@@ -4311,17 +4381,19 @@ const ComputedField = ({
   // Legacy hid the score control outright until every item was answered. All
   // hooks above have already run, so bailing out here is safe.
   if (isIncomplete && incompleteBehavior === "hide") return null;
-  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(TextArea, {
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(ComputedValuePresentation, {
     fieldId: fieldId,
     label: label,
     value: renderedValue,
     onChange: markOverridden,
+    displayStyle: displayStyle,
     labelPosition: labelPosition,
     placeholder: placeholder,
     readOnly: !canEdit,
     required: required,
-    size: size
-  }), policy === "calculated-until-overridden" ? /*#__PURE__*/React.createElement("div", {
+    size: size,
+    isDarkMode: isDarkMode
+  }), !presentationOnly && policy === "calculated-until-overridden" ? /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 4,
       marginLeft: labelPosition === "left" ? 160 : 0,
@@ -4341,7 +4413,7 @@ const ComputedField = ({
       padding: "2px 8px",
       cursor: "pointer"
     }
-  }, "Reset to calculation") : null) : null, policy === "suggested-calculation" ? /*#__PURE__*/React.createElement("div", {
+  }, "Reset to calculation") : null) : null, !presentationOnly && policy === "suggested-calculation" ? /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 4,
       marginLeft: labelPosition === "left" ? 160 : 0,
@@ -4361,7 +4433,7 @@ const ComputedField = ({
       padding: "2px 8px",
       cursor: "pointer"
     }
-  }, "Use suggestion") : null) : null, interpretationRange ? /*#__PURE__*/React.createElement("div", {
+  }, "Use suggestion") : null) : null, !presentationOnly && interpretationRange ? /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 4,
       marginLeft: labelPosition === "left" ? 160 : 0,
@@ -31703,62 +31775,28 @@ const _LOCAL_RADIO_GROUP_STYLE = {
 // Summary-view module
 // =====================================================================
 
+const _calculationIncompleteBehavior = calculation => calculation?.incompleteBehavior || calculation?.builderField?.computedConfig?.incompleteBehavior || "compute-anyway";
+const _calculationIncompleteText = calculation => calculation?.incompleteText || calculation?.builderField?.computedConfig?.incompleteText || "Incomplete";
+const _calculationPresentationValue = (calculation, value, isComplete) => {
+  if (isComplete) return value;
+  return _calculationIncompleteBehavior(calculation) === "show-text" ? _calculationIncompleteText(calculation) : null;
+};
 const ScoreSummaryItem = ({
   total,
   score,
   isComplete,
   isDarkMode
 }) => {
-  const style = {
-    display: "flex",
-    alignItems: "center",
-    gap: "8px",
-    padding: "6px 12px",
-    borderRadius: "4px",
-    backgroundColor: isDarkMode ? "#1a3a5c" : "#e6f2ff",
-    border: \`1px solid \${isDarkMode ? "#2a5a8c" : "#b8d4f0"}\`
-  };
-  if (!isComplete) {
-    return /*#__PURE__*/React.createElement("div", {
-      style: {
-        ...style,
-        backgroundColor: isDarkMode ? "#3a3a1a" : "#fff8e6",
-        border: \`1px solid \${isDarkMode ? "#5a5a2a" : "#f0e0b8"}\`
-      }
-    }, /*#__PURE__*/React.createElement(Text, {
-      styles: {
-        root: {
-          fontWeight: 600,
-          fontSize: "13px"
-        }
-      }
-    }, total.label, ":"), /*#__PURE__*/React.createElement(Text, {
-      styles: {
-        root: {
-          fontSize: "13px",
-          color: isDarkMode ? "#cca050" : "#996600",
-          fontStyle: "italic"
-        }
-      }
-    }, "Incomplete"));
-  }
-  return /*#__PURE__*/React.createElement("div", {
-    style: style
-  }, /*#__PURE__*/React.createElement(Text, {
-    styles: {
-      root: {
-        fontWeight: 600,
-        fontSize: "13px"
-      }
-    }
-  }, total.label, ":"), /*#__PURE__*/React.createElement(Text, {
-    styles: {
-      root: {
-        fontWeight: 700,
-        fontSize: "16px"
-      }
-    }
-  }, score));
+  if (!isComplete && _calculationIncompleteBehavior(total) === "hide") return null;
+  return /*#__PURE__*/React.createElement(ComputedField, {
+    fieldId: total.id,
+    label: total.label,
+    resolvedValue: _calculationPresentationValue(total, score, isComplete),
+    presentationOnly: true,
+    displayStyle: total.displayStyle || "field",
+    readOnly: true,
+    isDarkMode: isDarkMode
+  });
 };
 const InterpretationSummaryItem = ({
   total,
@@ -31841,56 +31879,17 @@ const CalculationSummaryItem = ({
   isDarkMode
 }) => {
   if (!calculation) return null;
-  const style = {
-    display: "flex",
-    alignItems: "center",
-    gap: "8px",
-    padding: "6px 12px",
-    borderRadius: "4px",
-    backgroundColor: isDarkMode ? "#1a3a5c" : "#e6f2ff",
-    border: \`1px solid \${isDarkMode ? "#2a5a8c" : "#b8d4f0"}\`
-  };
-  if (value === null || value === undefined) {
-    return /*#__PURE__*/React.createElement("div", {
-      style: {
-        ...style,
-        backgroundColor: isDarkMode ? "#3a3a1a" : "#fff8e6",
-        border: \`1px solid \${isDarkMode ? "#5a5a2a" : "#f0e0b8"}\`
-      }
-    }, /*#__PURE__*/React.createElement(Text, {
-      styles: {
-        root: {
-          fontWeight: 600,
-          fontSize: "13px"
-        }
-      }
-    }, calculation.label, ":"), /*#__PURE__*/React.createElement(Text, {
-      styles: {
-        root: {
-          fontSize: "13px",
-          color: isDarkMode ? "#cca050" : "#996600",
-          fontStyle: "italic"
-        }
-      }
-    }, "Incomplete"));
-  }
-  return /*#__PURE__*/React.createElement("div", {
-    style: style
-  }, /*#__PURE__*/React.createElement(Text, {
-    styles: {
-      root: {
-        fontWeight: 600,
-        fontSize: "13px"
-      }
-    }
-  }, calculation.label, ":"), /*#__PURE__*/React.createElement(Text, {
-    styles: {
-      root: {
-        fontWeight: 700,
-        fontSize: "16px"
-      }
-    }
-  }, value));
+  const isComplete = value !== null && value !== undefined;
+  if (!isComplete && _calculationIncompleteBehavior(calculation) === "hide") return null;
+  return /*#__PURE__*/React.createElement(ComputedField, {
+    fieldId: calculation.id,
+    label: calculation.label,
+    resolvedValue: _calculationPresentationValue(calculation, value, isComplete),
+    presentationOnly: true,
+    displayStyle: calculation.displayStyle || "field",
+    readOnly: true,
+    isDarkMode: isDarkMode
+  });
 };
 const DataInterpretationSummaryItem = ({
   calculation,
@@ -33443,31 +33442,20 @@ const SubformScoringInner = ({
     }
   }, dataEntryCalculations.map(calculation => {
     const value = calculatedExpressions[calculation.id];
-    return /*#__PURE__*/React.createElement("div", {
+    const isComplete = value !== null && value !== undefined;
+    if (!isComplete && _calculationIncompleteBehavior(calculation) === "hide") {
+      return null;
+    }
+    return /*#__PURE__*/React.createElement(ComputedField, {
       key: \`modal-calc-\${calculation.id}\`,
-      style: {
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "baseline",
-        gap: "12px"
-      }
-    }, /*#__PURE__*/React.createElement(Text, {
-      styles: {
-        root: {
-          fontSize: "13px",
-          fontWeight: 700,
-          letterSpacing: "0.02em"
-        }
-      }
-    }, calculation.label.toUpperCase(), ":"), /*#__PURE__*/React.createElement(Text, {
-      styles: {
-        root: {
-          fontSize: "26px",
-          fontWeight: 700,
-          lineHeight: 1
-        }
-      }
-    }, value ?? "Incomplete"));
+      fieldId: calculation.id,
+      label: calculation.label,
+      resolvedValue: _calculationPresentationValue(calculation, value, isComplete),
+      presentationOnly: true,
+      displayStyle: calculation.displayStyle || "field",
+      readOnly: true,
+      isDarkMode: isDarkMode
+    });
   }))) : /*#__PURE__*/React.createElement("div", {
     style: {
       maxHeight: "65vh",
@@ -34594,7 +34582,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './CodedObservationChoiceField/index.jsx': ["CodedObservationChoiceField","candidates","checklistOptions","code","codedChoicePayloadsEqual","codings","commentValue","componentId","container","createdBy","currentPayload","display","effectiveFieldId","effectiveRenderAs","effectiveSelectionType","findExistingObservationId","formatCodedChoiceReport","fromContext","handleFindCodeChange","isMultiple","match","nextGroup","normalizeCodedChoiceOptions","normalizeSelectedCodings","oldId","option","options","report","sd","selectOptions","selectedValue","setCodedChoicePayload","stripVolatileCodedChoicePayloadFields","value","values","writeCodedChoiceValue"],
   './CommonSchemaDefn/index.jsx': ["NameBlockFields","active","commonSchemaDefn","formHistorySchema","makeCodedObsUpdates","makeObsUpdatesFromVs","makeTextObsUpdates","makeValueSetOptions","nameBlockSchema","newDco","oldObs","oldObsId","options","selectAll","startDateDesc","valueSet","vso","ynuaOptions"],
   './CompactBooleanField/index.jsx': ["BooleanLabelPresets","CompactBooleanChecklist","CompactBooleanChecklistSchema","CompactBooleanField","CompactBooleanFieldSchema","CompactBooleanGroup","CompactChoiceField","CompactChoiceFieldMultiSchema","CompactChoiceFieldSchema","OptionButtons","YesNoButtons","baseContainerStyle","buttonStyle","checkboxWrapperRef","choiceContent","commitValue","containerStyle","currentData","currentValue","data","decodePDFHex","decoded","fieldContent","getBooleanLabels","getButtonStyles","getCardContainerStyles","getFieldContainerStyles","getWidthStyle","handleChange","handleCheckboxChange","handleClick","handleNoClick","handleYesClick","input","isDarkMode","isDisabled","isHorizontal","isLast","isLeftLabel","isMultiple","isSelected","labelStyle","lastRowStyle","newValues","noButtonStyle","normalizeValue","normalized","normalizedValue","noteStyle","prevDecoded","rowStyle","selected","selectedValues","setFormData","sizeStyles","theme","themeLabelMaxWidth","themeLabelMinWidth","titleStyle","values","widthMap","yesButtonStyle"],
-  './ComputedField/index.jsx': ["ComputedField","_COMPUTED_NON_FIELD_IDENTIFIERS","_COMPUTED_REF_PATTERN","_MS_PER_DAY","_calendarDayNumber","_coalesce","_computedFieldIsOverridden","_computedFieldState","_contains","_countTrue","_daysSince","_escapeRegExp","_evaluateComputedExpression","_exp","_extractComputedReferences","_floor","_getInterpretationRange","_hasAllReferencedValues","_hasValue","_iif","_isDateOnlyValue","_isSafeComputedExpression","_ln","_max","_min","_mod","_monthsSince","_normalizeCalculationPolicy","_numericExtrema","_power","_replaceBareReferencesOutsideQuotes","_round","_roundComputedValue","_score","_shouldApplyComputedValue","_stripQuotedStrings","_text","_toComparableValue","_toDateValue","_toDisplayValue","_toEditableComputedValue","_toNumericValue","bareRefs","bracketedRefs","canEdit","canShowInterpretation","candidate","computedValue","currentValue","cursor","date","dateOnly","digits","direct","displayValue","enteredDisplayValue","externallyReadOnly","factor","interpretationRange","interpretationValue","isIncomplete","isOverridden","markOverridden","max","min","months","nextSegment","numeric","numericDivisor","numericExponent","numericPrecision","numericValues","parsed","passesMax","passesMin","policy","prepared","previousState","reference","refs","renderedValue","replaceInSegment","replaced","result","rounded","roundedValue","start","state","stateContainer","stateMatches","storedValue","stringPattern","strippedExpression","tail","trimmed","uniqueBareRefs","uniqueBracketedRefs","unwrappedExpression","useCalculatedValue","valueMatches","valuesByFieldId"],
+  './ComputedField/index.jsx': ["ComputedField","ComputedValuePresentation","_COMPUTED_NON_FIELD_IDENTIFIERS","_COMPUTED_REF_PATTERN","_MS_PER_DAY","_calendarDayNumber","_coalesce","_computedFieldIsOverridden","_computedFieldState","_contains","_countTrue","_daysSince","_escapeRegExp","_evaluateComputedExpression","_exp","_extractComputedReferences","_floor","_getInterpretationRange","_hasAllReferencedValues","_hasValue","_iif","_isDateOnlyValue","_isSafeComputedExpression","_ln","_max","_min","_mod","_monthsSince","_normalizeCalculationPolicy","_normalizeComputedDisplayStyle","_numericExtrema","_power","_replaceBareReferencesOutsideQuotes","_round","_roundComputedValue","_score","_shouldApplyComputedValue","_stripQuotedStrings","_text","_toComparableValue","_toDateValue","_toDisplayValue","_toEditableComputedValue","_toNumericValue","bareRefs","bracketedRefs","canEdit","canShowInterpretation","candidate","computedValue","containerStyle","currentValue","cursor","date","dateOnly","digits","direct","displayValue","enteredDisplayValue","externallyReadOnly","factor","interpretationRange","interpretationValue","isIncomplete","isOverridden","isProminent","markOverridden","max","min","months","nextSegment","normalizedStyle","numeric","numericDivisor","numericExponent","numericPrecision","numericValues","parsed","passesMax","passesMin","policy","prepared","previousState","reference","refs","renderedValue","replaceInSegment","replaced","result","rounded","roundedValue","start","state","stateContainer","stateMatches","storedValue","stringPattern","strippedExpression","tail","trimmed","uniqueBareRefs","uniqueBracketedRefs","unwrappedExpression","useCalculatedValue","valueMatches","valuesByFieldId"],
   './ConditionalGroup/index.jsx': ["ConditionalField","ConditionalGroup","ConditionalGroupSchema","ConditionalReadOnly","ControllerLabelPresets","DISABLED_NATIVE_ELEMENTS","LogicGateContext","LogicGateProvider","MAX_SUBGROUP_DEPTH","READ_ONLY_NATIVE_ELEMENTS","allParentsVisible","baseContainerStyle","baseContentStyle","becameHidden","checkChoiceMatch","checkComparisonMatch","checkControllerMatch","childContext","clippedField","cloneWithProtection","conditionMet","containerStyle","contentNode","contentRef","contentStyle","context","contextValue","controllerFieldId","controllerValue","controllerWrapperStyle","createBranchingRule","currentDepth","defaultPadding","depthIndicatorStyle","effectiveValue","evaluateConditionEntries","evaluateConditionEntry","fieldValue","fieldValues","frame","generateConditionalGroupJSX","generateGroup","getControllerValue","groupRect","handleControllerChange","hasMatch","hiddenIndicatorStyle","indent","isDarkMode","isGroupVisible","isVisible","jsx","left","matches","mergeStyles","mode","nestedValue","nextProps","normalizeComparableValue","normalizeComparableValues","normalizeValue","normalized","normalizedOptionValues","orderedRules","override","overrides","parentChain","parentContext","payloads","props","protectedChildren","readControllerValue","rect","reportOverflow","result","right","rule","rules","theme","titleStyle","type","useConditionalVisibility","useIsVisible","useLogicGate","usesDisabledFallback","wasVisibleRef"],
   './Conditions/index.jsx': ["Conditions","ConditionsFields"],
   './Connections/index.jsx': ["CONNECTIONS_SORTS","Connections","ConnectionsFields","SelectActiveConnections","byType","prop","resolvedCompare"],
@@ -34650,7 +34638,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './ServiceEpisodes/index.jsx': ["ServiceEpisodes","ServiceEpisodesFields","activeServiceEpisodes","startDateDesc"],
   './ServiceRequests/index.jsx': ["ServiceRequests","ServiceRequestsFields","activeServiceRequests","orderDateDesc"],
   './SignaturePad/index.jsx': ["B","D","L","O","SignaturePad","SignaturePadLib","T","U","W","_","__exports","a","c","canvas","canvasRef","container","containerRef","containerStyle","dataUrl","define","e","exports","f","h","handleClear","handleEndStroke","i","k","l","m","module","o","p","pad","padRef","r","ratio","readOnlyImageStyle","resizeCanvas","s","savedDataUrl","t","theme","u","width","y"],
-  './SubformScoring/index.jsx': ["AnswerSummaryItem","CalculationSummaryItem","DataFieldSummaryItem","DataInterpretationSummaryItem","FormSessionProvider","InterpretationSummaryItem","MOIS_WRITE_ID_FALLBACK_PATHS","MOIS_WRITE_MUTATIONS","MOIS_WRITE_MUTATION_KEYS","ProgressSummaryItem","ScoreSummaryItem","SubformScoring","SubformScoringInner","_LOCAL_INPUT_STYLE","_LOCAL_RADIO_GROUP_STYLE","_LOCAL_TEXTAREA_STYLE","_REPORT_ITEM_FORMATS","__SubformScoringSessionContext","__cloneSubformScoringSessionValue","_buildDataEntryRenderGroups","_buildDataEntrySnapshot","_buildFormattedObservationReport","_buildMappedPayload","_buildScaleLegendSignature","_buildScaleOptions","_buildScoreMap","_buildSubformFormDataWrites","_buildSubformObservationReport","_buildSubformObservationUpdates","_collectScoreCandidates","_computeMorphineEquivalent","_createPreparedSessionSetter","_evaluateDataEntryVisibility","_evaluateExpression","_findQuestionOptionForAnswer","_formatBounds","_formatCalculatorDisplayValue","_formatNumericValue","_getInterpretation","_getScoreFromValue","_getSelectableOptionNumericValue","_getValueAtPath","_isHeadingField","_isInRange","_isLoincDataEntryField","_isMeaningfulValue","_isScaleChoiceSelected","_isSelectableOptionSelected","_latestObservationDefault","_normalizeChartPreferenceValue","_normalizeScoreToken","_normalizeSelectableOptions","_optionMatchesValue","_recordSubformActionPayload","_resolveChecklistOptions","_resolveDataEntryDisplayValue","_resolveFieldDefaultValue","_resolveFieldEmptyNumericValue","_resolveFieldWidthBasis","_resolveObservationTemplate","_resolvePathValue","_resolveQuestionOptions","_resolveSelectableBinaryOptions","_resolveWriteActionId","_serializeSelectableValue","_setSubformFormDataOutputs","_setSubformObservationPayloads","_setValueAtPath","_shouldShowDataEntryHelpText","_stringifyObservationValue","_toDisplayValue","_toNumericValue","_toPathSegments","_usesStructuredSelectableOptions","abs","action","actionPayload","aliases","allValues","allVars","answer","answerScore","answerableFields","answered","answers","aspect","barBg","barFill","baseDose","baseEquivalentDoseMg","baseEquivalentDoseRaw","basis","binding","boundedPrecision","buttonRowStyle","cadFieldId","calc","calculatedExpressions","calculatedTotals","calculation","calculatorFields","candidate","candidateKeys","candidatePaths","candidates","ceil","checked","checkedFromConfig","checkedOption","checklist","cloneFormSessionState","code","columnTemplate","commentsField","commonProps","componentPayloads","computedFallback","configuredDialogMinWidth","configuredField","configuredMatrixGroupId","container","containerStyle","controlLabel","controllerId","conversions","createdBy","current","currentSignature","cursor","dataEntryAction","dataEntryCalculations","dataEntryCalculatorConfig","dataEntryFieldById","dataEntryFields","dataEntryRenderGroups","dataEntrySnapshot","dataEntryValues","dateField","day","defaultValue","defaults","description","desiredDialogMinWidth","dialogContentProps","dialogMinWidth","dialogTitle","direct","displayText","displayValue","dose","doseColumnLabel","effectiveInitialData","entry","equivalentColumnLabel","equivalentDose","equivalentDoseMg","evaluated","explicitDefault","expressionVars","extracted","factor","fallbackOptions","field","fieldExists","fields","fieldsForProgress","floor","flushMatrixBuffer","flushScaleStack","formDataWrites","formatted","fromCalculation","functionNames","generatedIndex","generatedVars","getCalculationConfig","getDataEntryFieldConfig","getQuestionConfig","getTotalConfig","groups","handleCommitToParent","handleOpenChange","hasAnyAnswers","hasAnyRowValue","hasExternalDataEntryStore","hasRequiredId","heading","history","iif","inputFieldId","inputType","inputValue","interpretation","isComplete","isDarkMode","isDataEntryMode","isDialogOpen","isHeading","isMatrixCandidate","isMorphineCalculatorMode","key","label","labelStyle","latest","left","leftDate","lines","map","match","matched","matchedOption","matrixBuffer","matrixGroupId","max","meetsMax","meetsMin","meqCalculationId","meqDisplay","meqValue","mergeFormSessionState","min","minSymbol","mod","modalProps","month","next","nextGroup","nextKey","nextOption","nextRaw","nextState","nextValue","normalize","normalized","normalizedButtonIconName","normalizedOptionMap","normalizedOptions","normalizedSessionData","normalizedType","normalizedValues","numeric","numericValue","numericValues","observationDefault","observationRows","observations","oldId","oldObservation","option","optionCount","optionList","optionMap","optionMatch","optionScoreMap","optionTokens","optionValue","options","parsed","payload","payloadMap","pendingDefaults","places","precision","precisionRaw","prepareCompletionState","prepared","preparedSession","prevIndex","previousEntry","previousField","previousScaleSignature","printScore","printed","progress","providedOptions","question","questionOptions","questionsById","raw","rawConfig","rawOptions","rawRows","rawType","rawValue","renderBloodGlucoseReadingEditor","renderDataEntryField","renderDataEntryScaleMatrix","renderDataEntryScaleStack","renderMorphineCalculator","renderNumberInput","renderStyle","renderSummaryItem","replacement","report","required","requiredFields","resolved","resolvedId","resolvedScore","response","result","resultColumnLabel","results","right","rightDate","root","round","rowId","rowLabels","rowValues","rows","rule","runMutation","runtime","scaleMatch","scaleOptions","scaleStack","scopedSetter","score","scoreMap","sd","segments","selected","selectedOption","selectedWithSetter","sessionContext","sessionSetFormData","sessionState","setDataEntryValue","setDialogOpen","setFormData","shouldClose","shouldHideButtonIcon","shouldUseDefaultButtonIcon","showCalculationsInModal","showItems","showLegend","showLegendForScale","signature","snapshot","source","sourceRoot","spec","stackMinWidth","stackedGroups","step","style","summaryContainerStyle","summaryItemsStyle","summaryLayout","target","termQuestionId","text","theme","today","token","tokenMatches","total","totalCalculationId","totalFallback","totalFromCalculation","totalLabel","totalValue","totals","triggerButtonIconProps","trimmed","uncheckedFromConfig","uncheckedOption","uniqueTokens","usFieldId","useBloodGlucoseReadingLayout","useFormSessionData","useRadio","useToggleSwitch","value","values","variableFieldIds","variables","vars","widestScaleMinWidth","writeDefinition","writeKey","writeMutationRunners","year"],
+  './SubformScoring/index.jsx': ["AnswerSummaryItem","CalculationSummaryItem","DataFieldSummaryItem","DataInterpretationSummaryItem","FormSessionProvider","InterpretationSummaryItem","MOIS_WRITE_ID_FALLBACK_PATHS","MOIS_WRITE_MUTATIONS","MOIS_WRITE_MUTATION_KEYS","ProgressSummaryItem","ScoreSummaryItem","SubformScoring","SubformScoringInner","_LOCAL_INPUT_STYLE","_LOCAL_RADIO_GROUP_STYLE","_LOCAL_TEXTAREA_STYLE","_REPORT_ITEM_FORMATS","__SubformScoringSessionContext","__cloneSubformScoringSessionValue","_buildDataEntryRenderGroups","_buildDataEntrySnapshot","_buildFormattedObservationReport","_buildMappedPayload","_buildScaleLegendSignature","_buildScaleOptions","_buildScoreMap","_buildSubformFormDataWrites","_buildSubformObservationReport","_buildSubformObservationUpdates","_calculationIncompleteBehavior","_calculationIncompleteText","_calculationPresentationValue","_collectScoreCandidates","_computeMorphineEquivalent","_createPreparedSessionSetter","_evaluateDataEntryVisibility","_evaluateExpression","_findQuestionOptionForAnswer","_formatBounds","_formatCalculatorDisplayValue","_formatNumericValue","_getInterpretation","_getScoreFromValue","_getSelectableOptionNumericValue","_getValueAtPath","_isHeadingField","_isInRange","_isLoincDataEntryField","_isMeaningfulValue","_isScaleChoiceSelected","_isSelectableOptionSelected","_latestObservationDefault","_normalizeChartPreferenceValue","_normalizeScoreToken","_normalizeSelectableOptions","_optionMatchesValue","_recordSubformActionPayload","_resolveChecklistOptions","_resolveDataEntryDisplayValue","_resolveFieldDefaultValue","_resolveFieldEmptyNumericValue","_resolveFieldWidthBasis","_resolveObservationTemplate","_resolvePathValue","_resolveQuestionOptions","_resolveSelectableBinaryOptions","_resolveWriteActionId","_serializeSelectableValue","_setSubformFormDataOutputs","_setSubformObservationPayloads","_setValueAtPath","_shouldShowDataEntryHelpText","_stringifyObservationValue","_toDisplayValue","_toNumericValue","_toPathSegments","_usesStructuredSelectableOptions","abs","action","actionPayload","aliases","allValues","allVars","answer","answerScore","answerableFields","answered","answers","aspect","barBg","barFill","baseDose","baseEquivalentDoseMg","baseEquivalentDoseRaw","basis","binding","boundedPrecision","buttonRowStyle","cadFieldId","calc","calculatedExpressions","calculatedTotals","calculation","calculatorFields","candidate","candidateKeys","candidatePaths","candidates","ceil","checked","checkedFromConfig","checkedOption","checklist","cloneFormSessionState","code","columnTemplate","commentsField","commonProps","componentPayloads","computedFallback","configuredDialogMinWidth","configuredField","configuredMatrixGroupId","container","containerStyle","controlLabel","controllerId","conversions","createdBy","current","currentSignature","cursor","dataEntryAction","dataEntryCalculations","dataEntryCalculatorConfig","dataEntryFieldById","dataEntryFields","dataEntryRenderGroups","dataEntrySnapshot","dataEntryValues","dateField","day","defaultValue","defaults","description","desiredDialogMinWidth","dialogContentProps","dialogMinWidth","dialogTitle","direct","displayText","displayValue","dose","doseColumnLabel","effectiveInitialData","entry","equivalentColumnLabel","equivalentDose","equivalentDoseMg","evaluated","explicitDefault","expressionVars","extracted","factor","fallbackOptions","field","fieldExists","fields","fieldsForProgress","floor","flushMatrixBuffer","flushScaleStack","formDataWrites","formatted","fromCalculation","functionNames","generatedIndex","generatedVars","getCalculationConfig","getDataEntryFieldConfig","getQuestionConfig","getTotalConfig","groups","handleCommitToParent","handleOpenChange","hasAnyAnswers","hasAnyRowValue","hasExternalDataEntryStore","hasRequiredId","heading","history","iif","inputFieldId","inputType","inputValue","interpretation","isComplete","isDarkMode","isDataEntryMode","isDialogOpen","isHeading","isMatrixCandidate","isMorphineCalculatorMode","key","label","labelStyle","latest","left","leftDate","lines","map","match","matched","matchedOption","matrixBuffer","matrixGroupId","max","meetsMax","meetsMin","meqCalculationId","meqDisplay","meqValue","mergeFormSessionState","min","minSymbol","mod","modalProps","month","next","nextGroup","nextKey","nextOption","nextRaw","nextState","nextValue","normalize","normalized","normalizedButtonIconName","normalizedOptionMap","normalizedOptions","normalizedSessionData","normalizedType","normalizedValues","numeric","numericValue","numericValues","observationDefault","observationRows","observations","oldId","oldObservation","option","optionCount","optionList","optionMap","optionMatch","optionScoreMap","optionTokens","optionValue","options","parsed","payload","payloadMap","pendingDefaults","places","precision","precisionRaw","prepareCompletionState","prepared","preparedSession","prevIndex","previousEntry","previousField","previousScaleSignature","printScore","printed","progress","providedOptions","question","questionOptions","questionsById","raw","rawConfig","rawOptions","rawRows","rawType","rawValue","renderBloodGlucoseReadingEditor","renderDataEntryField","renderDataEntryScaleMatrix","renderDataEntryScaleStack","renderMorphineCalculator","renderNumberInput","renderStyle","renderSummaryItem","replacement","report","required","requiredFields","resolved","resolvedId","resolvedScore","response","result","resultColumnLabel","results","right","rightDate","root","round","rowId","rowLabels","rowValues","rows","rule","runMutation","runtime","scaleMatch","scaleOptions","scaleStack","scopedSetter","score","scoreMap","sd","segments","selected","selectedOption","selectedWithSetter","sessionContext","sessionSetFormData","sessionState","setDataEntryValue","setDialogOpen","setFormData","shouldClose","shouldHideButtonIcon","shouldUseDefaultButtonIcon","showCalculationsInModal","showItems","showLegend","showLegendForScale","signature","snapshot","source","sourceRoot","spec","stackMinWidth","stackedGroups","step","style","summaryContainerStyle","summaryItemsStyle","summaryLayout","target","termQuestionId","text","theme","today","token","tokenMatches","total","totalCalculationId","totalFallback","totalFromCalculation","totalLabel","totalValue","totals","triggerButtonIconProps","trimmed","uncheckedFromConfig","uncheckedOption","uniqueTokens","usFieldId","useBloodGlucoseReadingLayout","useFormSessionData","useRadio","useToggleSwitch","value","values","variableFieldIds","variables","vars","widestScaleMinWidth","writeDefinition","writeKey","writeMutationRunners","year"],
   './UnsavedChangesGuard/index.jsx': ["ButtonComponent","DCOUpdates","DEFAULT_WINDOW_HOURS","UnsavedChangesGuard","actionItems","actor","actorFrom","addHoursIso","baselineRef","buildDefaultSavePayload","buildDefaultSubmitPayload","buildKey","c","changed","ck","claim","claims","closeWindow","collectComponentPayloads","collectDomFieldValues","commitSave","componentPayload","confirmUnloadActive","current","d","data","dcoGroups","disabled","domFieldValues","editableUntil","euDate","existing","expired","field","fieldData","fieldId","footerActionItems","footerActions","formData","formatTimestamp","guardSkipsWhenSigned","handleAction","handler","hasLifecycleSignals","host","inputType","isNonEmpty","isOwner","isSettling","isSigned","isSubmitAction","keepStatus","key","label","lifecycle","linkedPanels","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","markSaved","mergeFieldValuesIntoState","narratives","nextStatus","nextValue","nhAuthCommitSave","nhAuthPrepareSave","normalizeFooterActions","normalizeGuardActions","normalizeGuardValue","normalizeStore","now","nowIso","ownerId","ownerName","ownerRefresh","pad2","panelUpdates","panels","payload","payloads","pending","persistAction","persistFd","policyAppliesToAction","prepareSave","prepared","primaryAction","promptText","raw","readStore","release","renderFooterAction","resolveNow","sameActor","saveSettleRef","savedWebform","sd","secondaryActions","serializeGuardValue","store","stripComponentPayloads","submitSd","success","tagName","trackedSnapshot","trackedValue","ts","untilSelf","useHostConfirmUnload","values","warmupRef","webformGroups","webformUpdate","windowHours"],
   './UseChangeWatch/index.jsx': ["_defaultCompare","_normalizeWatchOptions","baselineRef","compare","delayCount","dirtyRef","disabled","forcedDirtyRef","isDirty","normalizedOptions","onDirtyChange","renderCountRef","setChanged","useChangeWatch"],
   './ValueSetObservationField/index.jsx': ["RuntimeCodedChoice","ValueSetObservationField"],
@@ -34736,7 +34724,7 @@ export const componentDependencies: Record<string, string[]> = {
   './ServiceEpisodes/index.jsx': [],
   './ServiceRequests/index.jsx': [],
   './SignaturePad/index.jsx': [],
-  './SubformScoring/index.jsx': ["ConversionField","FormSessionRuntime","HotspotMapField","ScoringModule","ScaleField"],
+  './SubformScoring/index.jsx': ["ConversionField","ComputedField","FormSessionRuntime","HotspotMapField","ScoringModule","ScaleField"],
   './UnsavedChangesGuard/index.jsx': [],
   './UseChangeWatch/index.jsx': [],
   './ValueSetObservationField/index.jsx': ["CodedObservationChoiceField"],

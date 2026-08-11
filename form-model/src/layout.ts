@@ -986,6 +986,9 @@ export interface SubformDataEntryCalculationConfig {
   label: string;
   expression: string;
   precision?: number;
+  displayStyle?: "field" | "compact" | "prominent";
+  incompleteBehavior?: "compute-anyway" | "show-text" | "hide";
+  incompleteText?: string;
   ranges?: Array<{
     label: string;
     min: number;
@@ -1207,6 +1210,9 @@ export interface ScoreTotalConfig {
   expression?: string;
   precision?: number;
   resultType?: "number" | "text";
+  displayStyle?: "field" | "compact" | "prominent";
+  incompleteBehavior?: "compute-anyway" | "show-text" | "hide";
+  incompleteText?: string;
   showInterpretation?: boolean;
   contextVariables?: ScoreContextVariableConfig[];
   terms: ScoreTotalTerm[];

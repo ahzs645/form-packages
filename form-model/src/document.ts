@@ -355,6 +355,7 @@ export interface ParsedField {
   computedExpression?: string;
   computedPrecision?: number;
   computedResultType?: "number" | "text";
+  computedDisplayStyle?: "field" | "compact" | "prominent";
   computedCalculationPolicy?:
     | "always-calculated"
     | "calculated-until-overridden"

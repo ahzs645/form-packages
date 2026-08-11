@@ -358,12 +358,92 @@ const _hasAllReferencedValues = (expression, valuesByFieldId) => {
   )
 }
 
+const _normalizeComputedDisplayStyle = (displayStyle) =>
+  displayStyle === "compact" || displayStyle === "prominent" ? displayStyle : "field"
+
+const ComputedValuePresentation = ({
+  fieldId,
+  label,
+  value,
+  displayStyle = "field",
+  labelPosition = "left",
+  placeholder = "Calculated automatically",
+  readOnly = true,
+  required = false,
+  size,
+  onChange,
+  isDarkMode = false,
+}) => {
+  const normalizedStyle = _normalizeComputedDisplayStyle(displayStyle)
+
+  // Editable calculations retain the regular field control regardless of the
+  // chosen summary style, so override and suggestion policies remain usable.
+  if (normalizedStyle === "field" || readOnly === false) {
+    return (
+      <TextArea
+        fieldId={fieldId}
+        label={label}
+        value={value}
+        onChange={onChange}
+        labelPosition={labelPosition}
+        placeholder={placeholder}
+        readOnly={readOnly}
+        required={required}
+        size={size}
+      />
+    )
+  }
+
+  const isProminent = normalizedStyle === "prominent"
+  const displayValue = value === undefined || value === null || value === ""
+    ? "Incomplete"
+    : String(value)
+  const containerStyle = isProminent
+    ? {
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "baseline",
+        gap: "12px",
+        padding: "12px 14px",
+        borderRadius: "6px",
+        border: `1px solid ${isDarkMode ? "#2a5a8c" : "#b8d4f0"}`,
+        backgroundColor: isDarkMode ? "#1a3a5c" : "#e6f2ff",
+      }
+    : {
+        display: "flex",
+        alignItems: "baseline",
+        gap: "6px",
+        padding: "4px 0",
+        fontSize: "13px",
+      }
+
+  return (
+    <div style={containerStyle}>
+      <span style={{
+        color: isDarkMode ? "#a0a0a0" : "#666666",
+        fontWeight: isProminent ? 600 : 500,
+        flexShrink: 0,
+      }}>
+        {label}:
+      </span>
+      <span style={{
+        fontWeight: isProminent ? 700 : 400,
+        fontSize: isProminent ? "16px" : "13px",
+        fontStyle: displayValue === "Incomplete" ? "italic" : "normal",
+      }}>
+        {displayValue}
+      </span>
+    </div>
+  )
+}
+
 const ComputedField = ({
   fieldId,
   label,
   expression,
   precision,
   resultType = "number",
+  displayStyle = "field",
   calculationPolicy = "always-calculated",
   labelPosition = "left",
   placeholder = "Calculated automatically",
@@ -378,6 +458,9 @@ const ComputedField = ({
   // persists. "compute-anyway" is the default so existing forms are unchanged.
   incompleteBehavior = "compute-anyway",
   incompleteText = "Incomplete",
+  resolvedValue,
+  presentationOnly = false,
+  isDarkMode = false,
 }) => {
   const [fd, setFd] = useActiveData()
   const valuesByFieldId = fd?.field?.data || {}
@@ -385,8 +468,10 @@ const ComputedField = ({
   const isOverridden = _computedFieldIsOverridden(valuesByFieldId, fieldId)
 
   const computedValue = useMemo(
-    () => _evaluateComputedExpression(expression, valuesByFieldId, fieldId),
-    [expression, fieldId, valuesByFieldId]
+    () => presentationOnly
+      ? resolvedValue
+      : _evaluateComputedExpression(expression, valuesByFieldId, fieldId),
+    [expression, fieldId, presentationOnly, resolvedValue, valuesByFieldId]
   )
 
   const roundedValue = useMemo(
@@ -444,6 +529,7 @@ const ComputedField = ({
   )
 
   useEffect(() => {
+    if (presentationOnly) return
     if (!fieldId) return
     if (!_shouldApplyComputedValue(policy, isOverridden)) return
     setFd((draft) => {
@@ -475,7 +561,7 @@ const ComputedField = ({
   // persisted value itself so an owned calculation repairs that late seed on
   // the next render. Suggested values and user overrides still opt out through
   // _shouldApplyComputedValue above.
-  }, [currentValue, fieldId, isOverridden, policy, setFd, storedValue])
+  }, [currentValue, fieldId, isOverridden, policy, presentationOnly, setFd, storedValue])
 
   const markOverridden = () => {
     if (!fieldId || !canEdit) return
@@ -518,18 +604,20 @@ const ComputedField = ({
 
   return (
     <div>
-      <TextArea
+      <ComputedValuePresentation
         fieldId={fieldId}
         label={label}
         value={renderedValue}
         onChange={markOverridden}
+        displayStyle={displayStyle}
         labelPosition={labelPosition}
         placeholder={placeholder}
         readOnly={!canEdit}
         required={required}
         size={size}
+        isDarkMode={isDarkMode}
       />
-      {policy === "calculated-until-overridden" ? (
+      {!presentationOnly && policy === "calculated-until-overridden" ? (
         <div style={{ marginTop: 4, marginLeft: labelPosition === "left" ? 160 : 0, display: "flex", gap: 8, alignItems: "center", fontSize: 12, color: isOverridden ? "#9a3412" : "#475569" }}>
           <span>
             {isOverridden
@@ -543,7 +631,7 @@ const ComputedField = ({
           ) : null}
         </div>
       ) : null}
-      {policy === "suggested-calculation" ? (
+      {!presentationOnly && policy === "suggested-calculation" ? (
         <div style={{ marginTop: 4, marginLeft: labelPosition === "left" ? 160 : 0, display: "flex", gap: 8, alignItems: "center", fontSize: 12, color: "#475569" }}>
           <span><strong>Suggested:</strong> {displayValue || "Unavailable until inputs are complete"}</span>
           {displayValue && canEdit ? (
@@ -553,7 +641,7 @@ const ComputedField = ({
           ) : null}
         </div>
       ) : null}
-      {interpretationRange ? (
+      {!presentationOnly && interpretationRange ? (
         <div style={{ marginTop: 4, marginLeft: labelPosition === "left" ? 160 : 0, fontSize: 12, color: "#475569" }}>
           <strong>{interpretation?.label || "Interpretation"}:</strong> {interpretationRange.label}
           {interpretationRange.description ? <span> - {interpretationRange.description}</span> : null}
