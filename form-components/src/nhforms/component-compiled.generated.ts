@@ -22732,7 +22732,11 @@ const ObservationChart = ({
   emptyText = "No chart data available",
   loincCode = "",
   loincCodes = [],
-  liveSeries
+  liveSeries,
+  showTrendLine = false,
+  xSpacing = "time",
+  liveUpdateMode = "immediate",
+  liveSettleMs = 1000
 }) => {
   const sd = useSourceData();
   // Sibling-field read for live plotting. Called unconditionally (hooks rules);
@@ -22753,6 +22757,33 @@ const ObservationChart = ({
     const liveDateFieldId = normalizeString(entry.dateFieldId);
     return liveFieldId + "=" + stringifyValue(liveFieldData[liveFieldId]) + (liveDateFieldId ? "@" + stringifyValue(liveFieldData[liveDateFieldId]) : "");
   }).join("|");
+
+  // Settled mode: the live point only appears/moves after the referenced values
+  // have stopped changing for settleMs (debounced on the fingerprint above).
+  // Initial values (e.g. a reopened draft) show right away; only subsequent
+  // edits wait out the delay. Immediate mode bypasses this state entirely.
+  const liveUpdate = resolveLiveUpdateConfig({
+    liveUpdateMode,
+    liveSettleMs
+  });
+  const latestLiveDataRef = useRef(liveFieldData);
+  latestLiveDataRef.current = liveFieldData;
+  const [settledLive, setSettledLive] = useState(() => ({
+    key: liveValuesKey,
+    data: liveFieldData
+  }));
+  useEffect(() => {
+    if (liveUpdate.mode !== "settled") return undefined;
+    const timer = setTimeout(() => {
+      setSettledLive(current => current.key === liveValuesKey ? current : {
+        key: liveValuesKey,
+        data: latestLiveDataRef.current
+      });
+    }, liveUpdate.settleMs);
+    return () => clearTimeout(timer);
+  }, [liveValuesKey, liveUpdate.mode, liveUpdate.settleMs]);
+  const effectiveLiveData = liveUpdate.mode === "settled" ? settledLive.data : liveFieldData;
+  const effectiveLiveKey = liveUpdate.mode === "settled" ? settledLive.key : liveValuesKey;
   const chartPayload = useMemo(() => buildChartPayload({
     title: effectiveTitle,
     label,
@@ -22782,8 +22813,10 @@ const ObservationChart = ({
     showPoints,
     loincCode,
     loincCodes,
-    liveSeries
-  }, sd, liveFieldData), [effectiveTitle, label, data, sourcePath, xKey, xLabel, datePath, valuePath, unitsPath, codePath, descriptionPath, observationCode, observationCodes, observationDescriptionIncludes, seriesLabel, series, parser, stroke, strokeWidth, pointSize, effectiveHeight, maxPoints, showLegend, showAxes, showGrid, showPoints, loincCode, loincCodes, liveSeries, liveValuesKey, sd]);
+    liveSeries,
+    showTrendLine,
+    xSpacing
+  }, sd, effectiveLiveData), [effectiveTitle, label, data, sourcePath, xKey, xLabel, datePath, valuePath, unitsPath, codePath, descriptionPath, observationCode, observationCodes, observationDescriptionIncludes, seriesLabel, series, parser, stroke, strokeWidth, pointSize, effectiveHeight, maxPoints, showLegend, showAxes, showGrid, showPoints, loincCode, loincCodes, liveSeries, showTrendLine, xSpacing, effectiveLiveKey, sd]);
   useEffect(() => {
     ensureObservationChartStyles();
     const container = containerRef.current;
@@ -35226,7 +35259,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './MultiTargetChoiceField/index.jsx': ["MultiTargetChoiceField","anyChecked","anyOn","applyForces","asArray","codeOf","computeToggledData","current","currentArr","data","effectiveFieldId","evalCondition","force","gridStyle","has","hasValue","isEmptyValue","left","normalizeChoiceValues","normalizeComparable","opt","optionChecked","optionVisible","requiredBackground","requiredStyle","right","rule","target","theme","toCoding","toggle","triggers"],
   './NarrativeReportBuilder/index.jsx': ["NarrativeReportBuilder","applyNarrative","buildNarrative","componentId","container","currentPayload","formData","generatedText","getFieldValue","getPathValue","key","nextGroup","normalizeTemplateRows","normalizeTextValue","normalizedTemplate","renderTextTemplate","rows","sections","setNarrativePayload","value"],
   './NewTextArea/index.jsx': ["NewTextArea","hideonprint","showonprint","sourceData"],
-  './ObservationChart/index.jsx': ["$","$e","$l","$n","$t","A","Ae","Ai","Al","An","B","Be","Bl","Bt","C","Ce","Ci","Cl","Ct","D","De","Di","Dl","Dn","Dt","E","El","En","F","Fe","Ft","G","Gt","H","He","Hi","Hl","Ht","I","Ii","Il","It","J","Je","Jl","Jn","Jt","Ke","Kl","Kn","Kt","L","Li","Ll","Lt","M","Mn","Mt","N","Nl","O","OBSERVATION_CHART_LIVE_POINT_COLOR","OBSERVATION_CHART_PALETTE","OBSERVATION_CHART_STYLE_ID","ObservationChart","Ol","Ot","P","Pe","Pi","Pl","Pn","Q","Qn","Qt","R","Re","Ri","Rt","S","Sn","St","T","TREND_SERIES_STROKE","Tn","Tt","UPlotCssText","UPlotLib","Ut","Vl","Vt","W","We","Wi","Wl","Wt","X","Xl","Xn","Xt","Y","Ye","Yi","Yl","Yt","Z","Zl","Zn","Zt","_","_i","_l","_n","_t","a","ai","anchorIndex","applyLiveSeriesValues","at","b","be","bi","bl","bn","bt","buildChartPayload","buildChartPayloadFromObservations","buildChartPayloadFromRows","buildLiveSeriesDefinitions","buildSeriesDefinitions","buildTrendColumn","buildUPlotOptions","c","candidate","chartPayload","chartSeries","ci","codeCandidates","coerceNumber","coercePositiveInt","columns","container","containerRef","count","current","d","dataKey","day","dayMs","denominator","di","direct","document","dt","e","ee","effectiveHeight","effectiveTitle","ei","el","en","ensureObservationChartStyles","entryCode","entryDescription","entryLoinc","et","explicitDate","f","fi","finalDefs","finalizeChartRows","firstLiveIndex","formatDate","formatXValue","frameStyle","fromPatient","fromQueryResult","ft","g","gi","gn","gt","h","hi","hl","ht","i","ie","ii","includes","insertAt","intercept","isEvenSpacing","isNonEmptyString","isRecord","it","jl","jt","k","keys","ki","kn","kt","l","liveDateFieldId","liveEntries","liveFieldData","liveFieldId","liveValuesKey","ll","ln","loincCodes","m","match","matchesObservationSeries","maxPoints","maxX","mi","minX","mode","month","mt","n","ne","ni","normalizeString","normalizeStringArray","normalized","normalizedCodePath","normalizedCodes","normalizedDateOnly","normalizedDescriptionPath","normalizedLoincPath","nt","numericDate","numericValue","o","observationCodes","oi","origin","p","parseDateValue","parseMeasurementValue","parseNumericValue","parsed","parsedDateOnly","patientPath","plot","plotRef","points","predicted","pt","qe","qn","qt","r","rawValue","renderWidth","resizeChart","resizeObserver","resolveLiveUpdateConfig","resolveMoisValue","resolvePathValue","resolveXSpacing","root","rowIndex","rowMap","s","sd","segments","self","seriesDefs","seriesPointSize","seriesShowsPoints","showAxes","showGrid","showLegend","showPoints","single","singleCode","singleLoinc","slope","slotDate","slotIndex","sortedRows","sourceItems","sourcePath","sourceRows","stringifyValue","style","sumX","sumXX","sumXY","sumY","summaryParts","t","target","te","text","timeValue","timestamp","tl","tn","toPathSegments","trendColumn","trimmed","tt","u","uPlot","units","v","value","valueText","ve","vi","vl","vn","vt","w","wi","window","wl","wn","wrapperStyle","wt","x","xAxis","xDates","xKey","xSpacing","xValues","xi","xl","xn","xt","y","year","yi","yn","yt","z","ze","zi","zl","zn"],
+  './ObservationChart/index.jsx': ["$","$e","$l","$n","$t","A","Ae","Ai","Al","An","B","Be","Bl","Bt","C","Ce","Ci","Cl","Ct","D","De","Di","Dl","Dn","Dt","E","El","En","F","Fe","Ft","G","Gt","H","He","Hi","Hl","Ht","I","Ii","Il","It","J","Je","Jl","Jn","Jt","Ke","Kl","Kn","Kt","L","Li","Ll","Lt","M","Mn","Mt","N","Nl","O","OBSERVATION_CHART_LIVE_POINT_COLOR","OBSERVATION_CHART_PALETTE","OBSERVATION_CHART_STYLE_ID","ObservationChart","Ol","Ot","P","Pe","Pi","Pl","Pn","Q","Qn","Qt","R","Re","Ri","Rt","S","Sn","St","T","TREND_SERIES_STROKE","Tn","Tt","UPlotCssText","UPlotLib","Ut","Vl","Vt","W","We","Wi","Wl","Wt","X","Xl","Xn","Xt","Y","Ye","Yi","Yl","Yt","Z","Zl","Zn","Zt","_","_i","_l","_n","_t","a","ai","anchorIndex","applyLiveSeriesValues","at","b","be","bi","bl","bn","bt","buildChartPayload","buildChartPayloadFromObservations","buildChartPayloadFromRows","buildLiveSeriesDefinitions","buildSeriesDefinitions","buildTrendColumn","buildUPlotOptions","c","candidate","chartPayload","chartSeries","ci","codeCandidates","coerceNumber","coercePositiveInt","columns","container","containerRef","count","current","d","dataKey","day","dayMs","denominator","di","direct","document","dt","e","ee","effectiveHeight","effectiveLiveData","effectiveLiveKey","effectiveTitle","ei","el","en","ensureObservationChartStyles","entryCode","entryDescription","entryLoinc","et","explicitDate","f","fi","finalDefs","finalizeChartRows","firstLiveIndex","formatDate","formatXValue","frameStyle","fromPatient","fromQueryResult","ft","g","gi","gn","gt","h","hi","hl","ht","i","ie","ii","includes","insertAt","intercept","isEvenSpacing","isNonEmptyString","isRecord","it","jl","jt","k","keys","ki","kn","kt","l","latestLiveDataRef","liveDateFieldId","liveEntries","liveFieldData","liveFieldId","liveUpdate","liveValuesKey","ll","ln","loincCodes","m","match","matchesObservationSeries","maxPoints","maxX","mi","minX","mode","month","mt","n","ne","ni","normalizeString","normalizeStringArray","normalized","normalizedCodePath","normalizedCodes","normalizedDateOnly","normalizedDescriptionPath","normalizedLoincPath","nt","numericDate","numericValue","o","observationCodes","oi","origin","p","parseDateValue","parseMeasurementValue","parseNumericValue","parsed","parsedDateOnly","patientPath","plot","plotRef","points","predicted","pt","qe","qn","qt","r","rawValue","renderWidth","resizeChart","resizeObserver","resolveLiveUpdateConfig","resolveMoisValue","resolvePathValue","resolveXSpacing","root","rowIndex","rowMap","s","sd","segments","self","seriesDefs","seriesPointSize","seriesShowsPoints","showAxes","showGrid","showLegend","showPoints","single","singleCode","singleLoinc","slope","slotDate","slotIndex","sortedRows","sourceItems","sourcePath","sourceRows","stringifyValue","style","sumX","sumXX","sumXY","sumY","summaryParts","t","target","te","text","timeValue","timer","timestamp","tl","tn","toPathSegments","trendColumn","trimmed","tt","u","uPlot","units","v","value","valueText","ve","vi","vl","vn","vt","w","wi","window","wl","wn","wrapperStyle","wt","x","xAxis","xDates","xKey","xSpacing","xValues","xi","xl","xn","xt","y","year","yi","yn","yt","z","ze","zi","zl","zn"],
   './ObservationEntryGrid/index.jsx': ["GRID_FLAG_DISPLAYS","GridDetailPane","GridRangeBands","ObservationEntryGrid","abnormalFlag","allRows","best","bestTime","buildGridAbnormalFlag","candidate","cellStyle","cells","centerText","chartRows","classifyGridFlag","codeIndex","codeList","commitEntryCode","componentId","container","createdBy","current","currentPayload","cutoff","deleteEntry","detailBandLabelStyle","detailLabelStyle","detailValueStyle","displayFlag","displayValue","editByObservationId","editPayload","edits","editsKey","entries","entriesKey","entryCode","entryLoinc","entryRows","explicitFlag","fields","findRangesForCode","flagCode","gridPayloadsEqual","handleKeyDown","hasBands","hasRanges","headStyle","inlineCodeFieldStyles","inlineNameFieldStyles","inlineTextFieldStyles","key","lookupCodeList","lookupEntry","lower","map","match","newPayload","newRowBackground","next","nextGroup","observationId","parsed","pendingCorrection","pendingDelete","pendingEdit","rangeText","ranges","readGridRows","resolveEntryCode","resolved","rowId","rows","sd","selectedPendingEdit","selectedRow","setGridNestedPayload","source","stageChartDelete","startCorrection","startEntry","stored","stripVolatileGridFields","testNameFieldRefs","text","time","undoChartEdit","updateCorrection","updateEntry","value","valueFieldRefs","withHotkeys","writeRows","zebraRowBackground"],
   './ObservationKit/index.jsx': ["ObservationKit","amount","classifyFlag","classifyRanges","code","codeText","criticalHigh","criticalLow","current","cutoff","cutoffDate","dateKey","dayTime","displayDate","displayText","entryCode","entryLoinc","explicit","extractValue","flagCellStyle","getPath","index","loinc","lookbackLabel","matchCodeIndex","matchesCode","normalHigh","normalLow","normalizeCodes","parseDate","parsed","raw","singular","steps","text","toNumber","toText","unit","value"],
   './ObservationPanelEditor/index.jsx': ["DEFAULT_WINDOW_HOURS","ObservationPanelEditor","actor","actorFrom","addHoursIso","authorshipPolicy","buildKey","c","changed","ck","claim","claims","codeSet","commitSave","componentId","computedTotals","container","createdBy","current","currentActorName","currentPayload","d","data","dcoUpdates","editableUntil","effectiveFieldId","euDate","existing","expired","fieldData","formatTimestamp","getCurrentActorName","getNhAuth","getPanelValue","grouped","hasValue","historyRows","isNonEmpty","isOwner","keepStatus","key","label","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","maxHistory","next","nextGroup","nextStatus","nhAuth","normalizePanelRows","normalizePanelTotals","normalizeStore","now","nowIso","numeric","oldObs","optionList","ownerId","ownerName","ownerRefresh","pad2","panelDateKey","payloadsEqual","pending","policyAppliesToAction","prepareSave","raw","readStore","release","resolveNow","rootValue","rowDefs","rowLockInfo","rowReadOnly","sameActor","sd","section","setPanelPayload","setRowValue","source","sourceIds","store","stripVolatilePayloadFields","toNumericValue","totalDefs","ts","untilSelf","value","windowHours"],

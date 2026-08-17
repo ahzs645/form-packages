@@ -780,6 +780,10 @@ const ObservationChart = ({
   loincCode = "",
   loincCodes = [],
   liveSeries,
+  showTrendLine = false,
+  xSpacing = "time",
+  liveUpdateMode = "immediate",
+  liveSettleMs = 1000,
 }) => {
   const sd = useSourceData()
   // Sibling-field read for live plotting. Called unconditionally (hooks rules);
@@ -805,6 +809,30 @@ const ObservationChart = ({
         (liveDateFieldId ? "@" + stringifyValue(liveFieldData[liveDateFieldId]) : "")
     })
     .join("|")
+
+  // Settled mode: the live point only appears/moves after the referenced values
+  // have stopped changing for settleMs (debounced on the fingerprint above).
+  // Initial values (e.g. a reopened draft) show right away; only subsequent
+  // edits wait out the delay. Immediate mode bypasses this state entirely.
+  const liveUpdate = resolveLiveUpdateConfig({ liveUpdateMode, liveSettleMs })
+  const latestLiveDataRef = useRef(liveFieldData)
+  latestLiveDataRef.current = liveFieldData
+  const [settledLive, setSettledLive] = useState(() => ({ key: liveValuesKey, data: liveFieldData }))
+
+  useEffect(() => {
+    if (liveUpdate.mode !== "settled") return undefined
+    const timer = setTimeout(() => {
+      setSettledLive((current) =>
+        current.key === liveValuesKey
+          ? current
+          : { key: liveValuesKey, data: latestLiveDataRef.current }
+      )
+    }, liveUpdate.settleMs)
+    return () => clearTimeout(timer)
+  }, [liveValuesKey, liveUpdate.mode, liveUpdate.settleMs])
+
+  const effectiveLiveData = liveUpdate.mode === "settled" ? settledLive.data : liveFieldData
+  const effectiveLiveKey = liveUpdate.mode === "settled" ? settledLive.key : liveValuesKey
 
   const chartPayload = useMemo(() => buildChartPayload({
     title: effectiveTitle,
@@ -836,7 +864,9 @@ const ObservationChart = ({
     loincCode,
     loincCodes,
     liveSeries,
-  }, sd, liveFieldData), [
+    showTrendLine,
+    xSpacing,
+  }, sd, effectiveLiveData), [
     effectiveTitle,
     label,
     data,
@@ -866,7 +896,9 @@ const ObservationChart = ({
     loincCode,
     loincCodes,
     liveSeries,
-    liveValuesKey,
+    showTrendLine,
+    xSpacing,
+    effectiveLiveKey,
     sd,
   ])
 
