@@ -30738,8 +30738,10 @@ const MOIS_WRITE_MUTATIONS = {
       newAddress: payload
     })
   },
-  "patient.changePatientName": {
-    document: \`mutation changePatientName($patientId: Int!, $patientUpdate: PatientInput!) {
+  // MOIS ships one patient-update surface (changePatient) under two operation
+  // labels differing only in input variable name, so it is one write target.
+  "patient.changePatient": {
+    document: \`mutation changePatient($patientId: Int!, $patientUpdate: PatientInput!) {
       changePatient(patientId: $patientId, newPatient: $patientUpdate) {
         patientId
       }
@@ -30760,18 +30762,6 @@ const MOIS_WRITE_MUTATIONS = {
     buildVariables: (patientId, payload) => ({
       patientId,
       newInsurance: payload
-    })
-  },
-  "patient.changePatientRace": {
-    document: \`mutation changePatientRace($patientId: Int!, $newPatient: PatientInput!) {
-      changePatient(patientId: $patientId, newPatient: $newPatient) {
-        patientId
-      }
-    }\`,
-    idVariable: "patientId",
-    buildVariables: (patientId, payload) => ({
-      patientId,
-      newPatient: payload
     })
   },
   "connection.changeConnection": {
