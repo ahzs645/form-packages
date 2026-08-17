@@ -314,6 +314,8 @@ type ScaleQuestionProps = {
   disableCount?: boolean
   question?: string
   scaleOptions?: ScaleChoiceInput[]
+  readOnly?: boolean
+  disabled?: boolean
 }
 
 const createScaleQuestion = ({
@@ -336,10 +338,14 @@ const createScaleQuestion = ({
     disableCount,
     question,
     scaleOptions,
+    readOnly = false,
+    disabled = false,
   }: ScaleQuestionProps) => {
     const [honosData,modHonosData]: [FormData,Setter] = useActiveData(fd=>fd.field.data)
     const [fd] = useActiveData()
     const theme = useTheme()
+    // Builder "Disabled (read-only)" and lock rules arrive as either prop name.
+    const isReadOnly = Boolean(readOnly || disabled)
 
     let defaultHonosItem: HonosItem = { selectedKey: null, value: null, question, response: null }
     if (dropdownOptions) defaultHonosItem = { ...defaultHonosItem, selectedDropdownKey: null}
@@ -430,6 +436,7 @@ const createScaleQuestion = ({
                         options={dropdownOptions}
                         styles={dropdownStyles}
                         selectedKey={fditem.selectedDropdownKey}
+                        disabled={isReadOnly}
                         onChange={(e, option, index) =>
                           handleDropdownChanged(option, id, honosData, modHonosData)
                         }
@@ -447,7 +454,9 @@ const createScaleQuestion = ({
                   options={renderedChoiceOptions}
                   styles={choiceGroupStyle}
                   selectedKey={fditem.selectedKey}
+                  disabled={isReadOnly}
                   onKeyUp={e =>
+                    !isReadOnly &&
                     handleKeyUp(
                       id,
                       e,

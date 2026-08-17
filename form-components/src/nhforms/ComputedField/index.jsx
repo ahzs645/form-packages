@@ -40,6 +40,31 @@ const _toComparableValue = (value) => {
   return String(value)
 }
 
+// DateSelect stores the *formatted* display string, not ISO, so every builder
+// dateFormat option must parse explicitly. dd/MM/yyyy and MM-dd-yyyy are
+// distinguishable by separator (slash vs dash); MM-dd-yyyy cannot collide with
+// ISO because ISO leads with a 4-digit year. Date-only strings parse as LOCAL
+// calendar dates (not UTC midnight) so local getters read the intended day.
+const _DATE_ONLY_FORMATS = [
+  { pattern: /^(\d{4})-(\d{1,2})-(\d{1,2})$/, order: [1, 2, 3] }, // yyyy-MM-dd (ISO)
+  { pattern: /^(\d{4})\.(\d{1,2})\.(\d{1,2})$/, order: [1, 2, 3] }, // yyyy.MM.dd (DateSelect default)
+  { pattern: /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/, order: [3, 2, 1] }, // dd/MM/yyyy
+  { pattern: /^(\d{1,2})-(\d{1,2})-(\d{4})$/, order: [3, 1, 2] }, // MM-dd-yyyy
+]
+
+// null = matched but invalid (e.g. 31/04); undefined = not a date-only string.
+const _parseDateOnlyString = (text) => {
+  for (const format of _DATE_ONLY_FORMATS) {
+    const match = format.pattern.exec(text)
+    if (!match) continue
+    const [year, month, day] = format.order.map((index) => Number(match[index]))
+    const date = new Date(year, month - 1, day)
+    const valid = date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day
+    return valid ? date : null
+  }
+  return undefined
+}
+
 const _toDateValue = (value) => {
   if (value === undefined || value === null || value === "") return null
   if (value instanceof Date) {
@@ -53,13 +78,8 @@ const _toDateValue = (value) => {
   if (typeof value === "string") {
     const trimmed = value.trim()
     if (!trimmed) return null
-    // ISO date-only strings parse as UTC midnight; local getters then read the
-    // previous day in negative-offset timezones. Parse them as calendar dates.
-    const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed)
-    if (dateOnly) {
-      const date = new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]))
-      return Number.isFinite(date.getTime()) ? date : null
-    }
+    const dateOnly = _parseDateOnlyString(trimmed)
+    if (dateOnly !== undefined) return dateOnly
     const date = new Date(trimmed)
     return Number.isFinite(date.getTime()) ? date : null
   }
@@ -150,7 +170,10 @@ const _max = (...values) => _numericExtrema(values, Math.max)
 const _MS_PER_DAY = 24 * 60 * 60 * 1000
 
 const _isDateOnlyValue = (value) => {
-  if (typeof value === "string") return /^\d{4}-\d{2}-\d{2}$/.test(value.trim())
+  if (typeof value === "string") {
+    const trimmed = value.trim()
+    return _DATE_ONLY_FORMATS.some((format) => format.pattern.test(trimmed))
+  }
   if (!value || typeof value !== "object" || value instanceof Date) return false
   return ["value", "date", "text", "display"].some((key) => _isDateOnlyValue(value[key]))
 }
@@ -178,6 +201,121 @@ const _monthsSince = (value, ref) => {
   return months
 }
 
+// Local calendar date, matching the local-calendar parse of date-only strings.
+const _today = () => {
+  const now = new Date()
+  const pad = (part) => String(part).padStart(2, "0")
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
+}
+
+const _DURATION_UNIT_ALIASES = {
+  day: "days", days: "days",
+  week: "weeks", weeks: "weeks",
+  month: "months", months: "months",
+  year: "years", years: "years",
+}
+
+const _normalizeDurationUnit = (unit) =>
+  typeof unit === "string" ? _DURATION_UNIT_ALIASES[unit.trim().toLowerCase()] ?? null : null
+
+// Exact day difference projected through local calendar components, so results
+// are DST-safe and date-only vs date-only arithmetic stays a whole number
+// (matching _daysSince's calendar-day semantics).
+const _exactDaysBetween = (from, to) => {
+  const project = (date) => Date.UTC(
+    date.getFullYear(), date.getMonth(), date.getDate(),
+    date.getHours(), date.getMinutes(), date.getSeconds(), date.getMilliseconds()
+  )
+  return (project(to) - project(from)) / _MS_PER_DAY
+}
+
+// Whole calendar months, matching _monthsSince's day-of-month rule.
+const _wholeMonthsBetween = (from, to) => {
+  let months = (to.getFullYear() - from.getFullYear()) * 12 + (to.getMonth() - from.getMonth())
+  if (to.getDate() < from.getDate()) months -= 1
+  return months
+}
+
+// Month arithmetic clamps to the target month's last day (Jan 31 + 1 month =
+// Feb 28/29), so a duration anchor never overshoots into the following month.
+const _addMonthsClamped = (date, months) => {
+  const monthIndex = date.getMonth() + months
+  const lastDay = new Date(date.getFullYear(), monthIndex + 1, 0).getDate()
+  return new Date(
+    date.getFullYear(), monthIndex, Math.min(date.getDate(), lastDay),
+    date.getHours(), date.getMinutes(), date.getSeconds(), date.getMilliseconds()
+  )
+}
+
+const _addCalendarDays = (date, days) => new Date(
+  date.getFullYear(), date.getMonth(), date.getDate() + days,
+  date.getHours(), date.getMinutes(), date.getSeconds(), date.getMilliseconds()
+)
+
+const _resolveDurationEndpoints = (value, ref) => {
+  const from = _toDateValue(value)
+  if (!from) return null
+  const to = ref === undefined || ref === null || ref === "" ? new Date() : _toDateValue(ref)
+  if (!to) return null
+  return { from, to }
+}
+
+// Exact (fractional) elapsed amount between two dates in the requested unit.
+// `ref` defaults to now; rounding is the caller's job (floor/round).
+const _durationBetween = (value, ref, unit) => {
+  const endpoints = _resolveDurationEndpoints(value, ref)
+  const normalizedUnit = _normalizeDurationUnit(unit)
+  if (!endpoints || !normalizedUnit) return null
+  if (normalizedUnit === "days") return _exactDaysBetween(endpoints.from, endpoints.to)
+  if (normalizedUnit === "weeks") return _exactDaysBetween(endpoints.from, endpoints.to) / 7
+  // Fractional months: whole calendar months plus the remaining days as a
+  // fraction of the actual length of the month being crossed.
+  const whole = _wholeMonthsBetween(endpoints.from, endpoints.to)
+  const anchor = _addMonthsClamped(endpoints.from, whole)
+  const next = _addMonthsClamped(endpoints.from, whole + 1)
+  const monthLength = _exactDaysBetween(anchor, next)
+  const months = whole + (monthLength > 0 ? _exactDaysBetween(anchor, endpoints.to) / monthLength : 0)
+  return normalizedUnit === "months" ? months : months / 12
+}
+
+// Cascading duration breakdown, e.g. "2 months, 3 weeks" for
+// durationText([dob], today(), "months,weeks"). Each listed unit (descending)
+// is floored and its remainder carried into the next; zero components are
+// omitted except the last unit when everything is zero ("0 days").
+const _durationText = (value, ref, units) => {
+  const endpoints = _resolveDurationEndpoints(value, ref)
+  if (!endpoints) return ""
+  const orderedUnits = String(units ?? "")
+    .split(",")
+    .map(_normalizeDurationUnit)
+    .filter(Boolean)
+    .filter((unit, index, all) => all.indexOf(unit) === index)
+  if (orderedUnits.length === 0) return ""
+
+  // Ages never read as negative: an end date before the start collapses to zero.
+  const end = _exactDaysBetween(endpoints.from, endpoints.to) < 0 ? endpoints.from : endpoints.to
+  let cursor = endpoints.from
+  const parts = orderedUnits.map((unit) => {
+    let amount = 0
+    if (unit === "years" || unit === "months") {
+      const wholeMonths = Math.max(0, _wholeMonthsBetween(cursor, end))
+      amount = unit === "years" ? Math.floor(wholeMonths / 12) : wholeMonths
+      cursor = _addMonthsClamped(cursor, unit === "years" ? amount * 12 : amount)
+    } else {
+      const days = Math.max(0, _exactDaysBetween(cursor, end))
+      amount = Math.floor(unit === "weeks" ? days / 7 : days)
+      cursor = _addCalendarDays(cursor, unit === "weeks" ? amount * 7 : amount)
+    }
+    return { unit, amount }
+  })
+
+  const nonZero = parts.filter((part) => part.amount > 0)
+  const shown = nonZero.length > 0 ? nonZero : [parts[parts.length - 1]]
+  return shown
+    .map((part) => `${part.amount} ${part.amount === 1 ? part.unit.slice(0, -1) : part.unit}`)
+    .join(", ")
+}
+
 // A field reference is `[field-id]`, and ids are slugified to id-safe
 // characters. Restricting the class (rather than `[^\]]+`) keeps JSON array
 // literals like `["often","very-often"]` — which appear as arguments to
@@ -198,6 +336,7 @@ const _stripQuotedStrings = (expression) =>
 
 const _COMPUTED_NON_FIELD_IDENTIFIERS = new Set([
   "iif", "score", "contains", "hasValue", "countTrue", "daysSince", "monthsSince",
+  "today", "durationBetween", "durationText",
   "floor", "mod", "round", "power", "ln", "exp", "coalesce", "text", "min", "max",
   "Math", "Number", "String", "null", "true", "false",
 ])
@@ -269,7 +408,7 @@ const _evaluateComputedExpression = (expression, valuesByFieldId, currentFieldId
   if (prepared === null) return null
 
   try {
-    const result = Function("iif", "score", "contains", "hasValue", "countTrue", "daysSince", "monthsSince", "floor", "mod", "round", "power", "ln", "exp", "coalesce", "text", "min", "max", `"use strict"; return (${prepared});`)(
+    const result = Function("iif", "score", "contains", "hasValue", "countTrue", "daysSince", "monthsSince", "today", "durationBetween", "durationText", "floor", "mod", "round", "power", "ln", "exp", "coalesce", "text", "min", "max", `"use strict"; return (${prepared});`)(
       _iif,
       _score,
       _contains,
@@ -277,6 +416,9 @@ const _evaluateComputedExpression = (expression, valuesByFieldId, currentFieldId
       _countTrue,
       _daysSince,
       _monthsSince,
+      _today,
+      _durationBetween,
+      _durationText,
       _floor,
       _mod,
       _round,
@@ -449,7 +591,8 @@ const ComputedField = ({
   placeholder = "Calculated automatically",
   size,
   required = false,
-  readOnly,
+  readOnly: readOnlyProp,
+  disabled = false,
   showInterpretation = false,
   interpretation,
   // Legacy calculators (BPI Severity/Interference/Relief, PEG, DLQI) pair
@@ -462,6 +605,9 @@ const ComputedField = ({
   presentationOnly = false,
   isDarkMode = false,
 }) => {
+  // Authorship/lock rules arrive as a dynamic `disabled` expression from the
+  // exporter; fold it into readOnly.
+  const readOnly = disabled ? true : readOnlyProp
   const [fd, setFd] = useActiveData()
   const valuesByFieldId = fd?.field?.data || {}
   const policy = _normalizeCalculationPolicy(calculationPolicy)

@@ -1679,6 +1679,7 @@ const SubformScoringInner = ({
   onOpenChange,
   hideTriggerButton = false,
   showSummary = true,
+  required = false,
   completeButtonText = "Done",
   secondaryCompleteButtonText,
   cancelButtonText = "Cancel",
@@ -3100,10 +3101,21 @@ const SubformScoringInner = ({
     padding: "8px 0",
   }
 
+  // Outer Required = the subform must be complete (its own progress metric).
+  // Mirror the native MOIS affordance: warning tint + asterisk until done.
+  const subformIncomplete = progress.total > 0 && progress.answered < progress.total
+  const showRequiredHint = required && subformIncomplete
   const buttonRowStyle = {
     display: "flex",
     alignItems: "center",
     gap: "12px",
+    ...(showRequiredHint
+      ? {
+          background: theme?.mois?.requiredBackground ?? theme?.aihs?.requiredBackground ?? "#fff4ce",
+          padding: "4px 6px",
+          borderRadius: "4px",
+        }
+      : {}),
   }
 
   const summaryContainerStyle = {
@@ -3170,7 +3182,11 @@ const SubformScoringInner = ({
         {!hideTriggerButton && !hideTitle && title && (
           <Text styles={{ root: { fontWeight: 600, fontSize: "14px" } }}>
             {title}
+            {required && <span style={{ color: "#a4262c", marginLeft: "4px" }}>*</span>}
           </Text>
+        )}
+        {!hideTriggerButton && (hideTitle || !title) && required && (
+          <span style={{ color: "#a4262c", fontWeight: 600 }}>*</span>
         )}
         {!hideTriggerButton && hasAnyAnswers && (
           <Text styles={{ root: { fontSize: "12px", color: isDarkMode ? "#a0a0a0" : "#888" } }}>

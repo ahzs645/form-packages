@@ -52,8 +52,12 @@ const SignaturePad = ({
   backgroundColor = "rgb(255,255,255)",
   height = 120,
   required = false,
-  readOnly = false,
+  readOnly: readOnlyProp = false,
+  disabled = false,
 }) => {
+  // Authorship/lock rules arrive as a dynamic `disabled` expression from the
+  // exporter; fold it into the static readOnly behavior.
+  const readOnly = readOnlyProp || disabled
   const [fieldData, setFieldData] = useActiveData(fd => fd.field.data)
   const theme = useTheme()
   const canvasRef = useRef(null)

@@ -3533,6 +3533,7 @@ const OptionButtons = ({
  * @param {ButtonSize} [props.size='normal'] - Button size
  * @param {boolean} [props.showCard=false] - Show card container
  * @param {boolean} [props.disabled] - Disable field
+ * @param {boolean} [props.readOnly] - Make field view-only
  * @param {boolean} [props.required] - Mark as required
  * @param {'left' | 'top' | 'right'} [props.labelPosition='top'] - Label position
  * @param {string} [props.note] - Annotation/note text
@@ -3547,6 +3548,7 @@ const CompactChoiceField = ({
   size = 'normal',
   showCard = false,
   disabled = false,
+  readOnly = false,
   required = false,
   labelPosition = 'top',
   note,
@@ -3623,7 +3625,7 @@ const CompactChoiceField = ({
         onChange={handleChange}
         selectionType={selectionType}
         size={size}
-        disabled={disabled}
+        disabled={disabled || readOnly}
         isDarkMode={isDarkMode}
         allowDeselect={allowDeselect}
         wrap={wrap}
@@ -3712,6 +3714,31 @@ const _toComparableValue = (value) => {
   return String(value)
 }
 
+// DateSelect stores the *formatted* display string, not ISO, so every builder
+// dateFormat option must parse explicitly. dd/MM/yyyy and MM-dd-yyyy are
+// distinguishable by separator (slash vs dash); MM-dd-yyyy cannot collide with
+// ISO because ISO leads with a 4-digit year. Date-only strings parse as LOCAL
+// calendar dates (not UTC midnight) so local getters read the intended day.
+const _DATE_ONLY_FORMATS = [
+  { pattern: /^(\\d{4})-(\\d{1,2})-(\\d{1,2})$/, order: [1, 2, 3] }, // yyyy-MM-dd (ISO)
+  { pattern: /^(\\d{4})\\.(\\d{1,2})\\.(\\d{1,2})$/, order: [1, 2, 3] }, // yyyy.MM.dd (DateSelect default)
+  { pattern: /^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})$/, order: [3, 2, 1] }, // dd/MM/yyyy
+  { pattern: /^(\\d{1,2})-(\\d{1,2})-(\\d{4})$/, order: [3, 1, 2] }, // MM-dd-yyyy
+]
+
+// null = matched but invalid (e.g. 31/04); undefined = not a date-only string.
+const _parseDateOnlyString = (text) => {
+  for (const format of _DATE_ONLY_FORMATS) {
+    const match = format.pattern.exec(text)
+    if (!match) continue
+    const [year, month, day] = format.order.map((index) => Number(match[index]))
+    const date = new Date(year, month - 1, day)
+    const valid = date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day
+    return valid ? date : null
+  }
+  return undefined
+}
+
 const _toDateValue = (value) => {
   if (value === undefined || value === null || value === "") return null
   if (value instanceof Date) {
@@ -3725,13 +3752,8 @@ const _toDateValue = (value) => {
   if (typeof value === "string") {
     const trimmed = value.trim()
     if (!trimmed) return null
-    // ISO date-only strings parse as UTC midnight; local getters then read the
-    // previous day in negative-offset timezones. Parse them as calendar dates.
-    const dateOnly = /^(\\d{4})-(\\d{2})-(\\d{2})$/.exec(trimmed)
-    if (dateOnly) {
-      const date = new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]))
-      return Number.isFinite(date.getTime()) ? date : null
-    }
+    const dateOnly = _parseDateOnlyString(trimmed)
+    if (dateOnly !== undefined) return dateOnly
     const date = new Date(trimmed)
     return Number.isFinite(date.getTime()) ? date : null
   }
@@ -3822,7 +3844,10 @@ const _max = (...values) => _numericExtrema(values, Math.max)
 const _MS_PER_DAY = 24 * 60 * 60 * 1000
 
 const _isDateOnlyValue = (value) => {
-  if (typeof value === "string") return /^\\d{4}-\\d{2}-\\d{2}$/.test(value.trim())
+  if (typeof value === "string") {
+    const trimmed = value.trim()
+    return _DATE_ONLY_FORMATS.some((format) => format.pattern.test(trimmed))
+  }
   if (!value || typeof value !== "object" || value instanceof Date) return false
   return ["value", "date", "text", "display"].some((key) => _isDateOnlyValue(value[key]))
 }
@@ -3850,6 +3875,121 @@ const _monthsSince = (value, ref) => {
   return months
 }
 
+// Local calendar date, matching the local-calendar parse of date-only strings.
+const _today = () => {
+  const now = new Date()
+  const pad = (part) => String(part).padStart(2, "0")
+  return \`\${now.getFullYear()}-\${pad(now.getMonth() + 1)}-\${pad(now.getDate())}\`
+}
+
+const _DURATION_UNIT_ALIASES = {
+  day: "days", days: "days",
+  week: "weeks", weeks: "weeks",
+  month: "months", months: "months",
+  year: "years", years: "years",
+}
+
+const _normalizeDurationUnit = (unit) =>
+  typeof unit === "string" ? _DURATION_UNIT_ALIASES[unit.trim().toLowerCase()] ?? null : null
+
+// Exact day difference projected through local calendar components, so results
+// are DST-safe and date-only vs date-only arithmetic stays a whole number
+// (matching _daysSince's calendar-day semantics).
+const _exactDaysBetween = (from, to) => {
+  const project = (date) => Date.UTC(
+    date.getFullYear(), date.getMonth(), date.getDate(),
+    date.getHours(), date.getMinutes(), date.getSeconds(), date.getMilliseconds()
+  )
+  return (project(to) - project(from)) / _MS_PER_DAY
+}
+
+// Whole calendar months, matching _monthsSince's day-of-month rule.
+const _wholeMonthsBetween = (from, to) => {
+  let months = (to.getFullYear() - from.getFullYear()) * 12 + (to.getMonth() - from.getMonth())
+  if (to.getDate() < from.getDate()) months -= 1
+  return months
+}
+
+// Month arithmetic clamps to the target month's last day (Jan 31 + 1 month =
+// Feb 28/29), so a duration anchor never overshoots into the following month.
+const _addMonthsClamped = (date, months) => {
+  const monthIndex = date.getMonth() + months
+  const lastDay = new Date(date.getFullYear(), monthIndex + 1, 0).getDate()
+  return new Date(
+    date.getFullYear(), monthIndex, Math.min(date.getDate(), lastDay),
+    date.getHours(), date.getMinutes(), date.getSeconds(), date.getMilliseconds()
+  )
+}
+
+const _addCalendarDays = (date, days) => new Date(
+  date.getFullYear(), date.getMonth(), date.getDate() + days,
+  date.getHours(), date.getMinutes(), date.getSeconds(), date.getMilliseconds()
+)
+
+const _resolveDurationEndpoints = (value, ref) => {
+  const from = _toDateValue(value)
+  if (!from) return null
+  const to = ref === undefined || ref === null || ref === "" ? new Date() : _toDateValue(ref)
+  if (!to) return null
+  return { from, to }
+}
+
+// Exact (fractional) elapsed amount between two dates in the requested unit.
+// \`ref\` defaults to now; rounding is the caller's job (floor/round).
+const _durationBetween = (value, ref, unit) => {
+  const endpoints = _resolveDurationEndpoints(value, ref)
+  const normalizedUnit = _normalizeDurationUnit(unit)
+  if (!endpoints || !normalizedUnit) return null
+  if (normalizedUnit === "days") return _exactDaysBetween(endpoints.from, endpoints.to)
+  if (normalizedUnit === "weeks") return _exactDaysBetween(endpoints.from, endpoints.to) / 7
+  // Fractional months: whole calendar months plus the remaining days as a
+  // fraction of the actual length of the month being crossed.
+  const whole = _wholeMonthsBetween(endpoints.from, endpoints.to)
+  const anchor = _addMonthsClamped(endpoints.from, whole)
+  const next = _addMonthsClamped(endpoints.from, whole + 1)
+  const monthLength = _exactDaysBetween(anchor, next)
+  const months = whole + (monthLength > 0 ? _exactDaysBetween(anchor, endpoints.to) / monthLength : 0)
+  return normalizedUnit === "months" ? months : months / 12
+}
+
+// Cascading duration breakdown, e.g. "2 months, 3 weeks" for
+// durationText([dob], today(), "months,weeks"). Each listed unit (descending)
+// is floored and its remainder carried into the next; zero components are
+// omitted except the last unit when everything is zero ("0 days").
+const _durationText = (value, ref, units) => {
+  const endpoints = _resolveDurationEndpoints(value, ref)
+  if (!endpoints) return ""
+  const orderedUnits = String(units ?? "")
+    .split(",")
+    .map(_normalizeDurationUnit)
+    .filter(Boolean)
+    .filter((unit, index, all) => all.indexOf(unit) === index)
+  if (orderedUnits.length === 0) return ""
+
+  // Ages never read as negative: an end date before the start collapses to zero.
+  const end = _exactDaysBetween(endpoints.from, endpoints.to) < 0 ? endpoints.from : endpoints.to
+  let cursor = endpoints.from
+  const parts = orderedUnits.map((unit) => {
+    let amount = 0
+    if (unit === "years" || unit === "months") {
+      const wholeMonths = Math.max(0, _wholeMonthsBetween(cursor, end))
+      amount = unit === "years" ? Math.floor(wholeMonths / 12) : wholeMonths
+      cursor = _addMonthsClamped(cursor, unit === "years" ? amount * 12 : amount)
+    } else {
+      const days = Math.max(0, _exactDaysBetween(cursor, end))
+      amount = Math.floor(unit === "weeks" ? days / 7 : days)
+      cursor = _addCalendarDays(cursor, unit === "weeks" ? amount * 7 : amount)
+    }
+    return { unit, amount }
+  })
+
+  const nonZero = parts.filter((part) => part.amount > 0)
+  const shown = nonZero.length > 0 ? nonZero : [parts[parts.length - 1]]
+  return shown
+    .map((part) => \`\${part.amount} \${part.amount === 1 ? part.unit.slice(0, -1) : part.unit}\`)
+    .join(", ")
+}
+
 // A field reference is \`[field-id]\`, and ids are slugified to id-safe
 // characters. Restricting the class (rather than \`[^\\]]+\`) keeps JSON array
 // literals like \`["often","very-often"]\` — which appear as arguments to
@@ -3870,6 +4010,7 @@ const _stripQuotedStrings = (expression) =>
 
 const _COMPUTED_NON_FIELD_IDENTIFIERS = new Set([
   "iif", "score", "contains", "hasValue", "countTrue", "daysSince", "monthsSince",
+  "today", "durationBetween", "durationText",
   "floor", "mod", "round", "power", "ln", "exp", "coalesce", "text", "min", "max",
   "Math", "Number", "String", "null", "true", "false",
 ])
@@ -3941,7 +4082,7 @@ const _evaluateComputedExpression = (expression, valuesByFieldId, currentFieldId
   if (prepared === null) return null
 
   try {
-    const result = Function("iif", "score", "contains", "hasValue", "countTrue", "daysSince", "monthsSince", "floor", "mod", "round", "power", "ln", "exp", "coalesce", "text", "min", "max", \`"use strict"; return (\${prepared});\`)(
+    const result = Function("iif", "score", "contains", "hasValue", "countTrue", "daysSince", "monthsSince", "today", "durationBetween", "durationText", "floor", "mod", "round", "power", "ln", "exp", "coalesce", "text", "min", "max", \`"use strict"; return (\${prepared});\`)(
       _iif,
       _score,
       _contains,
@@ -3949,6 +4090,9 @@ const _evaluateComputedExpression = (expression, valuesByFieldId, currentFieldId
       _countTrue,
       _daysSince,
       _monthsSince,
+      _today,
+      _durationBetween,
+      _durationText,
       _floor,
       _mod,
       _round,
@@ -4121,7 +4265,8 @@ const ComputedField = ({
   placeholder = "Calculated automatically",
   size,
   required = false,
-  readOnly,
+  readOnly: readOnlyProp,
+  disabled = false,
   showInterpretation = false,
   interpretation,
   // Legacy calculators (BPI Severity/Interference/Relief, PEG, DLQI) pair
@@ -4134,6 +4279,9 @@ const ComputedField = ({
   presentationOnly = false,
   isDarkMode = false,
 }) => {
+  // Authorship/lock rules arrive as a dynamic \`disabled\` expression from the
+  // exporter; fold it into readOnly.
+  const readOnly = disabled ? true : readOnlyProp
   const [fd, setFd] = useActiveData()
   const valuesByFieldId = fd?.field?.data || {}
   const policy = _normalizeCalculationPolicy(calculationPolicy)
@@ -8970,6 +9118,11 @@ const FindCodeSelectBase = ({
     ? (!Array.isArray(selectedValue) || selectedValue.length === 0) && !searchText
     : !selectedValue && !searchText
   const sectionLayout = section?.layout
+  const theme = useTheme()
+  // Native MOIS parity: warning tint while a required field is empty.
+  const requiresHighlight = required && isEmpty && !readOnly && !disabled
+  const requiredBackground =
+    theme?.mois?.requiredBackground ?? theme?.aihs?.requiredBackground ?? '#fff4ce'
 
   const effectiveLabelPosition = labelPosition ?? (
     sectionLayout === 'linear' ? 'left' : 'top'
@@ -9019,6 +9172,14 @@ const FindCodeSelectBase = ({
     }
   }
 
+  if (requiresHighlight && typeof combinedStyles !== 'function') {
+    combinedStyles = {
+      ...combinedStyles,
+      root: { ...(combinedStyles.root || {}), backgroundColor: requiredBackground },
+      input: { ...(combinedStyles.input || {}), backgroundColor: requiredBackground },
+    }
+  }
+
   return (
     <LayoutItem
       actions={actions}
@@ -9046,6 +9207,7 @@ const FindCodeSelectBase = ({
         <ComboBox
           id={fieldId}
           label={fluentLabel}
+          required={required}
           selectedKey={comboSelectedKey}
           multiSelect={isMultiSelect}
           options={options}
@@ -15656,6 +15818,8 @@ type ScaleQuestionProps = {
   disableCount?: boolean
   question?: string
   scaleOptions?: ScaleChoiceInput[]
+  readOnly?: boolean
+  disabled?: boolean
 }
 
 const createScaleQuestion = ({
@@ -15678,10 +15842,14 @@ const createScaleQuestion = ({
     disableCount,
     question,
     scaleOptions,
+    readOnly = false,
+    disabled = false,
   }: ScaleQuestionProps) => {
     const [honosData,modHonosData]: [FormData,Setter] = useActiveData(fd=>fd.field.data)
     const [fd] = useActiveData()
     const theme = useTheme()
+    // Builder "Disabled (read-only)" and lock rules arrive as either prop name.
+    const isReadOnly = Boolean(readOnly || disabled)
 
     let defaultHonosItem: HonosItem = { selectedKey: null, value: null, question, response: null }
     if (dropdownOptions) defaultHonosItem = { ...defaultHonosItem, selectedDropdownKey: null}
@@ -15772,6 +15940,7 @@ const createScaleQuestion = ({
                         options={dropdownOptions}
                         styles={dropdownStyles}
                         selectedKey={fditem.selectedDropdownKey}
+                        disabled={isReadOnly}
                         onChange={(e, option, index) =>
                           handleDropdownChanged(option, id, honosData, modHonosData)
                         }
@@ -15789,7 +15958,9 @@ const createScaleQuestion = ({
                   options={renderedChoiceOptions}
                   styles={choiceGroupStyle}
                   selectedKey={fditem.selectedKey}
+                  disabled={isReadOnly}
                   onKeyUp={e =>
+                    !isReadOnly &&
                     handleKeyUp(
                       id,
                       e,
@@ -19552,7 +19723,8 @@ const MoisPatientReviewLink = ({
   confirmEnabled = true,
   label = 'I confirm this was reviewed and given to the patient',
   required = false,
-  disabled = false,
+  disabled: disabledProp = false,
+  readOnly = false,
   openInNewTab = true,
   rel = 'noopener noreferrer',
   showLink = true,
@@ -19567,6 +19739,8 @@ const MoisPatientReviewLink = ({
   linkStyles,
   checkboxProps = {},
 }) => {
+  // The MOIS export emits \`readOnly\`; treat it the same as \`disabled\`.
+  const disabled = disabledProp || readOnly
   const resolvedFieldId = normalizeFieldId(fieldId, id)
   section = MoisHooks.useSection(section)
   const [fd] = useActiveData()
@@ -19924,10 +20098,16 @@ const MultiTargetChoiceField = ({
   writeAggregate = true,
   readOnly = false,
   disabled = false,
+  required = false,
 }) => {
   const [fd, setFormData] = useActiveData()
+  const theme = useTheme()
   const data = (fd && fd.field && fd.field.data) || {}
   const effectiveFieldId = fieldId || id || "multiTargetChoice"
+  const anyChecked = options.some((option) => optionChecked(data, option))
+  // Native MOIS required affordance: warning tint while unanswered.
+  const requiredBackground =
+    theme?.mois?.requiredBackground ?? theme?.aihs?.requiredBackground ?? "#fff4ce"
 
   const toggle = (option, next) => {
     if (readOnly || disabled) return
@@ -19947,10 +20127,13 @@ const MultiTargetChoiceField = ({
   const gridStyle = columns > 1
     ? { display: "grid", gridTemplateColumns: \`repeat(\${columns}, 1fr)\`, gap: "6px 24px" }
     : { display: "flex", flexDirection: "column", gap: 6 }
+  const requiredStyle = required && !anyChecked
+    ? { background: requiredBackground, padding: "4px 6px", borderRadius: 2 }
+    : {}
 
   return (
-    <LayoutItem fieldId={effectiveFieldId} label={label} readOnly={readOnly}>
-      <div style={gridStyle}>
+    <LayoutItem fieldId={effectiveFieldId} label={label} readOnly={readOnly} required={required}>
+      <div style={{ ...gridStyle, ...requiredStyle }}>
         {options.filter((option) => optionVisible(data, option)).map((option) => (
           <Fluent.Checkbox
             key={option.code}
@@ -22639,6 +22822,190 @@ const ObservationQuery = ({
   )
 }
 `,
+  './ObservationValueDisplay/index.jsx': `const { useMemo } = React
+const { Stack, Label, Text, Link } = Fluent
+
+// ObservationValueDisplay — read-only inline display of a patient's prior
+// observation value ("2026.07.01  128 mmol/L"). This is the builder-native
+// replacement for the legacy dform \`^viewonly=measure;CODE;value;recent^\`
+// control: the twin that sat beside a writable \`^fid=\` entry field and only
+// ever showed the last charted result.
+//
+// STRUCTURAL CONTRACT — this component never writes.
+// It takes no field id, reads only through useSourceData (never the active-form
+// data or save hooks), and has no persistence setting at all. "Display a past
+// result" and "capture a new result" are therefore different components, not
+// two modes of one component.
+// PastMeasurementField remains the *entry* control (it owns the input, the
+// observation write, and the history strip beside it); a form that only wants
+// the read uses this component and can no longer land in the two failure modes
+// the shared component allowed — an entry field that shows history but silently
+// never persists, and a read-only field that writes stale history back.
+//
+// Matching, date parsing, and abnormal-band classification all delegate to the
+// shared ObservationKit kernel, so this component sees the same case-insensitive
+// code/LOINC comparison and the same LL/HH/L/H flags as ObservationQuery,
+// FlowSheet, and ObservationEntryGrid. ObservationKit is referenced only inside
+// function bodies — bundled component files load in no guaranteed order.
+
+// Most recent matching observations, newest first. Returns [] when no code is
+// configured so the caller can render a builder hint instead of "not found".
+const collectObservationValues = (sd, {
+  sourcePath,
+  datePath,
+  observationCode,
+  loincCode,
+  observationComment,
+  lookback,
+  maxRows,
+  units,
+}) => {
+  const candidate = {
+    code: ObservationKit.toText(observationCode).trim(),
+    loincCode: ObservationKit.toText(loincCode).trim(),
+  }
+  if (!candidate.code && !candidate.loincCode) return []
+
+  const cutoff = ObservationKit.cutoffDate(lookback)
+  const commentFilter = ObservationKit.toText(observationComment).trim().toLowerCase()
+  const rows = []
+
+  ObservationKit.getPath(sd, sourcePath).forEach((entry, index) => {
+    if (!entry || typeof entry !== "object") return
+    if (!ObservationKit.matchesCode(entry, candidate)) return
+    const parsedDate = ObservationKit.parseDate(entry[datePath])
+    if (!parsedDate) return
+    if (cutoff && parsedDate.getTime() < cutoff.getTime()) return
+    // Legacy measurement pairs disambiguate same-code rows by comment
+    // (PastMeasurementField's observationComment filter does the same).
+    if (commentFilter && ObservationKit.toText(entry.comment).trim().toLowerCase() !== commentFilter) return
+    const value = ObservationKit.extractValue(entry).trim()
+    if (!value) return
+    rows.push({
+      index,
+      time: parsedDate.getTime(),
+      dateText: ObservationKit.displayDate(ObservationKit.dateKey(entry[datePath])),
+      value,
+      units: ObservationKit.toText(entry.units).trim() || ObservationKit.toText(units).trim(),
+      flag: ObservationKit.classifyFlag(entry, value),
+    })
+  })
+
+  const limit = Math.max(1, Math.floor(Number(maxRows)) || 1)
+  return rows
+    .sort((left, right) => right.time - left.time || left.index - right.index)
+    .slice(0, limit)
+}
+
+const ObservationValueDisplay = ({
+  id,
+  label = "",
+  // "left" places the label beside the value (the legacy viewonly layout);
+  // "top" stacks it; "none" renders the value alone.
+  labelPosition = "left",
+  observationCode = "",
+  loincCode = "",
+  observationComment = "",
+  sourcePath = "patient.observations",
+  datePath = "collectedDateTime",
+  lookback = null,
+  maxRows = 1,
+  showDate = true,
+  showUnits = true,
+  showAbnormalFlag = true,
+  units = "",
+  emptyText = "No past measurement available",
+  graphLinkText = "",
+  graphHref = "",
+}) => {
+  const sd = useSourceData()
+
+  const items = useMemo(
+    () => collectObservationValues(sd, {
+      sourcePath,
+      datePath,
+      observationCode,
+      loincCode,
+      observationComment,
+      lookback,
+      maxRows,
+      units,
+    }),
+    [datePath, loincCode, lookback, maxRows, observationCode, observationComment, sd, sourcePath, units]
+  )
+
+  const hasCode = Boolean(
+    ObservationKit.toText(observationCode).trim() || ObservationKit.toText(loincCode).trim()
+  )
+  const inline = labelPosition !== "top"
+  const showLabel = Boolean(label) && labelPosition !== "none"
+  const windowLabel = ObservationKit.lookbackLabel(lookback)
+
+  let body = null
+  if (!hasCode) {
+    body = <Text variant="small">No observation code configured for this display.</Text>
+  } else if (items.length === 0) {
+    body = <Text variant="small">{emptyText}</Text>
+  } else {
+    body = (
+      <Stack tokens={{ childrenGap: 2 }}>
+        {items.map((item) => (
+          <Stack
+            key={\`\${item.time}-\${item.index}\`}
+            horizontal
+            verticalAlign="center"
+            tokens={{ childrenGap: 6 }}
+            styles={{ root: { flexWrap: "wrap" } }}
+          >
+            {showDate ? (
+              <Text variant="small" styles={{ root: { color: "#605e5c", whiteSpace: "nowrap" } }}>
+                {item.dateText}
+              </Text>
+            ) : null}
+            <Text
+              variant="small"
+              styles={{
+                root: {
+                  fontWeight: 600,
+                  padding: "0 3px",
+                  ...(showAbnormalFlag ? ObservationKit.flagCellStyle(item.flag) : {}),
+                },
+              }}
+            >
+              {item.value}
+              {showUnits && item.units ? \` \${item.units}\` : ""}
+              {showAbnormalFlag && item.flag ? <span style={{ marginLeft: 6, fontWeight: 700 }}>{item.flag}</span> : null}
+            </Text>
+          </Stack>
+        ))}
+      </Stack>
+    )
+  }
+
+  return (
+    <Stack
+      id={id}
+      data-observation-value-display
+      data-observation-code={ObservationKit.toText(observationCode).trim() || undefined}
+      horizontal={inline}
+      verticalAlign={inline ? "center" : undefined}
+      tokens={{ childrenGap: inline ? 8 : 2 }}
+      styles={{ root: { width: "100%", minWidth: 0, ...(inline ? { flexWrap: "wrap" } : {}) } }}
+    >
+      {showLabel ? <Label>{label}</Label> : null}
+      {body}
+      {graphLinkText ? (
+        graphHref ? (
+          <Link href={graphHref} target="_blank" rel="noopener noreferrer">{graphLinkText}</Link>
+        ) : (
+          <Text variant="small" styles={{ root: { color: "#0f5ea8" } }}>{graphLinkText}</Text>
+        )
+      ) : null}
+      {windowLabel ? <Text variant="small" styles={{ root: { color: "#605e5c" } }}>{windowLabel}</Text> : null}
+    </Stack>
+  )
+}
+`,
   './Occupations/index.jsx': `/**
  * Display a list of patient's employers and occupations. By default, it will
  * display all occupations in the patient chart and then allows selection of
@@ -22649,11 +23016,13 @@ const Occupations = ({
   label = "Employment History",
   selectText = "Select specific employment",
   selectionType = "none",
+  ...props
 }) => {
 
   return (
     <ListSelection
       {...{id, label, selectText, selectionType, columns: occupationColumns}}
+      {...props}
     />
   )
 }
@@ -24712,11 +25081,14 @@ const PdfRegenerator = ({
   choiceComponentMaps,
   includeOnlyFieldIds,
   flatten = false,
-  disabled = false,
+  disabled: disabledProp = false,
+  readOnly = false,
   showStatus = false,
   showDiagnostics = false,
   onComplete,
 }) => {
+  // The MOIS export emits \`readOnly\`; treat it the same as \`disabled\`.
+  const disabled = disabledProp || readOnly
   const [fd] = useActiveData()
   const sd = useSourceData()
   const [isBusy, setIsBusy] = useState(false)
@@ -26007,7 +26379,7 @@ const _useChangeAwareDirtyState = ({
  *
  * Props:
  * - getSaveData?: () => any
- * - disabled?: boolean
+ * - disabled?: boolean (readOnly is accepted as an alias — the MOIS export emits it)
  * - watchedValue?: any
  * - onlyWhenChanged?: boolean
  * - delayCount?: number
@@ -26015,12 +26387,14 @@ const _useChangeAwareDirtyState = ({
  */
 const SaveOnClose = ({
   getSaveData,
-  disabled = false,
+  disabled: disabledProp = false,
+  readOnly = false,
   watchedValue,
   onlyWhenChanged = true,
   delayCount = 3,
   onDirtyChange,
 }) => {
+  const disabled = disabledProp || readOnly
   const sd = useSourceData()
   const [fd] = useActiveData()
   const trackedValue = typeof watchedValue === "undefined" ? fd?.field?.data : watchedValue
@@ -26297,8 +26671,12 @@ const ScaleField = ({
   tooltipMode = "all",
   disableHorizontalScroll = false,
   required = false,
-  readOnly = false,
+  readOnly: readOnlyProp = false,
+  disabled = false,
 }) => {
+  // Authorship/lock rules arrive as a dynamic \`disabled\` expression from the
+  // exporter; fold it into the static readOnly behavior.
+  const readOnly = readOnlyProp || disabled
   const [fieldData, setFieldData] = useActiveData(fd => fd.field.data)
   const theme = useTheme()
 
@@ -28067,8 +28445,12 @@ const SignaturePad = ({
   backgroundColor = "rgb(255,255,255)",
   height = 120,
   required = false,
-  readOnly = false,
+  readOnly: readOnlyProp = false,
+  disabled = false,
 }) => {
+  // Authorship/lock rules arrive as a dynamic \`disabled\` expression from the
+  // exporter; fold it into the static readOnly behavior.
+  const readOnly = readOnlyProp || disabled
   const [fieldData, setFieldData] = useActiveData(fd => fd.field.data)
   const theme = useTheme()
   const canvasRef = useRef(null)
@@ -29903,6 +30285,7 @@ const SubformScoringInner = ({
   onOpenChange,
   hideTriggerButton = false,
   showSummary = true,
+  required = false,
   completeButtonText = "Done",
   secondaryCompleteButtonText,
   cancelButtonText = "Cancel",
@@ -31324,10 +31707,21 @@ const SubformScoringInner = ({
     padding: "8px 0",
   }
 
+  // Outer Required = the subform must be complete (its own progress metric).
+  // Mirror the native MOIS affordance: warning tint + asterisk until done.
+  const subformIncomplete = progress.total > 0 && progress.answered < progress.total
+  const showRequiredHint = required && subformIncomplete
   const buttonRowStyle = {
     display: "flex",
     alignItems: "center",
     gap: "12px",
+    ...(showRequiredHint
+      ? {
+          background: theme?.mois?.requiredBackground ?? theme?.aihs?.requiredBackground ?? "#fff4ce",
+          padding: "4px 6px",
+          borderRadius: "4px",
+        }
+      : {}),
   }
 
   const summaryContainerStyle = {
@@ -31394,7 +31788,11 @@ const SubformScoringInner = ({
         {!hideTriggerButton && !hideTitle && title && (
           <Text styles={{ root: { fontWeight: 600, fontSize: "14px" } }}>
             {title}
+            {required && <span style={{ color: "#a4262c", marginLeft: "4px" }}>*</span>}
           </Text>
+        )}
+        {!hideTriggerButton && (hideTitle || !title) && required && (
+          <span style={{ color: "#a4262c", fontWeight: 600 }}>*</span>
         )}
         {!hideTriggerButton && hasAnyAnswers && (
           <Text styles={{ root: { fontSize: "12px", color: isDarkMode ? "#a0a0a0" : "#888" } }}>
@@ -34014,6 +34412,35 @@ export const componentIdentities: Record<string, any> = {
     },
     "components": [
       "ObservationChart",
+      "ObservationKit"
+    ]
+  },
+  'ObservationValueDisplay': {
+    "name": "ObservationValueDisplay",
+    "title": "Observation Value Display",
+    "description": "Read-only inline display of a patient's most recent prior observation value and date; never writes an observation (replaces legacy ^viewonly=measure^ controls)",
+    "category": "Clinical",
+    "version": {
+      "major": 1,
+      "minor": 0,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "Northern Health",
+    "author": "Northern Health",
+    "publisher": "Northern Health",
+    "globalIdentifier": "",
+    "requiredFormViewerVersion": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "requiredMoisVersion": {
+      "major": 2,
+      "minor": 28,
+      "patch": 10
+    },
+    "components": [
       "ObservationKit"
     ]
   },

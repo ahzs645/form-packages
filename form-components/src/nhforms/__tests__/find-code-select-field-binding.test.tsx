@@ -29,13 +29,22 @@ function loadFindCodeSelect(codeList: unknown[] = []): React.ComponentType<any> 
   const compiled = Babel.transform(source, { presets: ["react"], filename: "index.jsx" }).code ?? "";
   // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func
   const factory = new Function(
-    "React", "Fluent", "useActiveData", "useSourceData", "useCodeList", "produce", "LayoutItem",
+    "React", "Fluent", "useActiveData", "useSourceData", "useCodeList", "useTheme", "produce", "LayoutItem",
     `${compiled};\nreturn { FindCodeSelect };`
   );
   const useActiveData = () => React.useContext(ActiveDataContext);
   const LayoutItem = ({ children }: { children?: React.ReactNode }) =>
     React.createElement(React.Fragment, null, children);
-  return factory(React, FluentStub, useActiveData, () => ({}), () => codeList, produce, LayoutItem).FindCodeSelect;
+  return factory(
+    React,
+    FluentStub,
+    useActiveData,
+    () => ({}),
+    () => codeList,
+    () => ({ mois: { requiredBackground: "#fff4ce" } }),
+    produce,
+    LayoutItem
+  ).FindCodeSelect;
 }
 
 // The four LOINC LL520-8 answers, shaped as field-renderer emits them for a

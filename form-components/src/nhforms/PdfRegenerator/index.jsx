@@ -739,11 +739,14 @@ const PdfRegenerator = ({
   choiceComponentMaps,
   includeOnlyFieldIds,
   flatten = false,
-  disabled = false,
+  disabled: disabledProp = false,
+  readOnly = false,
   showStatus = false,
   showDiagnostics = false,
   onComplete,
 }) => {
+  // The MOIS export emits `readOnly`; treat it the same as `disabled`.
+  const disabled = disabledProp || readOnly
   const [fd] = useActiveData()
   const sd = useSourceData()
   const [isBusy, setIsBusy] = useState(false)

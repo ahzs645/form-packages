@@ -35,6 +35,7 @@ function loadFindCodeSelect(sourceData: Record<string, unknown>): React.Componen
     "useActiveData",
     "useSourceData",
     "useCodeList",
+    "useTheme",
     "produce",
     "LayoutItem",
     `${compiled};\nreturn { FindCodeSelect };`
@@ -47,6 +48,7 @@ function loadFindCodeSelect(sourceData: Record<string, unknown>): React.Componen
     useActiveData,
     () => sourceData,
     () => [],
+    () => ({ mois: { requiredBackground: "#fff4ce" } }),
     produce,
     LayoutItem
   ).FindCodeSelect;

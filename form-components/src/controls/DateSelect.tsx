@@ -7,7 +7,7 @@ import React, { useEffect, useState } from 'react';
 import { DatePicker, DefaultButton, IDatePickerProps, Stack, Toggle } from '@fluentui/react';
 import { LayoutItem } from '../controls/LayoutItem';
 import { useActiveDataSlice } from '../hooks/form-state';
-import { useSourceData, useSection } from '../context/MoisContext';
+import { useSourceData, useSection, useTheme } from '../context/MoisContext';
 import {
   getSectionActiveTarget,
   getSectionSourceTarget,
@@ -304,6 +304,7 @@ export const DateSelect: React.FC<DateSelectProps> = ({
   const { activeValue, compositeValue } = activeSlice;
   const sourceData = useSourceData();
   const effectiveReadOnly = !!readOnly;
+  const theme = useTheme();
   const effectiveSourceId = sourceId || id || fieldId || layoutId;
   const sourceTarget = getSectionSourceTarget(sourceData, sectionContext);
   const sourceValue = effectiveSourceId ? sourceTarget?.[effectiveSourceId] : undefined;
@@ -426,6 +427,9 @@ export const DateSelect: React.FC<DateSelectProps> = ({
 
   if (hidden) return null;
 
+  // Native MOIS parity: warning tint while a required field is empty.
+  const requiresHighlight = Boolean(required) && !selectedDate && !effectiveReadOnly && !disabled;
+
   const renderDatePickerInput = (rootStyle: React.CSSProperties) => (
     <DatePicker
       value={selectedDate}
@@ -448,6 +452,9 @@ export const DateSelect: React.FC<DateSelectProps> = ({
       textField={{
         iconProps: effectiveReadOnly ? { iconName: '' } : undefined,
         readOnly: effectiveReadOnly,
+        styles: requiresHighlight
+          ? { fieldGroup: { backgroundColor: theme.mois.requiredBackground } }
+          : undefined,
       }}
       {...({ showButtonPanel: true } as any)}
       {...datePickerProps}

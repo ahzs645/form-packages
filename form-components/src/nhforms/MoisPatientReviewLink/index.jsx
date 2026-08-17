@@ -85,7 +85,8 @@ const MoisPatientReviewLink = ({
   confirmEnabled = true,
   label = 'I confirm this was reviewed and given to the patient',
   required = false,
-  disabled = false,
+  disabled: disabledProp = false,
+  readOnly = false,
   openInNewTab = true,
   rel = 'noopener noreferrer',
   showLink = true,
@@ -100,6 +101,8 @@ const MoisPatientReviewLink = ({
   linkStyles,
   checkboxProps = {},
 }) => {
+  // The MOIS export emits `readOnly`; treat it the same as `disabled`.
+  const disabled = disabledProp || readOnly
   const resolvedFieldId = normalizeFieldId(fieldId, id)
   section = MoisHooks.useSection(section)
   const [fd] = useActiveData()

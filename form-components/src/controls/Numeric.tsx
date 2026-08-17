@@ -425,7 +425,16 @@ export const Numeric: React.FC<NumericProps> = ({
         tabIndex={effectiveReadOnly ? -1 : undefined}
         styles={{
           ...fieldStyles,
-          field: effectiveReadOnly ? { backgroundColor: 'transparent' } : undefined,
+          // Native MOIS parity: warning tint while a required field is empty.
+          field: effectiveReadOnly
+            ? { backgroundColor: 'transparent' }
+            : required && isEmpty
+              ? { backgroundColor: theme.mois.requiredBackground }
+              : undefined,
+          fieldGroup:
+            required && isEmpty && !effectiveReadOnly
+              ? { backgroundColor: theme.mois.requiredBackground }
+              : undefined,
         }}
         {...textFieldProps}
       />

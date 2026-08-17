@@ -541,6 +541,7 @@ export const SimpleCodeSelect: React.FC<SimpleCodeSelectProps> = ({
         <Dropdown
           id={fieldId}
           label={fluentLabel}
+          required={required && !readOnly}
           selectedKey={isMultiple ? undefined : (effectiveSelectedKeys[0] || null)}
           selectedKeys={isMultiple ? effectiveSelectedKeys : undefined}
           multiSelect={isMultiple}
@@ -551,6 +552,10 @@ export const SimpleCodeSelect: React.FC<SimpleCodeSelectProps> = ({
           errorMessage={fieldStatus?.errorMessage}
           styles={{
             root: { width: '100%' },
+            // Native MOIS parity: warning tint while a required field is empty.
+            ...(required && isEmpty && !readOnly && !disabled
+              ? { title: { backgroundColor: theme.mois.requiredBackground } }
+              : {}),
             ...dropdownProps?.styles,
           }}
           {...dropdownProps}

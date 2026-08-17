@@ -741,6 +741,7 @@ const OptionButtons = ({
  * @param {ButtonSize} [props.size='normal'] - Button size
  * @param {boolean} [props.showCard=false] - Show card container
  * @param {boolean} [props.disabled] - Disable field
+ * @param {boolean} [props.readOnly] - Make field view-only
  * @param {boolean} [props.required] - Mark as required
  * @param {'left' | 'top' | 'right'} [props.labelPosition='top'] - Label position
  * @param {string} [props.note] - Annotation/note text
@@ -755,6 +756,7 @@ const CompactChoiceField = ({
   size = 'normal',
   showCard = false,
   disabled = false,
+  readOnly = false,
   required = false,
   labelPosition = 'top',
   note,
@@ -831,7 +833,7 @@ const CompactChoiceField = ({
         onChange={handleChange}
         selectionType={selectionType}
         size={size}
-        disabled={disabled}
+        disabled={disabled || readOnly}
         isDarkMode={isDarkMode}
         allowDeselect={allowDeselect}
         wrap={wrap}

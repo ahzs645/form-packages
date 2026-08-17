@@ -467,6 +467,11 @@ const FindCodeSelectBase = ({
     ? (!Array.isArray(selectedValue) || selectedValue.length === 0) && !searchText
     : !selectedValue && !searchText
   const sectionLayout = section?.layout
+  const theme = useTheme()
+  // Native MOIS parity: warning tint while a required field is empty.
+  const requiresHighlight = required && isEmpty && !readOnly && !disabled
+  const requiredBackground =
+    theme?.mois?.requiredBackground ?? theme?.aihs?.requiredBackground ?? '#fff4ce'
 
   const effectiveLabelPosition = labelPosition ?? (
     sectionLayout === 'linear' ? 'left' : 'top'
@@ -516,6 +521,14 @@ const FindCodeSelectBase = ({
     }
   }
 
+  if (requiresHighlight && typeof combinedStyles !== 'function') {
+    combinedStyles = {
+      ...combinedStyles,
+      root: { ...(combinedStyles.root || {}), backgroundColor: requiredBackground },
+      input: { ...(combinedStyles.input || {}), backgroundColor: requiredBackground },
+    }
+  }
+
   return (
     <LayoutItem
       actions={actions}
@@ -543,6 +556,7 @@ const FindCodeSelectBase = ({
         <ComboBox
           id={fieldId}
           label={fluentLabel}
+          required={required}
           selectedKey={comboSelectedKey}
           multiSelect={isMultiSelect}
           options={options}

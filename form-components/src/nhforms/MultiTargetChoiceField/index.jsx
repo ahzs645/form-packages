@@ -195,10 +195,16 @@ const MultiTargetChoiceField = ({
   writeAggregate = true,
   readOnly = false,
   disabled = false,
+  required = false,
 }) => {
   const [fd, setFormData] = useActiveData()
+  const theme = useTheme()
   const data = (fd && fd.field && fd.field.data) || {}
   const effectiveFieldId = fieldId || id || "multiTargetChoice"
+  const anyChecked = options.some((option) => optionChecked(data, option))
+  // Native MOIS required affordance: warning tint while unanswered.
+  const requiredBackground =
+    theme?.mois?.requiredBackground ?? theme?.aihs?.requiredBackground ?? "#fff4ce"
 
   const toggle = (option, next) => {
     if (readOnly || disabled) return
@@ -218,10 +224,13 @@ const MultiTargetChoiceField = ({
   const gridStyle = columns > 1
     ? { display: "grid", gridTemplateColumns: `repeat(${columns}, 1fr)`, gap: "6px 24px" }
     : { display: "flex", flexDirection: "column", gap: 6 }
+  const requiredStyle = required && !anyChecked
+    ? { background: requiredBackground, padding: "4px 6px", borderRadius: 2 }
+    : {}
 
   return (
-    <LayoutItem fieldId={effectiveFieldId} label={label} readOnly={readOnly}>
-      <div style={gridStyle}>
+    <LayoutItem fieldId={effectiveFieldId} label={label} readOnly={readOnly} required={required}>
+      <div style={{ ...gridStyle, ...requiredStyle }}>
         {options.filter((option) => optionVisible(data, option)).map((option) => (
           <Fluent.Checkbox
             key={option.code}

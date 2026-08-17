@@ -8,11 +8,13 @@ const Occupations = ({
   label = "Employment History",
   selectText = "Select specific employment",
   selectionType = "none",
+  ...props
 }) => {
 
   return (
     <ListSelection
       {...{id, label, selectText, selectionType, columns: occupationColumns}}
+      {...props}
     />
   )
 }

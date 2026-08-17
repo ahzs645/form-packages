@@ -43,7 +43,7 @@ function getCategory(name: string): NHFormsComponentMetadata['category'] {
     return 'MSE';
   }
   if (['ObservationQuery', 'ObservationEntryGrid', 'ChartReviewSummary', 'HistoricalObservationTable',
-       'ObservationChart', 'FocusedObservationHistory', 'PastMeasurementField', 'FlowSheet'].includes(name)) {
+       'ObservationChart', 'FocusedObservationHistory', 'ObservationValueDisplay', 'PastMeasurementField', 'FlowSheet'].includes(name)) {
     return 'Investigations';
   }
   if (['Allergies', 'Conditions', 'Goals', 'LongTermMedications', 'ServiceEpisodes',

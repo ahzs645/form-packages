@@ -94,7 +94,7 @@ const _useChangeAwareDirtyState = ({
  *
  * Props:
  * - getSaveData?: () => any
- * - disabled?: boolean
+ * - disabled?: boolean (readOnly is accepted as an alias — the MOIS export emits it)
  * - watchedValue?: any
  * - onlyWhenChanged?: boolean
  * - delayCount?: number
@@ -102,12 +102,14 @@ const _useChangeAwareDirtyState = ({
  */
 const SaveOnClose = ({
   getSaveData,
-  disabled = false,
+  disabled: disabledProp = false,
+  readOnly = false,
   watchedValue,
   onlyWhenChanged = true,
   delayCount = 3,
   onDirtyChange,
 }) => {
+  const disabled = disabledProp || readOnly
   const sd = useSourceData()
   const [fd] = useActiveData()
   const trackedValue = typeof watchedValue === "undefined" ? fd?.field?.data : watchedValue
