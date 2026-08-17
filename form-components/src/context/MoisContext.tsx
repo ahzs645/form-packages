@@ -998,8 +998,11 @@ export const defaultSourceData: SourceData = {
   },
   userProfile: {
     userProfileId: 500001,
-    identity: { fullName: 'Dr. Jane Provider' },
+    loginName: 'jprovider',
+    identity: { fullName: 'Dr. Jane Provider', first: 'Jane', family: 'Provider', initials: 'JP' },
+    providerId: 500007,
     desktopProvider: { name: 'PRACTITIONER, GENERAL', providerId: 500007 },
+    role: { roleName: 'PHYSICIAN', description: 'Physician' },
   },
   // Only keep fallback data for components NOT using JSON yet
   example: {

@@ -22307,12 +22307,18 @@ const buildSeriesDefinitions = props => {
       descriptionPath: normalizeString(entry.descriptionPath, normalizeString(props.descriptionPath, "description")),
       observationCodes: normalizeStringArray(entry.observationCodes),
       observationCode: normalizeString(entry.observationCode),
+      loincCodes: normalizeStringArray(entry.loincCodes),
+      loincCode: normalizeString(entry.loincCode),
+      loincPath: normalizeString(entry.loincPath, normalizeString(props.loincPath, "loincCode")),
       descriptionIncludes: normalizeStringArray(entry.descriptionIncludes)
     }));
   }
   const observationCodes = normalizeStringArray(props.observationCodes);
   const singleCode = normalizeString(props.observationCode);
   if (singleCode) observationCodes.unshift(singleCode);
+  const loincCodes = normalizeStringArray(props.loincCodes);
+  const singleLoinc = normalizeString(props.loincCode);
+  if (singleLoinc) loincCodes.unshift(singleLoinc);
   return [{
     label: normalizeString(props.seriesLabel || props.label || props.title, "Value"),
     stroke: normalizeString(props.stroke, OBSERVATION_CHART_PALETTE[0]),
@@ -22332,19 +22338,30 @@ const buildSeriesDefinitions = props => {
     descriptionPath: normalizeString(props.descriptionPath, "description"),
     observationCodes,
     observationCode: singleCode,
+    loincCodes,
+    loincCode: singleLoinc,
+    loincPath: normalizeString(props.loincPath, "loincCode"),
     descriptionIncludes: normalizeStringArray(props.observationDescriptionIncludes || props.descriptionIncludes)
   }];
 };
 const matchesObservationSeries = (entry, seriesDef) => {
   const normalizedCodePath = normalizeString(seriesDef.codePath, "observationCode");
+  const normalizedLoincPath = normalizeString(seriesDef.loincPath, "loincCode");
   const normalizedDescriptionPath = normalizeString(seriesDef.descriptionPath, "description");
   const entryCode = normalizeString(resolvePathValue(entry, normalizedCodePath)).toLowerCase();
+  const entryLoinc = normalizeString(resolvePathValue(entry, normalizedLoincPath)).toLowerCase();
   const entryDescription = normalizeString(resolvePathValue(entry, normalizedDescriptionPath)).toLowerCase();
+
+  // Either-code semantics, mirroring ObservationKit.matchesCode: a row matches
+  // when its observationCode OR loincCode equals any configured observation or
+  // LOINC code, case-insensitively.
   const codeCandidates = [];
   if (isNonEmptyString(seriesDef.observationCode)) codeCandidates.push(seriesDef.observationCode);
   normalizeStringArray(seriesDef.observationCodes).forEach(item => codeCandidates.push(item));
+  if (isNonEmptyString(seriesDef.loincCode)) codeCandidates.push(seriesDef.loincCode);
+  normalizeStringArray(seriesDef.loincCodes).forEach(item => codeCandidates.push(item));
   const normalizedCodes = codeCandidates.map(item => item.toLowerCase()).filter(Boolean);
-  if (normalizedCodes.length > 0 && !normalizedCodes.includes(entryCode)) {
+  if (normalizedCodes.length > 0 && !(entryCode && normalizedCodes.includes(entryCode)) && !(entryLoinc && normalizedCodes.includes(entryLoinc))) {
     return false;
   }
   const includes = normalizeStringArray(seriesDef.descriptionIncludes).map(item => item.toLowerCase()).filter(Boolean);
@@ -22353,7 +22370,63 @@ const matchesObservationSeries = (entry, seriesDef) => {
   }
   return true;
 };
-const buildChartPayloadFromRows = (rowsInput, seriesDefs, props) => {
+
+// Live form-value plotting: each liveSeries entry names a sibling form field
+// whose currently-typed value is plotted as a highlighted point. The chart
+// stays a pure READER of that field — it never owns or writes the value.
+const OBSERVATION_CHART_LIVE_POINT_COLOR = "#d97706";
+const buildLiveSeriesDefinitions = props => {
+  if (!Array.isArray(props.liveSeries)) return [];
+  return props.liveSeries.filter(entry => isRecord(entry) && isNonEmptyString(entry.fieldId)).map(entry => ({
+    label: normalizeString(entry.label, "Current entry"),
+    stroke: normalizeString(entry.stroke, OBSERVATION_CHART_LIVE_POINT_COLOR),
+    width: 0,
+    dash: undefined,
+    pointSize: Math.max(1, coerceNumber(entry.pointSize, 8)),
+    showPoints: true,
+    pointStroke: normalizeString(entry.stroke, OBSERVATION_CHART_LIVE_POINT_COLOR),
+    pointFill: normalizeString(entry.stroke, OBSERVATION_CHART_LIVE_POINT_COLOR),
+    // Live points are in-progress entries, so they stay out of summaryText.
+    includeInSummary: false,
+    parser: normalizeString(entry.parser, normalizeString(props.parser, "number")),
+    isLive: true,
+    fieldId: normalizeString(entry.fieldId),
+    dateFieldId: normalizeString(entry.dateFieldId)
+  }));
+};
+
+// Live update timing: "immediate" repaints the live point on every keystroke;
+// "settled" waits until the referenced field values have stopped changing for
+// settleMs. Blur of a sibling field is not observable from this component, so
+// the debounce is the honest equivalent of "after the user finished typing".
+const resolveLiveUpdateConfig = props => {
+  const mode = normalizeString(props.liveUpdateMode, "immediate").toLowerCase() === "settled" ? "settled" : "immediate";
+  return {
+    mode,
+    settleMs: Math.max(0, coerceNumber(props.liveSettleMs, 1000))
+  };
+};
+const applyLiveSeriesValues = (rowMap, seriesDefs, liveFieldData) => {
+  if (!isRecord(liveFieldData)) return;
+  seriesDefs.forEach((seriesDef, seriesIndex) => {
+    if (!seriesDef.isLive) return;
+    const numericValue = parseMeasurementValue(liveFieldData[seriesDef.fieldId], seriesDef.parser);
+    if (!Number.isFinite(numericValue)) return;
+    const explicitDate = seriesDef.dateFieldId ? parseDateValue(liveFieldData[seriesDef.dateFieldId]) : null;
+    const timeValue = (explicitDate || new Date()).getTime();
+    let target = rowMap.get(timeValue);
+    if (!target) {
+      target = {
+        x: timeValue,
+        values: new Array(seriesDefs.length).fill(null),
+        units: new Array(seriesDefs.length).fill("")
+      };
+      rowMap.set(timeValue, target);
+    }
+    target.values[seriesIndex] = numericValue;
+  });
+};
+const buildChartPayloadFromRows = (rowsInput, seriesDefs, props, liveFieldData) => {
   const xKey = normalizeString(props.xKey, "date");
   const rowMap = new Map();
   rowsInput.forEach(row => {
@@ -22371,6 +22444,7 @@ const buildChartPayloadFromRows = (rowsInput, seriesDefs, props) => {
       rowMap.set(timeValue, target);
     }
     seriesDefs.forEach((seriesDef, index) => {
+      if (seriesDef.isLive) return;
       const dataKey = normalizeString(seriesDef.dataKey || "value", "value");
       const rawValue = resolvePathValue(row, dataKey) ?? row[dataKey];
       const numericValue = parseMeasurementValue(rawValue, seriesDef.parser);
@@ -22379,13 +22453,15 @@ const buildChartPayloadFromRows = (rowsInput, seriesDefs, props) => {
       target.units[index] = normalizeString(row.units ?? row.unit);
     });
   });
+  applyLiveSeriesValues(rowMap, seriesDefs, liveFieldData);
   return finalizeChartRows(Array.from(rowMap.values()), seriesDefs, props);
 };
-const buildChartPayloadFromObservations = (sourceItems, seriesDefs, props) => {
+const buildChartPayloadFromObservations = (sourceItems, seriesDefs, props, liveFieldData) => {
   const rowMap = new Map();
   sourceItems.forEach(entry => {
     if (!isRecord(entry)) return;
     seriesDefs.forEach((seriesDef, seriesIndex) => {
+      if (seriesDef.isLive) return;
       if (!matchesObservationSeries(entry, seriesDef)) return;
       const timestamp = parseDateValue(resolvePathValue(entry, seriesDef.datePath));
       if (!timestamp) return;
@@ -22405,19 +22481,64 @@ const buildChartPayloadFromObservations = (sourceItems, seriesDefs, props) => {
       target.units[seriesIndex] = normalizeString(resolvePathValue(entry, seriesDef.unitsPath));
     });
   });
+  applyLiveSeriesValues(rowMap, seriesDefs, liveFieldData);
   return finalizeChartRows(Array.from(rowMap.values()), seriesDefs, props);
 };
+const TREND_SERIES_STROKE = "#155e75";
+
+// Least-squares best fit over ONE history series' points (x normalized to days
+// so the slope math stays well-conditioned). Returns a per-row column of
+// predicted values spanning only that series' own date range — the in-progress
+// live point never influences the fit. Null when fewer than 2 points exist.
+const buildTrendColumn = (sortedRows, seriesIndex) => {
+  const points = sortedRows.map(row => ({
+    x: row.x,
+    y: row.values[seriesIndex]
+  })).filter(point => Number.isFinite(point.x) && Number.isFinite(point.y));
+  if (points.length < 2) return null;
+  const dayMs = 86400000;
+  const origin = points[0].x;
+  const count = points.length;
+  let sumX = 0;
+  let sumY = 0;
+  let sumXY = 0;
+  let sumXX = 0;
+  points.forEach(point => {
+    const x = (point.x - origin) / dayMs;
+    sumX += x;
+    sumY += point.y;
+    sumXY += x * point.y;
+    sumXX += x * x;
+  });
+  const denominator = count * sumXX - sumX * sumX;
+  if (!Number.isFinite(denominator) || Math.abs(denominator) < Number.EPSILON) return null;
+  const slope = (count * sumXY - sumX * sumY) / denominator;
+  const intercept = (sumY - slope * sumX) / count;
+  const minX = points[0].x;
+  const maxX = points[count - 1].x;
+  return sortedRows.map(row => {
+    if (row.x < minX || row.x > maxX) return null;
+    const predicted = slope * ((row.x - origin) / dayMs) + intercept;
+    return Number.isFinite(predicted) ? Math.round(predicted * 100) / 100 : null;
+  });
+};
+const resolveXSpacing = value => normalizeString(value, "time").toLowerCase() === "even" ? "even" : "time";
 const finalizeChartRows = (rows, seriesDefs, props) => {
   const maxPoints = coercePositiveInt(props.maxPoints, 30);
   const sortedRows = rows.filter(row => row.values.some(value => Number.isFinite(value))).sort((left, right) => left.x - right.x).slice(-maxPoints);
-  const xValues = sortedRows.map(row => row.x);
-  const data = [xValues];
-  seriesDefs.forEach((seriesDef, index) => {
-    data.push(sortedRows.map(row => {
-      const value = row.values[index];
-      return Number.isFinite(value) ? value : null;
-    }));
-  });
+  const xSpacing = resolveXSpacing(props.xSpacing);
+  const xDates = sortedRows.map(row => row.x);
+  // "time" keeps real millisecond timestamps so gaps read as gaps (the uPlot
+  // opts run with ms: 1); "even" plots readings at ordinal slots and labels
+  // each slot with its reading's date instead.
+  const xValues = xSpacing === "even" ? sortedRows.map((_row, index) => index) : xDates;
+  const columns = seriesDefs.map((_seriesDef, index) => sortedRows.map(row => {
+    const value = row.values[index];
+    return Number.isFinite(value) ? value : null;
+  }));
+
+  // Summary is computed against the ORIGINAL defs/row indexes — the appended
+  // trend series never participates in summaryText.
   const summaryParts = seriesDefs.map((seriesDef, index) => {
     if (seriesDef.includeInSummary === false) return "";
     for (let rowIndex = sortedRows.length - 1; rowIndex >= 0; rowIndex -= 1) {
@@ -22429,46 +22550,83 @@ const finalizeChartRows = (rows, seriesDefs, props) => {
     }
     return "";
   }).filter(Boolean);
+  let finalDefs = seriesDefs;
+  if (props.showTrendLine === true) {
+    // Fit against the FIRST history (non-live) series only.
+    const anchorIndex = seriesDefs.findIndex(seriesDef => !seriesDef.isLive);
+    const trendColumn = anchorIndex >= 0 ? buildTrendColumn(sortedRows, anchorIndex) : null;
+    if (trendColumn) {
+      // Insert before any live series so the highlighted live point still draws
+      // on top and lists last in the legend.
+      const firstLiveIndex = seriesDefs.findIndex(seriesDef => seriesDef.isLive);
+      const insertAt = firstLiveIndex >= 0 ? firstLiveIndex : seriesDefs.length;
+      finalDefs = seriesDefs.slice();
+      finalDefs.splice(insertAt, 0, {
+        label: "Trend",
+        stroke: TREND_SERIES_STROKE,
+        width: 1,
+        dash: [10, 6],
+        pointSize: 0,
+        showPoints: false,
+        pointStroke: TREND_SERIES_STROKE,
+        pointFill: TREND_SERIES_STROKE,
+        includeInSummary: false,
+        isTrend: true
+      });
+      columns.splice(insertAt, 0, trendColumn);
+    }
+  }
   return {
-    data,
-    seriesDefs,
+    data: [xValues].concat(columns),
+    seriesDefs: finalDefs,
     hasData: sortedRows.length > 0,
-    summaryText: summaryParts.join("  |  ")
+    summaryText: summaryParts.join("  |  "),
+    xSpacing,
+    xDates
   };
 };
-const buildChartPayload = (props, sourceData) => {
-  const seriesDefs = buildSeriesDefinitions(props);
+const buildChartPayload = (props, sourceData, liveFieldData) => {
+  // Live series render after (on top of) the regular series so the highlighted
+  // in-progress point is drawn over the history lines and listed last in the
+  // legend.
+  const seriesDefs = buildSeriesDefinitions(props).concat(buildLiveSeriesDefinitions(props));
   if (seriesDefs.length === 0) {
     return {
       data: [[], []],
       seriesDefs: [],
       hasData: false,
-      summaryText: ""
+      summaryText: "",
+      xSpacing: resolveXSpacing(props.xSpacing),
+      xDates: []
     };
   }
   if (Array.isArray(props.data) && props.data.length > 0) {
-    return buildChartPayloadFromRows(props.data, seriesDefs, props);
+    return buildChartPayloadFromRows(props.data, seriesDefs, props, liveFieldData);
   }
   const sourcePath = normalizeString(props.sourcePath, "patient.observations");
   const sourceItems = resolveMoisValue(sourceData, sourcePath);
-  if (!Array.isArray(sourceItems)) {
-    return {
-      data: [[], []],
-      seriesDefs,
-      hasData: false,
-      summaryText: ""
-    };
-  }
-  return buildChartPayloadFromObservations(sourceItems, seriesDefs, props);
+  const sourceRows = Array.isArray(sourceItems) ? sourceItems : [];
+  return buildChartPayloadFromObservations(sourceRows, seriesDefs, props, liveFieldData);
 };
 const buildUPlotOptions = (props, width, height, chartPayload) => {
   const showLegend = props.showLegend !== false;
   const showAxes = props.showAxes !== false;
   const showGrid = props.showGrid !== false;
   const showPoints = props.showPoints === true;
+  const isEvenSpacing = chartPayload.xSpacing === "even";
+  const xDates = Array.isArray(chartPayload.xDates) ? chartPayload.xDates : [];
+
+  // In even mode data[0] holds ordinal slot indexes; the reading's real date
+  // lives in xDates, keyed by that index.
+  const formatXValue = rawValue => {
+    if (!isEvenSpacing) return formatDate(rawValue);
+    const slotIndex = Math.round(Number(rawValue));
+    const slotDate = slotIndex === Number(rawValue) ? xDates[slotIndex] : undefined;
+    return slotDate === undefined ? "" : formatDate(slotDate);
+  };
   const chartSeries = [{
     label: normalizeString(props.xLabel, "Date"),
-    value: (_self, rawValue) => formatDate(rawValue)
+    value: (_self, rawValue) => formatXValue(rawValue)
   }];
   chartPayload.seriesDefs.forEach(seriesDef => {
     const seriesPointSize = Math.max(0, coerceNumber(seriesDef.pointSize, 0));
@@ -22491,10 +22649,29 @@ const buildUPlotOptions = (props, width, height, chartPayload) => {
       }
     });
   });
+  const xAxis = {
+    stroke: "#64748b",
+    grid: {
+      show: false
+    },
+    // Wider minimum tick spacing so "YYYY.MM.DD" labels never collide.
+    space: 80
+  };
+  if (isEvenSpacing) {
+    // Ordinal scale: uPlot hands the values callback the x data values at the
+    // chosen splits, which in even mode ARE the slot indexes.
+    xAxis.values = (_self, splits) => splits.map(split => formatXValue(split));
+  }
   return {
     width,
     height,
     class: "observation-chart-runtime",
+    // x values are millisecond epoch timestamps. uPlot's time scale defaults to
+    // UNIX seconds (ms: 1e-3); feeding it milliseconds makes the visible range
+    // read as multiple millennia, no time increment can satisfy the axis
+    // spacing, and uPlot responds by hiding the x axis (and its date labels)
+    // entirely. ms: 1 declares the true unit.
+    ms: 1,
     legend: {
       show: showLegend,
       live: true
@@ -22508,16 +22685,14 @@ const buildUPlotOptions = (props, width, height, chartPayload) => {
       }
     },
     scales: {
-      x: {
+      x: isEvenSpacing ? {
+        time: false,
+        distr: 2
+      } : {
         time: true
       }
     },
-    axes: showAxes ? [{
-      stroke: "#64748b",
-      grid: {
-        show: false
-      }
-    }, {
+    axes: showAxes ? [xAxis, {
       stroke: "#64748b",
       grid: {
         show: showGrid,
@@ -22554,14 +22729,30 @@ const ObservationChart = ({
   showAxes = true,
   showGrid = true,
   showPoints = false,
-  emptyText = "No chart data available"
+  emptyText = "No chart data available",
+  loincCode = "",
+  loincCodes = [],
+  liveSeries
 }) => {
   const sd = useSourceData();
+  // Sibling-field read for live plotting. Called unconditionally (hooks rules);
+  // reading is cheap when liveSeries is absent. The chart only READS these
+  // values — it never owns or writes a form field.
+  const [fd] = useActiveData();
   const containerRef = useRef(null);
   const plotRef = useRef(null);
   const [renderError, setRenderError] = useState("");
   const effectiveTitle = normalizeString(title || label);
   const effectiveHeight = Math.max(120, coercePositiveInt(height, 240));
+  const liveEntries = Array.isArray(liveSeries) ? liveSeries.filter(entry => isRecord(entry)) : [];
+  const liveFieldData = fd && fd.field && fd.field.data || {};
+  // Fingerprint of just the referenced field values, so the memo below refreshes
+  // as the user types without re-running on unrelated form-state changes.
+  const liveValuesKey = liveEntries.map(entry => {
+    const liveFieldId = normalizeString(entry.fieldId);
+    const liveDateFieldId = normalizeString(entry.dateFieldId);
+    return liveFieldId + "=" + stringifyValue(liveFieldData[liveFieldId]) + (liveDateFieldId ? "@" + stringifyValue(liveFieldData[liveDateFieldId]) : "");
+  }).join("|");
   const chartPayload = useMemo(() => buildChartPayload({
     title: effectiveTitle,
     label,
@@ -22588,8 +22779,11 @@ const ObservationChart = ({
     showLegend,
     showAxes,
     showGrid,
-    showPoints
-  }, sd), [effectiveTitle, label, data, sourcePath, xKey, xLabel, datePath, valuePath, unitsPath, codePath, descriptionPath, observationCode, observationCodes, observationDescriptionIncludes, seriesLabel, series, parser, stroke, strokeWidth, pointSize, effectiveHeight, maxPoints, showLegend, showAxes, showGrid, showPoints, sd]);
+    showPoints,
+    loincCode,
+    loincCodes,
+    liveSeries
+  }, sd, liveFieldData), [effectiveTitle, label, data, sourcePath, xKey, xLabel, datePath, valuePath, unitsPath, codePath, descriptionPath, observationCode, observationCodes, observationDescriptionIncludes, seriesLabel, series, parser, stroke, strokeWidth, pointSize, effectiveHeight, maxPoints, showLegend, showAxes, showGrid, showPoints, loincCode, loincCodes, liveSeries, liveValuesKey, sd]);
   useEffect(() => {
     ensureObservationChartStyles();
     const container = containerRef.current;
@@ -35032,7 +35226,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './MultiTargetChoiceField/index.jsx': ["MultiTargetChoiceField","anyChecked","anyOn","applyForces","asArray","codeOf","computeToggledData","current","currentArr","data","effectiveFieldId","evalCondition","force","gridStyle","has","hasValue","isEmptyValue","left","normalizeChoiceValues","normalizeComparable","opt","optionChecked","optionVisible","requiredBackground","requiredStyle","right","rule","target","theme","toCoding","toggle","triggers"],
   './NarrativeReportBuilder/index.jsx': ["NarrativeReportBuilder","applyNarrative","buildNarrative","componentId","container","currentPayload","formData","generatedText","getFieldValue","getPathValue","key","nextGroup","normalizeTemplateRows","normalizeTextValue","normalizedTemplate","renderTextTemplate","rows","sections","setNarrativePayload","value"],
   './NewTextArea/index.jsx': ["NewTextArea","hideonprint","showonprint","sourceData"],
-  './ObservationChart/index.jsx': ["$","$e","$l","$n","$t","A","Ae","Ai","Al","An","B","Be","Bl","Bt","C","Ce","Ci","Cl","Ct","D","De","Di","Dl","Dn","Dt","E","El","En","F","Fe","Ft","G","Gt","H","He","Hi","Hl","Ht","I","Ii","Il","It","J","Je","Jl","Jn","Jt","Ke","Kl","Kn","Kt","L","Li","Ll","Lt","M","Mn","Mt","N","Nl","O","OBSERVATION_CHART_PALETTE","OBSERVATION_CHART_STYLE_ID","ObservationChart","Ol","Ot","P","Pe","Pi","Pl","Pn","Q","Qn","Qt","R","Re","Ri","Rt","S","Sn","St","T","Tn","Tt","UPlotCssText","UPlotLib","Ut","Vl","Vt","W","We","Wi","Wl","Wt","X","Xl","Xn","Xt","Y","Ye","Yi","Yl","Yt","Z","Zl","Zn","Zt","_","_i","_l","_n","_t","a","ai","at","b","be","bi","bl","bn","bt","buildChartPayload","buildChartPayloadFromObservations","buildChartPayloadFromRows","buildSeriesDefinitions","buildUPlotOptions","c","candidate","chartPayload","chartSeries","ci","codeCandidates","coerceNumber","coercePositiveInt","container","containerRef","current","d","data","dataKey","day","di","direct","document","dt","e","ee","effectiveHeight","effectiveTitle","ei","el","en","ensureObservationChartStyles","entryCode","entryDescription","et","f","fi","finalizeChartRows","formatDate","frameStyle","fromPatient","fromQueryResult","ft","g","gi","gn","gt","h","hi","hl","ht","i","ie","ii","includes","isNonEmptyString","isRecord","it","jl","jt","k","keys","ki","kn","kt","l","ll","ln","m","match","matchesObservationSeries","maxPoints","mi","mode","month","mt","n","ne","ni","normalizeString","normalizeStringArray","normalized","normalizedCodePath","normalizedCodes","normalizedDateOnly","normalizedDescriptionPath","nt","numericDate","numericValue","o","observationCodes","oi","p","parseDateValue","parseMeasurementValue","parseNumericValue","parsed","parsedDateOnly","patientPath","plot","plotRef","pt","qe","qn","qt","r","rawValue","renderWidth","resizeChart","resizeObserver","resolveMoisValue","resolvePathValue","root","rowIndex","rowMap","s","sd","segments","self","seriesDefs","seriesPointSize","seriesShowsPoints","showAxes","showGrid","showLegend","showPoints","single","singleCode","sortedRows","sourceItems","sourcePath","stringifyValue","style","summaryParts","t","target","te","text","timeValue","timestamp","tl","tn","toPathSegments","trimmed","tt","u","uPlot","units","v","value","valueText","ve","vi","vl","vn","vt","w","wi","window","wl","wn","wrapperStyle","wt","xKey","xValues","xi","xl","xn","xt","y","year","yi","yn","yt","z","ze","zi","zl","zn"],
+  './ObservationChart/index.jsx': ["$","$e","$l","$n","$t","A","Ae","Ai","Al","An","B","Be","Bl","Bt","C","Ce","Ci","Cl","Ct","D","De","Di","Dl","Dn","Dt","E","El","En","F","Fe","Ft","G","Gt","H","He","Hi","Hl","Ht","I","Ii","Il","It","J","Je","Jl","Jn","Jt","Ke","Kl","Kn","Kt","L","Li","Ll","Lt","M","Mn","Mt","N","Nl","O","OBSERVATION_CHART_LIVE_POINT_COLOR","OBSERVATION_CHART_PALETTE","OBSERVATION_CHART_STYLE_ID","ObservationChart","Ol","Ot","P","Pe","Pi","Pl","Pn","Q","Qn","Qt","R","Re","Ri","Rt","S","Sn","St","T","TREND_SERIES_STROKE","Tn","Tt","UPlotCssText","UPlotLib","Ut","Vl","Vt","W","We","Wi","Wl","Wt","X","Xl","Xn","Xt","Y","Ye","Yi","Yl","Yt","Z","Zl","Zn","Zt","_","_i","_l","_n","_t","a","ai","anchorIndex","applyLiveSeriesValues","at","b","be","bi","bl","bn","bt","buildChartPayload","buildChartPayloadFromObservations","buildChartPayloadFromRows","buildLiveSeriesDefinitions","buildSeriesDefinitions","buildTrendColumn","buildUPlotOptions","c","candidate","chartPayload","chartSeries","ci","codeCandidates","coerceNumber","coercePositiveInt","columns","container","containerRef","count","current","d","dataKey","day","dayMs","denominator","di","direct","document","dt","e","ee","effectiveHeight","effectiveTitle","ei","el","en","ensureObservationChartStyles","entryCode","entryDescription","entryLoinc","et","explicitDate","f","fi","finalDefs","finalizeChartRows","firstLiveIndex","formatDate","formatXValue","frameStyle","fromPatient","fromQueryResult","ft","g","gi","gn","gt","h","hi","hl","ht","i","ie","ii","includes","insertAt","intercept","isEvenSpacing","isNonEmptyString","isRecord","it","jl","jt","k","keys","ki","kn","kt","l","liveDateFieldId","liveEntries","liveFieldData","liveFieldId","liveValuesKey","ll","ln","loincCodes","m","match","matchesObservationSeries","maxPoints","maxX","mi","minX","mode","month","mt","n","ne","ni","normalizeString","normalizeStringArray","normalized","normalizedCodePath","normalizedCodes","normalizedDateOnly","normalizedDescriptionPath","normalizedLoincPath","nt","numericDate","numericValue","o","observationCodes","oi","origin","p","parseDateValue","parseMeasurementValue","parseNumericValue","parsed","parsedDateOnly","patientPath","plot","plotRef","points","predicted","pt","qe","qn","qt","r","rawValue","renderWidth","resizeChart","resizeObserver","resolveLiveUpdateConfig","resolveMoisValue","resolvePathValue","resolveXSpacing","root","rowIndex","rowMap","s","sd","segments","self","seriesDefs","seriesPointSize","seriesShowsPoints","showAxes","showGrid","showLegend","showPoints","single","singleCode","singleLoinc","slope","slotDate","slotIndex","sortedRows","sourceItems","sourcePath","sourceRows","stringifyValue","style","sumX","sumXX","sumXY","sumY","summaryParts","t","target","te","text","timeValue","timestamp","tl","tn","toPathSegments","trendColumn","trimmed","tt","u","uPlot","units","v","value","valueText","ve","vi","vl","vn","vt","w","wi","window","wl","wn","wrapperStyle","wt","x","xAxis","xDates","xKey","xSpacing","xValues","xi","xl","xn","xt","y","year","yi","yn","yt","z","ze","zi","zl","zn"],
   './ObservationEntryGrid/index.jsx': ["GRID_FLAG_DISPLAYS","GridDetailPane","GridRangeBands","ObservationEntryGrid","abnormalFlag","allRows","best","bestTime","buildGridAbnormalFlag","candidate","cellStyle","cells","centerText","chartRows","classifyGridFlag","codeIndex","codeList","commitEntryCode","componentId","container","createdBy","current","currentPayload","cutoff","deleteEntry","detailBandLabelStyle","detailLabelStyle","detailValueStyle","displayFlag","displayValue","editByObservationId","editPayload","edits","editsKey","entries","entriesKey","entryCode","entryLoinc","entryRows","explicitFlag","fields","findRangesForCode","flagCode","gridPayloadsEqual","handleKeyDown","hasBands","hasRanges","headStyle","inlineCodeFieldStyles","inlineNameFieldStyles","inlineTextFieldStyles","key","lookupCodeList","lookupEntry","lower","map","match","newPayload","newRowBackground","next","nextGroup","observationId","parsed","pendingCorrection","pendingDelete","pendingEdit","rangeText","ranges","readGridRows","resolveEntryCode","resolved","rowId","rows","sd","selectedPendingEdit","selectedRow","setGridNestedPayload","source","stageChartDelete","startCorrection","startEntry","stored","stripVolatileGridFields","testNameFieldRefs","text","time","undoChartEdit","updateCorrection","updateEntry","value","valueFieldRefs","withHotkeys","writeRows","zebraRowBackground"],
   './ObservationKit/index.jsx': ["ObservationKit","amount","classifyFlag","classifyRanges","code","codeText","criticalHigh","criticalLow","current","cutoff","cutoffDate","dateKey","dayTime","displayDate","displayText","entryCode","entryLoinc","explicit","extractValue","flagCellStyle","getPath","index","loinc","lookbackLabel","matchCodeIndex","matchesCode","normalHigh","normalLow","normalizeCodes","parseDate","parsed","raw","singular","steps","text","toNumber","toText","unit","value"],
   './ObservationPanelEditor/index.jsx': ["DEFAULT_WINDOW_HOURS","ObservationPanelEditor","actor","actorFrom","addHoursIso","authorshipPolicy","buildKey","c","changed","ck","claim","claims","codeSet","commitSave","componentId","computedTotals","container","createdBy","current","currentActorName","currentPayload","d","data","dcoUpdates","editableUntil","effectiveFieldId","euDate","existing","expired","fieldData","formatTimestamp","getCurrentActorName","getNhAuth","getPanelValue","grouped","hasValue","historyRows","isNonEmpty","isOwner","keepStatus","key","label","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","maxHistory","next","nextGroup","nextStatus","nhAuth","normalizePanelRows","normalizePanelTotals","normalizeStore","now","nowIso","numeric","oldObs","optionList","ownerId","ownerName","ownerRefresh","pad2","panelDateKey","payloadsEqual","pending","policyAppliesToAction","prepareSave","raw","readStore","release","resolveNow","rootValue","rowDefs","rowLockInfo","rowReadOnly","sameActor","sd","section","setPanelPayload","setRowValue","source","sourceIds","store","stripVolatilePayloadFields","toNumericValue","totalDefs","ts","untilSelf","value","windowHours"],
