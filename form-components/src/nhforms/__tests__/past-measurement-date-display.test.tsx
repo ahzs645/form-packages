@@ -79,9 +79,9 @@ function loadPastMeasurementField(sourceData: Record<string, unknown>): React.Co
   ).PastMeasurementField;
 }
 
-function renderField(props: Record<string, unknown>) {
-  textFieldProps = null;
-  const PastMeasurementField = loadPastMeasurementField({
+function renderField(
+  props: Record<string, unknown>,
+  sourceData: Record<string, unknown> = {
     patient: {
       observations: [
         {
@@ -92,10 +92,18 @@ function renderField(props: Record<string, unknown>) {
         },
       ],
     },
-  });
+  },
+  initialFieldData: Record<string, unknown> = {},
+) {
+  textFieldProps = null;
+  const PastMeasurementField = loadPastMeasurementField(sourceData);
+  let latestState: Record<string, any> | null = null;
 
   const Harness: React.FC = () => {
-    const [state, setState] = React.useState({ field: { data: {}, status: {}, history: [] } });
+    const [state, setState] = React.useState({
+      field: { data: initialFieldData, status: {}, history: [] },
+    });
+    latestState = state;
     const setter = (updater: any) => setState((previous) => (
       typeof updater === "function" ? updater(previous) : updater
     ));
@@ -120,7 +128,7 @@ function renderField(props: Record<string, unknown>) {
   document.body.appendChild(container);
   const root: Root = createRoot(container);
   act(() => root.render(React.createElement(Harness)));
-  return { container, root };
+  return { container, root, getState: () => latestState };
 }
 
 describe("PastMeasurementField date-aspect display", () => {
@@ -188,5 +196,156 @@ describe("PastMeasurementField date-aspect display", () => {
     const hiddenHarness = renderField({ label: "Weight (kg)", labelPosition: "none" });
     expect(hiddenHarness.container.querySelector('[data-layout-label="true"]')).toBeNull();
     act(() => hiddenHarness.root.unmount());
+  });
+});
+
+describe("PastMeasurementField webform observation ownership", () => {
+  const linkedWeight = {
+    observationId: 700101,
+    observationCode: "22732",
+    value: "82.4",
+    units: "kg",
+    collectedDateTime: "2026-04-21T09:00:00",
+  };
+
+  it("does not seed a fresh form from observations supplied in the webform collection", () => {
+    const harness = renderField(
+      {
+        fieldId: "weight",
+        observationCode: "22732",
+        autoFillFromHistory: false,
+        persistenceMode: "observationAndForm",
+        readOnly: false,
+      },
+      {
+        formParams: { webformId: 0 },
+        webform: {
+          webformId: 0,
+          observations: [{ ...linkedWeight, sourceWebformId: 41 }],
+        },
+        patient: { observations: [linkedWeight] },
+      },
+    );
+
+    expect(textFieldProps?.value).toBe("");
+
+    act(() => textFieldProps?.onChange?.({}, "84"));
+    expect(
+      harness.getState()?.field?.data?.__componentPayloads?.dcoUpdatesByComponent?.weight?.[0]
+    ).toMatchObject({
+      observationId: 0,
+      observationCode: "22732",
+      value: "84",
+      status: "F",
+    });
+    act(() => harness.root.unmount());
+  });
+
+  it("can explicitly seed a new empty form from the latest patient history value", () => {
+    const harness = renderField(
+      {
+        fieldId: "weight",
+        observationCode: "22732",
+        autoFillFromHistory: true,
+        bringForward: true,
+        persistenceMode: "observationAndForm",
+        readOnly: false,
+      },
+      {
+        formParams: { webformId: 0 },
+        webform: { webformId: 0, observations: [] },
+        patient: { observations: [linkedWeight] },
+      },
+    );
+
+    expect(textFieldProps?.value).toBe("82.4");
+    expect(harness.getState()?.field?.data?.weight).toBe("82.4");
+    expect(
+      harness.getState()?.field?.data?.__componentPayloads?.dcoUpdatesByComponent?.weight?.[0]
+    ).toMatchObject({
+      observationId: 0,
+      observationCode: "22732",
+      value: "82.4",
+      status: "F",
+    });
+    act(() => harness.root.unmount());
+  });
+
+  it("honours the legacy bring-forward safety gate when auto-fill is configured", () => {
+    const harness = renderField(
+      {
+        fieldId: "weight",
+        observationCode: "22732",
+        autoFillFromHistory: true,
+        bringForward: false,
+        persistenceMode: "observationAndForm",
+        readOnly: false,
+      },
+      {
+        formParams: { webformId: 0 },
+        webform: { webformId: 0, observations: [] },
+        patient: { observations: [linkedWeight] },
+      },
+    );
+
+    expect(textFieldProps?.value).toBe("");
+    expect(harness.getState()?.field?.data?.weight).toBeUndefined();
+    act(() => harness.root.unmount());
+  });
+
+  it("updates the linked observation when the same saved form is reopened", () => {
+    const harness = renderField(
+      {
+        fieldId: "weight",
+        observationCode: "22732",
+        autoFillFromHistory: false,
+        persistenceMode: "observationAndForm",
+        readOnly: false,
+      },
+      {
+        formParams: { webformId: 41 },
+        webform: {
+          webformId: 41,
+          observations: [{ ...linkedWeight, sourceWebformId: 41 }],
+        },
+        patient: { observations: [linkedWeight] },
+      },
+    );
+
+    expect(textFieldProps?.value).toBe("82.4");
+
+    act(() => textFieldProps?.onChange?.({}, "84"));
+    expect(
+      harness.getState()?.field?.data?.__componentPayloads?.dcoUpdatesByComponent?.weight?.[0]
+    ).toMatchObject({
+      observationId: 700101,
+      observationCode: "22732",
+      value: "84",
+      status: "C",
+    });
+    act(() => harness.root.unmount());
+  });
+
+  it("ignores an observation explicitly linked to a different saved form", () => {
+    const harness = renderField(
+      {
+        fieldId: "weight",
+        observationCode: "22732",
+        autoFillFromHistory: false,
+        persistenceMode: "observationAndForm",
+        readOnly: false,
+      },
+      {
+        formParams: { webformId: 41 },
+        webform: {
+          webformId: 41,
+          observations: [{ ...linkedWeight, sourceWebformId: 99 }],
+        },
+        patient: { observations: [linkedWeight] },
+      },
+    );
+
+    expect(textFieldProps?.value).toBe("");
+    act(() => harness.root.unmount());
   });
 });

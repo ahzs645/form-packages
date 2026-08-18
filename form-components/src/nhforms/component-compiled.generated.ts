@@ -25351,6 +25351,7 @@ const setNestedPayload = (setFormData, componentId, payloadType, payload) => {
   }));
 };
 const toObservationList = source => Array.isArray(source) ? source.filter(entry => entry && typeof entry === "object") : [];
+const observationWebformId = observation => Number(observation?.sourceWebformId) || Number(observation?.linkedWebformId) || Number(observation?.webformId) || Number(observation?.webform?.webformId) || 0;
 const normalizeObservationItems = ({
   items,
   valuePath,
@@ -25422,6 +25423,10 @@ const PastMeasurementField = ({
   observationComment = "",
   docDateFieldPath = "docDate",
   maxHistory = 5,
+  // Patient history is context, not an answer. New editable forms stay blank
+  // unless the author deliberately opts into carrying the latest value over.
+  // Saved-form restoration uses stored/linked form data and is independent of
+  // this option.
   autoFillFromHistory = false,
   // Legacy ^bringforward=NO^. A point-in-time score (Daily Morphine Equivalent
   // Dose 61848, Opioid Risk Tool 61865) must be re-derived on a new encounter,
@@ -25516,8 +25521,23 @@ const PastMeasurementField = ({
     }).slice(0, effectiveHistorySize);
   }, [codeFilter, commentPath, codePath, commentFilter, datePath, documentDate, effectiveHistorySize, historySourcePath, sd, unitsPath, valuePath, isHistoricalFormValue]);
   const historyItems = isHistoricalFormValue ? formHistoryItems : observationHistoryItems;
+
+  // \`sd.webform.observations\` represents observations already owned by the
+  // current saved webform. It is not a bring-forward source. A fresh form has
+  // webformId 0; even if a preview/host accidentally supplies observations in
+  // that collection, they must remain history rather than becoming answers.
+  // Once the form has an id, accept contained observations without an explicit
+  // link id (the real MOIS response shape) and reject an explicit mismatched id.
+  const currentWebformId = Number(sd?.webform?.webformId) || Number(sd?.formParams?.webformId) || 0;
+  const currentWebformObservations = useMemo(() => {
+    if (!currentWebformId) return [];
+    return toObservationList(sd?.webform?.observations).filter(observation => {
+      const linkedWebformId = observationWebformId(observation);
+      return !linkedWebformId || linkedWebformId === currentWebformId;
+    });
+  }, [currentWebformId, sd]);
   const linkedObservationItem = useMemo(() => isHistoricalFormValue ? null : normalizeObservationItems({
-    items: sd?.webform?.observations,
+    items: currentWebformObservations,
     valuePath,
     datePath,
     unitsPath,
@@ -25527,7 +25547,7 @@ const PastMeasurementField = ({
     commentFilter,
     documentDate: null,
     applyDocumentDateFilter: false
-  })[0] ?? null, [codeFilter, commentPath, codePath, commentFilter, datePath, isHistoricalFormValue, sd, unitsPath, valuePath]);
+  })[0] ?? null, [codeFilter, commentPath, codePath, commentFilter, currentWebformObservations, datePath, isHistoricalFormValue, unitsPath, valuePath]);
   const latestHistoryItem = historyItems[0] ?? null;
   const normalizedPullTargets = useMemo(() => (Array.isArray(pullTargets) ? pullTargets : []).map(target => {
     if (!target || typeof target !== "object") return null;
@@ -35266,7 +35286,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './ObservationQuery/index.jsx': ["ObservationQuery","ObservationQueryLatest","ObservationQueryTable","body","cell","cellStyle","chartRows","codeIndex","codeList","cutoff","effectiveMaxRows","existing","grouped","headerStyle","latest","latestByCode","limited","matches","parsedDate","recentFirst","row","rows","runObservationQuery","sd","series","source","value","windowLabel"],
   './ObservationValueDisplay/index.jsx': ["ObservationValueDisplay","body","candidate","collectObservationValues","commentFilter","cutoff","hasCode","inline","items","limit","parsedDate","rows","sd","showLabel","value","windowLabel"],
   './Occupations/index.jsx': ["Occupations","OccupationsFields"],
-  './PastMeasurementField/index.jsx': ["PastMeasurementField","abnormalFlag","abnormalHighValue","abnormalLowValue","canPullLatest","candidate","candidates","codeFilter","coercePositiveInt","commentFilter","componentId","container","createdBy","criticalHighValue","criticalLowValue","current","currentPayload","day","direct","displayedCurrentValue","documentDate","effectiveFieldId","effectiveHistorySize","effectiveLabelPosition","effectiveMeasurementSize","entryCode","entryComment","entryDate","entryUnits","entryValue","explicitValue","fieldData","flagCode","flagDisplays","formHistoryItems","formatDate","fromPatient","fromQueryResult","handleValueChange","hasAbnormalHigh","hasAbnormalLow","hasExplicitValue","hasMeaningfulValue","hasNumericCurrentValue","hasRangeMetadata","hasStoredValue","historicalFormRowDate","historyItems","historySummary","index","inputSuffix","isAbnormal","isHistoricalFormValue","isNonEmptyString","key","latestHistoryItem","legacyRangePayload","linkedObservationItem","matchingKey","measurementWidthBySize","month","nextGroup","normalizeObservationItems","normalizedDateOnly","normalizedPullTargets","numericCurrentValue","numericExplicitValue","numericTime","observationHistoryItems","oldId","oldObs","optionalString","parseDateValue","parsed","parsedDate","parsedDateOnly","patientPath","payloadsEqual","pullLatestIntoTargets","raw","rawDate","recentHistoryText","resolveHistoricalFormRows","resolveMeasurementContainerStyle","resolveMoisValue","resolvePathValue","resolvedAbnormalHigh","resolvedAbnormalLow","resolvedCriticalHigh","resolvedCriticalLow","resolvedCurrentValue","resolvedUnits","role","roots","sd","segments","setNestedPayload","shouldReserveHistory","shouldShowHistory","storedValue","stringifyValue","stripVolatilePayloadFields","targetFieldId","text","toObservationList","toPathSegments","updatedValue","value","valueFromHistoricalFormRow","valueIsDate","valueKeys","valuePart","valueText","width","year"],
+  './PastMeasurementField/index.jsx': ["PastMeasurementField","abnormalFlag","abnormalHighValue","abnormalLowValue","canPullLatest","candidate","candidates","codeFilter","coercePositiveInt","commentFilter","componentId","container","createdBy","criticalHighValue","criticalLowValue","current","currentPayload","currentWebformId","currentWebformObservations","day","direct","displayedCurrentValue","documentDate","effectiveFieldId","effectiveHistorySize","effectiveLabelPosition","effectiveMeasurementSize","entryCode","entryComment","entryDate","entryUnits","entryValue","explicitValue","fieldData","flagCode","flagDisplays","formHistoryItems","formatDate","fromPatient","fromQueryResult","handleValueChange","hasAbnormalHigh","hasAbnormalLow","hasExplicitValue","hasMeaningfulValue","hasNumericCurrentValue","hasRangeMetadata","hasStoredValue","historicalFormRowDate","historyItems","historySummary","index","inputSuffix","isAbnormal","isHistoricalFormValue","isNonEmptyString","key","latestHistoryItem","legacyRangePayload","linkedObservationItem","linkedWebformId","matchingKey","measurementWidthBySize","month","nextGroup","normalizeObservationItems","normalizedDateOnly","normalizedPullTargets","numericCurrentValue","numericExplicitValue","numericTime","observationHistoryItems","observationWebformId","oldId","oldObs","optionalString","parseDateValue","parsed","parsedDate","parsedDateOnly","patientPath","payloadsEqual","pullLatestIntoTargets","raw","rawDate","recentHistoryText","resolveHistoricalFormRows","resolveMeasurementContainerStyle","resolveMoisValue","resolvePathValue","resolvedAbnormalHigh","resolvedAbnormalLow","resolvedCriticalHigh","resolvedCriticalLow","resolvedCurrentValue","resolvedUnits","role","roots","sd","segments","setNestedPayload","shouldReserveHistory","shouldShowHistory","storedValue","stringifyValue","stripVolatilePayloadFields","targetFieldId","text","toObservationList","toPathSegments","updatedValue","value","valueFromHistoricalFormRow","valueIsDate","valueKeys","valuePart","valueText","width","year"],
   './PatientFileSections/index.jsx': ["PatientFileSections","activeText","addressText","cityLine","compactLines","contactText","countryLine","createdDate","editButtonStyle","encounter","fieldWrapStyle","formatAddress","formatContact","formatDate","getPatientFromData","gridStyle","healthNumber","insuranceBy","insuranceNumber","insuranceText","lines","match","mergeObjects","nextPatient","optionCode","optionDisplay","patient","preferredCode","preferredPhoneOptions","providerName","queryPatient","raw","renderClientDemographics","renderDocumentDetails","renderEncounterDetails","renderTitle","requested","sd","section","sectionTitleStyle","textValue","updateContactText","visibleSections","whiteDropdownStyles","whiteFlexTextFieldStyles","whiteTextFieldStyles","writePatientUpdates"],
   './PatientValueField/index.jsx': ["PatientValueField","age","applyPatientTransform","candidates","coercePatientValue","collectionCandidateValues","collectionItemMatches","computeAgeYears","dob","effectiveFieldId","expected","items","monthDelta","normalizedExpected","now","raw","resolveCollectionItemPath","resolvePatientContextPath","resolved","root","sd","stored","values"],
   './PdfRegenerator/index.jsx': ["PDFLib","PDF_LIB_URL","PdfRegenerator","_base64ToBytes","_buildChoiceComponentIndex","_buildDateComponentIndex","_buildTableReverseIndex","_choiceItemMatches","_choiceItems","_collectCandidates","_decodePdfHex","_downloadBytes","_fillField","_getCheckboxOnStates","_inferBooleanState","_installPdfLibFromSource","_isNonEmptyString","_loadPdfLib","_loadPdfLibFromCdn","_matchMultipleOptions","_matchSingleOption","_normalizeFieldMap","_normalizeToken","_pdfLibPromise","_printBytes","_resolveChoiceComponentValue","_resolveDateComponentValue","_resolveTableCellValue","_resolveValueByPath","_setCheckboxByState","_splitCanonicalDateParts","_statusColor","_toBooleanLike","_toCandidateList","_toText","acro","baseMap","binary","blob","boolValue","booleanStates","buttonDisabled","byRow","bytes","candidate","candidateKeys","candidates","choiceComponentIndex","choiceComponentValue","choiceEntry","clean","cleaned","cleanup","component","components","current","dateComponentIndex","dateComponentValue","dateEntry","desiredMaxLength","diagnosticsText","didFill","direct","disabled","doc","existing","filledFieldCount","form","formData","formKeys","fromData","fromPath","fuzzy","handleGeneratePdf","hasMatchingState","i","iframe","includeSet","index","inferredState","inlineSource","installed","isOn","items","knownOptions","left","leftIsFormId","lib","link","map","mapped","match","matches","maxLength","maybe","maybeDate","maybeTime","nextFileName","normalized","normalizedAction","normalizedCandidate","normalizedOption","normalizedOptionMap","normalizedRequested","offState","onText","onValue","options","otherItem","outputBytes","parts","pathByColumnId","payload","pdfFieldId","pdfFieldName","printWindow","rawValue","renderActionButton","renderButton","requested","resolvePath","resolvedPdfSource","right","rightIsFormId","row","rowIndex","rowMapping","rows","runner","script","sd","segments","selected","selectedCount","set","single","skippedFieldCount","sourceFieldId","sourceId","sourceValue","sourceValues","state","states","strategy","tableEntry","tableId","tableIndex","targetAction","targetState","targetStateName","targetWidget","text","trimmed","url","warningCount","warnings","widgets","withoutSlash"],

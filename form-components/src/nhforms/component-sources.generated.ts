@@ -23598,6 +23598,14 @@ const toObservationList = (source) => (
     : []
 )
 
+const observationWebformId = (observation) => (
+  Number(observation?.sourceWebformId) ||
+  Number(observation?.linkedWebformId) ||
+  Number(observation?.webformId) ||
+  Number(observation?.webform?.webformId) ||
+  0
+)
+
 const normalizeObservationItems = ({
   items,
   valuePath,
@@ -23677,6 +23685,10 @@ const PastMeasurementField = ({
   observationComment = "",
   docDateFieldPath = "docDate",
   maxHistory = 5,
+  // Patient history is context, not an answer. New editable forms stay blank
+  // unless the author deliberately opts into carrying the latest value over.
+  // Saved-form restoration uses stored/linked form data and is independent of
+  // this option.
   autoFillFromHistory = false,
   // Legacy ^bringforward=NO^. A point-in-time score (Daily Morphine Equivalent
   // Dose 61848, Opioid Risk Tool 61865) must be re-derived on a new encounter,
@@ -23795,12 +23807,27 @@ const PastMeasurementField = ({
 
   const historyItems = isHistoricalFormValue ? formHistoryItems : observationHistoryItems
 
+  // \`sd.webform.observations\` represents observations already owned by the
+  // current saved webform. It is not a bring-forward source. A fresh form has
+  // webformId 0; even if a preview/host accidentally supplies observations in
+  // that collection, they must remain history rather than becoming answers.
+  // Once the form has an id, accept contained observations without an explicit
+  // link id (the real MOIS response shape) and reject an explicit mismatched id.
+  const currentWebformId = Number(sd?.webform?.webformId) || Number(sd?.formParams?.webformId) || 0
+  const currentWebformObservations = useMemo(() => {
+    if (!currentWebformId) return []
+    return toObservationList(sd?.webform?.observations).filter((observation) => {
+      const linkedWebformId = observationWebformId(observation)
+      return !linkedWebformId || linkedWebformId === currentWebformId
+    })
+  }, [currentWebformId, sd])
+
   const linkedObservationItem = useMemo(() => (
     isHistoricalFormValue
       ? null
       :
     normalizeObservationItems({
-      items: sd?.webform?.observations,
+      items: currentWebformObservations,
       valuePath,
       datePath,
       unitsPath,
@@ -23811,7 +23838,7 @@ const PastMeasurementField = ({
       documentDate: null,
       applyDocumentDateFilter: false,
     })[0] ?? null
-  ), [codeFilter, commentPath, codePath, commentFilter, datePath, isHistoricalFormValue, sd, unitsPath, valuePath])
+  ), [codeFilter, commentPath, codePath, commentFilter, currentWebformObservations, datePath, isHistoricalFormValue, unitsPath, valuePath])
 
   const latestHistoryItem = historyItems[0] ?? null
 
