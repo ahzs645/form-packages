@@ -1947,7 +1947,7 @@ export const defaultFormDesign: FormDesign = {
   darkMode: "auto",
   inputSize: "md",
   borderRadius: "small",
-  labelPosition: "top",
+  labelPosition: "left",
   showProgressBar: false,
   formWidth: "centered",
   questionSpacing: "standard",

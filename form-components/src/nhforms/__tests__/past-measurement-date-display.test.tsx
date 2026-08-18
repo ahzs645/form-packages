@@ -153,6 +153,20 @@ describe("PastMeasurementField date-aspect display", () => {
     act(() => harness.root.unmount());
   });
 
+  it("renders numeric measurements as numeric HTML inputs", () => {
+    const harness = renderField({
+      valuePath: "value",
+      datePath: "collectedDateTime",
+      valueType: "NUMERIC",
+    });
+
+    expect(textFieldProps?.type).toBe("number");
+    expect(textFieldProps?.inputMode).toBe("decimal");
+    expect(textFieldProps?.step).toBe("any");
+    expect(textFieldProps?.suffix).toBe("kg");
+    act(() => harness.root.unmount());
+  });
+
   it("places the label, input, and history in horizontal stacks when inline layout is enabled", () => {
     const harness = renderField({
       inlineLayout: true,

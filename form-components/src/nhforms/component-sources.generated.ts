@@ -23898,6 +23898,7 @@ const PastMeasurementField = ({
     : stringifyValue(resolvedCurrentValue)
   const numericCurrentValue = Number(stringifyValue(resolvedCurrentValue))
   const hasNumericCurrentValue = Number.isFinite(numericCurrentValue)
+  const isNumericInput = String(valueType || "").trim().toUpperCase() === "NUMERIC"
   const resolvedAbnormalLow = abnormalLow ?? rangeNormalLow
   const resolvedAbnormalHigh = abnormalHigh ?? rangeNormalHigh
   const resolvedCriticalLow = criticalLow ?? rangeAbsurdLow ?? rangeVeryLow
@@ -24133,6 +24134,9 @@ const PastMeasurementField = ({
             }}
           >
             <TextField
+              type={isNumericInput ? "number" : "text"}
+              inputMode={isNumericInput ? "decimal" : undefined}
+              step={isNumericInput ? "any" : undefined}
               value={displayedCurrentValue}
               placeholder={placeholder}
               onChange={handleValueChange}
