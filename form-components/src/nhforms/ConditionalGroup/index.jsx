@@ -408,6 +408,12 @@ const ConditionalGroup = ({
       : `hsl(${210 + (currentDepth * 15)}, 70%, 50%)`,
   } : {}
 
+  // When the controller is rendered elsewhere in the form, a closed group has
+  // no UI of its own. Avoid leaving an empty card/bottom margin in the layout.
+  if (!showController && !isVisible && !showHiddenIndicator) {
+    return null
+  }
+
   return (
     <LogicGateContext.Provider value={childContext}>
       <div

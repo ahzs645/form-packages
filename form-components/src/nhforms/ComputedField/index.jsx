@@ -508,6 +508,7 @@ const ComputedValuePresentation = ({
   label,
   value,
   displayStyle = "field",
+  displaySuffix = "",
   labelPosition = "left",
   placeholder = "Calculated automatically",
   readOnly = true,
@@ -532,6 +533,7 @@ const ComputedValuePresentation = ({
         readOnly={readOnly}
         required={required}
         size={size}
+        textFieldProps={displaySuffix ? { suffix: displaySuffix } : undefined}
       />
     )
   }
@@ -573,7 +575,7 @@ const ComputedValuePresentation = ({
         fontSize: isProminent ? "16px" : "13px",
         fontStyle: displayValue === "Incomplete" ? "italic" : "normal",
       }}>
-        {displayValue}
+        {displayValue}{displayValue !== "Incomplete" && displaySuffix ? ` ${displaySuffix}` : ""}
       </span>
     </div>
   )
@@ -586,6 +588,7 @@ const ComputedField = ({
   precision,
   resultType = "number",
   displayStyle = "field",
+  displaySuffix = "",
   calculationPolicy = "always-calculated",
   labelPosition = "left",
   placeholder = "Calculated automatically",
@@ -604,10 +607,20 @@ const ComputedField = ({
   resolvedValue,
   presentationOnly = false,
   isDarkMode = false,
+  // Prior observations are display-only. They never seed the calculated field
+  // and never participate in its MOIS write.
+  showHistory = false,
+  historyObservationCode = "",
+  historyLoincCode = "",
+  historyUnits = "",
+  historyMaxRows = 1,
+  graphLinkText = "Graph",
+  graphHref = "",
 }) => {
   // Authorship/lock rules arrive as a dynamic `disabled` expression from the
   // exporter; fold it into readOnly.
   const readOnly = disabled ? true : readOnlyProp
+  const theme = useTheme()
   const [fd, setFd] = useActiveData()
   const valuesByFieldId = fd?.field?.data || {}
   const policy = _normalizeCalculationPolicy(calculationPolicy)
@@ -660,6 +673,15 @@ const ComputedField = ({
   const renderedValue = policy === "always-calculated" ? displayValue : enteredDisplayValue
   const externallyReadOnly = readOnly === true
   const canEdit = policy !== "always-calculated" && !externallyReadOnly
+  // LayoutItem owns the left-label column used by TextArea and measurement
+  // fields. Supplemental rows live outside that control, so derive the same
+  // column width from the MOIS theme instead of using an unrelated fixed inset.
+  const labelColumnWidth = theme?.mois?.defaultCommonControlStyle?.minLabelWidth ?? 240
+  const supplementalInset = labelPosition !== "left"
+    ? 0
+    : typeof labelColumnWidth === "number"
+      ? `${labelColumnWidth + 10}px`
+      : `calc(${labelColumnWidth} + 10px)`
 
   const canShowInterpretation = useMemo(
     () => Boolean(showInterpretation && _hasAllReferencedValues(expression, valuesByFieldId)),
@@ -761,10 +783,28 @@ const ComputedField = ({
         readOnly={!canEdit}
         required={required}
         size={size}
+        displaySuffix={displaySuffix}
         isDarkMode={isDarkMode}
       />
+      {showHistory && (historyObservationCode || historyLoincCode) ? (
+        <div
+          data-computed-observation-history
+          style={{ marginTop: 4, marginLeft: supplementalInset }}
+        >
+          <ObservationValueDisplay
+            labelPosition="none"
+            observationCode={historyObservationCode}
+            loincCode={historyLoincCode}
+            units={historyUnits}
+            maxRows={historyMaxRows}
+            graphLinkText={graphLinkText}
+            graphHref={graphHref}
+            presentation="measurement-summary"
+          />
+        </div>
+      ) : null}
       {!presentationOnly && policy === "calculated-until-overridden" ? (
-        <div style={{ marginTop: 4, marginLeft: labelPosition === "left" ? 160 : 0, display: "flex", gap: 8, alignItems: "center", fontSize: 12, color: isOverridden ? "#9a3412" : "#475569" }}>
+        <div style={{ marginTop: 4, marginLeft: supplementalInset, display: "flex", gap: 8, alignItems: "center", fontSize: 12, color: isOverridden ? "#9a3412" : "#475569" }}>
           <span>
             {isOverridden
               ? `User override preserved. Current calculation: ${displayValue || "unavailable"}.`
@@ -778,7 +818,7 @@ const ComputedField = ({
         </div>
       ) : null}
       {!presentationOnly && policy === "suggested-calculation" ? (
-        <div style={{ marginTop: 4, marginLeft: labelPosition === "left" ? 160 : 0, display: "flex", gap: 8, alignItems: "center", fontSize: 12, color: "#475569" }}>
+        <div style={{ marginTop: 4, marginLeft: supplementalInset, display: "flex", gap: 8, alignItems: "center", fontSize: 12, color: "#475569" }}>
           <span><strong>Suggested:</strong> {displayValue || "Unavailable until inputs are complete"}</span>
           {displayValue && canEdit ? (
             <button type="button" onClick={useCalculatedValue} style={{ border: "1px solid #cbd5e1", borderRadius: 4, background: "#fff", padding: "2px 8px", cursor: "pointer" }}>
@@ -788,7 +828,7 @@ const ComputedField = ({
         </div>
       ) : null}
       {!presentationOnly && interpretationRange ? (
-        <div style={{ marginTop: 4, marginLeft: labelPosition === "left" ? 160 : 0, fontSize: 12, color: "#475569" }}>
+        <div style={{ marginTop: 4, marginLeft: supplementalInset, fontSize: 12, color: "#475569" }}>
           <strong>{interpretation?.label || "Interpretation"}:</strong> {interpretationRange.label}
           {interpretationRange.description ? <span> - {interpretationRange.description}</span> : null}
         </div>

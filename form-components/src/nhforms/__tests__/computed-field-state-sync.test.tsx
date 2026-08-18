@@ -19,20 +19,30 @@ const ActiveDataContext = React.createContext<ActiveTuple>([{}, () => undefined]
 
 function loadComputedField(): React.ComponentType<any> {
   const compiled = Babel.transform(source, { presets: ["react"], filename: "index.jsx" }).code ?? "";
-  const TextArea = (props: { fieldId: string; value?: unknown }) => React.createElement("input", {
+  const TextArea = (props: { fieldId: string; value?: unknown; textFieldProps?: { suffix?: string } }) => React.createElement("input", {
     "data-field-id": props.fieldId,
+    "data-display-suffix": props.textFieldProps?.suffix ?? "",
     value: props.value == null ? "" : String(props.value),
     readOnly: true,
   });
+  const ObservationValueDisplay = (props: Record<string, unknown>) => React.createElement("div", {
+    "data-history-code": String(props.observationCode ?? ""),
+    "data-history-units": String(props.units ?? ""),
+    "data-graph-label": String(props.graphLinkText ?? ""),
+    "data-history-presentation": String(props.presentation ?? ""),
+  });
   const useActiveData = () => React.useContext(ActiveDataContext);
+  const useTheme = () => ({ mois: { defaultCommonControlStyle: { minLabelWidth: 240 } } });
   // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func
   const factory = new Function(
     "React",
     "TextArea",
     "useActiveData",
+    "ObservationValueDisplay",
+    "useTheme",
     `${compiled};\nreturn { ComputedField };`
   );
-  return factory(React, TextArea, useActiveData).ComputedField;
+  return factory(React, TextArea, useActiveData, ObservationValueDisplay, useTheme).ComputedField;
 }
 
 function renderComputedField(
@@ -42,6 +52,7 @@ function renderComputedField(
     expression?: string;
     incompleteBehavior?: string;
     incompleteText?: string;
+    componentProps?: Record<string, unknown>;
   } = {},
 ) {
   const ComputedField = loadComputedField();
@@ -70,6 +81,7 @@ function renderComputedField(
         calculationPolicy,
         incompleteBehavior: options.incompleteBehavior,
         incompleteText: options.incompleteText,
+        ...options.componentProps,
       })
     );
   };
@@ -100,6 +112,7 @@ function renderComputedField(
       }));
     },
     getRenderedValue: () => container.querySelector("input")?.getAttribute("value") ?? null,
+    getContainer: () => container,
     unmount: async () => {
       await act(async () => root.unmount());
     },
@@ -135,6 +148,38 @@ describe("ComputedField stored-value synchronization", () => {
     const harness = renderComputedField("suggested-calculation");
     await harness.render();
     expect(harness.getState().field.data.result).toBeNull();
+    await harness.unmount();
+  });
+
+  it("shows configured observation history without seeding or replacing the calculation", async () => {
+    const harness = renderComputedField("always-calculated", {
+      componentProps: {
+        showHistory: true,
+        historyObservationCode: "951",
+        historyUnits: "kg/m2",
+        graphLinkText: "Graph",
+      },
+    });
+    await harness.render();
+
+    const history = harness.getContainer().querySelector("[data-computed-observation-history]");
+    expect(history?.querySelector("[data-history-code='951']")).not.toBeNull();
+    expect(history?.querySelector("[data-history-units='kg/m2']")).not.toBeNull();
+    expect(history?.querySelector("[data-graph-label='Graph']")).not.toBeNull();
+    expect(history?.querySelector("[data-history-presentation='measurement-summary']")).not.toBeNull();
+    expect((history as HTMLElement | null)?.style.marginLeft).toBe("250px");
+    expect(harness.getState().field.data.result).toBe(20);
+    await harness.unmount();
+  });
+
+  it("shows a display suffix without appending it to the stored numeric result", async () => {
+    const harness = renderComputedField("always-calculated", {
+      componentProps: { displaySuffix: "kg/m²" },
+    });
+    await harness.render();
+
+    expect(harness.getContainer().querySelector("input")?.getAttribute("data-display-suffix")).toBe("kg/m²");
+    expect(harness.getState().field.data.result).toBe(20);
     await harness.unmount();
   });
 

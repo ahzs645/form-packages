@@ -4413,11 +4413,21 @@ const ComputedField = ({
   incompleteText = "Incomplete",
   resolvedValue,
   presentationOnly = false,
-  isDarkMode = false
+  isDarkMode = false,
+  // Prior observations are display-only. They never seed the calculated field
+  // and never participate in its MOIS write.
+  showHistory = false,
+  historyObservationCode = "",
+  historyLoincCode = "",
+  historyUnits = "",
+  historyMaxRows = 1,
+  graphLinkText = "Graph",
+  graphHref = ""
 }) => {
   // Authorship/lock rules arrive as a dynamic \`disabled\` expression from the
   // exporter; fold it into readOnly.
   const readOnly = disabled ? true : readOnlyProp;
+  const theme = useTheme();
   const [fd, setFd] = useActiveData();
   const valuesByFieldId = fd?.field?.data || {};
   const policy = _normalizeCalculationPolicy(calculationPolicy);
@@ -4450,6 +4460,11 @@ const ComputedField = ({
   const renderedValue = policy === "always-calculated" ? displayValue : enteredDisplayValue;
   const externallyReadOnly = readOnly === true;
   const canEdit = policy !== "always-calculated" && !externallyReadOnly;
+  // LayoutItem owns the left-label column used by TextArea and measurement
+  // fields. Supplemental rows live outside that control, so derive the same
+  // column width from the MOIS theme instead of using an unrelated fixed inset.
+  const labelColumnWidth = theme?.mois?.defaultCommonControlStyle?.minLabelWidth ?? 240;
+  const supplementalInset = labelPosition !== "left" ? 0 : typeof labelColumnWidth === "number" ? \`\${labelColumnWidth + 10}px\` : \`calc(\${labelColumnWidth} + 10px)\`;
   const canShowInterpretation = useMemo(() => Boolean(showInterpretation && _hasAllReferencedValues(expression, valuesByFieldId)), [expression, showInterpretation, valuesByFieldId]);
   const interpretationValue = policy === "always-calculated" ? roundedValue : _toNumericValue(currentValue);
   const interpretationRange = useMemo(() => canShowInterpretation ? _getInterpretationRange(interpretationValue, interpretation) : null, [canShowInterpretation, interpretation, interpretationValue]);
@@ -4540,10 +4555,25 @@ const ComputedField = ({
     required: required,
     size: size,
     isDarkMode: isDarkMode
-  }), !presentationOnly && policy === "calculated-until-overridden" ? /*#__PURE__*/React.createElement("div", {
+  }), showHistory && (historyObservationCode || historyLoincCode) ? /*#__PURE__*/React.createElement("div", {
+    "data-computed-observation-history": true,
     style: {
       marginTop: 4,
-      marginLeft: labelPosition === "left" ? 160 : 0,
+      marginLeft: supplementalInset
+    }
+  }, /*#__PURE__*/React.createElement(ObservationValueDisplay, {
+    labelPosition: "none",
+    observationCode: historyObservationCode,
+    loincCode: historyLoincCode,
+    units: historyUnits,
+    maxRows: historyMaxRows,
+    graphLinkText: graphLinkText,
+    graphHref: graphHref,
+    presentation: "measurement-summary"
+  })) : null, !presentationOnly && policy === "calculated-until-overridden" ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 4,
+      marginLeft: supplementalInset,
       display: "flex",
       gap: 8,
       alignItems: "center",
@@ -4563,7 +4593,7 @@ const ComputedField = ({
   }, "Reset to calculation") : null) : null, !presentationOnly && policy === "suggested-calculation" ? /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 4,
-      marginLeft: labelPosition === "left" ? 160 : 0,
+      marginLeft: supplementalInset,
       display: "flex",
       gap: 8,
       alignItems: "center",
@@ -4583,7 +4613,7 @@ const ComputedField = ({
   }, "Use suggestion") : null) : null, !presentationOnly && interpretationRange ? /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 4,
-      marginLeft: labelPosition === "left" ? 160 : 0,
+      marginLeft: supplementalInset,
       fontSize: 12,
       color: "#475569"
     }
@@ -24989,7 +25019,11 @@ const ObservationValueDisplay = ({
   units = "",
   emptyText = "No past measurement available",
   graphLinkText = "",
-  graphHref = ""
+  graphHref = "",
+  // Matches PastMeasurementField's compact history strip: Graph first, then
+  // "date   value   (units)". The default retains this component's richer
+  // read-only observation display for existing consumers.
+  presentation = "default"
 }) => {
   const sd = useSourceData();
   const items = useMemo(() => collectObservationValues(sd, {
@@ -25006,6 +25040,7 @@ const ObservationValueDisplay = ({
   const inline = labelPosition !== "top";
   const showLabel = Boolean(label) && labelPosition !== "none";
   const windowLabel = ObservationKit.lookbackLabel(lookback);
+  const measurementSummary = presentation === "measurement-summary";
   let body = null;
   if (!hasCode) {
     body = /*#__PURE__*/React.createElement(Text, {
@@ -25015,6 +25050,15 @@ const ObservationValueDisplay = ({
     body = /*#__PURE__*/React.createElement(Text, {
       variant: "small"
     }, emptyText);
+  } else if (measurementSummary) {
+    body = /*#__PURE__*/React.createElement(Stack, {
+      tokens: {
+        childrenGap: 2
+      }
+    }, items.map(item => /*#__PURE__*/React.createElement(Text, {
+      key: \`\${item.time}-\${item.index}\`,
+      variant: "small"
+    }, [showDate ? item.dateText : "", item.value, showUnits && item.units ? \`(\${item.units})\` : "", showAbnormalFlag && item.flag ? item.flag : ""].filter(Boolean).join("   "))));
   } else {
     body = /*#__PURE__*/React.createElement(Stack, {
       tokens: {
@@ -25056,6 +25100,18 @@ const ObservationValueDisplay = ({
       }
     }, item.flag) : null))));
   }
+  const graph = graphLinkText ? graphHref ? /*#__PURE__*/React.createElement(Link, {
+    href: graphHref,
+    target: "_blank",
+    rel: "noopener noreferrer"
+  }, graphLinkText) : /*#__PURE__*/React.createElement(Text, {
+    variant: "small",
+    styles: {
+      root: {
+        color: "#0f5ea8"
+      }
+    }
+  }, graphLinkText) : null;
   return /*#__PURE__*/React.createElement(Stack, {
     id: id,
     "data-observation-value-display": true,
@@ -25074,18 +25130,7 @@ const ObservationValueDisplay = ({
         } : {})
       }
     }
-  }, showLabel ? /*#__PURE__*/React.createElement(Label, null, label) : null, body, graphLinkText ? graphHref ? /*#__PURE__*/React.createElement(Link, {
-    href: graphHref,
-    target: "_blank",
-    rel: "noopener noreferrer"
-  }, graphLinkText) : /*#__PURE__*/React.createElement(Text, {
-    variant: "small",
-    styles: {
-      root: {
-        color: "#0f5ea8"
-      }
-    }
-  }, graphLinkText) : null, windowLabel ? /*#__PURE__*/React.createElement(Text, {
+  }, showLabel ? /*#__PURE__*/React.createElement(Label, null, label) : null, measurementSummary ? graph : null, body, !measurementSummary ? graph : null, windowLabel ? /*#__PURE__*/React.createElement(Text, {
     variant: "small",
     styles: {
       root: {
@@ -25150,7 +25195,8 @@ employer
 classification { code display system }
 hoursPerWeek
 \`;`,
-  './PastMeasurementField/index.jsx': `const {
+  './PastMeasurementField/index.jsx': `function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
+const {
   useEffect,
   useMemo,
   useState
@@ -25159,6 +25205,7 @@ const {
   Stack,
   StackItem,
   Link,
+  SpinButton,
   Text,
   TextField
 } = Fluent;
@@ -25436,6 +25483,9 @@ const PastMeasurementField = ({
   bringForward = true,
   persistenceMode = "formOnly",
   valueType = "TEXT",
+  numberTypeNumber = "number",
+  buttonControls = false,
+  spinButtonProps,
   observationDescription,
   saveDescription,
   saveUnits,
@@ -25588,6 +25638,7 @@ const PastMeasurementField = ({
   const numericCurrentValue = Number(stringifyValue(resolvedCurrentValue));
   const hasNumericCurrentValue = Number.isFinite(numericCurrentValue);
   const isNumericInput = String(valueType || "").trim().toUpperCase() === "NUMERIC";
+  const defaultSpinStep = numberTypeNumber === "decimal" ? 0.1 : 1;
   const resolvedAbnormalLow = abnormalLow ?? rangeNormalLow;
   const resolvedAbnormalHigh = abnormalHigh ?? rangeNormalHigh;
   const resolvedCriticalLow = criticalLow ?? rangeAbsurdLow ?? rangeVeryLow;
@@ -25790,7 +25841,25 @@ const PastMeasurementField = ({
         minWidth: 0
       }
     }
-  }, /*#__PURE__*/React.createElement(TextField, {
+  }, isNumericInput && buttonControls && !readOnly ? /*#__PURE__*/React.createElement(SpinButton, _extends({
+    value: displayedCurrentValue,
+    min: numberTypeNumber === "year" ? 1900 : undefined,
+    max: numberTypeNumber === "year" ? 2100 : undefined,
+    step: defaultSpinStep,
+    onChange: handleValueChange,
+    onFocus: () => setHistoryFocused(true),
+    onBlur: () => {
+      if (!historyInitiallyVisible) setHistoryFocused(false);
+    },
+    disabled: disabled
+  }, spinButtonProps, {
+    styles: {
+      root: {
+        width: "100%"
+      },
+      ...(spinButtonProps?.styles ?? {})
+    }
+  })) : /*#__PURE__*/React.createElement(TextField, {
     type: isNumericInput ? "number" : "text",
     inputMode: isNumericInput ? "decimal" : undefined,
     step: isNumericInput ? "any" : undefined,
@@ -25803,7 +25872,23 @@ const PastMeasurementField = ({
     },
     disabled: disabled,
     readOnly: readOnly,
-    suffix: inputSuffix || undefined
+    suffix: inputSuffix || undefined,
+    styles: isNumericInput && !buttonControls ? {
+      field: {
+        appearance: "textfield",
+        MozAppearance: "textfield",
+        selectors: {
+          "&::-webkit-inner-spin-button": {
+            WebkitAppearance: "none",
+            margin: 0
+          },
+          "&::-webkit-outer-spin-button": {
+            WebkitAppearance: "none",
+            margin: 0
+          }
+        }
+      }
+    } : undefined
   })), shouldShowHistory || shouldReserveHistory ? /*#__PURE__*/React.createElement(StackItem, {
     styles: {
       root: {
@@ -35247,7 +35332,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './CodedObservationChoiceField/index.jsx': ["CodedObservationChoiceField","candidates","checklistOptions","code","codedChoicePayloadsEqual","codings","commentValue","componentId","container","createdBy","currentPayload","display","effectiveFieldId","effectiveRenderAs","effectiveSelectionType","findExistingObservationId","formatCodedChoiceReport","fromContext","handleFindCodeChange","isMultiple","match","nextGroup","normalizeCodedChoiceOptions","normalizeSelectedCodings","oldId","option","options","report","sd","selectOptions","selectedValue","setCodedChoicePayload","stripVolatileCodedChoicePayloadFields","value","values","writeCodedChoiceValue"],
   './CommonSchemaDefn/index.jsx': ["NameBlockFields","active","commonSchemaDefn","formHistorySchema","makeCodedObsUpdates","makeObsUpdatesFromVs","makeTextObsUpdates","makeValueSetOptions","nameBlockSchema","newDco","oldObs","oldObsId","options","selectAll","startDateDesc","valueSet","vso","ynuaOptions"],
   './CompactBooleanField/index.jsx': ["BooleanLabelPresets","CompactBooleanChecklist","CompactBooleanChecklistSchema","CompactBooleanField","CompactBooleanFieldSchema","CompactBooleanGroup","CompactChoiceField","CompactChoiceFieldMultiSchema","CompactChoiceFieldSchema","OptionButtons","YesNoButtons","baseContainerStyle","buttonStyle","checkboxWrapperRef","choiceContent","commitValue","containerStyle","currentData","currentValue","data","decodePDFHex","decoded","fieldContent","getBooleanLabels","getButtonStyles","getCardContainerStyles","getFieldContainerStyles","getWidthStyle","handleChange","handleCheckboxChange","handleClick","handleNoClick","handleYesClick","input","isDarkMode","isDisabled","isHorizontal","isLast","isLeftLabel","isMultiple","isSelected","labelStyle","lastRowStyle","newValues","noButtonStyle","normalizeValue","normalized","normalizedValue","noteStyle","prevDecoded","rowStyle","selected","selectedValues","setFormData","sizeStyles","theme","themeLabelMaxWidth","themeLabelMinWidth","titleStyle","values","widthMap","yesButtonStyle"],
-  './ComputedField/index.jsx': ["ComputedField","ComputedValuePresentation","_COMPUTED_NON_FIELD_IDENTIFIERS","_COMPUTED_REF_PATTERN","_DATE_ONLY_FORMATS","_DURATION_UNIT_ALIASES","_MS_PER_DAY","_addCalendarDays","_addMonthsClamped","_calendarDayNumber","_coalesce","_computedFieldIsOverridden","_computedFieldState","_contains","_countTrue","_daysSince","_durationBetween","_durationText","_escapeRegExp","_evaluateComputedExpression","_exactDaysBetween","_exp","_extractComputedReferences","_floor","_getInterpretationRange","_hasAllReferencedValues","_hasValue","_iif","_isDateOnlyValue","_isSafeComputedExpression","_ln","_max","_min","_mod","_monthsSince","_normalizeCalculationPolicy","_normalizeComputedDisplayStyle","_normalizeDurationUnit","_numericExtrema","_parseDateOnlyString","_power","_replaceBareReferencesOutsideQuotes","_resolveDurationEndpoints","_round","_roundComputedValue","_score","_shouldApplyComputedValue","_stripQuotedStrings","_text","_toComparableValue","_toDateValue","_toDisplayValue","_toEditableComputedValue","_toNumericValue","_today","_wholeMonthsBetween","amount","anchor","bareRefs","bracketedRefs","canEdit","canShowInterpretation","candidate","computedValue","containerStyle","currentValue","cursor","date","dateOnly","days","digits","direct","displayValue","end","endpoints","enteredDisplayValue","externallyReadOnly","factor","from","interpretationRange","interpretationValue","isIncomplete","isOverridden","isProminent","lastDay","markOverridden","match","max","min","monthIndex","monthLength","months","next","nextSegment","nonZero","normalizedStyle","normalizedUnit","now","numeric","numericDivisor","numericExponent","numericPrecision","numericValues","orderedUnits","pad","parsed","parts","passesMax","passesMin","policy","prepared","previousState","project","readOnly","reference","refs","renderedValue","replaceInSegment","replaced","result","rounded","roundedValue","shown","start","state","stateContainer","stateMatches","storedValue","stringPattern","strippedExpression","tail","to","trimmed","uniqueBareRefs","uniqueBracketedRefs","unwrappedExpression","useCalculatedValue","valid","valueMatches","valuesByFieldId","whole","wholeMonths"],
+  './ComputedField/index.jsx': ["ComputedField","ComputedValuePresentation","_COMPUTED_NON_FIELD_IDENTIFIERS","_COMPUTED_REF_PATTERN","_DATE_ONLY_FORMATS","_DURATION_UNIT_ALIASES","_MS_PER_DAY","_addCalendarDays","_addMonthsClamped","_calendarDayNumber","_coalesce","_computedFieldIsOverridden","_computedFieldState","_contains","_countTrue","_daysSince","_durationBetween","_durationText","_escapeRegExp","_evaluateComputedExpression","_exactDaysBetween","_exp","_extractComputedReferences","_floor","_getInterpretationRange","_hasAllReferencedValues","_hasValue","_iif","_isDateOnlyValue","_isSafeComputedExpression","_ln","_max","_min","_mod","_monthsSince","_normalizeCalculationPolicy","_normalizeComputedDisplayStyle","_normalizeDurationUnit","_numericExtrema","_parseDateOnlyString","_power","_replaceBareReferencesOutsideQuotes","_resolveDurationEndpoints","_round","_roundComputedValue","_score","_shouldApplyComputedValue","_stripQuotedStrings","_text","_toComparableValue","_toDateValue","_toDisplayValue","_toEditableComputedValue","_toNumericValue","_today","_wholeMonthsBetween","amount","anchor","bareRefs","bracketedRefs","canEdit","canShowInterpretation","candidate","computedValue","containerStyle","currentValue","cursor","date","dateOnly","days","digits","direct","displayValue","end","endpoints","enteredDisplayValue","externallyReadOnly","factor","from","interpretationRange","interpretationValue","isIncomplete","isOverridden","isProminent","labelColumnWidth","lastDay","markOverridden","match","max","min","monthIndex","monthLength","months","next","nextSegment","nonZero","normalizedStyle","normalizedUnit","now","numeric","numericDivisor","numericExponent","numericPrecision","numericValues","orderedUnits","pad","parsed","parts","passesMax","passesMin","policy","prepared","previousState","project","readOnly","reference","refs","renderedValue","replaceInSegment","replaced","result","rounded","roundedValue","shown","start","state","stateContainer","stateMatches","storedValue","stringPattern","strippedExpression","supplementalInset","tail","theme","to","trimmed","uniqueBareRefs","uniqueBracketedRefs","unwrappedExpression","useCalculatedValue","valid","valueMatches","valuesByFieldId","whole","wholeMonths"],
   './ConditionalGroup/index.jsx': ["ConditionalField","ConditionalGroup","ConditionalGroupSchema","ConditionalReadOnly","ControllerLabelPresets","DISABLED_NATIVE_ELEMENTS","LogicGateContext","LogicGateProvider","MAX_SUBGROUP_DEPTH","READ_ONLY_NATIVE_ELEMENTS","allParentsVisible","baseContainerStyle","baseContentStyle","becameHidden","checkChoiceMatch","checkComparisonMatch","checkControllerMatch","childContext","clippedField","cloneWithProtection","conditionMet","containerStyle","contentNode","contentRef","contentStyle","context","contextValue","controllerFieldId","controllerValue","controllerWrapperStyle","createBranchingRule","currentDepth","defaultPadding","depthIndicatorStyle","effectiveValue","evaluateConditionEntries","evaluateConditionEntry","fieldValue","fieldValues","frame","generateConditionalGroupJSX","generateGroup","getControllerValue","groupRect","handleControllerChange","hasMatch","hiddenIndicatorStyle","indent","isDarkMode","isGroupVisible","isVisible","jsx","left","matches","mergeStyles","mode","nestedValue","nextProps","normalizeComparableValue","normalizeComparableValues","normalizeValue","normalized","normalizedOptionValues","orderedRules","override","overrides","parentChain","parentContext","payloads","props","protectedChildren","readControllerValue","rect","reportOverflow","result","right","rule","rules","theme","titleStyle","type","useConditionalVisibility","useIsVisible","useLogicGate","usesDisabledFallback","wasVisibleRef"],
   './Conditions/index.jsx': ["Conditions","ConditionsFields"],
   './Connections/index.jsx': ["CONNECTIONS_SORTS","Connections","ConnectionsFields","SelectActiveConnections","byType","prop","resolvedCompare"],
@@ -35288,9 +35373,9 @@ export const componentDefinedNames: Record<string, string[]> = {
   './ObservationKit/index.jsx': ["ObservationKit","amount","classifyFlag","classifyRanges","code","codeText","criticalHigh","criticalLow","current","cutoff","cutoffDate","dateKey","dayTime","displayDate","displayText","entryCode","entryLoinc","explicit","extractValue","flagCellStyle","getPath","index","loinc","lookbackLabel","matchCodeIndex","matchesCode","normalHigh","normalLow","normalizeCodes","parseDate","parsed","raw","singular","steps","text","toNumber","toText","unit","value"],
   './ObservationPanelEditor/index.jsx': ["DEFAULT_WINDOW_HOURS","ObservationPanelEditor","actor","actorFrom","addHoursIso","authorshipPolicy","buildKey","c","changed","ck","claim","claims","codeSet","commitSave","componentId","computedTotals","container","createdBy","current","currentActorName","currentPayload","d","data","dcoUpdates","editableUntil","effectiveFieldId","euDate","existing","expired","fieldData","formatTimestamp","getCurrentActorName","getNhAuth","getPanelValue","grouped","hasValue","historyRows","isNonEmpty","isOwner","keepStatus","key","label","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","maxHistory","next","nextGroup","nextStatus","nhAuth","normalizePanelRows","normalizePanelTotals","normalizeStore","now","nowIso","numeric","oldObs","optionList","ownerId","ownerName","ownerRefresh","pad2","panelDateKey","payloadsEqual","pending","policyAppliesToAction","prepareSave","raw","readStore","release","resolveNow","rootValue","rowDefs","rowLockInfo","rowReadOnly","sameActor","sd","section","setPanelPayload","setRowValue","source","sourceIds","store","stripVolatilePayloadFields","toNumericValue","totalDefs","ts","untilSelf","value","windowHours"],
   './ObservationQuery/index.jsx': ["ObservationQuery","ObservationQueryLatest","ObservationQueryTable","body","cell","cellStyle","chartRows","codeIndex","codeList","cutoff","effectiveMaxRows","existing","grouped","headerStyle","latest","latestByCode","limited","matches","parsedDate","recentFirst","row","rows","runObservationQuery","sd","series","source","value","windowLabel"],
-  './ObservationValueDisplay/index.jsx': ["ObservationValueDisplay","body","candidate","collectObservationValues","commentFilter","cutoff","hasCode","inline","items","limit","parsedDate","rows","sd","showLabel","value","windowLabel"],
+  './ObservationValueDisplay/index.jsx': ["ObservationValueDisplay","body","candidate","collectObservationValues","commentFilter","cutoff","graph","hasCode","inline","items","limit","measurementSummary","parsedDate","rows","sd","showLabel","value","windowLabel"],
   './Occupations/index.jsx': ["Occupations","OccupationsFields"],
-  './PastMeasurementField/index.jsx': ["PastMeasurementField","abnormalFlag","abnormalHighValue","abnormalLowValue","canPullLatest","candidate","candidates","codeFilter","coercePositiveInt","commentFilter","componentId","container","createdBy","criticalHighValue","criticalLowValue","current","currentPayload","currentWebformId","currentWebformObservations","day","direct","displayedCurrentValue","documentDate","effectiveFieldId","effectiveHistorySize","effectiveLabelPosition","effectiveMeasurementSize","entryCode","entryComment","entryDate","entryUnits","entryValue","explicitValue","fieldData","flagCode","flagDisplays","formHistoryItems","formatDate","fromPatient","fromQueryResult","handleValueChange","hasAbnormalHigh","hasAbnormalLow","hasExplicitValue","hasMeaningfulValue","hasNumericCurrentValue","hasRangeMetadata","hasStoredValue","historicalFormRowDate","historyItems","historySummary","index","inputSuffix","isAbnormal","isHistoricalFormValue","isNonEmptyString","isNumericInput","key","latestHistoryItem","legacyRangePayload","linkedObservationItem","linkedWebformId","matchingKey","measurementWidthBySize","month","nextGroup","normalizeObservationItems","normalizedDateOnly","normalizedPullTargets","numericCurrentValue","numericExplicitValue","numericTime","observationHistoryItems","observationWebformId","oldId","oldObs","optionalString","parseDateValue","parsed","parsedDate","parsedDateOnly","patientPath","payloadsEqual","pullLatestIntoTargets","raw","rawDate","recentHistoryText","resolveHistoricalFormRows","resolveMeasurementContainerStyle","resolveMoisValue","resolvePathValue","resolvedAbnormalHigh","resolvedAbnormalLow","resolvedCriticalHigh","resolvedCriticalLow","resolvedCurrentValue","resolvedUnits","role","roots","sd","segments","setNestedPayload","shouldReserveHistory","shouldShowHistory","storedValue","stringifyValue","stripVolatilePayloadFields","targetFieldId","text","toObservationList","toPathSegments","updatedValue","value","valueFromHistoricalFormRow","valueIsDate","valueKeys","valuePart","valueText","width","year"],
+  './PastMeasurementField/index.jsx': ["PastMeasurementField","abnormalFlag","abnormalHighValue","abnormalLowValue","canPullLatest","candidate","candidates","codeFilter","coercePositiveInt","commentFilter","componentId","container","createdBy","criticalHighValue","criticalLowValue","current","currentPayload","currentWebformId","currentWebformObservations","day","defaultSpinStep","direct","displayedCurrentValue","documentDate","effectiveFieldId","effectiveHistorySize","effectiveLabelPosition","effectiveMeasurementSize","entryCode","entryComment","entryDate","entryUnits","entryValue","explicitValue","fieldData","flagCode","flagDisplays","formHistoryItems","formatDate","fromPatient","fromQueryResult","handleValueChange","hasAbnormalHigh","hasAbnormalLow","hasExplicitValue","hasMeaningfulValue","hasNumericCurrentValue","hasRangeMetadata","hasStoredValue","historicalFormRowDate","historyItems","historySummary","index","inputSuffix","isAbnormal","isHistoricalFormValue","isNonEmptyString","isNumericInput","key","latestHistoryItem","legacyRangePayload","linkedObservationItem","linkedWebformId","matchingKey","measurementWidthBySize","month","nextGroup","normalizeObservationItems","normalizedDateOnly","normalizedPullTargets","numericCurrentValue","numericExplicitValue","numericTime","observationHistoryItems","observationWebformId","oldId","oldObs","optionalString","parseDateValue","parsed","parsedDate","parsedDateOnly","patientPath","payloadsEqual","pullLatestIntoTargets","raw","rawDate","recentHistoryText","resolveHistoricalFormRows","resolveMeasurementContainerStyle","resolveMoisValue","resolvePathValue","resolvedAbnormalHigh","resolvedAbnormalLow","resolvedCriticalHigh","resolvedCriticalLow","resolvedCurrentValue","resolvedUnits","role","roots","sd","segments","setNestedPayload","shouldReserveHistory","shouldShowHistory","storedValue","stringifyValue","stripVolatilePayloadFields","targetFieldId","text","toObservationList","toPathSegments","updatedValue","value","valueFromHistoricalFormRow","valueIsDate","valueKeys","valuePart","valueText","width","year"],
   './PatientFileSections/index.jsx': ["PatientFileSections","activeText","addressText","cityLine","compactLines","contactText","countryLine","createdDate","editButtonStyle","encounter","fieldWrapStyle","formatAddress","formatContact","formatDate","getPatientFromData","gridStyle","healthNumber","insuranceBy","insuranceNumber","insuranceText","lines","match","mergeObjects","nextPatient","optionCode","optionDisplay","patient","preferredCode","preferredPhoneOptions","providerName","queryPatient","raw","renderClientDemographics","renderDocumentDetails","renderEncounterDetails","renderTitle","requested","sd","section","sectionTitleStyle","textValue","updateContactText","visibleSections","whiteDropdownStyles","whiteFlexTextFieldStyles","whiteTextFieldStyles","writePatientUpdates"],
   './PatientValueField/index.jsx': ["PatientValueField","age","applyPatientTransform","candidates","coercePatientValue","collectionCandidateValues","collectionItemMatches","computeAgeYears","dob","effectiveFieldId","expected","items","monthDelta","normalizedExpected","now","raw","resolveCollectionItemPath","resolvePatientContextPath","resolved","root","sd","stored","values"],
   './PdfRegenerator/index.jsx': ["PDFLib","PDF_LIB_URL","PdfRegenerator","_base64ToBytes","_buildChoiceComponentIndex","_buildDateComponentIndex","_buildTableReverseIndex","_choiceItemMatches","_choiceItems","_collectCandidates","_decodePdfHex","_downloadBytes","_fillField","_getCheckboxOnStates","_inferBooleanState","_installPdfLibFromSource","_isNonEmptyString","_loadPdfLib","_loadPdfLibFromCdn","_matchMultipleOptions","_matchSingleOption","_normalizeFieldMap","_normalizeToken","_pdfLibPromise","_printBytes","_resolveChoiceComponentValue","_resolveDateComponentValue","_resolveTableCellValue","_resolveValueByPath","_setCheckboxByState","_splitCanonicalDateParts","_statusColor","_toBooleanLike","_toCandidateList","_toText","acro","baseMap","binary","blob","boolValue","booleanStates","buttonDisabled","byRow","bytes","candidate","candidateKeys","candidates","choiceComponentIndex","choiceComponentValue","choiceEntry","clean","cleaned","cleanup","component","components","current","dateComponentIndex","dateComponentValue","dateEntry","desiredMaxLength","diagnosticsText","didFill","direct","disabled","doc","existing","filledFieldCount","form","formData","formKeys","fromData","fromPath","fuzzy","handleGeneratePdf","hasMatchingState","i","iframe","includeSet","index","inferredState","inlineSource","installed","isOn","items","knownOptions","left","leftIsFormId","lib","link","map","mapped","match","matches","maxLength","maybe","maybeDate","maybeTime","nextFileName","normalized","normalizedAction","normalizedCandidate","normalizedOption","normalizedOptionMap","normalizedRequested","offState","onText","onValue","options","otherItem","outputBytes","parts","pathByColumnId","payload","pdfFieldId","pdfFieldName","printWindow","rawValue","renderActionButton","renderButton","requested","resolvePath","resolvedPdfSource","right","rightIsFormId","row","rowIndex","rowMapping","rows","runner","script","sd","segments","selected","selectedCount","set","single","skippedFieldCount","sourceFieldId","sourceId","sourceValue","sourceValues","state","states","strategy","tableEntry","tableId","tableIndex","targetAction","targetState","targetStateName","targetWidget","text","trimmed","url","warningCount","warnings","widgets","withoutSlash"],
@@ -35334,7 +35419,7 @@ export const componentDependencies: Record<string, string[]> = {
   './CodedObservationChoiceField/index.jsx': ["FindCodeSelect"],
   './CommonSchemaDefn/index.jsx': [],
   './CompactBooleanField/index.jsx': [],
-  './ComputedField/index.jsx': [],
+  './ComputedField/index.jsx': ["ObservationValueDisplay"],
   './ConditionalGroup/index.jsx': ["CompactBooleanField"],
   './Conditions/index.jsx': [],
   './Connections/index.jsx': [],

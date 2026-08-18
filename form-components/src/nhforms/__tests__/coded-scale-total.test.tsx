@@ -24,10 +24,12 @@ function loadComputedField(): React.ComponentType<any> {
     value: props.value == null ? "" : String(props.value),
     readOnly: true,
   });
+  const ObservationValueDisplay = () => null;
   const useActiveData = () => React.useContext(ActiveDataContext);
+  const useTheme = () => ({ mois: { defaultCommonControlStyle: { minLabelWidth: 240 } } });
   // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func
-  const factory = new Function("React", "TextArea", "useActiveData", `${compiled};\nreturn { ComputedField };`);
-  return factory(React, TextArea, useActiveData).ComputedField;
+  const factory = new Function("React", "TextArea", "useActiveData", "ObservationValueDisplay", "useTheme", `${compiled};\nreturn { ComputedField };`);
+  return factory(React, TextArea, useActiveData, ObservationValueDisplay, useTheme).ComputedField;
 }
 
 const IDS = ["a1", "a2", "a3", "a4", "a5", "a6"];

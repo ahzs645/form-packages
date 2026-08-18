@@ -4278,10 +4278,20 @@ const ComputedField = ({
   resolvedValue,
   presentationOnly = false,
   isDarkMode = false,
+  // Prior observations are display-only. They never seed the calculated field
+  // and never participate in its MOIS write.
+  showHistory = false,
+  historyObservationCode = "",
+  historyLoincCode = "",
+  historyUnits = "",
+  historyMaxRows = 1,
+  graphLinkText = "Graph",
+  graphHref = "",
 }) => {
   // Authorship/lock rules arrive as a dynamic \`disabled\` expression from the
   // exporter; fold it into readOnly.
   const readOnly = disabled ? true : readOnlyProp
+  const theme = useTheme()
   const [fd, setFd] = useActiveData()
   const valuesByFieldId = fd?.field?.data || {}
   const policy = _normalizeCalculationPolicy(calculationPolicy)
@@ -4334,6 +4344,15 @@ const ComputedField = ({
   const renderedValue = policy === "always-calculated" ? displayValue : enteredDisplayValue
   const externallyReadOnly = readOnly === true
   const canEdit = policy !== "always-calculated" && !externallyReadOnly
+  // LayoutItem owns the left-label column used by TextArea and measurement
+  // fields. Supplemental rows live outside that control, so derive the same
+  // column width from the MOIS theme instead of using an unrelated fixed inset.
+  const labelColumnWidth = theme?.mois?.defaultCommonControlStyle?.minLabelWidth ?? 240
+  const supplementalInset = labelPosition !== "left"
+    ? 0
+    : typeof labelColumnWidth === "number"
+      ? \`\${labelColumnWidth + 10}px\`
+      : \`calc(\${labelColumnWidth} + 10px)\`
 
   const canShowInterpretation = useMemo(
     () => Boolean(showInterpretation && _hasAllReferencedValues(expression, valuesByFieldId)),
@@ -4437,8 +4456,25 @@ const ComputedField = ({
         size={size}
         isDarkMode={isDarkMode}
       />
+      {showHistory && (historyObservationCode || historyLoincCode) ? (
+        <div
+          data-computed-observation-history
+          style={{ marginTop: 4, marginLeft: supplementalInset }}
+        >
+          <ObservationValueDisplay
+            labelPosition="none"
+            observationCode={historyObservationCode}
+            loincCode={historyLoincCode}
+            units={historyUnits}
+            maxRows={historyMaxRows}
+            graphLinkText={graphLinkText}
+            graphHref={graphHref}
+            presentation="measurement-summary"
+          />
+        </div>
+      ) : null}
       {!presentationOnly && policy === "calculated-until-overridden" ? (
-        <div style={{ marginTop: 4, marginLeft: labelPosition === "left" ? 160 : 0, display: "flex", gap: 8, alignItems: "center", fontSize: 12, color: isOverridden ? "#9a3412" : "#475569" }}>
+        <div style={{ marginTop: 4, marginLeft: supplementalInset, display: "flex", gap: 8, alignItems: "center", fontSize: 12, color: isOverridden ? "#9a3412" : "#475569" }}>
           <span>
             {isOverridden
               ? \`User override preserved. Current calculation: \${displayValue || "unavailable"}.\`
@@ -4452,7 +4488,7 @@ const ComputedField = ({
         </div>
       ) : null}
       {!presentationOnly && policy === "suggested-calculation" ? (
-        <div style={{ marginTop: 4, marginLeft: labelPosition === "left" ? 160 : 0, display: "flex", gap: 8, alignItems: "center", fontSize: 12, color: "#475569" }}>
+        <div style={{ marginTop: 4, marginLeft: supplementalInset, display: "flex", gap: 8, alignItems: "center", fontSize: 12, color: "#475569" }}>
           <span><strong>Suggested:</strong> {displayValue || "Unavailable until inputs are complete"}</span>
           {displayValue && canEdit ? (
             <button type="button" onClick={useCalculatedValue} style={{ border: "1px solid #cbd5e1", borderRadius: 4, background: "#fff", padding: "2px 8px", cursor: "pointer" }}>
@@ -4462,7 +4498,7 @@ const ComputedField = ({
         </div>
       ) : null}
       {!presentationOnly && interpretationRange ? (
-        <div style={{ marginTop: 4, marginLeft: labelPosition === "left" ? 160 : 0, fontSize: 12, color: "#475569" }}>
+        <div style={{ marginTop: 4, marginLeft: supplementalInset, fontSize: 12, color: "#475569" }}>
           <strong>{interpretation?.label || "Interpretation"}:</strong> {interpretationRange.label}
           {interpretationRange.description ? <span> - {interpretationRange.description}</span> : null}
         </div>
@@ -23189,6 +23225,10 @@ const ObservationValueDisplay = ({
   emptyText = "No past measurement available",
   graphLinkText = "",
   graphHref = "",
+  // Matches PastMeasurementField's compact history strip: Graph first, then
+  // "date   value   (units)". The default retains this component's richer
+  // read-only observation display for existing consumers.
+  presentation = "default",
 }) => {
   const sd = useSourceData()
 
@@ -23213,11 +23253,27 @@ const ObservationValueDisplay = ({
   const showLabel = Boolean(label) && labelPosition !== "none"
   const windowLabel = ObservationKit.lookbackLabel(lookback)
 
+  const measurementSummary = presentation === "measurement-summary"
   let body = null
   if (!hasCode) {
     body = <Text variant="small">No observation code configured for this display.</Text>
   } else if (items.length === 0) {
     body = <Text variant="small">{emptyText}</Text>
+  } else if (measurementSummary) {
+    body = (
+      <Stack tokens={{ childrenGap: 2 }}>
+        {items.map((item) => (
+          <Text key={\`\${item.time}-\${item.index}\`} variant="small">
+            {[
+              showDate ? item.dateText : "",
+              item.value,
+              showUnits && item.units ? \`(\${item.units})\` : "",
+              showAbnormalFlag && item.flag ? item.flag : "",
+            ].filter(Boolean).join("   ")}
+          </Text>
+        ))}
+      </Stack>
+    )
   } else {
     body = (
       <Stack tokens={{ childrenGap: 2 }}>
@@ -23254,6 +23310,14 @@ const ObservationValueDisplay = ({
     )
   }
 
+  const graph = graphLinkText ? (
+    graphHref ? (
+      <Link href={graphHref} target="_blank" rel="noopener noreferrer">{graphLinkText}</Link>
+    ) : (
+      <Text variant="small" styles={{ root: { color: "#0f5ea8" } }}>{graphLinkText}</Text>
+    )
+  ) : null
+
   return (
     <Stack
       id={id}
@@ -23265,14 +23329,9 @@ const ObservationValueDisplay = ({
       styles={{ root: { width: "100%", minWidth: 0, ...(inline ? { flexWrap: "wrap" } : {}) } }}
     >
       {showLabel ? <Label>{label}</Label> : null}
+      {measurementSummary ? graph : null}
       {body}
-      {graphLinkText ? (
-        graphHref ? (
-          <Link href={graphHref} target="_blank" rel="noopener noreferrer">{graphLinkText}</Link>
-        ) : (
-          <Text variant="small" styles={{ root: { color: "#0f5ea8" } }}>{graphLinkText}</Text>
-        )
-      ) : null}
+      {!measurementSummary ? graph : null}
       {windowLabel ? <Text variant="small" styles={{ root: { color: "#605e5c" } }}>{windowLabel}</Text> : null}
     </Stack>
   )
@@ -23344,7 +23403,7 @@ hoursPerWeek
 \`
 `,
   './PastMeasurementField/index.jsx': `const { useEffect, useMemo, useState } = React
-const { Stack, StackItem, Link, Text, TextField } = Fluent
+const { Stack, StackItem, Link, SpinButton, Text, TextField } = Fluent
 
 const isNonEmptyString = (value) => typeof value === "string" && value.trim().length > 0
 
@@ -23698,6 +23757,9 @@ const PastMeasurementField = ({
   bringForward = true,
   persistenceMode = "formOnly",
   valueType = "TEXT",
+  numberTypeNumber = "number",
+  buttonControls = false,
+  spinButtonProps,
   observationDescription,
   saveDescription,
   saveUnits,
@@ -23899,6 +23961,7 @@ const PastMeasurementField = ({
   const numericCurrentValue = Number(stringifyValue(resolvedCurrentValue))
   const hasNumericCurrentValue = Number.isFinite(numericCurrentValue)
   const isNumericInput = String(valueType || "").trim().toUpperCase() === "NUMERIC"
+  const defaultSpinStep = numberTypeNumber === "decimal" ? 0.1 : 1
   const resolvedAbnormalLow = abnormalLow ?? rangeNormalLow
   const resolvedAbnormalHigh = abnormalHigh ?? rangeNormalHigh
   const resolvedCriticalLow = criticalLow ?? rangeAbsurdLow ?? rangeVeryLow
@@ -24133,21 +24196,48 @@ const PastMeasurementField = ({
                 : { width: "100%", minWidth: 0 },
             }}
           >
-            <TextField
-              type={isNumericInput ? "number" : "text"}
-              inputMode={isNumericInput ? "decimal" : undefined}
-              step={isNumericInput ? "any" : undefined}
-              value={displayedCurrentValue}
-              placeholder={placeholder}
-              onChange={handleValueChange}
-              onFocus={() => setHistoryFocused(true)}
-              onBlur={() => {
-                if (!historyInitiallyVisible) setHistoryFocused(false)
-              }}
-              disabled={disabled}
-              readOnly={readOnly}
-              suffix={inputSuffix || undefined}
-            />
+            {isNumericInput && buttonControls && !readOnly ? (
+              <SpinButton
+                value={displayedCurrentValue}
+                min={numberTypeNumber === "year" ? 1900 : undefined}
+                max={numberTypeNumber === "year" ? 2100 : undefined}
+                step={defaultSpinStep}
+                onChange={handleValueChange}
+                onFocus={() => setHistoryFocused(true)}
+                onBlur={() => {
+                  if (!historyInitiallyVisible) setHistoryFocused(false)
+                }}
+                disabled={disabled}
+                {...spinButtonProps}
+                styles={{ root: { width: "100%" }, ...(spinButtonProps?.styles ?? {}) }}
+              />
+            ) : (
+              <TextField
+                type={isNumericInput ? "number" : "text"}
+                inputMode={isNumericInput ? "decimal" : undefined}
+                step={isNumericInput ? "any" : undefined}
+                value={displayedCurrentValue}
+                placeholder={placeholder}
+                onChange={handleValueChange}
+                onFocus={() => setHistoryFocused(true)}
+                onBlur={() => {
+                  if (!historyInitiallyVisible) setHistoryFocused(false)
+                }}
+                disabled={disabled}
+                readOnly={readOnly}
+                suffix={inputSuffix || undefined}
+                styles={isNumericInput && !buttonControls ? {
+                  field: {
+                    appearance: "textfield",
+                    MozAppearance: "textfield",
+                    selectors: {
+                      "&::-webkit-inner-spin-button": { WebkitAppearance: "none", margin: 0 },
+                      "&::-webkit-outer-spin-button": { WebkitAppearance: "none", margin: 0 },
+                    },
+                  },
+                } : undefined}
+              />
+            )}
           </StackItem>
 
           {shouldShowHistory || shouldReserveHistory ? (
@@ -33757,7 +33847,10 @@ export const componentIdentities: Record<string, any> = {
       "major": 2,
       "minor": 26,
       "patch": 18
-    }
+    },
+    "components": [
+      "ObservationValueDisplay"
+    ]
   },
   'ConditionalGroup': {
     "name": "ConditionalGroup",

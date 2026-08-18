@@ -1,5 +1,5 @@
 const { useEffect, useMemo, useState } = React
-const { Stack, StackItem, Link, Text, TextField } = Fluent
+const { Stack, StackItem, Link, SpinButton, Text, TextField } = Fluent
 
 const isNonEmptyString = (value) => typeof value === "string" && value.trim().length > 0
 
@@ -353,6 +353,9 @@ const PastMeasurementField = ({
   bringForward = true,
   persistenceMode = "formOnly",
   valueType = "TEXT",
+  numberTypeNumber = "number",
+  buttonControls = false,
+  spinButtonProps,
   observationDescription,
   saveDescription,
   saveUnits,
@@ -554,6 +557,7 @@ const PastMeasurementField = ({
   const numericCurrentValue = Number(stringifyValue(resolvedCurrentValue))
   const hasNumericCurrentValue = Number.isFinite(numericCurrentValue)
   const isNumericInput = String(valueType || "").trim().toUpperCase() === "NUMERIC"
+  const defaultSpinStep = numberTypeNumber === "decimal" ? 0.1 : 1
   const resolvedAbnormalLow = abnormalLow ?? rangeNormalLow
   const resolvedAbnormalHigh = abnormalHigh ?? rangeNormalHigh
   const resolvedCriticalLow = criticalLow ?? rangeAbsurdLow ?? rangeVeryLow
@@ -788,21 +792,48 @@ const PastMeasurementField = ({
                 : { width: "100%", minWidth: 0 },
             }}
           >
-            <TextField
-              type={isNumericInput ? "number" : "text"}
-              inputMode={isNumericInput ? "decimal" : undefined}
-              step={isNumericInput ? "any" : undefined}
-              value={displayedCurrentValue}
-              placeholder={placeholder}
-              onChange={handleValueChange}
-              onFocus={() => setHistoryFocused(true)}
-              onBlur={() => {
-                if (!historyInitiallyVisible) setHistoryFocused(false)
-              }}
-              disabled={disabled}
-              readOnly={readOnly}
-              suffix={inputSuffix || undefined}
-            />
+            {isNumericInput && buttonControls && !readOnly ? (
+              <SpinButton
+                value={displayedCurrentValue}
+                min={numberTypeNumber === "year" ? 1900 : undefined}
+                max={numberTypeNumber === "year" ? 2100 : undefined}
+                step={defaultSpinStep}
+                onChange={handleValueChange}
+                onFocus={() => setHistoryFocused(true)}
+                onBlur={() => {
+                  if (!historyInitiallyVisible) setHistoryFocused(false)
+                }}
+                disabled={disabled}
+                {...spinButtonProps}
+                styles={{ root: { width: "100%" }, ...(spinButtonProps?.styles ?? {}) }}
+              />
+            ) : (
+              <TextField
+                type={isNumericInput ? "number" : "text"}
+                inputMode={isNumericInput ? "decimal" : undefined}
+                step={isNumericInput ? "any" : undefined}
+                value={displayedCurrentValue}
+                placeholder={placeholder}
+                onChange={handleValueChange}
+                onFocus={() => setHistoryFocused(true)}
+                onBlur={() => {
+                  if (!historyInitiallyVisible) setHistoryFocused(false)
+                }}
+                disabled={disabled}
+                readOnly={readOnly}
+                suffix={inputSuffix || undefined}
+                styles={isNumericInput && !buttonControls ? {
+                  field: {
+                    appearance: "textfield",
+                    MozAppearance: "textfield",
+                    selectors: {
+                      "&::-webkit-inner-spin-button": { WebkitAppearance: "none", margin: 0 },
+                      "&::-webkit-outer-spin-button": { WebkitAppearance: "none", margin: 0 },
+                    },
+                  },
+                } : undefined}
+              />
+            )}
           </StackItem>
 
           {shouldShowHistory || shouldReserveHistory ? (

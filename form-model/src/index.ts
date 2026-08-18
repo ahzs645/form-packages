@@ -35,6 +35,14 @@ export interface MoisCalculatedObservationConfig {
   reportFieldId?: string;
   reportedByFieldId?: string;
   reportedDateFieldId?: string;
+  /** Display matching prior chart observations without copying them into the computed answer. */
+  showHistory?: boolean;
+  /** Number of newest matching observations shown beneath the computed value. */
+  historyMaxRows?: number;
+  /** Label for the optional chart-history navigation affordance. Defaults to "Graph". */
+  graphLinkText?: string;
+  /** Optional MOIS/chart URL used by the Graph link. Text is still shown when this is empty. */
+  graphHref?: string;
 }
 
 export interface CalculatedValueRange {
@@ -79,6 +87,10 @@ export interface CalculatedValueConfig {
   resultType?: "number" | "text";
   /** Visual presentation shared by regular computed fields and subform totals. */
   displayStyle?: CalculatedValueDisplayStyle;
+  /** Whether to render displaySuffix beside the calculated value. */
+  showDisplaySuffix?: boolean;
+  /** Presentation-only units/text; never appended to the stored calculated value. */
+  displaySuffix?: string;
   /** Controls whether the runtime owns the value, yields after a user edit, or only offers a suggestion. */
   calculationPolicy?: CalculatedValuePolicy;
   /** What to do before every referenced input has a value. Defaults to "compute-anyway". */
@@ -254,6 +266,8 @@ export interface BuilderWorkflowReportDefinition extends BuilderWorkflowBaseDefi
   fieldIds?: string[];
   /** Prompt text per line: the field's label (default) or its raw fieldId. */
   labelSource?: "label" | "fieldId";
+  /** Optional report-only prompt overrides keyed by field id. */
+  fieldLabels?: Record<string, string>;
   /** Placeholder emitted for unanswered prompts (e.g. "<<<Nothing specified>>>"). */
   emptyText?: string;
   /** Section title presentation: plain line (default) or title + ===== underline (legacy MSE style). */
@@ -1397,6 +1411,10 @@ export interface BuilderField {
     resultType?: "number" | "text";
     /** Visual presentation shared by regular computed fields and subform totals. */
     displayStyle?: CalculatedValueDisplayStyle;
+    /** Whether to render displaySuffix beside the calculated value. */
+    showDisplaySuffix?: boolean;
+    /** Presentation-only units/text; never appended to the stored calculated value. */
+    displaySuffix?: string;
     /** Defaults to always-calculated for backward compatibility. */
     calculationPolicy?: CalculatedValuePolicy;
     /** What to do before every referenced input has a value. Defaults to "compute-anyway". */

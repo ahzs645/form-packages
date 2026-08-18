@@ -356,6 +356,8 @@ export interface ParsedField {
   computedPrecision?: number;
   computedResultType?: "number" | "text";
   computedDisplayStyle?: "field" | "compact" | "prominent";
+  /** Presentation-only suffix resolved from an enabled computed-field suffix setting. */
+  computedDisplaySuffix?: string;
   computedCalculationPolicy?:
     | "always-calculated"
     | "calculated-until-overridden"
@@ -397,6 +399,17 @@ export interface ParsedField {
     reportFieldId?: string;
     reportedByFieldId?: string;
     reportedDateFieldId?: string;
+  } | null;
+  /** Read-only prior observations displayed with a computed field. This is
+   *  intentionally separate from computedMoisCalculated so history settings
+   *  never leak into the MOIS calculated-observation write payload. */
+  computedObservationHistory?: {
+    observationCode?: string;
+    loincCode?: string;
+    units?: string;
+    maxRows?: number;
+    graphLinkText?: string;
+    graphHref?: string;
   } | null;
 
   // Optional suffix rendered inside single-line text or numeric inputs

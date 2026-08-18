@@ -93,6 +93,10 @@ const ObservationValueDisplay = ({
   emptyText = "No past measurement available",
   graphLinkText = "",
   graphHref = "",
+  // Matches PastMeasurementField's compact history strip: Graph first, then
+  // "date   value   (units)". The default retains this component's richer
+  // read-only observation display for existing consumers.
+  presentation = "default",
 }) => {
   const sd = useSourceData()
 
@@ -117,11 +121,27 @@ const ObservationValueDisplay = ({
   const showLabel = Boolean(label) && labelPosition !== "none"
   const windowLabel = ObservationKit.lookbackLabel(lookback)
 
+  const measurementSummary = presentation === "measurement-summary"
   let body = null
   if (!hasCode) {
     body = <Text variant="small">No observation code configured for this display.</Text>
   } else if (items.length === 0) {
     body = <Text variant="small">{emptyText}</Text>
+  } else if (measurementSummary) {
+    body = (
+      <Stack tokens={{ childrenGap: 2 }}>
+        {items.map((item) => (
+          <Text key={`${item.time}-${item.index}`} variant="small">
+            {[
+              showDate ? item.dateText : "",
+              item.value,
+              showUnits && item.units ? `(${item.units})` : "",
+              showAbnormalFlag && item.flag ? item.flag : "",
+            ].filter(Boolean).join("   ")}
+          </Text>
+        ))}
+      </Stack>
+    )
   } else {
     body = (
       <Stack tokens={{ childrenGap: 2 }}>
@@ -158,6 +178,14 @@ const ObservationValueDisplay = ({
     )
   }
 
+  const graph = graphLinkText ? (
+    graphHref ? (
+      <Link href={graphHref} target="_blank" rel="noopener noreferrer">{graphLinkText}</Link>
+    ) : (
+      <Text variant="small" styles={{ root: { color: "#0f5ea8" } }}>{graphLinkText}</Text>
+    )
+  ) : null
+
   return (
     <Stack
       id={id}
@@ -169,14 +197,9 @@ const ObservationValueDisplay = ({
       styles={{ root: { width: "100%", minWidth: 0, ...(inline ? { flexWrap: "wrap" } : {}) } }}
     >
       {showLabel ? <Label>{label}</Label> : null}
+      {measurementSummary ? graph : null}
       {body}
-      {graphLinkText ? (
-        graphHref ? (
-          <Link href={graphHref} target="_blank" rel="noopener noreferrer">{graphLinkText}</Link>
-        ) : (
-          <Text variant="small" styles={{ root: { color: "#0f5ea8" } }}>{graphLinkText}</Text>
-        )
-      ) : null}
+      {!measurementSummary ? graph : null}
       {windowLabel ? <Text variant="small" styles={{ root: { color: "#605e5c" } }}>{windowLabel}</Text> : null}
     </Stack>
   )
