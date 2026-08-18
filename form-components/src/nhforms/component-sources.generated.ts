@@ -30356,6 +30356,24 @@ const _resolveFieldEmptyNumericValue = (field) => {
   return null
 }
 
+const _clampDataEntryNumberValue = (value, field) => {
+  const numeric = typeof value === "number" ? value : Number(value)
+  if (!Number.isFinite(numeric)) return value
+
+  const configuredMin = field?.min
+  const configuredMax = field?.max
+  const min = configuredMin !== null && configuredMin !== undefined && Number.isFinite(Number(configuredMin))
+    ? Number(configuredMin)
+    : null
+  const max = configuredMax !== null && configuredMax !== undefined && Number.isFinite(Number(configuredMax))
+    ? Number(configuredMax)
+    : null
+
+  if (min !== null && numeric < min) return min
+  if (max !== null && numeric > max) return max
+  return numeric
+}
+
 const _buildDataEntryRenderGroups = (fields) => {
   const groups = []
   let matrixBuffer = null
@@ -31332,7 +31350,10 @@ const SubformScoringInner = ({
                 return
               }
               const parsed = Number(nextRaw)
-              setDataEntryValue(field.id, Number.isFinite(parsed) ? parsed : nextRaw)
+              setDataEntryValue(
+                field.id,
+                Number.isFinite(parsed) ? _clampDataEntryNumberValue(parsed, field) : nextRaw
+              )
             }}
             style={_LOCAL_INPUT_STYLE(isDarkMode)}
           />

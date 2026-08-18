@@ -1,4 +1,12 @@
-import type { HiddenAnswerPolicy } from "./index";
+import type {
+  BuilderField,
+  BuilderFieldTranslation,
+  BuilderFhirConfig,
+  BuilderMoisOutputMapping,
+  BuilderValidationConfig,
+  BuilderVisibilityRule,
+  HiddenAnswerPolicy,
+} from "./index";
 
 export type ComponentKind =
   | "text"
@@ -135,6 +143,31 @@ export interface LayoutTableCellField {
   inputType?: LayoutTableCellInputType;
   optionList?: string[] | Array<{ key?: string; text?: string; code?: string; display?: string }>;
   codeSystem?: string;
+  fhirConfig?: BuilderFhirConfig | null;
+  moisOutput?: BuilderMoisOutputMapping | null;
+  translations?: Record<string, BuilderFieldTranslation> | null;
+  required?: boolean;
+  hidden?: boolean;
+  disabled?: boolean;
+  labelPosition?: "top" | "left" | "none";
+  placeholder?: string;
+  helpText?: string;
+  helpPosition?: "above_input" | "below_input";
+  prefill?: FieldPrefillValue;
+  choiceStyle?: BuilderField["choiceStyle"];
+  choiceAnswerLayout?: BuilderField["choiceAnswerLayout"];
+  showOtherOption?: boolean;
+  autoHotKey?: boolean;
+  allowCreation?: boolean;
+  shuffleOptions?: boolean;
+  minSelection?: number;
+  maxSelection?: number;
+  booleanLabels?: { on: string; off: string } | null;
+  booleanNeutralMode?: "cycle" | "initial" | "none";
+  useToggleSwitch?: boolean;
+  visibility?: BuilderVisibilityRule | null;
+  validation?: BuilderValidationConfig | null;
+  numberConfig?: BuilderField["numberConfig"];
 }
 export interface LayoutTableCell {
   id: string;
@@ -163,6 +196,30 @@ export interface LayoutTableCell {
   sourceFieldIds?: string[];
   optionList?: string[] | Array<{ key?: string; text?: string; code?: string; display?: string }>;
   codeSystem?: string;
+  fhirConfig?: BuilderFhirConfig | null;
+  moisOutput?: BuilderMoisOutputMapping | null;
+  translations?: Record<string, BuilderFieldTranslation> | null;
+  hidden?: boolean;
+  disabled?: boolean;
+  labelPosition?: "top" | "left" | "none";
+  placeholder?: string;
+  helpText?: string;
+  helpPosition?: "above_input" | "below_input";
+  prefill?: FieldPrefillValue;
+  choiceStyle?: BuilderField["choiceStyle"];
+  choiceAnswerLayout?: BuilderField["choiceAnswerLayout"];
+  showOtherOption?: boolean;
+  autoHotKey?: boolean;
+  allowCreation?: boolean;
+  shuffleOptions?: boolean;
+  minSelection?: number;
+  maxSelection?: number;
+  booleanLabels?: { on: string; off: string } | null;
+  booleanNeutralMode?: "cycle" | "initial" | "none";
+  useToggleSwitch?: boolean;
+  visibility?: BuilderVisibilityRule | null;
+  validation?: BuilderValidationConfig | null;
+  numberConfig?: BuilderField["numberConfig"];
   resources?: Array<{ label: string; url: string }>;
   resourceListStyle?: "disc" | "none";
   targets?: LayoutTableStampTarget[];
