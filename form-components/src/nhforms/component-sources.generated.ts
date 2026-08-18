@@ -4182,6 +4182,7 @@ const ComputedValuePresentation = ({
   label,
   value,
   displayStyle = "field",
+  displaySuffix = "",
   labelPosition = "left",
   placeholder = "Calculated automatically",
   readOnly = true,
@@ -4206,6 +4207,7 @@ const ComputedValuePresentation = ({
         readOnly={readOnly}
         required={required}
         size={size}
+        textFieldProps={displaySuffix ? { suffix: displaySuffix } : undefined}
       />
     )
   }
@@ -4247,7 +4249,7 @@ const ComputedValuePresentation = ({
         fontSize: isProminent ? "16px" : "13px",
         fontStyle: displayValue === "Incomplete" ? "italic" : "normal",
       }}>
-        {displayValue}
+        {displayValue}{displayValue !== "Incomplete" && displaySuffix ? \` \${displaySuffix}\` : ""}
       </span>
     </div>
   )
@@ -4260,6 +4262,7 @@ const ComputedField = ({
   precision,
   resultType = "number",
   displayStyle = "field",
+  displaySuffix = "",
   calculationPolicy = "always-calculated",
   labelPosition = "left",
   placeholder = "Calculated automatically",
@@ -4454,6 +4457,7 @@ const ComputedField = ({
         readOnly={!canEdit}
         required={required}
         size={size}
+        displaySuffix={displaySuffix}
         isDarkMode={isDarkMode}
       />
       {showHistory && (historyObservationCode || historyLoincCode) ? (
@@ -4916,6 +4920,12 @@ const ConditionalGroup = ({
       ? \`hsl(\${210 + (currentDepth * 15)}, 60%, 40%)\`
       : \`hsl(\${210 + (currentDepth * 15)}, 70%, 50%)\`,
   } : {}
+
+  // When the controller is rendered elsewhere in the form, a closed group has
+  // no UI of its own. Avoid leaving an empty card/bottom margin in the layout.
+  if (!showController && !isVisible && !showHiddenIndicator) {
+    return null
+  }
 
   return (
     <LogicGateContext.Provider value={childContext}>
@@ -18669,7 +18679,23 @@ const layoutTableSourceText = (value, fallback = "") => {
   return value.display || value.text || value.name || value.code || fallback
 }
 
-const formatLayoutTableSourceValue = (value, sourceFormat = "text", fallback = "") => {
+const formatLayoutTableSourceValue = (value, sourceFormat = "text", fallback = "", codeSystem = "") => {
+  if (sourceFormat === "coding") {
+    const raw = hasLayoutTableSourceValue(value) ? value : fallback
+    if (!hasLayoutTableSourceValue(raw)) return { code: null, display: null, system: codeSystem }
+    if (raw && typeof raw === "object") {
+      const code = raw.code ?? raw.key ?? raw.value ?? raw.display ?? raw.text
+      const display = raw.display ?? raw.text ?? raw.label ?? raw.code ?? raw.key ?? raw.value
+      return {
+        code: code == null ? null : String(code),
+        display: display == null ? null : String(display),
+        system: raw.system || codeSystem,
+      }
+    }
+    const text = String(raw)
+    return { code: text, display: text, system: codeSystem }
+  }
+
   if (sourceFormat === "visitCode" && value && typeof value === "object") {
     const code = value.code || value.key || ""
     const display = value.display || value.text || ""
@@ -18719,8 +18745,12 @@ const resolveLayoutTableSourceValue = (cell, data, sourceData) => {
     }
   }
   const fallback = cell.sourceFallback ?? cell.defaultValue ?? ""
-  return formatLayoutTableSourceValue(sourceValue, cell.sourceFormat || "text", fallback)
+  return formatLayoutTableSourceValue(sourceValue, cell.sourceFormat || "text", fallback, cell.codeSystem)
 }
+
+const sourceBindingIsInitial = (cell) => cell?.sourceMode === "initial"
+const fieldHasSavedValue = (data, fieldId) =>
+  Boolean(data && fieldId && Object.prototype.hasOwnProperty.call(data, fieldId))
 
 const getCellDisplayValue = (cell, data, sourceData) => {
   const sourcePaths = getLayoutTableSourcePaths(cell)
@@ -18864,11 +18894,18 @@ const computeLayoutTableCellValue = (cell, data) => {
 }
 
 const renderLayoutTableField = (cell, readOnly, data, setFieldValue) => {
+  if (cell.hidden === true) return null
   const fieldId = cell.fieldId || cell.id
   const label = cell.label || ""
   const labelProp = label ? { label } : {}
-  const effectiveReadOnly = readOnly || cell.readOnly === true
-  const sharedProps = { fieldId, labelPosition: label ? "top" : "none", readOnly: effectiveReadOnly, required: cell.required === true }
+  const effectiveReadOnly = readOnly || cell.readOnly === true || cell.disabled === true
+  const sharedProps = {
+    fieldId,
+    labelPosition: cell.labelPosition || (label ? "top" : "none"),
+    readOnly: effectiveReadOnly,
+    required: cell.required === true,
+    placeholder: cell.placeholder,
+  }
   const optionList = normalizeLayoutTableOptionList(cell.optionList ?? cell.options)
 
   if (effectiveReadOnly) return renderLayoutTableReadOnlyField(cell, data)
@@ -18886,17 +18923,17 @@ const renderLayoutTableField = (cell, readOnly, data, setFieldValue) => {
         />
       )
     case "number":
-      return <Numeric {...sharedProps} {...labelProp} spinButtonProps={{ min: cell.min, max: cell.max, step: cell.step }} />
+      return <Numeric {...sharedProps} {...labelProp} spinButtonProps={cell.numberConfig?.spinButtonProps || { min: cell.min, max: cell.max, step: cell.step }} />
     case "date":
       return <DateSelect {...sharedProps} {...labelProp} />
     case "time":
       return <TimeSelect {...sharedProps} {...labelProp} />
     case "booleanYesNo":
-      return <SimpleCodeSelect {...sharedProps} {...labelProp} codeSystem="MOIS-YESNO" />
+      return <SimpleCodeSelect {...sharedProps} {...labelProp} codeSystem="MOIS-YESNO" autoHotKey={cell.autoHotKey} />
     case "choice":
       return optionList.length > 0
-        ? <SimpleCodeSelect {...sharedProps} {...labelProp} optionList={optionList} />
-        : <SimpleCodeSelect {...sharedProps} {...labelProp} codeSystem={cell.codeSystem} />
+        ? <SimpleCodeSelect {...sharedProps} {...labelProp} optionList={optionList} codeSystem={cell.codeSystem} autoHotKey={cell.autoHotKey} showOtherOption={cell.showOtherOption} />
+        : <SimpleCodeSelect {...sharedProps} {...labelProp} codeSystem={cell.codeSystem} autoHotKey={cell.autoHotKey} showOtherOption={cell.showOtherOption} />
     case "choiceMulti": {
       const checklistOptions = optionList.map((option) => ({ key: option.code, text: option.display }))
       const multiline = cell.multiline !== false
@@ -18974,6 +19011,7 @@ const renderLayoutTableStampButton = (cell, readOnly) => {
 }
 
 const renderLayoutTableCellContent = (cell, readOnly, data, sourceData, setFieldValue) => {
+  if (cell.hidden === true) return null
   if (cell.kind === "field") return renderLayoutTableField(cell, readOnly, data, setFieldValue)
   if (cell.kind === "fieldList") return renderLayoutTableFieldList(cell, readOnly, data, setFieldValue)
   if (cell.kind === "resources") return renderLayoutTableResources(cell)
@@ -19058,7 +19096,9 @@ function LayoutTable({
     .filter((cell) => cell?.kind === "field" && cell.fieldId && getLayoutTableSourcePaths(cell).length > 0)
   const tableData = { ...(activeData || {}) }
   sourceBoundCells.forEach((cell) => {
-    tableData[cell.fieldId] = resolveLayoutTableSourceValue(cell, activeData, sd)
+    if (!sourceBindingIsInitial(cell) || !fieldHasSavedValue(activeData, cell.fieldId)) {
+      tableData[cell.fieldId] = resolveLayoutTableSourceValue(cell, activeData, sd)
+    }
   })
   const visibleRows = tableRows.filter((row) => rowIsVisible(row, activeData))
   const setFieldValue = (fieldId, value) => {
@@ -19090,6 +19130,7 @@ function LayoutTable({
         return nextData
       }
       boundCells.forEach((cell) => {
+        if (sourceBindingIsInitial(cell) && fieldHasSavedValue(draft, cell.fieldId)) return
         const nextValue = resolveLayoutTableSourceValue(cell, draft, sd)
         if (draft[cell.fieldId] !== nextValue) draft[cell.fieldId] = nextValue
       })

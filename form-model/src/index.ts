@@ -614,7 +614,8 @@ export type BuilderTableColumnType = "text" | "number" | "date" | "time" | "choi
 export type BuilderTableMode = "inline" | "modal";
 export type BuilderLayoutTableCellKind = "text" | "field" | "fieldList" | "resources" | "computed" | "stampButton";
 export type BuilderLayoutTableCellInputType = "text" | "textarea" | "number" | "date" | "time" | "choice" | "choiceMulti" | "booleanYesNo" | "booleanSingle";
-export type BuilderLayoutTableSourceFormat = "text" | "date" | "dateTime" | "visitCode";
+export type BuilderLayoutTableSourceFormat = "text" | "date" | "dateTime" | "visitCode" | "coding";
+export type BuilderLayoutTableSourceMode = "live" | "initial";
 
 export interface BuilderLayoutTableStampTarget {
   fieldId: string;
@@ -631,6 +632,32 @@ export interface BuilderLayoutTableCellField {
   inputType?: BuilderLayoutTableCellInputType;
   optionList?: string[] | Array<{ key?: string; text?: string; code?: string; display?: string }>;
   codeSystem?: string;
+  /** Ordinary field metadata, stored on the nested answer instead of the layout container. */
+  fhirConfig?: BuilderFhirConfig | null;
+  moisOutput?: BuilderMoisOutputMapping | null;
+  translations?: Record<string, BuilderFieldTranslation> | null;
+  required?: boolean;
+  hidden?: boolean;
+  disabled?: boolean;
+  labelPosition?: "top" | "left" | "none";
+  placeholder?: string;
+  helpText?: string;
+  helpPosition?: HelpPosition;
+  prefill?: FieldPrefillValue;
+  choiceStyle?: BuilderField["choiceStyle"];
+  choiceAnswerLayout?: BuilderField["choiceAnswerLayout"];
+  showOtherOption?: boolean;
+  autoHotKey?: boolean;
+  allowCreation?: boolean;
+  shuffleOptions?: boolean;
+  minSelection?: number;
+  maxSelection?: number;
+  booleanLabels?: { on: string; off: string } | null;
+  booleanNeutralMode?: "cycle" | "initial" | "none";
+  useToggleSwitch?: boolean;
+  visibility?: BuilderVisibilityRule | null;
+  validation?: BuilderValidationConfig | null;
+  numberConfig?: BuilderField["numberConfig"];
 }
 
 export interface BuilderLayoutTableCell {
@@ -640,6 +667,8 @@ export interface BuilderLayoutTableCell {
   sourcePath?: string;
   sourcePaths?: string[];
   sourceFormat?: BuilderLayoutTableSourceFormat;
+  /** Keep the source synchronized, or use it only to seed a new saved value. */
+  sourceMode?: BuilderLayoutTableSourceMode;
   sourceFallback?: string | number | boolean | null;
   defaultValue?: string | number | boolean | null;
   fieldId?: string;
@@ -658,6 +687,31 @@ export interface BuilderLayoutTableCell {
   sourceFieldIds?: string[];
   optionList?: string[] | Array<{ key?: string; text?: string; code?: string; display?: string }>;
   codeSystem?: string;
+  /** Ordinary field metadata, stored on the nested answer instead of the layout container. */
+  fhirConfig?: BuilderFhirConfig | null;
+  moisOutput?: BuilderMoisOutputMapping | null;
+  translations?: Record<string, BuilderFieldTranslation> | null;
+  hidden?: boolean;
+  disabled?: boolean;
+  labelPosition?: "top" | "left" | "none";
+  placeholder?: string;
+  helpText?: string;
+  helpPosition?: HelpPosition;
+  prefill?: FieldPrefillValue;
+  choiceStyle?: BuilderField["choiceStyle"];
+  choiceAnswerLayout?: BuilderField["choiceAnswerLayout"];
+  showOtherOption?: boolean;
+  autoHotKey?: boolean;
+  allowCreation?: boolean;
+  shuffleOptions?: boolean;
+  minSelection?: number;
+  maxSelection?: number;
+  booleanLabels?: { on: string; off: string } | null;
+  booleanNeutralMode?: "cycle" | "initial" | "none";
+  useToggleSwitch?: boolean;
+  visibility?: BuilderVisibilityRule | null;
+  validation?: BuilderValidationConfig | null;
+  numberConfig?: BuilderField["numberConfig"];
   resources?: Array<{ label: string; url: string }>;
   resourceListStyle?: "disc" | "none";
   targets?: BuilderLayoutTableStampTarget[];

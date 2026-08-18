@@ -4330,6 +4330,7 @@ const ComputedValuePresentation = ({
   label,
   value,
   displayStyle = "field",
+  displaySuffix = "",
   labelPosition = "left",
   placeholder = "Calculated automatically",
   readOnly = true,
@@ -4352,7 +4353,10 @@ const ComputedValuePresentation = ({
       placeholder: placeholder,
       readOnly: readOnly,
       required: required,
-      size: size
+      size: size,
+      textFieldProps: displaySuffix ? {
+        suffix: displaySuffix
+      } : undefined
     });
   }
   const isProminent = normalizedStyle === "prominent";
@@ -4387,7 +4391,7 @@ const ComputedValuePresentation = ({
       fontSize: isProminent ? "16px" : "13px",
       fontStyle: displayValue === "Incomplete" ? "italic" : "normal"
     }
-  }, displayValue));
+  }, displayValue, displayValue !== "Incomplete" && displaySuffix ? \` \${displaySuffix}\` : ""));
 };
 const ComputedField = ({
   fieldId,
@@ -4396,6 +4400,7 @@ const ComputedField = ({
   precision,
   resultType = "number",
   displayStyle = "field",
+  displaySuffix = "",
   calculationPolicy = "always-calculated",
   labelPosition = "left",
   placeholder = "Calculated automatically",
@@ -4554,6 +4559,7 @@ const ComputedField = ({
     readOnly: !canEdit,
     required: required,
     size: size,
+    displaySuffix: displaySuffix,
     isDarkMode: isDarkMode
   }), showHistory && (historyObservationCode || historyLoincCode) ? /*#__PURE__*/React.createElement("div", {
     "data-computed-observation-history": true,
@@ -5025,6 +5031,12 @@ const ConditionalGroup = ({
     borderLeftStyle: 'solid',
     borderLeftColor: isDarkMode ? \`hsl(\${210 + currentDepth * 15}, 60%, 40%)\` : \`hsl(\${210 + currentDepth * 15}, 70%, 50%)\`
   } : {};
+
+  // When the controller is rendered elsewhere in the form, a closed group has
+  // no UI of its own. Avoid leaving an empty card/bottom margin in the layout.
+  if (!showController && !isVisible && !showHiddenIndicator) {
+    return null;
+  }
   return /*#__PURE__*/React.createElement(LogicGateContext.Provider, {
     value: childContext
   }, /*#__PURE__*/React.createElement("div", _extends({
@@ -17918,7 +17930,30 @@ const layoutTableSourceText = (value, fallback = "") => {
   if (Array.isArray(value)) return value.map(item => layoutTableSourceText(item)).filter(Boolean).join(", ");
   return value.display || value.text || value.name || value.code || fallback;
 };
-const formatLayoutTableSourceValue = (value, sourceFormat = "text", fallback = "") => {
+const formatLayoutTableSourceValue = (value, sourceFormat = "text", fallback = "", codeSystem = "") => {
+  if (sourceFormat === "coding") {
+    const raw = hasLayoutTableSourceValue(value) ? value : fallback;
+    if (!hasLayoutTableSourceValue(raw)) return {
+      code: null,
+      display: null,
+      system: codeSystem
+    };
+    if (raw && typeof raw === "object") {
+      const code = raw.code ?? raw.key ?? raw.value ?? raw.display ?? raw.text;
+      const display = raw.display ?? raw.text ?? raw.label ?? raw.code ?? raw.key ?? raw.value;
+      return {
+        code: code == null ? null : String(code),
+        display: display == null ? null : String(display),
+        system: raw.system || codeSystem
+      };
+    }
+    const text = String(raw);
+    return {
+      code: text,
+      display: text,
+      system: codeSystem
+    };
+  }
   if (sourceFormat === "visitCode" && value && typeof value === "object") {
     const code = value.code || value.key || "";
     const display = value.display || value.text || "";
@@ -17965,8 +18000,10 @@ const resolveLayoutTableSourceValue = (cell, data, sourceData) => {
     }
   }
   const fallback = cell.sourceFallback ?? cell.defaultValue ?? "";
-  return formatLayoutTableSourceValue(sourceValue, cell.sourceFormat || "text", fallback);
+  return formatLayoutTableSourceValue(sourceValue, cell.sourceFormat || "text", fallback, cell.codeSystem);
 };
+const sourceBindingIsInitial = cell => cell?.sourceMode === "initial";
+const fieldHasSavedValue = (data, fieldId) => Boolean(data && fieldId && Object.prototype.hasOwnProperty.call(data, fieldId));
 const getCellDisplayValue = (cell, data, sourceData) => {
   const sourcePaths = getLayoutTableSourcePaths(cell);
   const value = sourcePaths.length > 0 ? resolveLayoutTableSourceValue(cell, data, sourceData) : cell.defaultValue ?? cell.text ?? "";
@@ -18080,17 +18117,19 @@ const computeLayoutTableCellValue = (cell, data) => {
   return formatLayoutTableComputedValue(rawValue, cell.precision, cell.resultType);
 };
 const renderLayoutTableField = (cell, readOnly, data, setFieldValue) => {
+  if (cell.hidden === true) return null;
   const fieldId = cell.fieldId || cell.id;
   const label = cell.label || "";
   const labelProp = label ? {
     label
   } : {};
-  const effectiveReadOnly = readOnly || cell.readOnly === true;
+  const effectiveReadOnly = readOnly || cell.readOnly === true || cell.disabled === true;
   const sharedProps = {
     fieldId,
-    labelPosition: label ? "top" : "none",
+    labelPosition: cell.labelPosition || (label ? "top" : "none"),
     readOnly: effectiveReadOnly,
-    required: cell.required === true
+    required: cell.required === true,
+    placeholder: cell.placeholder
   };
   const optionList = normalizeLayoutTableOptionList(cell.optionList ?? cell.options);
   if (effectiveReadOnly) return renderLayoutTableReadOnlyField(cell, data);
@@ -18106,7 +18145,7 @@ const renderLayoutTableField = (cell, readOnly, data, setFieldValue) => {
       });
     case "number":
       return /*#__PURE__*/React.createElement(Numeric, _extends({}, sharedProps, labelProp, {
-        spinButtonProps: {
+        spinButtonProps: cell.numberConfig?.spinButtonProps || {
           min: cell.min,
           max: cell.max,
           step: cell.step
@@ -18118,13 +18157,19 @@ const renderLayoutTableField = (cell, readOnly, data, setFieldValue) => {
       return /*#__PURE__*/React.createElement(TimeSelect, _extends({}, sharedProps, labelProp));
     case "booleanYesNo":
       return /*#__PURE__*/React.createElement(SimpleCodeSelect, _extends({}, sharedProps, labelProp, {
-        codeSystem: "MOIS-YESNO"
+        codeSystem: "MOIS-YESNO",
+        autoHotKey: cell.autoHotKey
       }));
     case "choice":
       return optionList.length > 0 ? /*#__PURE__*/React.createElement(SimpleCodeSelect, _extends({}, sharedProps, labelProp, {
-        optionList: optionList
+        optionList: optionList,
+        codeSystem: cell.codeSystem,
+        autoHotKey: cell.autoHotKey,
+        showOtherOption: cell.showOtherOption
       })) : /*#__PURE__*/React.createElement(SimpleCodeSelect, _extends({}, sharedProps, labelProp, {
-        codeSystem: cell.codeSystem
+        codeSystem: cell.codeSystem,
+        autoHotKey: cell.autoHotKey,
+        showOtherOption: cell.showOtherOption
       }));
     case "choiceMulti":
       {
@@ -18217,6 +18262,7 @@ const renderLayoutTableStampButton = (cell, readOnly) => {
   });
 };
 const renderLayoutTableCellContent = (cell, readOnly, data, sourceData, setFieldValue) => {
+  if (cell.hidden === true) return null;
   if (cell.kind === "field") return renderLayoutTableField(cell, readOnly, data, setFieldValue);
   if (cell.kind === "fieldList") return renderLayoutTableFieldList(cell, readOnly, data, setFieldValue);
   if (cell.kind === "resources") return renderLayoutTableResources(cell);
@@ -18297,7 +18343,9 @@ function LayoutTable({
     ...(activeData || {})
   };
   sourceBoundCells.forEach(cell => {
-    tableData[cell.fieldId] = resolveLayoutTableSourceValue(cell, activeData, sd);
+    if (!sourceBindingIsInitial(cell) || !fieldHasSavedValue(activeData, cell.fieldId)) {
+      tableData[cell.fieldId] = resolveLayoutTableSourceValue(cell, activeData, sd);
+    }
   });
   const visibleRows = tableRows.filter(row => rowIsVisible(row, activeData));
   const setFieldValue = (fieldId, value) => {
@@ -18325,6 +18373,7 @@ function LayoutTable({
         return nextData;
       }
       boundCells.forEach(cell => {
+        if (sourceBindingIsInitial(cell) && fieldHasSavedValue(draft, cell.fieldId)) return;
         const nextValue = resolveLayoutTableSourceValue(cell, draft, sd);
         if (draft[cell.fieldId] !== nextValue) draft[cell.fieldId] = nextValue;
       });
@@ -35360,7 +35409,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './HotspotMapField/index.jsx': ["ANNOTATION_SYMBOL_LABELS","DEFAULT_ANNOTATION_COLOR","DEFAULT_ANNOTATION_SIZE_PERCENT","DEFAULT_ANNOTATION_SYMBOL","DEFAULT_ANNOTATION_SYMBOLS","DEFAULT_INTERACTION_MODE","DEFAULT_MAP_MARGIN_PX","DEFAULT_MAP_MAX_WIDTH","DEFAULT_MAP_MIN_HEIGHT","DEFAULT_MAP_PADDING_PX","DEFAULT_MAP_WIDTH_PERCENT","DEFAULT_MAP_ZOOM_PERCENT","DEFAULT_MARKER_RADIUS","DEFAULT_MARKER_SIZE","DEFAULT_NUMBER_FIELD_WIDTH_PERCENT","DEFAULT_SVG_VIEWBOX_MARGIN_PERCENT","HotspotMapField","annotationDefaultSymbol","annotationPointsToSvgString","annotationSymbols","annotations","append","assignedHotspotIds","baseId","bounds","buildCountsByGroup","buildFallbackPolygon","buildGroupSelectionSummary","buildMapValue","byHotspot","centroid","centroidFromPoints","circleAspectRatio","clampPercent","clampSvgViewBoxMarginPercent","clamped","color","commitMapState","commitSelection","compact","counterGroups","countsByGroup","createHotspotMapConfig","cx","cy","deltaX","deltaY","displayValue","doc","drawingPointerIdRef","drawingPointsRef","element","elements","ensureResponsiveSvg","ensuredDefault","fallbackList","fieldFillTextLayerIdSet","fieldFillValueMap","fieldId","fields","fill","getHotspotLabelAnchor","getNumberFieldValue","getPointFromEvent","group","groupId","groupLabel","groupsById","half","handleAddAnnotation","handleDrawPointerDown","handleDrawPointerMove","handleDrawPointerUp","handleHotspotKeyDown","handleNumberFieldChange","handleToggleHotspot","hasAnnotations","hasExplicitCounterGroups","hasMapData","hasSelections","hasSvgBackground","height","heightAttr","hotspotIdSet","hotspots","hotspotsById","id","ids","importSvgHotspots","injectFieldFillValuesIntoSvg","inlineStyle","input","interactionMode","isDarkMode","isDrawModeActive","isDrawingRef","isFieldFillMode","isSelected","isSymbolModeActive","labelAnchor","labels","labelsByGroup","map","mapFrameRef","mapFrameStyle","mapValue","marginPercent","markerSize","markup","match","max","min","names","next","nextAnnotations","nextAspectRatio","nextPoints","nextSymbol","nextValue","normalizeAnnotationPoints","normalizeAnnotationSymbol","normalizeAnnotationSymbols","normalizeAnnotationType","normalizeAnnotations","normalizeColor","normalizeCounterGroupId","normalizeCounterGroups","normalizeHotspotPoints","normalizeHotspots","normalizeMapInteractionMode","normalizeNumberFields","normalizeShape","normalizeString","normalized","normalizedAnnotations","normalizedCounterGroups","normalizedHotspot","normalizedHotspots","normalizedId","normalizedNumberFields","normalizedNumeric","normalizedRaw","numberFields","numeric","observer","overlayStyle","overlayViewBox","padX","padY","pair","panelStyle","parseAnnotationSymbol","parseList","parseSvgAspectRatio","parseSvgNumber","parsed","parsedPoints","parsedViewBox","parser","parts","point","points","pointsAttr","pointsToSvgString","previous","projectMapLengthToRenderPercent","projectMapPercentToRenderPercent","projectRenderPercentToMapPercent","r","radius","raw","rawId","rawLabel","rawValue","rect","renderAnnotationModeControls","renderMapFrame","renderSummary","renderedWidth","renderedX","renderedY","resolveAnnotationSymbol","resolveMapInteractionMode","resolved","resolvedAllowedSymbols","resolvedAnnotationDefaultColor","resolvedAnnotationDefaultSymbol","resolvedAnnotationSizePercent","resolvedAnnotationSymbols","resolvedInteractionMode","resolvedMapMarginPx","resolvedMapMaxWidth","resolvedMapMinHeight","resolvedMapPaddingPx","resolvedMapWidthPercent","resolvedMapZoomPercent","resolvedModalMinWidth","responsiveSvg","sanitizeHotspotIds","seen","selectedCount","selectedIds","selectedIdsCsv","selectedLabels","selectedLabelsCsv","serialized","shape","showSymbolPicker","showToolToggle","size","sourceHeight","sourceWidth","step","stroke","strokeWidth","suffix","summaryGroups","supportsAnnotations","supportsDrawAnnotations","supportsSelection","supportsSymbolAnnotations","svg","svgAspectRatio","svgViewBoxMarginPercent","svgViewBoxRenderSize","symbol","symbols","tagName","target","textLayerId","theme","toXPercent","toYPercent","total","trimmed","tspan","type","unique","updateAspectRatio","useSvgLayerTakeover","usedIds","value","vbHeight","vbWidth","vbX","vbY","viewBoxHeight","viewBoxParts","viewBoxRaw","viewBoxWidth","width","widthAttr","widthRaw","x","y","zoomFactor"],
   './HttpJsonTestPanel/index.jsx': ["AbortControllerClass","HTTP_JSON_RESULT_EVENT","HttpJsonTestPanel","aborted","body","controller","effectiveEndpointUrl","effectiveOutputId","fetchJson","formatHttpJsonTestResult","handler","key","nextResult","normalizeHttpJsonEndpointUrl","persistHttpJsonTestResult","previous","publishHttpJsonTestResult","readHttpJsonTestBody","requestBody","response","responseText","sd","sendTest","startedAt","statusColor","statusLabel","storedResult","text","timeout","trimmed","url"],
   './InvestigationTabs/index.jsx': ["INVESTIGATION_DEFAULT_TABS","InvestigationTab","InvestigationTabs","childArray","childById","childTabId","count","handleTabListKeyDown","id","isActive","label","next","normalizeInvestigationTabs","numeric","panelChildren","props","resolvedTabs","selected","source","tabRefs","target"],
-  './LayoutTable/index.jsx': ["LayoutTable","Tag","bareRefs","boundCells","bracketedRefs","candidate","cellStyle","checklistOptions","code","comparableValue","computeLayoutTableCellValue","computedCells","config","date","display","displayValue","effectiveReadOnly","evaluateLayoutTableFormula","extractLayoutTableFormulaRefs","fallback","fieldId","fields","formatLayoutTableComputedValue","formatLayoutTableFieldDisplayValue","formatLayoutTableSourceValue","formatOne","formula","getCellDisplayValue","getLayoutTableFieldRawValue","getLayoutTableSourcePaths","getNumericFieldValue","getPathValue","hasLayoutTableSourceValue","id","ids","isCheckedValue","isNoLikeValue","isSafeLayoutTableFormula","isYesLikeValue","jsExpression","label","labelProp","layoutTableSourceText","match","matched","multiline","nextData","nextValue","normalizeComparableValue","normalizeLayoutTableOptionList","normalized","numeric","optionList","paths","raw","rawValue","refs","renderLayoutTableCellContent","renderLayoutTableField","renderLayoutTableFieldList","renderLayoutTableReadOnlyField","renderLayoutTableResources","renderLayoutTableStampButton","renderLink","resolveLayoutTableSourceValue","resources","root","rounded","rowIsVisible","rule","sd","section","setFieldValue","sharedProps","sourceBoundCells","sourceFieldIds","sourcePaths","strippedExpression","sumMatch","tableData","tableRows","targets","unwrappedExpression","value","values","visibleRows"],
+  './LayoutTable/index.jsx': ["LayoutTable","Tag","bareRefs","boundCells","bracketedRefs","candidate","cellStyle","checklistOptions","code","comparableValue","computeLayoutTableCellValue","computedCells","config","date","display","displayValue","effectiveReadOnly","evaluateLayoutTableFormula","extractLayoutTableFormulaRefs","fallback","fieldHasSavedValue","fieldId","fields","formatLayoutTableComputedValue","formatLayoutTableFieldDisplayValue","formatLayoutTableSourceValue","formatOne","formula","getCellDisplayValue","getLayoutTableFieldRawValue","getLayoutTableSourcePaths","getNumericFieldValue","getPathValue","hasLayoutTableSourceValue","id","ids","isCheckedValue","isNoLikeValue","isSafeLayoutTableFormula","isYesLikeValue","jsExpression","label","labelProp","layoutTableSourceText","match","matched","multiline","nextData","nextValue","normalizeComparableValue","normalizeLayoutTableOptionList","normalized","numeric","optionList","paths","raw","rawValue","refs","renderLayoutTableCellContent","renderLayoutTableField","renderLayoutTableFieldList","renderLayoutTableReadOnlyField","renderLayoutTableResources","renderLayoutTableStampButton","renderLink","resolveLayoutTableSourceValue","resources","root","rounded","rowIsVisible","rule","sd","section","setFieldValue","sharedProps","sourceBindingIsInitial","sourceBoundCells","sourceFieldIds","sourcePaths","strippedExpression","sumMatch","tableData","tableRows","targets","text","unwrappedExpression","value","values","visibleRows"],
   './LongTermMedications/index.jsx': ["LongTermMedications","LongTermMedicationsFields"],
   './MirthListenerUtility/index.jsx': ["AbortControllerClass","MIRTH_UTILITY_DEFAULT_SITES","MIRTH_UTILITY_PAYLOAD_MODES","MIRTH_UTILITY_SEND_METHODS","MirthListenerUtility","aborted","baseResult","body","canBeacon","controller","fetchJson","finishSend","form","initialSiteId","methodInfo","mirthUtilityBuildTemplate","mirthUtilityFormatBody","mirthUtilityNormalizeUrl","mirthUtilityParseBody","mirthUtilityPersistResult","mirthUtilitySelectStyle","parsed","payloadIssue","queued","resetPayload","response","responseText","sd","selectedSite","signAndSend","siteList","stampPayload","stamped","startedAt","statusColor","statusLabel","storedResult","targetUrl","text","timeout","timeoutMs","trimmed","url","xhr","xhrResult"],
   './MoisModuleLinkList/index.jsx': ["MoisModuleLinkList","label","moisModule","normalizeItems","normalizedItems","source"],

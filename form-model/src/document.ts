@@ -119,7 +119,8 @@ export interface TableColumn {
 export type TableMode = "inline" | "modal";
 export type LayoutTableCellKind = "text" | "field" | "fieldList" | "resources" | "computed" | "stampButton";
 export type LayoutTableCellInputType = "text" | "textarea" | "number" | "date" | "time" | "choice" | "choiceMulti" | "booleanYesNo" | "booleanSingle";
-export type LayoutTableSourceFormat = "text" | "date" | "dateTime" | "visitCode";
+export type LayoutTableSourceFormat = "text" | "date" | "dateTime" | "visitCode" | "coding";
+export type LayoutTableSourceMode = "live" | "initial";
 export interface LayoutTableStampTarget {
   fieldId: string;
   sourcePath?: string;
@@ -142,6 +143,8 @@ export interface LayoutTableCell {
   sourcePath?: string;
   sourcePaths?: string[];
   sourceFormat?: LayoutTableSourceFormat;
+  /** Keep the source synchronized, or use it only to seed a new saved value. */
+  sourceMode?: LayoutTableSourceMode;
   sourceFallback?: string | number | boolean | null;
   defaultValue?: string | number | boolean | null;
   fieldId?: string;
