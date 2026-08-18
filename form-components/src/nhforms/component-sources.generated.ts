@@ -33648,7 +33648,10 @@ export const componentIdentities: Record<string, any> = {
     "title": "Coded Observation Choice Field",
     "description": "Coded choice field with optional observation update output",
     "category": "Clinical",
-    "version": "1.0.0"
+    "version": "1.0.0",
+    "components": [
+      "FindCodeSelect"
+    ]
   },
   'CommonSchemaDefn': {
     "name": "CommonSchemaDefn",
@@ -33748,7 +33751,10 @@ export const componentIdentities: Record<string, any> = {
       "major": 2,
       "minor": 26,
       "patch": 12
-    }
+    },
+    "components": [
+      "CompactBooleanField"
+    ]
   },
   'Conditions': {
     "name": "Conditions",
@@ -33900,7 +33906,10 @@ export const componentIdentities: Record<string, any> = {
       "major": 2,
       "minor": 26,
       "patch": 12
-    }
+    },
+    "components": [
+      "SubformScoring"
+    ]
   },
   'EducationHistory': {
     "name": "EducationHistory",
@@ -35075,7 +35084,8 @@ export const componentIdentities: Record<string, any> = {
       "FormSessionRuntime",
       "HotspotMapField",
       "ScoringModule",
-      "ScaleField"
+      "ScaleField",
+      "FindCodeSelect"
     ]
   },
   'UnsavedChangesGuard': {

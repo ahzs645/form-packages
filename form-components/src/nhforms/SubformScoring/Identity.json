@@ -28,6 +28,7 @@
     "FormSessionRuntime",
     "HotspotMapField",
     "ScoringModule",
-    "ScaleField"
+    "ScaleField",
+    "FindCodeSelect"
   ]
 }
