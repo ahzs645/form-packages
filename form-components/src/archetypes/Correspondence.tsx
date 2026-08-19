@@ -88,12 +88,15 @@ interface FieldProps {
 
 const contact: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = useCorrespondenceBinding(section);
+  // A size override from the Grid (e.g. size="100%") must reach the inner
+  // control too, or its own wrapper re-clamps inside the stretched LayoutItem.
+  const effectiveSize = (rest.size as 'tiny' | 'small' | 'medium' | 'large' | undefined) ?? 'medium';
 
   return (
     <LayoutItem fieldId="contact" label="Contact" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.contact || ''}
-        size="medium"
+        size={effectiveSize}
         onChange={(_, val) => setField('contact', val || '')}
       />
     </LayoutItem>
@@ -103,12 +106,13 @@ contact.displayName = 'Correspondence.contact';
 
 const direction: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = useCorrespondenceBinding(section);
+  const effectiveSize = (rest.size as 'tiny' | 'small' | 'medium' | 'large' | undefined) ?? 'small';
 
   return (
     <LayoutItem fieldId="direction" label="Direction" size="small" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.direction || ''}
-        size="small"
+        size={effectiveSize}
         onChange={(_, val) => setField('direction', val || '')}
       />
     </LayoutItem>
@@ -118,6 +122,7 @@ direction.displayName = 'Correspondence.direction';
 
 const note: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = useCorrespondenceBinding(section);
+  const effectiveSize = (rest.size as 'tiny' | 'small' | 'medium' | 'large' | undefined) ?? 'medium';
 
   return (
     <LayoutItem fieldId="note" label="Note" size="medium" index={index} section={section} {...rest}>
@@ -125,7 +130,7 @@ const note: React.FC<FieldProps> = ({ index, section, ...rest }) => {
         value={data?.note || ''}
         multiline
         rows={3}
-        size="medium"
+        size={effectiveSize}
         onChange={(_, val) => setField('note', val || '')}
       />
     </LayoutItem>

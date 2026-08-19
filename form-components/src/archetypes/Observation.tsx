@@ -199,6 +199,7 @@ const panel: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 
 const sequenceInPanel: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data } = useObservationBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'tiny';
 
   return (
     <LayoutItem fieldId="sequenceInPanel" label="Sequence in panel" size="tiny" index={index} section={section} {...rest}>
@@ -206,7 +207,7 @@ const sequenceInPanel: React.FC<FieldProps> = ({ index, section, ...rest }) => {
         value={data?.sequenceInPanel ? String(data.sequenceInPanel) : ''}
         readOnly
         borderless
-        size="tiny"
+        size={effectiveSize}
       />
     </LayoutItem>
   );
@@ -214,12 +215,13 @@ const sequenceInPanel: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 
 const placerReference: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = useObservationBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'medium';
 
   return (
     <LayoutItem fieldId="placerReference" label="Placer reference" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.placerReference || ''}
-        size="medium"
+        size={effectiveSize}
         onChange={(_, val) => setField('placerReference', val || '')}
       />
     </LayoutItem>
@@ -228,12 +230,13 @@ const placerReference: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 
 const copiesTo: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = useObservationBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'medium';
 
   return (
     <LayoutItem fieldId="copiesTo" label="Copies to" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.copiesTo || ''}
-        size="medium"
+        size={effectiveSize}
         onChange={(_, val) => setField('copiesTo', val || '')}
       />
     </LayoutItem>
@@ -242,12 +245,13 @@ const copiesTo: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 
 const status: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = useObservationBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'tiny';
 
   return (
     <LayoutItem fieldId="status" label="Status" size="tiny" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.status || ''}
-        size="tiny"
+        size={effectiveSize}
         onChange={(_, val) => setField('status', val || '')}
       />
     </LayoutItem>
@@ -256,13 +260,14 @@ const status: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 
 const performedDateTime: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = useObservationBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'small';
 
   return (
     <LayoutItem fieldId="performedDateTime" label="Performed" size="small" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.performedDateTime || ''}
         placeholder="yyyy-mm-ddThh:mm:ss"
-        size="small"
+        size={effectiveSize}
         onChange={(_, val) => setField('performedDateTime', val || '')}
       />
     </LayoutItem>
@@ -271,12 +276,13 @@ const performedDateTime: React.FC<FieldProps> = ({ index, section, ...rest }) =>
 
 const performedBy: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = useObservationBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'small';
 
   return (
     <LayoutItem fieldId="performedBy" label="Performed by" size="small" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.performedBy || ''}
-        size="small"
+        size={effectiveSize}
         onChange={(_, val) => setField('performedBy', val || '')}
       />
     </LayoutItem>
@@ -285,12 +291,13 @@ const performedBy: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 
 const reportedBy: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = useObservationBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'small';
 
   return (
     <LayoutItem fieldId="reportedBy" label="Reporter" size="small" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.reportedBy || ''}
-        size="small"
+        size={effectiveSize}
         onChange={(_, val) => setField('reportedBy', val || '')}
       />
     </LayoutItem>
@@ -299,12 +306,13 @@ const reportedBy: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 
 const observationCode: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = useObservationBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'tiny';
 
   return (
     <LayoutItem fieldId="observationCode" label="Code" size="tiny" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.observationCode || ''}
-        size="tiny"
+        size={effectiveSize}
         onChange={(_, val) => setField('observationCode', val || '')}
       />
     </LayoutItem>
@@ -313,12 +321,13 @@ const observationCode: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 
 const description: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = useObservationBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'medium';
 
   return (
     <LayoutItem fieldId="description" label="Description" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.description || ''}
-        size="medium"
+        size={effectiveSize}
         onChange={(_, val) => setField('description', val || '')}
       />
     </LayoutItem>
@@ -327,12 +336,13 @@ const description: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 
 const observationClass: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = useObservationBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'small';
 
   return (
     <LayoutItem fieldId="observationClass" label="Classification" size="small" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.observationClass || ''}
-        size="small"
+        size={effectiveSize}
         onChange={(_, val) => setField('observationClass', val || '')}
       />
     </LayoutItem>
@@ -341,12 +351,13 @@ const observationClass: React.FC<FieldProps> = ({ index, section, ...rest }) => 
 
 const loincCode: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = useObservationBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'tiny';
 
   return (
     <LayoutItem fieldId="loincCode" label="LOINC code" size="tiny" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.loincCode || ''}
-        size="tiny"
+        size={effectiveSize}
         onChange={(_, val) => setField('loincCode', val || '')}
       />
     </LayoutItem>
@@ -355,12 +366,13 @@ const loincCode: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 
 const valueType: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = useObservationBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'tiny';
 
   return (
     <LayoutItem fieldId="valueType" label="Value type" size="tiny" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.valueType || ''}
-        size="tiny"
+        size={effectiveSize}
         onChange={(_, val) => setField('valueType', val || '')}
       />
     </LayoutItem>
@@ -369,12 +381,13 @@ const valueType: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 
 const value: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = useObservationBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'medium';
 
   return (
     <LayoutItem fieldId="value" label="value" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.value || ''}
-        size="medium"
+        size={effectiveSize}
         onChange={(_, val) => setField('value', val || '')}
       />
     </LayoutItem>
@@ -383,12 +396,13 @@ const value: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 
 const units: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = useObservationBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'tiny';
 
   return (
     <LayoutItem fieldId="units" label="Units" size="tiny" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.units || ''}
-        size="tiny"
+        size={effectiveSize}
         onChange={(_, val) => setField('units', val || '')}
       />
     </LayoutItem>
@@ -397,13 +411,14 @@ const units: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 
 const comment: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = useObservationBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'max';
 
   return (
     <LayoutItem fieldId="comment" label="Comment" size="max" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.comment || ''}
         multiline
-        size="max"
+        size={effectiveSize}
         onChange={(_, val) => setField('comment', val || '')}
       />
     </LayoutItem>
@@ -413,6 +428,7 @@ const comment: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 const report: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = useObservationBinding(section);
   const [selectedKey, setSelectedKey] = useState('Edit');
+  const effectiveSize = (rest.size as string | undefined) ?? 'max';
 
   return (
     <LayoutItem fieldId="report" label="Report" size="max" index={index} section={section} {...rest}>
@@ -433,7 +449,7 @@ const report: React.FC<FieldProps> = ({ index, section, ...rest }) => {
                   value={data?.report || ''}
                   multiline
                   rows={6}
-                  size="max"
+                  size={effectiveSize}
                   onChange={(_, val) => setField('report', val || '')}
                 />
               </LayoutItem>
@@ -453,12 +469,14 @@ const abnormalFlag: React.FC<FieldProps> = ({ index, section, ...rest }) => {
     { key: '', text: 'Please select' },
     ...options.filter(opt => opt.code !== '').map(opt => ({ key: opt.code, text: opt.display })),
   ];
+  const effectiveSize = (rest.size as string | undefined) ?? 'small';
 
   return (
     <LayoutItem fieldId="abnormalFlag" label="Flag" index={index} section={section} {...rest}>
       <MoisDropdown
         selectedKey={codeOf(data?.abnormalFlag)}
         options={dropdownOptions}
+        size={effectiveSize}
         onChange={(_, option) => {
           const selected = options.find(o => o.code === option?.key);
           setField(
@@ -473,12 +491,13 @@ const abnormalFlag: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 
 const interfaceNotes: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = useObservationBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'medium';
 
   return (
     <LayoutItem fieldId="interfaceNotes" label="Interface notes" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.interfaceNotes || ''}
-        size="medium"
+        size={effectiveSize}
         onChange={(_, val) => setField('interfaceNotes', val || '')}
       />
     </LayoutItem>
@@ -487,12 +506,13 @@ const interfaceNotes: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 
 const referenceRangeText: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = useObservationBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'small';
 
   return (
     <LayoutItem fieldId="referenceRangeText" label="Reference range" size="small" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.referenceRangeText || ''}
-        size="small"
+        size={effectiveSize}
         onChange={(_, val) => setField('referenceRangeText', val || '')}
       />
     </LayoutItem>
@@ -501,6 +521,7 @@ const referenceRangeText: React.FC<FieldProps> = ({ index, section, ...rest }) =
 
 const rangeNormalLow: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data } = useObservationBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'small';
 
   return (
     <LayoutItem fieldId="rangeNormalLow" label="Low normal" size="small" index={index} section={section} {...rest}>
@@ -508,7 +529,7 @@ const rangeNormalLow: React.FC<FieldProps> = ({ index, section, ...rest }) => {
         value={data?.rangeNormalLow || ''}
         readOnly
         borderless
-        size="small"
+        size={effectiveSize}
       />
     </LayoutItem>
   );
@@ -516,6 +537,7 @@ const rangeNormalLow: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 
 const rangeNormalHigh: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data } = useObservationBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'small';
 
   return (
     <LayoutItem fieldId="rangeNormalHigh" label="High normal" size="small" index={index} section={section} {...rest}>
@@ -523,7 +545,7 @@ const rangeNormalHigh: React.FC<FieldProps> = ({ index, section, ...rest }) => {
         value={data?.rangeNormalHigh || ''}
         readOnly
         borderless
-        size="small"
+        size={effectiveSize}
       />
     </LayoutItem>
   );
@@ -531,6 +553,7 @@ const rangeNormalHigh: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 
 const rangeVeryLow: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data } = useObservationBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'small';
 
   return (
     <LayoutItem fieldId="rangeVeryLow" label="Very low" size="small" index={index} section={section} {...rest}>
@@ -538,7 +561,7 @@ const rangeVeryLow: React.FC<FieldProps> = ({ index, section, ...rest }) => {
         value={data?.rangeVeryLow || ''}
         readOnly
         borderless
-        size="small"
+        size={effectiveSize}
       />
     </LayoutItem>
   );
@@ -546,6 +569,7 @@ const rangeVeryLow: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 
 const rangeVeryHigh: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data } = useObservationBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'small';
 
   return (
     <LayoutItem fieldId="rangeVeryHigh" label="Very high" size="small" index={index} section={section} {...rest}>
@@ -553,7 +577,7 @@ const rangeVeryHigh: React.FC<FieldProps> = ({ index, section, ...rest }) => {
         value={data?.rangeVeryHigh || ''}
         readOnly
         borderless
-        size="small"
+        size={effectiveSize}
       />
     </LayoutItem>
   );
@@ -561,6 +585,7 @@ const rangeVeryHigh: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 
 const rangeAbsurdLow: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data } = useObservationBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'small';
 
   return (
     <LayoutItem fieldId="rangeAbsurdLow" label="Absurdly low" size="small" index={index} section={section} {...rest}>
@@ -568,7 +593,7 @@ const rangeAbsurdLow: React.FC<FieldProps> = ({ index, section, ...rest }) => {
         value={data?.rangeAbsurdLow || ''}
         readOnly
         borderless
-        size="small"
+        size={effectiveSize}
       />
     </LayoutItem>
   );
@@ -576,6 +601,7 @@ const rangeAbsurdLow: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 
 const rangeAbsurdHigh: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data } = useObservationBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'small';
 
   return (
     <LayoutItem fieldId="rangeAbsurdHigh" label="Absurdly high" size="small" index={index} section={section} {...rest}>
@@ -583,7 +609,7 @@ const rangeAbsurdHigh: React.FC<FieldProps> = ({ index, section, ...rest }) => {
         value={data?.rangeAbsurdHigh || ''}
         readOnly
         borderless
-        size="small"
+        size={effectiveSize}
       />
     </LayoutItem>
   );
@@ -591,6 +617,7 @@ const rangeAbsurdHigh: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 
 const attachmentCount: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data } = useObservationBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'tiny';
 
   return (
     <LayoutItem fieldId="attachmentCount" label="Attachments" size="tiny" index={index} section={section} {...rest}>
@@ -598,7 +625,7 @@ const attachmentCount: React.FC<FieldProps> = ({ index, section, ...rest }) => {
         value={data?.attachmentCount ? String(data.attachmentCount) : ''}
         readOnly
         borderless
-        size="tiny"
+        size={effectiveSize}
       />
     </LayoutItem>
   );
@@ -612,12 +639,14 @@ const recordState: React.FC<FieldProps> = ({ index, section, ...rest }) => {
     { key: '', text: 'Please select' },
     ...options.map(opt => ({ key: opt.code, text: opt.display })),
   ];
+  const effectiveSize = (rest.size as string | undefined) ?? 'small';
 
   return (
     <LayoutItem fieldId="recordState" label="Record state" index={index} section={section} {...rest}>
       <MoisDropdown
         selectedKey={codeOf(data?.recordState)}
         options={dropdownOptions}
+        size={effectiveSize}
         onChange={(_, option) => {
           const selected = options.find(o => o.code === option?.key);
           setField(

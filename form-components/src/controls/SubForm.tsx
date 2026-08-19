@@ -143,14 +143,23 @@ export const SubForm: React.FC<SubFormProps> = ({
         ? minWidth
         : 480;
 
+  // In modal mode, minWidth belongs to the Dialog alone (real MOIS renders
+  // children bare inside the Dialog). Repeating it on an inner container
+  // overflows the Dialog's padded content box and adds a horizontal scrollbar.
+  const modalContainerStyle: React.CSSProperties | undefined = style;
+
   return (
     <Dialog
       hidden={false}
       onDismiss={onCancel}
       dialogContentProps={defaultDialogContentProps}
       minWidth={dialogMinWidth}
+      // Real MOIS passes isBlocking, and Fluent's Dialog derives the
+      // top-right close button from it (showCloseButton: isBlocking) —
+      // this also stops overlay clicks from dismissing the dialog.
+      modalProps={{ isBlocking: true }}
     >
-      <div style={containerStyle} data-component="SubForm">
+      <div style={modalContainerStyle} data-component="SubForm">
         {sectionContent}
       </div>
     </Dialog>

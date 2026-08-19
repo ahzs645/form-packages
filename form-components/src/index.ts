@@ -253,6 +253,9 @@ export {
   produce,
 } from './context';
 
+// Fluent theme for MOIS previews (orange FormTester palette)
+export { moisPreviewTheme } from './preview-theme';
+
 // ============================================================================
 // Hooks
 // ============================================================================

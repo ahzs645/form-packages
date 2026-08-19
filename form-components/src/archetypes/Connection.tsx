@@ -114,6 +114,9 @@ const makeCodedField = (
   const CodedField: React.FC<FieldProps> = ({ index, section, ...rest }) => {
     const { data, setField } = useConnectionBinding(section);
     const { options, dropdownOptions } = usePleaseSelectOptions(codeSystem);
+    // A size override from the Grid (e.g. size="100%") must reach the inner
+    // control too, or its own wrapper re-clamps inside the stretched LayoutItem.
+    const effectiveSize = (rest.size as typeof size | undefined) ?? size;
 
     return (
       <LayoutItem fieldId={fieldId} label={label} size={size} index={index} section={section} {...rest}>
@@ -122,7 +125,7 @@ const makeCodedField = (
           codeSystem={codeSystem}
           selectedKey={codeOf(data?.[fieldId])}
           options={dropdownOptions}
-          size={size}
+          size={effectiveSize}
           onChange={(_, option) => {
             const selected = options.find(o => o.code === option?.key);
             setField(
@@ -143,6 +146,7 @@ const makeCodedField = (
 const attachmentCount: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data } = useConnectionBinding(section);
   const displayValue = data?.attachmentCount ? String(data.attachmentCount) : '';
+  const effectiveSize = (rest.size as string | undefined) ?? 'tiny';
 
   return (
     <LayoutItem fieldId="attachmentCount" label="Attached" size="tiny" index={index} section={section} {...rest}>
@@ -151,7 +155,7 @@ const attachmentCount: React.FC<FieldProps> = ({ index, section, ...rest }) => {
         readOnly
         borderless
         tabIndex={-1}
-        size="tiny"
+        size={effectiveSize}
       />
     </LayoutItem>
   );
@@ -159,6 +163,7 @@ const attachmentCount: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 
 const comment: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = useConnectionBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'max';
 
   return (
     <LayoutItem fieldId="comment" label="General comment" size="max" index={index} section={section} {...rest}>
@@ -166,7 +171,7 @@ const comment: React.FC<FieldProps> = ({ index, section, ...rest }) => {
         value={data?.comment || ''}
         multiline
         rows={3}
-        size="max"
+        size={effectiveSize}
         onChange={(_, val) => setField('comment', val || '')}
       />
     </LayoutItem>
@@ -179,6 +184,7 @@ const isCareTeamMember = makeCodedField('isCareTeamMember', 'Care team member', 
 
 const patientId: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data } = useConnectionBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'tiny';
 
   return (
     <LayoutItem fieldId="patientId" label="Patient Id" size="tiny" index={index} section={section} {...rest}>
@@ -187,7 +193,7 @@ const patientId: React.FC<FieldProps> = ({ index, section, ...rest }) => {
         readOnly
         borderless
         tabIndex={-1}
-        size="tiny"
+        size={effectiveSize}
       />
     </LayoutItem>
   );
@@ -195,13 +201,14 @@ const patientId: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 
 const provider: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = useConnectionBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'large';
 
   return (
     <LayoutItem fieldId="provider" label="Connection" size="large" index={index} section={section} {...rest}>
       <MoisTextField
         placeholder="Please search"
         value={data?.provider?.name || data?.name || ''}
-        size="large"
+        size={effectiveSize}
         onChange={(_, val) => {
           setField(
             'provider',
@@ -220,13 +227,14 @@ const providerType = makeCodedField('providerType', 'Connection resource', 'MOIS
 
 const name: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data } = useConnectionBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'medium';
 
   return (
     <LayoutItem fieldId="name" label="Provider name" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.name || ''}
         readOnly
-        size="medium"
+        size={effectiveSize}
       />
     </LayoutItem>
   );
@@ -234,13 +242,14 @@ const name: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 
 const stopDate: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = useConnectionBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'small';
 
   return (
     <LayoutItem fieldId="stopDate" label="End date" size="small" index={index} section={section} {...rest}>
       <DateSelect
         inline
         value={data?.stopDate || ''}
-        size="small"
+        size={effectiveSize}
         onChange={(date) => setField('stopDate', date)}
       />
     </LayoutItem>
@@ -249,6 +258,7 @@ const stopDate: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 
 const stopNote: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = useConnectionBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'medium';
 
   return (
     <LayoutItem fieldId="stopNote" label="Stopped note" size="medium" index={index} section={section} {...rest}>
@@ -256,7 +266,7 @@ const stopNote: React.FC<FieldProps> = ({ index, section, ...rest }) => {
         value={data?.stopNote || ''}
         multiline
         rows={3}
-        size="medium"
+        size={effectiveSize}
         onChange={(_, val) => setField('stopNote', val || '')}
       />
     </LayoutItem>
@@ -271,13 +281,14 @@ const stamp: React.FC<FieldProps> = ({ index, ...props }) => {
 
 const startDate: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = useConnectionBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'small';
 
   return (
     <LayoutItem fieldId="startDate" label="Start date" size="small" index={index} section={section} {...rest}>
       <DateSelect
         inline
         value={data?.startDate || ''}
-        size="small"
+        size={effectiveSize}
         onChange={(date) => setField('startDate', date)}
       />
     </LayoutItem>

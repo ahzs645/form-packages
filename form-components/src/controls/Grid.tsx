@@ -174,6 +174,9 @@ export const Grid: React.FC<GridProps> = ({
   placement,
   fields,
   section,
+  // MOIS semantics: any other Grid prop (size="100%", instructionCodeSystem,
+  // readOnly, ...) is forwarded to every rendered field.
+  ...fieldProps
 }) => {
   const theme = useTheme();
   const parentSection = useSection(section as Partial<SectionContextValue> | undefined);
@@ -260,7 +263,7 @@ export const Grid: React.FC<GridProps> = ({
       }
       // Call the field function/component to get the rendered element
       const fieldElement = typeof FieldComponent === 'function'
-        ? React.createElement(FieldComponent as React.FC)
+        ? React.createElement(FieldComponent as React.FC, { ...fieldProps })
         : FieldComponent;
       // Get size from field metadata (fieldSize property) or default to 'small'
       const fieldSize = (FieldComponent as any).fieldSize || 'small';
@@ -271,14 +274,15 @@ export const Grid: React.FC<GridProps> = ({
     const fieldsObj = fields as Record<string, React.FC | (() => React.ReactNode)>;
     renderedContent = Object.entries(fieldsObj).map(([fieldName, FieldComponent]) =>
       typeof FieldComponent === 'function'
-        ? React.createElement(FieldComponent as React.FC, { key: fieldName })
+        ? React.createElement(FieldComponent as React.FC, { key: fieldName, ...fieldProps })
         : FieldComponent
     );
   } else {
-    // If children is a function, call it (a bare `{Mois.X.All}` component
-    // reference returns an element that renders inside our section provider)
+    // If children is a function, call it with the forwarded field props (a
+    // bare `{Mois.X.All}` component reference returns an element that renders
+    // inside our section provider and spreads these into every field)
     const content: React.ReactNode = typeof children === 'function'
-      ? (children as (props?: any) => React.ReactNode)({})
+      ? (children as (props?: any) => React.ReactNode)(fieldProps)
       : children;
 
     // If we have placement with children, wrap children and apply gridArea

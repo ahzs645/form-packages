@@ -77,6 +77,9 @@ const makeCodedField = (
   const CodedField: React.FC<FieldProps> = ({ index, section, ...rest }) => {
     const { data, setField } = useAssociatedPartyBinding(section);
     const dropdownOptions = usePleaseSelectOptions(codeSystem);
+    // A size override from the Grid (e.g. size="100%") must reach the inner
+    // control too, or its own wrapper re-clamps inside the stretched LayoutItem.
+    const effectiveSize = (rest.size as typeof size | undefined) ?? size;
 
     return (
       <LayoutItem fieldId={fieldId} label={label} size={size} index={index} section={section} {...rest}>
@@ -86,7 +89,7 @@ const makeCodedField = (
           selectedKey={codeOf(data?.[fieldId])}
           options={dropdownOptions}
           placeholder="Please select"
-          size={size}
+          size={effectiveSize}
           onChange={(_, option) => setField(fieldId, toCodedValue(option, codeSystem))}
         />
       </LayoutItem>
@@ -105,13 +108,14 @@ const makeTextField = (
   const TextFieldComponent: React.FC<FieldProps> = ({ index, section, ...rest }) => {
     const { data, setField } = useAssociatedPartyBinding(section);
     const value = displayOf(data?.[fieldId]);
+    const effectiveSize = (rest.size as typeof size | undefined) ?? size;
 
     return (
       <LayoutItem fieldId={fieldId} label={label} size={size} index={index} section={section} {...rest}>
         <MoisTextField
           fieldId={fieldId}
           value={value}
-          size={size}
+          size={effectiveSize}
           {...(options.placeholder ? { placeholder: options.placeholder } : {})}
           {...(options.multiline ? { multiline: true, rows: 3 } : {})}
           {...(options.readOnly
@@ -130,6 +134,7 @@ const attachmentCount: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 
   // Show empty string if attachmentCount is 0 or falsy
   const displayValue = data?.attachmentCount ? String(data.attachmentCount) : '';
+  const effectiveSize = (rest.size as string | undefined) ?? 'tiny';
 
   return (
     <LayoutItem fieldId="attachmentCount" label="Attached" size="tiny" index={index} section={section} {...rest}>
@@ -139,7 +144,7 @@ const attachmentCount: React.FC<FieldProps> = ({ index, section, ...rest }) => {
         readOnly
         borderless
         tabIndex={-1}
-        size="tiny"
+        size={effectiveSize}
       />
     </LayoutItem>
   );

@@ -71,6 +71,9 @@ const makeCodedField = (
     const effectiveSystem = (codeSystemProp && rest[codeSystemProp]) || codeSystem;
     const dropdownOptions = usePleaseSelectOptions(effectiveSystem);
     if (codeSystemProp) delete rest[codeSystemProp];
+    // A size override from the Grid (e.g. size="100%") must reach the inner
+    // control too, or its own wrapper re-clamps inside the stretched LayoutItem.
+    const effectiveSize = (rest.size as typeof size | undefined) ?? size;
 
     return (
       <LayoutItem fieldId={fieldId} label={label} size={size} index={index} section={section} {...rest}>
@@ -79,7 +82,7 @@ const makeCodedField = (
           codeSystem={effectiveSystem}
           selectedKey={codeOf(data?.[fieldId])}
           options={dropdownOptions}
-          size={size}
+          size={effectiveSize}
           onChange={(_, option) => setField(fieldId, toCodedValue(option, effectiveSystem))}
         />
       </LayoutItem>
@@ -99,12 +102,13 @@ const makeTextField = (
     const { data, setField } = useChartPreferenceBinding(section);
     const rawValue = data?.[fieldId];
     const value = rawValue === null || rawValue === undefined ? '' : String(rawValue);
+    const effectiveSize = (rest.size as typeof size | undefined) ?? size;
 
     return (
       <LayoutItem fieldId={fieldId} label={label} size={size} index={index} section={section} {...rest}>
         <MoisTextField
           value={value}
-          size={size}
+          size={effectiveSize}
           {...(options.multiline ? { multiline: true, rows: 3 } : {})}
           {...(options.readOnly
             ? { readOnly: true, borderless: true, tabIndex: -1 }
@@ -123,13 +127,14 @@ const makeDateField = (
 ): React.FC<FieldProps> => {
   const DateFieldComponent: React.FC<FieldProps> = ({ index, section, ...rest }) => {
     const { data, setField } = useChartPreferenceBinding(section);
+    const effectiveSize = (rest.size as string | undefined) ?? 'small';
 
     return (
       <LayoutItem fieldId={fieldId} label={label} size="small" index={index} section={section} {...rest}>
         <DateSelect
           inline
           value={data?.[fieldId] || ''}
-          size="small"
+          size={effectiveSize}
           onChange={(date) => setField(fieldId, date)}
         />
       </LayoutItem>

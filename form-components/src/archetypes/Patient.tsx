@@ -147,13 +147,15 @@ interface FieldProps {
 const active: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = usePatientBinding(section);
 
+  const effectiveSize = (rest.size as string | undefined) ?? 'small';
+
   return (
     <LayoutItem fieldId="active" label="Current status" size="small" index={index} section={section} {...rest}>
       <MoisDropdown
         fieldId="active"
         codeSystem="MOIS-PATIENTSTATUS"
         selectedKey={codeOf(data?.active) || undefined}
-        size="small"
+        size={effectiveSize}
         onChange={(_, option) => setField('active', toCodedValue(option, 'MOIS-PATIENTSTATUS'))}
       />
     </LayoutItem>
@@ -163,9 +165,11 @@ const active: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 const activeChanged: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data } = usePatientBinding(section);
 
+  const effectiveSize = (rest.size as string | undefined) ?? 'small';
+
   return (
     <LayoutItem fieldId="activeChanged" label="Effective date" size="small" index={index} section={section} {...rest}>
-      <DateSelect inline value={formatDate(data?.activeChanged)} onChange={() => {}} size="small" />
+      <DateSelect inline value={formatDate(data?.activeChanged)} onChange={() => {}} size={effectiveSize} />
     </LayoutItem>
   );
 };
@@ -191,6 +195,8 @@ const status: React.FC<FieldProps> = ({ index, ...props }) => {
 const address: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data } = usePatientBinding(section);
 
+  const effectiveSize = (rest.size as string | undefined) ?? 'medium';
+
   return (
     <LayoutItem fieldId="address" label="Address" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
@@ -200,7 +206,7 @@ const address: React.FC<FieldProps> = ({ index, section, ...rest }) => {
         readOnly
         borderless
         tabIndex={-1}
-        size="medium"
+        size={effectiveSize}
       />
     </LayoutItem>
   );
@@ -209,13 +215,15 @@ const address: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 const administrativeGender: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = usePatientBinding(section);
 
+  const effectiveSize = (rest.size as string | undefined) ?? 'medium';
+
   return (
     <LayoutItem fieldId="administrativeGender" label="Administrative gender" size="medium" index={index} section={section} {...rest}>
       <MoisDropdown
         fieldId="gender"
         codeSystem="MOIS-ADMINISTRATIVEGENDER"
         selectedKey={data?.gender || undefined}
-        size="medium"
+        size={effectiveSize}
         onChange={(_, option) => {
           if (option) setField('gender', option.key);
         }}
@@ -227,6 +235,8 @@ const administrativeGender: React.FC<FieldProps> = ({ index, section, ...rest })
 const adopted: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = usePatientBinding(section);
 
+  const effectiveSize = (rest.size as string | undefined) ?? 'small';
+
   return (
     <LayoutItem fieldId="adopted" label="Adopted" size="small" index={index} section={section} {...rest}>
       <MoisDropdown
@@ -234,7 +244,7 @@ const adopted: React.FC<FieldProps> = ({ index, section, ...rest }) => {
         codeSystem="MOIS-YESNOFULL"
         selectedKey={codeOf(data?.adopted) || undefined}
         placeholder="Please select"
-        size="small"
+        size={effectiveSize}
         onChange={(_, option) => setField('adopted', toCodedValue(option, 'MOIS-YESNOFULL'))}
       />
     </LayoutItem>
@@ -244,9 +254,11 @@ const adopted: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 const age: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data } = usePatientBinding(section);
 
+  const effectiveSize = (rest.size as string | undefined) ?? 'small';
+
   return (
     <LayoutItem fieldId="age" label="Age" size="small" index={index} section={section} {...rest}>
-      <MoisTextField value={calculateAge(data?.dob)} readOnly borderless tabIndex={-1} size="small" />
+      <MoisTextField value={calculateAge(data?.dob)} readOnly borderless tabIndex={-1} size={effectiveSize} />
     </LayoutItem>
   );
 };
@@ -255,9 +267,11 @@ const birthDate: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data } = usePatientBinding(section);
   const ageStr = calculateAge(data?.dob);
 
+  const effectiveSize = (rest.size as string | undefined) ?? 'medium';
+
   return (
     <LayoutItem fieldId="birthDate" label={`Birth date${ageStr ? ` (${ageStr})` : ''}`} size="medium" index={index} section={section} {...rest}>
-      <DateSelect inline value={formatDate(data?.dob)} onChange={() => {}} size="medium" />
+      <DateSelect inline value={formatDate(data?.dob)} onChange={() => {}} size={effectiveSize} />
     </LayoutItem>
   );
 };
@@ -265,11 +279,13 @@ const birthDate: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 const chartLocation: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = usePatientBinding(section);
 
+  const effectiveSize = (rest.size as string | undefined) ?? 'small';
+
   return (
     <LayoutItem fieldId="chartLocation" label="Chart location" size="small" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.chartLocation || ''}
-        size="small"
+        size={effectiveSize}
         onChange={(_, val) => setField('chartLocation', val || '')}
       />
     </LayoutItem>
@@ -279,9 +295,11 @@ const chartLocation: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 const chartNumber: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data } = usePatientBinding(section);
 
+  const effectiveSize = (rest.size as string | undefined) ?? 'tiny';
+
   return (
     <LayoutItem fieldId="chartNumber" label="Chart No." size="tiny" index={index} section={section} {...rest}>
-      <MoisTextField value={String(data?.chartNumber ?? '')} readOnly borderless tabIndex={-1} size="tiny" />
+      <MoisTextField value={String(data?.chartNumber ?? '')} readOnly borderless tabIndex={-1} size={effectiveSize} />
     </LayoutItem>
   );
 };
@@ -289,12 +307,14 @@ const chartNumber: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 const city: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = usePatientBinding(section);
 
+  const effectiveSize = (rest.size as string | undefined) ?? 'medium';
+
   return (
     <LayoutItem fieldId="city" label="City" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.address?.city || ''}
         autoComplete="new-password"
-        size="medium"
+        size={effectiveSize}
         onChange={(_, val) => setField('address', { ...data?.address, city: val || '' })}
       />
     </LayoutItem>
@@ -304,12 +324,14 @@ const city: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 const countryOfOrigin: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = usePatientBinding(section);
 
+  const effectiveSize = (rest.size as string | undefined) ?? 'small';
+
   return (
     <LayoutItem fieldId="countryOfOrigin" label="Country of origin" size="small" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.countryOfOrigin?.display || ''}
         placeholder="Please search"
-        size="small"
+        size={effectiveSize}
         onChange={(_, val) => setField('countryOfOrigin', { display: val || '' })}
       />
     </LayoutItem>
@@ -319,9 +341,11 @@ const countryOfOrigin: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 const deceasedDate: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data } = usePatientBinding(section);
 
+  const effectiveSize = (rest.size as string | undefined) ?? 'small';
+
   return (
     <LayoutItem fieldId="deceasedDate" label="Deceased date" size="small" index={index} section={section} {...rest}>
-      <DateSelect inline value={formatDate(data?.deceasedDate)} onChange={() => {}} size="small" />
+      <DateSelect inline value={formatDate(data?.deceasedDate)} onChange={() => {}} size={effectiveSize} />
     </LayoutItem>
   );
 };
@@ -435,6 +459,8 @@ const facilityCode: React.FC<FieldProps> = ({ index, section, ...rest }) => {
     text: opt.display,
   }));
 
+  const effectiveSize = (rest.size as string | undefined) ?? 'small';
+
   return (
     <LayoutItem fieldId="facilityCode" label="Facility " size="small" index={index} section={section} {...rest}>
       <MoisDropdown
@@ -442,7 +468,7 @@ const facilityCode: React.FC<FieldProps> = ({ index, section, ...rest }) => {
         codeSystem="MOIS-FACILITYCODE"
         selectedKey={codeOf(data?.facilityCode) || undefined}
         placeholder="Please select"
-        size="small"
+        size={effectiveSize}
         onChange={(_, option) => setField('facilityCode', toCodedValue(option, 'MOIS-FACILITYCODE'))}
       />
     </LayoutItem>
@@ -452,13 +478,15 @@ const facilityCode: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 const first: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = usePatientBinding(section);
 
+  const effectiveSize = (rest.size as string | undefined) ?? 'medium';
+
   return (
     <LayoutItem fieldId="first" label="First name" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.name?.first || ''}
         required
         autoComplete="new-password"
-        size="medium"
+        size={effectiveSize}
         onChange={(_, val) => setField('name', { ...data?.name, first: val || '' })}
       />
     </LayoutItem>
@@ -474,6 +502,8 @@ const firstNationStatus: React.FC<FieldProps> = ({ index, section, ...rest }) =>
     text: opt.display,
   }));
 
+  const effectiveSize = (rest.size as string | undefined) ?? 'small';
+
   return (
     <LayoutItem fieldId="firstNationStatus" label="First nation status" size="small" index={index} section={section} {...rest}>
       <MoisDropdown
@@ -481,7 +511,7 @@ const firstNationStatus: React.FC<FieldProps> = ({ index, section, ...rest }) =>
         codeSystem="MOIS-FIRSTNATIONSTATUS"
         selectedKey={codeOf(data?.firstNationStatus) || undefined}
         placeholder="Please select"
-        size="small"
+        size={effectiveSize}
         onChange={(_, option) => setField('firstNationStatus', toCodedValue(option, 'MOIS-FIRSTNATIONSTATUS'))}
       />
     </LayoutItem>
@@ -491,11 +521,13 @@ const firstNationStatus: React.FC<FieldProps> = ({ index, section, ...rest }) =>
 const genderComment: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = usePatientBinding(section);
 
+  const effectiveSize = (rest.size as string | undefined) ?? 'large';
+
   return (
     <LayoutItem fieldId="genderComment" label="Gender comment" size="large" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.genderComment || ''}
-        size="large"
+        size={effectiveSize}
         onChange={(_, val) => setField('genderComment', val || '')}
       />
     </LayoutItem>
@@ -505,12 +537,14 @@ const genderComment: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 const generalPractitioner: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = usePatientBinding(section);
 
+  const effectiveSize = (rest.size as string | undefined) ?? 'medium';
+
   return (
     <LayoutItem fieldId="generalPractitioner" label="Provider" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.generalPractitioner?.display || ''}
         placeholder="Please search"
-        size="medium"
+        size={effectiveSize}
         onChange={(_, val) => setField('generalPractitioner', { display: val || '' })}
       />
     </LayoutItem>
@@ -526,13 +560,15 @@ const genotypicGender: React.FC<FieldProps> = ({ index, section, ...rest }) => {
     text: opt.display,
   }));
 
+  const effectiveSize = (rest.size as string | undefined) ?? 'small';
+
   return (
     <LayoutItem fieldId="genotypicGender" label="Genotypic gender" size="small" index={index} section={section} {...rest}>
       <MoisDropdown
         fieldId="genotypicGender"
         codeSystem="MOIS-GENOTYPICGENDER"
         selectedKey={codeOf(data?.genotypicGender) || undefined}
-        size="small"
+        size={effectiveSize}
         onChange={(_, option) => setField('genotypicGender', toCodedValue(option, 'MOIS-GENOTYPICGENDER'))}
       />
     </LayoutItem>
@@ -542,11 +578,13 @@ const genotypicGender: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 const healthNumber: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = usePatientBinding(section);
 
+  const effectiveSize = (rest.size as string | undefined) ?? 'small';
+
   return (
     <LayoutItem fieldId="healthNumber" label="Health number" size="small" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.healthNumber || ''}
-        size="small"
+        size={effectiveSize}
         onChange={(_, val) => setField('healthNumber', val || '')}
       />
     </LayoutItem>
@@ -556,11 +594,13 @@ const healthNumber: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 const healthNumberBy: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = usePatientBinding(section);
 
+  const effectiveSize = (rest.size as string | undefined) ?? 'small';
+
   return (
     <LayoutItem fieldId="healthNumberBy" label="Health number by" size="small" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.healthNumberBy || ''}
-        size="small"
+        size={effectiveSize}
         onChange={(_, val) => setField('healthNumberBy', val || '')}
       />
     </LayoutItem>
@@ -570,12 +610,14 @@ const healthNumberBy: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 const homeEmail: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = usePatientBinding(section);
 
+  const effectiveSize = (rest.size as string | undefined) ?? 'large';
+
   return (
     <LayoutItem fieldId="homeEmail" label="Home email" size="large" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.telecom?.homeEmail || ''}
         autoComplete="new-password"
-        size="large"
+        size={effectiveSize}
         onChange={(_, val) => setField('telecom', { ...data?.telecom, homeEmail: val || '' })}
       />
     </LayoutItem>
@@ -593,10 +635,12 @@ const insurance: React.FC<FieldProps> = ({ index, section, ...rest }) => {
     Object.entries(updates).forEach(([key, value]) => setField(key, value));
   };
 
+  const effectiveSize = (rest.size as string | undefined) ?? 'medium';
+
   return (
     <>
       <LayoutItem fieldId="insurance" label="Insurance" size="medium" index={index} section={section} {...rest}>
-        <MoisTextField value={displayValue} readOnly borderless tabIndex={-1} size="medium" />
+        <MoisTextField value={displayValue} readOnly borderless tabIndex={-1} size={effectiveSize} />
         <Action.Edit onEdit={() => setIsDialogOpen(true)} />
       </LayoutItem>
       <InsuranceEditDialog
@@ -612,11 +656,13 @@ const insurance: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 const insuranceBenefitSource: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = usePatientBinding(section);
 
+  const effectiveSize = (rest.size as string | undefined) ?? 'small';
+
   return (
     <LayoutItem fieldId="insuranceBenefitSource" label="Benefit source" size="small" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.insuranceBenefitSource || ''}
-        size="small"
+        size={effectiveSize}
         onChange={(_, val) => setField('insuranceBenefitSource', val || '')}
       />
     </LayoutItem>
@@ -648,13 +694,15 @@ const insuranceBy: React.FC<FieldProps> = ({ index, section, ...rest }) => {
     text: opt.display,
   }));
 
+  const effectiveSize = (rest.size as string | undefined) ?? 'small';
+
   return (
     <LayoutItem fieldId="insuranceBy" label="Insurer" size="small" index={index} section={section} {...rest}>
       <MoisDropdown
         fieldId="insuranceBy"
         codeSystem="MOIS-INSURANCEBY"
         selectedKey={codeOf(data?.insuranceBy) || undefined}
-        size="small"
+        size={effectiveSize}
         onChange={(_, option) => setField('insuranceBy', toCodedValue(option, 'MOIS-INSURANCEBY'))}
       />
     </LayoutItem>
@@ -664,11 +712,13 @@ const insuranceBy: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 const insuranceDependent: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = usePatientBinding(section);
 
+  const effectiveSize = (rest.size as string | undefined) ?? 'tiny';
+
   return (
     <LayoutItem fieldId="insuranceDependent" label="Dep. no." size="tiny" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.insuranceDependent || ''}
-        size="tiny"
+        size={effectiveSize}
         onChange={(_, val) => setField('insuranceDependent', val || '')}
       />
     </LayoutItem>
@@ -678,11 +728,13 @@ const insuranceDependent: React.FC<FieldProps> = ({ index, section, ...rest }) =
 const insuranceNumber: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = usePatientBinding(section);
 
+  const effectiveSize = (rest.size as string | undefined) ?? 'small';
+
   return (
     <LayoutItem fieldId="insuranceNumber" label="Insurance number" size="small" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.insuranceNumber || ''}
-        size="small"
+        size={effectiveSize}
         onChange={(_, val) => setField('insuranceNumber', val || '')}
       />
     </LayoutItem>
@@ -695,11 +747,13 @@ const insuranceText: React.FC<FieldProps> = ({ index, section, ...rest }) => {
     ? `${data.insuranceBy.code}: ${data.insuranceNumber || ''}`
     : '';
 
+  const effectiveSize = (rest.size as string | undefined) ?? 'medium';
+
   return (
     <LayoutItem fieldId="insuranceText" label="Insurance" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={displayValue}
-        size="medium"
+        size={effectiveSize}
         onChange={() => {}}
       />
     </LayoutItem>
@@ -709,12 +763,14 @@ const insuranceText: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 const language: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = usePatientBinding(section);
 
+  const effectiveSize = (rest.size as string | undefined) ?? 'small';
+
   return (
     <LayoutItem fieldId="language" label="First language" size="small" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.language?.display || ''}
         placeholder="Please search"
-        size="small"
+        size={effectiveSize}
         onChange={(_, val) => setField('language', { display: val || '' })}
       />
     </LayoutItem>
@@ -724,9 +780,11 @@ const language: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 const lastContactDate: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data } = usePatientBinding(section);
 
+  const effectiveSize = (rest.size as string | undefined) ?? 'small';
+
   return (
     <LayoutItem fieldId="lastContactDate" label="Last contact date" size="small" index={index} section={section} {...rest}>
-      <DateSelect inline value={formatDate(data?.lastContactDate)} onChange={() => {}} disabled size="small" />
+      <DateSelect inline value={formatDate(data?.lastContactDate)} onChange={() => {}} disabled size={effectiveSize} />
     </LayoutItem>
   );
 };
@@ -734,13 +792,15 @@ const lastContactDate: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 const family: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = usePatientBinding(section);
 
+  const effectiveSize = (rest.size as string | undefined) ?? 'medium';
+
   return (
     <LayoutItem fieldId="family" label="Family name" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.name?.family || ''}
         required
         autoComplete="new-password"
-        size="medium"
+        size={effectiveSize}
         onChange={(_, val) => setField('name', { ...data?.name, family: val || '' })}
       />
     </LayoutItem>
@@ -756,6 +816,8 @@ const locationCode: React.FC<FieldProps> = ({ index, section, ...rest }) => {
     text: opt.display,
   }));
 
+  const effectiveSize = (rest.size as string | undefined) ?? 'small';
+
   return (
     <LayoutItem fieldId="locationCode" label="Location" size="small" index={index} section={section} {...rest}>
       <MoisDropdown
@@ -763,7 +825,7 @@ const locationCode: React.FC<FieldProps> = ({ index, section, ...rest }) => {
         codeSystem="MOIS-LOCATIONCODE"
         selectedKey={codeOf(data?.locationCode) || undefined}
         placeholder="Please select"
-        size="small"
+        size={effectiveSize}
         onChange={(_, option) => setField('locationCode', toCodedValue(option, 'MOIS-LOCATIONCODE'))}
       />
     </LayoutItem>
@@ -779,13 +841,15 @@ const maritalStatus: React.FC<FieldProps> = ({ index, section, ...rest }) => {
     text: opt.display,
   }));
 
+  const effectiveSize = (rest.size as string | undefined) ?? 'small';
+
   return (
     <LayoutItem fieldId="maritalStatus" label="Marital status" size="small" index={index} section={section} {...rest}>
       <MoisDropdown
         fieldId="maritalStatus"
         codeSystem="MOIS-MARITALSTATUS"
         selectedKey={codeOf(data?.maritalStatus) || undefined}
-        size="small"
+        size={effectiveSize}
         onChange={(_, option) => setField('maritalStatus', toCodedValue(option, 'MOIS-MARITALSTATUS'))}
       />
     </LayoutItem>
@@ -795,12 +859,14 @@ const maritalStatus: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 const middle: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = usePatientBinding(section);
 
+  const effectiveSize = (rest.size as string | undefined) ?? 'medium';
+
   return (
     <LayoutItem fieldId="middle" label="Middle name" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.name?.middle || ''}
         autoComplete="new-password"
-        size="medium"
+        size={effectiveSize}
         onChange={(_, val) => setField('name', { ...data?.name, middle: val || '' })}
       />
     </LayoutItem>
@@ -810,6 +876,8 @@ const middle: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 const multipleBirth: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = usePatientBinding(section);
 
+  const effectiveSize = (rest.size as string | undefined) ?? 'small';
+
   return (
     <LayoutItem fieldId="multipleBirth" label="Multiple birth" size="small" index={index} section={section} {...rest}>
       <MoisDropdown
@@ -817,7 +885,7 @@ const multipleBirth: React.FC<FieldProps> = ({ index, section, ...rest }) => {
         codeSystem="MOIS-YESNO"
         selectedKey={codeOf(data?.multipleBirth) || undefined}
         placeholder="Please select"
-        size="small"
+        size={effectiveSize}
         onChange={(_, option) => setField('multipleBirth', toCodedValue(option, 'MOIS-YESNO'))}
       />
     </LayoutItem>
@@ -827,9 +895,11 @@ const multipleBirth: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 const name: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data } = usePatientBinding(section);
 
+  const effectiveSize = (rest.size as string | undefined) ?? 'medium';
+
   return (
     <LayoutItem fieldId="name" label="Name" size="medium" index={index} section={section} {...rest}>
-      <MoisTextField value={data?.name?.text || ''} readOnly borderless tabIndex={-1} size="medium" />
+      <MoisTextField value={data?.name?.text || ''} readOnly borderless tabIndex={-1} size={effectiveSize} />
     </LayoutItem>
   );
 };
@@ -837,9 +907,11 @@ const name: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 const nickName: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data } = usePatientBinding(section);
 
+  const effectiveSize = (rest.size as string | undefined) ?? 'medium';
+
   return (
     <LayoutItem fieldId="nickName" label="Alias" size="medium" index={index} section={section} {...rest}>
-      <MoisTextField value={data?.nickName?.text || ''} readOnly borderless tabIndex={-1} size="medium" />
+      <MoisTextField value={data?.nickName?.text || ''} readOnly borderless tabIndex={-1} size={effectiveSize} />
     </LayoutItem>
   );
 };
@@ -847,13 +919,15 @@ const nickName: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 const note: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = usePatientBinding(section);
 
+  const effectiveSize = (rest.size as string | undefined) ?? 'medium';
+
   return (
     <LayoutItem fieldId="note" label="General notes" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.note || ''}
         multiline
         rows={8}
-        size="medium"
+        size={effectiveSize}
         onChange={(_, val) => setField('note', val || '')}
       />
     </LayoutItem>
@@ -863,13 +937,15 @@ const note: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 const preferredGender: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = usePatientBinding(section);
 
+  const effectiveSize = (rest.size as string | undefined) ?? 'small';
+
   return (
     <LayoutItem fieldId="preferredGender" label="Preferred gender" size="small" index={index} section={section} {...rest}>
       <MoisDropdown
         fieldId="preferredGender"
         codeSystem="MOIS-PREFERREDGENDER"
         selectedKey={codeOf(data?.preferredGender) || undefined}
-        size="small"
+        size={effectiveSize}
         onChange={(_, option) => setField('preferredGender', toCodedValue(option, 'MOIS-PREFERREDGENDER'))}
       />
     </LayoutItem>
@@ -879,13 +955,15 @@ const preferredGender: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 const preferredPhone: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = usePatientBinding(section);
 
+  const effectiveSize = (rest.size as string | undefined) ?? 'small';
+
   return (
     <LayoutItem fieldId="preferredPhone" label="Preferred phone" size="small" index={index} section={section} {...rest}>
       <MoisDropdown
         fieldId="preferredPhone"
         codeSystem="MOIS-PREFERREDPHONE"
         selectedKey={codeOf(data?.preferredPhone) || undefined}
-        size="small"
+        size={effectiveSize}
         onChange={(_, option) => setField('preferredPhone', toCodedValue(option, 'MOIS-PREFERREDPHONE'))}
       />
     </LayoutItem>
@@ -895,12 +973,14 @@ const preferredPhone: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 const province: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = usePatientBinding(section);
 
+  const effectiveSize = (rest.size as string | undefined) ?? 'medium';
+
   return (
     <LayoutItem fieldId="province" label="Province" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.address?.province || ''}
         autoComplete="new-password"
-        size="medium"
+        size={effectiveSize}
         onChange={(_, val) => setField('address', { ...data?.address, province: val || '' })}
       />
     </LayoutItem>
@@ -910,12 +990,14 @@ const province: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 const postalCode: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = usePatientBinding(section);
 
+  const effectiveSize = (rest.size as string | undefined) ?? 'medium';
+
   return (
     <LayoutItem fieldId="postalCode" label="Postal code" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.address?.postalCode || ''}
         autoComplete="new-password"
-        size="medium"
+        size={effectiveSize}
         onChange={(_, val) => setField('address', { ...data?.address, postalCode: val || '' })}
       />
     </LayoutItem>
@@ -934,6 +1016,8 @@ const race1: React.FC<FieldProps> = ({ index, section, ...rest }) => {
     });
   };
 
+  const effectiveSize = (rest.size as string | undefined) ?? 'medium';
+
   return (
     <>
       <LayoutItem fieldId="race1" label="Ethnicity 1" size="medium" index={index} section={section} {...rest}>
@@ -943,7 +1027,7 @@ const race1: React.FC<FieldProps> = ({ index, section, ...rest }) => {
           borderless
           tabIndex={-1}
           prefix="SELF"
-          size="medium"
+          size={effectiveSize}
         />
         <Action.Edit onEdit={() => setIsDialogOpen(true)} />
       </LayoutItem>
@@ -974,6 +1058,8 @@ const race2: React.FC<FieldProps> = ({ index, section, ...rest }) => {
     });
   };
 
+  const effectiveSize = (rest.size as string | undefined) ?? 'medium';
+
   return (
     <>
       <LayoutItem fieldId="race2" label="Ethnicity 2" size="medium" index={index} section={section} {...rest}>
@@ -982,7 +1068,7 @@ const race2: React.FC<FieldProps> = ({ index, section, ...rest }) => {
           readOnly
           borderless
           tabIndex={-1}
-          size="medium"
+          size={effectiveSize}
         />
         <Action.Edit onEdit={() => setIsDialogOpen(true)} />
       </LayoutItem>
@@ -1013,6 +1099,8 @@ const race3: React.FC<FieldProps> = ({ index, section, ...rest }) => {
     });
   };
 
+  const effectiveSize = (rest.size as string | undefined) ?? 'medium';
+
   return (
     <>
       <LayoutItem fieldId="race3" label="Ethnicity 3" size="medium" index={index} section={section} {...rest}>
@@ -1021,7 +1109,7 @@ const race3: React.FC<FieldProps> = ({ index, section, ...rest }) => {
           readOnly
           borderless
           tabIndex={-1}
-          size="medium"
+          size={effectiveSize}
         />
         <Action.Edit onEdit={() => setIsDialogOpen(true)} />
       </LayoutItem>
@@ -1043,11 +1131,13 @@ const race3: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 const religion: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = usePatientBinding(section);
 
+  const effectiveSize = (rest.size as string | undefined) ?? 'small';
+
   return (
     <LayoutItem fieldId="religion" label="Religion" size="small" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.religion || ''}
-        size="small"
+        size={effectiveSize}
         onChange={(_, val) => setField('religion', val || '')}
       />
     </LayoutItem>
@@ -1057,11 +1147,13 @@ const religion: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 const shortNote: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = usePatientBinding(section);
 
+  const effectiveSize = (rest.size as string | undefined) ?? 'medium';
+
   return (
     <LayoutItem fieldId="shortNote" label="Short note" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.shortNote || ''}
-        size="medium"
+        size={effectiveSize}
         onChange={(_, val) => setField('shortNote', val || '')}
       />
     </LayoutItem>
@@ -1071,6 +1163,8 @@ const shortNote: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 const serviceCenter: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = usePatientBinding(section);
 
+  const effectiveSize = (rest.size as string | undefined) ?? 'small';
+
   return (
     <LayoutItem fieldId="serviceCenter" label="Service center" size="small" index={index} section={section} {...rest}>
       <MoisDropdown
@@ -1078,7 +1172,7 @@ const serviceCenter: React.FC<FieldProps> = ({ index, section, ...rest }) => {
         codeSystem="MOIS-SERVICECENTER"
         selectedKey={codeOf(data?.serviceCenter) || undefined}
         placeholder="Please select"
-        size="small"
+        size={effectiveSize}
         onChange={(_, option) => setField('serviceCenter', toCodedValue(option, 'MOIS-SERVICECENTER'))}
       />
     </LayoutItem>
@@ -1101,6 +1195,8 @@ const telecom: React.FC<FieldProps> = ({ index, section, ...rest }) => {
     setField('telecom', { ...data?.telecom, ...updates });
   };
 
+  const effectiveSize = (rest.size as string | undefined) ?? 'medium';
+
   return (
     <>
       <LayoutItem fieldId="telecom" label="Contact" size="medium" index={index} section={section} {...rest}>
@@ -1111,7 +1207,7 @@ const telecom: React.FC<FieldProps> = ({ index, section, ...rest }) => {
           readOnly
           borderless
           tabIndex={-1}
-          size="medium"
+          size={effectiveSize}
         />
         <Action.Edit onEdit={() => setIsDialogOpen(true)} />
       </LayoutItem>

@@ -180,23 +180,25 @@ const arrivedDateTime = makeReadOnlyDateTimeField('arrivedDateTime', 'Arrived');
 
 const attachmentCount: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data } = useEncounterBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'tiny';
 
   return (
     <LayoutItem fieldId="attachmentCount" label="Attached" size="tiny" index={index} section={section} {...rest}>
-      <MoisTextField value={String(data?.attachmentCount ?? 0)} readOnly borderless size="tiny" />
+      <MoisTextField value={String(data?.attachmentCount ?? 0)} readOnly borderless size={effectiveSize} />
     </LayoutItem>
   );
 };
 
 const attendingProvider: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = useEncounterBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'medium';
 
   return (
     <LayoutItem fieldId="attendingProvider" label="Attending" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.attendingProvider?.display || ''}
         placeholder="Please search"
-        size="medium"
+        size={effectiveSize}
         onChange={(_, val) => setField(
           'attendingProvider',
           val ? { code: null, display: val, system: 'MOIS-PROVIDER' } : null
@@ -208,6 +210,7 @@ const attendingProvider: React.FC<FieldProps> = ({ index, section, ...rest }) =>
 
 const billingStatus: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = useEncounterBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'small';
 
   return (
     <LayoutItem fieldId="billingStatus" label="Billing status" size="small" index={index} section={section} {...rest}>
@@ -215,7 +218,7 @@ const billingStatus: React.FC<FieldProps> = ({ index, section, ...rest }) => {
         fieldId="billingStatus"
         codeSystem="MOIS-BILLINGSTATUS"
         selectedKey={codeOf(data?.billingStatus) || undefined}
-        size="small"
+        size={effectiveSize}
         onChange={(_, option) => setField('billingStatus', toCodedValue(option, 'MOIS-BILLINGSTATUS'))}
       />
     </LayoutItem>
@@ -224,13 +227,14 @@ const billingStatus: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 
 const callingCenter: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = useEncounterBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'medium';
 
   return (
     <LayoutItem fieldId="callingCenter" label="Calling centre" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.callingCenter?.display || ''}
         placeholder="Please search"
-        size="medium"
+        size={effectiveSize}
         onChange={(_, val) => setField(
           'callingCenter',
           val ? { code: null, display: val, system: 'MOIS-CITY' } : null
@@ -245,10 +249,11 @@ const chartAssignedDateTime = makeReadOnlyDateTimeField('chartAssignedDateTime',
 
 const chartNumber: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data } = useEncounterBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'tiny';
 
   return (
     <LayoutItem fieldId="chartNumber" label="Chart No." size="tiny" index={index} section={section} {...rest}>
-      <MoisTextField value={String(data?.chartNumber ?? '')} readOnly borderless size="tiny" />
+      <MoisTextField value={String(data?.chartNumber ?? '')} readOnly borderless size={effectiveSize} />
     </LayoutItem>
   );
 };
@@ -257,6 +262,7 @@ const dischargeDateTime = makeReadOnlyDateTimeField('dischargeDateTime', 'Discha
 
 const documentStatus: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = useEncounterBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'small';
 
   return (
     <LayoutItem fieldId="documentStatus" label="Doc. Status" size="small" index={index} section={section} {...rest}>
@@ -264,7 +270,7 @@ const documentStatus: React.FC<FieldProps> = ({ index, section, ...rest }) => {
         fieldId="documentStatus"
         codeSystem="MOIS-DOCUMENTSTATUS"
         selectedKey={codeOf(data?.documentStatus) || undefined}
-        size="small"
+        size={effectiveSize}
         onChange={(_, option) => setField('documentStatus', toCodedValue(option, 'MOIS-DOCUMENTSTATUS'))}
       />
     </LayoutItem>
@@ -273,22 +279,24 @@ const documentStatus: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 
 const encompassingEncounterId: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data } = useEncounterBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'tiny';
 
   return (
     <LayoutItem fieldId="encompassingEncounterId" label="Encompassing Encounter" size="tiny" index={index} section={section} {...rest}>
-      <MoisTextField value={String(data?.encompassingEncounterId ?? '')} readOnly borderless size="tiny" />
+      <MoisTextField value={String(data?.encompassingEncounterId ?? '')} readOnly borderless size={effectiveSize} />
     </LayoutItem>
   );
 };
 
 const encompassingEncounterIdent: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = useEncounterBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'small';
 
   return (
     <LayoutItem fieldId="encompassingEncounterIdent" label="Encounter Reference" size="small" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.encompassingEncounterIdent || ''}
-        size="small"
+        size={effectiveSize}
         onChange={(_, val) => setField('encompassingEncounterIdent', val || null)}
       />
     </LayoutItem>
@@ -297,30 +305,33 @@ const encompassingEncounterIdent: React.FC<FieldProps> = ({ index, section, ...r
 
 const encounterFormCount: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data } = useEncounterBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'tiny';
 
   return (
     <LayoutItem fieldId="encounterFormCount" label="Attached forms" size="tiny" index={index} section={section} {...rest}>
-      <MoisTextField value={String(data?.encounterFormCount ?? 0)} readOnly borderless size="tiny" />
+      <MoisTextField value={String(data?.encounterFormCount ?? 0)} readOnly borderless size={effectiveSize} />
     </LayoutItem>
   );
 };
 
 const encounterId: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data } = useEncounterBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'tiny';
 
   return (
     <LayoutItem fieldId="encounterId" label="Encounter Id" size="tiny" index={index} section={section} {...rest}>
-      <MoisTextField value={String(data?.encounterId ?? '')} readOnly borderless size="tiny" />
+      <MoisTextField value={String(data?.encounterId ?? '')} readOnly borderless size={effectiveSize} />
     </LayoutItem>
   );
 };
 
 const groupVisitId: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data } = useEncounterBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'tiny';
 
   return (
     <LayoutItem fieldId="groupVisitId" label="Group visit Id" size="tiny" index={index} section={section} {...rest}>
-      <MoisTextField value={String(data?.groupVisitId ?? '')} readOnly borderless size="tiny" />
+      <MoisTextField value={String(data?.groupVisitId ?? '')} readOnly borderless size={effectiveSize} />
     </LayoutItem>
   );
 };
@@ -328,13 +339,14 @@ const groupVisitId: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 const healthIssue: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = useEncounterBinding(section);
   const firstIssue = data?.healthIssues?.[0];
+  const effectiveSize = (rest.size as string | undefined) ?? 'medium';
 
   return (
     <LayoutItem fieldId="healthIssue" label="Health issue" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={firstIssue?.display || ''}
         placeholder="Please search"
-        size="medium"
+        size={effectiveSize}
         onChange={(_, val) => {
           const newIssues = [...(data?.healthIssues || [null, null, null, null, null])];
           newIssues[0] = val ? { code: null, display: val, system: 'ICD-9' } : null;
@@ -349,12 +361,13 @@ const inRoomDateTime = makeReadOnlyDateTimeField('inRoomDateTime', 'In room');
 
 const location: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = useEncounterBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'medium';
 
   return (
     <LayoutItem fieldId="location" label="Location" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.location || ''}
-        size="medium"
+        size={effectiveSize}
         onChange={(_, val) => setField('location', val || null)}
       />
     </LayoutItem>
@@ -363,16 +376,18 @@ const location: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 
 const name: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data } = useEncounterBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'medium';
 
   return (
     <LayoutItem fieldId="name" label="Patient name" size="medium" index={index} section={section} {...rest}>
-      <MoisTextField value={data?.name?.text || ''} readOnly borderless size="medium" />
+      <MoisTextField value={data?.name?.text || ''} readOnly borderless size={effectiveSize} />
     </LayoutItem>
   );
 };
 
 const officeNote: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = useEncounterBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'max';
 
   return (
     <LayoutItem fieldId="officeNote" label="Office note" size="max" index={index} section={section} {...rest}>
@@ -380,7 +395,7 @@ const officeNote: React.FC<FieldProps> = ({ index, section, ...rest }) => {
         value={data?.officeNote || ''}
         multiline
         rows={3}
-        size="max"
+        size={effectiveSize}
         onChange={(_, val) => setField('officeNote', val || null)}
       />
     </LayoutItem>
@@ -389,16 +404,18 @@ const officeNote: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 
 const patientId: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data } = useEncounterBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'tiny';
 
   return (
     <LayoutItem fieldId="patientId" label="Patient Id" size="tiny" index={index} section={section} {...rest}>
-      <MoisTextField value={String(data?.patientId ?? '')} readOnly borderless size="tiny" />
+      <MoisTextField value={String(data?.patientId ?? '')} readOnly borderless size={effectiveSize} />
     </LayoutItem>
   );
 };
 
 const payor: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = useEncounterBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'small';
 
   return (
     <LayoutItem fieldId="payor" label="Payor" size="small" index={index} section={section} {...rest}>
@@ -407,7 +424,7 @@ const payor: React.FC<FieldProps> = ({ index, section, ...rest }) => {
         codeSystem="MOIS-FUNDINGSOURCE"
         selectedKey={codeOf(data?.payor) || undefined}
         placeholder="Please select"
-        size="small"
+        size={effectiveSize}
         onChange={(_, option) => setField('payor', toCodedValue(option, 'MOIS-FUNDINGSOURCE'))}
       />
     </LayoutItem>
@@ -416,6 +433,7 @@ const payor: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 
 const priority: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = useEncounterBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'small';
 
   return (
     <LayoutItem fieldId="priority" label="Priority" size="small" index={index} section={section} {...rest}>
@@ -424,7 +442,7 @@ const priority: React.FC<FieldProps> = ({ index, section, ...rest }) => {
         codeSystem="VALUESET:ENCOUNTER.PRIORITY"
         selectedKey={codeOf(data?.priority) || undefined}
         placeholder="Please select"
-        size="small"
+        size={effectiveSize}
         onChange={(_, option) => setField('priority', toCodedValue(option, 'VALUESET:ENCOUNTER.PRIORITY'))}
       />
     </LayoutItem>
@@ -433,32 +451,35 @@ const priority: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 
 const providerId: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data } = useEncounterBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'tiny';
 
   return (
     <LayoutItem fieldId="providerId" label="Provider Id" size="tiny" index={index} section={section} {...rest}>
-      <MoisTextField value={String(data?.providerId ?? '')} readOnly borderless size="tiny" />
+      <MoisTextField value={String(data?.providerId ?? '')} readOnly borderless size={effectiveSize} />
     </LayoutItem>
   );
 };
 
 const resourceId: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data } = useEncounterBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'tiny';
 
   return (
     <LayoutItem fieldId="resourceId" label="Resource Id" size="tiny" index={index} section={section} {...rest}>
-      <MoisTextField value={String(data?.resourceId ?? '')} readOnly borderless size="tiny" />
+      <MoisTextField value={String(data?.resourceId ?? '')} readOnly borderless size={effectiveSize} />
     </LayoutItem>
   );
 };
 
 const roomNumber: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = useEncounterBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'small';
 
   return (
     <LayoutItem fieldId="roomNumber" label="Room" size="small" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.roomNumber || ''}
-        size="small"
+        size={effectiveSize}
         onChange={(_, val) => setField('roomNumber', val || null)}
       />
     </LayoutItem>
@@ -470,13 +491,14 @@ const seenDateTime = makeReadOnlyDateTimeField('seenDateTime', 'Seen');
 const service: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = useEncounterBinding(section);
   const firstService = data?.services?.[0];
+  const effectiveSize = (rest.size as string | undefined) ?? 'medium';
 
   return (
     <LayoutItem fieldId="service" label="Service" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={firstService?.display || ''}
         placeholder="Please search"
-        size="medium"
+        size={effectiveSize}
         onChange={(_, val) => {
           const newServices = [...(data?.services || [null, null, null, null])];
           newServices[0] = val ? { code: null, display: val, system: 'USER', count: null, phase: 'ONETIME' } : null;
@@ -489,6 +511,7 @@ const service: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 
 const status: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = useEncounterBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'medium';
 
   return (
     <LayoutItem fieldId="status" label="Status" size="medium" index={index} section={section} {...rest}>
@@ -497,7 +520,7 @@ const status: React.FC<FieldProps> = ({ index, section, ...rest }) => {
         codeSystem="MOIS-ENCOUNTERSTATUS"
         selectedKey={codeOf(data?.status) || undefined}
         placeholder="Please select"
-        size="medium"
+        size={effectiveSize}
         onChange={(_, option) => setField('status', toCodedValue(option, 'MOIS-ENCOUNTERSTATUS'))}
       />
     </LayoutItem>
@@ -510,26 +533,29 @@ const stamp: React.FC<FieldProps> = ({ index, ...props }) => {
 
 const taskCount: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data } = useEncounterBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'tiny';
 
   return (
     <LayoutItem fieldId="taskCount" label="Tasks" size="tiny" index={index} section={section} {...rest}>
-      <MoisTextField value={String(data?.taskCount ?? '')} readOnly borderless size="tiny" />
+      <MoisTextField value={String(data?.taskCount ?? '')} readOnly borderless size={effectiveSize} />
     </LayoutItem>
   );
 };
 
 const timeSlots: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data } = useEncounterBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'tiny';
 
   return (
     <LayoutItem fieldId="timeSlots" label="Slots" size="tiny" index={index} section={section} {...rest}>
-      <MoisTextField value={String(data?.timeSlots ?? '')} readOnly borderless tabIndex={-1} size="tiny" />
+      <MoisTextField value={String(data?.timeSlots ?? '')} readOnly borderless tabIndex={-1} size={effectiveSize} />
     </LayoutItem>
   );
 };
 
 const visitCode: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = useEncounterBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'medium';
 
   return (
     <LayoutItem fieldId="visitCode" label="Code" size="medium" index={index} section={section} {...rest}>
@@ -537,7 +563,7 @@ const visitCode: React.FC<FieldProps> = ({ index, section, ...rest }) => {
         fieldId="visitCode"
         codeSystem="MOIS-VISITCODE"
         selectedKey={codeOf(data?.visitCode) || undefined}
-        size="medium"
+        size={effectiveSize}
         onChange={(_, option) => setField('visitCode', toCodedValue(option, 'MOIS-VISITCODE'))}
       />
     </LayoutItem>
@@ -546,6 +572,7 @@ const visitCode: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 
 const visitMode: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = useEncounterBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'medium';
 
   return (
     <LayoutItem fieldId="visitMode" label="Mode" size="medium" index={index} section={section} {...rest}>
@@ -554,7 +581,7 @@ const visitMode: React.FC<FieldProps> = ({ index, section, ...rest }) => {
         codeSystem="MOIS-VISITMODE"
         selectedKey={codeOf(data?.visitMode) || undefined}
         dropdownWidth="auto"
-        size="medium"
+        size={effectiveSize}
         onChange={(_, option) => setField('visitMode', toCodedValue(option, 'MOIS-VISITMODE'))}
       />
     </LayoutItem>
@@ -563,13 +590,14 @@ const visitMode: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 
 const visitReason1: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = useEncounterBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'medium';
 
   return (
     <LayoutItem fieldId="visitReason1" label="Visit reason" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.visitReason1?.display || ''}
         placeholder="Please search"
-        size="medium"
+        size={effectiveSize}
         onChange={(_, val) => setField(
           'visitReason1',
           { code: null, display: val || null, system: 'MOIS-VISITREASON' }
@@ -581,13 +609,14 @@ const visitReason1: React.FC<FieldProps> = ({ index, section, ...rest }) => {
 
 const visitReason2: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = useEncounterBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'medium';
 
   return (
     <LayoutItem fieldId="visitReason2" label="Secondary visit reason" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.visitReason2?.display || ''}
         placeholder="Please search"
-        size="medium"
+        size={effectiveSize}
         onChange={(_, val) => setField(
           'visitReason2',
           { code: null, display: val || null, system: 'MOIS-VISITREASON' }

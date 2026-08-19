@@ -148,12 +148,15 @@ const makeTextField = (
 ): React.FC<FieldProps> => {
   const TextFieldComponent: React.FC<FieldProps> = ({ index, section, ...rest }) => {
     const { data, setField } = useObservationPanelBinding(section);
+    // A size override from the Grid (e.g. size="100%") must reach the inner
+    // control too, or its own wrapper re-clamps inside the stretched LayoutItem.
+    const effectiveSize = (rest.size as typeof size | undefined) ?? size;
 
     return (
       <LayoutItem fieldId={fieldId} label={label} size={size} index={index} section={section} {...rest}>
         <MoisTextField
           value={data?.[fieldId] || ''}
-          size={size}
+          size={effectiveSize}
           {...(options.placeholder ? { placeholder: options.placeholder } : {})}
           {...(options.multiline ? { multiline: true } : {})}
           onChange={(_, val) => setField(fieldId, val || '')}
@@ -199,13 +202,15 @@ const panelName: React.FC<FieldProps> = ({ index, section, ...rest }) => {
     ...options.map(opt => ({ key: opt.code, text: opt.display })),
   ];
 
+  const effectiveSize = (rest.size as 'tiny' | 'small' | 'medium' | 'large' | undefined) ?? 'medium';
+
   return (
     <LayoutItem fieldId="panelName" label="Panel name" size="medium" index={index} section={section} {...rest}>
       <MoisDropdown
         fieldId="panelName"
         selectedKey={codeOf(data?.panelName)}
         options={dropdownOptions}
-        size="medium"
+        size={effectiveSize}
         onChange={(_, option) => setField('panelName', String(option?.key || ''))}
       />
     </LayoutItem>
@@ -229,6 +234,7 @@ const interfaceType = makeTextField('interfaceType', 'Interface type', 'medium')
 
 const messageSequenceNumber: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data } = useObservationPanelBinding(section);
+  const effectiveSize = (rest.size as 'tiny' | 'small' | 'medium' | 'large' | undefined) ?? 'small';
 
   return (
     <LayoutItem fieldId="messageSequenceNumber" label="Sequence in bundle" size="small" index={index} section={section} {...rest}>
@@ -236,7 +242,7 @@ const messageSequenceNumber: React.FC<FieldProps> = ({ index, section, ...rest }
         value={data?.messageSequenceNumber ? String(data.messageSequenceNumber) : ''}
         readOnly
         borderless
-        size="small"
+        size={effectiveSize}
       />
     </LayoutItem>
   );

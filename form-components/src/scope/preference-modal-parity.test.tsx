@@ -148,5 +148,23 @@ describe('preference modal parity (compiled form pipeline)', () => {
     // shows in DateSelect's MOIS display format (matching real MOIS).
     const inputs = Array.from(subForm!.querySelectorAll('input')) as HTMLInputElement[];
     expect(inputs.map((el) => el.value)).toContain('2026.08.19');
+
+    // The Grid's size="100%" must reach every field (MOIS forwards Grid rest
+    // props into the fields), so wrappers stretch to fill their grid cells
+    // instead of clamping at the small/medium size presets.
+    const stretched = Array.from(subForm!.querySelectorAll('div')).filter(
+      (el) => el.style.maxWidth === '100%' && el.style.minWidth === '100%'
+    );
+    expect(stretched.length, 'fields must stretch to their grid cells').toBeGreaterThanOrEqual(3);
+
+    // The dialog's minWidth belongs to the Dialog alone. Repeating it on the
+    // inner SubForm container overflowed the Dialog's padded content box and
+    // produced a horizontal scrollbar the real engine doesn't have.
+    expect((subForm as HTMLElement).style.minWidth).toBe('');
+
+    // Real MOIS dialogs are blocking, and Fluent derives the top-right close
+    // button from isBlocking (showCloseButton: isBlocking in Dialog.render).
+    const closeButton = document.querySelector('.ms-Dialog-button--close');
+    expect(closeButton, 'dialog must show the top-right close button').toBeTruthy();
   });
 });

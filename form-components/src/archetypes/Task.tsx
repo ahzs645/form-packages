@@ -117,13 +117,16 @@ interface FieldProps {
 
 const createdDate: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = useTaskBinding(section);
+  // A size override from the Grid (e.g. size="100%") must reach the inner
+  // control too, or its own wrapper re-clamps inside the stretched LayoutItem.
+  const effectiveSize = (rest.size as string | undefined) ?? 'small';
 
   return (
     <LayoutItem fieldId="createdDate" label="Created date" size="small" index={index} section={section} {...rest}>
       <DateSelect
         inline
         value={data?.createdDate ? formatDate(data.createdDate) : ''}
-        size="small"
+        size={effectiveSize}
         onChange={(dateStr) => {
           if (dateStr) {
             // Convert from YYYY.MM.DD to YYYY-MM-DD
@@ -138,12 +141,13 @@ createdDate.displayName = 'Task.createdDate';
 
 const description: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = useTaskBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'medium';
 
   return (
     <LayoutItem fieldId="description" label="Task" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.description || ''}
-        size="medium"
+        size={effectiveSize}
         onChange={(_, val) => setField('description', val || '')}
       />
     </LayoutItem>
@@ -153,13 +157,14 @@ description.displayName = 'Task.description';
 
 const dueDate: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = useTaskBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'small';
 
   return (
     <LayoutItem fieldId="dueDate" label="Due date" size="small" index={index} section={section} {...rest}>
       <DateSelect
         inline
         value={data?.dueDate ? formatDate(data.dueDate) : ''}
-        size="small"
+        size={effectiveSize}
         onChange={(dateStr) => {
           if (dateStr) {
             // Convert from YYYY.MM.DD to YYYY-MM-DD
@@ -174,12 +179,13 @@ dueDate.displayName = 'Task.dueDate';
 
 const note: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data, setField } = useTaskBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'max';
 
   return (
     <LayoutItem fieldId="note" label="Detail" size="max" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.note || ''}
-        size="max"
+        size={effectiveSize}
         multiline
         onChange={(_, val) => setField('note', val || '')}
       />
@@ -190,12 +196,13 @@ note.displayName = 'Task.note';
 
 const patientName: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   const { data } = useTaskBinding(section);
+  const effectiveSize = (rest.size as string | undefined) ?? 'medium';
 
   return (
     <LayoutItem fieldId="patientName" label="Patient name" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.patientName || ''}
-        size="medium"
+        size={effectiveSize}
         readOnly
         borderless
       />
@@ -212,6 +219,7 @@ const priority: React.FC<FieldProps> = ({ index, section, ...rest }) => {
     key: opt.code,
     text: opt.display,
   }));
+  const effectiveSize = (rest.size as string | undefined) ?? 'medium';
 
   return (
     <LayoutItem fieldId="priority" label="Priority" size="medium" index={index} section={section} {...rest}>
@@ -220,7 +228,7 @@ const priority: React.FC<FieldProps> = ({ index, section, ...rest }) => {
         codeSystem="MOIS-TASKPRIORITY"
         selectedKey={codeOf(data?.priority) || undefined}
         options={dropdownOptions}
-        size="medium"
+        size={effectiveSize}
         onChange={(_, option) => {
           if (option) {
             setField('priority', toCodedValue(option, 'MOIS-TASKPRIORITY'));
