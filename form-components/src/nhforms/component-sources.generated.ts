@@ -1791,6 +1791,15 @@ const _chartRecordManagerStripKeys = {
   default: ["key"],
 }
 
+// Fields hidden when EDITING an existing record, per source — the vendor's
+// PreferenceEdit placement: a preference's identity (classification, subject
+// type, name) is not editable, only its details are. The full record still
+// travels as payload defaults, so nothing is lost on update. Overridable via
+// the editor's editHiddenFieldIds prop ([] shows everything).
+const _chartRecordManagerEditHiddenFields = {
+  preferences: ["classification", "preferenceType", "preference"],
+}
+
 // Vendor-informed default modal fields per collection: coded columns get
 // real coded editors (choice + codeSystem serializes {code, display, system})
 // instead of free text. \`provider\` is deliberately absent from the
@@ -1817,7 +1826,9 @@ const _chartRecordManagerDefaultFieldPresets = {
     { id: "preference", label: "Preference", type: "text" },
     { id: "subjectDetail", label: "Subject detail", type: "textarea" },
     { id: "instruction", label: "Instruction", type: "choice", codeSystem: "MOIS-PREFINST" },
+    { id: "instructionDetail", label: "Instruction detail", type: "textarea" },
     { id: "reason", label: "Reason", type: "choice", codeSystem: "MOIS-PREFERENCEREASON" },
+    { id: "reasonDetail", label: "Reason detail", type: "textarea" },
     { id: "startDate", label: "Start date", type: "date", width: "half" },
     { id: "endDate", label: "End date", type: "date", width: "half" },
     { id: "sensitive", label: "Sensitive", type: "choice", codeSystem: "MOIS-YESNO", width: "half" },
@@ -1971,11 +1982,15 @@ ChartRecordEditor = ({
   confirmDeleteText = "Delete the selected record from the chart?",
   cascades,
   stripKeys,
+  editHiddenFieldIds,
 }) => {
   const sd = useSourceData()
   const [fd] = useActiveData()
 
   const resolvedManagerId = managerId || source
+  const resolvedEditHiddenFieldIds = Array.isArray(editHiddenFieldIds)
+    ? editHiddenFieldIds
+    : _chartRecordManagerEditHiddenFields[source] || []
   const targetInfo = CHART_RECORD_MANAGER_TARGETS[source] || {}
   const resolvedWriteTarget = writeTarget || targetInfo.writeTarget || null
   const resolvedRecordIdKey = recordIdKey || targetInfo.recordIdKey || null
@@ -2074,10 +2089,14 @@ ChartRecordEditor = ({
       }
       setDraft(seeded)
       setOpenDefaults(cleaned)
-      setOpenMeta(null)
+      setOpenMeta(
+        resolvedEditHiddenFieldIds.length > 0
+          ? { hiddenFieldIds: resolvedEditHiddenFieldIds, title: null }
+          : null
+      )
       setIsModalOpen(true)
     },
-    [resolvedPayloadMap, stripRecord]
+    [resolvedPayloadMap, stripRecord, resolvedEditHiddenFieldIds]
   )
 
   const handleConfirmDelete = React.useCallback(async () => {
@@ -2201,9 +2220,14 @@ ChartRecordEditor = ({
 }
 
 /**
- * ChartRecordList - the record table as its own builder field: the
- * collection list with per-row Edit/Delete actions routed to the
- * ChartRecordEditor sharing its managerId (default: the source).
+ * ChartRecordList - the record table as a builder field, WITH the editor
+ * modal built in: per-row Edit/Delete open its own editor, and any
+ * ChartRecordCreateButton sharing the managerId (default: the source)
+ * drives the same editor. The editor is invisible chrome, not a layout
+ * element, so it lives inside the list rather than being a field the
+ * author has to place (which also made list/editor source mismatches
+ * possible). \`withEditor={false}\` opts out when something else on the
+ * form hosts the editor (the composite manager does this).
  */
 ChartRecordList = ({
   source = "connections",
@@ -2215,34 +2239,68 @@ ChartRecordList = ({
   filterPred,
   listCompare,
   selectionType = "none",
+  withEditor = true,
+  // Editor pass-through (used only when withEditor):
+  writeTarget,
+  recordIdKey,
+  dataEntryFields,
+  payloadMap,
+  payloadDefaults,
+  modalTitle,
+  completeButtonText,
+  confirmDeleteTitle,
+  confirmDeleteText,
+  cascades,
+  stripKeys,
+  editHiddenFieldIds,
   ...props
 }) => {
   const resolvedManagerId = managerId || source
   const targetInfo = CHART_RECORD_MANAGER_TARGETS[source] || {}
   const resolvedAllowDelete =
     typeof allowDelete === "boolean" ? allowDelete : targetInfo.deleteVerified === true
-  const hasWriteTarget = Boolean(targetInfo.writeTarget)
+  const hasWriteTarget = Boolean(targetInfo.writeTarget || writeTarget)
 
   return (
-    <ChartRecordTable
-      source={source}
-      label={label}
-      columns={columns}
-      filterPred={filterPred}
-      listCompare={listCompare}
-      selectionType={selectionType}
-      onEditRecord={
-        allowEdit && hasWriteTarget
-          ? (record) => openChartRecordEditor(resolvedManagerId, { kind: "edit", record })
-          : undefined
-      }
-      onDeleteRecord={
-        resolvedAllowDelete && hasWriteTarget
-          ? (record) => openChartRecordEditor(resolvedManagerId, { kind: "delete", record })
-          : undefined
-      }
-      {...props}
-    />
+    <>
+      <ChartRecordTable
+        source={source}
+        label={label}
+        columns={columns}
+        filterPred={filterPred}
+        listCompare={listCompare}
+        selectionType={selectionType}
+        onEditRecord={
+          allowEdit && hasWriteTarget
+            ? (record) => openChartRecordEditor(resolvedManagerId, { kind: "edit", record })
+            : undefined
+        }
+        onDeleteRecord={
+          resolvedAllowDelete && hasWriteTarget
+            ? (record) => openChartRecordEditor(resolvedManagerId, { kind: "delete", record })
+            : undefined
+        }
+        {...props}
+      />
+      {withEditor ? (
+        <ChartRecordEditor
+          source={source}
+          managerId={resolvedManagerId}
+          writeTarget={writeTarget}
+          recordIdKey={recordIdKey}
+          dataEntryFields={dataEntryFields}
+          payloadMap={payloadMap}
+          payloadDefaults={payloadDefaults}
+          modalTitle={modalTitle}
+          completeButtonText={completeButtonText}
+          confirmDeleteTitle={confirmDeleteTitle}
+          confirmDeleteText={confirmDeleteText}
+          cascades={cascades}
+          stripKeys={stripKeys}
+          editHiddenFieldIds={editHiddenFieldIds}
+        />
+      ) : null}
+    </>
   )
 }
 
@@ -2316,6 +2374,7 @@ ChartRecordManager = ({
   confirmDeleteText = "Delete the selected record from the chart?",
   cascades,
   stripKeys,
+  editHiddenFieldIds,
   columns,
   filterPred,
   listCompare,
@@ -2354,6 +2413,7 @@ ChartRecordManager = ({
         filterPred={filterPred}
         listCompare={listCompare}
         selectionType={selectionType}
+        withEditor={false}
         {...props}
       />
 
@@ -2388,6 +2448,7 @@ ChartRecordManager = ({
         confirmDeleteText={confirmDeleteText}
         cascades={cascades}
         stripKeys={stripKeys}
+        editHiddenFieldIds={editHiddenFieldIds}
       />
     </Fluent.Stack>
   )
@@ -30800,6 +30861,17 @@ const _evaluateExpression = (expression, varsByName) => {
 
 const _isHeadingField = (field) => field?.type === "heading"
 
+// The data-entry row uses a 12px column gap, so fractional widths must
+// subtract their gap share or two 50% fields can never share a row
+// (50% + 50% + 12px > 100% always wraps — the halves silently stacked).
+const _dataEntryFieldContainerStyle = (field) => {
+  if (_isHeadingField(field)) return { flex: "1 0 100%", maxWidth: "100%" }
+  const basis = _resolveFieldWidthBasis(field)
+  if (basis === "100%") return { flex: "1 1 100%", maxWidth: "100%", minWidth: "220px" }
+  const adjusted = \`calc(\${basis} - 12px)\`
+  return { flex: \`1 1 \${adjusted}\`, maxWidth: adjusted, minWidth: "160px" }
+}
+
 const _resolveFieldWidthBasis = (field) => {
   if (_isHeadingField(field)) return "100%"
   const normalized = typeof field?.width === "string" ? field.width.trim().toLowerCase() : ""
@@ -32150,6 +32222,9 @@ const SubformScoringInner = ({
             key={\`field-\${field.id}\`}
             fieldId={\`subform_\${id}_\${field.id}\`}
             label={field.label}
+            // Fill the field's cell (the default "medium" caps at 320px and
+            // leaves half-width pairs visually ragged next to native inputs).
+            size={field.size || { minWidth: 120, flex: "1 1 0px" }}
             codeSystem={field.codeSystem}
             value={dataEntryValues[field.id] ?? null}
             defaultValue={_resolveFieldDefaultValue(field, sd, bringForward)}
@@ -33048,9 +33123,7 @@ const SubformScoringInner = ({
                     }
                     showLegendForScale = previousScaleSignature !== currentSignature
                   }
-                  const containerStyle = isHeading
-                    ? { flex: "1 0 100%", maxWidth: "100%" }
-                    : { flex: \`1 1 \${basis}\`, maxWidth: basis, minWidth: "220px" }
+                  const containerStyle = _dataEntryFieldContainerStyle(field)
                   return (
                     <div key={field.id} style={containerStyle}>
                       {renderDataEntryField(field, { showLegend: showLegendForScale })}
@@ -33109,7 +33182,7 @@ const SubformScoringInner = ({
                   return (
                     <div
                       key={\`supplemental-\${field.id}\`}
-                      style={{ flex: \`1 1 \${basis}\`, maxWidth: basis, minWidth: "220px" }}
+                      style={_dataEntryFieldContainerStyle(field)}
                     >
                       {renderDataEntryField(field)}
                     </div>

@@ -1658,6 +1658,38 @@ export interface SectionSubgroup {
   createdByAssistant?: boolean;
 }
 
+/**
+ * Provenance link recorded on a section that was inserted from a library
+ * preset. Editing the section never removes the link; consumers compare the
+ * fingerprints to report divergence instead.
+ */
+export interface SectionPresetLink {
+  /** Importable preset key the section was inserted from (e.g. "mse-stamp"). */
+  presetKey: string;
+  /** Preset label at insert time, shown without loading the fixture chunk. */
+  presetLabel?: string;
+  /** Zero-based index of this section among the preset's top-level sections. */
+  sectionIndex: number;
+  /**
+   * Fingerprint of the library preset's normalized section block at insert
+   * time. Compare against the current library preset to detect upstream
+   * changes.
+   */
+  fingerprint: string;
+  /**
+   * Fingerprint of the section block as it landed in this document (insert
+   * applies builder defaults, so this differs from `fingerprint`). Compare
+   * against the current document to detect local edits.
+   */
+  insertedFingerprint: string;
+  /**
+   * Normalized snapshot (ordinal field ids) of the preset's section block at
+   * insert time, kept so divergence can still be explained after the library
+   * preset itself changes.
+   */
+  snapshot: BuilderField[];
+}
+
 export interface AuthorshipPolicyConfig {
   enabled?: boolean;
   granularity?: "field" | "row";
@@ -1711,6 +1743,8 @@ export interface SectionConfig {
   navigationTarget?: MoisNavigationTarget | null;
   /** @deprecated Prefer navigationTarget */
   moisModule?: string | null;
+  /** Provenance of the library preset this section was inserted from. */
+  presetLink?: SectionPresetLink | null;
 }
 
 // Column configuration for layout

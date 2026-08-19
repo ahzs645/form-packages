@@ -1034,6 +1034,17 @@ const _evaluateExpression = (expression, varsByName) => {
 
 const _isHeadingField = (field) => field?.type === "heading"
 
+// The data-entry row uses a 12px column gap, so fractional widths must
+// subtract their gap share or two 50% fields can never share a row
+// (50% + 50% + 12px > 100% always wraps — the halves silently stacked).
+const _dataEntryFieldContainerStyle = (field) => {
+  if (_isHeadingField(field)) return { flex: "1 0 100%", maxWidth: "100%" }
+  const basis = _resolveFieldWidthBasis(field)
+  if (basis === "100%") return { flex: "1 1 100%", maxWidth: "100%", minWidth: "220px" }
+  const adjusted = `calc(${basis} - 12px)`
+  return { flex: `1 1 ${adjusted}`, maxWidth: adjusted, minWidth: "160px" }
+}
+
 const _resolveFieldWidthBasis = (field) => {
   if (_isHeadingField(field)) return "100%"
   const normalized = typeof field?.width === "string" ? field.width.trim().toLowerCase() : ""
@@ -2384,6 +2395,9 @@ const SubformScoringInner = ({
             key={`field-${field.id}`}
             fieldId={`subform_${id}_${field.id}`}
             label={field.label}
+            // Fill the field's cell (the default "medium" caps at 320px and
+            // leaves half-width pairs visually ragged next to native inputs).
+            size={field.size || { minWidth: 120, flex: "1 1 0px" }}
             codeSystem={field.codeSystem}
             value={dataEntryValues[field.id] ?? null}
             defaultValue={_resolveFieldDefaultValue(field, sd, bringForward)}
@@ -3282,9 +3296,7 @@ const SubformScoringInner = ({
                     }
                     showLegendForScale = previousScaleSignature !== currentSignature
                   }
-                  const containerStyle = isHeading
-                    ? { flex: "1 0 100%", maxWidth: "100%" }
-                    : { flex: `1 1 ${basis}`, maxWidth: basis, minWidth: "220px" }
+                  const containerStyle = _dataEntryFieldContainerStyle(field)
                   return (
                     <div key={field.id} style={containerStyle}>
                       {renderDataEntryField(field, { showLegend: showLegendForScale })}
@@ -3343,7 +3355,7 @@ const SubformScoringInner = ({
                   return (
                     <div
                       key={`supplemental-${field.id}`}
-                      style={{ flex: `1 1 ${basis}`, maxWidth: basis, minWidth: "220px" }}
+                      style={_dataEntryFieldContainerStyle(field)}
                     >
                       {renderDataEntryField(field)}
                     </div>

@@ -1775,6 +1775,15 @@ const _chartRecordManagerStripKeys = {
   default: ["key"]
 };
 
+// Fields hidden when EDITING an existing record, per source — the vendor's
+// PreferenceEdit placement: a preference's identity (classification, subject
+// type, name) is not editable, only its details are. The full record still
+// travels as payload defaults, so nothing is lost on update. Overridable via
+// the editor's editHiddenFieldIds prop ([] shows everything).
+const _chartRecordManagerEditHiddenFields = {
+  preferences: ["classification", "preferenceType", "preference"]
+};
+
 // Vendor-informed default modal fields per collection: coded columns get
 // real coded editors (choice + codeSystem serializes {code, display, system})
 // instead of free text. \`provider\` is deliberately absent from the
@@ -1858,10 +1867,18 @@ const _chartRecordManagerDefaultFieldPresets = {
     type: "choice",
     codeSystem: "MOIS-PREFINST"
   }, {
+    id: "instructionDetail",
+    label: "Instruction detail",
+    type: "textarea"
+  }, {
     id: "reason",
     label: "Reason",
     type: "choice",
     codeSystem: "MOIS-PREFERENCEREASON"
+  }, {
+    id: "reasonDetail",
+    label: "Reason detail",
+    type: "textarea"
   }, {
     id: "startDate",
     label: "Start date",
@@ -2025,11 +2042,13 @@ ChartRecordEditor = ({
   confirmDeleteTitle = "Confirm delete",
   confirmDeleteText = "Delete the selected record from the chart?",
   cascades,
-  stripKeys
+  stripKeys,
+  editHiddenFieldIds
 }) => {
   const sd = useSourceData();
   const [fd] = useActiveData();
   const resolvedManagerId = managerId || source;
+  const resolvedEditHiddenFieldIds = Array.isArray(editHiddenFieldIds) ? editHiddenFieldIds : _chartRecordManagerEditHiddenFields[source] || [];
   const targetInfo = CHART_RECORD_MANAGER_TARGETS[source] || {};
   const resolvedWriteTarget = writeTarget || targetInfo.writeTarget || null;
   const resolvedRecordIdKey = recordIdKey || targetInfo.recordIdKey || null;
@@ -2112,9 +2131,12 @@ ChartRecordEditor = ({
     }
     setDraft(seeded);
     setOpenDefaults(cleaned);
-    setOpenMeta(null);
+    setOpenMeta(resolvedEditHiddenFieldIds.length > 0 ? {
+      hiddenFieldIds: resolvedEditHiddenFieldIds,
+      title: null
+    } : null);
     setIsModalOpen(true);
-  }, [resolvedPayloadMap, stripRecord]);
+  }, [resolvedPayloadMap, stripRecord, resolvedEditHiddenFieldIds]);
   const handleConfirmDelete = React.useCallback(async () => {
     const record = pendingDelete;
     setPendingDelete(null);
@@ -2216,9 +2238,14 @@ ChartRecordEditor = ({
 };
 
 /**
- * ChartRecordList - the record table as its own builder field: the
- * collection list with per-row Edit/Delete actions routed to the
- * ChartRecordEditor sharing its managerId (default: the source).
+ * ChartRecordList - the record table as a builder field, WITH the editor
+ * modal built in: per-row Edit/Delete open its own editor, and any
+ * ChartRecordCreateButton sharing the managerId (default: the source)
+ * drives the same editor. The editor is invisible chrome, not a layout
+ * element, so it lives inside the list rather than being a field the
+ * author has to place (which also made list/editor source mismatches
+ * possible). \`withEditor={false}\` opts out when something else on the
+ * form hosts the editor (the composite manager does this).
  */
 ChartRecordList = ({
   source = "connections",
@@ -2230,13 +2257,27 @@ ChartRecordList = ({
   filterPred,
   listCompare,
   selectionType = "none",
+  withEditor = true,
+  // Editor pass-through (used only when withEditor):
+  writeTarget,
+  recordIdKey,
+  dataEntryFields,
+  payloadMap,
+  payloadDefaults,
+  modalTitle,
+  completeButtonText,
+  confirmDeleteTitle,
+  confirmDeleteText,
+  cascades,
+  stripKeys,
+  editHiddenFieldIds,
   ...props
 }) => {
   const resolvedManagerId = managerId || source;
   const targetInfo = CHART_RECORD_MANAGER_TARGETS[source] || {};
   const resolvedAllowDelete = typeof allowDelete === "boolean" ? allowDelete : targetInfo.deleteVerified === true;
-  const hasWriteTarget = Boolean(targetInfo.writeTarget);
-  return /*#__PURE__*/React.createElement(ChartRecordTable, _extends({
+  const hasWriteTarget = Boolean(targetInfo.writeTarget || writeTarget);
+  return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(ChartRecordTable, _extends({
     source: source,
     label: label,
     columns: columns,
@@ -2251,7 +2292,22 @@ ChartRecordList = ({
       kind: "delete",
       record
     }) : undefined
-  }, props));
+  }, props)), withEditor ? /*#__PURE__*/React.createElement(ChartRecordEditor, {
+    source: source,
+    managerId: resolvedManagerId,
+    writeTarget: writeTarget,
+    recordIdKey: recordIdKey,
+    dataEntryFields: dataEntryFields,
+    payloadMap: payloadMap,
+    payloadDefaults: payloadDefaults,
+    modalTitle: modalTitle,
+    completeButtonText: completeButtonText,
+    confirmDeleteTitle: confirmDeleteTitle,
+    confirmDeleteText: confirmDeleteText,
+    cascades: cascades,
+    stripKeys: stripKeys,
+    editHiddenFieldIds: editHiddenFieldIds
+  }) : null);
 };
 
 /**
@@ -2327,6 +2383,7 @@ ChartRecordManager = ({
   confirmDeleteText = "Delete the selected record from the chart?",
   cascades,
   stripKeys,
+  editHiddenFieldIds,
   columns,
   filterPred,
   listCompare,
@@ -2358,7 +2415,8 @@ ChartRecordManager = ({
     columns: columns,
     filterPred: filterPred,
     listCompare: listCompare,
-    selectionType: selectionType
+    selectionType: selectionType,
+    withEditor: false
   }, props)), createButtons.length > 0 ? /*#__PURE__*/React.createElement(Fluent.Stack, {
     horizontal: true,
     tokens: {
@@ -2387,7 +2445,8 @@ ChartRecordManager = ({
     confirmDeleteTitle: confirmDeleteTitle,
     confirmDeleteText: confirmDeleteText,
     cascades: cascades,
-    stripKeys: stripKeys
+    stripKeys: stripKeys,
+    editHiddenFieldIds: editHiddenFieldIds
   }));
 };`,
   './ChartRecordTable/index.jsx': `function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
@@ -32918,6 +32977,28 @@ const _evaluateExpression = (expression, varsByName) => {
 // =====================================================================
 
 const _isHeadingField = field => field?.type === "heading";
+
+// The data-entry row uses a 12px column gap, so fractional widths must
+// subtract their gap share or two 50% fields can never share a row
+// (50% + 50% + 12px > 100% always wraps — the halves silently stacked).
+const _dataEntryFieldContainerStyle = field => {
+  if (_isHeadingField(field)) return {
+    flex: "1 0 100%",
+    maxWidth: "100%"
+  };
+  const basis = _resolveFieldWidthBasis(field);
+  if (basis === "100%") return {
+    flex: "1 1 100%",
+    maxWidth: "100%",
+    minWidth: "220px"
+  };
+  const adjusted = \`calc(\${basis} - 12px)\`;
+  return {
+    flex: \`1 1 \${adjusted}\`,
+    maxWidth: adjusted,
+    minWidth: "160px"
+  };
+};
 const _resolveFieldWidthBasis = field => {
   if (_isHeadingField(field)) return "100%";
   const normalized = typeof field?.width === "string" ? field.width.trim().toLowerCase() : "";
@@ -34073,7 +34154,14 @@ const SubformScoringInner = ({
         return /*#__PURE__*/React.createElement(FindCodeSelect, {
           key: \`field-\${field.id}\`,
           fieldId: \`subform_\${id}_\${field.id}\`,
-          label: field.label,
+          label: field.label
+          // Fill the field's cell (the default "medium" caps at 320px and
+          // leaves half-width pairs visually ragged next to native inputs).
+          ,
+          size: field.size || {
+            minWidth: 120,
+            flex: "1 1 0px"
+          },
           codeSystem: field.codeSystem,
           value: dataEntryValues[field.id] ?? null,
           defaultValue: _resolveFieldDefaultValue(field, sd, bringForward),
@@ -34935,14 +35023,7 @@ const SubformScoringInner = ({
       }
       showLegendForScale = previousScaleSignature !== currentSignature;
     }
-    const containerStyle = isHeading ? {
-      flex: "1 0 100%",
-      maxWidth: "100%"
-    } : {
-      flex: \`1 1 \${basis}\`,
-      maxWidth: basis,
-      minWidth: "220px"
-    };
+    const containerStyle = _dataEntryFieldContainerStyle(field);
     return /*#__PURE__*/React.createElement("div", {
       key: field.id,
       style: containerStyle
@@ -35008,11 +35089,7 @@ const SubformScoringInner = ({
     const basis = _resolveFieldWidthBasis(field);
     return /*#__PURE__*/React.createElement("div", {
       key: \`supplemental-\${field.id}\`,
-      style: {
-        flex: \`1 1 \${basis}\`,
-        maxWidth: basis,
-        minWidth: "220px"
-      }
+      style: _dataEntryFieldContainerStyle(field)
     }, renderDataEntryField(field));
   })), /*#__PURE__*/React.createElement(ScoringModule, {
     id: id,
@@ -36110,7 +36187,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './AuthorshipField/index.jsx': ["AuthorshipField","DEFAULT_WINDOW_HOURS","_defaultPolicy","_nhAuth","_normalizeFieldOptions","actor","actorFrom","addHoursIso","base","buildKey","c","changed","ck","claim","claims","commitSave","commitValue","componentId","current","d","data","editableUntil","effectiveFieldId","euDate","existing","expired","fieldData","formatTimestamp","isNonEmpty","isOwner","keepStatus","key","label","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","nextStatus","nhAuth","normalizeStore","now","nowIso","numeric","optionList","ownerId","ownerName","ownerRefresh","pad2","pending","policy","policyAppliesToAction","prepareSave","query","raw","readOnly","readStore","release","renderInput","resolveNow","sameActor","sd","section","store","text","trimmed","ts","untilSelf","value","windowHours"],
   './BulkSetField/index.jsx': ["BulkSetField","ButtonComponent","apply","comparableAnswer","contradictedFieldIds","current","effectiveControlFieldId","fieldData","fieldId","isApplied","isBlankAnswer","isDisabled","normalizeBulkTargets","normalizedTargets","previous","raw","shouldClearControl","showWarning","unapply","writeControl"],
   './ChartAttachmentUpload/index.jsx': ["ChartAttachmentUpload","FormDataClass","apiServer","appSettings","auth","body","bytes","canUpload","clearSelection","document","endpoint","fetchAttachment","fileInputRef","fileTooLarge","formatChartAttachmentBytes","inputId","missingRuntime","nextResult","patientId","persistChartAttachmentResult","rawApiServer","readChartAttachmentResponse","recordResult","response","responseBody","runtime","sd","startedAt","statusColor","statusLabel","storedResult","text","uploadAttachment","userProfile","userProfileId"],
-  './ChartRecordManager/index.jsx': ["CHART_RECORD_MANAGER_TARGETS","ChartRecordCreateButton","ChartRecordEditor","ChartRecordList","ChartRecordManager","__chartRecordEditorChannels","_chartRecordEditorRegister","_chartRecordManagerApplyCascades","_chartRecordManagerDefaultCascades","_chartRecordManagerDefaultFieldPresets","_chartRecordManagerDefaultFields","_chartRecordManagerFieldTransforms","_chartRecordManagerStripKeys","baseFields","chartRefresh","classification","cleaned","code","codeSystem","columns","contextId","createButtons","dataEntryConfig","fallback","fieldPreset","handleConfirmDelete","handler","hasWriteTarget","hidden","identity","layered","managerId","mapped","merged","next","openChartRecordEditor","openForCreate","openForEdit","preset","record","recordId","resolvedAllowDelete","resolvedCascades","resolvedFields","resolvedManagerId","resolvedPayloadMap","resolvedRecordIdKey","resolvedStripKeys","resolvedWriteTarget","result","sd","seeded","spec","stripRecord","subject","targetInfo","transform","variables","writeDefinition"],
+  './ChartRecordManager/index.jsx': ["CHART_RECORD_MANAGER_TARGETS","ChartRecordCreateButton","ChartRecordEditor","ChartRecordList","ChartRecordManager","__chartRecordEditorChannels","_chartRecordEditorRegister","_chartRecordManagerApplyCascades","_chartRecordManagerDefaultCascades","_chartRecordManagerDefaultFieldPresets","_chartRecordManagerDefaultFields","_chartRecordManagerEditHiddenFields","_chartRecordManagerFieldTransforms","_chartRecordManagerStripKeys","baseFields","chartRefresh","classification","cleaned","code","codeSystem","columns","contextId","createButtons","dataEntryConfig","fallback","fieldPreset","handleConfirmDelete","handler","hasWriteTarget","hidden","identity","layered","managerId","mapped","merged","next","openChartRecordEditor","openForCreate","openForEdit","preset","record","recordId","resolvedAllowDelete","resolvedCascades","resolvedEditHiddenFieldIds","resolvedFields","resolvedManagerId","resolvedPayloadMap","resolvedRecordIdKey","resolvedStripKeys","resolvedWriteTarget","result","sd","seeded","spec","stripRecord","subject","targetInfo","transform","variables","writeDefinition"],
   './ChartRecordTable/index.jsx': ["ChartRecordTable","_chartRecordTableActiveConnections","_chartRecordTableActivePlannedActions","_chartRecordTableGenericColumns","_chartRecordTableGenericEntryColumns","_chartRecordTablePresets","_chartRecordTableSorts","_chartRecordTableStartDateDesc","baseChartColumns","byType","preset","resolvedChartColumns","resolvedEntryColumns","resolvedFieldId","resolvedFilterPred","resolvedId","resolvedLabel","resolvedListCompare","resolvedMoisModule","resolvedSelectionType","resolvedSourceId","resolvedSourceMap"],
   './ChartReviewSummary/index.jsx': ["ChartReviewSummary","K","REVIEW_BLUE","REVIEW_GRAY","REVIEW_INK","REVIEW_RED","ReviewSectionHeading","age","best","bestTime","codeList","current","doseText","latestByCode","medications","monthDelta","now","observations","parsed","patient","problems","reviewAgeYears","reviewArray","reviewDateKey","reviewGetObject","reviewHeadingStyle","reviewLineStyle","rows","sd","sex","steps","stopRaw","stopTime","time","units","value"],
   './CodedObservationChoiceField/index.jsx': ["CodedObservationChoiceField","candidates","checklistOptions","code","codedChoicePayloadsEqual","codings","commentValue","componentId","container","createdBy","currentPayload","display","effectiveFieldId","effectiveRenderAs","effectiveSelectionType","findExistingObservationId","formatCodedChoiceReport","fromContext","handleFindCodeChange","isMultiple","match","nextGroup","normalizeCodedChoiceOptions","normalizeSelectedCodings","oldId","option","options","report","sd","selectOptions","selectedValue","setCodedChoicePayload","stripVolatileCodedChoicePayloadFields","value","values","writeCodedChoiceValue"],
@@ -36173,7 +36250,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './ServiceEpisodes/index.jsx': ["ServiceEpisodes","ServiceEpisodesFields","activeServiceEpisodes","startDateDesc"],
   './ServiceRequests/index.jsx': ["ServiceRequests","ServiceRequestsFields","activeServiceRequests","orderDateDesc"],
   './SignaturePad/index.jsx': ["B","D","L","O","SignaturePad","SignaturePadLib","T","U","W","_","__exports","a","c","canvas","canvasRef","container","containerRef","containerStyle","dataUrl","define","e","exports","f","h","handleClear","handleEndStroke","i","k","l","m","module","o","p","pad","padRef","r","ratio","readOnly","readOnlyImageStyle","resizeCanvas","s","savedDataUrl","t","theme","u","width","y"],
-  './SubformScoring/index.jsx': ["AnswerSummaryItem","CalculationSummaryItem","DataFieldSummaryItem","DataInterpretationSummaryItem","FormSessionProvider","InterpretationSummaryItem","MOIS_WRITE_ID_FALLBACK_PATHS","MOIS_WRITE_MUTATIONS","MOIS_WRITE_MUTATION_KEYS","ProgressSummaryItem","ScoreSummaryItem","SubformScoring","SubformScoringInner","_LOCAL_INPUT_STYLE","_LOCAL_RADIO_GROUP_STYLE","_LOCAL_TEXTAREA_STYLE","_REPORT_ITEM_FORMATS","__SubformScoringSessionContext","__cloneSubformScoringSessionValue","_buildDataEntryRenderGroups","_buildDataEntrySnapshot","_buildFormattedObservationReport","_buildMappedPayload","_buildScaleLegendSignature","_buildScaleOptions","_buildScoreMap","_buildSubformFormDataWrites","_buildSubformObservationReport","_buildSubformObservationUpdates","_calculationIncompleteBehavior","_calculationIncompleteText","_calculationPresentationValue","_clampDataEntryNumberValue","_collectScoreCandidates","_computeMorphineEquivalent","_createPreparedSessionSetter","_evaluateDataEntryVisibility","_evaluateExpression","_findQuestionOptionForAnswer","_formatBounds","_formatCalculatorDisplayValue","_formatNumericValue","_getInterpretation","_getScoreFromValue","_getSelectableOptionNumericValue","_getValueAtPath","_isHeadingField","_isInRange","_isLoincDataEntryField","_isMeaningfulValue","_isScaleChoiceSelected","_isSelectableOptionSelected","_latestObservationDefault","_normalizeChartPreferenceValue","_normalizeScoreToken","_normalizeSelectableOptions","_optionMatchesValue","_recordSubformActionPayload","_resolveChecklistOptions","_resolveDataEntryDisplayValue","_resolveFieldDefaultValue","_resolveFieldEmptyNumericValue","_resolveFieldWidthBasis","_resolveObservationTemplate","_resolvePathValue","_resolveQuestionOptions","_resolveSelectableBinaryOptions","_resolveWriteActionId","_serializeSelectableValue","_setSubformFormDataOutputs","_setSubformObservationPayloads","_setValueAtPath","_shouldShowDataEntryHelpText","_stringifyObservationValue","_toDisplayValue","_toNumericValue","_toPathSegments","_usesStructuredSelectableOptions","abs","action","actionPayload","aliases","allValues","allVars","answer","answerScore","answerableFields","answered","answers","aspect","barBg","barFill","baseDose","baseEquivalentDoseMg","baseEquivalentDoseRaw","basis","binding","boundedPrecision","buttonRowStyle","cadFieldId","calc","calculatedExpressions","calculatedTotals","calculation","calculatorFields","candidate","candidateKeys","candidatePaths","candidates","ceil","checked","checkedFromConfig","checkedOption","checklist","cloneFormSessionState","code","columnTemplate","commentsField","commonProps","componentPayloads","computedFallback","configuredDialogMinWidth","configuredField","configuredMatrixGroupId","configuredMax","configuredMin","container","containerStyle","controlLabel","controllerId","conversions","createdBy","current","currentSignature","cursor","dataEntryAction","dataEntryCalculations","dataEntryCalculatorConfig","dataEntryFieldById","dataEntryFields","dataEntryRenderGroups","dataEntrySnapshot","dataEntryValues","dateField","day","defaultValue","defaults","description","desiredDialogMinWidth","dialogContentProps","dialogMinWidth","dialogTitle","direct","displayText","displayValue","dose","doseColumnLabel","effectiveInitialData","entry","equivalentColumnLabel","equivalentDose","equivalentDoseMg","evaluated","explicitDefault","expressionVars","extracted","factor","fallbackOptions","field","fieldExists","fields","fieldsForProgress","floor","flushMatrixBuffer","flushScaleStack","formDataWrites","formatted","fromCalculation","functionNames","generatedIndex","generatedVars","getCalculationConfig","getDataEntryFieldConfig","getQuestionConfig","getTotalConfig","groups","handleCommitToParent","handleOpenChange","hasAnyAnswers","hasAnyRowValue","hasExternalDataEntryStore","hasRequiredId","heading","history","iif","inputFieldId","inputType","inputValue","interpretation","isComplete","isDarkMode","isDataEntryMode","isDialogOpen","isHeading","isMatrixCandidate","isMorphineCalculatorMode","key","label","labelStyle","latest","left","leftDate","lines","map","match","matched","matchedOption","matrixBuffer","matrixGroupId","max","meetsMax","meetsMin","meqCalculationId","meqDisplay","meqValue","mergeFormSessionState","min","minSymbol","mod","modalProps","month","next","nextGroup","nextKey","nextOption","nextRaw","nextState","nextValue","normalize","normalized","normalizedButtonIconName","normalizedOptionMap","normalizedOptions","normalizedSessionData","normalizedType","normalizedValues","numeric","numericValue","numericValues","observationDefault","observationRows","observations","oldId","oldObservation","option","optionCount","optionList","optionMap","optionMatch","optionScoreMap","optionTokens","optionValue","options","parsed","payload","payloadMap","pendingDefaults","places","precision","precisionRaw","prepareCompletionState","prepared","preparedSession","prevIndex","previousEntry","previousField","previousScaleSignature","printScore","printed","progress","providedOptions","question","questionOptions","questionsById","raw","rawConfig","rawOptions","rawRows","rawType","rawValue","renderBloodGlucoseReadingEditor","renderDataEntryField","renderDataEntryScaleMatrix","renderDataEntryScaleStack","renderMorphineCalculator","renderNumberInput","renderStyle","renderSummaryItem","replacement","report","required","requiredFields","resolved","resolvedId","resolvedScore","response","result","resultColumnLabel","results","right","rightDate","root","round","rowId","rowLabels","rowValues","rows","rule","runMutation","runtime","scaleMatch","scaleOptions","scaleStack","scopedSetter","score","scoreMap","sd","segments","selected","selectedOption","selectedWithSetter","sessionContext","sessionSetFormData","sessionState","setDataEntryValue","setDialogOpen","setFormData","shouldClose","shouldHideButtonIcon","shouldUseDefaultButtonIcon","showCalculationsInModal","showItems","showLegend","showLegendForScale","showRequiredHint","signature","snapshot","source","sourceRoot","spec","stackMinWidth","stackedGroups","step","style","subformIncomplete","summaryContainerStyle","summaryItemsStyle","summaryLayout","target","termQuestionId","text","theme","today","token","tokenMatches","total","totalCalculationId","totalFallback","totalFromCalculation","totalLabel","totalValue","totals","triggerButtonIconProps","trimmed","uncheckedFromConfig","uncheckedOption","uniqueTokens","usFieldId","useBloodGlucoseReadingLayout","useFormSessionData","useRadio","useToggleSwitch","value","values","variableFieldIds","variables","vars","widestScaleMinWidth","writeDefinition","writeKey","writeMutationRunners","year"],
+  './SubformScoring/index.jsx': ["AnswerSummaryItem","CalculationSummaryItem","DataFieldSummaryItem","DataInterpretationSummaryItem","FormSessionProvider","InterpretationSummaryItem","MOIS_WRITE_ID_FALLBACK_PATHS","MOIS_WRITE_MUTATIONS","MOIS_WRITE_MUTATION_KEYS","ProgressSummaryItem","ScoreSummaryItem","SubformScoring","SubformScoringInner","_LOCAL_INPUT_STYLE","_LOCAL_RADIO_GROUP_STYLE","_LOCAL_TEXTAREA_STYLE","_REPORT_ITEM_FORMATS","__SubformScoringSessionContext","__cloneSubformScoringSessionValue","_buildDataEntryRenderGroups","_buildDataEntrySnapshot","_buildFormattedObservationReport","_buildMappedPayload","_buildScaleLegendSignature","_buildScaleOptions","_buildScoreMap","_buildSubformFormDataWrites","_buildSubformObservationReport","_buildSubformObservationUpdates","_calculationIncompleteBehavior","_calculationIncompleteText","_calculationPresentationValue","_clampDataEntryNumberValue","_collectScoreCandidates","_computeMorphineEquivalent","_createPreparedSessionSetter","_dataEntryFieldContainerStyle","_evaluateDataEntryVisibility","_evaluateExpression","_findQuestionOptionForAnswer","_formatBounds","_formatCalculatorDisplayValue","_formatNumericValue","_getInterpretation","_getScoreFromValue","_getSelectableOptionNumericValue","_getValueAtPath","_isHeadingField","_isInRange","_isLoincDataEntryField","_isMeaningfulValue","_isScaleChoiceSelected","_isSelectableOptionSelected","_latestObservationDefault","_normalizeChartPreferenceValue","_normalizeScoreToken","_normalizeSelectableOptions","_optionMatchesValue","_recordSubformActionPayload","_resolveChecklistOptions","_resolveDataEntryDisplayValue","_resolveFieldDefaultValue","_resolveFieldEmptyNumericValue","_resolveFieldWidthBasis","_resolveObservationTemplate","_resolvePathValue","_resolveQuestionOptions","_resolveSelectableBinaryOptions","_resolveWriteActionId","_serializeSelectableValue","_setSubformFormDataOutputs","_setSubformObservationPayloads","_setValueAtPath","_shouldShowDataEntryHelpText","_stringifyObservationValue","_toDisplayValue","_toNumericValue","_toPathSegments","_usesStructuredSelectableOptions","abs","action","actionPayload","adjusted","aliases","allValues","allVars","answer","answerScore","answerableFields","answered","answers","aspect","barBg","barFill","baseDose","baseEquivalentDoseMg","baseEquivalentDoseRaw","basis","binding","boundedPrecision","buttonRowStyle","cadFieldId","calc","calculatedExpressions","calculatedTotals","calculation","calculatorFields","candidate","candidateKeys","candidatePaths","candidates","ceil","checked","checkedFromConfig","checkedOption","checklist","cloneFormSessionState","code","columnTemplate","commentsField","commonProps","componentPayloads","computedFallback","configuredDialogMinWidth","configuredField","configuredMatrixGroupId","configuredMax","configuredMin","container","containerStyle","controlLabel","controllerId","conversions","createdBy","current","currentSignature","cursor","dataEntryAction","dataEntryCalculations","dataEntryCalculatorConfig","dataEntryFieldById","dataEntryFields","dataEntryRenderGroups","dataEntrySnapshot","dataEntryValues","dateField","day","defaultValue","defaults","description","desiredDialogMinWidth","dialogContentProps","dialogMinWidth","dialogTitle","direct","displayText","displayValue","dose","doseColumnLabel","effectiveInitialData","entry","equivalentColumnLabel","equivalentDose","equivalentDoseMg","evaluated","explicitDefault","expressionVars","extracted","factor","fallbackOptions","field","fieldExists","fields","fieldsForProgress","floor","flushMatrixBuffer","flushScaleStack","formDataWrites","formatted","fromCalculation","functionNames","generatedIndex","generatedVars","getCalculationConfig","getDataEntryFieldConfig","getQuestionConfig","getTotalConfig","groups","handleCommitToParent","handleOpenChange","hasAnyAnswers","hasAnyRowValue","hasExternalDataEntryStore","hasRequiredId","heading","history","iif","inputFieldId","inputType","inputValue","interpretation","isComplete","isDarkMode","isDataEntryMode","isDialogOpen","isHeading","isMatrixCandidate","isMorphineCalculatorMode","key","label","labelStyle","latest","left","leftDate","lines","map","match","matched","matchedOption","matrixBuffer","matrixGroupId","max","meetsMax","meetsMin","meqCalculationId","meqDisplay","meqValue","mergeFormSessionState","min","minSymbol","mod","modalProps","month","next","nextGroup","nextKey","nextOption","nextRaw","nextState","nextValue","normalize","normalized","normalizedButtonIconName","normalizedOptionMap","normalizedOptions","normalizedSessionData","normalizedType","normalizedValues","numeric","numericValue","numericValues","observationDefault","observationRows","observations","oldId","oldObservation","option","optionCount","optionList","optionMap","optionMatch","optionScoreMap","optionTokens","optionValue","options","parsed","payload","payloadMap","pendingDefaults","places","precision","precisionRaw","prepareCompletionState","prepared","preparedSession","prevIndex","previousEntry","previousField","previousScaleSignature","printScore","printed","progress","providedOptions","question","questionOptions","questionsById","raw","rawConfig","rawOptions","rawRows","rawType","rawValue","renderBloodGlucoseReadingEditor","renderDataEntryField","renderDataEntryScaleMatrix","renderDataEntryScaleStack","renderMorphineCalculator","renderNumberInput","renderStyle","renderSummaryItem","replacement","report","required","requiredFields","resolved","resolvedId","resolvedScore","response","result","resultColumnLabel","results","right","rightDate","root","round","rowId","rowLabels","rowValues","rows","rule","runMutation","runtime","scaleMatch","scaleOptions","scaleStack","scopedSetter","score","scoreMap","sd","segments","selected","selectedOption","selectedWithSetter","sessionContext","sessionSetFormData","sessionState","setDataEntryValue","setDialogOpen","setFormData","shouldClose","shouldHideButtonIcon","shouldUseDefaultButtonIcon","showCalculationsInModal","showItems","showLegend","showLegendForScale","showRequiredHint","signature","snapshot","source","sourceRoot","spec","stackMinWidth","stackedGroups","step","style","subformIncomplete","summaryContainerStyle","summaryItemsStyle","summaryLayout","target","termQuestionId","text","theme","today","token","tokenMatches","total","totalCalculationId","totalFallback","totalFromCalculation","totalLabel","totalValue","totals","triggerButtonIconProps","trimmed","uncheckedFromConfig","uncheckedOption","uniqueTokens","usFieldId","useBloodGlucoseReadingLayout","useFormSessionData","useRadio","useToggleSwitch","value","values","variableFieldIds","variables","vars","widestScaleMinWidth","writeDefinition","writeKey","writeMutationRunners","year"],
   './UnsavedChangesGuard/index.jsx': ["ButtonComponent","DCOUpdates","DEFAULT_WINDOW_HOURS","UnsavedChangesGuard","actionItems","actor","actorFrom","addHoursIso","baselineRef","buildDefaultSavePayload","buildDefaultSubmitPayload","buildKey","c","changed","ck","claim","claims","closeWindow","collectComponentPayloads","collectDomFieldValues","commitSave","componentPayload","confirmUnloadActive","current","d","data","dcoGroups","disabled","domFieldValues","editableUntil","euDate","existing","expired","field","fieldData","fieldId","footerActionItems","footerActions","formData","formatTimestamp","guardSkipsWhenSigned","handleAction","handler","hasLifecycleSignals","host","inputType","isNonEmpty","isOwner","isSettling","isSigned","isSubmitAction","keepStatus","key","label","lifecycle","linkedPanels","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","markSaved","mergeFieldValuesIntoState","narratives","nextStatus","nextValue","nhAuthCommitSave","nhAuthPrepareSave","normalizeFooterActions","normalizeGuardActions","normalizeGuardValue","normalizeStore","now","nowIso","ownerId","ownerName","ownerRefresh","pad2","panelUpdates","panels","payload","payloads","pending","persistAction","persistFd","policyAppliesToAction","prepareSave","prepared","primaryAction","promptText","raw","readStore","release","renderFooterAction","resolveNow","sameActor","saveSettleRef","savedWebform","sd","secondaryActions","serializeGuardValue","store","stripComponentPayloads","submitSd","success","tagName","trackedSnapshot","trackedValue","ts","untilSelf","useHostConfirmUnload","values","warmupRef","webformGroups","webformUpdate","windowHours"],
   './UseChangeWatch/index.jsx': ["_defaultCompare","_normalizeWatchOptions","baselineRef","compare","delayCount","dirtyRef","disabled","forcedDirtyRef","isDirty","normalizedOptions","onDirtyChange","renderCountRef","setChanged","useChangeWatch"],
   './ValueSetObservationField/index.jsx': ["RuntimeCodedChoice","ValueSetObservationField"],

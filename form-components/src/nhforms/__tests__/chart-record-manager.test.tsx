@@ -69,27 +69,27 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 
-describe("decomposed pieces (list / button / editor as separate fields)", () => {
+describe("decomposed pieces (list hosting its editor + standalone buttons)", () => {
   it("coordinates separate fields through the managerId channel", async () => {
-    // Three independent builder fields — the decomposed authoring model.
-    // They share managerId by defaulting it to the source.
+    // The decomposed authoring model: the list HOSTS the editor (invisible
+    // chrome, not a placeable field); buttons wire to it by sharing the
+    // managerId, which defaults to the source.
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
     await act(async () => {
       root!.render(
         <FormStateProvider>
-          <ChartRecordList source="connections" />
+          <ChartRecordList
+            source="connections"
+            dataEntryFields={[{ id: "comment", label: "Comment", type: "text" }]}
+          />
           <ChartRecordCreateButton
             source="connections"
             text="New POA"
             defaults={{
               connectionType: { code: "POA", display: "Power of Attorney", system: "MOIS-CONNECTIONTYPE" },
             }}
-          />
-          <ChartRecordEditor
-            source="connections"
-            dataEntryFields={[{ id: "comment", label: "Comment", type: "text" }]}
           />
         </FormStateProvider>
       );
@@ -188,6 +188,50 @@ describe("template modal (vendor-style)", () => {
     for (const label of ["Subject detail", "Instruction", "Reason", "Start date", "Sensitive"]) {
       expect(text).toContain(label);
     }
+  });
+});
+
+describe("edit modal (vendor-style)", () => {
+  it("hides identity fields on preference edit and pairs half-width fields", async () => {
+    // Seed a preference row so there is something to edit.
+    const { applyPreviewChartMutation } = await import("../../scope/preview-chart-store");
+    applyPreviewChartMutation(
+      "mutation p { changeChartPreference(patientId: $p, chartPreference: $c) { patientId } }",
+      {
+        patientId: 500063,
+        chartPreference: {
+          chartPreferenceId: 0,
+          preference: "PHARMANET ACCESS",
+          classification: { code: "DISCLOSURE", display: "Disclosure", system: "MOIS-PREFERENCECLASSIFICATION" },
+          startDate: "2014-09-09",
+        },
+      }
+    );
+
+    await mount({ source: "preferences", modalTitle: "Preference / consent" });
+    await act(async () => {
+      buttonsByAriaLabel("Edit")[0].click();
+    });
+
+    // Scope to the dialog: the table behind it legitimately has a
+    // "Classification" column header.
+    const dialog = Array.from(document.querySelectorAll<HTMLElement>(".ms-Dialog, [role='dialog']"))
+      .find((el) => el.textContent?.includes("Preference / consent"));
+    expect(dialog).toBeTruthy();
+    const text = dialog!.textContent ?? "";
+    // The vendor's PreferenceEdit placement: identity is not editable —
+    // classification/subject-type/preference stay out of the edit dialog.
+    expect(text).not.toContain("Classification");
+    expect(text).not.toContain("Subject type");
+    for (const label of ["Subject detail", "Instruction detail", "Reason detail", "Start date", "End date"]) {
+      expect(text).toContain(label);
+    }
+
+    // Half-width pairs actually share a row: the container basis subtracts
+    // the flex gap (a bare 50% + 50% + 12px gap always wrapped to stacked).
+    const startDateCell = Array.from(document.querySelectorAll<HTMLElement>("div"))
+      .find((el) => el.style.maxWidth === "calc(50% - 12px)");
+    expect(startDateCell).toBeTruthy();
   });
 });
 
