@@ -44,12 +44,38 @@ ChartRecordTable = ({
   listCompare,
   sortBy,
   sourceMap,
+  // Row actions: providing either callback appends an Actions column whose
+  // Action.Bar mirrors the vendor CRUD forms (edit opens an editor seeded
+  // from the record, delete asks the consumer to remove it). Callbacks cannot
+  // travel through serialized builder componentProps — they are runtime
+  // wiring for composing components like ChartRecordManager.
+  onEditRecord,
+  onDeleteRecord,
+  rowActionsTitle = "Actions",
   ...props
 }) => {
   const preset = _chartRecordTablePresets[source] || {}
   const resolvedId = id || `${source}Reported`
   const resolvedLabel = typeof label === "undefined" ? preset.label || source : label
-  const resolvedChartColumns = columns || preset.columns || _chartRecordTableGenericColumns
+  const baseChartColumns = columns || preset.columns || _chartRecordTableGenericColumns
+  const resolvedChartColumns =
+    onEditRecord || onDeleteRecord
+      ? [
+          ...baseChartColumns,
+          {
+            title: rowActionsTitle,
+            id: "__rowActions",
+            type: "action",
+            size: "tiny",
+            onRender: (record) => (
+              <Action.Bar
+                onEdit={onEditRecord ? () => onEditRecord(record) : undefined}
+                onDelete={onDeleteRecord ? () => onDeleteRecord(record) : undefined}
+              />
+            ),
+          },
+        ]
+      : baseChartColumns
   const resolvedEntryColumns = entryColumns || preset.entryColumns || _chartRecordTableGenericEntryColumns
   const resolvedMoisModule = typeof moisModule === "undefined" ? preset.moisModule : moisModule
   const resolvedFieldId = fieldId || preset.fieldId || source

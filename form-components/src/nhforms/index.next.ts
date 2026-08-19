@@ -390,8 +390,13 @@ function loadComponentCode(
     'InvestigationTabs', 'InvestigationTab',
     // ObservationKit helper namespace (observation-family shared kernel)
     'ObservationKit',
-    // SubformScoring exports
-    'SubformScoring',
+    // SubformScoring exports. The write kernel (mutation documents + context
+    // id resolver) is shared so composing components (ChartRecordManager)
+    // reuse one executor instead of duplicating mutation documents.
+    'SubformScoring', 'MOIS_WRITE_MUTATIONS', '_resolveWriteActionId',
+    // ChartRecordTable exports: per-collection column presets, reused by
+    // ChartRecordManager to derive default modal fields.
+    '_chartRecordTablePresets',
     // PDF regeneration exports
     'PdfRegenerator',
     // CompactBooleanField exports
