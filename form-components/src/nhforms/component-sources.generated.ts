@@ -32200,15 +32200,18 @@ const SubformScoringInner = ({
     }
 
     if (field.type === "date") {
+      // Standardized Fluent date picker (DateSelect), not the browser-native
+      // input. Controlled: no fieldId, so it never writes the store itself.
+      // DateSelect emits canonical YYYY.MM.DD; normalize to the ISO dashes
+      // the native input stored so downstream save logic sees no change.
       return (
         <div key={\`field-\${field.id}\`}>
           <Label required={required}>{field.label}</Label>
-          <input
-            type="date"
+          <DateSelect
+            inline
             placeholder={field.placeholder}
             value={dataEntryValues[field.id] ?? ""}
-            onChange={(event) => setDataEntryValue(field.id, event?.target?.value ?? "")}
-            style={_LOCAL_INPUT_STYLE(isDarkMode)}
+            onChange={(value) => setDataEntryValue(field.id, (value ?? "").replace(/\\./g, "-"))}
           />
         </div>
       )
@@ -32793,12 +32796,12 @@ const SubformScoringInner = ({
             style={{ breakInside: "avoid", margin: "0 10px", flex: "2 2 0", minWidth: 80, maxWidth: 180 }}
           >
             <Label required={dateField.required === true}>{dateField.label || "Select reading date"}</Label>
-            <input
-              id={dateField.id}
-              type="date"
+            {/* Standardized Fluent date picker; stores ISO dashes like the
+                native input it replaced (DateSelect emits YYYY.MM.DD). */}
+            <DateSelect
+              inline
               value={dataEntryValues[dateField.id] ?? ""}
-              onChange={(event) => setDataEntryValue(dateField.id, event?.target?.value ?? "")}
-              style={_LOCAL_INPUT_STYLE(isDarkMode)}
+              onChange={(value) => setDataEntryValue(dateField.id, (value ?? "").replace(/\\./g, "-"))}
             />
           </div>
 

@@ -34139,16 +34139,19 @@ const SubformScoringInner = ({
       });
     }
     if (field.type === "date") {
+      // Standardized Fluent date picker (DateSelect), not the browser-native
+      // input. Controlled: no fieldId, so it never writes the store itself.
+      // DateSelect emits canonical YYYY.MM.DD; normalize to the ISO dashes
+      // the native input stored so downstream save logic sees no change.
       return /*#__PURE__*/React.createElement("div", {
         key: \`field-\${field.id}\`
       }, /*#__PURE__*/React.createElement(Label, {
         required: required
-      }, field.label), /*#__PURE__*/React.createElement("input", {
-        type: "date",
+      }, field.label), /*#__PURE__*/React.createElement(DateSelect, {
+        inline: true,
         placeholder: field.placeholder,
         value: dataEntryValues[field.id] ?? "",
-        onChange: event => setDataEntryValue(field.id, event?.target?.value ?? ""),
-        style: _LOCAL_INPUT_STYLE(isDarkMode)
+        onChange: value => setDataEntryValue(field.id, (value ?? "").replace(/\\./g, "-"))
       }));
     }
     if (field.type === "datetime") {
@@ -34706,12 +34709,10 @@ const SubformScoringInner = ({
       }
     }, /*#__PURE__*/React.createElement(Label, {
       required: dateField.required === true
-    }, dateField.label || "Select reading date"), /*#__PURE__*/React.createElement("input", {
-      id: dateField.id,
-      type: "date",
+    }, dateField.label || "Select reading date"), /*#__PURE__*/React.createElement(DateSelect, {
+      inline: true,
       value: dataEntryValues[dateField.id] ?? "",
-      onChange: event => setDataEntryValue(dateField.id, event?.target?.value ?? ""),
-      style: _LOCAL_INPUT_STYLE(isDarkMode)
+      onChange: value => setDataEntryValue(dateField.id, (value ?? "").replace(/\\./g, "-"))
     })), /*#__PURE__*/React.createElement(Toggle, {
       label: "Show US (mg/dl) entry",
       checked: showBloodGlucoseUsEntry,
