@@ -16,12 +16,21 @@
  * and the document status values "Complete" and "Incomplete".
  *
  * Uses reusable controls: ButtonBar (for action buttons)
+ *
+ * MOIS parity notes (see ChartPreference.tsx for the reference port):
+ * - Every field passes a stable fieldId (its Fields-map key) so section
+ *   fieldPlacement can select and position it (`<Grid placement=...>`).
+ * - `All` renders the fields as a Fragment in placement order via ArchAll.
+ * - Fields read/write through the section's activeSelector when one is set,
+ *   falling back to the JSON example data (`example.encounter`) for gallery
+ *   demos.
  */
 
-import React, { useCallback } from 'react';
-import { IDropdownOption, IconButton, TooltipHost } from '@fluentui/react';
-import { LayoutItem, AuditStamp } from '../components/Layout';
-import { useActiveData, useCodeList, EncounterData, CodeValue } from '../context/MoisContext';
+import React from 'react';
+import { IconButton, TooltipHost } from '@fluentui/react';
+import { LayoutItem, ArchAll, AuditStamp } from '../components/Layout';
+import { EncounterData, SectionContextValue } from '../context/MoisContext';
+import { useArchetypeBinding, codeOf, toCodedValue, ArchetypeBinding } from './archetype-binding';
 import { DateTimeSelect } from '../controls/DateTimeSelect';
 import { MoisTextField } from '../components/MoisTextField';
 import { MoisDropdown } from '../components/MoisDropdown';
@@ -78,26 +87,20 @@ const defaultEncounter: EncounterData = {
 };
 
 // ============================================================================
-// Hooks
+// Section-aware data access
 // ============================================================================
 
-const useEncounterData = (): [EncounterData, (updates: Partial<EncounterData>) => void] => {
-  const [activeData, setActiveData] = useActiveData();
-  const data = (activeData as any).example?.encounter as EncounterData | undefined;
-
-  // Memoize setData to prevent infinite re-renders
-  const setData = useCallback((updates: Partial<EncounterData>) => {
-    setActiveData((current: any) => ({
-      ...current,
-      example: {
-        ...current.example,
-        encounter: { ...current.example?.encounter, ...updates },
-      },
-    }));
-  }, [setActiveData]);
-
-  return [data || defaultEncounter, setData];
-};
+const useEncounterBinding = (
+  sectionOverride?: Partial<SectionContextValue>
+): ArchetypeBinding =>
+  useArchetypeBinding({
+    exampleData: (activeData) => activeData.example?.encounter ?? defaultEncounter,
+    exampleTarget: (draft) => {
+      draft.example = draft.example || {};
+      return (draft.example.encounter = draft.example.encounter || {});
+    },
+    section: sectionOverride,
+  });
 
 // ============================================================================
 // Date/Time Helpers
@@ -138,252 +141,196 @@ const parseDateTime = (dateStr: string | null): { date: string; time: string } =
 // Field Components
 // ============================================================================
 
-const appointmentDateTime: React.FC<any> = ({ index, ...props }) => {
-  const [data] = useEncounterData();
-  const { date, time } = parseDateTime(data?.appointmentDateTime);
+interface FieldProps {
+  index?: number | string;
+  section?: Partial<SectionContextValue>;
+  [key: string]: any;
+}
 
-  return (
-    <DateTimeSelect
-      label="Scheduled"
-      index={index}
-      defaultValue={date}
-      defaultTime={time}
-      size="medium"
-      readOnly
-    />
-  );
+/** Read-only date+time field rendered through DateTimeSelect (which carries
+ * its own placement-aware LayoutItem, so it gets the fieldId directly). */
+const makeReadOnlyDateTimeField = (
+  fieldId: keyof EncounterData & string,
+  label: string
+): React.FC<FieldProps> => {
+  const DateTimeField: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+    const { data } = useEncounterBinding(section);
+    const { date, time } = parseDateTime((data?.[fieldId] as string | null) ?? null);
+
+    return (
+      <DateTimeSelect
+        fieldId={fieldId}
+        label={label}
+        index={index as number | undefined}
+        section={section}
+        defaultValue={date}
+        defaultTime={time}
+        size="medium"
+        readOnly
+        {...rest}
+      />
+    );
+  };
+  DateTimeField.displayName = `Encounter.${fieldId}`;
+  return DateTimeField;
 };
 
-const arrivedDateTime: React.FC<any> = ({ index, ...props }) => {
-  const [data] = useEncounterData();
-  const { date, time } = parseDateTime(data?.arrivedDateTime);
+const appointmentDateTime = makeReadOnlyDateTimeField('appointmentDateTime', 'Scheduled');
+const arrivedDateTime = makeReadOnlyDateTimeField('arrivedDateTime', 'Arrived');
+
+const attachmentCount: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data } = useEncounterBinding(section);
 
   return (
-    <DateTimeSelect
-      label="Arrived"
-      index={index}
-      defaultValue={date}
-      defaultTime={time}
-      size="medium"
-      readOnly
-    />
-  );
-};
-
-const attachmentCount: React.FC<any> = ({ index, ...props }) => {
-  const [data] = useEncounterData();
-
-  return (
-    <LayoutItem label="Attached" size="tiny" index={index}>
+    <LayoutItem fieldId="attachmentCount" label="Attached" size="tiny" index={index} section={section} {...rest}>
       <MoisTextField value={String(data?.attachmentCount ?? 0)} readOnly borderless size="tiny" />
     </LayoutItem>
   );
 };
 
-const attendingProvider: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useEncounterData();
+const attendingProvider: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = useEncounterBinding(section);
 
   return (
-    <LayoutItem label="Attending" size="medium" index={index}>
+    <LayoutItem fieldId="attendingProvider" label="Attending" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.attendingProvider?.display || ''}
         placeholder="Please search"
         size="medium"
-        onChange={(_, val) => setData({
-          attendingProvider: val ? { code: null, display: val, system: 'MOIS-PROVIDER' } : null
-        })}
+        onChange={(_, val) => setField(
+          'attendingProvider',
+          val ? { code: null, display: val, system: 'MOIS-PROVIDER' } : null
+        )}
       />
     </LayoutItem>
   );
 };
 
-const billingStatus: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useEncounterData();
+const billingStatus: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = useEncounterBinding(section);
 
   return (
-    <LayoutItem label="Billing status" size="small" index={index}>
+    <LayoutItem fieldId="billingStatus" label="Billing status" size="small" index={index} section={section} {...rest}>
       <MoisDropdown
         fieldId="billingStatus"
         codeSystem="MOIS-BILLINGSTATUS"
-        selectedKey={data?.billingStatus?.code || undefined}
+        selectedKey={codeOf(data?.billingStatus) || undefined}
         size="small"
-        onChange={(_, option) => {
-          if (option) {
-            setData({
-              billingStatus: {
-                code: option.key as string,
-                display: option.text,
-                system: 'MOIS-BILLINGSTATUS',
-              },
-            });
-          }
-        }}
+        onChange={(_, option) => setField('billingStatus', toCodedValue(option, 'MOIS-BILLINGSTATUS'))}
       />
     </LayoutItem>
   );
 };
 
-const callingCenter: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useEncounterData();
+const callingCenter: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = useEncounterBinding(section);
 
   return (
-    <LayoutItem label="Calling centre" size="medium" index={index}>
+    <LayoutItem fieldId="callingCenter" label="Calling centre" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.callingCenter?.display || ''}
         placeholder="Please search"
         size="medium"
-        onChange={(_, val) => setData({
-          callingCenter: val ? { code: null, display: val, system: 'MOIS-CITY' } : null
-        })}
+        onChange={(_, val) => setField(
+          'callingCenter',
+          val ? { code: null, display: val, system: 'MOIS-CITY' } : null
+        )}
       />
     </LayoutItem>
   );
 };
 
-const cancelledDateTime: React.FC<any> = ({ index, ...props }) => {
-  const [data] = useEncounterData();
-  const { date, time } = parseDateTime(data?.cancelledDateTime);
+const cancelledDateTime = makeReadOnlyDateTimeField('cancelledDateTime', 'Cancelled');
+const chartAssignedDateTime = makeReadOnlyDateTimeField('chartAssignedDateTime', 'Chart assigned');
+
+const chartNumber: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data } = useEncounterBinding(section);
 
   return (
-    <DateTimeSelect
-      label="Cancelled"
-      index={index}
-      defaultValue={date}
-      defaultTime={time}
-      size="medium"
-      readOnly
-    />
-  );
-};
-
-const chartAssignedDateTime: React.FC<any> = ({ index, ...props }) => {
-  const [data] = useEncounterData();
-  const { date, time } = parseDateTime(data?.chartAssignedDateTime);
-
-  return (
-    <DateTimeSelect
-      label="Chart assigned"
-      index={index}
-      defaultValue={date}
-      defaultTime={time}
-      size="medium"
-      readOnly
-    />
-  );
-};
-
-const chartNumber: React.FC<any> = ({ index, ...props }) => {
-  const [data] = useEncounterData();
-
-  return (
-    <LayoutItem label="Chart No." size="tiny" index={index}>
+    <LayoutItem fieldId="chartNumber" label="Chart No." size="tiny" index={index} section={section} {...rest}>
       <MoisTextField value={String(data?.chartNumber ?? '')} readOnly borderless size="tiny" />
     </LayoutItem>
   );
 };
 
-const dischargeDateTime: React.FC<any> = ({ index, ...props }) => {
-  const [data] = useEncounterData();
-  const { date, time } = parseDateTime(data?.dischargeDateTime);
+const dischargeDateTime = makeReadOnlyDateTimeField('dischargeDateTime', 'Discharged');
+
+const documentStatus: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = useEncounterBinding(section);
 
   return (
-    <DateTimeSelect
-      label="Discharged"
-      index={index}
-      defaultValue={date}
-      defaultTime={time}
-      size="medium"
-      readOnly
-    />
-  );
-};
-
-const documentStatus: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useEncounterData();
-
-  return (
-    <LayoutItem label="Doc. Status" size="small" index={index}>
+    <LayoutItem fieldId="documentStatus" label="Doc. Status" size="small" index={index} section={section} {...rest}>
       <MoisDropdown
         fieldId="documentStatus"
         codeSystem="MOIS-DOCUMENTSTATUS"
-        selectedKey={data?.documentStatus?.code || undefined}
+        selectedKey={codeOf(data?.documentStatus) || undefined}
         size="small"
-        onChange={(_, option) => {
-          if (option) {
-            setData({
-              documentStatus: {
-                code: option.key as string,
-                display: option.text,
-                system: 'MOIS-DOCUMENTSTATUS',
-              },
-            });
-          }
-        }}
+        onChange={(_, option) => setField('documentStatus', toCodedValue(option, 'MOIS-DOCUMENTSTATUS'))}
       />
     </LayoutItem>
   );
 };
 
-const encompassingEncounterId: React.FC<any> = ({ index, ...props }) => {
-  const [data] = useEncounterData();
+const encompassingEncounterId: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data } = useEncounterBinding(section);
 
   return (
-    <LayoutItem label="Encompassing Encounter" size="tiny" index={index}>
+    <LayoutItem fieldId="encompassingEncounterId" label="Encompassing Encounter" size="tiny" index={index} section={section} {...rest}>
       <MoisTextField value={String(data?.encompassingEncounterId ?? '')} readOnly borderless size="tiny" />
     </LayoutItem>
   );
 };
 
-const encompassingEncounterIdent: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useEncounterData();
+const encompassingEncounterIdent: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = useEncounterBinding(section);
 
   return (
-    <LayoutItem label="Encounter Reference" size="small" index={index}>
+    <LayoutItem fieldId="encompassingEncounterIdent" label="Encounter Reference" size="small" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.encompassingEncounterIdent || ''}
         size="small"
-        onChange={(_, val) => setData({ encompassingEncounterIdent: val || null })}
+        onChange={(_, val) => setField('encompassingEncounterIdent', val || null)}
       />
     </LayoutItem>
   );
 };
 
-const encounterFormCount: React.FC<any> = ({ index, ...props }) => {
-  const [data] = useEncounterData();
+const encounterFormCount: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data } = useEncounterBinding(section);
 
   return (
-    <LayoutItem label="Attached forms" size="tiny" index={index}>
+    <LayoutItem fieldId="encounterFormCount" label="Attached forms" size="tiny" index={index} section={section} {...rest}>
       <MoisTextField value={String(data?.encounterFormCount ?? 0)} readOnly borderless size="tiny" />
     </LayoutItem>
   );
 };
 
-const encounterId: React.FC<any> = ({ index, ...props }) => {
-  const [data] = useEncounterData();
+const encounterId: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data } = useEncounterBinding(section);
 
   return (
-    <LayoutItem label="Encounter Id" size="tiny" index={index}>
+    <LayoutItem fieldId="encounterId" label="Encounter Id" size="tiny" index={index} section={section} {...rest}>
       <MoisTextField value={String(data?.encounterId ?? '')} readOnly borderless size="tiny" />
     </LayoutItem>
   );
 };
 
-const groupVisitId: React.FC<any> = ({ index, ...props }) => {
-  const [data] = useEncounterData();
+const groupVisitId: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data } = useEncounterBinding(section);
 
   return (
-    <LayoutItem label="Group visit Id" size="tiny" index={index}>
+    <LayoutItem fieldId="groupVisitId" label="Group visit Id" size="tiny" index={index} section={section} {...rest}>
       <MoisTextField value={String(data?.groupVisitId ?? '')} readOnly borderless size="tiny" />
     </LayoutItem>
   );
 };
 
-const healthIssue: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useEncounterData();
+const healthIssue: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = useEncounterBinding(section);
   const firstIssue = data?.healthIssues?.[0];
 
   return (
-    <LayoutItem label="Health issue" size="medium" index={index}>
+    <LayoutItem fieldId="healthIssue" label="Health issue" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={firstIssue?.display || ''}
         placeholder="Please search"
@@ -391,189 +338,141 @@ const healthIssue: React.FC<any> = ({ index, ...props }) => {
         onChange={(_, val) => {
           const newIssues = [...(data?.healthIssues || [null, null, null, null, null])];
           newIssues[0] = val ? { code: null, display: val, system: 'ICD-9' } : null;
-          setData({ healthIssues: newIssues });
+          setField('healthIssues', newIssues);
         }}
       />
     </LayoutItem>
   );
 };
 
-const inRoomDateTime: React.FC<any> = ({ index, ...props }) => {
-  const [data] = useEncounterData();
-  const { date, time } = parseDateTime(data?.inRoomDateTime);
+const inRoomDateTime = makeReadOnlyDateTimeField('inRoomDateTime', 'In room');
+
+const location: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = useEncounterBinding(section);
 
   return (
-    <DateTimeSelect
-      label="In room"
-      index={index}
-      defaultValue={date}
-      defaultTime={time}
-      size="medium"
-      readOnly
-    />
-  );
-};
-
-const location: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useEncounterData();
-
-  return (
-    <LayoutItem label="Location" size="medium" index={index}>
+    <LayoutItem fieldId="location" label="Location" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.location || ''}
         size="medium"
-        onChange={(_, val) => setData({ location: val || null })}
+        onChange={(_, val) => setField('location', val || null)}
       />
     </LayoutItem>
   );
 };
 
-const name: React.FC<any> = ({ index, ...props }) => {
-  const [data] = useEncounterData();
+const name: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data } = useEncounterBinding(section);
 
   return (
-    <LayoutItem label="Patient name" size="medium" index={index}>
+    <LayoutItem fieldId="name" label="Patient name" size="medium" index={index} section={section} {...rest}>
       <MoisTextField value={data?.name?.text || ''} readOnly borderless size="medium" />
     </LayoutItem>
   );
 };
 
-const officeNote: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useEncounterData();
+const officeNote: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = useEncounterBinding(section);
 
   return (
-    <LayoutItem label="Office note" size="max" index={index}>
+    <LayoutItem fieldId="officeNote" label="Office note" size="max" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.officeNote || ''}
         multiline
         rows={3}
         size="max"
-        onChange={(_, val) => setData({ officeNote: val || null })}
+        onChange={(_, val) => setField('officeNote', val || null)}
       />
     </LayoutItem>
   );
 };
 
-const patientId: React.FC<any> = ({ index, ...props }) => {
-  const [data] = useEncounterData();
+const patientId: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data } = useEncounterBinding(section);
 
   return (
-    <LayoutItem label="Patient Id" size="tiny" index={index}>
+    <LayoutItem fieldId="patientId" label="Patient Id" size="tiny" index={index} section={section} {...rest}>
       <MoisTextField value={String(data?.patientId ?? '')} readOnly borderless size="tiny" />
     </LayoutItem>
   );
 };
 
-const payor: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useEncounterData();
+const payor: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = useEncounterBinding(section);
 
   return (
-    <LayoutItem label="Payor" size="small" index={index}>
+    <LayoutItem fieldId="payor" label="Payor" size="small" index={index} section={section} {...rest}>
       <MoisDropdown
         fieldId="payor"
         codeSystem="MOIS-FUNDINGSOURCE"
-        selectedKey={data?.payor?.code || undefined}
+        selectedKey={codeOf(data?.payor) || undefined}
         placeholder="Please select"
         size="small"
-        onChange={(_, option) => {
-          if (option) {
-            setData({
-              payor: {
-                code: option.key as string,
-                display: option.text,
-                system: 'MOIS-FUNDINGSOURCE',
-              },
-            });
-          }
-        }}
+        onChange={(_, option) => setField('payor', toCodedValue(option, 'MOIS-FUNDINGSOURCE'))}
       />
     </LayoutItem>
   );
 };
 
-const priority: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useEncounterData();
+const priority: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = useEncounterBinding(section);
 
   return (
-    <LayoutItem label="Priority" size="small" index={index}>
+    <LayoutItem fieldId="priority" label="Priority" size="small" index={index} section={section} {...rest}>
       <MoisDropdown
         fieldId="priority"
         codeSystem="VALUESET:ENCOUNTER.PRIORITY"
-        selectedKey={data?.priority?.code || undefined}
+        selectedKey={codeOf(data?.priority) || undefined}
         placeholder="Please select"
         size="small"
-        onChange={(_, option) => {
-          if (option) {
-            setData({
-              priority: {
-                code: option.key as string,
-                display: option.text,
-                system: 'VALUESET:ENCOUNTER.PRIORITY',
-              },
-            });
-          }
-        }}
+        onChange={(_, option) => setField('priority', toCodedValue(option, 'VALUESET:ENCOUNTER.PRIORITY'))}
       />
     </LayoutItem>
   );
 };
 
-const providerId: React.FC<any> = ({ index, ...props }) => {
-  const [data] = useEncounterData();
+const providerId: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data } = useEncounterBinding(section);
 
   return (
-    <LayoutItem label="Provider Id" size="tiny" index={index}>
+    <LayoutItem fieldId="providerId" label="Provider Id" size="tiny" index={index} section={section} {...rest}>
       <MoisTextField value={String(data?.providerId ?? '')} readOnly borderless size="tiny" />
     </LayoutItem>
   );
 };
 
-const resourceId: React.FC<any> = ({ index, ...props }) => {
-  const [data] = useEncounterData();
+const resourceId: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data } = useEncounterBinding(section);
 
   return (
-    <LayoutItem label="Resource Id" size="tiny" index={index}>
+    <LayoutItem fieldId="resourceId" label="Resource Id" size="tiny" index={index} section={section} {...rest}>
       <MoisTextField value={String(data?.resourceId ?? '')} readOnly borderless size="tiny" />
     </LayoutItem>
   );
 };
 
-const roomNumber: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useEncounterData();
+const roomNumber: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = useEncounterBinding(section);
 
   return (
-    <LayoutItem label="Room" size="small" index={index}>
+    <LayoutItem fieldId="roomNumber" label="Room" size="small" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.roomNumber || ''}
         size="small"
-        onChange={(_, val) => setData({ roomNumber: val || null })}
+        onChange={(_, val) => setField('roomNumber', val || null)}
       />
     </LayoutItem>
   );
 };
 
-const seenDateTime: React.FC<any> = ({ index, ...props }) => {
-  const [data] = useEncounterData();
-  const { date, time } = parseDateTime(data?.seenDateTime);
+const seenDateTime = makeReadOnlyDateTimeField('seenDateTime', 'Seen');
 
-  return (
-    <DateTimeSelect
-      label="Seen"
-      index={index}
-      defaultValue={date}
-      defaultTime={time}
-      size="medium"
-      readOnly
-    />
-  );
-};
-
-const service: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useEncounterData();
+const service: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = useEncounterBinding(section);
   const firstService = data?.services?.[0];
 
   return (
-    <LayoutItem label="Service" size="medium" index={index}>
+    <LayoutItem fieldId="service" label="Service" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={firstService?.display || ''}
         placeholder="Please search"
@@ -581,146 +480,118 @@ const service: React.FC<any> = ({ index, ...props }) => {
         onChange={(_, val) => {
           const newServices = [...(data?.services || [null, null, null, null])];
           newServices[0] = val ? { code: null, display: val, system: 'USER', count: null, phase: 'ONETIME' } : null;
-          setData({ services: newServices as any });
+          setField('services', newServices);
         }}
       />
     </LayoutItem>
   );
 };
 
-const status: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useEncounterData();
+const status: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = useEncounterBinding(section);
 
   return (
-    <LayoutItem label="Status" size="medium" index={index}>
+    <LayoutItem fieldId="status" label="Status" size="medium" index={index} section={section} {...rest}>
       <MoisDropdown
         fieldId="status"
         codeSystem="MOIS-ENCOUNTERSTATUS"
-        selectedKey={data?.status?.code || undefined}
+        selectedKey={codeOf(data?.status) || undefined}
         placeholder="Please select"
         size="medium"
-        onChange={(_, option) => {
-          if (option) {
-            setData({
-              status: {
-                code: option.key as string,
-                display: option.text,
-                system: 'MOIS-ENCOUNTERSTATUS',
-              },
-            });
-          }
-        }}
+        onChange={(_, option) => setField('status', toCodedValue(option, 'MOIS-ENCOUNTERSTATUS'))}
       />
     </LayoutItem>
   );
 };
 
-const stamp: React.FC<any> = ({ index, ...props }) => {
-  return <AuditStamp index={index} {...props} />;
+const stamp: React.FC<FieldProps> = ({ index, ...props }) => {
+  return <AuditStamp fieldId="stamp" index={index} {...props} />;
 };
 
-const taskCount: React.FC<any> = ({ index, ...props }) => {
-  const [data] = useEncounterData();
+const taskCount: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data } = useEncounterBinding(section);
 
   return (
-    <LayoutItem label="Tasks" size="tiny" index={index}>
+    <LayoutItem fieldId="taskCount" label="Tasks" size="tiny" index={index} section={section} {...rest}>
       <MoisTextField value={String(data?.taskCount ?? '')} readOnly borderless size="tiny" />
     </LayoutItem>
   );
 };
 
-const timeSlots: React.FC<any> = ({ index, ...props }) => {
-  const [data] = useEncounterData();
+const timeSlots: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data } = useEncounterBinding(section);
 
   return (
-    <LayoutItem label="Slots" size="tiny" index={index}>
+    <LayoutItem fieldId="timeSlots" label="Slots" size="tiny" index={index} section={section} {...rest}>
       <MoisTextField value={String(data?.timeSlots ?? '')} readOnly borderless tabIndex={-1} size="tiny" />
     </LayoutItem>
   );
 };
 
-const visitCode: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useEncounterData();
+const visitCode: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = useEncounterBinding(section);
 
   return (
-    <LayoutItem label="Code" size="medium" index={index}>
+    <LayoutItem fieldId="visitCode" label="Code" size="medium" index={index} section={section} {...rest}>
       <MoisDropdown
         fieldId="visitCode"
         codeSystem="MOIS-VISITCODE"
-        selectedKey={data?.visitCode?.code || undefined}
+        selectedKey={codeOf(data?.visitCode) || undefined}
         size="medium"
-        onChange={(_, option) => {
-          if (option) {
-            setData({
-              visitCode: {
-                code: option.key as string,
-                display: option.text,
-                system: 'MOIS-VISITCODE',
-              },
-            });
-          }
-        }}
+        onChange={(_, option) => setField('visitCode', toCodedValue(option, 'MOIS-VISITCODE'))}
       />
     </LayoutItem>
   );
 };
 
-const visitMode: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useEncounterData();
+const visitMode: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = useEncounterBinding(section);
 
   return (
-    <LayoutItem label="Mode" size="medium" index={index}>
+    <LayoutItem fieldId="visitMode" label="Mode" size="medium" index={index} section={section} {...rest}>
       <MoisDropdown
         fieldId="visitMode"
         codeSystem="MOIS-VISITMODE"
-        selectedKey={data?.visitMode?.code || undefined}
+        selectedKey={codeOf(data?.visitMode) || undefined}
         dropdownWidth="auto"
         size="medium"
-        onChange={(_, option) => {
-          if (option) {
-            setData({
-              visitMode: {
-                code: option.key as string,
-                display: option.text,
-                system: 'MOIS-VISITMODE',
-              },
-            });
-          }
-        }}
+        onChange={(_, option) => setField('visitMode', toCodedValue(option, 'MOIS-VISITMODE'))}
       />
     </LayoutItem>
   );
 };
 
-const visitReason1: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useEncounterData();
+const visitReason1: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = useEncounterBinding(section);
 
   return (
-    <LayoutItem label="Visit reason" size="medium" index={index}>
+    <LayoutItem fieldId="visitReason1" label="Visit reason" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.visitReason1?.display || ''}
         placeholder="Please search"
         size="medium"
-        onChange={(_, val) => setData({
-          visitReason1: { code: null, display: val || null, system: 'MOIS-VISITREASON' } as any
-        })}
+        onChange={(_, val) => setField(
+          'visitReason1',
+          { code: null, display: val || null, system: 'MOIS-VISITREASON' }
+        )}
       />
     </LayoutItem>
   );
 };
 
-const visitReason2: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useEncounterData();
+const visitReason2: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = useEncounterBinding(section);
 
   return (
-    <LayoutItem label="Secondary visit reason" size="medium" index={index}>
+    <LayoutItem fieldId="visitReason2" label="Secondary visit reason" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.visitReason2?.display || ''}
         placeholder="Please search"
         size="medium"
-        onChange={(_, val) => setData({
-          visitReason2: { code: null, display: val || null, system: 'MOIS-VISITREASON' } as any
-        })}
+        onChange={(_, val) => setField(
+          'visitReason2',
+          { code: null, display: val || null, system: 'MOIS-VISITREASON' }
+        )}
       />
     </LayoutItem>
   );
@@ -849,52 +720,10 @@ const Button = {
 };
 
 // ============================================================================
-// All Component (renders ALL fields)
+// All Component (renders the placed fields, or every field with no placement)
 // ============================================================================
 
-const All: React.FC<any> = (props) => {
-  return (
-    <div>
-      <Fields.appointmentDateTime {...props} />
-      <Fields.arrivedDateTime {...props} />
-      <Fields.attachmentCount {...props} />
-      <Fields.attendingProvider {...props} />
-      <Fields.billingStatus {...props} />
-      <Fields.callingCenter {...props} />
-      <Fields.cancelledDateTime {...props} />
-      <Fields.chartAssignedDateTime {...props} />
-      <Fields.chartNumber {...props} />
-      <Fields.dischargeDateTime {...props} />
-      <Fields.documentStatus {...props} />
-      <Fields.encompassingEncounterId {...props} />
-      <Fields.encompassingEncounterIdent {...props} />
-      <Fields.encounterFormCount {...props} />
-      <Fields.encounterId {...props} />
-      <Fields.groupVisitId {...props} />
-      <Fields.healthIssue {...props} />
-      <Fields.inRoomDateTime {...props} />
-      <Fields.location {...props} />
-      <Fields.name {...props} />
-      <Fields.officeNote {...props} />
-      <Fields.patientId {...props} />
-      <Fields.payor {...props} />
-      <Fields.priority {...props} />
-      <Fields.providerId {...props} />
-      <Fields.resourceId {...props} />
-      <Fields.roomNumber {...props} />
-      <Fields.seenDateTime {...props} />
-      <Fields.service {...props} />
-      <Fields.status {...props} />
-      <Fields.stamp {...props} />
-      <Fields.taskCount {...props} />
-      <Fields.timeSlots {...props} />
-      <Fields.visitCode {...props} />
-      <Fields.visitMode {...props} />
-      <Fields.visitReason1 {...props} />
-      <Fields.visitReason2 {...props} />
-    </div>
-  );
-};
+const All: React.FC<any> = (props) => <ArchAll fields={Fields} {...props} />;
 
 // ============================================================================
 // Export

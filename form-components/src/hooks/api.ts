@@ -4,6 +4,7 @@
  */
 
 import React from 'react';
+import { applyPreviewChartMutation } from '../scope/preview-chart-store';
 
 export interface QueryResult<T = any> {
   data: T | undefined;
@@ -102,26 +103,18 @@ export const useQuery = <T = any>(_query: string, _variables?: any): QueryTuple<
   ];
 };
 
-/**
- * First GraphQL field a mutation document selects (e.g. "changeConnection"
- * from `mutation updateConnection(...) { changeConnection(...) { ... } }`).
- * Exported for tests.
- */
-export const extractMutationFieldName = (document: string): string | null => {
-  const bodyStart = document.indexOf('{');
-  if (bodyStart === -1) return null;
-  const match = document.slice(bodyStart + 1).match(/[A-Za-z_][A-Za-z0-9_]*/);
-  return match ? match[0] : null;
-};
+export { extractMutationFieldName } from '../scope/preview-chart-store';
 
 /**
  * Mock useMutation hook for form preview
  * Shimmed MOIS returns [mutateFunction, queryResult, status].
  *
- * The resolved value echoes the mutation's GraphQL field so the standard
- * post-mutation idiom (vendor test forms, HFC forms) works in preview:
- * `const result = await mutate(vars); if (result?.changeConnection) { ... }`.
- * An empty `{}` here silently stalls those flows — the subform never closes.
+ * Mutations apply to the preview chart store (modeled on the FormTester's
+ * serve-local.js): the mock patient's collections and demographic fields
+ * actually change, useSourceData overlays the result, and the resolved value
+ * is engine-shaped — list results keyed by the mutation's GraphQL field
+ * ({ changeConnection: [{ patientId }] }), which the standard post-mutation
+ * idiom (`if (result?.changeConnection) { refresh(sd) }`) depends on.
  */
 export const useMutation = <T = any>(
   mutation: string,
@@ -141,10 +134,7 @@ export const useMutation = <T = any>(
       setTimeout(() => {
         setLoading(false);
         setStatus('ready');
-        const fieldName = extractMutationFieldName(mutation);
-        const result = (fieldName
-          ? { [fieldName]: { ...(variables ?? {}) } }
-          : {}) as T;
+        const result = applyPreviewChartMutation(mutation, variables) as T;
         setData(result);
         resolve(result);
       }, 100);

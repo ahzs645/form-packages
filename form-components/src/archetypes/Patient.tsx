@@ -6,12 +6,21 @@
  * insurance details, and administrative data.
  *
  * Uses reusable controls: Action.Edit (for edit buttons)
+ *
+ * MOIS parity notes (verified against the SMOIS FormTester bundle):
+ * - Every field passes a stable fieldId (its Fields-map key) so section
+ *   fieldPlacement can select and position it (`<Grid placement=...>`).
+ * - `All` renders the fields as a Fragment in placement order — fields must be
+ *   direct grid children for per-field gridArea to work.
+ * - Fields read/write through the section's activeSelector when one is set,
+ *   falling back to the JSON example demographics for gallery demos.
  */
 
-import React, { useState, useCallback, useMemo } from 'react';
-import { IDropdownOption, Checkbox, PrimaryButton, Label, IconButton } from '@fluentui/react';
-import { LayoutItem, AuditStamp } from '../components/Layout';
-import { useActiveData, useCodeList, PatientData } from '../context/MoisContext';
+import React, { useState } from 'react';
+import { IDropdownOption, Checkbox, PrimaryButton, Label } from '@fluentui/react';
+import { LayoutItem, ArchAll, AuditStamp } from '../components/Layout';
+import { useCodeList, PatientData, SectionContextValue } from '../context/MoisContext';
+import { useArchetypeBinding, codeOf, toCodedValue, ArchetypeBinding } from './archetype-binding';
 import { DateSelect } from '../controls/DateSelect';
 import { MoisTextField } from '../components/MoisTextField';
 import { MoisDropdown } from '../components/MoisDropdown';
@@ -73,27 +82,24 @@ const defaultPatient: PatientData = {
 };
 
 // ============================================================================
-// Hooks
+// Section-aware data access
 // ============================================================================
 
-const usePatientData = (): [any, (updates: any) => void] => {
-  const [activeData, setActiveData] = useActiveData();
-  // Use demographics from JSON (primary) or fall back to patient
-  const data = (activeData as any).example?.demographics || (activeData as any).example?.patient;
-
-  // Memoize setData to prevent infinite re-renders
-  const setData = useCallback((updates: any) => {
-    setActiveData((current: any) => ({
-      ...current,
-      example: {
-        ...current.example,
-        patient: { ...current.example?.patient, ...updates },
-      },
-    }));
-  }, [setActiveData]);
-
-  return [data || defaultPatient, setData];
-};
+const usePatientBinding = (
+  sectionOverride?: Partial<SectionContextValue>
+): ArchetypeBinding =>
+  useArchetypeBinding({
+    exampleData: (activeData) =>
+      activeData.example?.demographics
+      || activeData.example?.patient
+      || defaultPatient,
+    exampleTarget: (draft) => {
+      draft.example = draft.example || {};
+      return draft.example.demographics
+        ?? (draft.example.patient = draft.example.patient || {});
+    },
+    section: sectionOverride,
+  });
 
 // ============================================================================
 // Date/Time Helpers
@@ -132,29 +138,33 @@ const calculateAge = (birthDate: string | null | undefined): string => {
 // Field Components
 // ============================================================================
 
-const active: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = usePatientData();
+interface FieldProps {
+  index?: number | string;
+  section?: Partial<SectionContextValue>;
+  [key: string]: any;
+}
+
+const active: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = usePatientBinding(section);
 
   return (
-    <LayoutItem label="Current status" size="small" index={index}>
+    <LayoutItem fieldId="active" label="Current status" size="small" index={index} section={section} {...rest}>
       <MoisDropdown
         fieldId="active"
         codeSystem="MOIS-PATIENTSTATUS"
-        selectedKey={data?.active?.code || undefined}
+        selectedKey={codeOf(data?.active) || undefined}
         size="small"
-        onChange={(_, option) => {
-          if (option) setData({ active: { code: option.key, display: option.text, system: 'MOIS-PATIENTSTATUS' } });
-        }}
+        onChange={(_, option) => setField('active', toCodedValue(option, 'MOIS-PATIENTSTATUS'))}
       />
     </LayoutItem>
   );
 };
 
-const activeChanged: React.FC<any> = ({ index, ...props }) => {
-  const [data] = usePatientData();
+const activeChanged: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data } = usePatientBinding(section);
 
   return (
-    <LayoutItem label="Effective date" size="small" index={index}>
+    <LayoutItem fieldId="activeChanged" label="Effective date" size="small" index={index} section={section} {...rest}>
       <DateSelect inline value={formatDate(data?.activeChanged)} onChange={() => {}} size="small" />
     </LayoutItem>
   );
@@ -164,7 +174,10 @@ const activeChanged: React.FC<any> = ({ index, ...props }) => {
 // renders <Mois.Patient.status /> and saves fd.field.data.active +
 // fd.field.data.activeChanged through changePatient, so status is the
 // active/activeChanged pair, not a third field.
-const status: React.FC<any> = ({ index, ...props }) => {
+// NOTE: the children carry their own fieldIds ("active"/"activeChanged"), so
+// a section fieldPlacement that names only "status" would hide both — place
+// "active" and "activeChanged" individually instead.
+const status: React.FC<FieldProps> = ({ index, ...props }) => {
   const Active = active;
   const ActiveChanged = activeChanged;
   return (
@@ -175,11 +188,11 @@ const status: React.FC<any> = ({ index, ...props }) => {
   );
 };
 
-const address: React.FC<any> = ({ index, ...props }) => {
-  const [data] = usePatientData();
+const address: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data } = usePatientBinding(section);
 
   return (
-    <LayoutItem label="Address" size="medium" index={index}>
+    <LayoutItem fieldId="address" label="Address" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.address?.text || ''}
         multiline
@@ -193,133 +206,129 @@ const address: React.FC<any> = ({ index, ...props }) => {
   );
 };
 
-const administrativeGender: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = usePatientData();
+const administrativeGender: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = usePatientBinding(section);
 
   return (
-    <LayoutItem label="Administrative gender" size="medium" index={index}>
+    <LayoutItem fieldId="administrativeGender" label="Administrative gender" size="medium" index={index} section={section} {...rest}>
       <MoisDropdown
         fieldId="gender"
         codeSystem="MOIS-ADMINISTRATIVEGENDER"
         selectedKey={data?.gender || undefined}
         size="medium"
         onChange={(_, option) => {
-          if (option) setData({ gender: option.key });
+          if (option) setField('gender', option.key);
         }}
       />
     </LayoutItem>
   );
 };
 
-const adopted: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = usePatientData();
+const adopted: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = usePatientBinding(section);
 
   return (
-    <LayoutItem label="Adopted" size="small" index={index}>
+    <LayoutItem fieldId="adopted" label="Adopted" size="small" index={index} section={section} {...rest}>
       <MoisDropdown
         fieldId="adopted"
         codeSystem="MOIS-YESNOFULL"
-        selectedKey={data?.adopted?.code || undefined}
+        selectedKey={codeOf(data?.adopted) || undefined}
         placeholder="Please select"
         size="small"
-        onChange={(_, option) => {
-          if (option) setData({ adopted: { code: option.key, display: option.text, system: 'MOIS-YESNOFULL' } });
-        }}
+        onChange={(_, option) => setField('adopted', toCodedValue(option, 'MOIS-YESNOFULL'))}
       />
     </LayoutItem>
   );
 };
 
-const age: React.FC<any> = ({ index, ...props }) => {
-  const [data] = usePatientData();
+const age: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data } = usePatientBinding(section);
 
   return (
-    <LayoutItem label="Age" size="small" index={index}>
+    <LayoutItem fieldId="age" label="Age" size="small" index={index} section={section} {...rest}>
       <MoisTextField value={calculateAge(data?.dob)} readOnly borderless tabIndex={-1} size="small" />
     </LayoutItem>
   );
 };
 
-const birthDate: React.FC<any> = ({ index, ...props }) => {
-  const [data] = usePatientData();
+const birthDate: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data } = usePatientBinding(section);
   const ageStr = calculateAge(data?.dob);
 
   return (
-    <LayoutItem label={`Birth date${ageStr ? ` (${ageStr})` : ''}`} size="medium" index={index}>
+    <LayoutItem fieldId="birthDate" label={`Birth date${ageStr ? ` (${ageStr})` : ''}`} size="medium" index={index} section={section} {...rest}>
       <DateSelect inline value={formatDate(data?.dob)} onChange={() => {}} size="medium" />
     </LayoutItem>
   );
 };
 
-const chartLocation: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = usePatientData();
+const chartLocation: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = usePatientBinding(section);
 
   return (
-    <LayoutItem label="Chart location" size="small" index={index}>
+    <LayoutItem fieldId="chartLocation" label="Chart location" size="small" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.chartLocation || ''}
         size="small"
-        onChange={(_, val) => setData({ chartLocation: val || '' })}
+        onChange={(_, val) => setField('chartLocation', val || '')}
       />
     </LayoutItem>
   );
 };
 
-const chartNumber: React.FC<any> = ({ index, ...props }) => {
-  const [data] = usePatientData();
+const chartNumber: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data } = usePatientBinding(section);
 
   return (
-    <LayoutItem label="Chart No." size="tiny" index={index}>
+    <LayoutItem fieldId="chartNumber" label="Chart No." size="tiny" index={index} section={section} {...rest}>
       <MoisTextField value={String(data?.chartNumber ?? '')} readOnly borderless tabIndex={-1} size="tiny" />
     </LayoutItem>
   );
 };
 
-const city: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = usePatientData();
+const city: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = usePatientBinding(section);
 
   return (
-    <LayoutItem label="City" size="medium" index={index}>
+    <LayoutItem fieldId="city" label="City" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.address?.city || ''}
         autoComplete="new-password"
         size="medium"
-        onChange={(_, val) => setData({
-          address: { ...data?.address, city: val || '' }
-        })}
+        onChange={(_, val) => setField('address', { ...data?.address, city: val || '' })}
       />
     </LayoutItem>
   );
 };
 
-const countryOfOrigin: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = usePatientData();
+const countryOfOrigin: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = usePatientBinding(section);
 
   return (
-    <LayoutItem label="Country of origin" size="small" index={index}>
+    <LayoutItem fieldId="countryOfOrigin" label="Country of origin" size="small" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.countryOfOrigin?.display || ''}
         placeholder="Please search"
         size="small"
-        onChange={(_, val) => setData({ countryOfOrigin: { display: val || '' } })}
+        onChange={(_, val) => setField('countryOfOrigin', { display: val || '' })}
       />
     </LayoutItem>
   );
 };
 
-const deceasedDate: React.FC<any> = ({ index, ...props }) => {
-  const [data] = usePatientData();
+const deceasedDate: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data } = usePatientBinding(section);
 
   return (
-    <LayoutItem label="Deceased date" size="small" index={index}>
+    <LayoutItem fieldId="deceasedDate" label="Deceased date" size="small" index={index} section={section} {...rest}>
       <DateSelect inline value={formatDate(data?.deceasedDate)} onChange={() => {}} size="small" />
     </LayoutItem>
   );
 };
 
-const expandedTelecom: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = usePatientData();
-  const preferredPhone = data?.preferredPhone?.code || '1'; // Default to Home
+const expandedTelecom: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = usePatientBinding(section);
+  const preferredPhone = codeOf(data?.preferredPhone) || '1'; // Default to Home
 
   // Checkbox styles matching .root-264
   const checkboxStyle: React.CSSProperties = {
@@ -353,7 +362,7 @@ const expandedTelecom: React.FC<any> = ({ index, ...props }) => {
             <Checkbox
               label="Mobile"
               checked={preferredPhone === '3'}
-              onChange={() => setData({ preferredPhone: { code: '3', display: 'Cell', system: 'MOIS-PREFERREDPHONE' } })}
+              onChange={() => setField('preferredPhone', { code: '3', display: 'Cell', system: 'MOIS-PREFERREDPHONE' })}
             />
           </div>
         </div>
@@ -363,7 +372,7 @@ const expandedTelecom: React.FC<any> = ({ index, ...props }) => {
             value={data?.telecom?.cellPhone || ''}
             autoComplete="new-password"
             size="small"
-            onChange={(_, val) => setData({ telecom: { ...data?.telecom, cellPhone: val || '' } })}
+            onChange={(_, val) => setField('telecom', { ...data?.telecom, cellPhone: val || '' })}
           />
         </div>
 
@@ -373,7 +382,7 @@ const expandedTelecom: React.FC<any> = ({ index, ...props }) => {
             <Checkbox
               label="Home"
               checked={preferredPhone === '1'}
-              onChange={() => setData({ preferredPhone: { code: '1', display: 'Home', system: 'MOIS-PREFERREDPHONE' } })}
+              onChange={() => setField('preferredPhone', { code: '1', display: 'Home', system: 'MOIS-PREFERREDPHONE' })}
             />
           </div>
         </div>
@@ -382,7 +391,7 @@ const expandedTelecom: React.FC<any> = ({ index, ...props }) => {
             value={data?.telecom?.homePhone || ''}
             autoComplete="new-password"
             size="small"
-            onChange={(_, val) => setData({ telecom: { ...data?.telecom, homePhone: val || '' } })}
+            onChange={(_, val) => setField('telecom', { ...data?.telecom, homePhone: val || '' })}
           />
         </div>
 
@@ -392,7 +401,7 @@ const expandedTelecom: React.FC<any> = ({ index, ...props }) => {
             <Checkbox
               label="Work"
               checked={preferredPhone === '2'}
-              onChange={() => setData({ preferredPhone: { code: '2', display: 'Work', system: 'MOIS-PREFERREDPHONE' } })}
+              onChange={() => setField('preferredPhone', { code: '2', display: 'Work', system: 'MOIS-PREFERREDPHONE' })}
             />
           </div>
         </div>
@@ -401,14 +410,14 @@ const expandedTelecom: React.FC<any> = ({ index, ...props }) => {
             value={data?.telecom?.workPhone || ''}
             autoComplete="new-password"
             size="small"
-            onChange={(_, val) => setData({ telecom: { ...data?.telecom, workPhone: val || '' } })}
+            onChange={(_, val) => setField('telecom', { ...data?.telecom, workPhone: val || '' })}
           />
           <div style={{ marginLeft: 10 }}>
             <MoisTextField
               value={data?.telecom?.workExt || ''}
               autoComplete="new-password"
               size="tiny"
-              onChange={(_, val) => setData({ telecom: { ...data?.telecom, workExt: val || '' } })}
+              onChange={(_, val) => setField('telecom', { ...data?.telecom, workExt: val || '' })}
             />
           </div>
         </div>
@@ -417,8 +426,8 @@ const expandedTelecom: React.FC<any> = ({ index, ...props }) => {
   );
 };
 
-const facilityCode: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = usePatientData();
+const facilityCode: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = usePatientBinding(section);
   const options = useCodeList('MOIS-FACILITYCODE');
 
   const dropdownOptions: IDropdownOption[] = options.map(opt => ({
@@ -427,41 +436,37 @@ const facilityCode: React.FC<any> = ({ index, ...props }) => {
   }));
 
   return (
-    <LayoutItem label="Facility " size="small" index={index}>
+    <LayoutItem fieldId="facilityCode" label="Facility " size="small" index={index} section={section} {...rest}>
       <MoisDropdown
         fieldId="facilityCode"
         codeSystem="MOIS-FACILITYCODE"
-        selectedKey={data?.facilityCode?.code || undefined}
+        selectedKey={codeOf(data?.facilityCode) || undefined}
         placeholder="Please select"
         size="small"
-        onChange={(_, option) => {
-          if (option) setData({ facilityCode: { code: option.key, display: option.text, system: 'MOIS-FACILITYCODE' } });
-        }}
+        onChange={(_, option) => setField('facilityCode', toCodedValue(option, 'MOIS-FACILITYCODE'))}
       />
     </LayoutItem>
   );
 };
 
-const first: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = usePatientData();
+const first: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = usePatientBinding(section);
 
   return (
-    <LayoutItem label="First name" size="medium" index={index}>
+    <LayoutItem fieldId="first" label="First name" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.name?.first || ''}
         required
         autoComplete="new-password"
         size="medium"
-        onChange={(_, val) => setData({
-          name: { ...data?.name, first: val || '' }
-        })}
+        onChange={(_, val) => setField('name', { ...data?.name, first: val || '' })}
       />
     </LayoutItem>
   );
 };
 
-const firstNationStatus: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = usePatientData();
+const firstNationStatus: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = usePatientBinding(section);
   const options = useCodeList('MOIS-FIRSTNATIONSTATUS');
 
   const dropdownOptions: IDropdownOption[] = options.map(opt => ({
@@ -470,52 +475,50 @@ const firstNationStatus: React.FC<any> = ({ index, ...props }) => {
   }));
 
   return (
-    <LayoutItem label="First nation status" size="small" index={index}>
+    <LayoutItem fieldId="firstNationStatus" label="First nation status" size="small" index={index} section={section} {...rest}>
       <MoisDropdown
         fieldId="firstNationStatus"
         codeSystem="MOIS-FIRSTNATIONSTATUS"
-        selectedKey={data?.firstNationStatus?.code || undefined}
+        selectedKey={codeOf(data?.firstNationStatus) || undefined}
         placeholder="Please select"
         size="small"
-        onChange={(_, option) => {
-          if (option) setData({ firstNationStatus: { code: option.key, display: option.text, system: 'MOIS-FIRSTNATIONSTATUS' } });
-        }}
+        onChange={(_, option) => setField('firstNationStatus', toCodedValue(option, 'MOIS-FIRSTNATIONSTATUS'))}
       />
     </LayoutItem>
   );
 };
 
-const genderComment: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = usePatientData();
+const genderComment: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = usePatientBinding(section);
 
   return (
-    <LayoutItem label="Gender comment" size="large" index={index}>
+    <LayoutItem fieldId="genderComment" label="Gender comment" size="large" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.genderComment || ''}
         size="large"
-        onChange={(_, val) => setData({ genderComment: val || '' })}
+        onChange={(_, val) => setField('genderComment', val || '')}
       />
     </LayoutItem>
   );
 };
 
-const generalPractitioner: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = usePatientData();
+const generalPractitioner: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = usePatientBinding(section);
 
   return (
-    <LayoutItem label="Provider" size="medium" index={index}>
+    <LayoutItem fieldId="generalPractitioner" label="Provider" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.generalPractitioner?.display || ''}
         placeholder="Please search"
         size="medium"
-        onChange={(_, val) => setData({ generalPractitioner: { display: val || '' } })}
+        onChange={(_, val) => setField('generalPractitioner', { display: val || '' })}
       />
     </LayoutItem>
   );
 };
 
-const genotypicGender: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = usePatientData();
+const genotypicGender: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = usePatientBinding(section);
   const options = useCodeList('MOIS-GENOTYPICGENDER');
 
   const dropdownOptions: IDropdownOption[] = options.map(opt => ({
@@ -524,107 +527,103 @@ const genotypicGender: React.FC<any> = ({ index, ...props }) => {
   }));
 
   return (
-    <LayoutItem label="Genotypic gender" size="small" index={index}>
+    <LayoutItem fieldId="genotypicGender" label="Genotypic gender" size="small" index={index} section={section} {...rest}>
       <MoisDropdown
         fieldId="genotypicGender"
         codeSystem="MOIS-GENOTYPICGENDER"
-        selectedKey={data?.genotypicGender?.code || undefined}
+        selectedKey={codeOf(data?.genotypicGender) || undefined}
         size="small"
-        onChange={(_, option) => {
-          if (option) setData({ genotypicGender: { code: option.key, display: option.text, system: 'MOIS-GENOTYPICGENDER' } });
-        }}
+        onChange={(_, option) => setField('genotypicGender', toCodedValue(option, 'MOIS-GENOTYPICGENDER'))}
       />
     </LayoutItem>
   );
 };
 
-const healthNumber: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = usePatientData();
+const healthNumber: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = usePatientBinding(section);
 
   return (
-    <LayoutItem label="Health number" size="small" index={index}>
+    <LayoutItem fieldId="healthNumber" label="Health number" size="small" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.healthNumber || ''}
         size="small"
-        onChange={(_, val) => setData({ healthNumber: val || '' })}
+        onChange={(_, val) => setField('healthNumber', val || '')}
       />
     </LayoutItem>
   );
 };
 
-const healthNumberBy: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = usePatientData();
+const healthNumberBy: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = usePatientBinding(section);
 
   return (
-    <LayoutItem label="Health number by" size="small" index={index}>
+    <LayoutItem fieldId="healthNumberBy" label="Health number by" size="small" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.healthNumberBy || ''}
         size="small"
-        onChange={(_, val) => setData({ healthNumberBy: val || '' })}
+        onChange={(_, val) => setField('healthNumberBy', val || '')}
       />
     </LayoutItem>
   );
 };
 
-const homeEmail: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = usePatientData();
+const homeEmail: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = usePatientBinding(section);
 
   return (
-    <LayoutItem label="Home email" size="large" index={index}>
+    <LayoutItem fieldId="homeEmail" label="Home email" size="large" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.telecom?.homeEmail || ''}
         autoComplete="new-password"
         size="large"
-        onChange={(_, val) => setData({
-          telecom: { ...data?.telecom, homeEmail: val || '' }
-        })}
+        onChange={(_, val) => setField('telecom', { ...data?.telecom, homeEmail: val || '' })}
       />
     </LayoutItem>
   );
 };
 
-const insurance: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = usePatientData();
+const insurance: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = usePatientBinding(section);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const displayValue = data?.insuranceBy?.code
     ? `${data.insuranceBy.code}: ${data.insuranceNumber || ''}`
     : '';
 
   const handleSave = (updates: any) => {
-    setData(updates);
+    Object.entries(updates).forEach(([key, value]) => setField(key, value));
   };
 
   return (
     <>
-      <LayoutItem label="Insurance" size="medium" index={index}>
+      <LayoutItem fieldId="insurance" label="Insurance" size="medium" index={index} section={section} {...rest}>
         <MoisTextField value={displayValue} readOnly borderless tabIndex={-1} size="medium" />
         <Action.Edit onEdit={() => setIsDialogOpen(true)} />
       </LayoutItem>
       <InsuranceEditDialog
         isOpen={isDialogOpen}
         onDismiss={() => setIsDialogOpen(false)}
-        data={data}
+        data={data ?? {}}
         onSave={handleSave}
       />
     </>
   );
 };
 
-const insuranceBenefitSource: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = usePatientData();
+const insuranceBenefitSource: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = usePatientBinding(section);
 
   return (
-    <LayoutItem label="Benefit source" size="small" index={index}>
+    <LayoutItem fieldId="insuranceBenefitSource" label="Benefit source" size="small" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.insuranceBenefitSource || ''}
         size="small"
-        onChange={(_, val) => setData({ insuranceBenefitSource: val || '' })}
+        onChange={(_, val) => setField('insuranceBenefitSource', val || '')}
       />
     </LayoutItem>
   );
 };
 
-const insuranceButton: React.FC<any> = ({ index, ...props }) => {
+const insuranceButton: React.FC<FieldProps> = ({ index, section, ...rest }) => {
   return (
     <div style={{ breakInside: 'avoid', margin: '8px 0' }}>
       <div style={{ display: 'flex', flexFlow: 'wrap', minWidth: 200 }}>
@@ -640,8 +639,8 @@ const insuranceButton: React.FC<any> = ({ index, ...props }) => {
   );
 };
 
-const insuranceBy: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = usePatientData();
+const insuranceBy: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = usePatientBinding(section);
   const options = useCodeList('MOIS-INSURANCEBY');
 
   const dropdownOptions: IDropdownOption[] = options.map(opt => ({
@@ -650,56 +649,54 @@ const insuranceBy: React.FC<any> = ({ index, ...props }) => {
   }));
 
   return (
-    <LayoutItem label="Insurer" size="small" index={index}>
+    <LayoutItem fieldId="insuranceBy" label="Insurer" size="small" index={index} section={section} {...rest}>
       <MoisDropdown
         fieldId="insuranceBy"
         codeSystem="MOIS-INSURANCEBY"
-        selectedKey={data?.insuranceBy?.code || undefined}
+        selectedKey={codeOf(data?.insuranceBy) || undefined}
         size="small"
-        onChange={(_, option) => {
-          if (option) setData({ insuranceBy: { code: option.key, display: option.text, system: 'MOIS-INSURANCEBY' } });
-        }}
+        onChange={(_, option) => setField('insuranceBy', toCodedValue(option, 'MOIS-INSURANCEBY'))}
       />
     </LayoutItem>
   );
 };
 
-const insuranceDependent: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = usePatientData();
+const insuranceDependent: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = usePatientBinding(section);
 
   return (
-    <LayoutItem label="Dep. no." size="tiny" index={index}>
+    <LayoutItem fieldId="insuranceDependent" label="Dep. no." size="tiny" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.insuranceDependent || ''}
         size="tiny"
-        onChange={(_, val) => setData({ insuranceDependent: val || '' })}
+        onChange={(_, val) => setField('insuranceDependent', val || '')}
       />
     </LayoutItem>
   );
 };
 
-const insuranceNumber: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = usePatientData();
+const insuranceNumber: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = usePatientBinding(section);
 
   return (
-    <LayoutItem label="Insurance number" size="small" index={index}>
+    <LayoutItem fieldId="insuranceNumber" label="Insurance number" size="small" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.insuranceNumber || ''}
         size="small"
-        onChange={(_, val) => setData({ insuranceNumber: val || '' })}
+        onChange={(_, val) => setField('insuranceNumber', val || '')}
       />
     </LayoutItem>
   );
 };
 
-const insuranceText: React.FC<any> = ({ index, ...props }) => {
-  const [data] = usePatientData();
+const insuranceText: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data } = usePatientBinding(section);
   const displayValue = data?.insuranceBy?.code
     ? `${data.insuranceBy.code}: ${data.insuranceNumber || ''}`
     : '';
 
   return (
-    <LayoutItem label="Insurance" size="medium" index={index}>
+    <LayoutItem fieldId="insuranceText" label="Insurance" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={displayValue}
         size="medium"
@@ -709,51 +706,49 @@ const insuranceText: React.FC<any> = ({ index, ...props }) => {
   );
 };
 
-const language: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = usePatientData();
+const language: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = usePatientBinding(section);
 
   return (
-    <LayoutItem label="First language" size="small" index={index}>
+    <LayoutItem fieldId="language" label="First language" size="small" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.language?.display || ''}
         placeholder="Please search"
         size="small"
-        onChange={(_, val) => setData({ language: { display: val || '' } })}
+        onChange={(_, val) => setField('language', { display: val || '' })}
       />
     </LayoutItem>
   );
 };
 
-const lastContactDate: React.FC<any> = ({ index, ...props }) => {
-  const [data] = usePatientData();
+const lastContactDate: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data } = usePatientBinding(section);
 
   return (
-    <LayoutItem label="Last contact date" size="small" index={index}>
+    <LayoutItem fieldId="lastContactDate" label="Last contact date" size="small" index={index} section={section} {...rest}>
       <DateSelect inline value={formatDate(data?.lastContactDate)} onChange={() => {}} disabled size="small" />
     </LayoutItem>
   );
 };
 
-const family: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = usePatientData();
+const family: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = usePatientBinding(section);
 
   return (
-    <LayoutItem label="Family name" size="medium" index={index}>
+    <LayoutItem fieldId="family" label="Family name" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.name?.family || ''}
         required
         autoComplete="new-password"
         size="medium"
-        onChange={(_, val) => setData({
-          name: { ...data?.name, family: val || '' }
-        })}
+        onChange={(_, val) => setField('name', { ...data?.name, family: val || '' })}
       />
     </LayoutItem>
   );
 };
 
-const locationCode: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = usePatientData();
+const locationCode: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = usePatientBinding(section);
   const options = useCodeList('MOIS-LOCATIONCODE');
 
   const dropdownOptions: IDropdownOption[] = options.map(opt => ({
@@ -762,23 +757,21 @@ const locationCode: React.FC<any> = ({ index, ...props }) => {
   }));
 
   return (
-    <LayoutItem label="Location" size="small" index={index}>
+    <LayoutItem fieldId="locationCode" label="Location" size="small" index={index} section={section} {...rest}>
       <MoisDropdown
         fieldId="locationCode"
         codeSystem="MOIS-LOCATIONCODE"
-        selectedKey={data?.locationCode?.code || undefined}
+        selectedKey={codeOf(data?.locationCode) || undefined}
         placeholder="Please select"
         size="small"
-        onChange={(_, option) => {
-          if (option) setData({ locationCode: { code: option.key, display: option.text, system: 'MOIS-LOCATIONCODE' } });
-        }}
+        onChange={(_, option) => setField('locationCode', toCodedValue(option, 'MOIS-LOCATIONCODE'))}
       />
     </LayoutItem>
   );
 };
 
-const maritalStatus: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = usePatientData();
+const maritalStatus: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = usePatientBinding(section);
   const options = useCodeList('MOIS-MARITALSTATUS');
 
   const dropdownOptions: IDropdownOption[] = options.map(opt => ({
@@ -787,191 +780,173 @@ const maritalStatus: React.FC<any> = ({ index, ...props }) => {
   }));
 
   return (
-    <LayoutItem label="Marital status" size="small" index={index}>
+    <LayoutItem fieldId="maritalStatus" label="Marital status" size="small" index={index} section={section} {...rest}>
       <MoisDropdown
         fieldId="maritalStatus"
         codeSystem="MOIS-MARITALSTATUS"
-        selectedKey={data?.maritalStatus?.code || undefined}
+        selectedKey={codeOf(data?.maritalStatus) || undefined}
         size="small"
-        onChange={(_, option) => {
-          if (option) setData({ maritalStatus: { code: option.key, display: option.text, system: 'MOIS-MARITALSTATUS' } });
-        }}
+        onChange={(_, option) => setField('maritalStatus', toCodedValue(option, 'MOIS-MARITALSTATUS'))}
       />
     </LayoutItem>
   );
 };
 
-const middle: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = usePatientData();
+const middle: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = usePatientBinding(section);
 
   return (
-    <LayoutItem label="Middle name" size="medium" index={index}>
+    <LayoutItem fieldId="middle" label="Middle name" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.name?.middle || ''}
         autoComplete="new-password"
         size="medium"
-        onChange={(_, val) => setData({
-          name: { ...data?.name, middle: val || '' }
-        })}
+        onChange={(_, val) => setField('name', { ...data?.name, middle: val || '' })}
       />
     </LayoutItem>
   );
 };
 
-const multipleBirth: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = usePatientData();
+const multipleBirth: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = usePatientBinding(section);
 
   return (
-    <LayoutItem label="Multiple birth" size="small" index={index}>
+    <LayoutItem fieldId="multipleBirth" label="Multiple birth" size="small" index={index} section={section} {...rest}>
       <MoisDropdown
         fieldId="multipleBirth"
         codeSystem="MOIS-YESNO"
-        selectedKey={data?.multipleBirth?.code || undefined}
+        selectedKey={codeOf(data?.multipleBirth) || undefined}
         placeholder="Please select"
         size="small"
-        onChange={(_, option) => {
-          if (option) setData({ multipleBirth: { code: option.key, display: option.text, system: 'MOIS-YESNO' } });
-        }}
+        onChange={(_, option) => setField('multipleBirth', toCodedValue(option, 'MOIS-YESNO'))}
       />
     </LayoutItem>
   );
 };
 
-const name: React.FC<any> = ({ index, ...props }) => {
-  const [data] = usePatientData();
+const name: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data } = usePatientBinding(section);
 
   return (
-    <LayoutItem label="Name" size="medium" index={index}>
+    <LayoutItem fieldId="name" label="Name" size="medium" index={index} section={section} {...rest}>
       <MoisTextField value={data?.name?.text || ''} readOnly borderless tabIndex={-1} size="medium" />
     </LayoutItem>
   );
 };
 
-const nickName: React.FC<any> = ({ index, ...props }) => {
-  const [data] = usePatientData();
+const nickName: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data } = usePatientBinding(section);
 
   return (
-    <LayoutItem label="Alias" size="medium" index={index}>
+    <LayoutItem fieldId="nickName" label="Alias" size="medium" index={index} section={section} {...rest}>
       <MoisTextField value={data?.nickName?.text || ''} readOnly borderless tabIndex={-1} size="medium" />
     </LayoutItem>
   );
 };
 
-const note: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = usePatientData();
+const note: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = usePatientBinding(section);
 
   return (
-    <LayoutItem label="General notes" size="medium" index={index}>
+    <LayoutItem fieldId="note" label="General notes" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.note || ''}
         multiline
         rows={8}
         size="medium"
-        onChange={(_, val) => setData({ note: val || '' })}
+        onChange={(_, val) => setField('note', val || '')}
       />
     </LayoutItem>
   );
 };
 
-const preferredGender: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = usePatientData();
+const preferredGender: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = usePatientBinding(section);
 
   return (
-    <LayoutItem label="Preferred gender" size="small" index={index}>
+    <LayoutItem fieldId="preferredGender" label="Preferred gender" size="small" index={index} section={section} {...rest}>
       <MoisDropdown
         fieldId="preferredGender"
         codeSystem="MOIS-PREFERREDGENDER"
-        selectedKey={data?.preferredGender?.code || undefined}
+        selectedKey={codeOf(data?.preferredGender) || undefined}
         size="small"
-        onChange={(_, option) => {
-          if (option) setData({ preferredGender: { code: option.key, display: option.text, system: 'MOIS-PREFERREDGENDER' } });
-        }}
+        onChange={(_, option) => setField('preferredGender', toCodedValue(option, 'MOIS-PREFERREDGENDER'))}
       />
     </LayoutItem>
   );
 };
 
-const preferredPhone: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = usePatientData();
+const preferredPhone: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = usePatientBinding(section);
 
   return (
-    <LayoutItem label="Preferred phone" size="small" index={index}>
+    <LayoutItem fieldId="preferredPhone" label="Preferred phone" size="small" index={index} section={section} {...rest}>
       <MoisDropdown
         fieldId="preferredPhone"
         codeSystem="MOIS-PREFERREDPHONE"
-        selectedKey={data?.preferredPhone?.code || undefined}
+        selectedKey={codeOf(data?.preferredPhone) || undefined}
         size="small"
-        onChange={(_, option) => {
-          if (option) setData({ preferredPhone: { code: option.key, display: option.text, system: 'MOIS-PREFERREDPHONE' } });
-        }}
+        onChange={(_, option) => setField('preferredPhone', toCodedValue(option, 'MOIS-PREFERREDPHONE'))}
       />
     </LayoutItem>
   );
 };
 
-const province: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = usePatientData();
+const province: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = usePatientBinding(section);
 
   return (
-    <LayoutItem label="Province" size="medium" index={index}>
+    <LayoutItem fieldId="province" label="Province" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.address?.province || ''}
         autoComplete="new-password"
         size="medium"
-        onChange={(_, val) => setData({
-          address: { ...data?.address, province: val || '' }
-        })}
+        onChange={(_, val) => setField('address', { ...data?.address, province: val || '' })}
       />
     </LayoutItem>
   );
 };
 
-const postalCode: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = usePatientData();
+const postalCode: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = usePatientBinding(section);
 
   return (
-    <LayoutItem label="Postal code" size="medium" index={index}>
+    <LayoutItem fieldId="postalCode" label="Postal code" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.address?.postalCode || ''}
         autoComplete="new-password"
         size="medium"
-        onChange={(_, val) => setData({
-          address: { ...data?.address, postalCode: val || '' }
-        })}
+        onChange={(_, val) => setField('address', { ...data?.address, postalCode: val || '' })}
       />
     </LayoutItem>
   );
 };
 
-const race1: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = usePatientData();
+const race1: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = usePatientBinding(section);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
 
   const handleSave = (updates: any) => {
-    setData({
-      race1: {
-        display: updates.race,
-        relation: updates.relation,
-        selfIdentified: updates.selfIdentified,
-      },
+    setField('race1', {
+      display: updates.race,
+      relation: updates.relation,
+      selfIdentified: updates.selfIdentified,
     });
   };
 
   return (
     <>
-      <div style={{ display: 'flex' }}>
-        <LayoutItem label="Ethnicity 1" size="medium" index={index}>
-          <MoisTextField
-            value={data?.race1?.display || ''}
-            readOnly
-            borderless
-            tabIndex={-1}
-            prefix="SELF"
-            size="medium"
-          />
-          <Action.Edit onEdit={() => setIsDialogOpen(true)} />
-        </LayoutItem>
-      </div>
+      <LayoutItem fieldId="race1" label="Ethnicity 1" size="medium" index={index} section={section} {...rest}>
+        <MoisTextField
+          value={data?.race1?.display || ''}
+          readOnly
+          borderless
+          tabIndex={-1}
+          prefix="SELF"
+          size="medium"
+        />
+        <Action.Edit onEdit={() => setIsDialogOpen(true)} />
+      </LayoutItem>
       <EthnicityEditDialog
         isOpen={isDialogOpen}
         onDismiss={() => setIsDialogOpen(false)}
@@ -987,34 +962,30 @@ const race1: React.FC<any> = ({ index, ...props }) => {
   );
 };
 
-const race2: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = usePatientData();
+const race2: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = usePatientBinding(section);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
 
   const handleSave = (updates: any) => {
-    setData({
-      race2: {
-        display: updates.race,
-        relation: updates.relation,
-        selfIdentified: updates.selfIdentified,
-      },
+    setField('race2', {
+      display: updates.race,
+      relation: updates.relation,
+      selfIdentified: updates.selfIdentified,
     });
   };
 
   return (
     <>
-      <div style={{ display: 'flex' }}>
-        <LayoutItem label="Ethnicity 2" size="medium" index={index}>
-          <MoisTextField
-            value={data?.race2?.display || ''}
-            readOnly
-            borderless
-            tabIndex={-1}
-            size="medium"
-          />
-          <Action.Edit onEdit={() => setIsDialogOpen(true)} />
-        </LayoutItem>
-      </div>
+      <LayoutItem fieldId="race2" label="Ethnicity 2" size="medium" index={index} section={section} {...rest}>
+        <MoisTextField
+          value={data?.race2?.display || ''}
+          readOnly
+          borderless
+          tabIndex={-1}
+          size="medium"
+        />
+        <Action.Edit onEdit={() => setIsDialogOpen(true)} />
+      </LayoutItem>
       <EthnicityEditDialog
         isOpen={isDialogOpen}
         onDismiss={() => setIsDialogOpen(false)}
@@ -1030,34 +1001,30 @@ const race2: React.FC<any> = ({ index, ...props }) => {
   );
 };
 
-const race3: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = usePatientData();
+const race3: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = usePatientBinding(section);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
 
   const handleSave = (updates: any) => {
-    setData({
-      race3: {
-        display: updates.race,
-        relation: updates.relation,
-        selfIdentified: updates.selfIdentified,
-      },
+    setField('race3', {
+      display: updates.race,
+      relation: updates.relation,
+      selfIdentified: updates.selfIdentified,
     });
   };
 
   return (
     <>
-      <div style={{ display: 'flex' }}>
-        <LayoutItem label="Ethnicity 3" size="medium" index={index}>
-          <MoisTextField
-            value={data?.race3?.display || ''}
-            readOnly
-            borderless
-            tabIndex={-1}
-            size="medium"
-          />
-          <Action.Edit onEdit={() => setIsDialogOpen(true)} />
-        </LayoutItem>
-      </div>
+      <LayoutItem fieldId="race3" label="Ethnicity 3" size="medium" index={index} section={section} {...rest}>
+        <MoisTextField
+          value={data?.race3?.display || ''}
+          readOnly
+          borderless
+          tabIndex={-1}
+          size="medium"
+        />
+        <Action.Edit onEdit={() => setIsDialogOpen(true)} />
+      </LayoutItem>
       <EthnicityEditDialog
         isOpen={isDialogOpen}
         onDismiss={() => setIsDialogOpen(false)}
@@ -1073,59 +1040,57 @@ const race3: React.FC<any> = ({ index, ...props }) => {
   );
 };
 
-const religion: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = usePatientData();
+const religion: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = usePatientBinding(section);
 
   return (
-    <LayoutItem label="Religion" size="small" index={index}>
+    <LayoutItem fieldId="religion" label="Religion" size="small" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.religion || ''}
         size="small"
-        onChange={(_, val) => setData({ religion: val || '' })}
+        onChange={(_, val) => setField('religion', val || '')}
       />
     </LayoutItem>
   );
 };
 
-const shortNote: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = usePatientData();
+const shortNote: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = usePatientBinding(section);
 
   return (
-    <LayoutItem label="Short note" size="medium" index={index}>
+    <LayoutItem fieldId="shortNote" label="Short note" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.shortNote || ''}
         size="medium"
-        onChange={(_, val) => setData({ shortNote: val || '' })}
+        onChange={(_, val) => setField('shortNote', val || '')}
       />
     </LayoutItem>
   );
 };
 
-const serviceCenter: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = usePatientData();
+const serviceCenter: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = usePatientBinding(section);
 
   return (
-    <LayoutItem label="Service center" size="small" index={index}>
+    <LayoutItem fieldId="serviceCenter" label="Service center" size="small" index={index} section={section} {...rest}>
       <MoisDropdown
         fieldId="serviceCenter"
         codeSystem="MOIS-SERVICECENTER"
-        selectedKey={data?.serviceCenter?.code || undefined}
+        selectedKey={codeOf(data?.serviceCenter) || undefined}
         placeholder="Please select"
         size="small"
-        onChange={(_, option) => {
-          if (option) setData({ serviceCenter: { code: option.key, display: option.text, system: 'MOIS-SERVICECENTER' } });
-        }}
+        onChange={(_, option) => setField('serviceCenter', toCodedValue(option, 'MOIS-SERVICECENTER'))}
       />
     </LayoutItem>
   );
 };
 
-const stamp: React.FC<any> = ({ index, ...props }) => {
-  return <AuditStamp index={index} {...props} />;
+const stamp: React.FC<FieldProps> = ({ index, ...props }) => {
+  return <AuditStamp fieldId="stamp" index={index} {...props} />;
 };
 
-const telecom: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = usePatientData();
+const telecom: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = usePatientBinding(section);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
 
   const telecomText = data?.telecom?.homePhone
@@ -1133,12 +1098,12 @@ const telecom: React.FC<any> = ({ index, ...props }) => {
     : '';
 
   const handleSave = (updates: any) => {
-    setData({ telecom: { ...data?.telecom, ...updates } });
+    setField('telecom', { ...data?.telecom, ...updates });
   };
 
   return (
     <>
-      <LayoutItem label="Contact" size="medium" index={index}>
+      <LayoutItem fieldId="telecom" label="Contact" size="medium" index={index} section={section} {...rest}>
         <MoisTextField
           value={telecomText}
           multiline
@@ -1220,73 +1185,17 @@ const Fields = {
 };
 
 // ============================================================================
-// All Component (renders ALL fields)
+// All Component (renders the placed fields, or every field with no placement)
 // ============================================================================
 
-const All: React.FC<any> = (props) => {
-  return (
-    <div>
-      <Fields.active {...props} />
-      <Fields.activeChanged {...props} />
-      <Fields.address {...props} />
-      <Fields.administrativeGender {...props} />
-      <Fields.adopted {...props} />
-      <Fields.age {...props} />
-      <Fields.birthDate {...props} />
-      <Fields.chartLocation {...props} />
-      <Fields.chartNumber {...props} />
-      <Fields.city {...props} />
-      <Fields.countryOfOrigin {...props} />
-      <Fields.deceasedDate {...props} />
-      <Fields.expandedTelecom {...props} />
-      <Fields.facilityCode {...props} />
-      <Fields.first {...props} />
-      <Fields.firstNationStatus {...props} />
-      <Fields.genderComment {...props} />
-      <Fields.generalPractitioner {...props} />
-      <Fields.genotypicGender {...props} />
-      <Fields.healthNumber {...props} />
-      <Fields.healthNumberBy {...props} />
-      <Fields.homeEmail {...props} />
-      <Fields.insurance {...props} />
-      <Fields.insuranceBenefitSource {...props} />
-      <Fields.insuranceButton {...props} />
-      <Fields.insuranceBy {...props} />
-      <Fields.insuranceDependent {...props} />
-      <Fields.insuranceNumber {...props} />
-      <Fields.insuranceText {...props} />
-      <Fields.language {...props} />
-      <Fields.lastContactDate {...props} />
-      <Fields.family {...props} />
-      <Fields.locationCode {...props} />
-      <Fields.maritalStatus {...props} />
-      <Fields.middle {...props} />
-      <Fields.multipleBirth {...props} />
-      <Fields.name {...props} />
-      <Fields.nickName {...props} />
-      <Fields.note {...props} />
-      <Fields.preferredGender {...props} />
-      <Fields.preferredPhone {...props} />
-      <Fields.province {...props} />
-      <Fields.postalCode {...props} />
-      <Fields.race1 {...props} />
-      <Fields.race2 {...props} />
-      <Fields.race3 {...props} />
-      <Fields.religion {...props} />
-      <Fields.shortNote {...props} />
-      <Fields.serviceCenter {...props} />
-      <Fields.stamp {...props} />
-      <Fields.telecom {...props} />
-    </div>
-  );
-};
+const All: React.FC<any> = (props) => <ArchAll fields={Fields} {...props} />;
 
 // ============================================================================
 // NameBlock Component - Uses the shared NameBlock component
 // ============================================================================
 
 const NameBlock: React.FC<any> = (props) => {
-  const [data] = usePatientData();
+  const { data } = usePatientBinding(props.section);
 
   // Map patient data to the format expected by NameBlockComponent
   const patient = data ? {

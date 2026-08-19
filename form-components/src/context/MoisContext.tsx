@@ -7,6 +7,11 @@ import React, { createContext, useContext, useState, useCallback, useMemo, useEf
 import { produce, setAutoFreeze, Draft } from 'immer';
 import { mockCodeLists, previewOptionListsRaw } from './mockCodeLists';
 import { getInitialData } from '../hooks/form-state';
+import {
+  getPreviewChartVersion,
+  overlayPreviewChartMutations,
+  subscribePreviewChart,
+} from '../scope/preview-chart-store';
 import { DEFAULT_AUTHORSHIP_POLICY, AuthorshipPolicy, syncAuthorshipMirrors } from '../authorship';
 
 // Import the complete example data for DebugView
@@ -1083,23 +1088,33 @@ export interface SourceDataWithHooks extends SourceData {
   useAppSettings: () => AppSettings;
 }
 
-// Merged source data cached by (sourceData, initialData) identity. Every
-// control calls useSourceData, and the per-consumer useMemo this replaces
-// re-spread potentially large sourceFormData objects on every mount (heavy
-// under virtualized lists, which remount rows while scrolling). One merged
-// object per input pair is shared by all consumers.
+// Merged source data cached by (sourceData, initialData, chartVersion)
+// identity. Every control calls useSourceData, and the per-consumer useMemo
+// this replaces re-spread potentially large sourceFormData objects on every
+// mount (heavy under virtualized lists, which remount rows while scrolling).
+// One merged object per input tuple is shared by all consumers.
 const sourceDataMergeCache = new WeakMap<
   object,
-  { initialData: Record<string, any>; merged: SourceDataWithHooks }
+  { initialData: Record<string, any>; chartVersion: number; merged: SourceDataWithHooks }
 >();
 
 export function useSourceData(): SourceDataWithHooks {
   const context = useContext(SourceDataContext);
+  // Preview mutations (useMutation shim) apply to the preview chart store;
+  // subscribing here re-renders every consumer when a mutation lands, so the
+  // vendor idiom mutate → refresh(sd) shows the change without a reload.
+  const chartVersion = React.useSyncExternalStore(
+    subscribePreviewChart,
+    getPreviewChartVersion,
+    getPreviewChartVersion
+  );
   const sourceData = context || defaultSourceData;
   const initialData = getInitialData();
 
   const cached = sourceDataMergeCache.get(sourceData);
-  if (cached && cached.initialData === initialData) return cached.merged;
+  if (cached && cached.initialData === initialData && cached.chartVersion === chartVersion) {
+    return cached.merged;
+  }
 
   const merged: SourceDataWithHooks = {
     ...sourceData,
@@ -1109,7 +1124,20 @@ export function useSourceData(): SourceDataWithHooks {
     },
     useAppSettings: getDefaultAppSettings,
   };
-  sourceDataMergeCache.set(sourceData, { initialData, merged });
+  if (merged.patient && typeof merged.patient === 'object') {
+    merged.patient = overlayPreviewChartMutations(merged.patient as Record<string, unknown>) as any;
+  }
+  const mirroredPatient = (merged as any).queryResult?.patient;
+  if (Array.isArray(mirroredPatient) && mirroredPatient[0] && typeof mirroredPatient[0] === 'object') {
+    (merged as any).queryResult = {
+      ...(merged as any).queryResult,
+      patient: [
+        overlayPreviewChartMutations(mirroredPatient[0] as Record<string, unknown>),
+        ...mirroredPatient.slice(1),
+      ],
+    };
+  }
+  sourceDataMergeCache.set(sourceData, { initialData, chartVersion, merged });
   return merged;
 }
 

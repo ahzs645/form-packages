@@ -2,21 +2,61 @@
  * AssociatedParty Archetype
  * The AssociatedParty archetype defines components for displaying and updating
  * Associated parties or Contacts of a chart
+ *
+ * MOIS parity notes (same contract as ChartPreference):
+ * - Every field passes a stable fieldId (its Fields-map key) so section
+ *   fieldPlacement can select and position it (`<Grid placement=...>`).
+ * - `All` renders the fields as a Fragment in placement order — fields must be
+ *   direct grid children for per-field gridArea to work.
+ * - Fields read/write through the section's activeSelector when one is set,
+ *   storing coded values as { code, display, system } objects like the real
+ *   engine. Without a custom section they fall back to the JSON example data
+ *   (example.associatedParties) for gallery demos.
  */
 
 import React from 'react';
 import { Checkbox, IDropdownOption } from '@fluentui/react';
 import {
   useActiveData,
-  useSection,
   useCodeList,
   useEffectOnce,
   produce,
-  AssociatedPartyData,
+  SectionContextValue,
 } from '../context/MoisContext';
-import { LayoutItem, Grid, Row, AuditStamp } from '../components/Layout';
+import { LayoutItem, ArchAll, Grid, Row, AuditStamp } from '../components/Layout';
+import { useArchetypeBinding, codeOf, toCodedValue, ArchetypeBinding } from './archetype-binding';
 import { MoisTextField } from '../components/MoisTextField';
 import { MoisDropdown } from '../components/MoisDropdown';
+
+// ============================================================================
+// Section-aware data access
+// ============================================================================
+
+const useAssociatedPartyBinding = (
+  sectionOverride?: Partial<SectionContextValue>
+): ArchetypeBinding =>
+  useArchetypeBinding({
+    exampleData: (activeData) => activeData.example?.associatedParties,
+    exampleTarget: (draft) => {
+      draft.example = draft.example || {};
+      return (draft.example.associatedParties = draft.example.associatedParties || {});
+    },
+    section: sectionOverride,
+  });
+
+const usePleaseSelectOptions = (codeSystem: string): IDropdownOption[] => {
+  const options = useCodeList(codeSystem);
+  return [
+    { key: '', text: 'Please select' },
+    ...options.map(opt => ({ key: opt.code, text: opt.display })),
+  ];
+};
+
+/** Free-text fields may hold a coded object in the example data. */
+const displayOf = (value: any): string =>
+  value && typeof value === 'object'
+    ? String(value.display ?? value.code ?? '')
+    : value === null || value === undefined ? '' : String(value);
 
 // ============================================================================
 // Field Components
@@ -24,244 +64,100 @@ import { MoisDropdown } from '../components/MoisDropdown';
 
 interface FieldProps {
   index?: number | string;
+  section?: Partial<SectionContextValue>;
   [key: string]: any;
 }
 
-const attachmentCount: React.FC<FieldProps> = ({ index, ...props }) => {
-  const section = useSection();
-  const [activeData] = useActiveData();
-  const data = section.activeSelector ? section.activeSelector(activeData) : {} as AssociatedPartyData;
+const makeCodedField = (
+  fieldId: string,
+  label: string,
+  codeSystem: string,
+  size: 'tiny' | 'small' | 'medium' | 'large'
+): React.FC<FieldProps> => {
+  const CodedField: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+    const { data, setField } = useAssociatedPartyBinding(section);
+    const dropdownOptions = usePleaseSelectOptions(codeSystem);
+
+    return (
+      <LayoutItem fieldId={fieldId} label={label} size={size} index={index} section={section} {...rest}>
+        <MoisDropdown
+          fieldId={fieldId}
+          codeSystem={codeSystem}
+          selectedKey={codeOf(data?.[fieldId])}
+          options={dropdownOptions}
+          placeholder="Please select"
+          size={size}
+          onChange={(_, option) => setField(fieldId, toCodedValue(option, codeSystem))}
+        />
+      </LayoutItem>
+    );
+  };
+  CodedField.displayName = `AssociatedParty.${fieldId}`;
+  return CodedField;
+};
+
+const makeTextField = (
+  fieldId: string,
+  label: string,
+  size: 'tiny' | 'small' | 'medium' | 'large' | 'max',
+  options: { multiline?: boolean; readOnly?: boolean; placeholder?: string } = {}
+): React.FC<FieldProps> => {
+  const TextFieldComponent: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+    const { data, setField } = useAssociatedPartyBinding(section);
+    const value = displayOf(data?.[fieldId]);
+
+    return (
+      <LayoutItem fieldId={fieldId} label={label} size={size} index={index} section={section} {...rest}>
+        <MoisTextField
+          fieldId={fieldId}
+          value={value}
+          size={size}
+          {...(options.placeholder ? { placeholder: options.placeholder } : {})}
+          {...(options.multiline ? { multiline: true, rows: 3 } : {})}
+          {...(options.readOnly
+            ? { readOnly: true, borderless: true, tabIndex: -1 }
+            : { onChange: (_: unknown, val?: string) => setField(fieldId, val || '') })}
+        />
+      </LayoutItem>
+    );
+  };
+  TextFieldComponent.displayName = `AssociatedParty.${fieldId}`;
+  return TextFieldComponent;
+};
+
+const attachmentCount: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data } = useAssociatedPartyBinding(section);
 
   // Show empty string if attachmentCount is 0 or falsy
-  const displayValue = data.attachmentCount ? String(data.attachmentCount) : '';
+  const displayValue = data?.attachmentCount ? String(data.attachmentCount) : '';
 
   return (
-    <LayoutItem label="Attached" size="tiny" fieldId="attachmentCount" index={index}>
+    <LayoutItem fieldId="attachmentCount" label="Attached" size="tiny" index={index} section={section} {...rest}>
       <MoisTextField
         fieldId="attachmentCount"
         value={displayValue}
         readOnly
         borderless
+        tabIndex={-1}
         size="tiny"
-        {...props}
       />
     </LayoutItem>
   );
 };
 
-const name: React.FC<FieldProps> = ({ index, ...props }) => {
-  const section = useSection();
-  const [activeData, setActiveData] = useActiveData();
-  const data = section.activeSelector ? section.activeSelector(activeData) : {} as AssociatedPartyData;
-
-  return (
-    <LayoutItem label="Name" size="small" fieldId="name" index={index}>
-      <MoisTextField
-        fieldId="name"
-        value={data.name ?? ''}
-        size="small"
-        onChange={(_, val) => {
-          setActiveData({ name: val } as any);
-        }}
-        {...props}
-      />
-    </LayoutItem>
-  );
-};
-
-const relationshipCode: React.FC<FieldProps> = ({ index, ...props }) => {
-  const section = useSection();
-  const [activeData, setActiveData] = useActiveData();
-  const data = section.activeSelector ? section.activeSelector(activeData) : {} as AssociatedPartyData;
-
-  return (
-    <LayoutItem label="Relationship" size="small" fieldId="relationshipCode" index={index}>
-      <MoisTextField
-        fieldId="relationshipCode"
-        value={data.relationshipCode ?? ''}
-        placeholder="Please search"
-        size="small"
-        onChange={(_, val) => {
-          setActiveData({ relationshipCode: val } as any);
-        }}
-        {...props}
-      />
-    </LayoutItem>
-  );
-};
-
-const relationshipType: React.FC<FieldProps> = ({ index, ...props }) => {
-  const section = useSection();
-  const [activeData, setActiveData] = useActiveData();
-  const data = section.activeSelector ? section.activeSelector(activeData) : {} as AssociatedPartyData;
-
-  return (
-    <LayoutItem label="Role" size="small" fieldId="relationshipType" index={index}>
-      <MoisDropdown
-        fieldId="relationshipType"
-        codeSystem="MOIS-RELATIONSHIPTYPE"
-        value={data.relationshipType}
-        placeholder="Please select"
-        size="small"
-        onChange={(_, option) => {
-          setActiveData({ relationshipType: option?.key as string } as any);
-        }}
-        {...props}
-      />
-    </LayoutItem>
-  );
-};
-
-const homePhone: React.FC<FieldProps> = ({ index, ...props }) => {
-  const section = useSection();
-  const [activeData, setActiveData] = useActiveData();
-  const data = section.activeSelector ? section.activeSelector(activeData) : {} as AssociatedPartyData;
-
-  return (
-    <LayoutItem label="Home Phone" size="small" fieldId="homePhone" index={index}>
-      <MoisTextField
-        fieldId="homePhone"
-        value={data.homePhone ?? ''}
-        size="small"
-        onChange={(_, val) => {
-          setActiveData({ homePhone: val } as any);
-        }}
-        {...props}
-      />
-    </LayoutItem>
-  );
-};
-
-const workPhone: React.FC<FieldProps> = ({ index, ...props }) => {
-  const section = useSection();
-  const [activeData, setActiveData] = useActiveData();
-  const data = section.activeSelector ? section.activeSelector(activeData) : {} as AssociatedPartyData;
-
-  return (
-    <LayoutItem label="Work Phone" size="small" fieldId="workPhone" index={index}>
-      <MoisTextField
-        fieldId="workPhone"
-        value={data.workPhone ?? ''}
-        size="small"
-        onChange={(_, val) => {
-          setActiveData({ workPhone: val } as any);
-        }}
-        {...props}
-      />
-    </LayoutItem>
-  );
-};
-
-const workExt: React.FC<FieldProps> = ({ index, ...props }) => {
-  const section = useSection();
-  const [activeData, setActiveData] = useActiveData();
-  const data = section.activeSelector ? section.activeSelector(activeData) : {} as AssociatedPartyData;
-
-  return (
-    <LayoutItem label="Ext." size="small" fieldId="workExt" index={index}>
-      <MoisTextField
-        fieldId="workExt"
-        value={data.workExt ?? ''}
-        size="small"
-        onChange={(_, val) => {
-          setActiveData({ workExt: val } as any);
-        }}
-        {...props}
-      />
-    </LayoutItem>
-  );
-};
-
-const note: React.FC<FieldProps> = ({ index, ...props }) => {
-  const section = useSection();
-  const [activeData, setActiveData] = useActiveData();
-  const data = section.activeSelector ? section.activeSelector(activeData) : {} as AssociatedPartyData;
-
-  return (
-    <LayoutItem label="General notes" size="max" fieldId="note" index={index}>
-      <MoisTextField
-        fieldId="note"
-        value={data.note ?? ''}
-        multiline
-        rows={3}
-        size="max"
-        onChange={(_, val) => {
-          setActiveData({ note: val } as any);
-        }}
-        {...props}
-      />
-    </LayoutItem>
-  );
-};
-
-const preferredPhone: React.FC<FieldProps> = ({ index, ...props }) => {
-  const section = useSection();
-  const [activeData, setActiveData] = useActiveData();
-  const data = section.activeSelector ? section.activeSelector(activeData) : {} as AssociatedPartyData;
-
-  return (
-    <LayoutItem label="Preferred phone" size="small" fieldId="preferredPhone" index={index}>
-      <MoisDropdown
-        fieldId="preferredPhone"
-        codeSystem="MOIS-PREFERREDPHONE"
-        value={data.preferredPhone}
-        placeholder="Please select"
-        size="small"
-        onChange={(_, option) => {
-          setActiveData({ preferredPhone: option?.key as string } as any);
-        }}
-        {...props}
-      />
-    </LayoutItem>
-  );
-};
-
-const includeOnDemographics: React.FC<FieldProps> = ({ index, ...props }) => {
-  const section = useSection();
-  const [activeData, setActiveData] = useActiveData();
-  const data = section.activeSelector ? section.activeSelector(activeData) : {} as AssociatedPartyData;
-
-  return (
-    <LayoutItem label="Show on demographics" size="small" fieldId="includeOnDemographics" index={index}>
-      <MoisDropdown
-        fieldId="includeOnDemographics"
-        codeSystem="MOIS-YESNO"
-        value={data.includeOnDemographics}
-        placeholder="Please select"
-        size="small"
-        onChange={(_, option) => {
-          setActiveData({ includeOnDemographics: option?.key as string } as any);
-        }}
-        {...props}
-      />
-    </LayoutItem>
-  );
-};
-
-const isMemberOfCareTeam: React.FC<FieldProps> = ({ index, ...props }) => {
-  const section = useSection();
-  const [activeData, setActiveData] = useActiveData();
-  const data = section.activeSelector ? section.activeSelector(activeData) : {} as AssociatedPartyData;
-
-  return (
-    <LayoutItem label="Show on care plan" size="small" fieldId="isMemberOfCareTeam" index={index}>
-      <MoisDropdown
-        fieldId="isMemberOfCareTeam"
-        codeSystem="MOIS-YESNO"
-        value={data.isMemberOfCareTeam}
-        placeholder="Please select"
-        size="small"
-        onChange={(_, option) => {
-          setActiveData({ isMemberOfCareTeam: option?.key as string } as any);
-        }}
-        {...props}
-      />
-    </LayoutItem>
-  );
-};
+const name = makeTextField('name', 'Name', 'small');
+const relationshipCode = makeTextField('relationshipCode', 'Relationship', 'small', { placeholder: 'Please search' });
+const relationshipType = makeCodedField('relationshipType', 'Role', 'MOIS-RELATIONSHIPTYPE', 'small');
+const homePhone = makeTextField('homePhone', 'Home Phone', 'small');
+const workPhone = makeTextField('workPhone', 'Work Phone', 'small');
+const workExt = makeTextField('workExt', 'Ext.', 'small');
+const note = makeTextField('note', 'General notes', 'max', { multiline: true });
+const preferredPhone = makeCodedField('preferredPhone', 'Preferred phone', 'MOIS-PREFERREDPHONE', 'small');
+const includeOnDemographics = makeCodedField('includeOnDemographics', 'Show on demographics', 'MOIS-YESNO', 'small');
+const isMemberOfCareTeam = makeCodedField('isMemberOfCareTeam', 'Show on care plan', 'MOIS-YESNO', 'small');
 
 const stamp: React.FC<FieldProps> = ({ index, ...props }) => {
-  return <AuditStamp index={index} {...props} />;
+  return <AuditStamp fieldId="stamp" index={index} {...props} />;
 };
 
 // ============================================================================
@@ -284,27 +180,10 @@ const Fields = {
 };
 
 // ============================================================================
-// All Component (renders all fields)
+// All Component (renders the placed fields, or every field with no placement)
 // ============================================================================
 
-const All: React.FC<any> = (props) => {
-  return (
-    <div>
-      <Fields.attachmentCount {...props} />
-      <Fields.name {...props} />
-      <Fields.relationshipCode {...props} />
-      <Fields.relationshipType {...props} />
-      <Fields.homePhone {...props} />
-      <Fields.workPhone {...props} />
-      <Fields.workExt {...props} />
-      <Fields.note {...props} />
-      <Fields.preferredPhone {...props} />
-      <Fields.includeOnDemographics {...props} />
-      <Fields.isMemberOfCareTeam {...props} />
-      <Fields.stamp {...props} />
-    </div>
-  );
-};
+const All: React.FC<any> = (props) => <ArchAll fields={Fields} {...props} />;
 
 // ============================================================================
 // Address Subform
@@ -487,7 +366,10 @@ const Telecom: React.FC<TelecomProps> = ({
   return (
     <div>
       <div>
-        <div>
+        {/* Single-column Grid (no placement) so an outer Grid's fieldPlacement
+            does not hide these subform LayoutItems (a Grid resets the
+            fieldPlacement context; a Row inherits it). */}
+        <Grid columnTemplate="1fr" gap={0}>
           {/* Home phone row */}
           <Row gap={0} align="end">
             <LayoutItem fieldId="homePhone" size="small" labelPosition="none">
@@ -576,7 +458,7 @@ const Telecom: React.FC<TelecomProps> = ({
               />
             </LayoutItem>
           </Row>
-        </div>
+        </Grid>
       </div>
     </div>
   );

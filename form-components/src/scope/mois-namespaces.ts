@@ -199,7 +199,10 @@ export const MoisFunction = {
     const data = hasReason ? maybeData : fdOrData;
     return applyPreviewFormAction('signSubmit', sd, fd, data);
   },
-  refresh: () => { console.log('Refresh called'); triggerToast('Refresh called'); },
+  // Preview mutations publish to the chart store immediately (useSourceData
+  // subscribes), so refresh only needs to acknowledge — the re-read the real
+  // engine performs here has already happened.
+  refresh: () => { console.log('Refresh called'); triggerToast('Chart refreshed'); },
   mapSourceToActive: (columns: any[] = []) => {
     return (item: any = {}) => {
       const result: Record<string, any> = {};

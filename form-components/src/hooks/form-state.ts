@@ -9,6 +9,7 @@ import React, { createContext, useContext, useState, useCallback, useMemo, useRe
 import { produce, setAutoFreeze } from 'immer';
 import { normalizeAuthorshipStore, syncAuthorshipMirrors } from '../authorship';
 import { warnIfRenderPhaseWrite } from '../runtime/render-write-tripwire';
+import { resetPreviewChartMutations } from '../scope/preview-chart-store';
 
 // ============================================================================
 // Types
@@ -203,6 +204,9 @@ export const getInitialData = (): Record<string, any> => {
  */
 export const initFormData = () => {
   globalInitialData = {};
+  // A fresh preview session starts from the scenario's baseline chart; any
+  // mutations the previous form applied to the preview chart store are stale.
+  resetPreviewChartMutations();
   if (globalSetFormData) {
     globalSetFormData(normalizeFormData({
       field: { data: {}, status: {} },
