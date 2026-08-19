@@ -62,7 +62,7 @@ const AttestationSignOff = ({
   defaultName,
   readOnly = false,
 }) => {
-  const [fieldData, setFieldData] = useActiveData(fd => fd.field.data)
+  const [fieldData, setFieldData] = useActiveData(fd => fd?.field?.data || {})
   const sd = useSourceData()
   const value = fieldData?.[fieldId] && typeof fieldData[fieldId] === "object" ? fieldData[fieldId] : {}
   const signatureFieldId = `${fieldId}_signature`

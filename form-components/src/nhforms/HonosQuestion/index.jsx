@@ -341,7 +341,7 @@ const createScaleQuestion = ({
     readOnly = false,
     disabled = false,
   }: ScaleQuestionProps) => {
-    const [honosData,modHonosData]: [FormData,Setter] = useActiveData(fd=>fd.field.data)
+    const [honosData,modHonosData]: [FormData,Setter] = useActiveData(fd=>fd?.field?.data || {})
     const [fd] = useActiveData()
     const theme = useTheme()
     // Builder "Disabled (read-only)" and lock rules arrive as either prop name.

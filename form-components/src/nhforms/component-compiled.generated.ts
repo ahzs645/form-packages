@@ -614,7 +614,7 @@ const AttestationSignOff = ({
   defaultName,
   readOnly = false
 }) => {
-  const [fieldData, setFieldData] = useActiveData(fd => fd.field.data);
+  const [fieldData, setFieldData] = useActiveData(fd => fd?.field?.data || {});
   const sd = useSourceData();
   const value = fieldData?.[fieldId] && typeof fieldData[fieldId] === "object" ? fieldData[fieldId] : {};
   const signatureFieldId = \`\${fieldId}_signature\`;
@@ -5318,6 +5318,17 @@ const ConditionalField = ({
     const becameHidden = wasVisibleRef.current && !isVisible;
     wasVisibleRef.current = isVisible;
     if (isVisible || !fieldId) return;
+    const activeFieldData = fd?.field?.data;
+    const activePayloads = activeFieldData?.__componentPayloads;
+    const shouldClearAnswer = becameHidden && hiddenAnswerPolicy === 'clear' && activeFieldData?.[fieldId] !== undefined;
+    const hasStagedDco = activePayloads?.dcoUpdatesByComponent?.[fieldId] !== undefined;
+    const hasStagedWebformUpdate = activePayloads?.webformUpdatesByComponent?.[fieldId] !== undefined;
+
+    // Real MOIS attaches its React setter directly to ActiveData. Avoid
+    // scheduling a curried Immer update when the initially-hidden wrapper has
+    // no answer or staged payload to withdraw; a large form can contain
+    // hundreds of these wrappers before any child has mounted.
+    if (!shouldClearAnswer && !hasStagedDco && !hasStagedWebformUpdate) return;
     setFormData(produce(draft => {
       if (becameHidden && hiddenAnswerPolicy === 'clear' && draft?.field?.data) {
         delete draft.field.data[fieldId];
@@ -5331,7 +5342,7 @@ const ConditionalField = ({
         delete payloads.webformUpdatesByComponent[fieldId];
       }
     }));
-  }, [isVisible, fieldId, hiddenAnswerPolicy, setFormData]);
+  }, [fd, isVisible, fieldId, hiddenAnswerPolicy, setFormData]);
   if (!isVisible) {
     return null;
   }
@@ -5534,11 +5545,12 @@ if (typeof Conditions === "undefined") {
  * Display a list of health issues (conditions) experienced by the patient and
  * optionally allows selection.
  */
+const selectAllConditions = () => true;
 Conditions = ({
   selectText = "Select conditions",
   id = "conditions",
   selectionType = "none",
-  filterPred = selectAll,
+  filterPred = selectAllConditions,
   ...props
 }) => {
   return /*#__PURE__*/React.createElement(ListSelection, _extends({
@@ -15655,7 +15667,7 @@ const createScaleQuestion = ({
     readOnly = false,
     disabled = false
   }) => {
-    const [honosData, modHonosData] = useActiveData(fd => fd.field.data);
+    const [honosData, modHonosData] = useActiveData(fd => fd?.field?.data || {});
     const [fd] = useActiveData();
     const theme = useTheme();
     // Builder "Disabled (read-only)" and lock rules arrive as either prop name.
@@ -28749,7 +28761,7 @@ const ScaleField = ({
   // Authorship/lock rules arrive as a dynamic \`disabled\` expression from the
   // exporter; fold it into the static readOnly behavior.
   const readOnly = readOnlyProp || disabled;
-  const [fieldData, setFieldData] = useActiveData(fd => fd.field.data);
+  const [fieldData, setFieldData] = useActiveData(fd => fd?.field?.data || {});
   const theme = useTheme();
 
   // Default options if none provided (0-5 scale)
@@ -31034,7 +31046,7 @@ const SignaturePad = ({
   // Authorship/lock rules arrive as a dynamic \`disabled\` expression from the
   // exporter; fold it into the static readOnly behavior.
   const readOnly = readOnlyProp || disabled;
-  const [fieldData, setFieldData] = useActiveData(fd => fd.field.data);
+  const [fieldData, setFieldData] = useActiveData(fd => fd?.field?.data || {});
   const theme = useTheme();
   const canvasRef = useRef(null);
   const padRef = useRef(null);
@@ -35393,8 +35405,8 @@ export const componentDefinedNames: Record<string, string[]> = {
   './CommonSchemaDefn/index.jsx': ["NameBlockFields","active","commonSchemaDefn","formHistorySchema","makeCodedObsUpdates","makeObsUpdatesFromVs","makeTextObsUpdates","makeValueSetOptions","nameBlockSchema","newDco","oldObs","oldObsId","options","selectAll","startDateDesc","valueSet","vso","ynuaOptions"],
   './CompactBooleanField/index.jsx': ["BooleanLabelPresets","CompactBooleanChecklist","CompactBooleanChecklistSchema","CompactBooleanField","CompactBooleanFieldSchema","CompactBooleanGroup","CompactChoiceField","CompactChoiceFieldMultiSchema","CompactChoiceFieldSchema","OptionButtons","YesNoButtons","baseContainerStyle","buttonStyle","checkboxWrapperRef","choiceContent","commitValue","containerStyle","currentData","currentValue","data","decodePDFHex","decoded","fieldContent","getBooleanLabels","getButtonStyles","getCardContainerStyles","getFieldContainerStyles","getWidthStyle","handleChange","handleCheckboxChange","handleClick","handleNoClick","handleYesClick","input","isDarkMode","isDisabled","isHorizontal","isLast","isLeftLabel","isMultiple","isSelected","labelStyle","lastRowStyle","newValues","noButtonStyle","normalizeValue","normalized","normalizedValue","noteStyle","prevDecoded","rowStyle","selected","selectedValues","setFormData","sizeStyles","theme","themeLabelMaxWidth","themeLabelMinWidth","titleStyle","values","widthMap","yesButtonStyle"],
   './ComputedField/index.jsx': ["ComputedField","ComputedValuePresentation","_COMPUTED_NON_FIELD_IDENTIFIERS","_COMPUTED_REF_PATTERN","_DATE_ONLY_FORMATS","_DURATION_UNIT_ALIASES","_MS_PER_DAY","_addCalendarDays","_addMonthsClamped","_calendarDayNumber","_coalesce","_computedFieldIsOverridden","_computedFieldState","_contains","_countTrue","_daysSince","_durationBetween","_durationText","_escapeRegExp","_evaluateComputedExpression","_exactDaysBetween","_exp","_extractComputedReferences","_floor","_getInterpretationRange","_hasAllReferencedValues","_hasValue","_iif","_isDateOnlyValue","_isSafeComputedExpression","_ln","_max","_min","_mod","_monthsSince","_normalizeCalculationPolicy","_normalizeComputedDisplayStyle","_normalizeDurationUnit","_numericExtrema","_parseDateOnlyString","_power","_replaceBareReferencesOutsideQuotes","_resolveDurationEndpoints","_round","_roundComputedValue","_score","_shouldApplyComputedValue","_stripQuotedStrings","_text","_toComparableValue","_toDateValue","_toDisplayValue","_toEditableComputedValue","_toNumericValue","_today","_wholeMonthsBetween","amount","anchor","bareRefs","bracketedRefs","canEdit","canShowInterpretation","candidate","computedValue","containerStyle","currentValue","cursor","date","dateOnly","days","digits","direct","displayValue","end","endpoints","enteredDisplayValue","externallyReadOnly","factor","from","interpretationRange","interpretationValue","isIncomplete","isOverridden","isProminent","labelColumnWidth","lastDay","markOverridden","match","max","min","monthIndex","monthLength","months","next","nextSegment","nonZero","normalizedStyle","normalizedUnit","now","numeric","numericDivisor","numericExponent","numericPrecision","numericValues","orderedUnits","pad","parsed","parts","passesMax","passesMin","policy","prepared","previousState","project","readOnly","reference","refs","renderedValue","replaceInSegment","replaced","result","rounded","roundedValue","shown","start","state","stateContainer","stateMatches","storedValue","stringPattern","strippedExpression","supplementalInset","tail","theme","to","trimmed","uniqueBareRefs","uniqueBracketedRefs","unwrappedExpression","useCalculatedValue","valid","valueMatches","valuesByFieldId","whole","wholeMonths"],
-  './ConditionalGroup/index.jsx': ["ConditionalField","ConditionalGroup","ConditionalGroupSchema","ConditionalReadOnly","ControllerLabelPresets","DISABLED_NATIVE_ELEMENTS","LogicGateContext","LogicGateProvider","MAX_SUBGROUP_DEPTH","READ_ONLY_NATIVE_ELEMENTS","allParentsVisible","baseContainerStyle","baseContentStyle","becameHidden","checkChoiceMatch","checkComparisonMatch","checkControllerMatch","childContext","clippedField","cloneWithProtection","conditionMet","containerStyle","contentNode","contentRef","contentStyle","context","contextValue","controllerFieldId","controllerValue","controllerWrapperStyle","createBranchingRule","currentDepth","defaultPadding","depthIndicatorStyle","effectiveValue","evaluateConditionEntries","evaluateConditionEntry","fieldValue","fieldValues","frame","generateConditionalGroupJSX","generateGroup","getControllerValue","groupRect","handleControllerChange","hasMatch","hiddenIndicatorStyle","indent","isDarkMode","isGroupVisible","isVisible","jsx","left","matches","mergeStyles","mode","nestedValue","nextProps","normalizeComparableValue","normalizeComparableValues","normalizeValue","normalized","normalizedOptionValues","orderedRules","override","overrides","parentChain","parentContext","payloads","props","protectedChildren","readControllerValue","rect","reportOverflow","result","right","rule","rules","theme","titleStyle","type","useConditionalVisibility","useIsVisible","useLogicGate","usesDisabledFallback","wasVisibleRef"],
-  './Conditions/index.jsx': ["Conditions","ConditionsFields"],
+  './ConditionalGroup/index.jsx': ["ConditionalField","ConditionalGroup","ConditionalGroupSchema","ConditionalReadOnly","ControllerLabelPresets","DISABLED_NATIVE_ELEMENTS","LogicGateContext","LogicGateProvider","MAX_SUBGROUP_DEPTH","READ_ONLY_NATIVE_ELEMENTS","activeFieldData","activePayloads","allParentsVisible","baseContainerStyle","baseContentStyle","becameHidden","checkChoiceMatch","checkComparisonMatch","checkControllerMatch","childContext","clippedField","cloneWithProtection","conditionMet","containerStyle","contentNode","contentRef","contentStyle","context","contextValue","controllerFieldId","controllerValue","controllerWrapperStyle","createBranchingRule","currentDepth","defaultPadding","depthIndicatorStyle","effectiveValue","evaluateConditionEntries","evaluateConditionEntry","fieldValue","fieldValues","frame","generateConditionalGroupJSX","generateGroup","getControllerValue","groupRect","handleControllerChange","hasMatch","hasStagedDco","hasStagedWebformUpdate","hiddenIndicatorStyle","indent","isDarkMode","isGroupVisible","isVisible","jsx","left","matches","mergeStyles","mode","nestedValue","nextProps","normalizeComparableValue","normalizeComparableValues","normalizeValue","normalized","normalizedOptionValues","orderedRules","override","overrides","parentChain","parentContext","payloads","props","protectedChildren","readControllerValue","rect","reportOverflow","result","right","rule","rules","shouldClearAnswer","theme","titleStyle","type","useConditionalVisibility","useIsVisible","useLogicGate","usesDisabledFallback","wasVisibleRef"],
+  './Conditions/index.jsx': ["Conditions","ConditionsFields","selectAllConditions"],
   './Connections/index.jsx': ["CONNECTIONS_SORTS","Connections","ConnectionsFields","SelectActiveConnections","byType","prop","resolvedCompare"],
   './ConversionField/index.jsx': ["ConversionField","ConversionFieldSchema","_asPositiveNumber","_asPrecision","_conversionPathSegments","_normalizeConversionRows","_readConversionPath","_readConversionValue","_sanitizeConversionNumber","activeFrom","activeTo","canUseFrom","canUseTo","char","clearValues","convertRow","current","fromValue","hasAnyValue","hasDecimal","index","lastEdited","lastEditedRef","next","nextValue","normalizedFromFieldId","normalizedToFieldId","parsed","parsedFrom","parsedTo","pathValue","rows","segments","setConversionValues","source","sourceFieldId","text","toValue","updateValue","updates"],
   './CustomJsxBlock/index.jsx': ["CustomJsxBlock","displaySource","raw"],

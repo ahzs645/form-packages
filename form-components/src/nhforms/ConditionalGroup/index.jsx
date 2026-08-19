@@ -732,6 +732,24 @@ const ConditionalField = ({
     const becameHidden = wasVisibleRef.current && !isVisible
     wasVisibleRef.current = isVisible
     if (isVisible || !fieldId) return
+
+    const activeFieldData = fd?.field?.data
+    const activePayloads = activeFieldData?.__componentPayloads
+    const shouldClearAnswer =
+      becameHidden &&
+      hiddenAnswerPolicy === 'clear' &&
+      activeFieldData?.[fieldId] !== undefined
+    const hasStagedDco =
+      activePayloads?.dcoUpdatesByComponent?.[fieldId] !== undefined
+    const hasStagedWebformUpdate =
+      activePayloads?.webformUpdatesByComponent?.[fieldId] !== undefined
+
+    // Real MOIS attaches its React setter directly to ActiveData. Avoid
+    // scheduling a curried Immer update when the initially-hidden wrapper has
+    // no answer or staged payload to withdraw; a large form can contain
+    // hundreds of these wrappers before any child has mounted.
+    if (!shouldClearAnswer && !hasStagedDco && !hasStagedWebformUpdate) return
+
     setFormData(produce((draft) => {
       if (becameHidden && hiddenAnswerPolicy === 'clear' && draft?.field?.data) {
         delete draft.field.data[fieldId]
@@ -745,7 +763,7 @@ const ConditionalField = ({
         delete payloads.webformUpdatesByComponent[fieldId]
       }
     }))
-  }, [isVisible, fieldId, hiddenAnswerPolicy, setFormData])
+  }, [fd, isVisible, fieldId, hiddenAnswerPolicy, setFormData])
 
   if (!isVisible) {
     return null

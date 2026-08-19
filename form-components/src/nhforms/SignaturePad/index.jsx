@@ -58,7 +58,7 @@ const SignaturePad = ({
   // Authorship/lock rules arrive as a dynamic `disabled` expression from the
   // exporter; fold it into the static readOnly behavior.
   const readOnly = readOnlyProp || disabled
-  const [fieldData, setFieldData] = useActiveData(fd => fd.field.data)
+  const [fieldData, setFieldData] = useActiveData(fd => fd?.field?.data || {})
   const theme = useTheme()
   const canvasRef = useRef(null)
   const padRef = useRef(null)

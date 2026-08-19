@@ -611,7 +611,7 @@ const AttestationSignOff = ({
   defaultName,
   readOnly = false,
 }) => {
-  const [fieldData, setFieldData] = useActiveData(fd => fd.field.data)
+  const [fieldData, setFieldData] = useActiveData(fd => fd?.field?.data || {})
   const sd = useSourceData()
   const value = fieldData?.[fieldId] && typeof fieldData[fieldId] === "object" ? fieldData[fieldId] : {}
   const signatureFieldId = \`\${fieldId}_signature\`
@@ -5245,6 +5245,24 @@ const ConditionalField = ({
     const becameHidden = wasVisibleRef.current && !isVisible
     wasVisibleRef.current = isVisible
     if (isVisible || !fieldId) return
+
+    const activeFieldData = fd?.field?.data
+    const activePayloads = activeFieldData?.__componentPayloads
+    const shouldClearAnswer =
+      becameHidden &&
+      hiddenAnswerPolicy === 'clear' &&
+      activeFieldData?.[fieldId] !== undefined
+    const hasStagedDco =
+      activePayloads?.dcoUpdatesByComponent?.[fieldId] !== undefined
+    const hasStagedWebformUpdate =
+      activePayloads?.webformUpdatesByComponent?.[fieldId] !== undefined
+
+    // Real MOIS attaches its React setter directly to ActiveData. Avoid
+    // scheduling a curried Immer update when the initially-hidden wrapper has
+    // no answer or staged payload to withdraw; a large form can contain
+    // hundreds of these wrappers before any child has mounted.
+    if (!shouldClearAnswer && !hasStagedDco && !hasStagedWebformUpdate) return
+
     setFormData(produce((draft) => {
       if (becameHidden && hiddenAnswerPolicy === 'clear' && draft?.field?.data) {
         delete draft.field.data[fieldId]
@@ -5258,7 +5276,7 @@ const ConditionalField = ({
         delete payloads.webformUpdatesByComponent[fieldId]
       }
     }))
-  }, [isVisible, fieldId, hiddenAnswerPolicy, setFormData])
+  }, [fd, isVisible, fieldId, hiddenAnswerPolicy, setFormData])
 
   if (!isVisible) {
     return null
@@ -5446,11 +5464,13 @@ if (typeof Conditions==="undefined") {
  * Display a list of health issues (conditions) experienced by the patient and
  * optionally allows selection.
  */
+const selectAllConditions = () => true
+
 Conditions = ({
     selectText = "Select conditions",
     id = "conditions",
     selectionType = "none",
-    filterPred = selectAll,
+    filterPred = selectAllConditions,
     ...props
 }:Props) => {
 
@@ -15891,7 +15911,7 @@ const createScaleQuestion = ({
     readOnly = false,
     disabled = false,
   }: ScaleQuestionProps) => {
-    const [honosData,modHonosData]: [FormData,Setter] = useActiveData(fd=>fd.field.data)
+    const [honosData,modHonosData]: [FormData,Setter] = useActiveData(fd=>fd?.field?.data || {})
     const [fd] = useActiveData()
     const theme = useTheme()
     // Builder "Disabled (read-only)" and lock rules arrive as either prop name.
@@ -27111,7 +27131,7 @@ const ScaleField = ({
   // Authorship/lock rules arrive as a dynamic \`disabled\` expression from the
   // exporter; fold it into the static readOnly behavior.
   const readOnly = readOnlyProp || disabled
-  const [fieldData, setFieldData] = useActiveData(fd => fd.field.data)
+  const [fieldData, setFieldData] = useActiveData(fd => fd?.field?.data || {})
   const theme = useTheme()
 
   // Default options if none provided (0-5 scale)
@@ -28885,7 +28905,7 @@ const SignaturePad = ({
   // Authorship/lock rules arrive as a dynamic \`disabled\` expression from the
   // exporter; fold it into the static readOnly behavior.
   const readOnly = readOnlyProp || disabled
-  const [fieldData, setFieldData] = useActiveData(fd => fd.field.data)
+  const [fieldData, setFieldData] = useActiveData(fd => fd?.field?.data || {})
   const theme = useTheme()
   const canvasRef = useRef(null)
   const padRef = useRef(null)

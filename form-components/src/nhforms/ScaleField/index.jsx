@@ -197,7 +197,7 @@ const ScaleField = ({
   // Authorship/lock rules arrive as a dynamic `disabled` expression from the
   // exporter; fold it into the static readOnly behavior.
   const readOnly = readOnlyProp || disabled
-  const [fieldData, setFieldData] = useActiveData(fd => fd.field.data)
+  const [fieldData, setFieldData] = useActiveData(fd => fd?.field?.data || {})
   const theme = useTheme()
 
   // Default options if none provided (0-5 scale)

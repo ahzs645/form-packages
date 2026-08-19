@@ -8,11 +8,13 @@ if (typeof Conditions==="undefined") {
  * Display a list of health issues (conditions) experienced by the patient and
  * optionally allows selection.
  */
+const selectAllConditions = () => true
+
 Conditions = ({
     selectText = "Select conditions",
     id = "conditions",
     selectionType = "none",
-    filterPred = selectAll,
+    filterPred = selectAllConditions,
     ...props
 }:Props) => {
 
