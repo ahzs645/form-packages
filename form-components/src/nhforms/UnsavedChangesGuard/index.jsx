@@ -355,9 +355,12 @@ const UnsavedChangesGuard = ({
       typeof window.__builderEncounterNoteFlush === "function"
     ) {
       try {
-        await window.__builderEncounterNoteFlush()
+        const encounterNotesSaved = await window.__builderEncounterNoteFlush()
+        if (encounterNotesSaved === false) return
       } catch (error) {
-        // best-effort: note failures surface via the form's errorDispatch
+        // A direct encounter-note failure must not be followed by a successful
+        // webform save; that leaves the user with a misleading partial result.
+        return
       }
     }
     const prepared = nhAuthPrepareSave(persistFd, persistAction)

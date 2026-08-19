@@ -1230,6 +1230,29 @@ export interface BuilderFieldSourceContract {
   unresolved: string[];
 }
 
+/** How a source-bound field's value is coerced before it lands in formData. */
+export type BuilderFieldSourceFormat = "text" | "date" | "dateTime" | "coding";
+
+/**
+ * "initial" seeds the value once and keeps any saved/edited answer;
+ * "sync" reapplies the source value on every load/refresh.
+ */
+export type BuilderFieldSourceMode = "initial" | "sync";
+
+/**
+ * Field-level MOIS source-data binding (see BuilderField.sourceConfig).
+ * Mirrors the layout-table cell vocabulary so the two stay interchangeable.
+ */
+export interface BuilderFieldSourceConfig {
+  /** MOIS source-data paths tried in order; the first meaningful value wins. */
+  paths: string[];
+  format?: BuilderFieldSourceFormat;
+  /** Defaults to "initial". */
+  mode?: BuilderFieldSourceMode;
+  /** Static value used when no path resolves (e.g. preview environments). */
+  fallback?: string | number | boolean | null;
+}
+
 export interface BuilderField {
   id: string;
   label: string;
@@ -1275,6 +1298,14 @@ export interface BuilderField {
   helpText?: string;
   helpPosition?: HelpPosition;
   prefill?: FieldPrefillValue;
+  /**
+   * MOIS source-data binding for this field's value — the field-level
+   * equivalent of a layout-table cell's sourcePaths/sourceMode/sourceFallback.
+   * Exports into the generated auto-fill pipeline: the value is resolved
+   * against `sd` at load/refresh and written into formData (so it saves like
+   * a filled answer, matching the legacy FormCreationHistory contract).
+   */
+  sourceConfig?: BuilderFieldSourceConfig | null;
   pdfFieldAliases?: string[];
   page?: number;
   bbox?: BoundingBox;

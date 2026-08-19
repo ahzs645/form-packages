@@ -3,21 +3,16 @@
  * Rich text display and edit control using Markdown syntax
  */
 
-import React, { useState } from 'react';
+import React from 'react';
 import { Pivot, PivotItem } from '@fluentui/react';
 import ReactMarkdown from 'react-markdown';
 import { useTheme, useSection, useActiveData, useSourceData, SectionContextValue } from '../context/MoisContext';
 import { LayoutItem, LayoutItemProps } from './LayoutItem';
+import { TextArea } from './TextArea';
 import {
-  getSectionActiveTarget,
-  getSectionSourceTarget,
   readSectionActiveFieldValue,
   readSectionSourceFieldValue,
 } from '../runtime/mois-contract';
-
-// Lazy-loaded so Milkdown (ProseMirror) only ships when an editable Markdown
-// field is actually rendered; read-only forms never pull it in.
-const MarkdownEditor = React.lazy(() => import('./MarkdownEditor'));
 
 export interface SectionInfo {
   name?: string;
@@ -179,10 +174,6 @@ export const Markdown: React.FC<MarkdownProps> = (props) => {
   const [activeData] = useActiveData();
   const sourceData = useSourceData();
 
-  // Apply selectors to get the relevant data objects
-  const activeFieldData = getSectionActiveTarget(activeData, sectionContext);
-  const sourceFieldData = getSectionSourceTarget(sourceData, sectionContext);
-
   // Resolve the content value (matching MOIS original fallback chain):
   // source prop → value prop → fieldId from activeData → sourceId from sourceData → defaultValue → ""
   let source = sourceProp;
@@ -198,19 +189,15 @@ export const Markdown: React.FC<MarkdownProps> = (props) => {
     readOnly = readOnly ?? true;
   }
 
-  // Resolve content from data sources if not directly provided
-  const resolvedContent =
+  // The Edit tab writes through the section contract (TextArea), so the
+  // preview re-reads the store on every render and reflects edits live —
+  // exactly the real engine's behavior. No local state needed.
+  const content =
     source ??
     readSectionActiveFieldValue(activeData, sectionContext, fieldId) ??
     readSectionSourceFieldValue(sourceData, sectionContext, sourceId) ??
     defaultValue ??
     '';
-
-  // Track local state for editable mode
-  const [localValue, setLocalValue] = useState(resolvedContent);
-
-  // Determine final content
-  const content = source ?? localValue;
 
   // isEmpty flag for LayoutItem
   const isEmpty = !Boolean(content);
@@ -227,10 +214,6 @@ export const Markdown: React.FC<MarkdownProps> = (props) => {
     ? (content ? 'preview' : 'edit')
     : startingMode;
 
-  const handleChange = (_: any, newValue?: string) => {
-    setLocalValue(newValue || '');
-    onChange?.(_, newValue);
-  };
 
   // Merge markdownProps - use strikethrough support based on allowStrikethrough prop
   const effectiveMarkdownProps = allowStrikethrough
@@ -252,10 +235,9 @@ export const Markdown: React.FC<MarkdownProps> = (props) => {
     ? { color: theme.semanticColors.disabledText }
     : {};
 
-  // Markdown content font styling (Times/serif as per MOIS reference)
-  // Also ensure content fills full width with no max-width constraints
+  // The real engine renders markdown in the app font (no serif override);
+  // only ensure the content fills full width with no max-width constraints.
   const markdownFontStyles: React.CSSProperties = {
-    fontFamily: 'Times, "Times New Roman", serif',
     maxWidth: 'none',
     width: '100%',
   };
@@ -295,19 +277,33 @@ export const Markdown: React.FC<MarkdownProps> = (props) => {
           </PivotItem>
           <PivotItem headerText="Edit" itemKey="edit">
             <div style={{ width: '100%', margin: '15px 0px' }}>
-              <React.Suspense
-                fallback={<div style={{ padding: '8px', fontSize: '13px', color: '#64748b' }}>Loading editor…</div>}
-              >
-                <MarkdownEditor
-                  value={content}
-                  onChange={(markdown) => handleChange(undefined, markdown)}
-                  disabled={disabled}
-                  placeholder={placeholder}
-                  height={height}
-                  gfm={false}
-                  borderless
-                />
-              </React.Suspense>
+              {/* MOIS parity (verbatim from the engine bundle): the Edit tab
+                  is the plain TextArea control showing the raw markdown
+                  source, bound through the section contract so edits write
+                  straight to the store — monospace, resizable when no fixed
+                  height, rows derived from the theme. */}
+              <TextArea
+                fieldId={fieldId}
+                sourceId={sourceId}
+                borderless={props.borderless}
+                placeholder={placeholder}
+                required={required}
+                disabled={disabled}
+                section={section}
+                defaultValue={defaultValue}
+                multiline
+                {...(value !== undefined ? { value, onChange } : {})}
+                textFieldProps={{
+                  rows: height
+                    ? Math.max(1, Math.round(height / theme.mois.textFieldRowHeight))
+                    : theme.mois.largeTextEditRowDefault,
+                  resizable: !height,
+                  styles: {
+                    root: { width: '100%', ...theme.mois.monospace },
+                    fieldGroup: requiredStyles as Record<string, unknown>,
+                  },
+                }}
+              />
             </div>
           </PivotItem>
         </Pivot>

@@ -1,5 +1,6 @@
 import type {
   BuilderField,
+  BuilderFieldSourceConfig,
   BuilderFieldTranslation,
   BuilderFhirConfig,
   BuilderMoisOutputMapping,
@@ -357,6 +358,8 @@ export interface ParsedField {
    * (lib/measurement-field-config.ts).
    */
   measurementConfig?: MeasurementFieldConfig | null;
+  /** Field-level MOIS source binding, carried verbatim from BuilderField. */
+  sourceConfig?: BuilderFieldSourceConfig | null;
   tableConfig?: {
     columns: TableColumn[];
     mode?: TableMode;

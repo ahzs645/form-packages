@@ -2306,9 +2306,12 @@ ChartRecordList = ({
 
 /**
  * ChartRecordCreateButton - one template-prefilled create button as its own
- * builder field (the vendor PreferenceButton, decomposed): opens the
- * ChartRecordEditor sharing its managerId, seeded with this button's
- * defaults. Place as many as needed, anywhere on the form.
+ * builder field (the vendor PreferenceButton, decomposed): opens the editor
+ * hosted by the ChartRecordList sharing its managerId, seeded with this
+ * button's defaults. When the form has NO matching list (a buttons-only
+ * consent form, for example), the button hosts its own default editor for
+ * the source instead of silently doing nothing — a create button always
+ * works. Place as many as needed, anywhere on the form.
  */
 ChartRecordCreateButton = ({
   source = "preferences",
@@ -2321,6 +2324,19 @@ ChartRecordCreateButton = ({
   fullWidth = false,
 }) => {
   const resolvedManagerId = managerId || source
+  const fallbackManagerId = \`__button:\${React.useId()}\`
+
+  const handleClick = () => {
+    const request = { kind: "create", defaults, hiddenFieldIds, title: createTitle }
+    // Prefer the shared editor (a list's, with its configured modal fields);
+    // fall back to this button's own when nothing is registered — resolved
+    // at click time, after every field on the form has mounted.
+    openChartRecordEditor(
+      __chartRecordEditorChannels[resolvedManagerId] ? resolvedManagerId : fallbackManagerId,
+      request
+    )
+  }
+
   return (
     // Natural width by default — a lone field row must not stretch the button
     // edge to edge (the vendor button rows are compact). fullWidth opts into
@@ -2335,14 +2351,12 @@ ChartRecordCreateButton = ({
       <Fluent.DefaultButton
         styles={fullWidth ? { root: { width: "100%" } } : undefined}
         text={text || label || \`New \${(_chartRecordTablePresets[source]?.label || source).replace(/s$/, "").toLowerCase()}\`}
-        onClick={() =>
-          openChartRecordEditor(resolvedManagerId, {
-            kind: "create",
-            defaults,
-            hiddenFieldIds,
-            title: createTitle,
-          })
-        }
+        onClick={handleClick}
+      />
+      <ChartRecordEditor
+        source={source}
+        managerId={fallbackManagerId}
+        modalTitle={createTitle}
       />
     </div>
   )
@@ -34063,9 +34077,12 @@ const UnsavedChangesGuard = ({
       typeof window.__builderEncounterNoteFlush === "function"
     ) {
       try {
-        await window.__builderEncounterNoteFlush()
+        const encounterNotesSaved = await window.__builderEncounterNoteFlush()
+        if (encounterNotesSaved === false) return
       } catch (error) {
-        // best-effort: note failures surface via the form's errorDispatch
+        // A direct encounter-note failure must not be followed by a successful
+        // webform save; that leaves the user with a misleading partial result.
+        return
       }
     }
     const prepared = nhAuthPrepareSave(persistFd, persistAction)

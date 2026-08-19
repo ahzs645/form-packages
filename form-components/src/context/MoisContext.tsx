@@ -617,7 +617,11 @@ const SourceDataContext = createContext<SourceData | null>(null);
 const ActiveDataContext = createContext<ActiveData | null>(null);
 const SectionContext = createContext<SectionContextValue>({
   sectionNum: 0,
-  layout: 'flex',
+  // MOIS parity: the engine's default section layout is 'linear' (verbatim in
+  // the SMOIS bundle's default context), which is what gives bare fields under
+  // <Form> their left-positioned labels in a ~240px label column. Layout
+  // containers (Grid/Row/Column/FlowSheet) override this for their subtrees.
+  layout: 'linear',
   readOnlyOptions: {},
   activeSelector: (fd: any) => fd?.field?.data ?? fd,
   sourceSelector: (sd: any) => sd?.patient ?? sd,

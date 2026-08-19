@@ -151,6 +151,46 @@ describe("create button width", () => {
   });
 });
 
+describe("standalone create button (no list on the form)", () => {
+  it("hosts its own default editor and creates the record", async () => {
+    const { overlayPreviewChartMutations } = await import("../../scope/preview-chart-store");
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    // Buttons-only form: no ChartRecordList anywhere.
+    await act(async () => {
+      root!.render(
+        <FormStateProvider>
+          <ChartRecordCreateButton
+            source="connections"
+            text="New POA"
+            defaults={{
+              connectionType: { code: "POA", display: "Power of Attorney", system: "MOIS-CONNECTIONTYPE" },
+            }}
+          />
+        </FormStateProvider>
+      );
+    });
+
+    await act(async () => {
+      buttonByText("New POA").click();
+    });
+    // The button's own fallback editor opened with the source's default
+    // coded fields.
+    expect(document.body.textContent).toContain("Role");
+    expect(document.body.textContent).toContain("Provider type");
+
+    await act(async () => {
+      buttonByText("Save").click();
+    });
+    await settleMutation();
+
+    const patient = overlayPreviewChartMutations({ connections: [] as Array<Record<string, unknown>> });
+    expect(patient.connections).toHaveLength(1);
+    expect((patient.connections[0] as { connectionType?: { code?: string } }).connectionType?.code).toBe("POA");
+  });
+});
+
 describe("template modal (vendor-style)", () => {
   it("hides template-fixed fields and uses the vendor create title", async () => {
     container = document.createElement("div");
