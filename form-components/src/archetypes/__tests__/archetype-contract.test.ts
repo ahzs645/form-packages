@@ -60,4 +60,22 @@ describe("Mois archetype namespace", () => {
       expect(typeof (Mois.Observation as Record<string, unknown>)[field], field).toBe("function");
     }
   });
+
+  it("exposes every Mois.Patient member the vendor demographic test form renders", () => {
+    // Bright Health test_demographic_mutations renders each of these as JSX.
+    // A property access on Mois.Patient bypasses the missing-symbol scope
+    // proxy, so an absent member is a hard render crash, not a placeholder.
+    const used = [
+      "NameBlock", "name", "nickName", "birthDate", "administrativeGender",
+      "status", "healthNumber", "address", "telecom", "preferredPhone",
+      "shortNote", "note", "facilityCode", "locationCode", "serviceCenter",
+      "chartLocation", "insurance", "generalPractitioner", "race1", "race2",
+      "race3", "preferredGender", "genotypicGender", "countryOfOrigin",
+      "language", "religion", "firstNationStatus", "adopted", "multipleBirth",
+      "maritalStatus", "stamp",
+    ];
+    for (const member of used) {
+      expect(typeof (Mois.Patient as Record<string, unknown>)[member], member).toBe("function");
+    }
+  });
 });

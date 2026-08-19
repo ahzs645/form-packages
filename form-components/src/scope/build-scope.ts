@@ -655,6 +655,10 @@ export const buildScope = (): Record<string, any> => ({
   Pe,
   NameBlockFields,
 
+  // Bare refresh(sd) — the vendor's CRUD test forms call it after a mutation
+  // to re-run the source query (real MOIS exposes it as a form global).
+  refresh: MoisFunction.refresh,
+
   // MOIS Hooks
   useSourceData,
   useActiveData: useActiveDataForForms, // Use custom implementation for forms

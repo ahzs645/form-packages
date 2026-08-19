@@ -160,6 +160,21 @@ const activeChanged: React.FC<any> = ({ index, ...props }) => {
   );
 };
 
+// Composite chart-status editor. The vendor's test_demographic_mutations form
+// renders <Mois.Patient.status /> and saves fd.field.data.active +
+// fd.field.data.activeChanged through changePatient, so status is the
+// active/activeChanged pair, not a third field.
+const status: React.FC<any> = ({ index, ...props }) => {
+  const Active = active;
+  const ActiveChanged = activeChanged;
+  return (
+    <>
+      <Active index={index} {...props} />
+      <ActiveChanged index={index} {...props} />
+    </>
+  );
+};
+
 const address: React.FC<any> = ({ index, ...props }) => {
   const [data] = usePatientData();
 
@@ -1200,6 +1215,7 @@ const Fields = {
   shortNote,
   serviceCenter,
   stamp,
+  status,
   telecom,
 };
 
