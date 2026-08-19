@@ -136,6 +136,90 @@ describe("ChartRecordManager", () => {
     expect(buttonsByAriaLabel("Edit").length).toBe(1);
   });
 
+  it("derives coded modal fields for connections (vendor-informed defaults)", async () => {
+    await mount();
+    await act(async () => {
+      buttonsByAriaLabel("Edit")[0].click();
+    });
+    // The default connections field set renders coded editors, not free text:
+    // FindCodeSelect inputs carry placeholder "Please search".
+    const text = document.body.textContent ?? "";
+    for (const label of ["Role", "Provider type", "Stopped reason", "Care team member"]) {
+      expect(text).toContain(label);
+    }
+    expect(
+      document.querySelectorAll("input[placeholder='Please search']").length
+    ).toBeGreaterThanOrEqual(3);
+  });
+
+  it("cascades connection type to its default provider type and clears provider", async () => {
+    const { nhformsComponentGroups } = await import("@mois/form-components/nhforms/next");
+    void nhformsComponentGroups; // loader warm
+    const managerSource = (await import("node:fs")).readFileSync(
+      (await import("node:path")).join(
+        process.cwd(),
+        "packages/form-components/src/nhforms/ChartRecordManager/index.jsx"
+      ),
+      "utf8"
+    );
+    // Unit-test the cascade helper directly (it is pure): compile the helper
+    // region and run it against the real option lists.
+    const Babel = await import("@babel/standalone");
+    const compiled = Babel.transform(managerSource, { presets: ["react"], filename: "index.jsx" }).code ?? "";
+    // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func
+    const factory = new Function(
+      "React",
+      "window",
+      "Fluent",
+      "_chartRecordTablePresets",
+      `${compiled}; return { _chartRecordManagerApplyCascades, _chartRecordManagerDefaultCascades, _chartRecordManagerFieldTransforms };`
+    );
+    const helpers = factory(React, {}, {}, {});
+    const optionLists = (await import("../../data/optionLists.json")).default as Record<
+      string,
+      Record<string, string>
+    >;
+    const sd = { optionLists };
+
+    const cascaded = helpers._chartRecordManagerApplyCascades(
+      helpers._chartRecordManagerDefaultCascades.connections,
+      "connectionType",
+      { code: "PRIMARY", display: "Primary Care Provider", system: "MOIS-CONNECTIONTYPE" },
+      { connectionType: { code: "PRIMARY" }, provider: { code: "X" } },
+      sd
+    );
+    expect(cascaded.providerType).toEqual({
+      code: "100",
+      display: "PROVIDER (EXT)",
+      system: "MOIS-CONNECTIONPROVIDERTYPE",
+    });
+
+    const cleared = helpers._chartRecordManagerApplyCascades(
+      helpers._chartRecordManagerDefaultCascades.connections,
+      "providerType",
+      { code: "110" },
+      { providerType: { code: "110" }, provider: { code: "X" } },
+      sd
+    );
+    expect(cleared.provider).toBeUndefined();
+
+    // Layered instruction lookup: classification-specific list, with the
+    // classification-only fallback when no subject-specific list exists.
+    const fields = [{ id: "instruction", label: "Instruction", type: "choice", codeSystem: "MOIS-PREFINST" }];
+    const layered = helpers._chartRecordManagerFieldTransforms.preferences(
+      fields,
+      { classification: { code: "CONSENT" }, codedSubject: { code: "04000" } },
+      sd
+    );
+    expect(layered[0].codeSystem).toBe("MOIS-PREFINST:CONSENT:04000");
+    const fallback = helpers._chartRecordManagerFieldTransforms.preferences(
+      fields,
+      { classification: { code: "CONSENT" }, codedSubject: { code: "NO-SUCH-SUBJECT" } },
+      sd
+    );
+    expect(fallback[0].codeSystem).toBe("MOIS-PREFINST:CONSENT");
+  });
+
   it("creates a record from a template button", async () => {
     await mount({
       dataEntryFields: [{ id: "comment", label: "Comment", type: "text" }],

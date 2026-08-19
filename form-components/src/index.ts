@@ -314,6 +314,12 @@ export {
   // Live preview
   ErrorBoundary,
   LivePreview,
+  // Preview chart mutation store
+  applyPreviewChartMutation,
+  overlayPreviewChartMutations,
+  resetPreviewChartMutations,
+  subscribePreviewChart,
+  getPreviewChartVersion,
 } from './scope';
 export type { LivePreviewProps } from './scope';
 

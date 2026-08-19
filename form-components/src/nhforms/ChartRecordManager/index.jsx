@@ -59,10 +59,44 @@ const _chartRecordManagerStripKeys = {
   default: ["key"],
 }
 
+// Vendor-informed default modal fields per collection: coded columns get
+// real coded editors (choice + codeSystem serializes {code, display, system})
+// instead of free text. `provider` is deliberately absent from the
+// connections defaults — it needs a provider search control; authors add it
+// (or map it) explicitly when required.
+const _chartRecordManagerDefaultFieldPresets = {
+  connections: [
+    { id: "connectionType", label: "Role", type: "choice", codeSystem: "MOIS-CONNECTIONTYPE" },
+    { id: "providerType", label: "Provider type", type: "choice", codeSystem: "MOIS-CONNECTIONPROVIDERTYPE" },
+    { id: "startDate", label: "Start date", type: "date" },
+    { id: "stopDate", label: "End date", type: "date" },
+    { id: "stopReason", label: "Stopped reason", type: "choice", codeSystem: "AIHS-STOPREASON" },
+    { id: "stopNote", label: "Stopped note", type: "textarea" },
+    { id: "comment", label: "Comment", type: "textarea" },
+    { id: "includeOnDemographics", label: "Show on demographics", type: "choice", codeSystem: "MOIS-YESNO" },
+    { id: "isCareTeamMember", label: "Care team member", type: "choice", codeSystem: "MOIS-YESNO" },
+  ],
+  preferences: [
+    { id: "classification", label: "Classification", type: "choice", codeSystem: "MOIS-PREFERENCECLASSIFICATION" },
+    { id: "preferenceType", label: "Subject type", type: "choice", codeSystem: "MOIS-PREFERENCETYPE" },
+    { id: "preference", label: "Preference", type: "text" },
+    { id: "subjectDetail", label: "Subject detail", type: "textarea" },
+    { id: "instruction", label: "Instruction", type: "choice", codeSystem: "MOIS-PREFINST" },
+    { id: "reason", label: "Reason", type: "choice", codeSystem: "MOIS-PREFERENCEREASON" },
+    { id: "startDate", label: "Start date", type: "date" },
+    { id: "endDate", label: "End date", type: "date" },
+    { id: "sensitive", label: "Sensitive", type: "choice", codeSystem: "MOIS-YESNO" },
+    { id: "includeOnDemographics", label: "Show on demographics", type: "choice", codeSystem: "MOIS-YESNO" },
+  ],
+}
+
 // Derive a usable modal field set from the collection's table columns when
-// the author has not configured one: visible data columns become text/date
-// fields; key/hidden/action columns are skipped.
+// the author has not configured one and no vendor-informed preset exists:
+// visible data columns become text/date fields; key/hidden/action columns
+// are skipped.
 const _chartRecordManagerDefaultFields = (source) => {
+  const fieldPreset = _chartRecordManagerDefaultFieldPresets[source]
+  if (fieldPreset) return fieldPreset
   const preset = _chartRecordTablePresets[source] || {}
   const columns = preset.columns || []
   return columns
@@ -72,6 +106,82 @@ const _chartRecordManagerDefaultFields = (source) => {
       label: col.title || col.id,
       type: col.type === "date" ? "date" : "text",
     }))
+}
+
+/**
+ * Cascade rules applied when a modal field changes, recreating the vendor
+ * forms' dynamics: changing the connection type looks up its default provider
+ * type in MOIS-CONNECTIONTYPEDEFAULT, and changing the provider type clears
+ * the selected provider (test_connections); the preference instruction list
+ * is layered per classification/subject (test_chart_preference — see
+ * _chartRecordManagerFieldTransforms).
+ * Rule shape: { when, setFromOptionList: { field, optionList, displayList }, clear: [ids] }
+ */
+const _chartRecordManagerDefaultCascades = {
+  connections: [
+    {
+      when: "connectionType",
+      setFromOptionList: {
+        field: "providerType",
+        optionList: "MOIS-CONNECTIONTYPEDEFAULT",
+        displayList: "MOIS-CONNECTIONPROVIDERTYPE",
+      },
+    },
+    { when: "providerType", clear: ["provider"] },
+  ],
+}
+
+const _chartRecordManagerApplyCascades = (cascades, fieldId, value, draft, sd) => {
+  let next = draft
+  for (const rule of cascades) {
+    if (!rule || rule.when !== fieldId) continue
+    const spec = rule.setFromOptionList
+    if (spec) {
+      const code = value && typeof value === "object" ? value.code : value
+      const mapped = code != null ? sd?.optionLists?.[spec.optionList]?.[code] : undefined
+      if (mapped !== undefined && next[spec.field]?.code !== mapped) {
+        next = {
+          ...next,
+          [spec.field]: {
+            code: mapped,
+            display: sd?.optionLists?.[spec.displayList]?.[mapped] ?? mapped,
+            system: spec.displayList ?? spec.optionList,
+          },
+        }
+      }
+    }
+    if (Array.isArray(rule.clear)) {
+      for (const clearId of rule.clear) {
+        if (next[clearId] !== undefined) next = { ...next, [clearId]: undefined }
+      }
+    }
+  }
+  return next
+}
+
+/**
+ * Per-source dynamic field adjustments driven by the current draft. The
+ * preference instruction picklist is layered exactly like the vendor's
+ * findInstructionCodeSystem: MOIS-PREFINST:{classification}:{subject},
+ * falling back to MOIS-PREFINST:{classification}.
+ */
+const _chartRecordManagerFieldTransforms = {
+  preferences: (fields, draft, sd) =>
+    fields.map((field) => {
+      if (field.id !== "instruction") return field
+      const classification = draft?.classification?.code ?? draft?.classification
+      if (!classification) return field
+      const subject = draft?.codedSubject?.code ?? draft?.subjectConceptName
+      const layered = `MOIS-PREFINST:${classification}:${subject}`
+      const fallback = `MOIS-PREFINST:${classification}`
+      const codeSystem =
+        subject && sd?.optionLists?.[layered] !== undefined
+          ? layered
+          : sd?.optionLists?.[fallback] !== undefined
+            ? fallback
+            : field.codeSystem
+      return codeSystem === field.codeSystem ? field : { ...field, codeSystem }
+    }),
 }
 
 ChartRecordManager = ({
@@ -92,6 +202,7 @@ ChartRecordManager = ({
   completeButtonText = "Save",
   confirmDeleteTitle = "Confirm delete",
   confirmDeleteText = "Delete the selected record from the chart?",
+  cascades,
   stripKeys,
   columns,
   filterPred,
@@ -112,13 +223,20 @@ ChartRecordManager = ({
 
   const writeDefinition = resolvedWriteTarget ? MOIS_WRITE_MUTATIONS[resolvedWriteTarget] : null
 
-  const resolvedFields = React.useMemo(
-    () =>
+  const [isModalOpen, setIsModalOpen] = React.useState(false)
+  const [draft, setDraft] = React.useState({})
+
+  const resolvedCascades =
+    Array.isArray(cascades) ? cascades : _chartRecordManagerDefaultCascades[source] || []
+
+  const resolvedFields = React.useMemo(() => {
+    const baseFields =
       Array.isArray(dataEntryFields) && dataEntryFields.length > 0
         ? dataEntryFields
-        : _chartRecordManagerDefaultFields(source),
-    [dataEntryFields, source]
-  )
+        : _chartRecordManagerDefaultFields(source)
+    const transform = _chartRecordManagerFieldTransforms[source]
+    return transform ? transform(baseFields, draft, sd) : baseFields
+  }, [dataEntryFields, source, draft, sd])
 
   // payloadMap maps payload keys onto modal field ids. With none configured,
   // every modal field maps onto the payload key of the same name.
@@ -131,8 +249,6 @@ ChartRecordManager = ({
     return identity
   }, [payloadMap, resolvedFields])
 
-  const [isModalOpen, setIsModalOpen] = React.useState(false)
-  const [draft, setDraft] = React.useState({})
   // Edit carries the full record as payload defaults so unmapped fields are
   // preserved on update (the vendor form sends the whole record back).
   const [openDefaults, setOpenDefaults] = React.useState(null)
@@ -281,7 +397,15 @@ ChartRecordManager = ({
           dataEntryConfig={dataEntryConfig}
           dataEntryValueRoot={draft}
           onDataEntryValueChange={(fieldId, value) =>
-            setDraft((current) => ({ ...current, [fieldId]: value }))
+            setDraft((current) =>
+              _chartRecordManagerApplyCascades(
+                resolvedCascades,
+                fieldId,
+                value,
+                { ...current, [fieldId]: value },
+                sd
+              )
+            )
           }
           completeButtonText={completeButtonText}
           persistNestedFields={false}

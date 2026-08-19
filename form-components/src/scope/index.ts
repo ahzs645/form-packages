@@ -6,6 +6,16 @@
 // The main buildScope function that creates the full scope for form rendering
 export { buildScope } from './build-scope';
 
+// Preview chart mutation store: the mock-mutation write path and its
+// overlay/reset/subscribe surface (useSourceData reads through it).
+export {
+  applyPreviewChartMutation,
+  overlayPreviewChartMutations,
+  resetPreviewChartMutations,
+  subscribePreviewChart,
+  getPreviewChartVersion,
+} from './preview-chart-store';
+
 // Fluent UI namespace helpers
 export { FluentNamespace, FluentActionButton } from './fluent-namespace';
 
