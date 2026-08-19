@@ -1992,11 +1992,19 @@ ChartRecordManager = ({
 
   const openForCreate = React.useCallback(
     (templateDefaults) => {
-      setDraft({})
-      setOpenDefaults({ ...payloadDefaults, ...(templateDefaults || {}) })
+      const merged = { ...payloadDefaults, ...(templateDefaults || {}) }
+      // Seed mapped defaults into the draft so the modal SHOWS the template's
+      // prefilled values (the vendor's PreferenceButton subform does); the
+      // rest of the defaults still travel in the payload unmapped.
+      const seeded = {}
+      for (const [payloadKey, fieldId] of Object.entries(resolvedPayloadMap)) {
+        if (merged[payloadKey] !== undefined) seeded[fieldId] = merged[payloadKey]
+      }
+      setDraft(seeded)
+      setOpenDefaults(merged)
       setIsModalOpen(true)
     },
-    [payloadDefaults]
+    [payloadDefaults, resolvedPayloadMap]
   )
 
   const openForEdit = React.useCallback(

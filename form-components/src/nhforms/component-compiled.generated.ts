@@ -2021,13 +2021,21 @@ ChartRecordManager = ({
     return cleaned;
   }, [resolvedStripKeys]);
   const openForCreate = React.useCallback(templateDefaults => {
-    setDraft({});
-    setOpenDefaults({
+    const merged = {
       ...payloadDefaults,
       ...(templateDefaults || {})
-    });
+    };
+    // Seed mapped defaults into the draft so the modal SHOWS the template's
+    // prefilled values (the vendor's PreferenceButton subform does); the
+    // rest of the defaults still travel in the payload unmapped.
+    const seeded = {};
+    for (const [payloadKey, fieldId] of Object.entries(resolvedPayloadMap)) {
+      if (merged[payloadKey] !== undefined) seeded[fieldId] = merged[payloadKey];
+    }
+    setDraft(seeded);
+    setOpenDefaults(merged);
     setIsModalOpen(true);
-  }, [payloadDefaults]);
+  }, [payloadDefaults, resolvedPayloadMap]);
   const openForEdit = React.useCallback(record => {
     const cleaned = stripRecord(record);
     const seeded = {};
@@ -35874,7 +35882,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './AuthorshipField/index.jsx': ["AuthorshipField","DEFAULT_WINDOW_HOURS","_defaultPolicy","_nhAuth","_normalizeFieldOptions","actor","actorFrom","addHoursIso","base","buildKey","c","changed","ck","claim","claims","commitSave","commitValue","componentId","current","d","data","editableUntil","effectiveFieldId","euDate","existing","expired","fieldData","formatTimestamp","isNonEmpty","isOwner","keepStatus","key","label","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","nextStatus","nhAuth","normalizeStore","now","nowIso","numeric","optionList","ownerId","ownerName","ownerRefresh","pad2","pending","policy","policyAppliesToAction","prepareSave","query","raw","readOnly","readStore","release","renderInput","resolveNow","sameActor","sd","section","store","text","trimmed","ts","untilSelf","value","windowHours"],
   './BulkSetField/index.jsx': ["BulkSetField","ButtonComponent","apply","comparableAnswer","contradictedFieldIds","current","effectiveControlFieldId","fieldData","fieldId","isApplied","isBlankAnswer","isDisabled","normalizeBulkTargets","normalizedTargets","previous","raw","shouldClearControl","showWarning","unapply","writeControl"],
   './ChartAttachmentUpload/index.jsx': ["ChartAttachmentUpload","FormDataClass","apiServer","appSettings","auth","body","bytes","canUpload","clearSelection","document","endpoint","fetchAttachment","fileInputRef","fileTooLarge","formatChartAttachmentBytes","inputId","missingRuntime","nextResult","patientId","persistChartAttachmentResult","rawApiServer","readChartAttachmentResponse","recordResult","response","responseBody","runtime","sd","startedAt","statusColor","statusLabel","storedResult","text","uploadAttachment","userProfile","userProfileId"],
-  './ChartRecordManager/index.jsx': ["CHART_RECORD_MANAGER_TARGETS","ChartRecordManager","_chartRecordManagerApplyCascades","_chartRecordManagerDefaultCascades","_chartRecordManagerDefaultFieldPresets","_chartRecordManagerDefaultFields","_chartRecordManagerFieldTransforms","_chartRecordManagerStripKeys","baseFields","chartRefresh","classification","cleaned","code","codeSystem","columns","contextId","createButtons","dataEntryConfig","fallback","fieldPreset","handleConfirmDelete","identity","layered","mapped","next","openForCreate","openForEdit","preset","record","recordId","resolvedAllowDelete","resolvedCascades","resolvedFields","resolvedPayloadMap","resolvedRecordIdKey","resolvedStripKeys","resolvedWriteTarget","result","sd","seeded","spec","stripRecord","subject","targetInfo","transform","variables","writeDefinition"],
+  './ChartRecordManager/index.jsx': ["CHART_RECORD_MANAGER_TARGETS","ChartRecordManager","_chartRecordManagerApplyCascades","_chartRecordManagerDefaultCascades","_chartRecordManagerDefaultFieldPresets","_chartRecordManagerDefaultFields","_chartRecordManagerFieldTransforms","_chartRecordManagerStripKeys","baseFields","chartRefresh","classification","cleaned","code","codeSystem","columns","contextId","createButtons","dataEntryConfig","fallback","fieldPreset","handleConfirmDelete","identity","layered","mapped","merged","next","openForCreate","openForEdit","preset","record","recordId","resolvedAllowDelete","resolvedCascades","resolvedFields","resolvedPayloadMap","resolvedRecordIdKey","resolvedStripKeys","resolvedWriteTarget","result","sd","seeded","spec","stripRecord","subject","targetInfo","transform","variables","writeDefinition"],
   './ChartRecordTable/index.jsx': ["ChartRecordTable","_chartRecordTableActiveConnections","_chartRecordTableActivePlannedActions","_chartRecordTableGenericColumns","_chartRecordTableGenericEntryColumns","_chartRecordTablePresets","_chartRecordTableSorts","_chartRecordTableStartDateDesc","baseChartColumns","byType","preset","resolvedChartColumns","resolvedEntryColumns","resolvedFieldId","resolvedFilterPred","resolvedId","resolvedLabel","resolvedListCompare","resolvedMoisModule","resolvedSelectionType","resolvedSourceId","resolvedSourceMap"],
   './ChartReviewSummary/index.jsx': ["ChartReviewSummary","K","REVIEW_BLUE","REVIEW_GRAY","REVIEW_INK","REVIEW_RED","ReviewSectionHeading","age","best","bestTime","codeList","current","doseText","latestByCode","medications","monthDelta","now","observations","parsed","patient","problems","reviewAgeYears","reviewArray","reviewDateKey","reviewGetObject","reviewHeadingStyle","reviewLineStyle","rows","sd","sex","steps","stopRaw","stopTime","time","units","value"],
   './CodedObservationChoiceField/index.jsx': ["CodedObservationChoiceField","candidates","checklistOptions","code","codedChoicePayloadsEqual","codings","commentValue","componentId","container","createdBy","currentPayload","display","effectiveFieldId","effectiveRenderAs","effectiveSelectionType","findExistingObservationId","formatCodedChoiceReport","fromContext","handleFindCodeChange","isMultiple","match","nextGroup","normalizeCodedChoiceOptions","normalizeSelectedCodings","oldId","option","options","report","sd","selectOptions","selectedValue","setCodedChoicePayload","stripVolatileCodedChoicePayloadFields","value","values","writeCodedChoiceValue"],

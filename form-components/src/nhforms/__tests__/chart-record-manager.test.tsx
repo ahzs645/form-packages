@@ -220,6 +220,41 @@ describe("ChartRecordManager", () => {
     expect(fallback[0].codeSystem).toBe("MOIS-PREFINST:CONSENT");
   });
 
+  it("seeds the modal draft with template defaults so prefills are visible", async () => {
+    await mount({
+      source: "preferences",
+      dataEntryFields: [
+        { id: "preference", label: "Preference", type: "text" },
+        { id: "subjectDetail", label: "Subject detail", type: "textarea" },
+      ],
+      templates: [
+        {
+          label: "New MOST",
+          defaults: {
+            classification: { code: "ADVANCE DIRECTIVE", display: "Advance directive", system: "MOIS-PREFERENCECLASSIFICATION" },
+            preference: "MOST",
+          },
+        },
+      ],
+    });
+
+    await act(async () => {
+      buttonByText("New MOST").click();
+    });
+    // The mapped default ("preference" -> "MOST") is visible in the modal
+    // field, not just riding invisibly in the payload.
+    const preferenceInput = Array.from(
+      document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("input, textarea")
+    ).find((element) => element.value === "MOST");
+    expect(preferenceInput).toBeTruthy();
+
+    await act(async () => {
+      buttonByText("Save").click();
+    });
+    await settleMutation();
+    expect(document.body.textContent).toContain("MOST");
+  });
+
   it("creates a record from a template button", async () => {
     await mount({
       dataEntryFields: [{ id: "comment", label: "Comment", type: "text" }],
