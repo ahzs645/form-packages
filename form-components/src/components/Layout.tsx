@@ -40,9 +40,18 @@ export const Grid: React.FC<GridProps> = ({
 
   // Parse placement string into gridTemplateAreas
   let gridTemplateAreas: string | undefined;
+  let fieldPlacement: Record<string, string> | undefined;
   if (placement) {
     const rows = placement.trim().split('\n').map(row => row.trim()).filter(Boolean);
     gridTemplateAreas = rows.map(row => `"${row}"`).join(' ');
+    // Named-area placement: each named field maps to its own grid area, and
+    // fields absent from the map are hidden by LayoutItem (MOIS semantics).
+    fieldPlacement = {};
+    for (const row of rows) {
+      for (const cell of row.split(/\s+/)) {
+        if (cell && cell !== '----' && cell !== '-') fieldPlacement[cell] = cell;
+      }
+    }
   }
 
   const gridStyle: React.CSSProperties = {
@@ -53,10 +62,13 @@ export const Grid: React.FC<GridProps> = ({
     ...style,
   };
 
-  // Provide grid layout context so LayoutItems know to apply flex sizing
+  // Provide grid layout context so LayoutItems know to apply flex sizing.
+  // fieldPlacement is deliberately NOT inherited from the parent: in MOIS a
+  // Grid without placement clears any outer selection.
   const gridSectionValue: SectionContextValue = {
     ...parentSection,
     layout: 'grid',
+    fieldPlacement,
   };
 
   return (
@@ -402,6 +414,12 @@ export const LayoutItem: React.FC<LayoutItemProps> = ({
     });
   const readOnly = propReadOnly || !!authorshipLockInfo.locked || isComplete || sourceData.lifecycleState.isPrinting;
 
+  // MOIS semantics: when the section carries a fieldPlacement, only the
+  // fields named in it render at all.
+  if (section.fieldPlacement && mId && !section.fieldPlacement[mId]) {
+    return null;
+  }
+
   // Handle hidden items
   if (hidden) {
     if (section.layout === 'linear') return null;
@@ -449,7 +467,10 @@ export const LayoutItem: React.FC<LayoutItemProps> = ({
       effectiveLabelPosition = labelPosition ?? 'top';
   }
 
-  if (mId) {
+  // Fall back to a named grid area only when no explicit placement resolved
+  // (this Grid's gridTemplateAreas mode names areas after field ids; the
+  // controls Grid resolves numeric areas through fieldPlacement instead).
+  if (mId && !effectivePlacement) {
     wrapperStyle.gridArea = mId;
   }
 
@@ -556,6 +577,35 @@ export const ArchFields: React.FC<ArchFieldsProps> = ({ fields, ...props }) => {
         </LayoutItem>
       ))}
     </div>
+  );
+};
+
+/**
+ * ArchAll - MOIS-parity renderer behind every archetype's `.All` member.
+ *
+ * Renders the archetype's field components as a Fragment (no wrapper element,
+ * so each field is a direct grid child and per-field gridArea works). When the
+ * section carries a fieldPlacement, only the placed fields render, in
+ * placement order — matching the real engine's fields renderer.
+ */
+export interface ArchAllProps {
+  fields: Record<string, React.FC<any>>;
+  section?: Partial<SectionContextValue>;
+  [key: string]: any;
+}
+
+export const ArchAll: React.FC<ArchAllProps> = ({ fields, ...props }) => {
+  const section = useSection(props.section);
+  const keySource = section.fieldPlacement ?? fields;
+  return (
+    <>
+      {Object.keys(keySource).reduce<React.ReactNode[]>((rendered, fieldName) => {
+        const FieldComponent = fields[fieldName];
+        if (!FieldComponent) return rendered;
+        rendered.push(<FieldComponent key={`${fieldName}${props.index ?? ''}`} {...props} />);
+        return rendered;
+      }, [])}
+    </>
   );
 };
 
@@ -668,7 +718,7 @@ export const AuditStamp: React.FC<AuditStampProps> = ({
   };
 
   return (
-    <LayoutItem label={label} size={size} index={index}>
+    <LayoutItem fieldId={fieldId} label={label} size={size} index={index}>
       <div style={gridStyle}>
         <div>Created:</div>
         <div>{stamp.createdDate}</div>

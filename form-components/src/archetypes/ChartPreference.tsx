@@ -1,483 +1,222 @@
 /**
  * ChartPreference Archetype
  * Components for displaying and updating user preferences, consents, directives, etc.
+ *
+ * MOIS parity notes (verified against the SMOIS FormTester bundle):
+ * - Every field passes a stable fieldId (its Fields-map key) so section
+ *   fieldPlacement can select and position it (`<Grid placement=...>`).
+ * - `All` renders the fields as a Fragment in placement order — fields must be
+ *   direct grid children for per-field gridArea to work.
+ * - Fields read/write through the section's activeSelector when one is set
+ *   (e.g. a SubForm editing fd.preferenceEdit), storing coded values as
+ *   { code, display, system } objects like the real engine. Without a custom
+ *   section they fall back to the JSON example data for gallery demos.
  */
 
 import React from 'react';
 import { IDropdownOption } from '@fluentui/react';
-import { LayoutItem, AuditStamp } from '../components/Layout';
-import { useActiveData, useSourceData, useCodeList, ChartPreferenceData } from '../context/MoisContext';
+import { LayoutItem, ArchAll, AuditStamp } from '../components/Layout';
+import {
+  useActiveData,
+  useSection,
+  useCodeList,
+  ChartPreferenceData,
+  SectionContextValue,
+} from '../context/MoisContext';
+import { useActiveDataSlice } from '../hooks/form-state';
+import { getSectionActiveTarget, writeSectionActiveFieldValue } from '../runtime/mois-contract';
 import { DateSelect } from '../controls/DateSelect';
 import { MoisTextField } from '../components/MoisTextField';
 import { MoisDropdown } from '../components/MoisDropdown';
 
 // ============================================================================
-// Hook to get chart preference data from JSON
+// Section-aware data access
 // ============================================================================
 
-const useChartPreferenceData = (): ChartPreferenceData | undefined => {
-  const [activeData] = useActiveData();
-  // Use demographics.preferences[0] from JSON (primary) or fall back to chartPreference
-  return (activeData as any).example?.demographics?.preferences?.[0]
-    || (activeData as any).example?.chartPreference;
+interface ChartPreferenceBinding {
+  data: Record<string, any> | undefined;
+  setField: (fieldId: string, value: unknown) => void;
+}
+
+/**
+ * Resolve where this field reads and writes.
+ *
+ * When the enclosing section supplies a custom activeSelector (a SubForm
+ * editing fd.preferenceEdit, a list row, ...), bind to the form-state store
+ * through the section contract — the same store and write path the standard
+ * controls use. Otherwise keep the legacy MoisContext example-data binding so
+ * standalone gallery previews stay populated and interactive.
+ */
+const useChartPreferenceBinding = (
+  sectionOverride?: Partial<SectionContextValue>
+): ChartPreferenceBinding => {
+  const section = useSection(sectionOverride);
+
+  // Form-state store (what the compiled form's useActiveData writes into).
+  const [slice, setFormData] = useActiveDataSlice((data: any) => ({
+    target: getSectionActiveTarget(data, section),
+    defaultTarget: data?.field?.data ?? data,
+  }));
+  const hasCustomTarget = slice.target != null && slice.target !== slice.defaultTarget;
+
+  // MoisContext demo store (gallery example data).
+  const [moisActiveData, setMoisActiveData] = useActiveData();
+  const exampleData: ChartPreferenceData | undefined =
+    (moisActiveData as any).example?.demographics?.preferences?.[0]
+    || (moisActiveData as any).example?.chartPreference;
+
+  const setField = React.useCallback((fieldId: string, value: unknown) => {
+    if (hasCustomTarget) {
+      setFormData((draft: any) => {
+        writeSectionActiveFieldValue(draft, section, fieldId, value);
+      });
+      return;
+    }
+    setMoisActiveData((draft: any) => {
+      draft.example = draft.example || {};
+      const target = draft.example.demographics?.preferences?.[0]
+        ?? (draft.example.chartPreference = draft.example.chartPreference || {});
+      target[fieldId] = value;
+    });
+  }, [hasCustomTarget, section, setFormData, setMoisActiveData]);
+
+  return {
+    data: hasCustomTarget ? (slice.target as Record<string, any>) : (exampleData as any),
+    setField,
+  };
+};
+
+/** MOIS stores coded values as { code, display, system }; demos may hold bare codes. */
+const codeOf = (value: any): string =>
+  (value && typeof value === 'object' ? value.code : value) ?? '';
+
+const toCodedValue = (
+  option: IDropdownOption | undefined,
+  system: string
+): { code: string; display: string; system: string } | null =>
+  option && option.key !== ''
+    ? { code: String(option.key), display: option.text, system }
+    : null;
+
+const usePleaseSelectOptions = (codeSystem: string): IDropdownOption[] => {
+  const options = useCodeList(codeSystem);
+  return [
+    { key: '', text: 'Please select' },
+    ...options.map(opt => ({ key: opt.code, text: opt.display })),
+  ];
 };
 
 // ============================================================================
 // Field Components
 // ============================================================================
 
-const attachmentCount: React.FC<any> = ({ index, ...props }) => {
-  const data = useChartPreferenceData();
-  const displayValue = data?.attachmentCount ? String(data.attachmentCount) : '';
+interface FieldProps {
+  index?: number | string;
+  section?: Partial<SectionContextValue>;
+  [key: string]: any;
+}
 
-  return (
-    <LayoutItem label="Attached" size="tiny" index={index}>
-      <MoisTextField
-        value={displayValue}
-        readOnly
-        borderless
-        tabIndex={-1}
-        size="tiny"
-      />
-    </LayoutItem>
-  );
+const makeCodedField = (
+  fieldId: string,
+  label: string,
+  codeSystem: string,
+  size: 'tiny' | 'small' | 'medium' | 'large',
+  codeSystemProp?: string
+): React.FC<FieldProps> => {
+  const CodedField: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+    const { data, setField } = useChartPreferenceBinding(section);
+    const effectiveSystem = (codeSystemProp && rest[codeSystemProp]) || codeSystem;
+    const dropdownOptions = usePleaseSelectOptions(effectiveSystem);
+    if (codeSystemProp) delete rest[codeSystemProp];
+
+    return (
+      <LayoutItem fieldId={fieldId} label={label} size={size} index={index} section={section} {...rest}>
+        <MoisDropdown
+          fieldId={fieldId}
+          codeSystem={effectiveSystem}
+          selectedKey={codeOf(data?.[fieldId])}
+          options={dropdownOptions}
+          size={size}
+          onChange={(_, option) => setField(fieldId, toCodedValue(option, effectiveSystem))}
+        />
+      </LayoutItem>
+    );
+  };
+  CodedField.displayName = `ChartPreference.${fieldId}`;
+  return CodedField;
 };
 
-const codedSubject: React.FC<any> = ({ index, ...props }) => {
-  const [activeData, setActiveData] = useActiveData();
-  const data = useChartPreferenceData();
-  const options = useCodeList('MOIS-PREFSUBJECTCODE');
+const makeTextField = (
+  fieldId: string,
+  label: string,
+  size: 'tiny' | 'small' | 'medium' | 'large',
+  options: { multiline?: boolean; readOnly?: boolean } = {}
+): React.FC<FieldProps> => {
+  const TextFieldComponent: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+    const { data, setField } = useChartPreferenceBinding(section);
+    const rawValue = data?.[fieldId];
+    const value = rawValue === null || rawValue === undefined ? '' : String(rawValue);
 
-  const dropdownOptions: IDropdownOption[] = [
-    { key: '', text: 'Please select' },
-    ...options.map(opt => ({ key: opt.code, text: opt.display })),
-  ];
-
-  return (
-    <LayoutItem label="Subject code" size="medium" index={index}>
-      <MoisDropdown
-        fieldId="codedSubject"
-        codeSystem="MOIS-PREFSUBJECTCODE"
-        selectedKey={data?.codedSubject || ''}
-        options={dropdownOptions}
-        size="medium"
-        onChange={(_, option) => {
-          setActiveData({
-            example: {
-              ...(activeData as any).example,
-              chartPreference: { ...data, codedSubject: option?.key as string },
-            },
-          } as any);
-        }}
-      />
-    </LayoutItem>
-  );
+    return (
+      <LayoutItem fieldId={fieldId} label={label} size={size} index={index} section={section} {...rest}>
+        <MoisTextField
+          value={value}
+          size={size}
+          {...(options.multiline ? { multiline: true, rows: 3 } : {})}
+          {...(options.readOnly
+            ? { readOnly: true, borderless: true, tabIndex: -1 }
+            : { onChange: (_: unknown, val?: string) => setField(fieldId, val || '') })}
+        />
+      </LayoutItem>
+    );
+  };
+  TextFieldComponent.displayName = `ChartPreference.${fieldId}`;
+  return TextFieldComponent;
 };
 
-const classification: React.FC<any> = ({ index, ...props }) => {
-  const [activeData, setActiveData] = useActiveData();
-  const data = useChartPreferenceData();
-  const options = useCodeList('MOIS-PREFERENCECLASSIFICATION');
+const makeDateField = (
+  fieldId: string,
+  label: string
+): React.FC<FieldProps> => {
+  const DateFieldComponent: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+    const { data, setField } = useChartPreferenceBinding(section);
 
-  const dropdownOptions: IDropdownOption[] = [
-    { key: '', text: 'Please select' },
-    ...options.map(opt => ({ key: opt.code, text: opt.display })),
-  ];
-
-  return (
-    <LayoutItem label="Classification" size="small" index={index}>
-      <MoisDropdown
-        fieldId="classification"
-        codeSystem="MOIS-PREFERENCECLASSIFICATION"
-        selectedKey={data?.classification || ''}
-        options={dropdownOptions}
-        size="small"
-        onChange={(_, option) => {
-          setActiveData({
-            example: {
-              ...(activeData as any).example,
-              chartPreference: { ...data, classification: option?.key as string },
-            },
-          } as any);
-        }}
-      />
-    </LayoutItem>
-  );
+    return (
+      <LayoutItem fieldId={fieldId} label={label} size="small" index={index} section={section} {...rest}>
+        <DateSelect
+          inline
+          value={data?.[fieldId] || ''}
+          size="small"
+          onChange={(date) => setField(fieldId, date)}
+        />
+      </LayoutItem>
+    );
+  };
+  DateFieldComponent.displayName = `ChartPreference.${fieldId}`;
+  return DateFieldComponent;
 };
 
-const encounterId: React.FC<any> = ({ index, ...props }) => {
-  const data = useChartPreferenceData();
-
-  return (
-    <LayoutItem label="Encounter Id" size="tiny" index={index}>
-      <MoisTextField
-        value={data?.encounterId ? String(data.encounterId) : ''}
-        readOnly
-        borderless
-        tabIndex={-1}
-        size="tiny"
-      />
-    </LayoutItem>
-  );
+const attachmentCount = makeTextField('attachmentCount', 'Attached', 'tiny', { readOnly: true });
+const codedSubject = makeCodedField('codedSubject', 'Subject code', 'MOIS-PREFSUBJECTCODE', 'medium', 'subjectCodeSystem');
+const classification = makeCodedField('classification', 'Classification', 'MOIS-PREFERENCECLASSIFICATION', 'small');
+const encounterId = makeTextField('encounterId', 'Encounter Id', 'tiny', { readOnly: true });
+const endDate = makeDateField('endDate', 'End date');
+const includeOnDemographics = makeCodedField('includeOnDemographics', 'Show on demo.', 'MOIS-YESNO', 'small');
+const instruction = makeCodedField('instruction', 'Instruction', 'MOIS-PREFERENCEINSTRUCTION', 'medium', 'instructionCodeSystem');
+const instructionDetail = makeTextField('instructionDetail', 'Instruction detail', 'medium', { multiline: true });
+const patientId = makeTextField('patientId', 'Patient Id', 'tiny', { readOnly: true });
+const preference = makeTextField('preference', 'Preference', 'medium');
+const preferenceType = makeCodedField('preferenceType', 'Preference type', 'MOIS-PREFERENCETYPE', 'small');
+const reason = makeCodedField('reason', 'Reason', 'MOIS-PREFERENCEREASON', 'medium');
+const reasonDetail = makeTextField('reasonDetail', 'Reason detail', 'medium', { multiline: true });
+const sensitive = makeCodedField('sensitive', 'Sensitive', 'MOIS-YESNO', 'small');
+const stamp: React.FC<FieldProps> = ({ index, ...props }) => {
+  return <AuditStamp fieldId="stamp" index={index} {...props} />;
 };
-
-const endDate: React.FC<any> = ({ index, ...props }) => {
-  const [activeData, setActiveData] = useActiveData();
-  const data = useChartPreferenceData();
-
-  return (
-    <LayoutItem label="End date" size="small" index={index}>
-      <DateSelect
-        inline
-        value={data?.endDate || ''}
-        size="small"
-        onChange={(date) => {
-          setActiveData({
-            example: {
-              ...(activeData as any).example,
-              chartPreference: { ...data, endDate: date },
-            },
-          } as any);
-        }}
-      />
-    </LayoutItem>
-  );
-};
-
-const includeOnDemographics: React.FC<any> = ({ index, ...props }) => {
-  const [activeData, setActiveData] = useActiveData();
-  const data = useChartPreferenceData();
-  const options = useCodeList('MOIS-YESNO');
-
-  const dropdownOptions: IDropdownOption[] = [
-    { key: '', text: 'Please select' },
-    ...options.map(opt => ({ key: opt.code, text: opt.display })),
-  ];
-
-  return (
-    <LayoutItem label="Show on demo." size="small" index={index}>
-      <MoisDropdown
-        fieldId="includeOnDemographics"
-        codeSystem="MOIS-YESNO"
-        selectedKey={data?.includeOnDemographics || ''}
-        options={dropdownOptions}
-        size="small"
-        onChange={(_, option) => {
-          setActiveData({
-            example: {
-              ...(activeData as any).example,
-              chartPreference: { ...data, includeOnDemographics: option?.key as string },
-            },
-          } as any);
-        }}
-      />
-    </LayoutItem>
-  );
-};
-
-const instruction: React.FC<any> = ({ index, ...props }) => {
-  const [activeData, setActiveData] = useActiveData();
-  const data = useChartPreferenceData();
-  const options = useCodeList('MOIS-PREFERENCEINSTRUCTION');
-
-  const dropdownOptions: IDropdownOption[] = [
-    { key: '', text: 'Please select' },
-    ...options.map(opt => ({ key: opt.code, text: opt.display })),
-  ];
-
-  return (
-    <LayoutItem label="Instruction" size="medium" index={index}>
-      <MoisDropdown
-        fieldId="instruction"
-        codeSystem="MOIS-PREFERENCEINSTRUCTION"
-        selectedKey={data?.instruction || ''}
-        options={dropdownOptions}
-        size="medium"
-        onChange={(_, option) => {
-          setActiveData({
-            example: {
-              ...(activeData as any).example,
-              chartPreference: { ...data, instruction: option?.key as string },
-            },
-          } as any);
-        }}
-      />
-    </LayoutItem>
-  );
-};
-const instructionDetail: React.FC<any> = ({ index, ...props }) => {
-  const [activeData, setActiveData] = useActiveData();
-  const data = useChartPreferenceData();
-
-  return (
-    <LayoutItem label="Instruction detail" size="medium" index={index}>
-      <MoisTextField
-        value={data?.instructionDetail || ''}
-        multiline
-        rows={3}
-        size="medium"
-        onChange={(_, val) => {
-          setActiveData({
-            example: {
-              ...(activeData as any).example,
-              chartPreference: { ...data, instructionDetail: val || '' },
-            },
-          } as any);
-        }}
-      />
-    </LayoutItem>
-  );
-};
-
-const patientId: React.FC<any> = ({ index, ...props }) => {
-  const data = useChartPreferenceData();
-
-  return (
-    <LayoutItem label="Patient Id" size="tiny" index={index}>
-      <MoisTextField
-        value={data?.patientId ? String(data.patientId) : ''}
-        readOnly
-        borderless
-        tabIndex={-1}
-        size="tiny"
-      />
-    </LayoutItem>
-  );
-};
-
-const preference: React.FC<any> = ({ index, ...props }) => {
-  const [activeData, setActiveData] = useActiveData();
-  const data = useChartPreferenceData();
-
-  return (
-    <LayoutItem label="Preference" size="medium" index={index}>
-      <MoisTextField
-        value={data?.preference || ''}
-        size="medium"
-        onChange={(_, val) => {
-          setActiveData({
-            example: {
-              ...(activeData as any).example,
-              chartPreference: { ...data, preference: val || '' },
-            },
-          } as any);
-        }}
-      />
-    </LayoutItem>
-  );
-};
-
-const preferenceType: React.FC<any> = ({ index, ...props }) => {
-  const [activeData, setActiveData] = useActiveData();
-  const data = useChartPreferenceData();
-  const options = useCodeList('MOIS-PREFERENCETYPE');
-
-  const dropdownOptions: IDropdownOption[] = [
-    { key: '', text: 'Please select' },
-    ...options.map(opt => ({ key: opt.code, text: opt.display })),
-  ];
-
-  return (
-    <LayoutItem label="Preference type" size="small" index={index}>
-      <MoisDropdown
-        selectedKey={data?.preferenceType || ''}
-        options={dropdownOptions}
-        size="small"
-        onChange={(_, option) => {
-          setActiveData({
-            example: {
-              ...(activeData as any).example,
-              chartPreference: { ...data, preferenceType: option?.key as string },
-            },
-          } as any);
-        }}
-      />
-    </LayoutItem>
-  );
-};
-
-const reason: React.FC<any> = ({ index, ...props }) => {
-  const [activeData, setActiveData] = useActiveData();
-  const data = useChartPreferenceData();
-  const options = useCodeList('MOIS-PREFERENCEREASON');
-
-  const dropdownOptions: IDropdownOption[] = [
-    { key: '', text: 'Please select' },
-    ...options.map(opt => ({ key: opt.code, text: opt.display })),
-  ];
-
-  return (
-    <LayoutItem label="Reason" size="medium" index={index}>
-      <MoisDropdown
-        selectedKey={data?.reason || ''}
-        options={dropdownOptions}
-        size="medium"
-        onChange={(_, option) => {
-          setActiveData({
-            example: {
-              ...(activeData as any).example,
-              chartPreference: { ...data, reason: option?.key as string },
-            },
-          } as any);
-        }}
-      />
-    </LayoutItem>
-  );
-};
-
-const reasonDetail: React.FC<any> = ({ index, ...props }) => {
-  const [activeData, setActiveData] = useActiveData();
-  const data = useChartPreferenceData();
-
-  return (
-    <LayoutItem label="Reason detail" size="medium" index={index}>
-      <MoisTextField
-        value={data?.reasonDetail || ''}
-        multiline
-        rows={3}
-        size="medium"
-        onChange={(_, val) => {
-          setActiveData({
-            example: {
-              ...(activeData as any).example,
-              chartPreference: { ...data, reasonDetail: val || '' },
-            },
-          } as any);
-        }}
-      />
-    </LayoutItem>
-  );
-};
-
-const sensitive: React.FC<any> = ({ index, ...props }) => {
-  const [activeData, setActiveData] = useActiveData();
-  const data = useChartPreferenceData();
-  const options = useCodeList('MOIS-YESNO');
-
-  const dropdownOptions: IDropdownOption[] = [
-    { key: '', text: 'Please select' },
-    ...options.map(opt => ({ key: opt.code, text: opt.display })),
-  ];
-
-  return (
-    <LayoutItem label="Sensitive" size="small" index={index}>
-      <MoisDropdown
-        selectedKey={data?.sensitive || ''}
-        options={dropdownOptions}
-        size="small"
-        onChange={(_, option) => {
-          setActiveData({
-            example: {
-              ...(activeData as any).example,
-              chartPreference: { ...data, sensitive: option?.key as string },
-            },
-          } as any);
-        }}
-      />
-    </LayoutItem>
-  );
-};
-const stamp: React.FC<any> = ({ index, ...props }) => {
-  return <AuditStamp index={index} {...props} />;
-};
-
-const startDate: React.FC<any> = ({ index, ...props }) => {
-  const [activeData, setActiveData] = useActiveData();
-  const data = useChartPreferenceData();
-
-  return (
-    <LayoutItem label="Start date" size="small" index={index}>
-      <DateSelect
-        inline
-        value={data?.startDate || ''}
-        size="small"
-        onChange={(date) => {
-          setActiveData({
-            example: {
-              ...(activeData as any).example,
-              chartPreference: { ...data, startDate: date },
-            },
-          } as any);
-        }}
-      />
-    </LayoutItem>
-  );
-};
-
-const subjectCodeType: React.FC<any> = ({ index, ...props }) => {
-  const [activeData, setActiveData] = useActiveData();
-  const data = useChartPreferenceData();
-  const options = useCodeList('MOIS-PREFERENCECODETYPE');
-
-  const dropdownOptions: IDropdownOption[] = [
-    { key: '', text: 'Please select' },
-    ...options.map(opt => ({ key: opt.code, text: opt.display })),
-  ];
-
-  return (
-    <LayoutItem label="Code type" size="small" index={index}>
-      <MoisDropdown
-        selectedKey={data?.subjectCodeType || ''}
-        options={dropdownOptions}
-        size="small"
-        onChange={(_, option) => {
-          setActiveData({
-            example: {
-              ...(activeData as any).example,
-              chartPreference: { ...data, subjectCodeType: option?.key as string },
-            },
-          } as any);
-        }}
-      />
-    </LayoutItem>
-  );
-};
-
-const subjectConceptName: React.FC<any> = ({ index, ...props }) => {
-  const [activeData, setActiveData] = useActiveData();
-  const data = useChartPreferenceData();
-
-  return (
-    <LayoutItem label="Concept" size="medium" index={index}>
-      <MoisTextField
-        value={data?.subjectConceptName || ''}
-        size="medium"
-        onChange={(_, val) => {
-          setActiveData({
-            example: {
-              ...(activeData as any).example,
-              chartPreference: { ...data, subjectConceptName: val || '' },
-            },
-          } as any);
-        }}
-      />
-    </LayoutItem>
-  );
-};
-
-const subjectDetail: React.FC<any> = ({ index, ...props }) => {
-  const [activeData, setActiveData] = useActiveData();
-  const data = useChartPreferenceData();
-
-  return (
-    <LayoutItem label="Subject detail" size="medium" index={index}>
-      <MoisTextField
-        value={data?.subjectDetail || ''}
-        multiline
-        rows={3}
-        size="medium"
-        onChange={(_, val) => {
-          setActiveData({
-            example: {
-              ...(activeData as any).example,
-              chartPreference: { ...data, subjectDetail: val || '' },
-            },
-          } as any);
-        }}
-      />
-    </LayoutItem>
-  );
-};
+const startDate = makeDateField('startDate', 'Start date');
+const subjectCodeType = makeCodedField('subjectCodeType', 'Code type', 'MOIS-PREFERENCECODETYPE', 'small');
+const subjectConceptName = makeTextField('subjectConceptName', 'Concept', 'medium');
+const subjectDetail = makeTextField('subjectDetail', 'Subject detail', 'medium', { multiline: true });
 
 // ============================================================================
 // Fields Collection
@@ -506,33 +245,11 @@ const Fields = {
 };
 
 // ============================================================================
-// All Component (renders all fields)
+// All Component (renders the placed fields, or every field with no placement)
 // ============================================================================
 
 const All: React.FC<any> = (props) => {
-  return (
-    <div>
-      <Fields.attachmentCount {...props} />
-      <Fields.codedSubject {...props} />
-      <Fields.classification {...props} />
-      <Fields.encounterId {...props} />
-      <Fields.endDate {...props} />
-      <Fields.includeOnDemographics {...props} />
-      <Fields.instruction {...props} />
-      <Fields.instructionDetail {...props} />
-      <Fields.patientId {...props} />
-      <Fields.preference {...props} />
-      <Fields.preferenceType {...props} />
-      <Fields.reason {...props} />
-      <Fields.reasonDetail {...props} />
-      <Fields.sensitive {...props} />
-      <Fields.stamp {...props} />
-      <Fields.startDate {...props} />
-      <Fields.subjectCodeType {...props} />
-      <Fields.subjectConceptName {...props} />
-      <Fields.subjectDetail {...props} />
-    </div>
-  );
+  return <ArchAll fields={Fields} {...props} />;
 };
 
 // ============================================================================

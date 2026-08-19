@@ -5,7 +5,7 @@
 
 import React from 'react';
 import { TextField, Dropdown, IDropdownOption } from '@fluentui/react';
-import { useTheme } from '../context/MoisContext';
+import { SectionContext, SectionContextValue, useSection, useTheme } from '../context/MoisContext';
 
 export interface GridProps {
   /** A functional component or interior controls */
@@ -173,8 +173,10 @@ export const Grid: React.FC<GridProps> = ({
   gap = '10px',
   placement,
   fields,
+  section,
 }) => {
   const theme = useTheme();
+  const parentSection = useSection(section as Partial<SectionContextValue> | undefined);
 
   const gridStyle: React.CSSProperties = {
     display: 'grid',
@@ -224,10 +226,26 @@ export const Grid: React.FC<GridProps> = ({
     );
   };
 
-  // Parse placement if provided
+  // Parse placement if provided (string template or a prebuilt layoutId -> gridArea map)
   const placementMap = placement && typeof placement === 'string'
     ? parsePlacement(placement)
-    : null;
+    : placement && typeof placement === 'object'
+      ? new Map(Object.entries(placement))
+      : null;
+
+  // MOIS semantics: the placement selection travels through section context so
+  // every field wrapper (LayoutItem) can hide itself when not placed and pick
+  // up its gridArea — regardless of how deeply the field is nested.
+  // fieldPlacement is deliberately NOT inherited from the parent: a Grid
+  // without placement clears any outer selection.
+  const fieldPlacement = placementMap && placementMap.size > 0
+    ? (Object.fromEntries(placementMap) as Record<string, string>)
+    : undefined;
+  const gridSectionValue: SectionContextValue = {
+    ...parentSection,
+    layout: 'grid',
+    fieldPlacement,
+  };
 
   let renderedContent: React.ReactNode;
 
@@ -248,6 +266,14 @@ export const Grid: React.FC<GridProps> = ({
       const fieldSize = (FieldComponent as any).fieldSize || 'small';
       return wrapInGridItem(fieldElement, gridArea, fieldSize);
     }).filter(Boolean);
+  } else if (fields) {
+    // Fields without placement: render the whole archetype set in map order
+    const fieldsObj = fields as Record<string, React.FC | (() => React.ReactNode)>;
+    renderedContent = Object.entries(fieldsObj).map(([fieldName, FieldComponent]) =>
+      typeof FieldComponent === 'function'
+        ? React.createElement(FieldComponent as React.FC, { key: fieldName })
+        : FieldComponent
+    );
   } else {
     // If children is a function, call it
     const content = typeof children === 'function' ? children() : children;
@@ -274,11 +300,13 @@ export const Grid: React.FC<GridProps> = ({
   }
 
   return (
-    <div>
-      <div style={gridStyle}>
-        {renderedContent}
+    <SectionContext.Provider value={gridSectionValue}>
+      <div>
+        <div style={gridStyle}>
+          {renderedContent}
+        </div>
       </div>
-    </div>
+    </SectionContext.Provider>
   );
 };
 
