@@ -9,7 +9,7 @@ import { SectionContext, SectionContextValue, useSection, useTheme } from '../co
 
 export interface GridProps {
   /** A functional component or interior controls */
-  children?: React.ReactNode | (() => React.ReactNode);
+  children?: React.ReactNode | ((props?: any) => React.ReactNode) | React.FC<any>;
   /** Column template. eg: "repeat(4,1fr)" */
   columnTemplate?: string;
   /** Archetype fields. Overrides child controls. */
@@ -275,8 +275,11 @@ export const Grid: React.FC<GridProps> = ({
         : FieldComponent
     );
   } else {
-    // If children is a function, call it
-    const content = typeof children === 'function' ? children() : children;
+    // If children is a function, call it (a bare `{Mois.X.All}` component
+    // reference returns an element that renders inside our section provider)
+    const content: React.ReactNode = typeof children === 'function'
+      ? (children as (props?: any) => React.ReactNode)({})
+      : children;
 
     // If we have placement with children, wrap children and apply gridArea
     if (placementMap && placementMap.size > 0) {

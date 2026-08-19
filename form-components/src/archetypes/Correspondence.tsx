@@ -3,12 +3,22 @@
  * Components for displaying and updating patient correspondence records
  * (email, phone, video, etc.) related to an encounter.
  *
+ * MOIS parity notes:
+ * - Every field passes a stable fieldId (its Fields-map key) so section
+ *   fieldPlacement can select and position it (`<Grid placement=...>`).
+ * - `All` renders the fields as a Fragment in placement order — fields must be
+ *   direct grid children for per-field gridArea to work.
+ * - Fields read/write through the section's activeSelector when one is set;
+ *   without a custom section they fall back to the JSON example data
+ *   (encounter.correspondences[0], then correspondence) for gallery demos.
+ *
  * Uses reusable controls: DateTimeSelect (for when field)
  */
 
-import React, { useCallback } from 'react';
-import { LayoutItem } from '../components/Layout';
-import { useActiveData } from '../context/MoisContext';
+import React from 'react';
+import { LayoutItem, ArchAll } from '../components/Layout';
+import { SectionContextValue } from '../context/MoisContext';
+import { useArchetypeBinding, ArchetypeBinding } from './archetype-binding';
 import { MoisTextField } from '../components/MoisTextField';
 import { DateTimeSelect } from '../controls/DateTimeSelect';
 
@@ -46,80 +56,86 @@ const defaultCorrespondence: CorrespondenceData = {
 };
 
 // ============================================================================
-// Hooks
+// Section-aware data access
 // ============================================================================
 
-const useCorrespondenceData = (): [any, (updates: any) => void] => {
-  const [activeData, setActiveData] = useActiveData();
-  // Use encounter.correspondences[0] from JSON (primary) or fall back to correspondence
-  const data = (activeData as any).example?.encounter?.correspondences?.[0]
-    || (activeData as any).example?.correspondence;
-
-  // Memoize setData to prevent infinite re-renders
-  const setData = useCallback((updates: any) => {
-    setActiveData((current: any) => ({
-      ...current,
-      example: {
-        ...current.example,
-        correspondence: { ...current.example?.correspondence, ...updates },
-      },
-    }));
-  }, [setActiveData]);
-
-  return [data || defaultCorrespondence, setData];
-};
+const useCorrespondenceBinding = (
+  sectionOverride?: Partial<SectionContextValue>
+): ArchetypeBinding =>
+  useArchetypeBinding({
+    // Use encounter.correspondences[0] from JSON (primary) or fall back to correspondence
+    exampleData: (activeData) =>
+      activeData.example?.encounter?.correspondences?.[0]
+      || activeData.example?.correspondence
+      || defaultCorrespondence,
+    exampleTarget: (draft) => {
+      draft.example = draft.example || {};
+      return draft.example.encounter?.correspondences?.[0]
+        ?? (draft.example.correspondence = draft.example.correspondence || {});
+    },
+    section: sectionOverride,
+  });
 
 // ============================================================================
 // Field Components
 // ============================================================================
 
-const contact: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useCorrespondenceData();
+interface FieldProps {
+  index?: number | string;
+  section?: Partial<SectionContextValue>;
+  [key: string]: any;
+}
+
+const contact: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = useCorrespondenceBinding(section);
 
   return (
-    <LayoutItem label="Contact" size="medium" index={index}>
+    <LayoutItem fieldId="contact" label="Contact" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.contact || ''}
         size="medium"
-        onChange={(_, val) => setData({ contact: val || '' })}
+        onChange={(_, val) => setField('contact', val || '')}
       />
     </LayoutItem>
   );
 };
+contact.displayName = 'Correspondence.contact';
 
-const direction: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useCorrespondenceData();
+const direction: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = useCorrespondenceBinding(section);
 
   return (
-    <LayoutItem label="Direction" size="small" index={index}>
+    <LayoutItem fieldId="direction" label="Direction" size="small" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.direction || ''}
         size="small"
-        onChange={(_, val) => setData({ direction: val || '' })}
+        onChange={(_, val) => setField('direction', val || '')}
       />
     </LayoutItem>
   );
 };
+direction.displayName = 'Correspondence.direction';
 
-const note: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useCorrespondenceData();
+const note: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = useCorrespondenceBinding(section);
 
   return (
-    <LayoutItem label="Note" size="medium" index={index}>
+    <LayoutItem fieldId="note" label="Note" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.note || ''}
         multiline
         rows={3}
         size="medium"
-        onChange={(_, val) => setData({ note: val || '' })}
+        onChange={(_, val) => setField('note', val || '')}
       />
     </LayoutItem>
   );
 };
+note.displayName = 'Correspondence.note';
 
 // When field - uses DateTimeSelect for date and time handling
-const when: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useCorrespondenceData();
+const when: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = useCorrespondenceBinding(section);
 
   // Parse date and time from the when field
   const getDefaultDate = () => {
@@ -153,9 +169,9 @@ const when: React.FC<any> = ({ index, ...props }) => {
       const [year, month, day] = value.date.split('.').map(Number);
       const [hours, minutes] = (value.time || '00:00').split(':').map(Number);
       const newDate = new Date(year, month - 1, day, hours, minutes);
-      setData({ when: newDate.toISOString() });
+      setField('when', newDate.toISOString());
     } else {
-      setData({ when: null });
+      setField('when', null);
     }
   };
 
@@ -163,15 +179,17 @@ const when: React.FC<any> = ({ index, ...props }) => {
     <DateTimeSelect
       label="When"
       fieldId="when"
-      index={index}
+      index={index as number | undefined}
+      section={section}
       defaultValue={getDefaultDate()}
       defaultTime={getDefaultTime()}
       size="medium"
       onChange={handleChange}
-      {...props}
+      {...rest}
     />
   );
 };
+when.displayName = 'Correspondence.when';
 
 // ============================================================================
 // Fields Collection
@@ -229,18 +247,11 @@ const Columns = {
 };
 
 // ============================================================================
-// All Component (renders all fields)
+// All Component (renders the placed fields, or every field with no placement)
 // ============================================================================
 
 const All: React.FC<any> = (props) => {
-  return (
-    <div>
-      <Fields.contact {...props} />
-      <Fields.direction {...props} />
-      <Fields.note {...props} />
-      <Fields.when {...props} />
-    </div>
-  );
+  return <ArchAll fields={Fields} {...props} />;
 };
 
 // ============================================================================

@@ -103,10 +103,31 @@ export const useQuery = <T = any>(_query: string, _variables?: any): QueryTuple<
 };
 
 /**
+ * First GraphQL field a mutation document selects (e.g. "changeConnection"
+ * from `mutation updateConnection(...) { changeConnection(...) { ... } }`).
+ * Exported for tests.
+ */
+export const extractMutationFieldName = (document: string): string | null => {
+  const bodyStart = document.indexOf('{');
+  if (bodyStart === -1) return null;
+  const match = document.slice(bodyStart + 1).match(/[A-Za-z_][A-Za-z0-9_]*/);
+  return match ? match[0] : null;
+};
+
+/**
  * Mock useMutation hook for form preview
  * Shimmed MOIS returns [mutateFunction, queryResult, status].
+ *
+ * The resolved value echoes the mutation's GraphQL field so the standard
+ * post-mutation idiom (vendor test forms, HFC forms) works in preview:
+ * `const result = await mutate(vars); if (result?.changeConnection) { ... }`.
+ * An empty `{}` here silently stalls those flows — the subform never closes.
  */
-export const useMutation = <T = any>(_mutation: string): MutationResult<T> => {
+export const useMutation = <T = any>(
+  mutation: string,
+  _options?: unknown,
+  _errorDispatch?: unknown
+): MutationResult<T> => {
   const [loading, setLoading] = React.useState(false);
   const [status, setStatus] = React.useState('ready');
   const [data, setData] = React.useState<T | undefined>(undefined);
@@ -120,12 +141,15 @@ export const useMutation = <T = any>(_mutation: string): MutationResult<T> => {
       setTimeout(() => {
         setLoading(false);
         setStatus('ready');
-        const result = {} as T;
+        const fieldName = extractMutationFieldName(mutation);
+        const result = (fieldName
+          ? { [fieldName]: { ...(variables ?? {}) } }
+          : {}) as T;
         setData(result);
         resolve(result);
       }, 100);
     });
-  }, []);
+  }, [mutation]);
 
   return [
     mutate,

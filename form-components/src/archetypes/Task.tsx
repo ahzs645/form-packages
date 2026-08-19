@@ -2,12 +2,23 @@
  * Task Archetype
  * The Task archetype displays information about tasks assigned to a user.
  * Tasks are attached to MOIS objects.
+ *
+ * MOIS parity notes:
+ * - Every field passes a stable fieldId (its Fields-map key) so section
+ *   fieldPlacement can select and position it (`<Grid placement=...>`).
+ * - `All` renders the fields as a Fragment in placement order — fields must be
+ *   direct grid children for per-field gridArea to work.
+ * - Fields read/write through the section's activeSelector when one is set,
+ *   storing coded values as { code, display, system } objects like the real
+ *   engine. Without a custom section they fall back to the JSON example data
+ *   for gallery demos.
  */
 
-import React, { useCallback } from 'react';
+import React from 'react';
 import { IDropdownOption } from '@fluentui/react';
-import { LayoutItem } from '../components/Layout';
-import { useActiveData, useCodeList } from '../context/MoisContext';
+import { LayoutItem, ArchAll } from '../components/Layout';
+import { useCodeList, SectionContextValue } from '../context/MoisContext';
+import { useArchetypeBinding, codeOf, toCodedValue, ArchetypeBinding } from './archetype-binding';
 import { DateSelect } from '../controls/DateSelect';
 import { MoisTextField } from '../components/MoisTextField';
 import { MoisDropdown } from '../components/MoisDropdown';
@@ -62,26 +73,20 @@ const defaultTask: TaskData = {
 };
 
 // ============================================================================
-// Hooks
+// Section-aware data access
 // ============================================================================
 
-const useTaskData = (): [TaskData, (updates: Partial<TaskData>) => void] => {
-  const [activeData, setActiveData] = useActiveData();
-  const data = (activeData as any).example?.task;
-
-  // Memoize setData to prevent infinite re-renders
-  const setData = useCallback((updates: Partial<TaskData>) => {
-    setActiveData((current: any) => ({
-      ...current,
-      example: {
-        ...current.example,
-        task: { ...current.example?.task, ...updates },
-      },
-    }));
-  }, [setActiveData]);
-
-  return [data || defaultTask, setData];
-};
+const useTaskBinding = (
+  sectionOverride?: Partial<SectionContextValue>
+): ArchetypeBinding =>
+  useArchetypeBinding({
+    exampleData: (activeData) => activeData.example?.task ?? defaultTask,
+    exampleTarget: (draft) => {
+      draft.example = draft.example || {};
+      return (draft.example.task = draft.example.task || {});
+    },
+    section: sectionOverride,
+  });
 
 // ============================================================================
 // Date Formatting
@@ -104,11 +109,17 @@ const formatDate = (dateStr: string | null | undefined): string => {
 // Field Components
 // ============================================================================
 
-const createdDate: React.FC<{ index?: number }> = ({ index }) => {
-  const [data, setData] = useTaskData();
+interface FieldProps {
+  index?: number | string;
+  section?: Partial<SectionContextValue>;
+  [key: string]: any;
+}
+
+const createdDate: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = useTaskBinding(section);
 
   return (
-    <LayoutItem label="Created date" size="small" index={index}>
+    <LayoutItem fieldId="createdDate" label="Created date" size="small" index={index} section={section} {...rest}>
       <DateSelect
         inline
         value={data?.createdDate ? formatDate(data.createdDate) : ''}
@@ -116,33 +127,35 @@ const createdDate: React.FC<{ index?: number }> = ({ index }) => {
         onChange={(dateStr) => {
           if (dateStr) {
             // Convert from YYYY.MM.DD to YYYY-MM-DD
-            setData({ createdDate: dateStr.replace(/\./g, '-') });
+            setField('createdDate', dateStr.replace(/\./g, '-'));
           }
         }}
       />
     </LayoutItem>
   );
 };
+createdDate.displayName = 'Task.createdDate';
 
-const description: React.FC<{ index?: number }> = ({ index }) => {
-  const [data, setData] = useTaskData();
+const description: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = useTaskBinding(section);
 
   return (
-    <LayoutItem label="Task" size="medium" index={index}>
+    <LayoutItem fieldId="description" label="Task" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.description || ''}
         size="medium"
-        onChange={(_, val) => setData({ description: val || '' })}
+        onChange={(_, val) => setField('description', val || '')}
       />
     </LayoutItem>
   );
 };
+description.displayName = 'Task.description';
 
-const dueDate: React.FC<{ index?: number }> = ({ index }) => {
-  const [data, setData] = useTaskData();
+const dueDate: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = useTaskBinding(section);
 
   return (
-    <LayoutItem label="Due date" size="small" index={index}>
+    <LayoutItem fieldId="dueDate" label="Due date" size="small" index={index} section={section} {...rest}>
       <DateSelect
         inline
         value={data?.dueDate ? formatDate(data.dueDate) : ''}
@@ -150,34 +163,36 @@ const dueDate: React.FC<{ index?: number }> = ({ index }) => {
         onChange={(dateStr) => {
           if (dateStr) {
             // Convert from YYYY.MM.DD to YYYY-MM-DD
-            setData({ dueDate: dateStr.replace(/\./g, '-') });
+            setField('dueDate', dateStr.replace(/\./g, '-'));
           }
         }}
       />
     </LayoutItem>
   );
 };
+dueDate.displayName = 'Task.dueDate';
 
-const note: React.FC<{ index?: number }> = ({ index }) => {
-  const [data, setData] = useTaskData();
+const note: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = useTaskBinding(section);
 
   return (
-    <LayoutItem label="Detail" size="max" index={index}>
+    <LayoutItem fieldId="note" label="Detail" size="max" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.note || ''}
         size="max"
         multiline
-        onChange={(_, val) => setData({ note: val || '' })}
+        onChange={(_, val) => setField('note', val || '')}
       />
     </LayoutItem>
   );
 };
+note.displayName = 'Task.note';
 
-const patientName: React.FC<{ index?: number }> = ({ index }) => {
-  const [data] = useTaskData();
+const patientName: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data } = useTaskBinding(section);
 
   return (
-    <LayoutItem label="Patient name" size="medium" index={index}>
+    <LayoutItem fieldId="patientName" label="Patient name" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.patientName || ''}
         size="medium"
@@ -187,9 +202,10 @@ const patientName: React.FC<{ index?: number }> = ({ index }) => {
     </LayoutItem>
   );
 };
+patientName.displayName = 'Task.patientName';
 
-const priority: React.FC<{ index?: number }> = ({ index }) => {
-  const [data, setData] = useTaskData();
+const priority: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = useTaskBinding(section);
   const options = useCodeList('MOIS-TASKPRIORITY');
 
   const dropdownOptions: IDropdownOption[] = options.map(opt => ({
@@ -198,28 +214,23 @@ const priority: React.FC<{ index?: number }> = ({ index }) => {
   }));
 
   return (
-    <LayoutItem label="Priority" size="medium" index={index}>
+    <LayoutItem fieldId="priority" label="Priority" size="medium" index={index} section={section} {...rest}>
       <MoisDropdown
         fieldId="priority"
         codeSystem="MOIS-TASKPRIORITY"
-        selectedKey={data?.priority?.code || undefined}
+        selectedKey={codeOf(data?.priority) || undefined}
         options={dropdownOptions}
         size="medium"
         onChange={(_, option) => {
           if (option) {
-            setData({
-              priority: {
-                code: String(option.key),
-                display: option.text,
-                system: 'MOIS-TASKPRIORITY',
-              },
-            });
+            setField('priority', toCodedValue(option, 'MOIS-TASKPRIORITY'));
           }
         }}
       />
     </LayoutItem>
   );
 };
+priority.displayName = 'Task.priority';
 
 // ============================================================================
 // Fields Collection
@@ -316,21 +327,10 @@ const Columns = {
 };
 
 // ============================================================================
-// All Component
+// All Component (renders the placed fields, or every field with no placement)
 // ============================================================================
 
-const All: React.FC = () => {
-  return (
-    <div>
-      <Fields.createdDate />
-      <Fields.description />
-      <Fields.dueDate />
-      <Fields.note />
-      <Fields.patientName />
-      <Fields.priority />
-    </div>
-  );
-};
+const All: React.FC<any> = (props) => <ArchAll fields={Fields} {...props} />;
 
 // ============================================================================
 // Task Archetype Export

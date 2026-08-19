@@ -4,12 +4,22 @@
  * An observation panel contains one or more observations.
  *
  * Uses reusable controls: ListSelection (for observations table)
+ *
+ * MOIS parity notes (see ChartPreference.tsx for the reference port):
+ * - Every field passes a stable fieldId (its Fields-map key) so section
+ *   fieldPlacement can select and position it (`<Grid placement=...>`).
+ * - `All` renders the fields as a Fragment in placement order — fields must be
+ *   direct grid children for per-field gridArea to work.
+ * - Fields read/write through the section's activeSelector when one is set,
+ *   falling back to the JSON example data (example.observationPanel) for
+ *   gallery demos.
  */
 
 import React, { useCallback } from 'react';
 import { IDropdownOption, CommandButton, IColumn } from '@fluentui/react';
-import { LayoutItem, AuditStamp } from '../components/Layout';
-import { useActiveData, useCodeList } from '../context/MoisContext';
+import { LayoutItem, ArchAll, AuditStamp } from '../components/Layout';
+import { useActiveData, useCodeList, SectionContextValue } from '../context/MoisContext';
+import { useArchetypeBinding, codeOf, ArchetypeBinding } from './archetype-binding';
 import { MoisTextField } from '../components/MoisTextField';
 import { MoisDropdown } from '../components/MoisDropdown';
 import { ListSelection } from '../controls/ListSelection';
@@ -59,7 +69,24 @@ export interface ObservationPanelData {
   };
 }
 
-// Helper to get observation panel data from active data (data comes from MoisContext)
+// ============================================================================
+// Section-aware data access
+// ============================================================================
+
+const useObservationPanelBinding = (
+  sectionOverride?: Partial<SectionContextValue>
+): ArchetypeBinding =>
+  useArchetypeBinding({
+    exampleData: (activeData) => activeData.example?.observationPanel,
+    exampleTarget: (draft) => {
+      draft.example = draft.example || {};
+      return (draft.example.observationPanel = draft.example.observationPanel || {});
+    },
+    section: sectionOverride,
+  });
+
+// Legacy example-data hook, kept solely for Link (whose internals are part of
+// the frozen archetype contract and only ever read the demo record).
 const useObservationPanelData = (): [ObservationPanelData, (updates: Partial<ObservationPanelData>) => void] => {
   const [activeData, setActiveData] = useActiveData();
   const data = (activeData as any).example?.observationPanel as ObservationPanelData;
@@ -107,9 +134,42 @@ const observationColumns: IColumn[] = [
 // Field Components
 // ============================================================================
 
+interface FieldProps {
+  index?: number | string;
+  section?: Partial<SectionContextValue>;
+  [key: string]: any;
+}
+
+const makeTextField = (
+  fieldId: string,
+  label: string,
+  size: 'tiny' | 'small' | 'medium' | 'large' | 'max',
+  options: { multiline?: boolean; placeholder?: string } = {}
+): React.FC<FieldProps> => {
+  const TextFieldComponent: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+    const { data, setField } = useObservationPanelBinding(section);
+
+    return (
+      <LayoutItem fieldId={fieldId} label={label} size={size} index={index} section={section} {...rest}>
+        <MoisTextField
+          value={data?.[fieldId] || ''}
+          size={size}
+          {...(options.placeholder ? { placeholder: options.placeholder } : {})}
+          {...(options.multiline ? { multiline: true } : {})}
+          onChange={(_, val) => setField(fieldId, val || '')}
+        />
+      </LayoutItem>
+    );
+  };
+  TextFieldComponent.displayName = `ObservationPanel.${fieldId}`;
+  return TextFieldComponent;
+};
+
 // Observations table - uses ListSelection for consistent styling
-const observations: React.FC<any> = ({ index, ...props }) => {
-  const [data] = useObservationPanelData();
+// (ListSelection renders its own LayoutItem with this fieldId, so it
+// participates in section fieldPlacement like any other field.)
+const observations: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data } = useObservationPanelBinding(section);
 
   return (
     <ListSelection
@@ -119,13 +179,15 @@ const observations: React.FC<any> = ({ index, ...props }) => {
       selectionType="none"
       selectText="View observations"
       labelPosition="none"
-      {...props}
+      index={index as any}
+      section={section}
+      {...rest}
     />
   );
 };
 
-const panelName: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useObservationPanelData();
+const panelName: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = useObservationPanelBinding(section);
   const options = useCodeList('MOIS-PANELNAME');
 
   const dropdownOptions: IDropdownOption[] = [
@@ -138,223 +200,38 @@ const panelName: React.FC<any> = ({ index, ...props }) => {
   ];
 
   return (
-    <LayoutItem label="Panel name" size="medium" index={index}>
+    <LayoutItem fieldId="panelName" label="Panel name" size="medium" index={index} section={section} {...rest}>
       <MoisDropdown
-        selectedKey={data?.panelName || ''}
+        fieldId="panelName"
+        selectedKey={codeOf(data?.panelName)}
         options={dropdownOptions}
         size="medium"
-        onChange={(_, option) => setData({ panelName: String(option?.key || '') })}
+        onChange={(_, option) => setField('panelName', String(option?.key || ''))}
       />
     </LayoutItem>
   );
 };
 
-const orderDateTime: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useObservationPanelData();
+const orderDateTime = makeTextField('orderDateTime', 'Ordered', 'small', { placeholder: 'yyyy-mm-ddThh:mm:ss' });
+const collectedDateTime = makeTextField('collectedDateTime', 'Collected', 'small', { placeholder: 'yyyy-mm-ddThh:mm:ss' });
+const specimenReceivedDateTime = makeTextField('specimenReceivedDateTime', 'Specimen received', 'small', { placeholder: 'yyyy-mm-ddThh:mm:ss' });
+const placerReferenceNumber = makeTextField('placerReferenceNumber', 'Placer reference', 'medium');
+const fillerReferenceNumber = makeTextField('fillerReferenceNumber', 'Filler reference', 'medium');
+const orderedBy = makeTextField('orderedBy', 'Ordered by', 'medium');
+const orderingSystem = makeTextField('orderingSystem', 'Ordering system', 'medium');
+const reportedDateTime = makeTextField('reportedDateTime', 'Reported', 'small', { placeholder: 'yyyy-mm-ddThh:mm:ss' });
+const status = makeTextField('status', 'Result status', 'medium');
+const collectedComment = makeTextField('collectedComment', 'Comment at collection', 'medium');
+const facility = makeTextField('facility', 'Facility', 'medium');
+const copyTo = makeTextField('copyTo', 'Copies to', 'medium');
+const notes = makeTextField('notes', 'Notes', 'max', { multiline: true });
+const interfaceType = makeTextField('interfaceType', 'Interface type', 'medium');
+
+const messageSequenceNumber: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data } = useObservationPanelBinding(section);
 
   return (
-    <LayoutItem label="Ordered" size="small" index={index}>
-      <MoisTextField
-        value={data?.orderDateTime || ''}
-        placeholder="yyyy-mm-ddThh:mm:ss"
-        size="small"
-        onChange={(_, val) => setData({ orderDateTime: val || '' })}
-      />
-    </LayoutItem>
-  );
-};
-
-const collectedDateTime: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useObservationPanelData();
-
-  return (
-    <LayoutItem label="Collected" size="small" index={index}>
-      <MoisTextField
-        value={data?.collectedDateTime || ''}
-        placeholder="yyyy-mm-ddThh:mm:ss"
-        size="small"
-        onChange={(_, val) => setData({ collectedDateTime: val || '' })}
-      />
-    </LayoutItem>
-  );
-};
-
-const specimenReceivedDateTime: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useObservationPanelData();
-
-  return (
-    <LayoutItem label="Specimen received" size="small" index={index}>
-      <MoisTextField
-        value={data?.specimenReceivedDateTime || ''}
-        placeholder="yyyy-mm-ddThh:mm:ss"
-        size="small"
-        onChange={(_, val) => setData({ specimenReceivedDateTime: val || '' })}
-      />
-    </LayoutItem>
-  );
-};
-
-const placerReferenceNumber: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useObservationPanelData();
-
-  return (
-    <LayoutItem label="Placer reference" size="medium" index={index}>
-      <MoisTextField
-        value={data?.placerReferenceNumber || ''}
-        size="medium"
-        onChange={(_, val) => setData({ placerReferenceNumber: val || '' })}
-      />
-    </LayoutItem>
-  );
-};
-
-const fillerReferenceNumber: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useObservationPanelData();
-
-  return (
-    <LayoutItem label="Filler reference" size="medium" index={index}>
-      <MoisTextField
-        value={data?.fillerReferenceNumber || ''}
-        size="medium"
-        onChange={(_, val) => setData({ fillerReferenceNumber: val || '' })}
-      />
-    </LayoutItem>
-  );
-};
-
-const orderedBy: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useObservationPanelData();
-
-  return (
-    <LayoutItem label="Ordered by" size="medium" index={index}>
-      <MoisTextField
-        value={data?.orderedBy || ''}
-        size="medium"
-        onChange={(_, val) => setData({ orderedBy: val || '' })}
-      />
-    </LayoutItem>
-  );
-};
-
-const orderingSystem: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useObservationPanelData();
-
-  return (
-    <LayoutItem label="Ordering system" size="medium" index={index}>
-      <MoisTextField
-        value={data?.orderingSystem || ''}
-        size="medium"
-        onChange={(_, val) => setData({ orderingSystem: val || '' })}
-      />
-    </LayoutItem>
-  );
-};
-
-const reportedDateTime: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useObservationPanelData();
-
-  return (
-    <LayoutItem label="Reported" size="small" index={index}>
-      <MoisTextField
-        value={data?.reportedDateTime || ''}
-        placeholder="yyyy-mm-ddThh:mm:ss"
-        size="small"
-        onChange={(_, val) => setData({ reportedDateTime: val || '' })}
-      />
-    </LayoutItem>
-  );
-};
-
-const status: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useObservationPanelData();
-
-  return (
-    <LayoutItem label="Result status" size="medium" index={index}>
-      <MoisTextField
-        value={data?.status || ''}
-        size="medium"
-        onChange={(_, val) => setData({ status: val || '' })}
-      />
-    </LayoutItem>
-  );
-};
-
-const collectedComment: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useObservationPanelData();
-
-  return (
-    <LayoutItem label="Comment at collection" size="medium" index={index}>
-      <MoisTextField
-        value={data?.collectedComment || ''}
-        size="medium"
-        onChange={(_, val) => setData({ collectedComment: val || '' })}
-      />
-    </LayoutItem>
-  );
-};
-
-const facility: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useObservationPanelData();
-
-  return (
-    <LayoutItem label="Facility" size="medium" index={index}>
-      <MoisTextField
-        value={data?.facility || ''}
-        size="medium"
-        onChange={(_, val) => setData({ facility: val || '' })}
-      />
-    </LayoutItem>
-  );
-};
-
-const copyTo: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useObservationPanelData();
-
-  return (
-    <LayoutItem label="Copies to" size="medium" index={index}>
-      <MoisTextField
-        value={data?.copyTo || ''}
-        size="medium"
-        onChange={(_, val) => setData({ copyTo: val || '' })}
-      />
-    </LayoutItem>
-  );
-};
-
-const notes: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useObservationPanelData();
-
-  return (
-    <LayoutItem label="Notes" size="max" index={index}>
-      <MoisTextField
-        value={data?.notes || ''}
-        multiline
-        size="max"
-        onChange={(_, val) => setData({ notes: val || '' })}
-      />
-    </LayoutItem>
-  );
-};
-
-const interfaceType: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useObservationPanelData();
-
-  return (
-    <LayoutItem label="Interface type" size="medium" index={index}>
-      <MoisTextField
-        value={data?.interfaceType || ''}
-        size="medium"
-        onChange={(_, val) => setData({ interfaceType: val || '' })}
-      />
-    </LayoutItem>
-  );
-};
-
-const messageSequenceNumber: React.FC<any> = ({ index, ...props }) => {
-  const [data] = useObservationPanelData();
-
-  return (
-    <LayoutItem label="Sequence in bundle" size="small" index={index}>
+    <LayoutItem fieldId="messageSequenceNumber" label="Sequence in bundle" size="small" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.messageSequenceNumber ? String(data.messageSequenceNumber) : ''}
         readOnly
@@ -365,106 +242,16 @@ const messageSequenceNumber: React.FC<any> = ({ index, ...props }) => {
   );
 };
 
-const collectionVolume: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useObservationPanelData();
+const collectionVolume = makeTextField('collectionVolume', 'Collection volume', 'medium');
+const collectedBy = makeTextField('collectedBy', 'Collected by', 'medium');
+const specimenSource = makeTextField('specimenSource', 'Specimen source', 'medium');
+const orderingSource = makeTextField('orderingSource', 'Ordering source', 'medium');
+const universalServiceCode = makeTextField('universalServiceCode', 'Universal service code', 'medium');
+const orderingProviderRef = makeTextField('orderingProviderRef', 'Ordering provider reference', 'medium');
+const diagnosticServiceSection = makeTextField('diagnosticServiceSection', 'Diagnostic service section', 'medium');
 
-  return (
-    <LayoutItem label="Collection volume" size="medium" index={index}>
-      <MoisTextField
-        value={data?.collectionVolume || ''}
-        size="medium"
-        onChange={(_, val) => setData({ collectionVolume: val || '' })}
-      />
-    </LayoutItem>
-  );
-};
-
-const collectedBy: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useObservationPanelData();
-
-  return (
-    <LayoutItem label="Collected by" size="medium" index={index}>
-      <MoisTextField
-        value={data?.collectedBy || ''}
-        size="medium"
-        onChange={(_, val) => setData({ collectedBy: val || '' })}
-      />
-    </LayoutItem>
-  );
-};
-
-const specimenSource: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useObservationPanelData();
-
-  return (
-    <LayoutItem label="Specimen source" size="medium" index={index}>
-      <MoisTextField
-        value={data?.specimenSource || ''}
-        size="medium"
-        onChange={(_, val) => setData({ specimenSource: val || '' })}
-      />
-    </LayoutItem>
-  );
-};
-
-const orderingSource: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useObservationPanelData();
-
-  return (
-    <LayoutItem label="Ordering source" size="medium" index={index}>
-      <MoisTextField
-        value={data?.orderingSource || ''}
-        size="medium"
-        onChange={(_, val) => setData({ orderingSource: val || '' })}
-      />
-    </LayoutItem>
-  );
-};
-
-const universalServiceCode: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useObservationPanelData();
-
-  return (
-    <LayoutItem label="Universal service code" size="medium" index={index}>
-      <MoisTextField
-        value={data?.universalServiceCode || ''}
-        size="medium"
-        onChange={(_, val) => setData({ universalServiceCode: val || '' })}
-      />
-    </LayoutItem>
-  );
-};
-
-const orderingProviderRef: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useObservationPanelData();
-
-  return (
-    <LayoutItem label="Ordering provider reference" size="medium" index={index}>
-      <MoisTextField
-        value={data?.orderingProviderRef || ''}
-        size="medium"
-        onChange={(_, val) => setData({ orderingProviderRef: val || '' })}
-      />
-    </LayoutItem>
-  );
-};
-
-const diagnosticServiceSection: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useObservationPanelData();
-
-  return (
-    <LayoutItem label="Diagnostic service section" size="medium" index={index}>
-      <MoisTextField
-        value={data?.diagnosticServiceSection || ''}
-        size="medium"
-        onChange={(_, val) => setData({ diagnosticServiceSection: val || '' })}
-      />
-    </LayoutItem>
-  );
-};
-
-const stamp: React.FC<any> = ({ index, ...props }) => {
-  return <AuditStamp index={index} {...props} />;
+const stamp: React.FC<FieldProps> = ({ index, ...props }) => {
+  return <AuditStamp fieldId="stamp" index={index} {...props} />;
 };
 
 // Link component - shows a button linking to the panel
@@ -516,39 +303,11 @@ const Fields = {
 };
 
 // ============================================================================
-// All Component (renders all fields in correct order)
+// All Component (renders the placed fields, or every field with no placement)
 // ============================================================================
 
 const All: React.FC<any> = (props) => {
-  return (
-    <div>
-      <Fields.observations {...props} />
-      <Fields.panelName {...props} />
-      <Fields.orderDateTime {...props} />
-      <Fields.collectedDateTime {...props} />
-      <Fields.specimenReceivedDateTime {...props} />
-      <Fields.placerReferenceNumber {...props} />
-      <Fields.fillerReferenceNumber {...props} />
-      <Fields.orderedBy {...props} />
-      <Fields.orderingSystem {...props} />
-      <Fields.reportedDateTime {...props} />
-      <Fields.status {...props} />
-      <Fields.collectedComment {...props} />
-      <Fields.facility {...props} />
-      <Fields.copyTo {...props} />
-      <Fields.notes {...props} />
-      <Fields.interfaceType {...props} />
-      <Fields.messageSequenceNumber {...props} />
-      <Fields.collectionVolume {...props} />
-      <Fields.collectedBy {...props} />
-      <Fields.specimenSource {...props} />
-      <Fields.orderingSource {...props} />
-      <Fields.universalServiceCode {...props} />
-      <Fields.orderingProviderRef {...props} />
-      <Fields.diagnosticServiceSection {...props} />
-      <Fields.stamp {...props} />
-    </div>
-  );
+  return <ArchAll fields={Fields} {...props} />;
 };
 
 // ============================================================================

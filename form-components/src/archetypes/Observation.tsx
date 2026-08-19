@@ -3,12 +3,22 @@
  * Components for displaying and updating observation/lab result data.
  *
  * Uses reusable controls: ButtonBar (for link buttons grouping)
+ *
+ * MOIS parity notes:
+ * - Every field passes a stable fieldId (its Fields-map key) so section
+ *   fieldPlacement can select and position it (`<Grid placement=...>`).
+ * - `All` renders the fields as a Fragment in placement order — fields must be
+ *   direct grid children for per-field gridArea to work.
+ * - Fields read/write through the section's activeSelector when one is set,
+ *   falling back to the JSON example data (activeData.example.observation)
+ *   for gallery demos.
  */
 
-import React, { useState, useCallback } from 'react';
+import React, { useState } from 'react';
 import { IDropdownOption, CommandButton, Pivot, PivotItem } from '@fluentui/react';
-import { LayoutItem, AuditStamp } from '../components/Layout';
-import { useActiveData, useCodeList } from '../context/MoisContext';
+import { LayoutItem, ArchAll, AuditStamp } from '../components/Layout';
+import { useCodeList, SectionContextValue } from '../context/MoisContext';
+import { useArchetypeBinding, codeOf, ArchetypeBinding } from './archetype-binding';
 import { MoisTextField } from '../components/MoisTextField';
 import { MoisDropdown } from '../components/MoisDropdown';
 import { ButtonBar } from '../controls/ButtonBar';
@@ -104,35 +114,39 @@ const defaultObservation: ObservationData = {
   },
 };
 
-// Helper to get observation data from active data
-const useObservationData = (): [ObservationData, (updates: Partial<ObservationData>) => void] => {
-  const [activeData, setActiveData] = useActiveData();
-  const data = (activeData as any).example?.observation as ObservationData | undefined;
+// ============================================================================
+// Section-aware data access
+// ============================================================================
 
-  // Memoize setData to prevent infinite re-renders
-  const setData = useCallback((updates: Partial<ObservationData>) => {
-    setActiveData((current: any) => ({
-      ...current,
-      example: {
-        ...current.example,
-        observation: { ...current.example?.observation, ...updates },
-      },
-    }));
-  }, [setActiveData]);
-
-  return [data || defaultObservation, setData];
-};
+const useObservationBinding = (
+  sectionOverride?: Partial<SectionContextValue>
+): ArchetypeBinding =>
+  useArchetypeBinding({
+    exampleData: (activeData) =>
+      activeData.example?.observation ?? defaultObservation,
+    exampleTarget: (draft) => {
+      draft.example = draft.example || {};
+      return (draft.example.observation = draft.example.observation || {});
+    },
+    section: sectionOverride,
+  });
 
 // ============================================================================
 // Field Components
 // ============================================================================
 
+interface FieldProps {
+  index?: number | string;
+  section?: Partial<SectionContextValue>;
+  [key: string]: any;
+}
+
 // Link button fields
-const patient: React.FC<any> = ({ index, ...props }) => {
-  const [data] = useObservationData();
+const patient: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data } = useObservationBinding(section);
 
   return (
-    <LayoutItem size="small" index={index}>
+    <LayoutItem fieldId="patient" size="small" index={index} section={section} {...rest}>
       <CommandButton
         iconProps={{ iconName: 'PreviewLink' }}
         text={`Patient: ${data?.patientId || 'Not linked'}`}
@@ -141,11 +155,11 @@ const patient: React.FC<any> = ({ index, ...props }) => {
   );
 };
 
-const order: React.FC<any> = ({ index, ...props }) => {
-  const [data] = useObservationData();
+const order: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data } = useObservationBinding(section);
 
   return (
-    <LayoutItem size="small" index={index}>
+    <LayoutItem fieldId="order" size="small" index={index} section={section} {...rest}>
       <CommandButton
         iconProps={{ iconName: 'PreviewLink' }}
         text={data?.orderId ? `Order: ${data.orderId}` : 'Order: Not linked'}
@@ -155,11 +169,11 @@ const order: React.FC<any> = ({ index, ...props }) => {
   );
 };
 
-const encounter: React.FC<any> = ({ index, ...props }) => {
-  const [data] = useObservationData();
+const encounter: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data } = useObservationBinding(section);
 
   return (
-    <LayoutItem size="small" index={index}>
+    <LayoutItem fieldId="encounter" size="small" index={index} section={section} {...rest}>
       <CommandButton
         iconProps={{ iconName: 'PreviewLink' }}
         text={data?.encounterId ? `Encounter: ${data.encounterId}` : 'Encounter: Not linked'}
@@ -169,11 +183,11 @@ const encounter: React.FC<any> = ({ index, ...props }) => {
   );
 };
 
-const panel: React.FC<any> = ({ index, ...props }) => {
-  const [data] = useObservationData();
+const panel: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data } = useObservationBinding(section);
 
   return (
-    <LayoutItem size="small" index={index}>
+    <LayoutItem fieldId="panel" size="small" index={index} section={section} {...rest}>
       <CommandButton
         iconProps={{ iconName: 'RowsGroup' }}
         text={data?.panelName ? `Panel: ${data.panelName}` : 'Panel: Not linked'}
@@ -183,11 +197,11 @@ const panel: React.FC<any> = ({ index, ...props }) => {
   );
 };
 
-const sequenceInPanel: React.FC<any> = ({ index, ...props }) => {
-  const [data] = useObservationData();
+const sequenceInPanel: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data } = useObservationBinding(section);
 
   return (
-    <LayoutItem label="Sequence in panel" size="tiny" index={index}>
+    <LayoutItem fieldId="sequenceInPanel" label="Sequence in panel" size="tiny" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.sequenceInPanel ? String(data.sequenceInPanel) : ''}
         readOnly
@@ -198,210 +212,210 @@ const sequenceInPanel: React.FC<any> = ({ index, ...props }) => {
   );
 };
 
-const placerReference: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useObservationData();
+const placerReference: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = useObservationBinding(section);
 
   return (
-    <LayoutItem label="Placer reference" size="medium" index={index}>
+    <LayoutItem fieldId="placerReference" label="Placer reference" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.placerReference || ''}
         size="medium"
-        onChange={(_, val) => setData({ placerReference: val || '' })}
+        onChange={(_, val) => setField('placerReference', val || '')}
       />
     </LayoutItem>
   );
 };
 
-const copiesTo: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useObservationData();
+const copiesTo: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = useObservationBinding(section);
 
   return (
-    <LayoutItem label="Copies to" size="medium" index={index}>
+    <LayoutItem fieldId="copiesTo" label="Copies to" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.copiesTo || ''}
         size="medium"
-        onChange={(_, val) => setData({ copiesTo: val || '' })}
+        onChange={(_, val) => setField('copiesTo', val || '')}
       />
     </LayoutItem>
   );
 };
 
-const status: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useObservationData();
+const status: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = useObservationBinding(section);
 
   return (
-    <LayoutItem label="Status" size="tiny" index={index}>
+    <LayoutItem fieldId="status" label="Status" size="tiny" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.status || ''}
         size="tiny"
-        onChange={(_, val) => setData({ status: val || '' })}
+        onChange={(_, val) => setField('status', val || '')}
       />
     </LayoutItem>
   );
 };
 
-const performedDateTime: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useObservationData();
+const performedDateTime: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = useObservationBinding(section);
 
   return (
-    <LayoutItem label="Performed" size="small" index={index}>
+    <LayoutItem fieldId="performedDateTime" label="Performed" size="small" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.performedDateTime || ''}
         placeholder="yyyy-mm-ddThh:mm:ss"
         size="small"
-        onChange={(_, val) => setData({ performedDateTime: val || '' })}
+        onChange={(_, val) => setField('performedDateTime', val || '')}
       />
     </LayoutItem>
   );
 };
 
-const performedBy: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useObservationData();
+const performedBy: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = useObservationBinding(section);
 
   return (
-    <LayoutItem label="Performed by" size="small" index={index}>
+    <LayoutItem fieldId="performedBy" label="Performed by" size="small" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.performedBy || ''}
         size="small"
-        onChange={(_, val) => setData({ performedBy: val || '' })}
+        onChange={(_, val) => setField('performedBy', val || '')}
       />
     </LayoutItem>
   );
 };
 
-const reportedBy: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useObservationData();
+const reportedBy: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = useObservationBinding(section);
 
   return (
-    <LayoutItem label="Reporter" size="small" index={index}>
+    <LayoutItem fieldId="reportedBy" label="Reporter" size="small" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.reportedBy || ''}
         size="small"
-        onChange={(_, val) => setData({ reportedBy: val || '' })}
+        onChange={(_, val) => setField('reportedBy', val || '')}
       />
     </LayoutItem>
   );
 };
 
-const observationCode: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useObservationData();
+const observationCode: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = useObservationBinding(section);
 
   return (
-    <LayoutItem label="Code" size="tiny" index={index}>
+    <LayoutItem fieldId="observationCode" label="Code" size="tiny" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.observationCode || ''}
         size="tiny"
-        onChange={(_, val) => setData({ observationCode: val || '' })}
+        onChange={(_, val) => setField('observationCode', val || '')}
       />
     </LayoutItem>
   );
 };
 
-const description: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useObservationData();
+const description: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = useObservationBinding(section);
 
   return (
-    <LayoutItem label="Description" size="medium" index={index}>
+    <LayoutItem fieldId="description" label="Description" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.description || ''}
         size="medium"
-        onChange={(_, val) => setData({ description: val || '' })}
+        onChange={(_, val) => setField('description', val || '')}
       />
     </LayoutItem>
   );
 };
 
-const observationClass: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useObservationData();
+const observationClass: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = useObservationBinding(section);
 
   return (
-    <LayoutItem label="Classification" size="small" index={index}>
+    <LayoutItem fieldId="observationClass" label="Classification" size="small" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.observationClass || ''}
         size="small"
-        onChange={(_, val) => setData({ observationClass: val || '' })}
+        onChange={(_, val) => setField('observationClass', val || '')}
       />
     </LayoutItem>
   );
 };
 
-const loincCode: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useObservationData();
+const loincCode: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = useObservationBinding(section);
 
   return (
-    <LayoutItem label="LOINC code" size="tiny" index={index}>
+    <LayoutItem fieldId="loincCode" label="LOINC code" size="tiny" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.loincCode || ''}
         size="tiny"
-        onChange={(_, val) => setData({ loincCode: val || '' })}
+        onChange={(_, val) => setField('loincCode', val || '')}
       />
     </LayoutItem>
   );
 };
 
-const valueType: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useObservationData();
+const valueType: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = useObservationBinding(section);
 
   return (
-    <LayoutItem label="Value type" size="tiny" index={index}>
+    <LayoutItem fieldId="valueType" label="Value type" size="tiny" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.valueType || ''}
         size="tiny"
-        onChange={(_, val) => setData({ valueType: val || '' })}
+        onChange={(_, val) => setField('valueType', val || '')}
       />
     </LayoutItem>
   );
 };
 
-const value: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useObservationData();
+const value: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = useObservationBinding(section);
 
   return (
-    <LayoutItem label="value" size="medium" index={index}>
+    <LayoutItem fieldId="value" label="value" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.value || ''}
         size="medium"
-        onChange={(_, val) => setData({ value: val || '' })}
+        onChange={(_, val) => setField('value', val || '')}
       />
     </LayoutItem>
   );
 };
 
-const units: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useObservationData();
+const units: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = useObservationBinding(section);
 
   return (
-    <LayoutItem label="Units" size="tiny" index={index}>
+    <LayoutItem fieldId="units" label="Units" size="tiny" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.units || ''}
         size="tiny"
-        onChange={(_, val) => setData({ units: val || '' })}
+        onChange={(_, val) => setField('units', val || '')}
       />
     </LayoutItem>
   );
 };
 
-const comment: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useObservationData();
+const comment: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = useObservationBinding(section);
 
   return (
-    <LayoutItem label="Comment" size="max" index={index}>
+    <LayoutItem fieldId="comment" label="Comment" size="max" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.comment || ''}
         multiline
         size="max"
-        onChange={(_, val) => setData({ comment: val || '' })}
+        onChange={(_, val) => setField('comment', val || '')}
       />
     </LayoutItem>
   );
 };
 
-const report: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useObservationData();
+const report: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = useObservationBinding(section);
   const [selectedKey, setSelectedKey] = useState('Edit');
 
   return (
-    <LayoutItem label="Report" size="max" index={index}>
+    <LayoutItem fieldId="report" label="Report" size="max" index={index} section={section} {...rest}>
       <div style={{ margin: '-6px 0 0', flex: '1 1 auto' }}>
         <Pivot
           selectedKey={selectedKey}
@@ -420,7 +434,7 @@ const report: React.FC<any> = ({ index, ...props }) => {
                   multiline
                   rows={6}
                   size="max"
-                  onChange={(_, val) => setData({ report: val || '' })}
+                  onChange={(_, val) => setField('report', val || '')}
                 />
               </LayoutItem>
             </div>
@@ -431,8 +445,8 @@ const report: React.FC<any> = ({ index, ...props }) => {
   );
 };
 
-const abnormalFlag: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useObservationData();
+const abnormalFlag: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = useObservationBinding(section);
   const options = useCodeList('MOIS-ABNORMALFLAG');
 
   const dropdownOptions: IDropdownOption[] = [
@@ -441,54 +455,55 @@ const abnormalFlag: React.FC<any> = ({ index, ...props }) => {
   ];
 
   return (
-    <LayoutItem label="Flag" index={index}>
+    <LayoutItem fieldId="abnormalFlag" label="Flag" index={index} section={section} {...rest}>
       <MoisDropdown
-        selectedKey={data?.abnormalFlag?.code || ''}
+        selectedKey={codeOf(data?.abnormalFlag)}
         options={dropdownOptions}
         onChange={(_, option) => {
           const selected = options.find(o => o.code === option?.key);
-          setData({
-            abnormalFlag: selected ? { code: selected.code, display: selected.display, system: selected.system } : null,
-          });
+          setField(
+            'abnormalFlag',
+            selected ? { code: selected.code, display: selected.display, system: selected.system } : null
+          );
         }}
       />
     </LayoutItem>
   );
 };
 
-const interfaceNotes: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useObservationData();
+const interfaceNotes: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = useObservationBinding(section);
 
   return (
-    <LayoutItem label="Interface notes" size="medium" index={index}>
+    <LayoutItem fieldId="interfaceNotes" label="Interface notes" size="medium" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.interfaceNotes || ''}
         size="medium"
-        onChange={(_, val) => setData({ interfaceNotes: val || '' })}
+        onChange={(_, val) => setField('interfaceNotes', val || '')}
       />
     </LayoutItem>
   );
 };
 
-const referenceRangeText: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useObservationData();
+const referenceRangeText: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = useObservationBinding(section);
 
   return (
-    <LayoutItem label="Reference range" size="small" index={index}>
+    <LayoutItem fieldId="referenceRangeText" label="Reference range" size="small" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.referenceRangeText || ''}
         size="small"
-        onChange={(_, val) => setData({ referenceRangeText: val || '' })}
+        onChange={(_, val) => setField('referenceRangeText', val || '')}
       />
     </LayoutItem>
   );
 };
 
-const rangeNormalLow: React.FC<any> = ({ index, ...props }) => {
-  const [data] = useObservationData();
+const rangeNormalLow: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data } = useObservationBinding(section);
 
   return (
-    <LayoutItem label="Low normal" size="small" index={index}>
+    <LayoutItem fieldId="rangeNormalLow" label="Low normal" size="small" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.rangeNormalLow || ''}
         readOnly
@@ -499,11 +514,11 @@ const rangeNormalLow: React.FC<any> = ({ index, ...props }) => {
   );
 };
 
-const rangeNormalHigh: React.FC<any> = ({ index, ...props }) => {
-  const [data] = useObservationData();
+const rangeNormalHigh: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data } = useObservationBinding(section);
 
   return (
-    <LayoutItem label="High normal" size="small" index={index}>
+    <LayoutItem fieldId="rangeNormalHigh" label="High normal" size="small" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.rangeNormalHigh || ''}
         readOnly
@@ -514,11 +529,11 @@ const rangeNormalHigh: React.FC<any> = ({ index, ...props }) => {
   );
 };
 
-const rangeVeryLow: React.FC<any> = ({ index, ...props }) => {
-  const [data] = useObservationData();
+const rangeVeryLow: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data } = useObservationBinding(section);
 
   return (
-    <LayoutItem label="Very low" size="small" index={index}>
+    <LayoutItem fieldId="rangeVeryLow" label="Very low" size="small" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.rangeVeryLow || ''}
         readOnly
@@ -529,11 +544,11 @@ const rangeVeryLow: React.FC<any> = ({ index, ...props }) => {
   );
 };
 
-const rangeVeryHigh: React.FC<any> = ({ index, ...props }) => {
-  const [data] = useObservationData();
+const rangeVeryHigh: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data } = useObservationBinding(section);
 
   return (
-    <LayoutItem label="Very high" size="small" index={index}>
+    <LayoutItem fieldId="rangeVeryHigh" label="Very high" size="small" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.rangeVeryHigh || ''}
         readOnly
@@ -544,11 +559,11 @@ const rangeVeryHigh: React.FC<any> = ({ index, ...props }) => {
   );
 };
 
-const rangeAbsurdLow: React.FC<any> = ({ index, ...props }) => {
-  const [data] = useObservationData();
+const rangeAbsurdLow: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data } = useObservationBinding(section);
 
   return (
-    <LayoutItem label="Absurdly low" size="small" index={index}>
+    <LayoutItem fieldId="rangeAbsurdLow" label="Absurdly low" size="small" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.rangeAbsurdLow || ''}
         readOnly
@@ -559,11 +574,11 @@ const rangeAbsurdLow: React.FC<any> = ({ index, ...props }) => {
   );
 };
 
-const rangeAbsurdHigh: React.FC<any> = ({ index, ...props }) => {
-  const [data] = useObservationData();
+const rangeAbsurdHigh: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data } = useObservationBinding(section);
 
   return (
-    <LayoutItem label="Absurdly high" size="small" index={index}>
+    <LayoutItem fieldId="rangeAbsurdHigh" label="Absurdly high" size="small" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.rangeAbsurdHigh || ''}
         readOnly
@@ -574,11 +589,11 @@ const rangeAbsurdHigh: React.FC<any> = ({ index, ...props }) => {
   );
 };
 
-const attachmentCount: React.FC<any> = ({ index, ...props }) => {
-  const [data] = useObservationData();
+const attachmentCount: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data } = useObservationBinding(section);
 
   return (
-    <LayoutItem label="Attachments" size="tiny" index={index}>
+    <LayoutItem fieldId="attachmentCount" label="Attachments" size="tiny" index={index} section={section} {...rest}>
       <MoisTextField
         value={data?.attachmentCount ? String(data.attachmentCount) : ''}
         readOnly
@@ -589,8 +604,8 @@ const attachmentCount: React.FC<any> = ({ index, ...props }) => {
   );
 };
 
-const recordState: React.FC<any> = ({ index, ...props }) => {
-  const [data, setData] = useObservationData();
+const recordState: React.FC<FieldProps> = ({ index, section, ...rest }) => {
+  const { data, setField } = useObservationBinding(section);
   const options = useCodeList('MOIS-RECORDSTATE');
 
   const dropdownOptions: IDropdownOption[] = [
@@ -599,23 +614,24 @@ const recordState: React.FC<any> = ({ index, ...props }) => {
   ];
 
   return (
-    <LayoutItem label="Record state" index={index}>
+    <LayoutItem fieldId="recordState" label="Record state" index={index} section={section} {...rest}>
       <MoisDropdown
-        selectedKey={data?.recordState?.code || ''}
+        selectedKey={codeOf(data?.recordState)}
         options={dropdownOptions}
         onChange={(_, option) => {
           const selected = options.find(o => o.code === option?.key);
-          setData({
-            recordState: selected ? { code: selected.code, display: selected.display, system: selected.system } : null,
-          });
+          setField(
+            'recordState',
+            selected ? { code: selected.code, display: selected.display, system: selected.system } : null
+          );
         }}
       />
     </LayoutItem>
   );
 };
 
-const stamp: React.FC<any> = ({ index, ...props }) => {
-  return <AuditStamp index={index} {...props} />;
+const stamp: React.FC<FieldProps> = ({ index, ...props }) => {
+  return <AuditStamp fieldId="stamp" index={index} {...props} />;
 };
 
 // ============================================================================
@@ -707,8 +723,8 @@ const List: React.FC<any> = (props) => {
 // LinksBar - Groups navigation link buttons together
 // ============================================================================
 
-const LinksBar: React.FC<any> = (props) => {
-  const [data] = useObservationData();
+const LinksBar: React.FC<any> = ({ section, ...props }) => {
+  const { data } = useObservationBinding(section);
 
   return (
     <ButtonBar gap={4} padding="8px 0">
@@ -736,43 +752,11 @@ const LinksBar: React.FC<any> = (props) => {
 };
 
 // ============================================================================
-// All Component (renders all fields in correct order)
+// All Component (renders the placed fields, or every field with no placement)
 // ============================================================================
 
 const All: React.FC<any> = (props) => {
-  return (
-    <div>
-      <LinksBar {...props} />
-      <Fields.sequenceInPanel {...props} />
-      <Fields.placerReference {...props} />
-      <Fields.copiesTo {...props} />
-      <Fields.status {...props} />
-      <Fields.performedDateTime {...props} />
-      <Fields.performedBy {...props} />
-      <Fields.reportedBy {...props} />
-      <Fields.observationCode {...props} />
-      <Fields.description {...props} />
-      <Fields.observationClass {...props} />
-      <Fields.loincCode {...props} />
-      <Fields.valueType {...props} />
-      <Fields.value {...props} />
-      <Fields.units {...props} />
-      <Fields.comment {...props} />
-      <Fields.report {...props} />
-      <Fields.abnormalFlag {...props} />
-      <Fields.interfaceNotes {...props} />
-      <Fields.referenceRangeText {...props} />
-      <Fields.rangeNormalLow {...props} />
-      <Fields.rangeNormalHigh {...props} />
-      <Fields.rangeVeryLow {...props} />
-      <Fields.rangeVeryHigh {...props} />
-      <Fields.rangeAbsurdLow {...props} />
-      <Fields.rangeAbsurdHigh {...props} />
-      <Fields.attachmentCount {...props} />
-      <Fields.recordState {...props} />
-      <Fields.stamp {...props} />
-    </div>
-  );
+  return <ArchAll fields={Fields} {...props} />;
 };
 
 // ============================================================================

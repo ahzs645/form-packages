@@ -16,15 +16,8 @@
 import React from 'react';
 import { IDropdownOption } from '@fluentui/react';
 import { LayoutItem, ArchAll, AuditStamp } from '../components/Layout';
-import {
-  useActiveData,
-  useSection,
-  useCodeList,
-  ChartPreferenceData,
-  SectionContextValue,
-} from '../context/MoisContext';
-import { useActiveDataSlice } from '../hooks/form-state';
-import { getSectionActiveTarget, writeSectionActiveFieldValue } from '../runtime/mois-contract';
+import { useCodeList, SectionContextValue } from '../context/MoisContext';
+import { useArchetypeBinding, codeOf, toCodedValue, ArchetypeBinding } from './archetype-binding';
 import { DateSelect } from '../controls/DateSelect';
 import { MoisTextField } from '../components/MoisTextField';
 import { MoisDropdown } from '../components/MoisDropdown';
@@ -33,70 +26,20 @@ import { MoisDropdown } from '../components/MoisDropdown';
 // Section-aware data access
 // ============================================================================
 
-interface ChartPreferenceBinding {
-  data: Record<string, any> | undefined;
-  setField: (fieldId: string, value: unknown) => void;
-}
-
-/**
- * Resolve where this field reads and writes.
- *
- * When the enclosing section supplies a custom activeSelector (a SubForm
- * editing fd.preferenceEdit, a list row, ...), bind to the form-state store
- * through the section contract — the same store and write path the standard
- * controls use. Otherwise keep the legacy MoisContext example-data binding so
- * standalone gallery previews stay populated and interactive.
- */
 const useChartPreferenceBinding = (
   sectionOverride?: Partial<SectionContextValue>
-): ChartPreferenceBinding => {
-  const section = useSection(sectionOverride);
-
-  // Form-state store (what the compiled form's useActiveData writes into).
-  const [slice, setFormData] = useActiveDataSlice((data: any) => ({
-    target: getSectionActiveTarget(data, section),
-    defaultTarget: data?.field?.data ?? data,
-  }));
-  const hasCustomTarget = slice.target != null && slice.target !== slice.defaultTarget;
-
-  // MoisContext demo store (gallery example data).
-  const [moisActiveData, setMoisActiveData] = useActiveData();
-  const exampleData: ChartPreferenceData | undefined =
-    (moisActiveData as any).example?.demographics?.preferences?.[0]
-    || (moisActiveData as any).example?.chartPreference;
-
-  const setField = React.useCallback((fieldId: string, value: unknown) => {
-    if (hasCustomTarget) {
-      setFormData((draft: any) => {
-        writeSectionActiveFieldValue(draft, section, fieldId, value);
-      });
-      return;
-    }
-    setMoisActiveData((draft: any) => {
+): ArchetypeBinding =>
+  useArchetypeBinding({
+    exampleData: (activeData) =>
+      activeData.example?.demographics?.preferences?.[0]
+      || activeData.example?.chartPreference,
+    exampleTarget: (draft) => {
       draft.example = draft.example || {};
-      const target = draft.example.demographics?.preferences?.[0]
+      return draft.example.demographics?.preferences?.[0]
         ?? (draft.example.chartPreference = draft.example.chartPreference || {});
-      target[fieldId] = value;
-    });
-  }, [hasCustomTarget, section, setFormData, setMoisActiveData]);
-
-  return {
-    data: hasCustomTarget ? (slice.target as Record<string, any>) : (exampleData as any),
-    setField,
-  };
-};
-
-/** MOIS stores coded values as { code, display, system }; demos may hold bare codes. */
-const codeOf = (value: any): string =>
-  (value && typeof value === 'object' ? value.code : value) ?? '';
-
-const toCodedValue = (
-  option: IDropdownOption | undefined,
-  system: string
-): { code: string; display: string; system: string } | null =>
-  option && option.key !== ''
-    ? { code: String(option.key), display: option.text, system }
-    : null;
+    },
+    section: sectionOverride,
+  });
 
 const usePleaseSelectOptions = (codeSystem: string): IDropdownOption[] => {
   const options = useCodeList(codeSystem);
