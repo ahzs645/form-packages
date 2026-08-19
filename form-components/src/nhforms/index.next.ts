@@ -397,6 +397,9 @@ function loadComponentCode(
     // ChartRecordTable exports: per-collection column presets, reused by
     // ChartRecordManager to derive default modal fields.
     '_chartRecordTablePresets',
+    // ChartRecordManager decomposed pieces (table / template button / editor
+    // modal as separate builder fields, coordinated by managerId channel).
+    'ChartRecordList', 'ChartRecordCreateButton', 'ChartRecordEditor',
     // PDF regeneration exports
     'PdfRegenerator',
     // CompactBooleanField exports

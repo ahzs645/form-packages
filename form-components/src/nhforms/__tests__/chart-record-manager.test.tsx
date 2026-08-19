@@ -15,6 +15,9 @@ import { resetPreviewChartMutations } from "../../scope/preview-chart-store";
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const ChartRecordManager = nhformsComponents.ChartRecordManager as React.ComponentType<any>;
+const ChartRecordList = nhformsComponents.ChartRecordList as React.ComponentType<any>;
+const ChartRecordCreateButton = nhformsComponents.ChartRecordCreateButton as React.ComponentType<any>;
+const ChartRecordEditor = nhformsComponents.ChartRecordEditor as React.ComponentType<any>;
 
 // The mock patient's active connection (packages/form-components/src/data/selected-source.json).
 const EXISTING_CONNECTION_NAME = "PRACTITIONER, GENERAL";
@@ -64,6 +67,128 @@ afterEach(() => {
   container?.remove();
   container = null;
   document.body.innerHTML = "";
+});
+
+describe("decomposed pieces (list / button / editor as separate fields)", () => {
+  it("coordinates separate fields through the managerId channel", async () => {
+    // Three independent builder fields — the decomposed authoring model.
+    // They share managerId by defaulting it to the source.
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(
+        <FormStateProvider>
+          <ChartRecordList source="connections" />
+          <ChartRecordCreateButton
+            source="connections"
+            text="New POA"
+            defaults={{
+              connectionType: { code: "POA", display: "Power of Attorney", system: "MOIS-CONNECTIONTYPE" },
+            }}
+          />
+          <ChartRecordEditor
+            source="connections"
+            dataEntryFields={[{ id: "comment", label: "Comment", type: "text" }]}
+          />
+        </FormStateProvider>
+      );
+    });
+
+    expect(document.body.textContent).toContain(EXISTING_CONNECTION_NAME);
+
+    // Row delete on the LIST opens the EDITOR's confirm dialog.
+    await act(async () => {
+      buttonsByAriaLabel("Delete")[0].click();
+    });
+    expect(document.body.textContent).toContain("Confirm delete");
+    await act(async () => {
+      buttonByText("Confirm").click();
+    });
+    await settleMutation();
+    expect(document.body.textContent).not.toContain(EXISTING_CONNECTION_NAME);
+
+    // The standalone BUTTON opens the EDITOR's modal; Save creates the record.
+    await act(async () => {
+      buttonByText("New POA").click();
+    });
+    await act(async () => {
+      buttonByText("Save").click();
+    });
+    await settleMutation();
+    expect(document.body.textContent).toContain("Power of Attorney");
+  });
+});
+
+describe("create button width", () => {
+  it("renders natural width by default and spans only with fullWidth", async () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(
+        <FormStateProvider>
+          <div data-testid="compact">
+            <ChartRecordCreateButton source="preferences" text="Compact" />
+          </div>
+          <div data-testid="wide">
+            <ChartRecordCreateButton source="preferences" text="Wide" fullWidth />
+          </div>
+        </FormStateProvider>
+      );
+    });
+
+    const compactWrapper = container!
+      .querySelector("[data-testid='compact']")!
+      .firstElementChild as HTMLElement;
+    expect(compactWrapper.style.display).toBe("inline-flex");
+
+    const wideWrapper = container!
+      .querySelector("[data-testid='wide']")!
+      .firstElementChild as HTMLElement;
+    expect(wideWrapper.style.display).toBe("flex");
+    expect(wideWrapper.style.width).toBe("100%");
+  });
+});
+
+describe("template modal (vendor-style)", () => {
+  it("hides template-fixed fields and uses the vendor create title", async () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(
+        <FormStateProvider>
+          <ChartRecordCreateButton
+            source="preferences"
+            text="Create MOST Preference"
+            createTitle="Create MOST Preference"
+            hiddenFieldIds={["classification", "preferenceType", "preference"]}
+            defaults={{
+              classification: { code: "ADVANCE DIRECTIVE", display: "Advance directive", system: "MOIS-PREFERENCECLASSIFICATION" },
+              preference: "MOST",
+            }}
+          />
+          <ChartRecordEditor source="preferences" />
+        </FormStateProvider>
+      );
+    });
+
+    await act(async () => {
+      buttonByText("Create MOST Preference").click();
+    });
+
+    const text = document.body.textContent ?? "";
+    // Vendor dialog title, not the generic "Edit ...".
+    expect(text).toContain("Create MOST Preference");
+    // Template-fixed fields are hidden (the vendor's per-button placement)…
+    expect(text).not.toContain("Classification");
+    expect(text).not.toContain("Subject type");
+    // …while the fields the clinician actually fills remain.
+    for (const label of ["Subject detail", "Instruction", "Reason", "Start date", "Sensitive"]) {
+      expect(text).toContain(label);
+    }
+  });
 });
 
 describe("ChartRecordManager", () => {

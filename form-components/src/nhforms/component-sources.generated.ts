@@ -1717,6 +1717,15 @@ const ChartAttachmentUpload = ({
 if (typeof ChartRecordManager === "undefined") {
   window.ChartRecordManager = null
 }
+if (typeof ChartRecordEditor === "undefined") {
+  window.ChartRecordEditor = null
+}
+if (typeof ChartRecordList === "undefined") {
+  window.ChartRecordList = null
+}
+if (typeof ChartRecordCreateButton === "undefined") {
+  window.ChartRecordCreateButton = null
+}
 
 /**
  * ChartRecordManager - Full CRUD over a writable chart collection, composed
@@ -1737,6 +1746,14 @@ if (typeof ChartRecordManager === "undefined") {
  * buttons, per-row Action.Bar, confirm-before-delete, edits in a scratch
  * store that never touches parent form data, stay-open on mutation error,
  * and refresh(sd) after every successful write.
+ *
+ * This file defines both packagings of the same machinery:
+ * - \`ChartRecordManager\` — the all-in-one composite field.
+ * - \`ChartRecordList\` + \`ChartRecordCreateButton\` + \`ChartRecordEditor\` —
+ *   the decomposed builder pieces: the table, each template button, and the
+ *   editor modal as separate form fields, coordinated through a managerId
+ *   channel (default: the shared \`source\`), so authors arrange them freely
+ *   on the canvas.
  */
 
 // Writable collections this manager understands, with their registry write
@@ -1779,29 +1796,32 @@ const _chartRecordManagerStripKeys = {
 // instead of free text. \`provider\` is deliberately absent from the
 // connections defaults — it needs a provider search control; authors add it
 // (or map it) explicitly when required.
+// Widths mirror the vendor dialogs' compact two-column grid: paired dates
+// and yes/no fields sit side by side (width "half" — the data-entry renderer
+// already understands it); detail textareas span the row.
 const _chartRecordManagerDefaultFieldPresets = {
   connections: [
-    { id: "connectionType", label: "Role", type: "choice", codeSystem: "MOIS-CONNECTIONTYPE" },
-    { id: "providerType", label: "Provider type", type: "choice", codeSystem: "MOIS-CONNECTIONPROVIDERTYPE" },
-    { id: "startDate", label: "Start date", type: "date" },
-    { id: "stopDate", label: "End date", type: "date" },
+    { id: "connectionType", label: "Role", type: "choice", codeSystem: "MOIS-CONNECTIONTYPE", width: "half" },
+    { id: "providerType", label: "Provider type", type: "choice", codeSystem: "MOIS-CONNECTIONPROVIDERTYPE", width: "half" },
+    { id: "startDate", label: "Start date", type: "date", width: "half" },
+    { id: "stopDate", label: "End date", type: "date", width: "half" },
     { id: "stopReason", label: "Stopped reason", type: "choice", codeSystem: "AIHS-STOPREASON" },
     { id: "stopNote", label: "Stopped note", type: "textarea" },
     { id: "comment", label: "Comment", type: "textarea" },
-    { id: "includeOnDemographics", label: "Show on demographics", type: "choice", codeSystem: "MOIS-YESNO" },
-    { id: "isCareTeamMember", label: "Care team member", type: "choice", codeSystem: "MOIS-YESNO" },
+    { id: "includeOnDemographics", label: "Show on demographics", type: "choice", codeSystem: "MOIS-YESNO", width: "half" },
+    { id: "isCareTeamMember", label: "Care team member", type: "choice", codeSystem: "MOIS-YESNO", width: "half" },
   ],
   preferences: [
-    { id: "classification", label: "Classification", type: "choice", codeSystem: "MOIS-PREFERENCECLASSIFICATION" },
-    { id: "preferenceType", label: "Subject type", type: "choice", codeSystem: "MOIS-PREFERENCETYPE" },
+    { id: "classification", label: "Classification", type: "choice", codeSystem: "MOIS-PREFERENCECLASSIFICATION", width: "half" },
+    { id: "preferenceType", label: "Subject type", type: "choice", codeSystem: "MOIS-PREFERENCETYPE", width: "half" },
     { id: "preference", label: "Preference", type: "text" },
     { id: "subjectDetail", label: "Subject detail", type: "textarea" },
     { id: "instruction", label: "Instruction", type: "choice", codeSystem: "MOIS-PREFINST" },
     { id: "reason", label: "Reason", type: "choice", codeSystem: "MOIS-PREFERENCEREASON" },
-    { id: "startDate", label: "Start date", type: "date" },
-    { id: "endDate", label: "End date", type: "date" },
-    { id: "sensitive", label: "Sensitive", type: "choice", codeSystem: "MOIS-YESNO" },
-    { id: "includeOnDemographics", label: "Show on demographics", type: "choice", codeSystem: "MOIS-YESNO" },
+    { id: "startDate", label: "Start date", type: "date", width: "half" },
+    { id: "endDate", label: "End date", type: "date", width: "half" },
+    { id: "sensitive", label: "Sensitive", type: "choice", codeSystem: "MOIS-YESNO", width: "half" },
+    { id: "includeOnDemographics", label: "Show on demo.", type: "choice", codeSystem: "MOIS-YESNO", width: "half" },
   ],
 }
 
@@ -1899,40 +1919,66 @@ const _chartRecordManagerFieldTransforms = {
     }),
 }
 
-ChartRecordManager = ({
-  id = "chartRecordManager",
-  label,
+/**
+ * Editor coordination channel. The decomposed builder pieces
+ * (ChartRecordList rows, ChartRecordCreateButton) are independent fields on
+ * the form; they reach "their" ChartRecordEditor through this module-level
+ * registry keyed by managerId. Every piece defaults its managerId to its
+ * \`source\`, so one editor + one list + any number of buttons per collection
+ * wire themselves with zero configuration; explicit managerId separates two
+ * groups over the same collection.
+ */
+const __chartRecordEditorChannels = {}
+
+const _chartRecordEditorRegister = (managerId, handler) => {
+  __chartRecordEditorChannels[managerId] = handler
+  return () => {
+    if (__chartRecordEditorChannels[managerId] === handler) {
+      delete __chartRecordEditorChannels[managerId]
+    }
+  }
+}
+
+const openChartRecordEditor = (managerId, request) => {
+  const handler = __chartRecordEditorChannels[managerId]
+  if (handler) {
+    handler(request)
+  } else {
+    console.warn(
+      \`ChartRecordEditor "\${managerId}" is not on this form — add a Chart Record Editor field with managerId "\${managerId}" (or matching source).\`
+    )
+  }
+}
+
+/**
+ * ChartRecordEditor - the create/edit modal, delete confirm, and MOIS write
+ * action for one chart collection. Renders nothing until a request arrives on
+ * its channel (from ChartRecordList, ChartRecordCreateButton, or the
+ * composite ChartRecordManager). One editor serves any number of triggers.
+ */
+ChartRecordEditor = ({
+  id,
   source = "connections",
+  managerId,
   writeTarget,
   recordIdKey,
   dataEntryFields,
   payloadMap,
   payloadDefaults = {},
-  templates = [],
-  allowCreate = true,
-  allowEdit = true,
-  allowDelete,
-  newButtonText,
   modalTitle,
   completeButtonText = "Save",
   confirmDeleteTitle = "Confirm delete",
   confirmDeleteText = "Delete the selected record from the chart?",
   cascades,
   stripKeys,
-  columns,
-  filterPred,
-  listCompare,
-  selectionType = "none",
-  ...props
 }) => {
   const sd = useSourceData()
   const [fd] = useActiveData()
 
+  const resolvedManagerId = managerId || source
   const targetInfo = CHART_RECORD_MANAGER_TARGETS[source] || {}
   const resolvedWriteTarget = writeTarget || targetInfo.writeTarget || null
   const resolvedRecordIdKey = recordIdKey || targetInfo.recordIdKey || null
-  const resolvedAllowDelete =
-    typeof allowDelete === "boolean" ? allowDelete : targetInfo.deleteVerified === true
   const resolvedStripKeys =
     stripKeys || _chartRecordManagerStripKeys[source] || _chartRecordManagerStripKeys.default
 
@@ -1944,14 +1990,22 @@ ChartRecordManager = ({
   const resolvedCascades =
     Array.isArray(cascades) ? cascades : _chartRecordManagerDefaultCascades[source] || []
 
+  // Template creates fix some fields (classification, subject, ...) and hide
+  // them — the vendor's per-button Grid placement. Carried per open request.
+  const [openMeta, setOpenMeta] = React.useState(null)
+
   const resolvedFields = React.useMemo(() => {
-    const baseFields =
+    let baseFields =
       Array.isArray(dataEntryFields) && dataEntryFields.length > 0
         ? dataEntryFields
         : _chartRecordManagerDefaultFields(source)
+    if (Array.isArray(openMeta?.hiddenFieldIds) && openMeta.hiddenFieldIds.length > 0) {
+      const hidden = new Set(openMeta.hiddenFieldIds)
+      baseFields = baseFields.filter((field) => !hidden.has(field?.id))
+    }
     const transform = _chartRecordManagerFieldTransforms[source]
     return transform ? transform(baseFields, draft, sd) : baseFields
-  }, [dataEntryFields, source, draft, sd])
+  }, [dataEntryFields, source, draft, sd, openMeta])
 
   // payloadMap maps payload keys onto modal field ids. With none configured,
   // every modal field maps onto the payload key of the same name.
@@ -1991,8 +2045,8 @@ ChartRecordManager = ({
   )
 
   const openForCreate = React.useCallback(
-    (templateDefaults) => {
-      const merged = { ...payloadDefaults, ...(templateDefaults || {}) }
+    (request) => {
+      const merged = { ...payloadDefaults, ...(request?.defaults || {}) }
       // Seed mapped defaults into the draft so the modal SHOWS the template's
       // prefilled values (the vendor's PreferenceButton subform does); the
       // rest of the defaults still travel in the payload unmapped.
@@ -2002,6 +2056,10 @@ ChartRecordManager = ({
       }
       setDraft(seeded)
       setOpenDefaults(merged)
+      setOpenMeta({
+        hiddenFieldIds: Array.isArray(request?.hiddenFieldIds) ? request.hiddenFieldIds : null,
+        title: typeof request?.title === "string" && request.title ? request.title : null,
+      })
       setIsModalOpen(true)
     },
     [payloadDefaults, resolvedPayloadMap]
@@ -2016,6 +2074,7 @@ ChartRecordManager = ({
       }
       setDraft(seeded)
       setOpenDefaults(cleaned)
+      setOpenMeta(null)
       setIsModalOpen(true)
     },
     [resolvedPayloadMap, stripRecord]
@@ -2042,6 +2101,19 @@ ChartRecordManager = ({
     if (result) chartRefresh()
   }, [pendingDelete, writeDefinition, resolvedRecordIdKey, sd, fd, runDeleteMutation, chartRefresh])
 
+  // Serve requests from the channel: any list or button on the form that
+  // shares this editor's managerId drives this one modal instance.
+  React.useEffect(
+    () =>
+      _chartRecordEditorRegister(resolvedManagerId, (request) => {
+        if (!request) return
+        if (request.kind === "create") openForCreate(request)
+        else if (request.kind === "edit") openForEdit(request.record)
+        else if (request.kind === "delete") setPendingDelete(request.record)
+      }),
+    [resolvedManagerId, openForCreate, openForEdit]
+  )
+
   const dataEntryConfig = React.useMemo(() => {
     const [resource, mutation] = (resolvedWriteTarget || ".").split(".")
     return {
@@ -2060,62 +2132,25 @@ ChartRecordManager = ({
     }
   }, [resolvedWriteTarget, writeDefinition, resolvedFields, resolvedPayloadMap, openDefaults, payloadDefaults])
 
-  const createButtons = allowCreate
-    ? (Array.isArray(templates) && templates.length > 0
-        ? templates.map((template, index) => ({
-            key: \`template-\${index}\`,
-            text: template?.label || \`New \${source}\`,
-            defaults: template?.defaults || {},
-          }))
-        : [
-            {
-              key: "new",
-              text: newButtonText || \`New \${(_chartRecordTablePresets[source]?.label || source).replace(/s$/, "").toLowerCase()}\`,
-              defaults: {},
-            },
-          ])
-    : []
-
   return (
-    <Fluent.Stack tokens={{ childrenGap: 10 }}>
-      <ChartRecordTable
-        source={source}
-        label={label}
-        columns={columns}
-        filterPred={filterPred}
-        listCompare={listCompare}
-        selectionType={selectionType}
-        onEditRecord={allowEdit && writeDefinition ? openForEdit : undefined}
-        onDeleteRecord={
-          resolvedAllowDelete && writeDefinition && resolvedRecordIdKey
-            ? (record) => setPendingDelete(record)
-            : undefined
-        }
-        {...props}
-      />
-
-      {createButtons.length > 0 && writeDefinition ? (
-        <Fluent.Stack horizontal tokens={{ childrenGap: 8 }} wrap>
-          {createButtons.map((button) => (
-            <Fluent.DefaultButton
-              key={button.key}
-              text={button.text}
-              onClick={() => openForCreate(button.defaults)}
-            />
-          ))}
-        </Fluent.Stack>
-      ) : null}
-
+    <>
       {isModalOpen ? (
         <SubformScoring
-          id={\`\${id}Editor\`}
+          id={\`\${id || resolvedManagerId}Editor\`}
           mode="data-entry"
-          title={modalTitle || \`Edit \${_chartRecordTablePresets[source]?.label || source}\`}
+          title={
+            openMeta?.title
+            || modalTitle
+            || \`Edit \${_chartRecordTablePresets[source]?.label || source}\`
+          }
           hideTriggerButton
           isOpen={isModalOpen}
           onOpenChange={(nextOpen) => {
             setIsModalOpen(nextOpen)
-            if (!nextOpen) setOpenDefaults(null)
+            if (!nextOpen) {
+              setOpenDefaults(null)
+              setOpenMeta(null)
+            }
           }}
           dataEntryConfig={dataEntryConfig}
           dataEntryValueRoot={draft}
@@ -2141,21 +2176,219 @@ ChartRecordManager = ({
         />
       ) : null}
 
-      <Fluent.Dialog
-        hidden={!pendingDelete}
-        onDismiss={() => setPendingDelete(null)}
-        dialogContentProps={{
-          type: Fluent.DialogType.normal,
-          title: confirmDeleteTitle,
-          subText: confirmDeleteText,
-        }}
-        modalProps={{ isBlocking: true, styles: { main: { maxWidth: "450px" } } }}
-      >
-        <Fluent.DialogFooter>
-          <Fluent.PrimaryButton text="Confirm" onClick={handleConfirmDelete} />
-          <Fluent.DefaultButton text="Cancel" onClick={() => setPendingDelete(null)} />
-        </Fluent.DialogFooter>
-      </Fluent.Dialog>
+      {pendingDelete ? (
+        // Mounted only while pending (not hidden-toggled): a closed-but-
+        // mounted blocking Dialog leaves its focus trap eating outside
+        // clicks until the close animation completes.
+        <Fluent.Dialog
+          hidden={false}
+          onDismiss={() => setPendingDelete(null)}
+          dialogContentProps={{
+            type: Fluent.DialogType.normal,
+            title: confirmDeleteTitle,
+            subText: confirmDeleteText,
+          }}
+          modalProps={{ isBlocking: true, styles: { main: { maxWidth: "450px" } } }}
+        >
+          <Fluent.DialogFooter>
+            <Fluent.PrimaryButton text="Confirm" onClick={handleConfirmDelete} />
+            <Fluent.DefaultButton text="Cancel" onClick={() => setPendingDelete(null)} />
+          </Fluent.DialogFooter>
+        </Fluent.Dialog>
+      ) : null}
+    </>
+  )
+}
+
+/**
+ * ChartRecordList - the record table as its own builder field: the
+ * collection list with per-row Edit/Delete actions routed to the
+ * ChartRecordEditor sharing its managerId (default: the source).
+ */
+ChartRecordList = ({
+  source = "connections",
+  managerId,
+  label,
+  allowEdit = true,
+  allowDelete,
+  columns,
+  filterPred,
+  listCompare,
+  selectionType = "none",
+  ...props
+}) => {
+  const resolvedManagerId = managerId || source
+  const targetInfo = CHART_RECORD_MANAGER_TARGETS[source] || {}
+  const resolvedAllowDelete =
+    typeof allowDelete === "boolean" ? allowDelete : targetInfo.deleteVerified === true
+  const hasWriteTarget = Boolean(targetInfo.writeTarget)
+
+  return (
+    <ChartRecordTable
+      source={source}
+      label={label}
+      columns={columns}
+      filterPred={filterPred}
+      listCompare={listCompare}
+      selectionType={selectionType}
+      onEditRecord={
+        allowEdit && hasWriteTarget
+          ? (record) => openChartRecordEditor(resolvedManagerId, { kind: "edit", record })
+          : undefined
+      }
+      onDeleteRecord={
+        resolvedAllowDelete && hasWriteTarget
+          ? (record) => openChartRecordEditor(resolvedManagerId, { kind: "delete", record })
+          : undefined
+      }
+      {...props}
+    />
+  )
+}
+
+/**
+ * ChartRecordCreateButton - one template-prefilled create button as its own
+ * builder field (the vendor PreferenceButton, decomposed): opens the
+ * ChartRecordEditor sharing its managerId, seeded with this button's
+ * defaults. Place as many as needed, anywhere on the form.
+ */
+ChartRecordCreateButton = ({
+  source = "preferences",
+  managerId,
+  label,
+  text,
+  defaults = {},
+  hiddenFieldIds,
+  createTitle,
+  fullWidth = false,
+}) => {
+  const resolvedManagerId = managerId || source
+  return (
+    // Natural width by default — a lone field row must not stretch the button
+    // edge to edge (the vendor button rows are compact). fullWidth opts into
+    // spanning the row for authors who want a banner-style action.
+    <div
+      style={
+        fullWidth
+          ? { display: "flex", width: "100%" }
+          : { display: "inline-flex", maxWidth: "100%" }
+      }
+    >
+      <Fluent.DefaultButton
+        styles={fullWidth ? { root: { width: "100%" } } : undefined}
+        text={text || label || \`New \${(_chartRecordTablePresets[source]?.label || source).replace(/s$/, "").toLowerCase()}\`}
+        onClick={() =>
+          openChartRecordEditor(resolvedManagerId, {
+            kind: "create",
+            defaults,
+            hiddenFieldIds,
+            title: createTitle,
+          })
+        }
+      />
+    </div>
+  )
+}
+
+/**
+ * ChartRecordManager - the all-in-one composite: list + create buttons +
+ * editor in one field, for forms that don't need the pieces arranged
+ * separately. Uses a private channel id so it never collides with
+ * standalone pieces on the same form.
+ */
+ChartRecordManager = ({
+  id = "chartRecordManager",
+  label,
+  source = "connections",
+  writeTarget,
+  recordIdKey,
+  dataEntryFields,
+  payloadMap,
+  payloadDefaults = {},
+  templates = [],
+  allowCreate = true,
+  allowEdit = true,
+  allowDelete,
+  newButtonText,
+  modalTitle,
+  completeButtonText = "Save",
+  confirmDeleteTitle = "Confirm delete",
+  confirmDeleteText = "Delete the selected record from the chart?",
+  cascades,
+  stripKeys,
+  columns,
+  filterPred,
+  listCompare,
+  selectionType = "none",
+  ...props
+}) => {
+  const managerId = \`__composite:\${id}:\${source}\`
+
+  const createButtons = allowCreate
+    ? (Array.isArray(templates) && templates.length > 0
+        ? templates.map((template, index) => ({
+            key: \`template-\${index}\`,
+            text: template?.label || \`New \${source}\`,
+            defaults: template?.defaults || {},
+            hiddenFieldIds: template?.hiddenFieldIds,
+            createTitle: template?.createTitle,
+          }))
+        : [
+            {
+              key: "new",
+              text: newButtonText || \`New \${(_chartRecordTablePresets[source]?.label || source).replace(/s$/, "").toLowerCase()}\`,
+              defaults: {},
+            },
+          ])
+    : []
+
+  return (
+    <Fluent.Stack tokens={{ childrenGap: 10 }}>
+      <ChartRecordList
+        source={source}
+        managerId={managerId}
+        label={label}
+        allowEdit={allowEdit}
+        allowDelete={allowDelete}
+        columns={columns}
+        filterPred={filterPred}
+        listCompare={listCompare}
+        selectionType={selectionType}
+        {...props}
+      />
+
+      {createButtons.length > 0 ? (
+        <Fluent.Stack horizontal tokens={{ childrenGap: 8 }} wrap>
+          {createButtons.map((button) => (
+            <ChartRecordCreateButton
+              key={button.key}
+              source={source}
+              managerId={managerId}
+              text={button.text}
+              defaults={button.defaults}
+              hiddenFieldIds={button.hiddenFieldIds}
+              createTitle={button.createTitle}
+            />
+          ))}
+        </Fluent.Stack>
+      ) : null}
+
+      <ChartRecordEditor
+        id={id}
+        source={source}
+        managerId={managerId}
+        writeTarget={writeTarget}
+        recordIdKey={recordIdKey}
+        dataEntryFields={dataEntryFields}
+        payloadMap={payloadMap}
+        payloadDefaults={payloadDefaults}
+        modalTitle={modalTitle}
+        completeButtonText={completeButtonText}
+        confirmDeleteTitle={confirmDeleteTitle}
+        confirmDeleteText={confirmDeleteText}
+        cascades={cascades}
+        stripKeys={stripKeys}
+      />
     </Fluent.Stack>
   )
 }
