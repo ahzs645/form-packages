@@ -1,7 +1,7 @@
 {
   "name": "ChartAttachmentUpload",
   "title": "Chart Attachment Upload",
-  "description": "Uploads a user-selected file to the current patient's MOIS chart through the runtime attachment API and displays the response.",
+  "description": "Uploads a user-selected file as a separate document on the current patient's MOIS chart through the runtime attachment API and displays the response.",
   "version": { "major": 1, "minor": 0, "patch": 0 },
   "type": "component",
   "owner": "NHForms",

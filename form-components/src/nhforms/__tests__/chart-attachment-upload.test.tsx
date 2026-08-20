@@ -28,6 +28,23 @@ const FluentStub = {
       onChange: (event: React.ChangeEvent<HTMLInputElement>) => onChange?.(event, event.target.value),
     }),
   ),
+  Dropdown: ({ label, selectedKey, options, onChange, disabled }: any) => React.createElement(
+    "label",
+    null,
+    label,
+    React.createElement(
+      "select",
+      {
+        value: selectedKey,
+        disabled,
+        onChange: (event: React.ChangeEvent<HTMLSelectElement>) => {
+          const option = options.find((entry: any) => String(entry.key) === event.target.value);
+          onChange?.(event, option);
+        },
+      },
+      options.map((option: any) => React.createElement("option", { key: option.key, value: option.key }, option.text)),
+    ),
+  ),
   PrimaryButton: ({ text, onClick, disabled }: any) =>
     React.createElement("button", { type: "button", onClick, disabled }, text),
   DefaultButton: ({ text, onClick, disabled }: any) =>
@@ -45,6 +62,7 @@ function loadComponent(): React.ComponentType<any> {
     "Fluent",
     "useActiveData",
     "useSourceData",
+    "useCodeList",
     "produce",
     `${compiled};\nreturn { ChartAttachmentUpload };`,
   );
@@ -54,7 +72,13 @@ function loadComponent(): React.ComponentType<any> {
     userProfile: { userProfileId: 1234 },
     formParams: { patientId: 5678 },
   });
-  return factory(React, FluentStub, useActiveData, useSourceData, produce).ChartAttachmentUpload;
+  const useCodeList = (system: string) => system === "MOIS-DOCUMENTTYPE"
+    ? [
+        { code: "CONSULTATION", display: "Consult Note", system },
+        { code: "NOTE", display: "Note / General Purpose Document", system },
+      ]
+    : [];
+  return factory(React, FluentStub, useActiveData, useSourceData, useCodeList, produce).ChartAttachmentUpload;
 }
 
 function renderComponent(props: Record<string, unknown> = {}) {
@@ -181,6 +205,41 @@ describe("ChartAttachmentUpload", () => {
       status: 403,
       error: "HTTP 403: Forbidden",
       body: { error: "Attachment upload is not permitted" },
+    });
+    act(() => harness.root.unmount());
+  });
+
+  it("falls back to a document type supplied by the target MOIS list", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      headers: { get: () => "application/json" },
+      text: async () => JSON.stringify({ documentId: 9013, pathname: "probe.txt" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const harness = renderComponent({
+      documentTypeCode: "NOT-IN-TARGET-MOIS",
+      documentTypeDisplay: "Invalid configured type",
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+      selectFile(harness.container, new File(["probe"], "probe.txt", { type: "text/plain" }));
+    });
+    const uploadButton = Array.from(harness.container.querySelectorAll("button"))
+      .find((button) => button.textContent === "Upload test attachment")!;
+    await act(async () => {
+      uploadButton.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const request = fetchMock.mock.calls[0][1];
+    expect(JSON.parse(String((request.body as FormData).get("document"))).documentType).toEqual({
+      code: "CONSULTATION",
+      display: "Consult Note",
+      system: "MOIS-DOCUMENTTYPE",
     });
     act(() => harness.root.unmount());
   });

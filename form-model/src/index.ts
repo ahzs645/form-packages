@@ -224,12 +224,23 @@ export interface GroupPageStats {
   details: Array<{ page: number; count: number }>;
 }
 
+export interface SourceArchiveIdentity {
+  path: string;
+  filename: string;
+  sha256: string;
+  sizeBytes: number;
+  depth: number;
+}
+
 export interface ParseMeta {
   title: string;
   sizeKB: number;
   pageCount: number;
   sourceArchiveName?: string | null;
   sourceArchiveType?: "zip" | "7z" | null;
+  sourceArchiveIdentity?: SourceArchiveIdentity | null;
+  sourceArchiveChain?: SourceArchiveIdentity[] | null;
+  sourceDocumentSha256?: string | null;
 }
 
 export type BuilderWorkflowSupportStatus = "implemented" | "partial" | "unsupported";

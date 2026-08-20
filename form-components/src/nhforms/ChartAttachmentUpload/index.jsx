@@ -1,4 +1,12 @@
-const { useMemo, useRef, useState } = React
+const { useEffect, useMemo, useRef, useState } = React
+
+const firstPositiveId = (...values) => {
+  for (const value of values) {
+    const parsed = Number(value)
+    if (Number.isFinite(parsed) && parsed > 0) return parsed
+  }
+  return null
+}
 
 const readChartAttachmentResponse = async (response) => {
   if (!response || typeof response.text !== "function") return null
@@ -45,7 +53,7 @@ const ChartAttachmentUpload = ({
   id,
   resultFieldId = "chartAttachmentUploadResult",
   title = "MOIS chart attachment upload test",
-  description = "Choose a small, non-sensitive test file. Upload writes immediately to the current patient's chart.",
+  description = "Choose a small, non-sensitive test file. Upload immediately creates a separate document on the current patient's chart; it is not embedded in this webform.",
   buttonText = "Upload test attachment",
   documentTypeCode = "NOTE",
   documentTypeDisplay = "Note / General Purpose Document",
@@ -57,9 +65,11 @@ const ChartAttachmentUpload = ({
 }) => {
   const [fd, setFormData] = useActiveData()
   const sd = useSourceData()
+  const documentTypes = useCodeList(documentTypeSystem, sd)
   const fileInputRef = useRef(null)
   const [selectedFile, setSelectedFile] = useState(null)
   const [note, setNote] = useState(defaultNote)
+  const [selectedDocumentTypeCode, setSelectedDocumentTypeCode] = useState(documentTypeCode)
   const [busy, setBusy] = useState(false)
   const storedResult = resultFieldId ? fd?.field?.data?.[resultFieldId] : null
   const [result, setResult] = useState(() => storedResult || null)
@@ -68,8 +78,13 @@ const ChartAttachmentUpload = ({
     const appSettings = typeof sd?.useAppSettings === "function" ? sd.useAppSettings() : null
     const auth = sd?.auth || appSettings?.auth || {}
     const userProfile = sd?.userProfile || appSettings?.userProfile || {}
-    const patientId = sd?.formParams?.patientId ?? sd?.patientId ?? sd?.patient?.patientId ?? null
-    const userProfileId = userProfile?.userProfileId ?? userProfile?.id ?? null
+    const patientId = firstPositiveId(
+      sd?.formParams?.patientId,
+      sd?.patientId,
+      sd?.patient?.patientId,
+      sd?.webform?.patientId,
+    )
+    const userProfileId = firstPositiveId(userProfile?.userProfileId, userProfile?.id)
     const rawApiServer = String(auth?.apiServer || "").trim()
     const apiServer = rawApiServer && !rawApiServer.endsWith("/") ? `${rawApiServer}/` : rawApiServer
     const endpoint = apiServer && patientId != null && userProfileId != null
@@ -83,12 +98,43 @@ const ChartAttachmentUpload = ({
     }
   }, [sd])
 
+  const documentTypeOptions = useMemo(() => (
+    Array.isArray(documentTypes)
+      ? documentTypes
+        .filter((entry) => entry?.code)
+        .map((entry) => ({ key: String(entry.code), text: String(entry.display || entry.code) }))
+      : []
+  ), [documentTypes])
+  const selectedDocumentType = useMemo(() => {
+    const liveEntry = Array.isArray(documentTypes)
+      ? documentTypes.find((entry) => String(entry?.code) === String(selectedDocumentTypeCode))
+      : null
+    if (liveEntry) {
+      return {
+        code: String(liveEntry.code),
+        display: String(liveEntry.display || liveEntry.code),
+        system: String(liveEntry.system || documentTypeSystem),
+      }
+    }
+    if (documentTypeOptions.length > 0) return null
+    return selectedDocumentTypeCode
+      ? { code: String(selectedDocumentTypeCode), display: String(documentTypeDisplay || selectedDocumentTypeCode), system: documentTypeSystem }
+      : null
+  }, [documentTypeDisplay, documentTypeOptions.length, documentTypeSystem, documentTypes, selectedDocumentTypeCode])
+
+  useEffect(() => {
+    if (documentTypeOptions.length === 0) return
+    if (documentTypeOptions.some((option) => option.key === String(selectedDocumentTypeCode))) return
+    const configuredOption = documentTypeOptions.find((option) => option.key === String(documentTypeCode))
+    setSelectedDocumentTypeCode(String(configuredOption?.key || documentTypeOptions[0].key))
+  }, [documentTypeCode, documentTypeOptions, selectedDocumentTypeCode])
+
   const inputId = `${id || resultFieldId || "chart-attachment-upload"}-file`
   const fileTooLarge = Boolean(
     selectedFile && Number(maxFileSizeBytes) > 0 && selectedFile.size > Number(maxFileSizeBytes)
   )
   const canUpload = Boolean(
-    selectedFile && runtime.endpoint && runtime.jwToken && !fileTooLarge && !busy
+    selectedFile && selectedDocumentType && runtime.endpoint && runtime.jwToken && !fileTooLarge && !busy
   )
 
   const recordResult = (nextResult) => {
@@ -108,11 +154,7 @@ const ChartAttachmentUpload = ({
       documentId: 0,
       patientId: Number(runtime.patientId),
       note: String(note || defaultNote || selectedFile.name),
-      documentType: {
-        code: documentTypeCode,
-        display: documentTypeDisplay,
-        system: documentTypeSystem,
-      },
+      documentType: selectedDocumentType,
     }
 
     setBusy(true)
@@ -245,6 +287,18 @@ const ChartAttachmentUpload = ({
           disabled={busy}
           onChange={(_event, value) => setNote(value || "")}
         />
+        <Fluent.Dropdown
+          label="Chart document type"
+          selectedKey={selectedDocumentTypeCode || undefined}
+          options={documentTypeOptions.length > 0
+            ? documentTypeOptions
+            : [{ key: documentTypeCode, text: documentTypeDisplay || documentTypeCode }]}
+          disabled={busy}
+          onChange={(_event, option) => setSelectedDocumentTypeCode(option?.key ? String(option.key) : "")}
+        />
+        <Fluent.Text variant="small" styles={{ root: { color: "#605e5c" } }}>
+          Document types are loaded from {documentTypeSystem} when the target MOIS server provides that list.
+        </Fluent.Text>
         <Fluent.Stack horizontal tokens={{ childrenGap: 8 }}>
           <Fluent.PrimaryButton
             text={busy ? "Uploading..." : buttonText}
