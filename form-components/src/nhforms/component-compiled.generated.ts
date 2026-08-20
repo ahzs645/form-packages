@@ -1470,6 +1470,13 @@ const formatChartAttachmentBytes = value => {
   if (bytes < 1024 * 1024) return \`\${(bytes / 1024).toFixed(1)} KB\`;
   return \`\${(bytes / (1024 * 1024)).toFixed(1)} MB\`;
 };
+const waitForAttachmentBatchDelay = delayMs => new Promise(resolve => {
+  setTimeout(resolve, Math.max(0, Number(delayMs) || 0));
+});
+const escapeAttachmentCsvCell = value => {
+  const text = value == null ? "" : String(value);
+  return /[",\\r\\n]/.test(text) ? \`"\${text.replace(/"/g, '""')}"\` : text;
+};
 
 /**
  * ChartAttachmentUpload — exported MOIS attachment API diagnostic.
@@ -1489,6 +1496,9 @@ const ChartAttachmentUpload = ({
   documentTypeSystem = "MOIS-DOCUMENTTYPE",
   defaultNote = "Uploaded from Webforms attachment API test",
   attachToEncounter = true,
+  enableBatchTest = false,
+  batchDelayMs = 150,
+  maxBatchTypes = 250,
   accept = "",
   maxFileSizeBytes = 10 * 1024 * 1024,
   showResponseBody = true
@@ -1497,9 +1507,13 @@ const ChartAttachmentUpload = ({
   const sd = useSourceData();
   const documentTypes = useCodeList(documentTypeSystem, sd);
   const fileInputRef = useRef(null);
+  const cancelBatchRef = useRef(false);
   const [selectedFile, setSelectedFile] = useState(null);
   const [note, setNote] = useState(defaultNote);
   const [selectedDocumentTypeCode, setSelectedDocumentTypeCode] = useState(documentTypeCode);
+  const [selectedBatchTypeCodes, setSelectedBatchTypeCodes] = useState([String(documentTypeCode)]);
+  const [batchConfirmed, setBatchConfirmed] = useState(false);
+  const [batchProgress, setBatchProgress] = useState(null);
   const [busy, setBusy] = useState(false);
   const storedResult = resultFieldId ? fd?.field?.data?.[resultFieldId] : null;
   const [result, setResult] = useState(() => storedResult || null);
@@ -1543,6 +1557,24 @@ const ChartAttachmentUpload = ({
     key: String(entry.code),
     text: String(entry.display || entry.code)
   })) : [], [normalizedDocumentTypes]);
+  const availableDocumentTypes = useMemo(() => {
+    const seen = new Set();
+    const entries = (Array.isArray(normalizedDocumentTypes) ? normalizedDocumentTypes : []).filter(entry => entry?.code).map(entry => ({
+      code: String(entry.code),
+      display: String(entry.display || entry.code),
+      system: String(entry.system || documentTypeSystem)
+    })).filter(entry => {
+      if (seen.has(entry.code)) return false;
+      seen.add(entry.code);
+      return true;
+    });
+    if (entries.length > 0) return entries;
+    return documentTypeCode ? [{
+      code: String(documentTypeCode),
+      display: String(documentTypeDisplay || documentTypeCode),
+      system: documentTypeSystem
+    }] : [];
+  }, [documentTypeCode, documentTypeDisplay, documentTypeSystem, normalizedDocumentTypes]);
   const selectedDocumentType = useMemo(() => {
     const liveEntry = Array.isArray(normalizedDocumentTypes) ? normalizedDocumentTypes.find(entry => String(entry?.code) === String(selectedDocumentTypeCode)) : null;
     if (liveEntry) {
@@ -1559,25 +1591,42 @@ const ChartAttachmentUpload = ({
       system: documentTypeSystem
     } : null;
   }, [documentTypeDisplay, documentTypeOptions.length, documentTypeSystem, normalizedDocumentTypes, selectedDocumentTypeCode]);
+  const selectedBatchDocumentTypes = useMemo(() => {
+    const selected = new Set(selectedBatchTypeCodes.map(String));
+    return availableDocumentTypes.filter(entry => selected.has(entry.code));
+  }, [availableDocumentTypes, selectedBatchTypeCodes]);
   useEffect(() => {
     if (documentTypeOptions.length === 0) return;
-    if (documentTypeOptions.some(option => option.key === String(selectedDocumentTypeCode))) return;
     const configuredOption = documentTypeOptions.find(option => option.key === String(documentTypeCode));
-    setSelectedDocumentTypeCode(String(configuredOption?.key || documentTypeOptions[0].key));
+    const fallbackCode = String(configuredOption?.key || documentTypeOptions[0].key);
+    if (!documentTypeOptions.some(option => option.key === String(selectedDocumentTypeCode))) {
+      setSelectedDocumentTypeCode(fallbackCode);
+    }
+    const validCodes = new Set(documentTypeOptions.map(option => String(option.key)));
+    setSelectedBatchTypeCodes(current => {
+      const valid = current.map(String).filter(code => validCodes.has(code));
+      return valid.length > 0 ? valid : [fallbackCode];
+    });
   }, [documentTypeCode, documentTypeOptions, selectedDocumentTypeCode]);
   const inputId = \`\${id || resultFieldId || "chart-attachment-upload"}-file\`;
   const fileTooLarge = Boolean(selectedFile && Number(maxFileSizeBytes) > 0 && selectedFile.size > Number(maxFileSizeBytes));
-  const canUpload = Boolean(selectedFile && selectedDocumentType && runtime.endpoint && runtime.jwToken && !fileTooLarge && !busy);
+  const hasUploadRuntime = Boolean(selectedFile && runtime.endpoint && runtime.jwToken && !fileTooLarge);
+  const canUpload = Boolean(hasUploadRuntime && selectedDocumentType && !busy);
+  const batchLimit = Math.max(1, Number(maxBatchTypes) || 1);
+  const allBatchDocumentTypes = availableDocumentTypes.slice(0, batchLimit);
+  const canRunSelectedBatch = Boolean(enableBatchTest && hasUploadRuntime && batchConfirmed && selectedBatchDocumentTypes.length > 0 && !busy);
+  const canRunAllBatch = Boolean(enableBatchTest && hasUploadRuntime && batchConfirmed && allBatchDocumentTypes.length > 0 && !busy);
   const recordResult = nextResult => {
     setResult(nextResult);
     persistChartAttachmentResult(setFormData, resultFieldId, nextResult);
   };
   const clearSelection = () => {
     setSelectedFile(null);
+    setBatchProgress(null);
+    setBatchConfirmed(false);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
-  const uploadAttachment = async () => {
-    if (!canUpload || !selectedFile) return;
+  const uploadAttachmentForType = async (targetDocumentType, source = "chart-attachment-upload") => {
     const startedAt = Date.now();
     const document = {
       documentId: 0,
@@ -1586,9 +1635,8 @@ const ChartAttachmentUpload = ({
         encounterId: Number(runtime.encounterId)
       } : {}),
       note: String(note || defaultNote || selectedFile.name),
-      documentType: selectedDocumentType
+      documentType: targetDocumentType
     };
-    setBusy(true);
     try {
       const fetchAttachment = typeof window !== "undefined" && typeof window.fetch === "function" ? window.fetch.bind(window) : null;
       const FormDataClass = typeof window !== "undefined" ? window.FormData : null;
@@ -1607,7 +1655,7 @@ const ChartAttachmentUpload = ({
       });
       const responseBody = await readChartAttachmentResponse(response);
       const nextResult = {
-        source: "chart-attachment-upload",
+        source,
         ok: Boolean(response?.ok),
         status: response?.status ?? null,
         statusText: response?.statusText || "",
@@ -1615,6 +1663,7 @@ const ChartAttachmentUpload = ({
         body: responseBody,
         endpoint: runtime.endpoint,
         patientId: runtime.patientId,
+        encounterId: attachToEncounter ? runtime.encounterId : null,
         userProfileId: runtime.userProfileId,
         file: {
           name: selectedFile.name,
@@ -1626,16 +1675,17 @@ const ChartAttachmentUpload = ({
         durationMs: Date.now() - startedAt
       };
       if (!response?.ok) nextResult.error = \`HTTP \${response?.status || "error"}\${response?.statusText ? \`: \${response.statusText}\` : ""}\`;
-      recordResult(nextResult);
+      return nextResult;
     } catch (error) {
-      recordResult({
-        source: "chart-attachment-upload",
+      return {
+        source,
         ok: false,
         status: null,
         statusText: "",
         body: null,
         endpoint: runtime.endpoint,
         patientId: runtime.patientId,
+        encounterId: attachToEncounter ? runtime.encounterId : null,
         userProfileId: runtime.userProfileId,
         file: selectedFile ? {
           name: selectedFile.name,
@@ -1647,13 +1697,118 @@ const ChartAttachmentUpload = ({
         diagnostic: "No HTTP response was readable. Check MOIS endpoint access, authorization, and runtime network policy.",
         receivedAt: new Date().toISOString(),
         durationMs: Date.now() - startedAt
-      });
+      };
+    }
+  };
+  const uploadAttachment = async () => {
+    if (!canUpload || !selectedFile || !selectedDocumentType) return;
+    setBusy(true);
+    setBatchProgress(null);
+    try {
+      recordResult(await uploadAttachmentForType(selectedDocumentType));
     } finally {
       setBusy(false);
     }
   };
-  const statusLabel = !result ? "Not tested" : result.ok ? \`Upload succeeded\${result.status ? \` (\${result.status})\` : ""}\` : result.status ? \`Upload failed (\${result.status})\` : "Upload request failed";
-  const statusColor = !result ? "#605e5c" : result.ok ? "#107c10" : "#a4262c";
+  const runAttachmentBatch = async (targetTypes, mode) => {
+    if (!selectedFile || busy || !batchConfirmed || !hasUploadRuntime) return;
+    const limitedTypes = targetTypes.slice(0, batchLimit);
+    if (limitedTypes.length === 0) return;
+    const startedAt = Date.now();
+    const results = [];
+    cancelBatchRef.current = false;
+    setBusy(true);
+    setBatchProgress({
+      mode,
+      completed: 0,
+      total: limitedTypes.length,
+      succeeded: 0,
+      failed: 0,
+      currentCode: limitedTypes[0].code
+    });
+    try {
+      for (let index = 0; index < limitedTypes.length; index += 1) {
+        if (cancelBatchRef.current) break;
+        const targetType = limitedTypes[index];
+        setBatchProgress(current => ({
+          ...current,
+          currentCode: targetType.code
+        }));
+        const entry = await uploadAttachmentForType(targetType, "chart-attachment-upload-batch-item");
+        entry.batchIndex = index + 1;
+        results.push(entry);
+        const succeeded = results.filter(item => item.ok).length;
+        setBatchProgress({
+          mode,
+          completed: results.length,
+          total: limitedTypes.length,
+          succeeded,
+          failed: results.length - succeeded,
+          currentCode: index + 1 < limitedTypes.length ? limitedTypes[index + 1].code : ""
+        });
+        if (!cancelBatchRef.current && index + 1 < limitedTypes.length) {
+          await waitForAttachmentBatchDelay(batchDelayMs);
+        }
+      }
+      const succeeded = results.filter(item => item.ok).length;
+      const cancelled = cancelBatchRef.current;
+      recordResult({
+        source: "chart-attachment-upload-batch",
+        ok: !cancelled && results.length === limitedTypes.length && succeeded === results.length,
+        batchMode: mode,
+        cancelled,
+        requestedCount: limitedTypes.length,
+        attemptedCount: results.length,
+        succeededCount: succeeded,
+        failedCount: results.length - succeeded,
+        availableDocumentTypeCount: availableDocumentTypes.length,
+        truncatedByMaxBatchTypes: targetTypes.length > limitedTypes.length,
+        maxBatchTypes: batchLimit,
+        delayMs: Number(batchDelayMs) || 0,
+        endpoint: runtime.endpoint,
+        patientId: runtime.patientId,
+        encounterId: attachToEncounter ? runtime.encounterId : null,
+        userProfileId: runtime.userProfileId,
+        file: {
+          name: selectedFile.name,
+          size: selectedFile.size,
+          type: selectedFile.type || "application/octet-stream"
+        },
+        startedAt: new Date(startedAt).toISOString(),
+        receivedAt: new Date().toISOString(),
+        durationMs: Date.now() - startedAt,
+        results
+      });
+    } finally {
+      setBusy(false);
+      cancelBatchRef.current = false;
+    }
+  };
+  const toggleBatchDocumentType = (_event, option) => {
+    if (!option?.key) return;
+    const code = String(option.key);
+    setSelectedBatchTypeCodes(current => option.selected ? Array.from(new Set([...current.map(String), code])) : current.map(String).filter(entry => entry !== code));
+  };
+  const downloadBatchResults = format => {
+    if (!result || result.source !== "chart-attachment-upload-batch" || typeof window === "undefined") return;
+    const rows = Array.isArray(result.results) ? result.results : [];
+    const isCsv = format === "csv";
+    const content = isCsv ? [["index", "documentTypeCode", "documentTypeDisplay", "ok", "status", "documentId", "encounterId", "durationMs", "error"], ...rows.map((entry, index) => [entry.batchIndex || index + 1, entry.document?.documentType?.code, entry.document?.documentType?.display, entry.ok, entry.status, entry.body?.documentId, entry.body?.encounterId ?? entry.encounterId, entry.durationMs, entry.error])].map(row => row.map(escapeAttachmentCsvCell).join(",")).join("\\r\\n") : JSON.stringify(result, null, 2);
+    const BlobClass = window.Blob;
+    const urlApi = window.URL;
+    if (!BlobClass || !urlApi?.createObjectURL || !window.document?.createElement) return;
+    const url = urlApi.createObjectURL(new BlobClass([content], {
+      type: isCsv ? "text/csv;charset=utf-8" : "application/json;charset=utf-8"
+    }));
+    const link = window.document.createElement("a");
+    link.href = url;
+    link.download = \`mois-attachment-batch-\${Date.now()}.\${isCsv ? "csv" : "json"}\`;
+    link.click();
+    setTimeout(() => urlApi.revokeObjectURL(url), 0);
+  };
+  const isBatchResult = result?.source === "chart-attachment-upload-batch";
+  const statusLabel = !result ? "Not tested" : isBatchResult ? \`Batch finished: \${result.succeededCount || 0} succeeded, \${result.failedCount || 0} failed\${result.cancelled ? " (cancelled)" : ""}\` : result.ok ? \`Upload succeeded\${result.status ? \` (\${result.status})\` : ""}\` : result.status ? \`Upload failed (\${result.status})\` : "Upload request failed";
+  const statusColor = !result ? "#605e5c" : result.ok ? "#107c10" : isBatchResult && Number(result.succeededCount) > 0 ? "#8a6d1d" : "#a4262c";
   const missingRuntime = [];
   if (runtime.patientId == null) missingRuntime.push("patient ID");
   if (runtime.userProfileId == null) missingRuntime.push("user profile ID");
@@ -1745,14 +1900,75 @@ const ChartAttachmentUpload = ({
     text: "Clear selection",
     disabled: !selectedFile || busy,
     onClick: clearSelection
-  })), /*#__PURE__*/React.createElement("div", {
+  })), enableBatchTest ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 6,
+      padding: 12,
+      border: "1px solid #d2d0ce",
+      background: "#ffffff"
+    }
+  }, /*#__PURE__*/React.createElement(Fluent.Stack, {
+    tokens: {
+      childrenGap: 9
+    }
+  }, /*#__PURE__*/React.createElement(Fluent.Text, {
+    variant: "medium",
+    styles: {
+      root: {
+        fontWeight: 600
+      }
+    }
+  }, "Optional document-type batch test"), /*#__PURE__*/React.createElement(Fluent.MessageBar, {
+    messageBarType: Fluent.MessageBarType.severeWarning
+  }, "Each attempted type creates a separate chart document immediately. Use only on a synthetic patient. \\u201CAll types\\u201D will attempt ", allBatchDocumentTypes.length, availableDocumentTypes.length > batchLimit ? \` of \${availableDocumentTypes.length} (limited by maxBatchTypes)\` : "", " uploads sequentially."), /*#__PURE__*/React.createElement(Fluent.Dropdown, {
+    label: "Document types for selected-subset test",
+    multiSelect: true,
+    selectedKeys: selectedBatchTypeCodes,
+    options: documentTypeOptions.length > 0 ? documentTypeOptions : [{
+      key: documentTypeCode,
+      text: documentTypeDisplay || documentTypeCode
+    }],
+    disabled: busy,
+    onChange: toggleBatchDocumentType
+  }), /*#__PURE__*/React.createElement(Fluent.Checkbox, {
+    label: "I confirm this is a synthetic test patient and understand that every attempt creates a chart document.",
+    checked: batchConfirmed,
+    disabled: busy,
+    onChange: (_event, checked) => setBatchConfirmed(Boolean(checked))
+  }), /*#__PURE__*/React.createElement(Fluent.Stack, {
+    horizontal: true,
+    wrap: true,
+    tokens: {
+      childrenGap: 8
+    }
+  }, /*#__PURE__*/React.createElement(Fluent.DefaultButton, {
+    text: \`Run selected subset (\${selectedBatchDocumentTypes.length})\`,
+    disabled: !canRunSelectedBatch,
+    onClick: () => runAttachmentBatch(selectedBatchDocumentTypes, "selected")
+  }), /*#__PURE__*/React.createElement(Fluent.DefaultButton, {
+    text: \`Run all document types (\${allBatchDocumentTypes.length})\`,
+    disabled: !canRunAllBatch,
+    onClick: () => runAttachmentBatch(allBatchDocumentTypes, "all")
+  }), /*#__PURE__*/React.createElement(Fluent.DefaultButton, {
+    text: "Cancel batch",
+    disabled: !busy || !batchProgress,
+    onClick: () => {
+      cancelBatchRef.current = true;
+    }
+  })), batchProgress ? /*#__PURE__*/React.createElement("div", {
+    role: "status",
+    "aria-live": "polite",
+    style: {
+      fontSize: 12
+    }
+  }, "Batch ", batchProgress.completed, "/", batchProgress.total, " \\xB7 ", batchProgress.succeeded, " succeeded \\xB7 ", batchProgress.failed, " failed", batchProgress.currentCode ? \` · Current: \${batchProgress.currentCode}\` : "") : null)) : null, /*#__PURE__*/React.createElement("div", {
     role: "status",
     "aria-live": "polite",
     style: {
       color: statusColor,
       fontWeight: 600
     }
-  }, busy ? "Uploading attachment..." : statusLabel, result?.durationMs != null ? \` in \${result.durationMs} ms\` : ""), result?.error ? /*#__PURE__*/React.createElement(Fluent.Text, {
+  }, busy ? batchProgress ? "Running attachment batch..." : "Uploading attachment..." : statusLabel, result?.durationMs != null ? \` in \${result.durationMs} ms\` : ""), result?.error ? /*#__PURE__*/React.createElement(Fluent.Text, {
     styles: {
       root: {
         color: "#a4262c"
@@ -1760,7 +1976,90 @@ const ChartAttachmentUpload = ({
     }
   }, result.error) : null, result?.diagnostic ? /*#__PURE__*/React.createElement(Fluent.Text, {
     variant: "small"
-  }, result.diagnostic) : null, showResponseBody && result ? /*#__PURE__*/React.createElement("pre", {
+  }, result.diagnostic) : null, isBatchResult && Array.isArray(result.results) ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      maxHeight: 300,
+      overflow: "auto",
+      border: "1px solid #edebe9"
+    }
+  }, /*#__PURE__*/React.createElement("table", {
+    style: {
+      width: "100%",
+      borderCollapse: "collapse",
+      fontSize: 11
+    }
+  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", {
+    style: {
+      textAlign: "left",
+      padding: 5
+    }
+  }, "#"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      textAlign: "left",
+      padding: 5
+    }
+  }, "Document type"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      textAlign: "left",
+      padding: 5
+    }
+  }, "Result"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      textAlign: "left",
+      padding: 5
+    }
+  }, "Document ID"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      textAlign: "left",
+      padding: 5
+    }
+  }, "Encounter"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      textAlign: "left",
+      padding: 5
+    }
+  }, "Time"))), /*#__PURE__*/React.createElement("tbody", null, result.results.map((entry, index) => /*#__PURE__*/React.createElement("tr", {
+    key: \`\${entry.document?.documentType?.code || "type"}-\${index}\`,
+    style: {
+      borderTop: "1px solid #edebe9"
+    }
+  }, /*#__PURE__*/React.createElement("td", {
+    style: {
+      padding: 5
+    }
+  }, entry.batchIndex || index + 1), /*#__PURE__*/React.createElement("td", {
+    style: {
+      padding: 5
+    }
+  }, entry.document?.documentType?.display || entry.document?.documentType?.code || "Unknown"), /*#__PURE__*/React.createElement("td", {
+    style: {
+      padding: 5,
+      color: entry.ok ? "#107c10" : "#a4262c"
+    }
+  }, entry.ok ? \`HTTP \${entry.status || "OK"}\` : entry.error || \`HTTP \${entry.status || "failed"}\`), /*#__PURE__*/React.createElement("td", {
+    style: {
+      padding: 5
+    }
+  }, entry.body?.documentId ?? "—"), /*#__PURE__*/React.createElement("td", {
+    style: {
+      padding: 5
+    }
+  }, entry.body?.encounterId ?? entry.encounterId ?? "—"), /*#__PURE__*/React.createElement("td", {
+    style: {
+      padding: 5
+    }
+  }, entry.durationMs, " ms")))))) : null, isBatchResult ? /*#__PURE__*/React.createElement(Fluent.Stack, {
+    horizontal: true,
+    tokens: {
+      childrenGap: 8
+    }
+  }, /*#__PURE__*/React.createElement(Fluent.DefaultButton, {
+    text: "Download batch JSON",
+    onClick: () => downloadBatchResults("json")
+  }), /*#__PURE__*/React.createElement(Fluent.DefaultButton, {
+    text: "Download batch CSV",
+    onClick: () => downloadBatchResults("csv")
+  })) : null, showResponseBody && result ? /*#__PURE__*/React.createElement("pre", {
     style: {
       margin: 0,
       maxHeight: 260,
@@ -36451,7 +36750,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './AttestationSignOff/index.jsx': ["AttestationSignOff","cleaned","current","deriveInitials","flatTargets","getCurrentActorName","initials","key","name","nestedTargets","next","normalizeInitialsName","normalizeRoleOptions","normalizeTargets","parts","roleOptions","row","sd","signatureFieldId","signatureValue","signedAt","source","table","text","updateValue","value"],
   './AuthorshipField/index.jsx': ["AuthorshipField","DEFAULT_WINDOW_HOURS","_defaultPolicy","_nhAuth","_normalizeFieldOptions","actor","actorFrom","addHoursIso","base","buildKey","c","changed","ck","claim","claims","commitSave","commitValue","componentId","current","d","data","editableUntil","effectiveFieldId","euDate","existing","expired","fieldData","formatTimestamp","isNonEmpty","isOwner","keepStatus","key","label","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","nextStatus","nhAuth","normalizeStore","now","nowIso","numeric","optionList","ownerId","ownerName","ownerRefresh","pad2","pending","policy","policyAppliesToAction","prepareSave","query","raw","readOnly","readStore","release","renderInput","resolveNow","sameActor","sd","section","store","text","trimmed","ts","untilSelf","value","windowHours"],
   './BulkSetField/index.jsx': ["BulkSetField","ButtonComponent","apply","comparableAnswer","contradictedFieldIds","current","effectiveControlFieldId","fieldData","fieldId","isApplied","isBlankAnswer","isDisabled","normalizeBulkTargets","normalizedTargets","previous","raw","shouldClearControl","showWarning","unapply","writeControl"],
-  './ChartAttachmentUpload/index.jsx': ["ChartAttachmentUpload","FormDataClass","apiServer","appSettings","auth","body","bytes","canUpload","clearSelection","configuredOption","document","documentTypeOptions","documentTypes","encounterId","endpoint","fetchAttachment","fileInputRef","fileTooLarge","firstPositiveId","formatChartAttachmentBytes","inputId","liveEntry","missingRuntime","nextResult","normalizedDocumentTypes","parsed","patientId","persistChartAttachmentResult","rawApiServer","readChartAttachmentResponse","recordResult","response","responseBody","runtime","sd","selectedDocumentType","startedAt","statusColor","statusLabel","storedResult","text","uploadAttachment","userProfile","userProfileId"],
+  './ChartAttachmentUpload/index.jsx': ["BlobClass","ChartAttachmentUpload","FormDataClass","allBatchDocumentTypes","apiServer","appSettings","auth","availableDocumentTypes","batchLimit","body","bytes","canRunAllBatch","canRunSelectedBatch","canUpload","cancelBatchRef","cancelled","clearSelection","code","configuredOption","content","document","documentTypeOptions","documentTypes","downloadBatchResults","encounterId","endpoint","entries","entry","escapeAttachmentCsvCell","fallbackCode","fetchAttachment","fileInputRef","fileTooLarge","firstPositiveId","formatChartAttachmentBytes","hasUploadRuntime","index","inputId","isBatchResult","isCsv","limitedTypes","link","liveEntry","missingRuntime","nextResult","normalizedDocumentTypes","parsed","patientId","persistChartAttachmentResult","rawApiServer","readChartAttachmentResponse","recordResult","response","responseBody","results","rows","runAttachmentBatch","runtime","sd","seen","selected","selectedBatchDocumentTypes","selectedDocumentType","startedAt","statusColor","statusLabel","storedResult","succeeded","targetType","text","toggleBatchDocumentType","uploadAttachment","uploadAttachmentForType","url","urlApi","userProfile","userProfileId","valid","validCodes","waitForAttachmentBatchDelay"],
   './ChartRecordManager/index.jsx': ["CHART_RECORD_MANAGER_TARGETS","ChartRecordCreateButton","ChartRecordEditor","ChartRecordList","ChartRecordManager","__chartRecordEditorChannels","_chartRecordEditorRegister","_chartRecordManagerApplyCascades","_chartRecordManagerDefaultCascades","_chartRecordManagerDefaultFieldPresets","_chartRecordManagerDefaultFields","_chartRecordManagerEditHiddenFields","_chartRecordManagerFieldTransforms","_chartRecordManagerStripKeys","baseFields","chartRefresh","classification","cleaned","code","codeSystem","columns","contextId","createButtons","dataEntryConfig","fallback","fallbackManagerId","fieldPreset","handleClick","handleConfirmDelete","handler","hasWriteTarget","hidden","identity","layered","managerId","mapped","merged","next","openChartRecordEditor","openForCreate","openForEdit","preset","record","recordId","request","resolvedAllowDelete","resolvedCascades","resolvedEditHiddenFieldIds","resolvedFields","resolvedManagerId","resolvedPayloadMap","resolvedRecordIdKey","resolvedStripKeys","resolvedWriteTarget","result","sd","seeded","spec","stripRecord","subject","targetInfo","transform","variables","writeDefinition"],
   './ChartRecordTable/index.jsx': ["ChartRecordTable","_chartRecordTableActiveConnections","_chartRecordTableActivePlannedActions","_chartRecordTableGenericColumns","_chartRecordTableGenericEntryColumns","_chartRecordTablePresets","_chartRecordTableSorts","_chartRecordTableStartDateDesc","baseChartColumns","byType","preset","resolvedChartColumns","resolvedEntryColumns","resolvedFieldId","resolvedFilterPred","resolvedId","resolvedLabel","resolvedListCompare","resolvedMoisModule","resolvedSelectionType","resolvedSourceId","resolvedSourceMap"],
   './ChartReviewSummary/index.jsx': ["ChartReviewSummary","K","REVIEW_BLUE","REVIEW_GRAY","REVIEW_INK","REVIEW_RED","ReviewSectionHeading","age","best","bestTime","codeList","current","doseText","latestByCode","medications","monthDelta","now","observations","parsed","patient","problems","reviewAgeYears","reviewArray","reviewDateKey","reviewGetObject","reviewHeadingStyle","reviewLineStyle","rows","sd","sex","steps","stopRaw","stopTime","time","units","value"],
