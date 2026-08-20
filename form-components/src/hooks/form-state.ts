@@ -305,8 +305,15 @@ const BaseFormStateProvider = ({
     queueMicrotask(flushPendingUpdates);
   }, [flushPendingUpdates]);
 
+  // Re-apply only when initialFormData CHANGES. The useState initializer
+  // already applied it at mount; re-applying in the mount effect wholesale-
+  // replaced state and silently wiped any write a child component made in
+  // its own mount effect (vendor-style `draft.panel = ...` seeds raced it).
+  const appliedInitialFormDataRef = React.useRef(initialFormData);
   React.useEffect(() => {
     if (!initialFormData) return;
+    if (appliedInitialFormDataRef.current === initialFormData) return;
+    appliedInitialFormDataRef.current = initialFormData;
     setFormDataState(normalizeFormData(initialFormData));
   }, [initialFormData]);
 
@@ -470,6 +477,23 @@ const useFormStateSelection = (select?: (data: FormDataState) => any): {
  * With a selector, the component only re-renders when the selected slice
  * changes, and the returned setter writes into the selected slice.
  */
+/**
+ * Like useActiveDataForForms without a selector, but returns null (no
+ * console warning) when no FormStateProvider is mounted. Lets consumers with
+ * their own fallback (MoisContext.useActiveData bridges to the MoisProvider
+ * context) probe for the form store — the innermost provider must win, or
+ * controls read a workspace-level mock while the form writes the store
+ * (the Markdown preview-tab blank bug).
+ */
+export const useOptionalActiveDataForForms = (): [any, (updater: any) => void] | null => {
+  const { context, selection, setFormData } = useFormStateSelection();
+  const withSetter = useMemo(
+    () => ({ ...(selection || {}), setFormData }),
+    [selection, setFormData]
+  );
+  return context ? [withSetter, setFormData] : null;
+};
+
 export const useActiveDataForForms = (selector?: (data: any) => any): [any, (updater: any) => void] => {
   const { context, selection, setFormData } = useFormStateSelection(selector);
 

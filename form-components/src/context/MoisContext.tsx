@@ -6,7 +6,7 @@
 import React, { createContext, useContext, useState, useCallback, useMemo, useEffect, ReactNode } from 'react';
 import { produce, setAutoFreeze, Draft } from 'immer';
 import { mockCodeLists, previewOptionListsRaw } from './mockCodeLists';
-import { getInitialData } from '../hooks/form-state';
+import { getInitialData, useOptionalActiveDataForForms } from '../hooks/form-state';
 import {
   getPreviewChartVersion,
   overlayPreviewChartMutations,
@@ -1180,8 +1180,26 @@ const getNormalizedActiveData = (activeContext: ActiveData): ActiveData => {
 
 export function useActiveData<T = ActiveData>(selector?: (data: ActiveData) => T): [T & { setFormData: (updater: (draft: any) => void) => void }, (updater: (draft: any) => void) => void] {
   const context = useContext(ActiveDataContext);
+  // Innermost provider wins: inside a FormStateProvider (every rendered form
+  // preview — and subform sessions), the form-state store is the live source
+  // of truth the form writes to; the MoisProvider context above it is
+  // workspace chrome. Reading the outer mock here made section-bound
+  // controls that import this hook (Markdown) render blank while TextArea
+  // (form-state hooks) showed the value. Outside any FormStateProvider the
+  // MoisProvider context (then the empty stub) applies as before.
+  const formStateActive = useOptionalActiveDataForForms();
 
-  const activeContext = context || EMPTY_ACTIVE_DATA as ActiveData;
+  const formStateData = formStateActive?.[0] as ActiveData | undefined;
+  // Keep the MoisProvider-supplied example data (archetype demo fallback)
+  // visible even when the form store wins — the store never carries it.
+  const activeContext = useMemo<ActiveData>(() => {
+    if (!formStateData) return context ?? (EMPTY_ACTIVE_DATA as ActiveData);
+    const contextExample = (context as { example?: unknown } | null)?.example;
+    if (contextExample !== undefined && (formStateData as { example?: unknown }).example === undefined) {
+      return { ...formStateData, example: contextExample } as ActiveData;
+    }
+    return formStateData;
+  }, [formStateData, context]);
   const normalizedActiveContext = getNormalizedActiveData(activeContext);
   const setFormData = activeContext.setFormData;
   const scopedSetFormData = useCallback((updates: any) => {
