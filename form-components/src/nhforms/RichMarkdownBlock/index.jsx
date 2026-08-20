@@ -39,9 +39,9 @@ const { useMemo } = React
  *   - parses GFM tables itself when `remarkGfm` is absent, so tables render on
  *     MOIS instead of falling through as literal pipe characters.
  *
- * Known limitation: raw HTML in the markdown needs `rehypeRaw`, which the
- * engine does not provide. It is dropped on MOIS, exactly as the engine's own
- * `Markdown` control drops it.
+ * Known limitation: arbitrary raw HTML in the markdown needs `rehypeRaw`, which
+ * the engine does not provide. Builder text colors are normalized to reserved
+ * fragment links instead, so they render consistently in preview and MOIS.
  */
 
 const HAS_REACT_MARKDOWN = typeof ReactMarkdown !== "undefined"
@@ -80,6 +80,30 @@ const moisLinkWrapperStyle = {
  */
 const normalizeMoisLinks = (text) =>
   typeof text === "string" ? text.replace(/\]\(\s*mois:/gi, "](#mois:") : ""
+
+const TEXT_COLOR_SPAN_PATTERN =
+  /<span\s+style=(["'])([^"']*?\bcolor\s*:\s*(#[0-9a-f]{6})\s*;?[^"']*)\1\s*>([\s\S]*?)<\/span>/gi
+
+const escapeMarkdownLinkLabel = (value) =>
+  String(value).replace(/\\/g, "\\\\").replace(/\[/g, "\\[").replace(/\]/g, "\\]")
+
+const normalizeTextColors = (text) =>
+  typeof text === "string"
+    ? text.replace(TEXT_COLOR_SPAN_PATTERN, (_match, _quote, _style, color, content) =>
+        String(content)
+          .split("\n")
+          .map((line) => line
+            ? `[${escapeMarkdownLinkLabel(line)}](#mois-text-color:${color.slice(1).toLowerCase()})`
+            : line)
+          .join("\n")
+      )
+    : ""
+
+const parseTextColorHref = (href) => {
+  if (typeof href !== "string") return null
+  const match = href.match(/^#?mois-text-color:([0-9a-f]{6})$/i)
+  return match ? `#${match[1].toLowerCase()}` : null
+}
 
 // Parse a MOIS link href into a module name + optional object id.
 //   #mois:CHARTACTION   -> { moisModule: "CHARTACTION" }
@@ -246,9 +270,12 @@ const renderInlineMarkdown = (text, keyPrefix) => {
       nodes.push(<code key={key}>{match[1]}</code>)
     } else if (match[3] != null) {
       const mois = parseMoisHref(match[3])
+      const textColor = parseTextColorHref(match[3])
       nodes.push(
         mois ? (
           renderMoisLink(mois, match[2], key)
+        ) : textColor ? (
+          <span key={key} style={{ color: textColor }}>{match[2]}</span>
         ) : (
           <a key={key} style={linkStyle} href={match[3]} target="_blank" rel="noreferrer">
             {match[2]}
@@ -341,6 +368,8 @@ const baseComponents = {
   a: ({ children, href, node, ...props }) => {
     const mois = parseMoisHref(href)
     if (mois) return renderMoisLink(mois, children)
+    const textColor = parseTextColorHref(href)
+    if (textColor) return <span style={{ color: textColor }}>{children}</span>
     return (
       <a style={linkStyle} target="_blank" rel="noreferrer" href={href} {...props}>
         {children}
@@ -412,7 +441,7 @@ const RichMarkdownBlock = ({
   markdownProps,
 }) => {
   const rawContent = typeof source === "string" ? source : (typeof value === "string" ? value : "")
-  const content = normalizeMoisLinks(rawContent)
+  const content = normalizeMoisLinks(normalizeTextColors(rawContent))
   const effectiveFieldId = fieldId || id
 
   const mergedMarkdownProps = useMemo(() => {

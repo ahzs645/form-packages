@@ -28887,9 +28887,9 @@ const {
  *   - parses GFM tables itself when \`remarkGfm\` is absent, so tables render on
  *     MOIS instead of falling through as literal pipe characters.
  *
- * Known limitation: raw HTML in the markdown needs \`rehypeRaw\`, which the
- * engine does not provide. It is dropped on MOIS, exactly as the engine's own
- * \`Markdown\` control drops it.
+ * Known limitation: arbitrary raw HTML in the markdown needs \`rehypeRaw\`, which
+ * the engine does not provide. Builder text colors are normalized to reserved
+ * fragment links instead, so they render consistently in preview and MOIS.
  */
 
 const HAS_REACT_MARKDOWN = typeof ReactMarkdown !== "undefined";
@@ -28923,6 +28923,14 @@ const moisLinkWrapperStyle = {
  * a fragment and is unpacked in the \`a\` renderer below.
  */
 const normalizeMoisLinks = text => typeof text === "string" ? text.replace(/\\]\\(\\s*mois:/gi, "](#mois:") : "";
+const TEXT_COLOR_SPAN_PATTERN = /<span\\s+style=(["'])([^"']*?\\bcolor\\s*:\\s*(#[0-9a-f]{6})\\s*;?[^"']*)\\1\\s*>([\\s\\S]*?)<\\/span>/gi;
+const escapeMarkdownLinkLabel = value => String(value).replace(/\\\\/g, "\\\\\\\\").replace(/\\[/g, "\\\\[").replace(/\\]/g, "\\\\]");
+const normalizeTextColors = text => typeof text === "string" ? text.replace(TEXT_COLOR_SPAN_PATTERN, (_match, _quote, _style, color, content) => String(content).split("\\n").map(line => line ? \`[\${escapeMarkdownLinkLabel(line)}](#mois-text-color:\${color.slice(1).toLowerCase()})\` : line).join("\\n")) : "";
+const parseTextColorHref = href => {
+  if (typeof href !== "string") return null;
+  const match = href.match(/^#?mois-text-color:([0-9a-f]{6})$/i);
+  return match ? \`#\${match[1].toLowerCase()}\` : null;
+};
 
 // Parse a MOIS link href into a module name + optional object id.
 //   #mois:CHARTACTION   -> { moisModule: "CHARTACTION" }
@@ -29092,7 +29100,13 @@ const renderInlineMarkdown = (text, keyPrefix) => {
       }, match[1]));
     } else if (match[3] != null) {
       const mois = parseMoisHref(match[3]);
-      nodes.push(mois ? renderMoisLink(mois, match[2], key) : /*#__PURE__*/React.createElement("a", {
+      const textColor = parseTextColorHref(match[3]);
+      nodes.push(mois ? renderMoisLink(mois, match[2], key) : textColor ? /*#__PURE__*/React.createElement("span", {
+        key: key,
+        style: {
+          color: textColor
+        }
+      }, match[2]) : /*#__PURE__*/React.createElement("a", {
         key: key,
         style: linkStyle,
         href: match[3],
@@ -29224,6 +29238,12 @@ const baseComponents = {
   }) => {
     const mois = parseMoisHref(href);
     if (mois) return renderMoisLink(mois, children);
+    const textColor = parseTextColorHref(href);
+    if (textColor) return /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: textColor
+      }
+    }, children);
     return /*#__PURE__*/React.createElement("a", _extends({
       style: linkStyle,
       target: "_blank",
@@ -29325,7 +29345,7 @@ const RichMarkdownBlock = ({
   markdownProps
 }) => {
   const rawContent = typeof source === "string" ? source : typeof value === "string" ? value : "";
-  const content = normalizeMoisLinks(rawContent);
+  const content = normalizeMoisLinks(normalizeTextColors(rawContent));
   const effectiveFieldId = fieldId || id;
   const mergedMarkdownProps = useMemo(() => {
     const extra = markdownProps && typeof markdownProps === "object" ? markdownProps : {};
@@ -36807,7 +36827,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './PlannedActions/index.jsx': ["PlannedActions","PlannedActionsFields","plannedActionsActiveOnly","plannedActionsColumns"],
   './ReferralSource/index.jsx': ["ReferralSource","codeSystem","defaultValue","optionList","referralValueSet","sd"],
   './RelationshipStatus/index.jsx': ["RelationshipStatus"],
-  './RichMarkdownBlock/index.jsx': ["HAS_REACT_MARKDOWN","HAS_REHYPE_RAW","HAS_REMARK_GFM","INLINE_PATTERN","MarkdownSegment","PreviewMarkdownRenderer","RichMarkdownBlock","align","baseComponents","buffer","cellAlignment","cells","char","content","current","cursor","defaultRehypePlugins","defaultRemarkPlugins","effectiveFieldId","endsWithColon","extra","extraPlugins","flush","fullWidthStyle","hasVisibleChildren","header","i","inFence","index","isTableDelimiterRow","key","lastIndex","line","lines","linkStyle","marginTop","match","mergedMarkdownProps","mois","moisLinkWrapperStyle","moisModule","next","nodes","normalizeMoisLinks","parseMoisHref","parsedId","rawContent","renderInlineMarkdown","renderMoisLink","renderTableSegment","rowLine","rows","segments","source","splitMarkdownSegments","splitTableRow","startsWithColon","tableStyle","tableWrapperStyle","tdStyle","thStyle","theadStyle","trStyle","trimmed"],
+  './RichMarkdownBlock/index.jsx': ["HAS_REACT_MARKDOWN","HAS_REHYPE_RAW","HAS_REMARK_GFM","INLINE_PATTERN","MarkdownSegment","PreviewMarkdownRenderer","RichMarkdownBlock","TEXT_COLOR_SPAN_PATTERN","align","baseComponents","buffer","cellAlignment","cells","char","content","current","cursor","defaultRehypePlugins","defaultRemarkPlugins","effectiveFieldId","endsWithColon","escapeMarkdownLinkLabel","extra","extraPlugins","flush","fullWidthStyle","hasVisibleChildren","header","i","inFence","index","isTableDelimiterRow","key","lastIndex","line","lines","linkStyle","marginTop","match","mergedMarkdownProps","mois","moisLinkWrapperStyle","moisModule","next","nodes","normalizeMoisLinks","normalizeTextColors","parseMoisHref","parseTextColorHref","parsedId","rawContent","renderInlineMarkdown","renderMoisLink","renderTableSegment","rowLine","rows","segments","source","splitMarkdownSegments","splitTableRow","startsWithColon","tableStyle","tableWrapperStyle","tdStyle","textColor","thStyle","theadStyle","trStyle","trimmed"],
   './SaveOnClose/index.jsx': ["DEFAULT_WINDOW_HOURS","SaveOnClose","_buildDefaultSavePayload","_nhAuthPrepareSave","_normalizeSaveOnCloseOptions","_stripComponentPayloads","_useChangeAwareDirtyState","actor","actorFrom","addHoursIso","baselineRef","buildKey","c","changed","ck","claim","claims","commitSave","current","d","data","dirtyRef","disabled","editableUntil","euDate","existing","expired","fieldData","formatTimestamp","isDirty","isNonEmpty","isOwner","keepStatus","key","label","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","markSaved","nextStatus","normalizeStore","normalizedOptions","now","nowIso","ownerId","ownerName","ownerRefresh","pad2","pending","policyAppliesToAction","prepareSave","prepared","raw","readStore","release","renderCountRef","resolveNow","sameActor","saveData","sd","store","trackedValue","ts","untilSelf","useSaveOnClose","windowHours"],
   './ScaleField/index.jsx': ["CHOICE_FIELD_STYLE","LABEL_COLUMN_STYLE","LABEL_STYLE","ScaleField","ScaleFieldEndpointLabels","ScaleFieldLegend","ScaleFieldTooltip","_getInlineMinWidth","_renderOptionTooltipContent","choiceGroupStyles","choiceOptions","containerStyle","currentData","fieldContent","firstDescription","handleChange","hasDescriptions","inlineMinWidth","label","lastDescription","legendItemStyle","legendRowStyle","normalizedTooltipMode","readOnly","scaleOptions","selectedOption","shouldShowAllTooltip","theme"],
   './ScoringModule/index.jsx': ["CompactScoringQuestion","GroupedChecklistQuestion","GroupedChecklistSection","INTERPRETATION_BOX_STYLE","MatrixScoringRow","MatrixScoringTable","QUESTION_CONTAINER_STYLE","ScoringModule","ScoringModuleSchema","ScoringOptionTooltip","ScoringQuestion","ScoringScales","ScoringTotal","TOTAL_CONTAINER_STYLE","_cloneMirrorValue","_getQuestionMirrorFieldIds","_safeSerialize","allEntries","answer","answerScore","answerValue","answered","answers","buildScoreMap","calculatedTotals","candidateKeys","candidates","checked","checkedFromConfig","checkedOption","checklist","checklistUngroupedQuestions","collectScoreCandidates","containerStyle","continuumLabels","countsBySignature","createScoringConfig","createScoringQuestion","createScoringTotal","currentData","direct","effectiveShowProgress","errorContainerStyle","explicitShared","formatBounds","getAnswers","getInterpretation","getScoreFromValue","groupedQuestionIds","handleSelect","handleToggle","hasChanges","hasDescription","headerLabelStyle","headerOptionStyle","headerStyle","ids","interpretation","interpretationStyle","isComplete","isDarkMode","isInRange","keyValue","labelCellStyle","labelStyle","map","matrixQuestionIds","matrixQuestions","matrixSignature","max","maxContinuumLabel","maxSymbol","meetsMax","meetsMin","min","minContinuumLabel","minSymbol","mirrorIds","nextChecked","nextOption","normalizeQuestionIds","normalizeScoreToken","normalizeScoringOption","normalizeScoringOptions","normalizedLayout","normalizedOptionMap","optionCellStyle","optionControl","optionMap","optionScoreMap","options","optionsBySignature","progress","progressStyle","question","questionGroups","questionMirrorEntries","questionOptions","questions","questionsById","resolveChecklistOptions","resolveMatrixOptions","resolveQuestionOptions","resolvedOptions","results","rowStyle","scaleGridStyle","scaleWrapStyle","score","scoreMap","scoreValue","sectionQuestions","selected","serializeOptionSignature","sharedOptions","shouldRenderCompact","shouldRenderGroupedChecklist","shouldRenderMatrix","signature","stackedQuestions","tableStyle","targetIds","termQuestionId","textValue","theme","token","total","totalMirrorEntries","totals","uncheckedFromConfig","uncheckedOption","value","winnerCount","winnerSignature","wrapperStyle"],

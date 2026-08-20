@@ -153,6 +153,24 @@ describe("RichMarkdownBlock — preview scope (ReactMarkdown available)", () => 
     expect(container.innerHTML).not.toContain("node=");
   });
 
+  it("renders reserved text-color links and legacy color spans as styled text", () => {
+    const Block = loadPreviewScope();
+    render(
+      React.createElement(Block, {
+        fieldId: "guidance",
+        source:
+          'A [purple phrase](#mois-text-color:5c2d91) and <span style="color:#107c10">green phrase</span>.',
+      })
+    );
+
+    const colored = Array.from(container.querySelectorAll("span")).filter((node) => node.style.color);
+    expect(colored.map((node) => [node.textContent, node.style.color])).toEqual([
+      ["purple phrase", "#5c2d91"],
+      ["green phrase", "#107c10"],
+    ]);
+    expect(container.querySelectorAll('a[href*="mois-text-color"]')).toHaveLength(0);
+  });
+
   it("renders GFM tables through remark-gfm", () => {
     const Block = loadPreviewScope();
     render(React.createElement(Block, { fieldId: "guidance", source: TABLE_SOURCE }));
@@ -203,6 +221,26 @@ describe("RichMarkdownBlock — engine scope (MOIS form scope)", () => {
 
     render(React.createElement(Anchor, { href: "https://example.com" }, "policy"));
     expect(container.querySelector("a")?.getAttribute("href")).toBe("https://example.com");
+  });
+
+  it("passes an anchor renderer that turns color fragments into styled text", () => {
+    const calls: EngineCall[] = [];
+    const Block = loadEngineScope(calls);
+    render(
+      React.createElement(Block, {
+        fieldId: "guidance",
+        source: 'Use <span style="color:#d13438">urgent text</span>.',
+      })
+    );
+
+    expect(calls[0].source).toContain("[urgent text](#mois-text-color:d13438)");
+    const Anchor = calls[0].markdownProps.components.a;
+    render(React.createElement(Anchor, { href: "#mois-text-color:d13438" }, "urgent text"));
+    const colored = Array.from(container.querySelectorAll("span")).find(
+      (node) => node.textContent === "urgent text"
+    );
+    expect(colored?.style.color).toBe("#d13438");
+    expect(container.querySelector('a[href*="mois-text-color"]')).toBeNull();
   });
 
   it("renders GFM tables itself, because the engine has no remark-gfm", () => {
