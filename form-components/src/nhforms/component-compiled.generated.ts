@@ -1488,6 +1488,7 @@ const ChartAttachmentUpload = ({
   documentTypeDisplay = "Note / General Purpose Document",
   documentTypeSystem = "MOIS-DOCUMENTTYPE",
   defaultNote = "Uploaded from Webforms attachment API test",
+  attachToEncounter = true,
   accept = "",
   maxFileSizeBytes = 10 * 1024 * 1024,
   showResponseBody = true
@@ -1508,12 +1509,14 @@ const ChartAttachmentUpload = ({
     const userProfile = sd?.userProfile || appSettings?.userProfile || {};
     const patientId = firstPositiveId(sd?.formParams?.patientId, sd?.patientId, sd?.patient?.patientId, sd?.webform?.patientId);
     const userProfileId = firstPositiveId(userProfile?.userProfileId, userProfile?.id);
+    const encounterId = firstPositiveId(sd?.formParams?.encounterId, sd?.webform?.encounterId, sd?.webform?.encounter?.encounterId);
     const rawApiServer = String(auth?.apiServer || "").trim();
     const apiServer = rawApiServer && !rawApiServer.endsWith("/") ? \`\${rawApiServer}/\` : rawApiServer;
     const endpoint = apiServer && patientId != null && userProfileId != null ? \`\${apiServer}api/attachment/file/\${encodeURIComponent(userProfileId)}/\${encodeURIComponent(patientId)}/\` : "";
     return {
       endpoint,
       patientId,
+      encounterId,
       userProfileId,
       jwToken: auth?.jwToken || ""
     };
@@ -1579,6 +1582,9 @@ const ChartAttachmentUpload = ({
     const document = {
       documentId: 0,
       patientId: Number(runtime.patientId),
+      ...(attachToEncounter && runtime.encounterId != null ? {
+        encounterId: Number(runtime.encounterId)
+      } : {}),
       note: String(note || defaultNote || selectedFile.name),
       documentType: selectedDocumentType
     };
@@ -1675,7 +1681,9 @@ const ChartAttachmentUpload = ({
     messageBarType: Fluent.MessageBarType.warning
   }, description), /*#__PURE__*/React.createElement(Fluent.Text, {
     variant: "small"
-  }, "Patient ID: ", runtime.patientId ?? "Unavailable", " \\xB7 User profile ID: ", runtime.userProfileId ?? "Unavailable"), /*#__PURE__*/React.createElement(Fluent.Text, {
+  }, "Patient ID: ", runtime.patientId ?? "Unavailable", " \\xB7 Encounter ID: ", attachToEncounter ? runtime.encounterId ?? "Unavailable" : "Not requested", " \\xB7 User profile ID: ", runtime.userProfileId ?? "Unavailable"), attachToEncounter && runtime.encounterId == null ? /*#__PURE__*/React.createElement(Fluent.MessageBar, {
+    messageBarType: Fluent.MessageBarType.warning
+  }, "This form was not opened with an encounter. The attachment can still be added to the chart, but it will not be encounter-linked.") : null, /*#__PURE__*/React.createElement(Fluent.Text, {
     variant: "small",
     styles: {
       root: {
@@ -36443,7 +36451,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './AttestationSignOff/index.jsx': ["AttestationSignOff","cleaned","current","deriveInitials","flatTargets","getCurrentActorName","initials","key","name","nestedTargets","next","normalizeInitialsName","normalizeRoleOptions","normalizeTargets","parts","roleOptions","row","sd","signatureFieldId","signatureValue","signedAt","source","table","text","updateValue","value"],
   './AuthorshipField/index.jsx': ["AuthorshipField","DEFAULT_WINDOW_HOURS","_defaultPolicy","_nhAuth","_normalizeFieldOptions","actor","actorFrom","addHoursIso","base","buildKey","c","changed","ck","claim","claims","commitSave","commitValue","componentId","current","d","data","editableUntil","effectiveFieldId","euDate","existing","expired","fieldData","formatTimestamp","isNonEmpty","isOwner","keepStatus","key","label","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","nextStatus","nhAuth","normalizeStore","now","nowIso","numeric","optionList","ownerId","ownerName","ownerRefresh","pad2","pending","policy","policyAppliesToAction","prepareSave","query","raw","readOnly","readStore","release","renderInput","resolveNow","sameActor","sd","section","store","text","trimmed","ts","untilSelf","value","windowHours"],
   './BulkSetField/index.jsx': ["BulkSetField","ButtonComponent","apply","comparableAnswer","contradictedFieldIds","current","effectiveControlFieldId","fieldData","fieldId","isApplied","isBlankAnswer","isDisabled","normalizeBulkTargets","normalizedTargets","previous","raw","shouldClearControl","showWarning","unapply","writeControl"],
-  './ChartAttachmentUpload/index.jsx': ["ChartAttachmentUpload","FormDataClass","apiServer","appSettings","auth","body","bytes","canUpload","clearSelection","configuredOption","document","documentTypeOptions","documentTypes","endpoint","fetchAttachment","fileInputRef","fileTooLarge","firstPositiveId","formatChartAttachmentBytes","inputId","liveEntry","missingRuntime","nextResult","normalizedDocumentTypes","parsed","patientId","persistChartAttachmentResult","rawApiServer","readChartAttachmentResponse","recordResult","response","responseBody","runtime","sd","selectedDocumentType","startedAt","statusColor","statusLabel","storedResult","text","uploadAttachment","userProfile","userProfileId"],
+  './ChartAttachmentUpload/index.jsx': ["ChartAttachmentUpload","FormDataClass","apiServer","appSettings","auth","body","bytes","canUpload","clearSelection","configuredOption","document","documentTypeOptions","documentTypes","encounterId","endpoint","fetchAttachment","fileInputRef","fileTooLarge","firstPositiveId","formatChartAttachmentBytes","inputId","liveEntry","missingRuntime","nextResult","normalizedDocumentTypes","parsed","patientId","persistChartAttachmentResult","rawApiServer","readChartAttachmentResponse","recordResult","response","responseBody","runtime","sd","selectedDocumentType","startedAt","statusColor","statusLabel","storedResult","text","uploadAttachment","userProfile","userProfileId"],
   './ChartRecordManager/index.jsx': ["CHART_RECORD_MANAGER_TARGETS","ChartRecordCreateButton","ChartRecordEditor","ChartRecordList","ChartRecordManager","__chartRecordEditorChannels","_chartRecordEditorRegister","_chartRecordManagerApplyCascades","_chartRecordManagerDefaultCascades","_chartRecordManagerDefaultFieldPresets","_chartRecordManagerDefaultFields","_chartRecordManagerEditHiddenFields","_chartRecordManagerFieldTransforms","_chartRecordManagerStripKeys","baseFields","chartRefresh","classification","cleaned","code","codeSystem","columns","contextId","createButtons","dataEntryConfig","fallback","fallbackManagerId","fieldPreset","handleClick","handleConfirmDelete","handler","hasWriteTarget","hidden","identity","layered","managerId","mapped","merged","next","openChartRecordEditor","openForCreate","openForEdit","preset","record","recordId","request","resolvedAllowDelete","resolvedCascades","resolvedEditHiddenFieldIds","resolvedFields","resolvedManagerId","resolvedPayloadMap","resolvedRecordIdKey","resolvedStripKeys","resolvedWriteTarget","result","sd","seeded","spec","stripRecord","subject","targetInfo","transform","variables","writeDefinition"],
   './ChartRecordTable/index.jsx': ["ChartRecordTable","_chartRecordTableActiveConnections","_chartRecordTableActivePlannedActions","_chartRecordTableGenericColumns","_chartRecordTableGenericEntryColumns","_chartRecordTablePresets","_chartRecordTableSorts","_chartRecordTableStartDateDesc","baseChartColumns","byType","preset","resolvedChartColumns","resolvedEntryColumns","resolvedFieldId","resolvedFilterPred","resolvedId","resolvedLabel","resolvedListCompare","resolvedMoisModule","resolvedSelectionType","resolvedSourceId","resolvedSourceMap"],
   './ChartReviewSummary/index.jsx': ["ChartReviewSummary","K","REVIEW_BLUE","REVIEW_GRAY","REVIEW_INK","REVIEW_RED","ReviewSectionHeading","age","best","bestTime","codeList","current","doseText","latestByCode","medications","monthDelta","now","observations","parsed","patient","problems","reviewAgeYears","reviewArray","reviewDateKey","reviewGetObject","reviewHeadingStyle","reviewLineStyle","rows","sd","sex","steps","stopRaw","stopTime","time","units","value"],

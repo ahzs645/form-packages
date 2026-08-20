@@ -1499,6 +1499,7 @@ const ChartAttachmentUpload = ({
   documentTypeDisplay = "Note / General Purpose Document",
   documentTypeSystem = "MOIS-DOCUMENTTYPE",
   defaultNote = "Uploaded from Webforms attachment API test",
+  attachToEncounter = true,
   accept = "",
   maxFileSizeBytes = 10 * 1024 * 1024,
   showResponseBody = true,
@@ -1525,6 +1526,11 @@ const ChartAttachmentUpload = ({
       sd?.webform?.patientId,
     )
     const userProfileId = firstPositiveId(userProfile?.userProfileId, userProfile?.id)
+    const encounterId = firstPositiveId(
+      sd?.formParams?.encounterId,
+      sd?.webform?.encounterId,
+      sd?.webform?.encounter?.encounterId,
+    )
     const rawApiServer = String(auth?.apiServer || "").trim()
     const apiServer = rawApiServer && !rawApiServer.endsWith("/") ? \`\${rawApiServer}/\` : rawApiServer
     const endpoint = apiServer && patientId != null && userProfileId != null
@@ -1533,6 +1539,7 @@ const ChartAttachmentUpload = ({
     return {
       endpoint,
       patientId,
+      encounterId,
       userProfileId,
       jwToken: auth?.jwToken || "",
     }
@@ -1607,6 +1614,9 @@ const ChartAttachmentUpload = ({
     const document = {
       documentId: 0,
       patientId: Number(runtime.patientId),
+      ...(attachToEncounter && runtime.encounterId != null
+        ? { encounterId: Number(runtime.encounterId) }
+        : {}),
       note: String(note || defaultNote || selectedFile.name),
       documentType: selectedDocumentType,
     }
@@ -1702,8 +1712,13 @@ const ChartAttachmentUpload = ({
           {description}
         </Fluent.MessageBar>
         <Fluent.Text variant="small">
-          Patient ID: {runtime.patientId ?? "Unavailable"} · User profile ID: {runtime.userProfileId ?? "Unavailable"}
+          Patient ID: {runtime.patientId ?? "Unavailable"} · Encounter ID: {attachToEncounter ? (runtime.encounterId ?? "Unavailable") : "Not requested"} · User profile ID: {runtime.userProfileId ?? "Unavailable"}
         </Fluent.Text>
+        {attachToEncounter && runtime.encounterId == null ? (
+          <Fluent.MessageBar messageBarType={Fluent.MessageBarType.warning}>
+            This form was not opened with an encounter. The attachment can still be added to the chart, but it will not be encounter-linked.
+          </Fluent.MessageBar>
+        ) : null}
         <Fluent.Text variant="small" styles={{ root: { color: "#605e5c", wordBreak: "break-all" } }}>
           Endpoint: {runtime.endpoint || "Unavailable"}
         </Fluent.Text>
@@ -34838,7 +34853,7 @@ export const componentIdentities: Record<string, any> = {
     "version": {
       "major": 1,
       "minor": 0,
-      "patch": 1
+      "patch": 2
     },
     "type": "component",
     "owner": "NHForms",
