@@ -245,7 +245,7 @@ export interface ParseMeta {
   oscarCompatibility?: {
     backgroundPages: Array<{
       pageNumber: number;
-      strategy: "packaged-image" | "generated-blank" | "html-native" | "user-supplied";
+      strategy: "packaged-image" | "generated-blank" | "html-native" | "html-native-rendered" | "user-supplied";
       projectionReady: boolean;
       reason?: string;
     }>;
@@ -255,6 +255,16 @@ export interface ParseMeta {
         category: "already-supported" | "reconstructable" | "host-integration" | "clinically-sensitive" | "unsupported-obsolete";
         behavior: string;
         disposition: "supported" | "rebuild" | "host-adapter" | "clinical-review" | "do-not-port";
+        evidence: string;
+        implementationStatus?: "native" | "reviewable-rebuild" | "host-contract" | "clinical-gate" | "retired";
+        targetCapability?: string;
+      }>;
+      reconstructionPlans?: Array<{
+        id: string;
+        kind: "native-date" | "checkbox-targets" | "dynamic-required";
+        status: "converted" | "author-review";
+        triggerControlId: string;
+        targetControlIds: string[];
         evidence: string;
       }>;
     };
@@ -1324,6 +1334,9 @@ export interface BuilderOscarImportMapping {
   /** The author's explicit observation choice; never inferred from an abbreviation. */
   measurementSelection?: {
     observationCode: string;
+    /** Universal clinical concept selected with the local MOIS observation. */
+    loincCode?: string;
+    loincDisplay?: string;
     description?: string;
     units?: string;
     valueType?: "TEXT" | "NUMERIC";
