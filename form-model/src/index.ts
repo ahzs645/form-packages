@@ -241,6 +241,25 @@ export interface ParseMeta {
   sourceArchiveIdentity?: SourceArchiveIdentity | null;
   sourceArchiveChain?: SourceArchiveIdentity[] | null;
   sourceDocumentSha256?: string | null;
+  /** Saved OSCAR import review evidence so queues survive session reopen. */
+  oscarCompatibility?: {
+    backgroundPages: Array<{
+      pageNumber: number;
+      strategy: "packaged-image" | "generated-blank" | "html-native" | "user-supplied";
+      projectionReady: boolean;
+      reason?: string;
+    }>;
+    scriptReview: {
+      classification: "standard-script-review" | "complex-manual-conversion";
+      items: Array<{
+        category: "already-supported" | "reconstructable" | "host-integration" | "clinically-sensitive" | "unsupported-obsolete";
+        behavior: string;
+        disposition: "supported" | "rebuild" | "host-adapter" | "clinical-review" | "do-not-port";
+        evidence: string;
+      }>;
+    };
+    diagnosticCodes: string[];
+  } | null;
 }
 
 export type BuilderWorkflowSupportStatus = "implemented" | "partial" | "unsupported";
@@ -1299,6 +1318,17 @@ export interface BuilderOscarImportMapping {
   note?: string;
   measurementType?: string;
   measurementProperty?: string;
+  /** Stable row in the explicitly reviewed OSCAR → MOIS measurement catalog. */
+  measurementCrosswalkId?: string;
+  measurementReviewStatus?: "pending" | "approved" | "rejected" | "ambiguous";
+  /** The author's explicit observation choice; never inferred from an abbreviation. */
+  measurementSelection?: {
+    observationCode: string;
+    description?: string;
+    units?: string;
+    valueType?: "TEXT" | "NUMERIC";
+    basis: "author-selected" | "approved-crosswalk";
+  } | null;
 }
 
 export interface BuilderField {

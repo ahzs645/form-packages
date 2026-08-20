@@ -1423,10 +1423,18 @@ function BulkSetField({
   }, contradictionMessage) : null));
 }`,
   './ChartAttachmentUpload/index.jsx': `const {
+  useEffect,
   useMemo,
   useRef,
   useState
 } = React;
+const firstPositiveId = (...values) => {
+  for (const value of values) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return null;
+};
 const readChartAttachmentResponse = async response => {
   if (!response || typeof response.text !== "function") return null;
   let text = "";
@@ -1474,7 +1482,7 @@ const ChartAttachmentUpload = ({
   id,
   resultFieldId = "chartAttachmentUploadResult",
   title = "MOIS chart attachment upload test",
-  description = "Choose a small, non-sensitive test file. Upload writes immediately to the current patient's chart.",
+  description = "Choose a small, non-sensitive test file. Upload immediately creates a separate document on the current patient's chart; it is not embedded in this webform.",
   buttonText = "Upload test attachment",
   documentTypeCode = "NOTE",
   documentTypeDisplay = "Note / General Purpose Document",
@@ -1486,9 +1494,11 @@ const ChartAttachmentUpload = ({
 }) => {
   const [fd, setFormData] = useActiveData();
   const sd = useSourceData();
+  const documentTypes = useCodeList(documentTypeSystem, sd);
   const fileInputRef = useRef(null);
   const [selectedFile, setSelectedFile] = useState(null);
   const [note, setNote] = useState(defaultNote);
+  const [selectedDocumentTypeCode, setSelectedDocumentTypeCode] = useState(documentTypeCode);
   const [busy, setBusy] = useState(false);
   const storedResult = resultFieldId ? fd?.field?.data?.[resultFieldId] : null;
   const [result, setResult] = useState(() => storedResult || null);
@@ -1496,8 +1506,8 @@ const ChartAttachmentUpload = ({
     const appSettings = typeof sd?.useAppSettings === "function" ? sd.useAppSettings() : null;
     const auth = sd?.auth || appSettings?.auth || {};
     const userProfile = sd?.userProfile || appSettings?.userProfile || {};
-    const patientId = sd?.formParams?.patientId ?? sd?.patientId ?? sd?.patient?.patientId ?? null;
-    const userProfileId = userProfile?.userProfileId ?? userProfile?.id ?? null;
+    const patientId = firstPositiveId(sd?.formParams?.patientId, sd?.patientId, sd?.patient?.patientId, sd?.webform?.patientId);
+    const userProfileId = firstPositiveId(userProfile?.userProfileId, userProfile?.id);
     const rawApiServer = String(auth?.apiServer || "").trim();
     const apiServer = rawApiServer && !rawApiServer.endsWith("/") ? \`\${rawApiServer}/\` : rawApiServer;
     const endpoint = apiServer && patientId != null && userProfileId != null ? \`\${apiServer}api/attachment/file/\${encodeURIComponent(userProfileId)}/\${encodeURIComponent(patientId)}/\` : "";
@@ -1508,9 +1518,53 @@ const ChartAttachmentUpload = ({
       jwToken: auth?.jwToken || ""
     };
   }, [sd]);
+  const normalizedDocumentTypes = useMemo(() => {
+    if (Array.isArray(documentTypes)) return documentTypes;
+    if (!documentTypes || typeof documentTypes !== "object") return [];
+    return Object.entries(documentTypes).map(([code, value]) => {
+      if (value && typeof value === "object") {
+        return {
+          code: value.code || code,
+          display: value.display || value.text || value.code || code,
+          system: value.system || documentTypeSystem
+        };
+      }
+      return {
+        code,
+        display: String(value || code),
+        system: documentTypeSystem
+      };
+    });
+  }, [documentTypeSystem, documentTypes]);
+  const documentTypeOptions = useMemo(() => Array.isArray(normalizedDocumentTypes) ? normalizedDocumentTypes.filter(entry => entry?.code).map(entry => ({
+    key: String(entry.code),
+    text: String(entry.display || entry.code)
+  })) : [], [normalizedDocumentTypes]);
+  const selectedDocumentType = useMemo(() => {
+    const liveEntry = Array.isArray(normalizedDocumentTypes) ? normalizedDocumentTypes.find(entry => String(entry?.code) === String(selectedDocumentTypeCode)) : null;
+    if (liveEntry) {
+      return {
+        code: String(liveEntry.code),
+        display: String(liveEntry.display || liveEntry.code),
+        system: String(liveEntry.system || documentTypeSystem)
+      };
+    }
+    if (documentTypeOptions.length > 0) return null;
+    return selectedDocumentTypeCode ? {
+      code: String(selectedDocumentTypeCode),
+      display: String(documentTypeDisplay || selectedDocumentTypeCode),
+      system: documentTypeSystem
+    } : null;
+  }, [documentTypeDisplay, documentTypeOptions.length, documentTypeSystem, normalizedDocumentTypes, selectedDocumentTypeCode]);
+  useEffect(() => {
+    if (documentTypeOptions.length === 0) return;
+    if (documentTypeOptions.some(option => option.key === String(selectedDocumentTypeCode))) return;
+    const configuredOption = documentTypeOptions.find(option => option.key === String(documentTypeCode));
+    setSelectedDocumentTypeCode(String(configuredOption?.key || documentTypeOptions[0].key));
+  }, [documentTypeCode, documentTypeOptions, selectedDocumentTypeCode]);
   const inputId = \`\${id || resultFieldId || "chart-attachment-upload"}-file\`;
   const fileTooLarge = Boolean(selectedFile && Number(maxFileSizeBytes) > 0 && selectedFile.size > Number(maxFileSizeBytes));
-  const canUpload = Boolean(selectedFile && runtime.endpoint && runtime.jwToken && !fileTooLarge && !busy);
+  const canUpload = Boolean(selectedFile && selectedDocumentType && runtime.endpoint && runtime.jwToken && !fileTooLarge && !busy);
   const recordResult = nextResult => {
     setResult(nextResult);
     persistChartAttachmentResult(setFormData, resultFieldId, nextResult);
@@ -1526,11 +1580,7 @@ const ChartAttachmentUpload = ({
       documentId: 0,
       patientId: Number(runtime.patientId),
       note: String(note || defaultNote || selectedFile.name),
-      documentType: {
-        code: documentTypeCode,
-        display: documentTypeDisplay,
-        system: documentTypeSystem
-      }
+      documentType: selectedDocumentType
     };
     setBusy(true);
     try {
@@ -1658,7 +1708,23 @@ const ChartAttachmentUpload = ({
     value: note,
     disabled: busy,
     onChange: (_event, value) => setNote(value || "")
-  }), /*#__PURE__*/React.createElement(Fluent.Stack, {
+  }), /*#__PURE__*/React.createElement(Fluent.Dropdown, {
+    label: "Chart document type",
+    selectedKey: selectedDocumentTypeCode || undefined,
+    options: documentTypeOptions.length > 0 ? documentTypeOptions : [{
+      key: documentTypeCode,
+      text: documentTypeDisplay || documentTypeCode
+    }],
+    disabled: busy,
+    onChange: (_event, option) => setSelectedDocumentTypeCode(option?.key ? String(option.key) : "")
+  }), /*#__PURE__*/React.createElement(Fluent.Text, {
+    variant: "small",
+    styles: {
+      root: {
+        color: "#605e5c"
+      }
+    }
+  }, "Document types are loaded from ", documentTypeSystem, " when the target MOIS server provides that list."), /*#__PURE__*/React.createElement(Fluent.Stack, {
     horizontal: true,
     tokens: {
       childrenGap: 8
@@ -36377,7 +36443,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './AttestationSignOff/index.jsx': ["AttestationSignOff","cleaned","current","deriveInitials","flatTargets","getCurrentActorName","initials","key","name","nestedTargets","next","normalizeInitialsName","normalizeRoleOptions","normalizeTargets","parts","roleOptions","row","sd","signatureFieldId","signatureValue","signedAt","source","table","text","updateValue","value"],
   './AuthorshipField/index.jsx': ["AuthorshipField","DEFAULT_WINDOW_HOURS","_defaultPolicy","_nhAuth","_normalizeFieldOptions","actor","actorFrom","addHoursIso","base","buildKey","c","changed","ck","claim","claims","commitSave","commitValue","componentId","current","d","data","editableUntil","effectiveFieldId","euDate","existing","expired","fieldData","formatTimestamp","isNonEmpty","isOwner","keepStatus","key","label","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","nextStatus","nhAuth","normalizeStore","now","nowIso","numeric","optionList","ownerId","ownerName","ownerRefresh","pad2","pending","policy","policyAppliesToAction","prepareSave","query","raw","readOnly","readStore","release","renderInput","resolveNow","sameActor","sd","section","store","text","trimmed","ts","untilSelf","value","windowHours"],
   './BulkSetField/index.jsx': ["BulkSetField","ButtonComponent","apply","comparableAnswer","contradictedFieldIds","current","effectiveControlFieldId","fieldData","fieldId","isApplied","isBlankAnswer","isDisabled","normalizeBulkTargets","normalizedTargets","previous","raw","shouldClearControl","showWarning","unapply","writeControl"],
-  './ChartAttachmentUpload/index.jsx': ["ChartAttachmentUpload","FormDataClass","apiServer","appSettings","auth","body","bytes","canUpload","clearSelection","document","endpoint","fetchAttachment","fileInputRef","fileTooLarge","formatChartAttachmentBytes","inputId","missingRuntime","nextResult","patientId","persistChartAttachmentResult","rawApiServer","readChartAttachmentResponse","recordResult","response","responseBody","runtime","sd","startedAt","statusColor","statusLabel","storedResult","text","uploadAttachment","userProfile","userProfileId"],
+  './ChartAttachmentUpload/index.jsx': ["ChartAttachmentUpload","FormDataClass","apiServer","appSettings","auth","body","bytes","canUpload","clearSelection","configuredOption","document","documentTypeOptions","documentTypes","endpoint","fetchAttachment","fileInputRef","fileTooLarge","firstPositiveId","formatChartAttachmentBytes","inputId","liveEntry","missingRuntime","nextResult","normalizedDocumentTypes","parsed","patientId","persistChartAttachmentResult","rawApiServer","readChartAttachmentResponse","recordResult","response","responseBody","runtime","sd","selectedDocumentType","startedAt","statusColor","statusLabel","storedResult","text","uploadAttachment","userProfile","userProfileId"],
   './ChartRecordManager/index.jsx': ["CHART_RECORD_MANAGER_TARGETS","ChartRecordCreateButton","ChartRecordEditor","ChartRecordList","ChartRecordManager","__chartRecordEditorChannels","_chartRecordEditorRegister","_chartRecordManagerApplyCascades","_chartRecordManagerDefaultCascades","_chartRecordManagerDefaultFieldPresets","_chartRecordManagerDefaultFields","_chartRecordManagerEditHiddenFields","_chartRecordManagerFieldTransforms","_chartRecordManagerStripKeys","baseFields","chartRefresh","classification","cleaned","code","codeSystem","columns","contextId","createButtons","dataEntryConfig","fallback","fallbackManagerId","fieldPreset","handleClick","handleConfirmDelete","handler","hasWriteTarget","hidden","identity","layered","managerId","mapped","merged","next","openChartRecordEditor","openForCreate","openForEdit","preset","record","recordId","request","resolvedAllowDelete","resolvedCascades","resolvedEditHiddenFieldIds","resolvedFields","resolvedManagerId","resolvedPayloadMap","resolvedRecordIdKey","resolvedStripKeys","resolvedWriteTarget","result","sd","seeded","spec","stripRecord","subject","targetInfo","transform","variables","writeDefinition"],
   './ChartRecordTable/index.jsx': ["ChartRecordTable","_chartRecordTableActiveConnections","_chartRecordTableActivePlannedActions","_chartRecordTableGenericColumns","_chartRecordTableGenericEntryColumns","_chartRecordTablePresets","_chartRecordTableSorts","_chartRecordTableStartDateDesc","baseChartColumns","byType","preset","resolvedChartColumns","resolvedEntryColumns","resolvedFieldId","resolvedFilterPred","resolvedId","resolvedLabel","resolvedListCompare","resolvedMoisModule","resolvedSelectionType","resolvedSourceId","resolvedSourceMap"],
   './ChartReviewSummary/index.jsx': ["ChartReviewSummary","K","REVIEW_BLUE","REVIEW_GRAY","REVIEW_INK","REVIEW_RED","ReviewSectionHeading","age","best","bestTime","codeList","current","doseText","latestByCode","medications","monthDelta","now","observations","parsed","patient","problems","reviewAgeYears","reviewArray","reviewDateKey","reviewGetObject","reviewHeadingStyle","reviewLineStyle","rows","sd","sex","steps","stopRaw","stopTime","time","units","value"],

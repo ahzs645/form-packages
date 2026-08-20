@@ -98,16 +98,30 @@ const ChartAttachmentUpload = ({
     }
   }, [sd])
 
+  const normalizedDocumentTypes = useMemo(() => {
+    if (Array.isArray(documentTypes)) return documentTypes
+    if (!documentTypes || typeof documentTypes !== "object") return []
+    return Object.entries(documentTypes).map(([code, value]) => {
+      if (value && typeof value === "object") {
+        return {
+          code: value.code || code,
+          display: value.display || value.text || value.code || code,
+          system: value.system || documentTypeSystem,
+        }
+      }
+      return { code, display: String(value || code), system: documentTypeSystem }
+    })
+  }, [documentTypeSystem, documentTypes])
   const documentTypeOptions = useMemo(() => (
-    Array.isArray(documentTypes)
-      ? documentTypes
+    Array.isArray(normalizedDocumentTypes)
+      ? normalizedDocumentTypes
         .filter((entry) => entry?.code)
         .map((entry) => ({ key: String(entry.code), text: String(entry.display || entry.code) }))
       : []
-  ), [documentTypes])
+  ), [normalizedDocumentTypes])
   const selectedDocumentType = useMemo(() => {
-    const liveEntry = Array.isArray(documentTypes)
-      ? documentTypes.find((entry) => String(entry?.code) === String(selectedDocumentTypeCode))
+    const liveEntry = Array.isArray(normalizedDocumentTypes)
+      ? normalizedDocumentTypes.find((entry) => String(entry?.code) === String(selectedDocumentTypeCode))
       : null
     if (liveEntry) {
       return {
@@ -120,7 +134,7 @@ const ChartAttachmentUpload = ({
     return selectedDocumentTypeCode
       ? { code: String(selectedDocumentTypeCode), display: String(documentTypeDisplay || selectedDocumentTypeCode), system: documentTypeSystem }
       : null
-  }, [documentTypeDisplay, documentTypeOptions.length, documentTypeSystem, documentTypes, selectedDocumentTypeCode])
+  }, [documentTypeDisplay, documentTypeOptions.length, documentTypeSystem, normalizedDocumentTypes, selectedDocumentTypeCode])
 
   useEffect(() => {
     if (documentTypeOptions.length === 0) return
