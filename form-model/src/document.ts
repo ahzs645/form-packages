@@ -4,6 +4,7 @@ import type {
   BuilderFieldTranslation,
   BuilderFhirConfig,
   BuilderMoisOutputMapping,
+  BuilderOscarImportMapping,
   BuilderValidationConfig,
   BuilderVisibilityRule,
   HiddenAnswerPolicy,
@@ -360,6 +361,8 @@ export interface ParsedField {
   measurementConfig?: MeasurementFieldConfig | null;
   /** Field-level MOIS source binding, carried verbatim from BuilderField. */
   sourceConfig?: BuilderFieldSourceConfig | null;
+  /** OSCAR import provenance and the user's mapping-review decision. */
+  oscarImport?: BuilderOscarImportMapping | null;
   tableConfig?: {
     columns: TableColumn[];
     mode?: TableMode;

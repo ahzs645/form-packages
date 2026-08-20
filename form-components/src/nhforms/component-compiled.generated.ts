@@ -27897,6 +27897,164 @@ const _fillField = (field, rawValue, sourceFieldId, warnings, PDFLib, booleanSta
     return false;
   }
 };
+const _geometryClamp = (value, minimum, maximum) => Math.max(minimum, Math.min(maximum, value));
+const _geometrySignatureDataUrl = value => {
+  if (_isNonEmptyString(value) && /^data:image\\/(?:png|jpe?g);base64,/i.test(value.trim())) {
+    return value.trim();
+  }
+  if (value && typeof value === "object") {
+    const candidate = value.dataUrl || value.dataURL || value.signatureDataUrl;
+    if (_isNonEmptyString(candidate) && /^data:image\\/(?:png|jpe?g);base64,/i.test(candidate.trim())) {
+      return candidate.trim();
+    }
+  }
+  return null;
+};
+const _geometryChoiceSelected = (rawValue, optionValue) => {
+  if (!_isNonEmptyString(optionValue)) return false;
+  const requested = _normalizeToken(optionValue);
+  return _toCandidateList(rawValue).some(candidate => _normalizeToken(candidate) === requested);
+};
+const _geometryTextLines = (text, font, fontSize, maxWidth, multiline) => {
+  const sourceLines = String(text || "").replace(/\\r\\n?/g, "\\n").split("\\n");
+  if (!multiline) return [sourceLines.join(" ")];
+  const lines = [];
+  sourceLines.forEach(sourceLine => {
+    const words = sourceLine.split(/\\s+/).filter(Boolean);
+    if (words.length === 0) {
+      lines.push("");
+      return;
+    }
+    let current = "";
+    words.forEach(word => {
+      const candidate = current ? \`\${current} \${word}\` : word;
+      if (!current || font.widthOfTextAtSize(candidate, fontSize) <= maxWidth) {
+        current = candidate;
+      } else {
+        lines.push(current);
+        current = word;
+      }
+    });
+    if (current) lines.push(current);
+  });
+  return lines;
+};
+
+/**
+ * Stamp answers using imported OSCAR geometry when the source PDF is only a
+ * raster-background projection and therefore has no AcroForm fields.
+ */
+const _drawGeometryOverlays = async ({
+  doc,
+  formData,
+  geometryOverlayFields,
+  includeSet,
+  warnings,
+  PDFLib
+}) => {
+  const pages = doc.getPages();
+  const font = await doc.embedFont(PDFLib.StandardFonts.Helvetica);
+  const boldFont = await doc.embedFont(PDFLib.StandardFonts.HelveticaBold);
+  let filledFieldCount = 0;
+  let skippedFieldCount = 0;
+  for (const field of Array.isArray(geometryOverlayFields) ? geometryOverlayFields : []) {
+    const fieldId = _isNonEmptyString(field?.id) ? field.id.trim() : "";
+    if (!fieldId || includeSet && !includeSet.has(fieldId)) {
+      skippedFieldCount += 1;
+      continue;
+    }
+    const rawValue = formData?.[fieldId];
+    if (rawValue === undefined || rawValue === null || rawValue === "") {
+      skippedFieldCount += 1;
+      continue;
+    }
+    const widgets = Array.isArray(field.widgets) && field.widgets.length > 0 ? field.widgets : [{
+      page: field.page,
+      bbox: field.bbox
+    }];
+    let didDraw = false;
+    try {
+      if (field.kind === "signature") {
+        const dataUrl = _geometrySignatureDataUrl(rawValue);
+        const widget = widgets[0];
+        const page = pages[Number(widget?.page || field.page || 1) - 1];
+        const box = widget?.bbox || field.bbox;
+        if (dataUrl && page && box) {
+          const bytes = _base64ToBytes(dataUrl);
+          const image = /^data:image\\/png/i.test(dataUrl) ? await doc.embedPng(bytes) : await doc.embedJpg(bytes);
+          page.drawImage(image, {
+            x: box.x,
+            y: box.y,
+            width: box.width,
+            height: box.height
+          });
+          didDraw = true;
+        }
+      } else if (field.kind === "boolean") {
+        if (_toBooleanLike(rawValue) === true) {
+          const widget = widgets[0];
+          const page = pages[Number(widget?.page || field.page || 1) - 1];
+          const box = widget?.bbox || field.bbox;
+          if (page && box) {
+            const size = _geometryClamp(Math.min(box.width, box.height) * 0.85, 7, 16);
+            page.drawText("X", {
+              x: box.x + Math.max(0, (box.width - boldFont.widthOfTextAtSize("X", size)) / 2),
+              y: box.y + Math.max(0, (box.height - size) / 2),
+              size,
+              font: boldFont
+            });
+            didDraw = true;
+          }
+        }
+      } else if (field.kind === "choice" && (widgets.length > 1 || field.choiceStyle === "radio" || field.choiceStyle === "checkbox")) {
+        widgets.forEach((widget, index) => {
+          const optionValue = widget?.optionValue || field.options?.[index]?.value || field.options?.[index]?.label;
+          if (!_geometryChoiceSelected(rawValue, optionValue)) return;
+          const page = pages[Number(widget?.page || field.page || 1) - 1];
+          const box = widget?.bbox;
+          if (!page || !box) return;
+          const size = _geometryClamp(Math.min(box.width, box.height) * 0.85, 7, 16);
+          page.drawText("X", {
+            x: box.x + Math.max(0, (box.width - boldFont.widthOfTextAtSize("X", size)) / 2),
+            y: box.y + Math.max(0, (box.height - size) / 2),
+            size,
+            font: boldFont
+          });
+          didDraw = true;
+        });
+      } else {
+        const text = _toText(rawValue);
+        const widget = widgets[0];
+        const page = pages[Number(widget?.page || field.page || 1) - 1];
+        const box = widget?.bbox || field.bbox;
+        if (text && page && box) {
+          const fontSize = _geometryClamp(box.height * (field.multiline ? 0.3 : 0.62), 7, 11);
+          const lineHeight = fontSize * 1.15;
+          const maxWidth = Math.max(1, box.width - 3);
+          const maxLines = field.multiline ? Math.max(1, Math.floor(box.height / lineHeight)) : 1;
+          const lines = _geometryTextLines(text, font, fontSize, maxWidth, Boolean(field.multiline)).slice(0, maxLines);
+          lines.forEach((line, index) => {
+            page.drawText(line, {
+              x: box.x + 1.5,
+              y: field.multiline ? box.y + box.height - fontSize - index * lineHeight : box.y + Math.max(0, (box.height - fontSize) / 2),
+              size: fontSize,
+              font,
+              maxWidth
+            });
+          });
+          didDraw = lines.length > 0;
+        }
+      }
+    } catch (error) {
+      warnings.push(\`Geometry field "\${fieldId}": \${error?.message || "failed"}\`);
+    }
+    if (didDraw) filledFieldCount += 1;else skippedFieldCount += 1;
+  }
+  return {
+    filledFieldCount,
+    skippedFieldCount
+  };
+};
 const _statusColor = kind => {
   if (kind === "success") return "#107c10";
   if (kind === "error") return "#a4262c";
@@ -27920,6 +28078,7 @@ const PdfRegenerator = ({
   fieldMaxLengths,
   dateComponentMaps,
   choiceComponentMaps,
+  geometryOverlayFields,
   includeOnlyFieldIds,
   flatten = false,
   disabled: disabledProp = false,
@@ -27984,7 +28143,8 @@ const PdfRegenerator = ({
       const warnings = [];
       let filledFieldCount = 0;
       let skippedFieldCount = 0;
-      form.getFields().forEach(field => {
+      const pdfFields = form.getFields();
+      pdfFields.forEach(field => {
         const pdfFieldName = field.getName();
         const sourceFieldId = map.get(pdfFieldName) || pdfFieldName;
         if (includeSet && !includeSet.has(sourceFieldId) && !includeSet.has(pdfFieldName)) {
@@ -28019,6 +28179,18 @@ const PdfRegenerator = ({
         const didFill = _fillField(field, rawValue, sourceFieldId, warnings, PDFLib, booleanStates, desiredMaxLength);
         if (didFill) filledFieldCount += 1;else skippedFieldCount += 1;
       });
+      if (pdfFields.length === 0 && Array.isArray(geometryOverlayFields) && geometryOverlayFields.length > 0) {
+        const geometryResult = await _drawGeometryOverlays({
+          doc,
+          formData,
+          geometryOverlayFields,
+          includeSet,
+          warnings,
+          PDFLib
+        });
+        filledFieldCount += geometryResult.filledFieldCount;
+        skippedFieldCount += geometryResult.skippedFieldCount;
+      }
       if (flatten) {
         form.flatten();
       }
@@ -28051,7 +28223,7 @@ const PdfRegenerator = ({
     } finally {
       setIsBusy(false);
     }
-  }, [resolvedPdfSource, fd, fieldMap, tableSourceMaps, booleanFieldStates, fieldMaxLengths, dateComponentMaps, choiceComponentMaps, includeOnlyFieldIds, flatten, fileName, onComplete, pdfLibStrategy, pdfLibSource]);
+  }, [resolvedPdfSource, fd, fieldMap, tableSourceMaps, booleanFieldStates, fieldMaxLengths, dateComponentMaps, choiceComponentMaps, geometryOverlayFields, includeOnlyFieldIds, flatten, fileName, onComplete, pdfLibStrategy, pdfLibSource]);
   const diagnosticsText = useMemo(() => {
     if (!showDiagnostics) return null;
     if (!_isNonEmptyString(resolvedPdfSource)) return "Waiting for source PDF data.";
@@ -36258,7 +36430,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './PastMeasurementField/index.jsx': ["PastMeasurementField","abnormalFlag","abnormalHighValue","abnormalLowValue","canPullLatest","candidate","candidates","codeFilter","coercePositiveInt","commentFilter","componentId","container","createdBy","criticalHighValue","criticalLowValue","current","currentPayload","currentWebformId","currentWebformObservations","day","defaultSpinStep","direct","displayedCurrentValue","documentDate","effectiveFieldId","effectiveHistorySize","effectiveLabelPosition","effectiveMeasurementSize","entryCode","entryComment","entryDate","entryUnits","entryValue","explicitValue","fieldData","flagCode","flagDisplays","formHistoryItems","formatDate","fromPatient","fromQueryResult","handleValueChange","hasAbnormalHigh","hasAbnormalLow","hasExplicitValue","hasMeaningfulValue","hasNumericCurrentValue","hasRangeMetadata","hasStoredValue","historicalFormRowDate","historyItems","historySummary","index","inputSuffix","isAbnormal","isHistoricalFormValue","isNonEmptyString","isNumericInput","key","latestHistoryItem","legacyRangePayload","linkedObservationItem","linkedWebformId","matchingKey","measurementWidthBySize","month","nextGroup","normalizeObservationItems","normalizedDateOnly","normalizedPullTargets","numericCurrentValue","numericExplicitValue","numericTime","observationHistoryItems","observationWebformId","oldId","oldObs","optionalString","parseDateValue","parsed","parsedDate","parsedDateOnly","patientPath","payloadsEqual","pullLatestIntoTargets","raw","rawDate","recentHistoryText","resolveHistoricalFormRows","resolveMeasurementContainerStyle","resolveMoisValue","resolvePathValue","resolvedAbnormalHigh","resolvedAbnormalLow","resolvedCriticalHigh","resolvedCriticalLow","resolvedCurrentValue","resolvedUnits","role","roots","sd","segments","setNestedPayload","shouldReserveHistory","shouldShowHistory","storedValue","stringifyValue","stripVolatilePayloadFields","targetFieldId","text","toObservationList","toPathSegments","updatedValue","value","valueFromHistoricalFormRow","valueIsDate","valueKeys","valuePart","valueText","width","year"],
   './PatientFileSections/index.jsx': ["PatientFileSections","activeText","addressText","cityLine","compactLines","contactText","countryLine","createdDate","editButtonStyle","encounter","fieldWrapStyle","formatAddress","formatContact","formatDate","getPatientFromData","gridStyle","healthNumber","insuranceBy","insuranceNumber","insuranceText","lines","match","mergeObjects","nextPatient","optionCode","optionDisplay","patient","preferredCode","preferredPhoneOptions","providerName","queryPatient","raw","renderClientDemographics","renderDocumentDetails","renderEncounterDetails","renderTitle","requested","sd","section","sectionTitleStyle","textValue","updateContactText","visibleSections","whiteDropdownStyles","whiteFlexTextFieldStyles","whiteTextFieldStyles","writePatientUpdates"],
   './PatientValueField/index.jsx': ["PatientValueField","age","applyPatientTransform","candidates","coercePatientValue","collectionCandidateValues","collectionItemMatches","computeAgeYears","dob","effectiveFieldId","expected","items","monthDelta","normalizedExpected","now","raw","resolveCollectionItemPath","resolvePatientContextPath","resolved","root","sd","stored","values"],
-  './PdfRegenerator/index.jsx': ["PDFLib","PDF_LIB_URL","PdfRegenerator","_base64ToBytes","_buildChoiceComponentIndex","_buildDateComponentIndex","_buildTableReverseIndex","_choiceItemMatches","_choiceItems","_collectCandidates","_decodePdfHex","_downloadBytes","_fillField","_getCheckboxOnStates","_inferBooleanState","_installPdfLibFromSource","_isNonEmptyString","_loadPdfLib","_loadPdfLibFromCdn","_matchMultipleOptions","_matchSingleOption","_normalizeFieldMap","_normalizeToken","_pdfLibPromise","_printBytes","_resolveChoiceComponentValue","_resolveDateComponentValue","_resolveTableCellValue","_resolveValueByPath","_setCheckboxByState","_splitCanonicalDateParts","_statusColor","_toBooleanLike","_toCandidateList","_toText","acro","baseMap","binary","blob","boolValue","booleanStates","buttonDisabled","byRow","bytes","candidate","candidateKeys","candidates","choiceComponentIndex","choiceComponentValue","choiceEntry","clean","cleaned","cleanup","component","components","current","dateComponentIndex","dateComponentValue","dateEntry","desiredMaxLength","diagnosticsText","didFill","direct","disabled","doc","existing","filledFieldCount","form","formData","formKeys","fromData","fromPath","fuzzy","handleGeneratePdf","hasMatchingState","i","iframe","includeSet","index","inferredState","inlineSource","installed","isOn","items","knownOptions","left","leftIsFormId","lib","link","map","mapped","match","matches","maxLength","maybe","maybeDate","maybeTime","nextFileName","normalized","normalizedAction","normalizedCandidate","normalizedOption","normalizedOptionMap","normalizedRequested","offState","onText","onValue","options","otherItem","outputBytes","parts","pathByColumnId","payload","pdfFieldId","pdfFieldName","printWindow","rawValue","renderActionButton","renderButton","requested","resolvePath","resolvedPdfSource","right","rightIsFormId","row","rowIndex","rowMapping","rows","runner","script","sd","segments","selected","selectedCount","set","single","skippedFieldCount","sourceFieldId","sourceId","sourceValue","sourceValues","state","states","strategy","tableEntry","tableId","tableIndex","targetAction","targetState","targetStateName","targetWidget","text","trimmed","url","warningCount","warnings","widgets","withoutSlash"],
+  './PdfRegenerator/index.jsx': ["PDFLib","PDF_LIB_URL","PdfRegenerator","_base64ToBytes","_buildChoiceComponentIndex","_buildDateComponentIndex","_buildTableReverseIndex","_choiceItemMatches","_choiceItems","_collectCandidates","_decodePdfHex","_downloadBytes","_drawGeometryOverlays","_fillField","_geometryChoiceSelected","_geometryClamp","_geometrySignatureDataUrl","_geometryTextLines","_getCheckboxOnStates","_inferBooleanState","_installPdfLibFromSource","_isNonEmptyString","_loadPdfLib","_loadPdfLibFromCdn","_matchMultipleOptions","_matchSingleOption","_normalizeFieldMap","_normalizeToken","_pdfLibPromise","_printBytes","_resolveChoiceComponentValue","_resolveDateComponentValue","_resolveTableCellValue","_resolveValueByPath","_setCheckboxByState","_splitCanonicalDateParts","_statusColor","_toBooleanLike","_toCandidateList","_toText","acro","baseMap","binary","blob","boldFont","boolValue","booleanStates","box","buttonDisabled","byRow","bytes","candidate","candidateKeys","candidates","choiceComponentIndex","choiceComponentValue","choiceEntry","clean","cleaned","cleanup","component","components","current","dataUrl","dateComponentIndex","dateComponentValue","dateEntry","desiredMaxLength","diagnosticsText","didDraw","didFill","direct","disabled","doc","existing","fieldId","filledFieldCount","font","fontSize","form","formData","formKeys","fromData","fromPath","fuzzy","geometryResult","handleGeneratePdf","hasMatchingState","i","iframe","image","includeSet","index","inferredState","inlineSource","installed","isOn","items","knownOptions","left","leftIsFormId","lib","lineHeight","lines","link","map","mapped","match","matches","maxLength","maxLines","maxWidth","maybe","maybeDate","maybeTime","nextFileName","normalized","normalizedAction","normalizedCandidate","normalizedOption","normalizedOptionMap","normalizedRequested","offState","onText","onValue","optionValue","options","otherItem","outputBytes","page","pages","parts","pathByColumnId","payload","pdfFieldId","pdfFieldName","pdfFields","printWindow","rawValue","renderActionButton","renderButton","requested","resolvePath","resolvedPdfSource","right","rightIsFormId","row","rowIndex","rowMapping","rows","runner","script","sd","segments","selected","selectedCount","set","single","size","skippedFieldCount","sourceFieldId","sourceId","sourceLines","sourceValue","sourceValues","state","states","strategy","tableEntry","tableId","tableIndex","targetAction","targetState","targetStateName","targetWidget","text","trimmed","url","warningCount","warnings","widget","widgets","withoutSlash","words"],
   './PlannedActions/index.jsx': ["PlannedActions","PlannedActionsFields","plannedActionsActiveOnly","plannedActionsColumns"],
   './ReferralSource/index.jsx': ["ReferralSource","codeSystem","defaultValue","optionList","referralValueSet","sd"],
   './RelationshipStatus/index.jsx': ["RelationshipStatus"],

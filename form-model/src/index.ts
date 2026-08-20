@@ -1231,7 +1231,14 @@ export interface BuilderFieldSourceContract {
 }
 
 /** How a source-bound field's value is coerced before it lands in formData. */
-export type BuilderFieldSourceFormat = "text" | "date" | "dateTime" | "coding";
+export type BuilderFieldSourceFormat =
+  | "text"
+  | "date"
+  | "dateTime"
+  | "coding"
+  | "oscarAllergies"
+  | "oscarConditions"
+  | "oscarMedications";
 
 /**
  * "initial" seeds the value once and keeps any saved/edited answer;
@@ -1251,6 +1258,36 @@ export interface BuilderFieldSourceConfig {
   mode?: BuilderFieldSourceMode;
   /** Static value used when no path resolves (e.g. preview environments). */
   fallback?: string | number | boolean | null;
+}
+
+export type BuilderOscarImportMappingStatus =
+  | "mapped"
+  | "partial"
+  | "unresolved"
+  | "measurement-review";
+
+export type BuilderOscarImportDecision =
+  | "suggested"
+  | "custom"
+  | "review"
+  | "response-only"
+  | "ignored";
+
+/**
+ * Reviewable provenance retained when a field is imported from an OSCAR
+ * eForm. The live MOIS binding remains in sourceConfig/measurementConfig;
+ * this record explains the source suggestion and the author's decision.
+ */
+export interface BuilderOscarImportMapping {
+  version: 1;
+  oscarDb: string;
+  catalogStatus: BuilderOscarImportMappingStatus;
+  catalogMappingId?: string;
+  suggestedSourceConfig?: BuilderFieldSourceConfig | null;
+  decision: BuilderOscarImportDecision;
+  note?: string;
+  measurementType?: string;
+  measurementProperty?: string;
 }
 
 export interface BuilderField {
@@ -1306,6 +1343,8 @@ export interface BuilderField {
    * a filled answer, matching the legacy FormCreationHistory contract).
    */
   sourceConfig?: BuilderFieldSourceConfig | null;
+  /** OSCAR import provenance and the user's mapping-review decision. */
+  oscarImport?: BuilderOscarImportMapping | null;
   pdfFieldAliases?: string[];
   page?: number;
   bbox?: BoundingBox;
@@ -1944,21 +1983,46 @@ export interface FieldLinkRule {
 }
 
 export type MoisFormType =
+  | "ACTIVITY"
   | "ATTACHMENT"
   | "CALCULATOR"
   | "FLOWSHEET"
+  | "TESTFORM"
+  /** Legacy saved values retained for import compatibility; not offered for new forms. */
   | "WEBCLIENT"
   | "TEST";
 
 export const MOIS_FORM_TYPE_OPTIONS: Array<{ value: MoisFormType; label: string }> = [
+  { value: "ACTIVITY", label: "Activity" },
   { value: "ATTACHMENT", label: "Attachment" },
   { value: "CALCULATOR", label: "Calculator" },
   { value: "FLOWSHEET", label: "Flowsheet" },
-  { value: "WEBCLIENT", label: "Web client" },
-  { value: "TEST", label: "Test" }
+  { value: "TESTFORM", label: "Test form" }
 ];
 
 export const DEFAULT_MOIS_FORM_TYPE: MoisFormType = "ATTACHMENT";
+
+export interface MoisSemanticVersion {
+  major: number;
+  minor: number;
+  patch: number;
+}
+
+/**
+ * Per-form metadata written to the exported MOIS Identity.json/manifest.
+ * The package name and title continue to follow the builder document name.
+ */
+export interface BuilderMoisIdentityMetadata {
+  author?: string;
+  owner?: string;
+  publisher?: string;
+  description?: string;
+  globalIdentifier?: string;
+  version?: MoisSemanticVersion;
+  requiredFormViewerVersion?: MoisSemanticVersion;
+  requiredMoisVersion?: MoisSemanticVersion;
+  isEncounterRequired?: boolean;
+}
 
 export const starterBuilderFields: BuilderField[] = [
   {
@@ -2111,6 +2175,7 @@ export interface BuilderDocument<TLayoutDraft = unknown> {
   design: FormDesign;
   identityType: MoisFormType;
   identityCode: string;
+  identityMetadata?: BuilderMoisIdentityMetadata;
   formPresentation?: BuilderFormPresentation;
   investigationTabs?: BuilderInvestigationTab[];
   investigationTabAssignments?: Record<string, string | null>;
