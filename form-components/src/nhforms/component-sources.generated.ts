@@ -712,25 +712,23 @@ const AttestationSignOff = ({
  * __nhAuth — self-contained field/row authorship runtime for NHForms components.
  *
  * WHY THIS EXISTS
- * Real MOIS runs every form by concatenating all component sources + the form
- * into ONE string, transpiling once, and executing it inside a fixed-arg
- * Function(React, Fabric, Fluent, MoisControl, MoisFunction, MoisActions,
- * MoisHooks, Mois) wrapper. It does NOT inject the webforms authorship engine
- * (prepareAuthorshipPersist / getAuthorshipLockInfo are undefined there), so the
- * preview-only engine is dormant on export. This runtime is INLINED into each
+ * Export hosts may execute generated component sources without importing the
+ * webforms package helpers. This runtime is therefore INLINED into each
  * authorship-aware component's source (prepended by the nhforms generator and
- * the Vite loader for any component that references \`__nhAuth\`) so the logic
- * actually executes inside real MOIS.
+ * the Vite loader for any component that references \`__nhAuth\`). The generated
+ * component remains self-contained in SMOIS/FormTester and in other browser
+ * hosts that implement the same source-data/active-data contract.
  *
  * COLLISION SAFETY
  * Everything lives inside a single anonymous IIFE that assigns \`window.__nhAuth\`
  * exactly once (idempotent). There are NO top-level declarations, so prepending
- * this snippet to several components — all concatenated into one scope by real
- * MOIS — can never produce a duplicate-declaration SyntaxError.
+ * this snippet to several components in a concatenating host can never produce
+ * a duplicate-declaration SyntaxError.
  *
  * SCOPE / LIMITS (see docs runtime/mois-locking-signing-audit.md)
- * - Advisory, client-side only: MOIS stores \`field.data.__authorship\` as an
- *   opaque blob and enforces nothing server-side. Not a security boundary.
+ * - Advisory, client-side only: the host stores \`field.data.__authorship\` as an
+ *   opaque blob and enforcement remains in the generated UI. Not a security
+ *   boundary.
  * - A component can only enforce read-only on inputs IT renders. Authored values
  *   must live inside an authorship-aware component, not as loose native fields.
  * - Claims persist in \`field.data.__authorship\` (that is what MOIS saves).
@@ -827,8 +825,8 @@ const AttestationSignOff = ({
             ? sd.auth.userProfileId
             : undefined;
     var ownerName =
-      (state && state.field && state.field.data && state.field.data.createdBy) ||
       (sd && sd.userProfile && sd.userProfile.identity && sd.userProfile.identity.fullName) ||
+      (state && state.field && state.field.data && state.field.data.createdBy) ||
       (sd && sd.webform && sd.webform.provider && sd.webform.provider.name) ||
       "";
     return { ownerId: ownerId, ownerName: ownerName };
@@ -7226,25 +7224,23 @@ const DentalWeightConverterSchema = {
  * __nhAuth — self-contained field/row authorship runtime for NHForms components.
  *
  * WHY THIS EXISTS
- * Real MOIS runs every form by concatenating all component sources + the form
- * into ONE string, transpiling once, and executing it inside a fixed-arg
- * Function(React, Fabric, Fluent, MoisControl, MoisFunction, MoisActions,
- * MoisHooks, Mois) wrapper. It does NOT inject the webforms authorship engine
- * (prepareAuthorshipPersist / getAuthorshipLockInfo are undefined there), so the
- * preview-only engine is dormant on export. This runtime is INLINED into each
+ * Export hosts may execute generated component sources without importing the
+ * webforms package helpers. This runtime is therefore INLINED into each
  * authorship-aware component's source (prepended by the nhforms generator and
- * the Vite loader for any component that references \`__nhAuth\`) so the logic
- * actually executes inside real MOIS.
+ * the Vite loader for any component that references \`__nhAuth\`). The generated
+ * component remains self-contained in SMOIS/FormTester and in other browser
+ * hosts that implement the same source-data/active-data contract.
  *
  * COLLISION SAFETY
  * Everything lives inside a single anonymous IIFE that assigns \`window.__nhAuth\`
  * exactly once (idempotent). There are NO top-level declarations, so prepending
- * this snippet to several components — all concatenated into one scope by real
- * MOIS — can never produce a duplicate-declaration SyntaxError.
+ * this snippet to several components in a concatenating host can never produce
+ * a duplicate-declaration SyntaxError.
  *
  * SCOPE / LIMITS (see docs runtime/mois-locking-signing-audit.md)
- * - Advisory, client-side only: MOIS stores \`field.data.__authorship\` as an
- *   opaque blob and enforces nothing server-side. Not a security boundary.
+ * - Advisory, client-side only: the host stores \`field.data.__authorship\` as an
+ *   opaque blob and enforcement remains in the generated UI. Not a security
+ *   boundary.
  * - A component can only enforce read-only on inputs IT renders. Authored values
  *   must live inside an authorship-aware component, not as loose native fields.
  * - Claims persist in \`field.data.__authorship\` (that is what MOIS saves).
@@ -7341,8 +7337,8 @@ const DentalWeightConverterSchema = {
             ? sd.auth.userProfileId
             : undefined;
     var ownerName =
-      (state && state.field && state.field.data && state.field.data.createdBy) ||
       (sd && sd.userProfile && sd.userProfile.identity && sd.userProfile.identity.fullName) ||
+      (state && state.field && state.field.data && state.field.data.createdBy) ||
       (sd && sd.webform && sd.webform.provider && sd.webform.provider.name) ||
       "";
     return { ownerId: ownerId, ownerName: ownerName };
@@ -23505,25 +23501,23 @@ const ObservationKit = (() => {
  * __nhAuth — self-contained field/row authorship runtime for NHForms components.
  *
  * WHY THIS EXISTS
- * Real MOIS runs every form by concatenating all component sources + the form
- * into ONE string, transpiling once, and executing it inside a fixed-arg
- * Function(React, Fabric, Fluent, MoisControl, MoisFunction, MoisActions,
- * MoisHooks, Mois) wrapper. It does NOT inject the webforms authorship engine
- * (prepareAuthorshipPersist / getAuthorshipLockInfo are undefined there), so the
- * preview-only engine is dormant on export. This runtime is INLINED into each
+ * Export hosts may execute generated component sources without importing the
+ * webforms package helpers. This runtime is therefore INLINED into each
  * authorship-aware component's source (prepended by the nhforms generator and
- * the Vite loader for any component that references \`__nhAuth\`) so the logic
- * actually executes inside real MOIS.
+ * the Vite loader for any component that references \`__nhAuth\`). The generated
+ * component remains self-contained in SMOIS/FormTester and in other browser
+ * hosts that implement the same source-data/active-data contract.
  *
  * COLLISION SAFETY
  * Everything lives inside a single anonymous IIFE that assigns \`window.__nhAuth\`
  * exactly once (idempotent). There are NO top-level declarations, so prepending
- * this snippet to several components — all concatenated into one scope by real
- * MOIS — can never produce a duplicate-declaration SyntaxError.
+ * this snippet to several components in a concatenating host can never produce
+ * a duplicate-declaration SyntaxError.
  *
  * SCOPE / LIMITS (see docs runtime/mois-locking-signing-audit.md)
- * - Advisory, client-side only: MOIS stores \`field.data.__authorship\` as an
- *   opaque blob and enforces nothing server-side. Not a security boundary.
+ * - Advisory, client-side only: the host stores \`field.data.__authorship\` as an
+ *   opaque blob and enforcement remains in the generated UI. Not a security
+ *   boundary.
  * - A component can only enforce read-only on inputs IT renders. Authored values
  *   must live inside an authorship-aware component, not as loose native fields.
  * - Claims persist in \`field.data.__authorship\` (that is what MOIS saves).
@@ -23620,8 +23614,8 @@ const ObservationKit = (() => {
             ? sd.auth.userProfileId
             : undefined;
     var ownerName =
-      (state && state.field && state.field.data && state.field.data.createdBy) ||
       (sd && sd.userProfile && sd.userProfile.identity && sd.userProfile.identity.fullName) ||
+      (state && state.field && state.field.data && state.field.data.createdBy) ||
       (sd && sd.webform && sd.webform.provider && sd.webform.provider.name) ||
       "";
     return { ownerId: ownerId, ownerName: ownerName };
@@ -27730,25 +27724,23 @@ const RichMarkdownBlock = ({
  * __nhAuth — self-contained field/row authorship runtime for NHForms components.
  *
  * WHY THIS EXISTS
- * Real MOIS runs every form by concatenating all component sources + the form
- * into ONE string, transpiling once, and executing it inside a fixed-arg
- * Function(React, Fabric, Fluent, MoisControl, MoisFunction, MoisActions,
- * MoisHooks, Mois) wrapper. It does NOT inject the webforms authorship engine
- * (prepareAuthorshipPersist / getAuthorshipLockInfo are undefined there), so the
- * preview-only engine is dormant on export. This runtime is INLINED into each
+ * Export hosts may execute generated component sources without importing the
+ * webforms package helpers. This runtime is therefore INLINED into each
  * authorship-aware component's source (prepended by the nhforms generator and
- * the Vite loader for any component that references \`__nhAuth\`) so the logic
- * actually executes inside real MOIS.
+ * the Vite loader for any component that references \`__nhAuth\`). The generated
+ * component remains self-contained in SMOIS/FormTester and in other browser
+ * hosts that implement the same source-data/active-data contract.
  *
  * COLLISION SAFETY
  * Everything lives inside a single anonymous IIFE that assigns \`window.__nhAuth\`
  * exactly once (idempotent). There are NO top-level declarations, so prepending
- * this snippet to several components — all concatenated into one scope by real
- * MOIS — can never produce a duplicate-declaration SyntaxError.
+ * this snippet to several components in a concatenating host can never produce
+ * a duplicate-declaration SyntaxError.
  *
  * SCOPE / LIMITS (see docs runtime/mois-locking-signing-audit.md)
- * - Advisory, client-side only: MOIS stores \`field.data.__authorship\` as an
- *   opaque blob and enforces nothing server-side. Not a security boundary.
+ * - Advisory, client-side only: the host stores \`field.data.__authorship\` as an
+ *   opaque blob and enforcement remains in the generated UI. Not a security
+ *   boundary.
  * - A component can only enforce read-only on inputs IT renders. Authored values
  *   must live inside an authorship-aware component, not as loose native fields.
  * - Claims persist in \`field.data.__authorship\` (that is what MOIS saves).
@@ -27845,8 +27837,8 @@ const RichMarkdownBlock = ({
             ? sd.auth.userProfileId
             : undefined;
     var ownerName =
-      (state && state.field && state.field.data && state.field.data.createdBy) ||
       (sd && sd.userProfile && sd.userProfile.identity && sd.userProfile.identity.fullName) ||
+      (state && state.field && state.field.data && state.field.data.createdBy) ||
       (sd && sd.webform && sd.webform.provider && sd.webform.provider.name) ||
       "";
     return { ownerId: ownerId, ownerName: ownerName };
@@ -28105,10 +28097,10 @@ const _stripComponentPayloads = (data) => {
   return rest
 }
 
-// Lock-on-save authorship: promote the current author's pending claims into the
-// saved payload via the shared __nhAuth engine (runs in real MOIS). Replaces the
-// preview-only prepareAuthorshipPersist path. (No in-memory commit here — the
-// onbeforeunload save is best-effort while the window is tearing down.)
+// Fallback for standalone component use. Generated forms inject their complete
+// host-neutral preparation callback so standard fields and NHForms claims are
+// prepared together. No in-memory commit occurs during onbeforeunload because
+// the save is best-effort while the window is tearing down.
 const _nhAuthPrepareSave = (fd, sd) =>
   (typeof window !== "undefined" && window.__nhAuth) ? window.__nhAuth.prepareSave(fd, sd, "save") : null
 
@@ -28174,7 +28166,8 @@ const _useChangeAwareDirtyState = ({
  * SaveOnClose - Renders nothing but sets up change-aware auto-save on close.
  *
  * Props:
- * - getSaveData?: () => any
+ * - getSaveData?: (preparedPersist?: any) => any
+ * - preparePersist?: (activeState: any, action: "save") => any
  * - disabled?: boolean (readOnly is accepted as an alias — the MOIS export emits it)
  * - watchedValue?: any
  * - onlyWhenChanged?: boolean
@@ -28183,6 +28176,7 @@ const _useChangeAwareDirtyState = ({
  */
 const SaveOnClose = ({
   getSaveData,
+  preparePersist,
   disabled: disabledProp = false,
   readOnly = false,
   watchedValue,
@@ -28208,9 +28202,11 @@ const SaveOnClose = ({
       if (sd?.webform?.isDraft === "N") return
       if (onlyWhenChanged && !hasChanged) return
 
-      const prepared = _nhAuthPrepareSave(fd, sd)
+      const prepared = typeof preparePersist === "function"
+        ? preparePersist(fd, "save")
+        : _nhAuthPrepareSave(fd, sd)
       const saveData = getSaveData
-        ? getSaveData()
+        ? getSaveData(prepared)
         : _buildDefaultSavePayload(fd, prepared?.formData)
 
       saveDraft(sd, fd, saveData)
@@ -28219,7 +28215,7 @@ const SaveOnClose = ({
     return () => {
       window.onbeforeunload = null
     }
-  }, [sd, fd, getSaveData, disabled, onlyWhenChanged, hasChanged])
+  }, [sd, fd, getSaveData, preparePersist, disabled, onlyWhenChanged, hasChanged])
 
   return null
 }
@@ -28231,7 +28227,7 @@ const SaveOnClose = ({
  * useSaveOnClose(getSaveData, disabledBoolean)
  *
  * Preferred signature:
- * useSaveOnClose(getSaveData, { disabled, watchedValue, onlyWhenChanged, delayCount, onDirtyChange })
+ * useSaveOnClose(getSaveData, { disabled, watchedValue, onlyWhenChanged, delayCount, onDirtyChange, preparePersist })
  */
 const useSaveOnClose = (getSaveData, options = {}) => {
   const normalizedOptions = _normalizeSaveOnCloseOptions(options)
@@ -28255,9 +28251,11 @@ const useSaveOnClose = (getSaveData, options = {}) => {
       if (sd?.webform?.isDraft === "N") return
       if ((normalizedOptions.onlyWhenChanged ?? true) && !hasChanged) return
 
-      const prepared = _nhAuthPrepareSave(fd, sd)
+      const prepared = typeof normalizedOptions.preparePersist === "function"
+        ? normalizedOptions.preparePersist(fd, "save")
+        : _nhAuthPrepareSave(fd, sd)
       const saveData = getSaveData
-        ? getSaveData()
+        ? getSaveData(prepared)
         : _buildDefaultSavePayload(fd, prepared?.formData)
 
       saveDraft(sd, fd, saveData)
@@ -28266,7 +28264,7 @@ const useSaveOnClose = (getSaveData, options = {}) => {
     return () => {
       window.onbeforeunload = null
     }
-  }, [sd, fd, getSaveData, normalizedOptions.disabled, normalizedOptions.onlyWhenChanged, hasChanged])
+  }, [sd, fd, getSaveData, normalizedOptions.disabled, normalizedOptions.onlyWhenChanged, normalizedOptions.preparePersist, hasChanged])
 
   return {
     hasChanged,
@@ -33935,25 +33933,23 @@ const SubformScoring = (props) => {
  * __nhAuth — self-contained field/row authorship runtime for NHForms components.
  *
  * WHY THIS EXISTS
- * Real MOIS runs every form by concatenating all component sources + the form
- * into ONE string, transpiling once, and executing it inside a fixed-arg
- * Function(React, Fabric, Fluent, MoisControl, MoisFunction, MoisActions,
- * MoisHooks, Mois) wrapper. It does NOT inject the webforms authorship engine
- * (prepareAuthorshipPersist / getAuthorshipLockInfo are undefined there), so the
- * preview-only engine is dormant on export. This runtime is INLINED into each
+ * Export hosts may execute generated component sources without importing the
+ * webforms package helpers. This runtime is therefore INLINED into each
  * authorship-aware component's source (prepended by the nhforms generator and
- * the Vite loader for any component that references \`__nhAuth\`) so the logic
- * actually executes inside real MOIS.
+ * the Vite loader for any component that references \`__nhAuth\`). The generated
+ * component remains self-contained in SMOIS/FormTester and in other browser
+ * hosts that implement the same source-data/active-data contract.
  *
  * COLLISION SAFETY
  * Everything lives inside a single anonymous IIFE that assigns \`window.__nhAuth\`
  * exactly once (idempotent). There are NO top-level declarations, so prepending
- * this snippet to several components — all concatenated into one scope by real
- * MOIS — can never produce a duplicate-declaration SyntaxError.
+ * this snippet to several components in a concatenating host can never produce
+ * a duplicate-declaration SyntaxError.
  *
  * SCOPE / LIMITS (see docs runtime/mois-locking-signing-audit.md)
- * - Advisory, client-side only: MOIS stores \`field.data.__authorship\` as an
- *   opaque blob and enforces nothing server-side. Not a security boundary.
+ * - Advisory, client-side only: the host stores \`field.data.__authorship\` as an
+ *   opaque blob and enforcement remains in the generated UI. Not a security
+ *   boundary.
  * - A component can only enforce read-only on inputs IT renders. Authored values
  *   must live inside an authorship-aware component, not as loose native fields.
  * - Claims persist in \`field.data.__authorship\` (that is what MOIS saves).
@@ -34050,8 +34046,8 @@ const SubformScoring = (props) => {
             ? sd.auth.userProfileId
             : undefined;
     var ownerName =
-      (state && state.field && state.field.data && state.field.data.createdBy) ||
       (sd && sd.userProfile && sd.userProfile.identity && sd.userProfile.identity.fullName) ||
+      (state && state.field && state.field.data && state.field.data.createdBy) ||
       (sd && sd.webform && sd.webform.provider && sd.webform.provider.name) ||
       "";
     return { ownerId: ownerId, ownerName: ownerName };
@@ -34485,16 +34481,30 @@ const UnsavedChangesGuard = ({
   skipWhenSigned = true,
   getSaveData,
   getSubmitData,
+  preparePersist,
 }) => {
   const sd = useSourceData()
   const [fd, setFormData] = useActiveData()
-  // Lock-on-save authorship: at save/sign time, promote the current author's
-  // pending claims to locked/signed via the shared __nhAuth engine (runs in real
-  // MOIS). Replaces the preview-only prepareAuthorshipPersist path.
-  const nhAuthPrepareSave = (state, action) =>
-    (typeof window !== "undefined" && window.__nhAuth) ? window.__nhAuth.prepareSave(state, sd, action) : null
-  const nhAuthCommitSave = (prepared) => {
-    if (prepared && prepared.changed && typeof setFormData === "function") setFormData(prepared.nextState)
+  // The generated form supplies the complete, host-neutral preparation step.
+  // __nhAuth remains a fallback when this component is embedded on its own.
+  const prepareStateForPersist = (state, action) => {
+    if (typeof preparePersist === "function") return preparePersist(state, action)
+    return (typeof window !== "undefined" && window.__nhAuth)
+      ? window.__nhAuth.prepareSave(state, sd, action)
+      : null
+  }
+  const commitPreparedState = (prepared) => {
+    if (!prepared?.changed || typeof setFormData !== "function") return
+    if (prepared.nextState) {
+      setFormData(prepared.nextState)
+      return
+    }
+    if (!prepared.formData || typeof prepared.formData !== "object") return
+    setFormData((draft) => {
+      draft.field = draft.field || { data: {}, status: {}, history: [] }
+      draft.field.data = { ...(draft.field.data || {}), ...prepared.formData }
+      draft.formData = { ...(draft.formData || {}), ...prepared.formData }
+    })
   }
   const trackedValue = typeof watchedValue === "undefined" ? fd?.field?.data : watchedValue
   const trackedSnapshot = serializeGuardValue(trackedValue)
@@ -34509,7 +34519,7 @@ const UnsavedChangesGuard = ({
     [dialogLibraryId, footerActions, showPrintButton]
   )
 
-  // Real MOIS exposes load/save lifecycle on sd.lifecycleState (formReady,
+  // Compatible hosts can expose load/save lifecycle on sd.lifecycleState (formReady,
   // isQuerying, isLoading). While any of those say the host is still seeding
   // or persisting data, re-capture the baseline instead of marking dirty —
   // this absorbs useOnLoad/useOnRefresh writes and also re-arms the baseline
@@ -34550,7 +34560,7 @@ const UnsavedChangesGuard = ({
       if (skipWhenSigned && sd?.webform?.isDraft === "N") return
       if (onlyWhenChanged && !isDirty) return
       if (typeof saveDraft !== "function") return
-      const prepared = nhAuthPrepareSave(fd, "save")
+      const prepared = prepareStateForPersist(fd, "save")
       const payload = typeof getSaveData === "function"
         ? getSaveData(prepared)
         : buildDefaultSavePayload(fd, prepared?.formData)
@@ -34561,7 +34571,7 @@ const UnsavedChangesGuard = ({
     }
     window.addEventListener("beforeunload", handler)
     return () => window.removeEventListener("beforeunload", handler)
-  }, [autoSaveOnUnload, fd, getSaveData, interceptUnload, isDirty, onlyWhenChanged, sd, skipWhenSigned])
+  }, [autoSaveOnUnload, fd, getSaveData, interceptUnload, isDirty, onlyWhenChanged, preparePersist, sd, skipWhenSigned])
 
   const markSaved = (nextValue) => {
     baselineRef.current = serializeGuardValue(typeof nextValue === "undefined" ? trackedValue : nextValue)
@@ -34629,7 +34639,10 @@ const UnsavedChangesGuard = ({
       })
     }
 
-    const persistAction = actionId === "sign" ? "sign" : actionId === "submit" ? "submit" : "save"
+    // Sign & Save is the form submit transport. It must use submit authorship
+    // semantics; an explicit document Sign action is the only path that
+    // finalizes data claims as signed.
+    const persistAction = actionId === "sign" || actionId === "submit" ? "submit" : "save"
     // Encounter-note writes: the generated form registers a direct-mutation
     // flush (window.__builderEncounterNoteFlush — same handshake pattern as
     // window.__nhAuth) because the engine's save payload does not consume
@@ -34649,7 +34662,7 @@ const UnsavedChangesGuard = ({
         return
       }
     }
-    const prepared = nhAuthPrepareSave(persistFd, persistAction)
+    const prepared = prepareStateForPersist(persistFd, persistAction)
     // Sign/submit should persist the full submit payload (mapped
     // observation updates, document comment) when the form provides it.
     const isSubmitAction = actionId === "sign" || actionId === "submit"
@@ -34703,9 +34716,9 @@ const UnsavedChangesGuard = ({
     }
 
     if (actionId === "sign" && typeof signSubmit === "function") {
-      // Real MOIS signSubmit is (note, sd, fd, options)
+      // Compatible signSubmit transport is (note, sd, fd, options).
       const success = await signSubmit("", submitSd, persistFd, payload)
-      if (success !== false) nhAuthCommitSave(prepared)
+      if (success !== false) commitPreparedState(prepared)
       markSaved(prepared?.nextState?.field?.data ?? prepared?.formData ?? payload?.formData)
       if (
         success !== false &&
@@ -34727,7 +34740,7 @@ const UnsavedChangesGuard = ({
     if (isSubmitAction && typeof saveSubmit === "function") {
       // Real MOIS saveSubmit is (sd, fd, options); it has no note argument.
       const success = await saveSubmit(submitSd, persistFd, payload)
-      if (success !== false) nhAuthCommitSave(prepared)
+      if (success !== false) commitPreparedState(prepared)
       markSaved(prepared?.nextState?.field?.data ?? prepared?.formData ?? payload?.formData)
       if (
         success !== false &&
@@ -34753,7 +34766,7 @@ const UnsavedChangesGuard = ({
 
     if (typeof saveDraft === "function") {
       const success = await saveDraft(sd, persistFd, payload)
-      if (success !== false) nhAuthCommitSave(prepared)
+      if (success !== false) commitPreparedState(prepared)
       markSaved(prepared?.nextState?.field?.data ?? prepared?.formData ?? payload?.formData)
     }
     setIsOpen(false)

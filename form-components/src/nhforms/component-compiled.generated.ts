@@ -743,25 +743,23 @@ const AttestationSignOff = ({
  * __nhAuth — self-contained field/row authorship runtime for NHForms components.
  *
  * WHY THIS EXISTS
- * Real MOIS runs every form by concatenating all component sources + the form
- * into ONE string, transpiling once, and executing it inside a fixed-arg
- * Function(React, Fabric, Fluent, MoisControl, MoisFunction, MoisActions,
- * MoisHooks, Mois) wrapper. It does NOT inject the webforms authorship engine
- * (prepareAuthorshipPersist / getAuthorshipLockInfo are undefined there), so the
- * preview-only engine is dormant on export. This runtime is INLINED into each
+ * Export hosts may execute generated component sources without importing the
+ * webforms package helpers. This runtime is therefore INLINED into each
  * authorship-aware component's source (prepended by the nhforms generator and
- * the Vite loader for any component that references \`__nhAuth\`) so the logic
- * actually executes inside real MOIS.
+ * the Vite loader for any component that references \`__nhAuth\`). The generated
+ * component remains self-contained in SMOIS/FormTester and in other browser
+ * hosts that implement the same source-data/active-data contract.
  *
  * COLLISION SAFETY
  * Everything lives inside a single anonymous IIFE that assigns \`window.__nhAuth\`
  * exactly once (idempotent). There are NO top-level declarations, so prepending
- * this snippet to several components — all concatenated into one scope by real
- * MOIS — can never produce a duplicate-declaration SyntaxError.
+ * this snippet to several components in a concatenating host can never produce
+ * a duplicate-declaration SyntaxError.
  *
  * SCOPE / LIMITS (see docs runtime/mois-locking-signing-audit.md)
- * - Advisory, client-side only: MOIS stores \`field.data.__authorship\` as an
- *   opaque blob and enforces nothing server-side. Not a security boundary.
+ * - Advisory, client-side only: the host stores \`field.data.__authorship\` as an
+ *   opaque blob and enforcement remains in the generated UI. Not a security
+ *   boundary.
  * - A component can only enforce read-only on inputs IT renders. Authored values
  *   must live inside an authorship-aware component, not as loose native fields.
  * - Claims persist in \`field.data.__authorship\` (that is what MOIS saves).
@@ -833,7 +831,7 @@ const AttestationSignOff = ({
   // runtimes that only expose the auth id.
   function actorFrom(sd, state) {
     var ownerId = sd && sd.userProfile && sd.userProfile.userProfileId !== undefined && sd.userProfile.userProfileId !== null ? sd.userProfile.userProfileId : sd && sd.auth && sd.auth.userProfileId !== undefined && sd.auth.userProfileId !== null ? sd.auth.userProfileId : undefined;
-    var ownerName = state && state.field && state.field.data && state.field.data.createdBy || sd && sd.userProfile && sd.userProfile.identity && sd.userProfile.identity.fullName || sd && sd.webform && sd.webform.provider && sd.webform.provider.name || "";
+    var ownerName = sd && sd.userProfile && sd.userProfile.identity && sd.userProfile.identity.fullName || state && state.field && state.field.data && state.field.data.createdBy || sd && sd.webform && sd.webform.provider && sd.webform.provider.name || "";
     return {
       ownerId: ownerId,
       ownerName: ownerName
@@ -7346,25 +7344,23 @@ const DentalWeightConverterSchema = {
  * __nhAuth — self-contained field/row authorship runtime for NHForms components.
  *
  * WHY THIS EXISTS
- * Real MOIS runs every form by concatenating all component sources + the form
- * into ONE string, transpiling once, and executing it inside a fixed-arg
- * Function(React, Fabric, Fluent, MoisControl, MoisFunction, MoisActions,
- * MoisHooks, Mois) wrapper. It does NOT inject the webforms authorship engine
- * (prepareAuthorshipPersist / getAuthorshipLockInfo are undefined there), so the
- * preview-only engine is dormant on export. This runtime is INLINED into each
+ * Export hosts may execute generated component sources without importing the
+ * webforms package helpers. This runtime is therefore INLINED into each
  * authorship-aware component's source (prepended by the nhforms generator and
- * the Vite loader for any component that references \`__nhAuth\`) so the logic
- * actually executes inside real MOIS.
+ * the Vite loader for any component that references \`__nhAuth\`). The generated
+ * component remains self-contained in SMOIS/FormTester and in other browser
+ * hosts that implement the same source-data/active-data contract.
  *
  * COLLISION SAFETY
  * Everything lives inside a single anonymous IIFE that assigns \`window.__nhAuth\`
  * exactly once (idempotent). There are NO top-level declarations, so prepending
- * this snippet to several components — all concatenated into one scope by real
- * MOIS — can never produce a duplicate-declaration SyntaxError.
+ * this snippet to several components in a concatenating host can never produce
+ * a duplicate-declaration SyntaxError.
  *
  * SCOPE / LIMITS (see docs runtime/mois-locking-signing-audit.md)
- * - Advisory, client-side only: MOIS stores \`field.data.__authorship\` as an
- *   opaque blob and enforces nothing server-side. Not a security boundary.
+ * - Advisory, client-side only: the host stores \`field.data.__authorship\` as an
+ *   opaque blob and enforcement remains in the generated UI. Not a security
+ *   boundary.
  * - A component can only enforce read-only on inputs IT renders. Authored values
  *   must live inside an authorship-aware component, not as loose native fields.
  * - Claims persist in \`field.data.__authorship\` (that is what MOIS saves).
@@ -7436,7 +7432,7 @@ const DentalWeightConverterSchema = {
   // runtimes that only expose the auth id.
   function actorFrom(sd, state) {
     var ownerId = sd && sd.userProfile && sd.userProfile.userProfileId !== undefined && sd.userProfile.userProfileId !== null ? sd.userProfile.userProfileId : sd && sd.auth && sd.auth.userProfileId !== undefined && sd.auth.userProfileId !== null ? sd.auth.userProfileId : undefined;
-    var ownerName = state && state.field && state.field.data && state.field.data.createdBy || sd && sd.userProfile && sd.userProfile.identity && sd.userProfile.identity.fullName || sd && sd.webform && sd.webform.provider && sd.webform.provider.name || "";
+    var ownerName = sd && sd.userProfile && sd.userProfile.identity && sd.userProfile.identity.fullName || state && state.field && state.field.data && state.field.data.createdBy || sd && sd.webform && sd.webform.provider && sd.webform.provider.name || "";
     return {
       ownerId: ownerId,
       ownerName: ownerName
@@ -25292,25 +25288,23 @@ const ObservationKit = (() => {
  * __nhAuth — self-contained field/row authorship runtime for NHForms components.
  *
  * WHY THIS EXISTS
- * Real MOIS runs every form by concatenating all component sources + the form
- * into ONE string, transpiling once, and executing it inside a fixed-arg
- * Function(React, Fabric, Fluent, MoisControl, MoisFunction, MoisActions,
- * MoisHooks, Mois) wrapper. It does NOT inject the webforms authorship engine
- * (prepareAuthorshipPersist / getAuthorshipLockInfo are undefined there), so the
- * preview-only engine is dormant on export. This runtime is INLINED into each
+ * Export hosts may execute generated component sources without importing the
+ * webforms package helpers. This runtime is therefore INLINED into each
  * authorship-aware component's source (prepended by the nhforms generator and
- * the Vite loader for any component that references \`__nhAuth\`) so the logic
- * actually executes inside real MOIS.
+ * the Vite loader for any component that references \`__nhAuth\`). The generated
+ * component remains self-contained in SMOIS/FormTester and in other browser
+ * hosts that implement the same source-data/active-data contract.
  *
  * COLLISION SAFETY
  * Everything lives inside a single anonymous IIFE that assigns \`window.__nhAuth\`
  * exactly once (idempotent). There are NO top-level declarations, so prepending
- * this snippet to several components — all concatenated into one scope by real
- * MOIS — can never produce a duplicate-declaration SyntaxError.
+ * this snippet to several components in a concatenating host can never produce
+ * a duplicate-declaration SyntaxError.
  *
  * SCOPE / LIMITS (see docs runtime/mois-locking-signing-audit.md)
- * - Advisory, client-side only: MOIS stores \`field.data.__authorship\` as an
- *   opaque blob and enforces nothing server-side. Not a security boundary.
+ * - Advisory, client-side only: the host stores \`field.data.__authorship\` as an
+ *   opaque blob and enforcement remains in the generated UI. Not a security
+ *   boundary.
  * - A component can only enforce read-only on inputs IT renders. Authored values
  *   must live inside an authorship-aware component, not as loose native fields.
  * - Claims persist in \`field.data.__authorship\` (that is what MOIS saves).
@@ -25382,7 +25376,7 @@ const ObservationKit = (() => {
   // runtimes that only expose the auth id.
   function actorFrom(sd, state) {
     var ownerId = sd && sd.userProfile && sd.userProfile.userProfileId !== undefined && sd.userProfile.userProfileId !== null ? sd.userProfile.userProfileId : sd && sd.auth && sd.auth.userProfileId !== undefined && sd.auth.userProfileId !== null ? sd.auth.userProfileId : undefined;
-    var ownerName = state && state.field && state.field.data && state.field.data.createdBy || sd && sd.userProfile && sd.userProfile.identity && sd.userProfile.identity.fullName || sd && sd.webform && sd.webform.provider && sd.webform.provider.name || "";
+    var ownerName = sd && sd.userProfile && sd.userProfile.identity && sd.userProfile.identity.fullName || state && state.field && state.field.data && state.field.data.createdBy || sd && sd.webform && sd.webform.provider && sd.webform.provider.name || "";
     return {
       ownerId: ownerId,
       ownerName: ownerName
@@ -29409,25 +29403,23 @@ const RichMarkdownBlock = ({
  * __nhAuth — self-contained field/row authorship runtime for NHForms components.
  *
  * WHY THIS EXISTS
- * Real MOIS runs every form by concatenating all component sources + the form
- * into ONE string, transpiling once, and executing it inside a fixed-arg
- * Function(React, Fabric, Fluent, MoisControl, MoisFunction, MoisActions,
- * MoisHooks, Mois) wrapper. It does NOT inject the webforms authorship engine
- * (prepareAuthorshipPersist / getAuthorshipLockInfo are undefined there), so the
- * preview-only engine is dormant on export. This runtime is INLINED into each
+ * Export hosts may execute generated component sources without importing the
+ * webforms package helpers. This runtime is therefore INLINED into each
  * authorship-aware component's source (prepended by the nhforms generator and
- * the Vite loader for any component that references \`__nhAuth\`) so the logic
- * actually executes inside real MOIS.
+ * the Vite loader for any component that references \`__nhAuth\`). The generated
+ * component remains self-contained in SMOIS/FormTester and in other browser
+ * hosts that implement the same source-data/active-data contract.
  *
  * COLLISION SAFETY
  * Everything lives inside a single anonymous IIFE that assigns \`window.__nhAuth\`
  * exactly once (idempotent). There are NO top-level declarations, so prepending
- * this snippet to several components — all concatenated into one scope by real
- * MOIS — can never produce a duplicate-declaration SyntaxError.
+ * this snippet to several components in a concatenating host can never produce
+ * a duplicate-declaration SyntaxError.
  *
  * SCOPE / LIMITS (see docs runtime/mois-locking-signing-audit.md)
- * - Advisory, client-side only: MOIS stores \`field.data.__authorship\` as an
- *   opaque blob and enforces nothing server-side. Not a security boundary.
+ * - Advisory, client-side only: the host stores \`field.data.__authorship\` as an
+ *   opaque blob and enforcement remains in the generated UI. Not a security
+ *   boundary.
  * - A component can only enforce read-only on inputs IT renders. Authored values
  *   must live inside an authorship-aware component, not as loose native fields.
  * - Claims persist in \`field.data.__authorship\` (that is what MOIS saves).
@@ -29499,7 +29491,7 @@ const RichMarkdownBlock = ({
   // runtimes that only expose the auth id.
   function actorFrom(sd, state) {
     var ownerId = sd && sd.userProfile && sd.userProfile.userProfileId !== undefined && sd.userProfile.userProfileId !== null ? sd.userProfile.userProfileId : sd && sd.auth && sd.auth.userProfileId !== undefined && sd.auth.userProfileId !== null ? sd.auth.userProfileId : undefined;
-    var ownerName = state && state.field && state.field.data && state.field.data.createdBy || sd && sd.userProfile && sd.userProfile.identity && sd.userProfile.identity.fullName || sd && sd.webform && sd.webform.provider && sd.webform.provider.name || "";
+    var ownerName = sd && sd.userProfile && sd.userProfile.identity && sd.userProfile.identity.fullName || state && state.field && state.field.data && state.field.data.createdBy || sd && sd.webform && sd.webform.provider && sd.webform.provider.name || "";
     return {
       ownerId: ownerId,
       ownerName: ownerName
@@ -29751,10 +29743,10 @@ const _stripComponentPayloads = data => {
   return rest;
 };
 
-// Lock-on-save authorship: promote the current author's pending claims into the
-// saved payload via the shared __nhAuth engine (runs in real MOIS). Replaces the
-// preview-only prepareAuthorshipPersist path. (No in-memory commit here — the
-// onbeforeunload save is best-effort while the window is tearing down.)
+// Fallback for standalone component use. Generated forms inject their complete
+// host-neutral preparation callback so standard fields and NHForms claims are
+// prepared together. No in-memory commit occurs during onbeforeunload because
+// the save is best-effort while the window is tearing down.
 const _nhAuthPrepareSave = (fd, sd) => typeof window !== "undefined" && window.__nhAuth ? window.__nhAuth.prepareSave(fd, sd, "save") : null;
 
 // Draft saves are formdata-only (legacy parity: saveDraft(sd, fd, { formData,
@@ -29812,7 +29804,8 @@ const _useChangeAwareDirtyState = ({
  * SaveOnClose - Renders nothing but sets up change-aware auto-save on close.
  *
  * Props:
- * - getSaveData?: () => any
+ * - getSaveData?: (preparedPersist?: any) => any
+ * - preparePersist?: (activeState: any, action: "save") => any
  * - disabled?: boolean (readOnly is accepted as an alias — the MOIS export emits it)
  * - watchedValue?: any
  * - onlyWhenChanged?: boolean
@@ -29821,6 +29814,7 @@ const _useChangeAwareDirtyState = ({
  */
 const SaveOnClose = ({
   getSaveData,
+  preparePersist,
   disabled: disabledProp = false,
   readOnly = false,
   watchedValue,
@@ -29843,14 +29837,14 @@ const SaveOnClose = ({
     window.onbeforeunload = () => {
       if (sd?.webform?.isDraft === "N") return;
       if (onlyWhenChanged && !hasChanged) return;
-      const prepared = _nhAuthPrepareSave(fd, sd);
-      const saveData = getSaveData ? getSaveData() : _buildDefaultSavePayload(fd, prepared?.formData);
+      const prepared = typeof preparePersist === "function" ? preparePersist(fd, "save") : _nhAuthPrepareSave(fd, sd);
+      const saveData = getSaveData ? getSaveData(prepared) : _buildDefaultSavePayload(fd, prepared?.formData);
       saveDraft(sd, fd, saveData);
     };
     return () => {
       window.onbeforeunload = null;
     };
-  }, [sd, fd, getSaveData, disabled, onlyWhenChanged, hasChanged]);
+  }, [sd, fd, getSaveData, preparePersist, disabled, onlyWhenChanged, hasChanged]);
   return null;
 };
 
@@ -29861,7 +29855,7 @@ const SaveOnClose = ({
  * useSaveOnClose(getSaveData, disabledBoolean)
  *
  * Preferred signature:
- * useSaveOnClose(getSaveData, { disabled, watchedValue, onlyWhenChanged, delayCount, onDirtyChange })
+ * useSaveOnClose(getSaveData, { disabled, watchedValue, onlyWhenChanged, delayCount, onDirtyChange, preparePersist })
  */
 const useSaveOnClose = (getSaveData, options = {}) => {
   const normalizedOptions = _normalizeSaveOnCloseOptions(options);
@@ -29879,14 +29873,14 @@ const useSaveOnClose = (getSaveData, options = {}) => {
     window.onbeforeunload = () => {
       if (sd?.webform?.isDraft === "N") return;
       if ((normalizedOptions.onlyWhenChanged ?? true) && !hasChanged) return;
-      const prepared = _nhAuthPrepareSave(fd, sd);
-      const saveData = getSaveData ? getSaveData() : _buildDefaultSavePayload(fd, prepared?.formData);
+      const prepared = typeof normalizedOptions.preparePersist === "function" ? normalizedOptions.preparePersist(fd, "save") : _nhAuthPrepareSave(fd, sd);
+      const saveData = getSaveData ? getSaveData(prepared) : _buildDefaultSavePayload(fd, prepared?.formData);
       saveDraft(sd, fd, saveData);
     };
     return () => {
       window.onbeforeunload = null;
     };
-  }, [sd, fd, getSaveData, normalizedOptions.disabled, normalizedOptions.onlyWhenChanged, hasChanged]);
+  }, [sd, fd, getSaveData, normalizedOptions.disabled, normalizedOptions.onlyWhenChanged, normalizedOptions.preparePersist, hasChanged]);
   return {
     hasChanged,
     markSaved
@@ -35827,25 +35821,23 @@ const SubformScoring = props => {
  * __nhAuth — self-contained field/row authorship runtime for NHForms components.
  *
  * WHY THIS EXISTS
- * Real MOIS runs every form by concatenating all component sources + the form
- * into ONE string, transpiling once, and executing it inside a fixed-arg
- * Function(React, Fabric, Fluent, MoisControl, MoisFunction, MoisActions,
- * MoisHooks, Mois) wrapper. It does NOT inject the webforms authorship engine
- * (prepareAuthorshipPersist / getAuthorshipLockInfo are undefined there), so the
- * preview-only engine is dormant on export. This runtime is INLINED into each
+ * Export hosts may execute generated component sources without importing the
+ * webforms package helpers. This runtime is therefore INLINED into each
  * authorship-aware component's source (prepended by the nhforms generator and
- * the Vite loader for any component that references \`__nhAuth\`) so the logic
- * actually executes inside real MOIS.
+ * the Vite loader for any component that references \`__nhAuth\`). The generated
+ * component remains self-contained in SMOIS/FormTester and in other browser
+ * hosts that implement the same source-data/active-data contract.
  *
  * COLLISION SAFETY
  * Everything lives inside a single anonymous IIFE that assigns \`window.__nhAuth\`
  * exactly once (idempotent). There are NO top-level declarations, so prepending
- * this snippet to several components — all concatenated into one scope by real
- * MOIS — can never produce a duplicate-declaration SyntaxError.
+ * this snippet to several components in a concatenating host can never produce
+ * a duplicate-declaration SyntaxError.
  *
  * SCOPE / LIMITS (see docs runtime/mois-locking-signing-audit.md)
- * - Advisory, client-side only: MOIS stores \`field.data.__authorship\` as an
- *   opaque blob and enforces nothing server-side. Not a security boundary.
+ * - Advisory, client-side only: the host stores \`field.data.__authorship\` as an
+ *   opaque blob and enforcement remains in the generated UI. Not a security
+ *   boundary.
  * - A component can only enforce read-only on inputs IT renders. Authored values
  *   must live inside an authorship-aware component, not as loose native fields.
  * - Claims persist in \`field.data.__authorship\` (that is what MOIS saves).
@@ -35917,7 +35909,7 @@ const SubformScoring = props => {
   // runtimes that only expose the auth id.
   function actorFrom(sd, state) {
     var ownerId = sd && sd.userProfile && sd.userProfile.userProfileId !== undefined && sd.userProfile.userProfileId !== null ? sd.userProfile.userProfileId : sd && sd.auth && sd.auth.userProfileId !== undefined && sd.auth.userProfileId !== null ? sd.auth.userProfileId : undefined;
-    var ownerName = state && state.field && state.field.data && state.field.data.createdBy || sd && sd.userProfile && sd.userProfile.identity && sd.userProfile.identity.fullName || sd && sd.webform && sd.webform.provider && sd.webform.provider.name || "";
+    var ownerName = sd && sd.userProfile && sd.userProfile.identity && sd.userProfile.identity.fullName || state && state.field && state.field.data && state.field.data.createdBy || sd && sd.webform && sd.webform.provider && sd.webform.provider.name || "";
     return {
       ownerId: ownerId,
       ownerName: ownerName
@@ -36360,16 +36352,39 @@ const UnsavedChangesGuard = ({
   closeAfterAction = false,
   skipWhenSigned = true,
   getSaveData,
-  getSubmitData
+  getSubmitData,
+  preparePersist
 }) => {
   const sd = useSourceData();
   const [fd, setFormData] = useActiveData();
-  // Lock-on-save authorship: at save/sign time, promote the current author's
-  // pending claims to locked/signed via the shared __nhAuth engine (runs in real
-  // MOIS). Replaces the preview-only prepareAuthorshipPersist path.
-  const nhAuthPrepareSave = (state, action) => typeof window !== "undefined" && window.__nhAuth ? window.__nhAuth.prepareSave(state, sd, action) : null;
-  const nhAuthCommitSave = prepared => {
-    if (prepared && prepared.changed && typeof setFormData === "function") setFormData(prepared.nextState);
+  // The generated form supplies the complete, host-neutral preparation step.
+  // __nhAuth remains a fallback when this component is embedded on its own.
+  const prepareStateForPersist = (state, action) => {
+    if (typeof preparePersist === "function") return preparePersist(state, action);
+    return typeof window !== "undefined" && window.__nhAuth ? window.__nhAuth.prepareSave(state, sd, action) : null;
+  };
+  const commitPreparedState = prepared => {
+    if (!prepared?.changed || typeof setFormData !== "function") return;
+    if (prepared.nextState) {
+      setFormData(prepared.nextState);
+      return;
+    }
+    if (!prepared.formData || typeof prepared.formData !== "object") return;
+    setFormData(draft => {
+      draft.field = draft.field || {
+        data: {},
+        status: {},
+        history: []
+      };
+      draft.field.data = {
+        ...(draft.field.data || {}),
+        ...prepared.formData
+      };
+      draft.formData = {
+        ...(draft.formData || {}),
+        ...prepared.formData
+      };
+    });
   };
   const trackedValue = typeof watchedValue === "undefined" ? fd?.field?.data : watchedValue;
   const trackedSnapshot = serializeGuardValue(trackedValue);
@@ -36381,7 +36396,7 @@ const UnsavedChangesGuard = ({
   const actionItems = useMemo(() => normalizeGuardActions(actions), [actions]);
   const footerActionItems = useMemo(() => normalizeFooterActions(footerActions, dialogLibraryId, showPrintButton), [dialogLibraryId, footerActions, showPrintButton]);
 
-  // Real MOIS exposes load/save lifecycle on sd.lifecycleState (formReady,
+  // Compatible hosts can expose load/save lifecycle on sd.lifecycleState (formReady,
   // isQuerying, isLoading). While any of those say the host is still seeding
   // or persisting data, re-capture the baseline instead of marking dirty —
   // this absorbs useOnLoad/useOnRefresh writes and also re-arms the baseline
@@ -36414,7 +36429,7 @@ const UnsavedChangesGuard = ({
       if (skipWhenSigned && sd?.webform?.isDraft === "N") return;
       if (onlyWhenChanged && !isDirty) return;
       if (typeof saveDraft !== "function") return;
-      const prepared = nhAuthPrepareSave(fd, "save");
+      const prepared = prepareStateForPersist(fd, "save");
       const payload = typeof getSaveData === "function" ? getSaveData(prepared) : buildDefaultSavePayload(fd, prepared?.formData);
       // Best-effort only (legacy SaveOnClose semantics): the async save may
       // not complete if the host tears the window down immediately. Never
@@ -36423,7 +36438,7 @@ const UnsavedChangesGuard = ({
     };
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
-  }, [autoSaveOnUnload, fd, getSaveData, interceptUnload, isDirty, onlyWhenChanged, sd, skipWhenSigned]);
+  }, [autoSaveOnUnload, fd, getSaveData, interceptUnload, isDirty, onlyWhenChanged, preparePersist, sd, skipWhenSigned]);
   const markSaved = nextValue => {
     baselineRef.current = serializeGuardValue(typeof nextValue === "undefined" ? trackedValue : nextValue);
     saveSettleRef.current = 2;
@@ -36486,7 +36501,11 @@ const UnsavedChangesGuard = ({
         Object.assign(draft.formData, domFieldValues);
       });
     }
-    const persistAction = actionId === "sign" ? "sign" : actionId === "submit" ? "submit" : "save";
+
+    // Sign & Save is the form submit transport. It must use submit authorship
+    // semantics; an explicit document Sign action is the only path that
+    // finalizes data claims as signed.
+    const persistAction = actionId === "sign" || actionId === "submit" ? "submit" : "save";
     // Encounter-note writes: the generated form registers a direct-mutation
     // flush (window.__builderEncounterNoteFlush — same handshake pattern as
     // window.__nhAuth) because the engine's save payload does not consume
@@ -36502,7 +36521,7 @@ const UnsavedChangesGuard = ({
         return;
       }
     }
-    const prepared = nhAuthPrepareSave(persistFd, persistAction);
+    const prepared = prepareStateForPersist(persistFd, persistAction);
     // Sign/submit should persist the full submit payload (mapped
     // observation updates, document comment) when the form provides it.
     const isSubmitAction = actionId === "sign" || actionId === "submit";
@@ -36538,9 +36557,9 @@ const UnsavedChangesGuard = ({
       }
     }
     if (actionId === "sign" && typeof signSubmit === "function") {
-      // Real MOIS signSubmit is (note, sd, fd, options)
+      // Compatible signSubmit transport is (note, sd, fd, options).
       const success = await signSubmit("", submitSd, persistFd, payload);
-      if (success !== false) nhAuthCommitSave(prepared);
+      if (success !== false) commitPreparedState(prepared);
       markSaved(prepared?.nextState?.field?.data ?? prepared?.formData ?? payload?.formData);
       if (success !== false && typeof window !== "undefined" && typeof window.__builderHttpJsonFlush === "function") {
         try {
@@ -36557,7 +36576,7 @@ const UnsavedChangesGuard = ({
     if (isSubmitAction && typeof saveSubmit === "function") {
       // Real MOIS saveSubmit is (sd, fd, options); it has no note argument.
       const success = await saveSubmit(submitSd, persistFd, payload);
-      if (success !== false) nhAuthCommitSave(prepared);
+      if (success !== false) commitPreparedState(prepared);
       markSaved(prepared?.nextState?.field?.data ?? prepared?.formData ?? payload?.formData);
       if (success !== false && typeof window !== "undefined" && typeof window.__builderHttpJsonFlush === "function") {
         try {
@@ -36577,7 +36596,7 @@ const UnsavedChangesGuard = ({
     }
     if (typeof saveDraft === "function") {
       const success = await saveDraft(sd, persistFd, payload);
-      if (success !== false) nhAuthCommitSave(prepared);
+      if (success !== false) commitPreparedState(prepared);
       markSaved(prepared?.nextState?.field?.data ?? prepared?.formData ?? payload?.formData);
     }
     setIsOpen(false);
@@ -36835,7 +36854,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './ServiceRequests/index.jsx': ["ServiceRequests","ServiceRequestsFields","activeServiceRequests","orderDateDesc"],
   './SignaturePad/index.jsx': ["B","D","L","O","SignaturePad","SignaturePadLib","T","U","W","_","__exports","a","c","canvas","canvasRef","container","containerRef","containerStyle","dataUrl","define","e","exports","f","h","handleClear","handleEndStroke","i","k","l","m","module","o","p","pad","padRef","r","ratio","readOnly","readOnlyImageStyle","resizeCanvas","s","savedDataUrl","t","theme","u","width","y"],
   './SubformScoring/index.jsx': ["AnswerSummaryItem","CalculationSummaryItem","DataFieldSummaryItem","DataInterpretationSummaryItem","FormSessionProvider","InterpretationSummaryItem","MOIS_WRITE_ID_FALLBACK_PATHS","MOIS_WRITE_MUTATIONS","MOIS_WRITE_MUTATION_KEYS","ProgressSummaryItem","ScoreSummaryItem","SubformScoring","SubformScoringInner","_LOCAL_INPUT_STYLE","_LOCAL_RADIO_GROUP_STYLE","_LOCAL_TEXTAREA_STYLE","_REPORT_ITEM_FORMATS","__SubformScoringSessionContext","__cloneSubformScoringSessionValue","_buildDataEntryRenderGroups","_buildDataEntrySnapshot","_buildFormattedObservationReport","_buildMappedPayload","_buildScaleLegendSignature","_buildScaleOptions","_buildScoreMap","_buildSubformFormDataWrites","_buildSubformObservationReport","_buildSubformObservationUpdates","_calculationIncompleteBehavior","_calculationIncompleteText","_calculationPresentationValue","_clampDataEntryNumberValue","_collectScoreCandidates","_computeMorphineEquivalent","_createPreparedSessionSetter","_dataEntryFieldContainerStyle","_evaluateDataEntryVisibility","_evaluateExpression","_findQuestionOptionForAnswer","_formatBounds","_formatCalculatorDisplayValue","_formatNumericValue","_getInterpretation","_getScoreFromValue","_getSelectableOptionNumericValue","_getValueAtPath","_isHeadingField","_isInRange","_isLoincDataEntryField","_isMeaningfulValue","_isScaleChoiceSelected","_isSelectableOptionSelected","_latestObservationDefault","_normalizeChartPreferenceValue","_normalizeScoreToken","_normalizeSelectableOptions","_optionMatchesValue","_recordSubformActionPayload","_resolveChecklistOptions","_resolveDataEntryDisplayValue","_resolveFieldDefaultValue","_resolveFieldEmptyNumericValue","_resolveFieldWidthBasis","_resolveObservationTemplate","_resolvePathValue","_resolveQuestionOptions","_resolveSelectableBinaryOptions","_resolveWriteActionId","_serializeSelectableValue","_setSubformFormDataOutputs","_setSubformObservationPayloads","_setValueAtPath","_shouldShowDataEntryHelpText","_stringifyObservationValue","_toDisplayValue","_toNumericValue","_toPathSegments","_usesStructuredSelectableOptions","abs","action","actionPayload","adjusted","aliases","allValues","allVars","answer","answerScore","answerableFields","answered","answers","aspect","barBg","barFill","baseDose","baseEquivalentDoseMg","baseEquivalentDoseRaw","basis","binding","boundedPrecision","buttonRowStyle","cadFieldId","calc","calculatedExpressions","calculatedTotals","calculation","calculatorFields","candidate","candidateKeys","candidatePaths","candidates","ceil","checked","checkedFromConfig","checkedOption","checklist","cloneFormSessionState","code","columnTemplate","commentsField","commonProps","componentPayloads","computedFallback","configuredDialogMinWidth","configuredField","configuredMatrixGroupId","configuredMax","configuredMin","container","containerStyle","controlLabel","controllerId","conversions","createdBy","current","currentSignature","cursor","dataEntryAction","dataEntryCalculations","dataEntryCalculatorConfig","dataEntryFieldById","dataEntryFields","dataEntryRenderGroups","dataEntrySnapshot","dataEntryValues","dateField","day","defaultValue","defaults","description","desiredDialogMinWidth","dialogContentProps","dialogMinWidth","dialogTitle","direct","displayText","displayValue","dose","doseColumnLabel","effectiveInitialData","entry","equivalentColumnLabel","equivalentDose","equivalentDoseMg","evaluated","explicitDefault","expressionVars","extracted","factor","fallbackOptions","field","fieldExists","fields","fieldsForProgress","floor","flushMatrixBuffer","flushScaleStack","formDataWrites","formatted","fromCalculation","functionNames","generatedIndex","generatedVars","getCalculationConfig","getDataEntryFieldConfig","getQuestionConfig","getTotalConfig","groups","handleCommitToParent","handleOpenChange","hasAnyAnswers","hasAnyRowValue","hasExternalDataEntryStore","hasRequiredId","heading","history","iif","inputFieldId","inputType","inputValue","interpretation","isComplete","isDarkMode","isDataEntryMode","isDialogOpen","isHeading","isMatrixCandidate","isMorphineCalculatorMode","key","label","labelStyle","latest","left","leftDate","lines","map","match","matched","matchedOption","matrixBuffer","matrixGroupId","max","meetsMax","meetsMin","meqCalculationId","meqDisplay","meqValue","mergeFormSessionState","min","minSymbol","mod","modalProps","month","next","nextGroup","nextKey","nextOption","nextRaw","nextState","nextValue","normalize","normalized","normalizedButtonIconName","normalizedOptionMap","normalizedOptions","normalizedSessionData","normalizedType","normalizedValues","numeric","numericValue","numericValues","observationDefault","observationRows","observations","oldId","oldObservation","option","optionCount","optionList","optionMap","optionMatch","optionScoreMap","optionTokens","optionValue","options","parsed","payload","payloadMap","pendingDefaults","places","precision","precisionRaw","prepareCompletionState","prepared","preparedSession","prevIndex","previousEntry","previousField","previousScaleSignature","printScore","printed","progress","providedOptions","question","questionOptions","questionsById","raw","rawConfig","rawOptions","rawRows","rawType","rawValue","renderBloodGlucoseReadingEditor","renderDataEntryField","renderDataEntryScaleMatrix","renderDataEntryScaleStack","renderMorphineCalculator","renderNumberInput","renderStyle","renderSummaryItem","replacement","report","required","requiredFields","resolved","resolvedId","resolvedScore","response","result","resultColumnLabel","results","right","rightDate","root","round","rowId","rowLabels","rowValues","rows","rule","runMutation","runtime","scaleMatch","scaleOptions","scaleStack","scopedSetter","score","scoreMap","sd","segments","selected","selectedOption","selectedWithSetter","sessionContext","sessionSetFormData","sessionState","setDataEntryValue","setDialogOpen","setFormData","shouldClose","shouldHideButtonIcon","shouldUseDefaultButtonIcon","showCalculationsInModal","showItems","showLegend","showLegendForScale","showRequiredHint","signature","snapshot","source","sourceRoot","spec","stackMinWidth","stackedGroups","step","style","subformIncomplete","summaryContainerStyle","summaryItemsStyle","summaryLayout","target","termQuestionId","text","theme","today","token","tokenMatches","total","totalCalculationId","totalFallback","totalFromCalculation","totalLabel","totalValue","totals","triggerButtonIconProps","trimmed","uncheckedFromConfig","uncheckedOption","uniqueTokens","usFieldId","useBloodGlucoseReadingLayout","useFormSessionData","useRadio","useToggleSwitch","value","values","variableFieldIds","variables","vars","widestScaleMinWidth","writeDefinition","writeKey","writeMutationRunners","year"],
-  './UnsavedChangesGuard/index.jsx': ["ButtonComponent","DCOUpdates","DEFAULT_WINDOW_HOURS","UnsavedChangesGuard","actionItems","actor","actorFrom","addHoursIso","baselineRef","buildDefaultSavePayload","buildDefaultSubmitPayload","buildKey","c","changed","ck","claim","claims","closeWindow","collectComponentPayloads","collectDomFieldValues","commitSave","componentPayload","confirmUnloadActive","current","d","data","dcoGroups","disabled","domFieldValues","editableUntil","encounterNotesSaved","euDate","existing","expired","field","fieldData","fieldId","footerActionItems","footerActions","formData","formatTimestamp","guardSkipsWhenSigned","handleAction","handler","hasLifecycleSignals","host","inputType","isNonEmpty","isOwner","isSettling","isSigned","isSubmitAction","keepStatus","key","label","lifecycle","linkedPanels","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","markSaved","mergeFieldValuesIntoState","narratives","nextStatus","nextValue","nhAuthCommitSave","nhAuthPrepareSave","normalizeFooterActions","normalizeGuardActions","normalizeGuardValue","normalizeStore","now","nowIso","ownerId","ownerName","ownerRefresh","pad2","panelUpdates","panels","payload","payloads","pending","persistAction","persistFd","policyAppliesToAction","prepareSave","prepared","primaryAction","promptText","raw","readStore","release","renderFooterAction","resolveNow","sameActor","saveSettleRef","savedWebform","sd","secondaryActions","serializeGuardValue","store","stripComponentPayloads","submitSd","success","tagName","trackedSnapshot","trackedValue","ts","untilSelf","useHostConfirmUnload","values","warmupRef","webformGroups","webformUpdate","windowHours"],
+  './UnsavedChangesGuard/index.jsx': ["ButtonComponent","DCOUpdates","DEFAULT_WINDOW_HOURS","UnsavedChangesGuard","actionItems","actor","actorFrom","addHoursIso","baselineRef","buildDefaultSavePayload","buildDefaultSubmitPayload","buildKey","c","changed","ck","claim","claims","closeWindow","collectComponentPayloads","collectDomFieldValues","commitPreparedState","commitSave","componentPayload","confirmUnloadActive","current","d","data","dcoGroups","disabled","domFieldValues","editableUntil","encounterNotesSaved","euDate","existing","expired","field","fieldData","fieldId","footerActionItems","footerActions","formData","formatTimestamp","guardSkipsWhenSigned","handleAction","handler","hasLifecycleSignals","host","inputType","isNonEmpty","isOwner","isSettling","isSigned","isSubmitAction","keepStatus","key","label","lifecycle","linkedPanels","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","markSaved","mergeFieldValuesIntoState","narratives","nextStatus","nextValue","normalizeFooterActions","normalizeGuardActions","normalizeGuardValue","normalizeStore","now","nowIso","ownerId","ownerName","ownerRefresh","pad2","panelUpdates","panels","payload","payloads","pending","persistAction","persistFd","policyAppliesToAction","prepareSave","prepareStateForPersist","prepared","primaryAction","promptText","raw","readStore","release","renderFooterAction","resolveNow","sameActor","saveSettleRef","savedWebform","sd","secondaryActions","serializeGuardValue","store","stripComponentPayloads","submitSd","success","tagName","trackedSnapshot","trackedValue","ts","untilSelf","useHostConfirmUnload","values","warmupRef","webformGroups","webformUpdate","windowHours"],
   './UseChangeWatch/index.jsx': ["_defaultCompare","_normalizeWatchOptions","baselineRef","compare","delayCount","dirtyRef","disabled","forcedDirtyRef","isDirty","normalizedOptions","onDirtyChange","renderCountRef","setChanged","useChangeWatch"],
   './ValueSetObservationField/index.jsx': ["RuntimeCodedChoice","ValueSetObservationField"],
 };

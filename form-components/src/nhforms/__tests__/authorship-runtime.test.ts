@@ -19,6 +19,8 @@ import React from "react";
 
 const NH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const runtimeSource = fs.readFileSync(path.join(NH, "_shared", "authorship-runtime.js"), "utf8");
+const guardSource = fs.readFileSync(path.join(NH, "UnsavedChangesGuard", "index.jsx"), "utf8");
+const saveOnCloseSource = fs.readFileSync(path.join(NH, "SaveOnClose", "index.jsx"), "utf8");
 
 // Load the runtime into an isolated fake `window` and return its __nhAuth.
 function loadRuntime(): any {
@@ -113,6 +115,34 @@ describe("__nhAuth engine — lock-on-save (pending → promote)", () => {
     expect(prepared.changed).toBe(false);
   });
 
+  it("uses the active session name when persisted data has another createdBy value", () => {
+    const state: any = { field: { data: { note: "draft", createdBy: "Original Author" } } };
+    A.claim(state, sdFor(2, "Nurse B"), FIELD, "draft", { enabled: true, lockOn: "save" }, { now: "2026-06-29T10:00:00Z" });
+    expect(state.field.data.__authorship.claims["field:note"]).toMatchObject({
+      ownerId: 2,
+      ownerName: "Nurse B",
+    });
+  });
+
+  it("keeps independently authored rows locked to their respective users after reload", () => {
+    const rowA = { scope: "row", componentId: "clinicalRows", rowKey: "row_a" };
+    const rowB = { scope: "row", componentId: "clinicalRows", rowKey: "row_b" };
+    const policy = { enabled: true, lockOn: "save", editableWindowHours: 72 };
+    const firstState: any = { field: { data: { rows: [{ _rowId: "row_a", note: "A row" }] } } };
+    A.claim(firstState, sdFor(1, "Dr A"), rowA, "A row", policy, { now: "2026-06-29T10:00:00Z" });
+    const firstSave = A.prepareSave(firstState, sdFor(1, "Dr A"), "save");
+
+    const secondState = firstSave.nextState;
+    secondState.field.data.rows.push({ _rowId: "row_b", note: "B row" });
+    A.claim(secondState, sdFor(2, "Nurse B"), rowB, "B row", policy, { now: "2026-06-29T11:00:00Z" });
+    const secondSave = A.prepareSave(secondState, sdFor(2, "Nurse B"), "save");
+
+    expect(secondSave.formData.__authorship.claims["row:clinicalRows:row_a"]).toMatchObject({ ownerId: 1, ownerName: "Dr A" });
+    expect(secondSave.formData.__authorship.claims["row:clinicalRows:row_b"]).toMatchObject({ ownerId: 2, ownerName: "Nurse B" });
+    expect(A.lockInfo(secondSave.nextState, sdFor(2, "Nurse B"), rowA, { ownerId: 2, ownerName: "Nurse B" }).locked).toBe(true);
+    expect(A.lockInfo(secondSave.nextState, sdFor(2, "Nurse B"), rowB, { ownerId: 2, ownerName: "Nurse B" }).locked).toBe(false);
+  });
+
   it("sign promotes a lockOn:'save' pending claim to signed (terminal)", () => {
     const state: any = { field: { data: { note: "draft by A" } } };
     A.claim(state, sdFor(1, "Dr A"), FIELD, "draft by A", { enabled: true, lockOn: "save" }, { now: "2026-06-29T10:00:00Z" });
@@ -127,6 +157,20 @@ describe("__nhAuth engine — lock-on-save (pending → promote)", () => {
     expect(onSave.changed).toBe(false);
     const onSign = A.prepareSave(state, sdFor(1, "Dr A"), "sign");
     expect(onSign.formData.__authorship.claims["field:note"].status).toBe("signed");
+  });
+});
+
+describe("portable persistence handshakes", () => {
+  it("lets the generated form prepare guarded saves before the NHForms fallback", () => {
+    expect(guardSource).toContain("preparePersist,");
+    expect(guardSource).toContain('if (typeof preparePersist === "function") return preparePersist(state, action)');
+    expect(guardSource).toContain('const prepared = prepareStateForPersist(persistFd, persistAction)');
+    expect(guardSource).toContain('const persistAction = actionId === "sign" || actionId === "submit" ? "submit" : "save"');
+  });
+
+  it("uses the same injected preparation callback for save-on-close", () => {
+    expect(saveOnCloseSource).toContain('preparePersist(fd, "save")');
+    expect(saveOnCloseSource).toContain("getSaveData(prepared)");
   });
 });
 

@@ -24,10 +24,10 @@ const _stripComponentPayloads = (data) => {
   return rest
 }
 
-// Lock-on-save authorship: promote the current author's pending claims into the
-// saved payload via the shared __nhAuth engine (runs in real MOIS). Replaces the
-// preview-only prepareAuthorshipPersist path. (No in-memory commit here — the
-// onbeforeunload save is best-effort while the window is tearing down.)
+// Fallback for standalone component use. Generated forms inject their complete
+// host-neutral preparation callback so standard fields and NHForms claims are
+// prepared together. No in-memory commit occurs during onbeforeunload because
+// the save is best-effort while the window is tearing down.
 const _nhAuthPrepareSave = (fd, sd) =>
   (typeof window !== "undefined" && window.__nhAuth) ? window.__nhAuth.prepareSave(fd, sd, "save") : null
 
@@ -93,7 +93,8 @@ const _useChangeAwareDirtyState = ({
  * SaveOnClose - Renders nothing but sets up change-aware auto-save on close.
  *
  * Props:
- * - getSaveData?: () => any
+ * - getSaveData?: (preparedPersist?: any) => any
+ * - preparePersist?: (activeState: any, action: "save") => any
  * - disabled?: boolean (readOnly is accepted as an alias — the MOIS export emits it)
  * - watchedValue?: any
  * - onlyWhenChanged?: boolean
@@ -102,6 +103,7 @@ const _useChangeAwareDirtyState = ({
  */
 const SaveOnClose = ({
   getSaveData,
+  preparePersist,
   disabled: disabledProp = false,
   readOnly = false,
   watchedValue,
@@ -127,9 +129,11 @@ const SaveOnClose = ({
       if (sd?.webform?.isDraft === "N") return
       if (onlyWhenChanged && !hasChanged) return
 
-      const prepared = _nhAuthPrepareSave(fd, sd)
+      const prepared = typeof preparePersist === "function"
+        ? preparePersist(fd, "save")
+        : _nhAuthPrepareSave(fd, sd)
       const saveData = getSaveData
-        ? getSaveData()
+        ? getSaveData(prepared)
         : _buildDefaultSavePayload(fd, prepared?.formData)
 
       saveDraft(sd, fd, saveData)
@@ -138,7 +142,7 @@ const SaveOnClose = ({
     return () => {
       window.onbeforeunload = null
     }
-  }, [sd, fd, getSaveData, disabled, onlyWhenChanged, hasChanged])
+  }, [sd, fd, getSaveData, preparePersist, disabled, onlyWhenChanged, hasChanged])
 
   return null
 }
@@ -150,7 +154,7 @@ const SaveOnClose = ({
  * useSaveOnClose(getSaveData, disabledBoolean)
  *
  * Preferred signature:
- * useSaveOnClose(getSaveData, { disabled, watchedValue, onlyWhenChanged, delayCount, onDirtyChange })
+ * useSaveOnClose(getSaveData, { disabled, watchedValue, onlyWhenChanged, delayCount, onDirtyChange, preparePersist })
  */
 const useSaveOnClose = (getSaveData, options = {}) => {
   const normalizedOptions = _normalizeSaveOnCloseOptions(options)
@@ -174,9 +178,11 @@ const useSaveOnClose = (getSaveData, options = {}) => {
       if (sd?.webform?.isDraft === "N") return
       if ((normalizedOptions.onlyWhenChanged ?? true) && !hasChanged) return
 
-      const prepared = _nhAuthPrepareSave(fd, sd)
+      const prepared = typeof normalizedOptions.preparePersist === "function"
+        ? normalizedOptions.preparePersist(fd, "save")
+        : _nhAuthPrepareSave(fd, sd)
       const saveData = getSaveData
-        ? getSaveData()
+        ? getSaveData(prepared)
         : _buildDefaultSavePayload(fd, prepared?.formData)
 
       saveDraft(sd, fd, saveData)
@@ -185,7 +191,7 @@ const useSaveOnClose = (getSaveData, options = {}) => {
     return () => {
       window.onbeforeunload = null
     }
-  }, [sd, fd, getSaveData, normalizedOptions.disabled, normalizedOptions.onlyWhenChanged, hasChanged])
+  }, [sd, fd, getSaveData, normalizedOptions.disabled, normalizedOptions.onlyWhenChanged, normalizedOptions.preparePersist, hasChanged])
 
   return {
     hasChanged,

@@ -2,25 +2,23 @@
  * __nhAuth — self-contained field/row authorship runtime for NHForms components.
  *
  * WHY THIS EXISTS
- * Real MOIS runs every form by concatenating all component sources + the form
- * into ONE string, transpiling once, and executing it inside a fixed-arg
- * Function(React, Fabric, Fluent, MoisControl, MoisFunction, MoisActions,
- * MoisHooks, Mois) wrapper. It does NOT inject the webforms authorship engine
- * (prepareAuthorshipPersist / getAuthorshipLockInfo are undefined there), so the
- * preview-only engine is dormant on export. This runtime is INLINED into each
+ * Export hosts may execute generated component sources without importing the
+ * webforms package helpers. This runtime is therefore INLINED into each
  * authorship-aware component's source (prepended by the nhforms generator and
- * the Vite loader for any component that references `__nhAuth`) so the logic
- * actually executes inside real MOIS.
+ * the Vite loader for any component that references `__nhAuth`). The generated
+ * component remains self-contained in SMOIS/FormTester and in other browser
+ * hosts that implement the same source-data/active-data contract.
  *
  * COLLISION SAFETY
  * Everything lives inside a single anonymous IIFE that assigns `window.__nhAuth`
  * exactly once (idempotent). There are NO top-level declarations, so prepending
- * this snippet to several components — all concatenated into one scope by real
- * MOIS — can never produce a duplicate-declaration SyntaxError.
+ * this snippet to several components in a concatenating host can never produce
+ * a duplicate-declaration SyntaxError.
  *
  * SCOPE / LIMITS (see docs runtime/mois-locking-signing-audit.md)
- * - Advisory, client-side only: MOIS stores `field.data.__authorship` as an
- *   opaque blob and enforces nothing server-side. Not a security boundary.
+ * - Advisory, client-side only: the host stores `field.data.__authorship` as an
+ *   opaque blob and enforcement remains in the generated UI. Not a security
+ *   boundary.
  * - A component can only enforce read-only on inputs IT renders. Authored values
  *   must live inside an authorship-aware component, not as loose native fields.
  * - Claims persist in `field.data.__authorship` (that is what MOIS saves).
@@ -117,8 +115,8 @@
             ? sd.auth.userProfileId
             : undefined;
     var ownerName =
-      (state && state.field && state.field.data && state.field.data.createdBy) ||
       (sd && sd.userProfile && sd.userProfile.identity && sd.userProfile.identity.fullName) ||
+      (state && state.field && state.field.data && state.field.data.createdBy) ||
       (sd && sd.webform && sd.webform.provider && sd.webform.provider.name) ||
       "";
     return { ownerId: ownerId, ownerName: ownerName };

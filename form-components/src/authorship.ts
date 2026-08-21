@@ -201,11 +201,11 @@ export const buildAuthorshipClaimKey = ({
   return `field:${fieldId || rowKey || componentId || ''}`;
 };
 
-export const isNonEmptyValue = (value: any) => {
+export const isNonEmptyValue = (value: any): boolean => {
   if (value === null || value === undefined) return false;
   if (typeof value === 'string') return value.trim().length > 0;
-  if (Array.isArray(value)) return value.length > 0;
-  if (typeof value === 'object') return Object.keys(value).length > 0;
+  if (Array.isArray(value)) return value.some((entry) => isNonEmptyValue(entry));
+  if (typeof value === 'object') return Object.values(value).some((entry) => isNonEmptyValue(entry));
   return true;
 };
 
@@ -228,16 +228,16 @@ export const valuesMatch = (left: any, right: any) => {
 };
 
 export const hasMeaningfulAuthorshipChange = (currentValue: any, baseValue: any) => {
-  if (!isNonEmptyValue(currentValue)) return false;
-  return !valuesMatch(currentValue, baseValue);
+  return !valuesMatch(currentValue, baseValue)
+    && (isNonEmptyValue(currentValue) || isNonEmptyValue(baseValue));
 };
 
 export const getAuthorshipOwnerName = (sourceData?: any, activeData?: any, fallback?: string) => {
   return (
     fallback
+    || sourceData?.userProfile?.identity?.fullName
     || activeData?.field?.data?.createdBy
     || activeData?.formData?.createdBy
-    || sourceData?.userProfile?.identity?.fullName
     || sourceData?.webform?.provider?.name
     || sourceData?.webform?.encounter?.attendingProvider?.display
     || ''

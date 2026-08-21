@@ -199,16 +199,30 @@ const UnsavedChangesGuard = ({
   skipWhenSigned = true,
   getSaveData,
   getSubmitData,
+  preparePersist,
 }) => {
   const sd = useSourceData()
   const [fd, setFormData] = useActiveData()
-  // Lock-on-save authorship: at save/sign time, promote the current author's
-  // pending claims to locked/signed via the shared __nhAuth engine (runs in real
-  // MOIS). Replaces the preview-only prepareAuthorshipPersist path.
-  const nhAuthPrepareSave = (state, action) =>
-    (typeof window !== "undefined" && window.__nhAuth) ? window.__nhAuth.prepareSave(state, sd, action) : null
-  const nhAuthCommitSave = (prepared) => {
-    if (prepared && prepared.changed && typeof setFormData === "function") setFormData(prepared.nextState)
+  // The generated form supplies the complete, host-neutral preparation step.
+  // __nhAuth remains a fallback when this component is embedded on its own.
+  const prepareStateForPersist = (state, action) => {
+    if (typeof preparePersist === "function") return preparePersist(state, action)
+    return (typeof window !== "undefined" && window.__nhAuth)
+      ? window.__nhAuth.prepareSave(state, sd, action)
+      : null
+  }
+  const commitPreparedState = (prepared) => {
+    if (!prepared?.changed || typeof setFormData !== "function") return
+    if (prepared.nextState) {
+      setFormData(prepared.nextState)
+      return
+    }
+    if (!prepared.formData || typeof prepared.formData !== "object") return
+    setFormData((draft) => {
+      draft.field = draft.field || { data: {}, status: {}, history: [] }
+      draft.field.data = { ...(draft.field.data || {}), ...prepared.formData }
+      draft.formData = { ...(draft.formData || {}), ...prepared.formData }
+    })
   }
   const trackedValue = typeof watchedValue === "undefined" ? fd?.field?.data : watchedValue
   const trackedSnapshot = serializeGuardValue(trackedValue)
@@ -223,7 +237,7 @@ const UnsavedChangesGuard = ({
     [dialogLibraryId, footerActions, showPrintButton]
   )
 
-  // Real MOIS exposes load/save lifecycle on sd.lifecycleState (formReady,
+  // Compatible hosts can expose load/save lifecycle on sd.lifecycleState (formReady,
   // isQuerying, isLoading). While any of those say the host is still seeding
   // or persisting data, re-capture the baseline instead of marking dirty —
   // this absorbs useOnLoad/useOnRefresh writes and also re-arms the baseline
@@ -264,7 +278,7 @@ const UnsavedChangesGuard = ({
       if (skipWhenSigned && sd?.webform?.isDraft === "N") return
       if (onlyWhenChanged && !isDirty) return
       if (typeof saveDraft !== "function") return
-      const prepared = nhAuthPrepareSave(fd, "save")
+      const prepared = prepareStateForPersist(fd, "save")
       const payload = typeof getSaveData === "function"
         ? getSaveData(prepared)
         : buildDefaultSavePayload(fd, prepared?.formData)
@@ -275,7 +289,7 @@ const UnsavedChangesGuard = ({
     }
     window.addEventListener("beforeunload", handler)
     return () => window.removeEventListener("beforeunload", handler)
-  }, [autoSaveOnUnload, fd, getSaveData, interceptUnload, isDirty, onlyWhenChanged, sd, skipWhenSigned])
+  }, [autoSaveOnUnload, fd, getSaveData, interceptUnload, isDirty, onlyWhenChanged, preparePersist, sd, skipWhenSigned])
 
   const markSaved = (nextValue) => {
     baselineRef.current = serializeGuardValue(typeof nextValue === "undefined" ? trackedValue : nextValue)
@@ -343,7 +357,10 @@ const UnsavedChangesGuard = ({
       })
     }
 
-    const persistAction = actionId === "sign" ? "sign" : actionId === "submit" ? "submit" : "save"
+    // Sign & Save is the form submit transport. It must use submit authorship
+    // semantics; an explicit document Sign action is the only path that
+    // finalizes data claims as signed.
+    const persistAction = actionId === "sign" || actionId === "submit" ? "submit" : "save"
     // Encounter-note writes: the generated form registers a direct-mutation
     // flush (window.__builderEncounterNoteFlush — same handshake pattern as
     // window.__nhAuth) because the engine's save payload does not consume
@@ -363,7 +380,7 @@ const UnsavedChangesGuard = ({
         return
       }
     }
-    const prepared = nhAuthPrepareSave(persistFd, persistAction)
+    const prepared = prepareStateForPersist(persistFd, persistAction)
     // Sign/submit should persist the full submit payload (mapped
     // observation updates, document comment) when the form provides it.
     const isSubmitAction = actionId === "sign" || actionId === "submit"
@@ -417,9 +434,9 @@ const UnsavedChangesGuard = ({
     }
 
     if (actionId === "sign" && typeof signSubmit === "function") {
-      // Real MOIS signSubmit is (note, sd, fd, options)
+      // Compatible signSubmit transport is (note, sd, fd, options).
       const success = await signSubmit("", submitSd, persistFd, payload)
-      if (success !== false) nhAuthCommitSave(prepared)
+      if (success !== false) commitPreparedState(prepared)
       markSaved(prepared?.nextState?.field?.data ?? prepared?.formData ?? payload?.formData)
       if (
         success !== false &&
@@ -441,7 +458,7 @@ const UnsavedChangesGuard = ({
     if (isSubmitAction && typeof saveSubmit === "function") {
       // Real MOIS saveSubmit is (sd, fd, options); it has no note argument.
       const success = await saveSubmit(submitSd, persistFd, payload)
-      if (success !== false) nhAuthCommitSave(prepared)
+      if (success !== false) commitPreparedState(prepared)
       markSaved(prepared?.nextState?.field?.data ?? prepared?.formData ?? payload?.formData)
       if (
         success !== false &&
@@ -467,7 +484,7 @@ const UnsavedChangesGuard = ({
 
     if (typeof saveDraft === "function") {
       const success = await saveDraft(sd, persistFd, payload)
-      if (success !== false) nhAuthCommitSave(prepared)
+      if (success !== false) commitPreparedState(prepared)
       markSaved(prepared?.nextState?.field?.data ?? prepared?.formData ?? payload?.formData)
     }
     setIsOpen(false)
