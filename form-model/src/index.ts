@@ -1009,6 +1009,44 @@ export interface BuilderAlayaCareConfig {
   importReadOnlyReason?: string | null;
 }
 
+export type BuilderFormioImportStatus = "exact" | "lossy" | "unsupported";
+
+/**
+ * Source metadata retained when a field is imported from a Form.io definition.
+ * Imported executable snippets are provenance only: runtimes must never execute
+ * raw Form.io JavaScript from this contract.
+ */
+export interface BuilderFormioConfig {
+  version: 1;
+  /** User-facing source name. Omitted for generic Form.io JSON imports. */
+  sourceLabel?: string;
+  /** Stable Form.io component key used in submission.data. */
+  sourceKey: string;
+  /** Original Form.io component type. */
+  sourceType: string;
+  /** Component-tree path used for diagnostics and deterministic round-trips. */
+  sourcePath: string;
+  /** Submission data path. Containers do not add path segments; datagrids do. */
+  dataPath?: string[];
+  /** Codec required to translate Form.io's stored answer shape. */
+  answerCodec?: "identity" | "selectboxes-boolean-map" | "datagrid-rows" | "day-date";
+  /** Complete source component, retained without executing embedded code. */
+  rawComponent: Record<string, unknown>;
+  /** Questionnaire/FHIR annotations used by the Health BC eForms runtime. */
+  fhirElement?: string;
+  fhirResource?: string;
+  formioResource?: string;
+  questionnaireElement?: string;
+  /** Import fidelity for the editable canonical representation. */
+  importStatus: BuilderFormioImportStatus;
+  importNotes?: string[];
+  /**
+   * Complete source form metadata, stored on the first imported field so it
+   * survives existing builder/session/share persistence paths.
+   */
+  formRoot?: Record<string, unknown>;
+}
+
 export interface BuilderFhirCoding {
   system?: string;
   code?: string;
@@ -1361,6 +1399,9 @@ export interface BuilderField {
 
   // AlayaCare-specific export metadata
   alayaCareConfig?: BuilderAlayaCareConfig | null;
+
+  // Form.io import provenance and loss/round-trip metadata
+  formioConfig?: BuilderFormioConfig | null;
 
   // FHIR Questionnaire import/export metadata
   fhirConfig?: BuilderFhirConfig | null;
