@@ -626,6 +626,16 @@ export const EMPTY_BUILDER_WORKFLOW_CONFIG: BuilderWorkflowConfig = {
 
 export type BuilderFieldType = (typeof BUILDER_FIELD_TYPES)[number];
 
+/** Image owned by a rich-text field and referenced from Markdown by id. */
+export interface BuilderRichTextImageAsset {
+  id: string;
+  src: string;
+  alt: string;
+  title?: string | null;
+  widthPercent?: number | null;
+  alignment?: "left" | "center" | "right";
+}
+
 // Non-input block types
 export type BuilderBlockType =
   | "textBlock"
@@ -1796,6 +1806,8 @@ export interface BuilderField {
   // Rich text / markdown field config
   richTextConfig?: {
     source?: string | null;
+    /** Managed images referenced as `#mois-rich-image:<id>` from source. */
+    images?: BuilderRichTextImageAsset[];
     readOnly?: boolean;
     borderless?: boolean;
     startingMode?: "edit" | "preview" | "default";

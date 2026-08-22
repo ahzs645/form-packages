@@ -153,6 +153,30 @@ describe("RichMarkdownBlock — preview scope (ReactMarkdown available)", () => 
     expect(container.innerHTML).not.toContain("node=");
   });
 
+  it("renders managed data images with imported width, alignment, and alt text", () => {
+    const Block = loadPreviewScope();
+    render(
+      React.createElement(Block, {
+        fieldId: "coverage",
+        source: "![Coverage](#mois-rich-image:coverage_logo)",
+        images: [{
+          id: "coverage_logo",
+          src: "data:image/jpeg;base64,YWJj",
+          alt: "PharmaCare coverage",
+          widthPercent: 29.2,
+          alignment: "center",
+        }],
+      })
+    );
+
+    const image = container.querySelector("img");
+    expect(image?.getAttribute("src")).toBe("data:image/jpeg;base64,YWJj");
+    expect(image?.getAttribute("alt")).toBe("PharmaCare coverage");
+    expect(image?.style.width).toBe("29.2%");
+    expect(image?.style.marginLeft).toBe("auto");
+    expect(image?.style.marginRight).toBe("auto");
+  });
+
   it("renders reserved text-color links and legacy color spans as styled text", () => {
     const Block = loadPreviewScope();
     render(
@@ -221,6 +245,31 @@ describe("RichMarkdownBlock — engine scope (MOIS form scope)", () => {
 
     render(React.createElement(Anchor, { href: "https://example.com" }, "policy"));
     expect(container.querySelector("a")?.getAttribute("href")).toBe("https://example.com");
+  });
+
+  it("passes an image renderer that resolves managed images in the MOIS Markdown control", () => {
+    const calls: EngineCall[] = [];
+    const Block = loadEngineScope(calls);
+    render(
+      React.createElement(Block, {
+        fieldId: "coverage",
+        source: "![Coverage](#mois-rich-image:coverage_logo)",
+        images: [{
+          id: "coverage_logo",
+          src: "data:image/jpeg;base64,YWJj",
+          alt: "PharmaCare coverage",
+          widthPercent: 29.2,
+          alignment: "left",
+        }],
+      })
+    );
+
+    const Image = calls[0].markdownProps.components.img;
+    render(React.createElement(Image, { src: "#mois-rich-image:coverage_logo", alt: "Coverage" }));
+    const image = container.querySelector("img");
+    expect(image?.getAttribute("src")).toBe("data:image/jpeg;base64,YWJj");
+    expect(image?.getAttribute("alt")).toBe("PharmaCare coverage");
+    expect(image?.style.width).toBe("29.2%");
   });
 
   it("passes an anchor renderer that turns color fragments into styled text", () => {

@@ -27309,6 +27309,36 @@ const parseTextColorHref = (href) => {
   return match ? \`#\${match[1].toLowerCase()}\` : null
 }
 
+const parseRichImageId = (src) => {
+  if (typeof src !== "string") return null
+  const match = src.match(/^#?mois-rich-image:([A-Za-z0-9_.-]+)$/)
+  return match ? match[1] : null
+}
+
+const safeRichImageSource = (src) => {
+  if (typeof src !== "string") return null
+  if (/^data:image\\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=\\s]+$/i.test(src)) {
+    return src.replace(/\\s+/g, "")
+  }
+  if (/^https?:\\/\\//i.test(src) || /^(?:\\/|\\.\\/|\\.\\.\\/)/.test(src)) return src
+  return null
+}
+
+const richImageStyle = (asset) => {
+  const numericWidth = Number(asset && asset.widthPercent)
+  const width = Number.isFinite(numericWidth)
+    ? \`\${Math.min(100, Math.max(1, numericWidth))}%\`
+    : "auto"
+  return {
+    display: "block",
+    width,
+    maxWidth: "100%",
+    height: "auto",
+    marginLeft: asset && asset.alignment === "center" ? "auto" : undefined,
+    marginRight: asset && asset.alignment !== "left" ? "auto" : undefined,
+  }
+}
+
 // Parse a MOIS link href into a module name + optional object id.
 //   #mois:CHARTACTION   -> { moisModule: "CHARTACTION" }
 //   mois://CHARTACTION  -> { moisModule: "CHARTACTION" }
@@ -27629,6 +27659,7 @@ const RichMarkdownBlock = ({
   size,
   source,
   value,
+  images = [],
   height,
   hidden,
   disabled,
@@ -27648,6 +27679,18 @@ const RichMarkdownBlock = ({
   const content = normalizeMoisLinks(normalizeTextColors(rawContent))
   const effectiveFieldId = fieldId || id
 
+  const imageById = useMemo(() => {
+    const result = {}
+    if (!Array.isArray(images)) return result
+    images.forEach((asset) => {
+      if (!asset || typeof asset !== "object" || typeof asset.id !== "string") return
+      const src = safeRichImageSource(asset.src)
+      if (!src) return
+      result[asset.id] = { ...asset, src }
+    })
+    return result
+  }, [images])
+
   const mergedMarkdownProps = useMemo(() => {
     const extra = markdownProps && typeof markdownProps === "object" ? markdownProps : {}
     const extraPlugins = Array.isArray(extra.remarkPlugins) ? extra.remarkPlugins : []
@@ -27657,10 +27700,26 @@ const RichMarkdownBlock = ({
       rehypePlugins: [...defaultRehypePlugins, ...(Array.isArray(extra.rehypePlugins) ? extra.rehypePlugins : [])],
       components: {
         ...baseComponents,
+        img: ({ src, alt, title, node, ...props }) => {
+          const imageId = parseRichImageId(src)
+          const asset = imageId ? imageById[imageId] : null
+          if (imageId && !asset) return null
+          const safeSrc = asset ? asset.src : safeRichImageSource(src)
+          if (!safeSrc) return null
+          return (
+            <img
+              {...props}
+              src={safeSrc}
+              alt={(asset && asset.alt) || alt || "Image"}
+              title={(asset && asset.title) || title || undefined}
+              style={asset ? richImageStyle(asset) : { maxWidth: "100%", height: "auto" }}
+            />
+          )
+        },
         ...(extra.components && typeof extra.components === "object" ? extra.components : {}),
       },
     }
-  }, [markdownProps])
+  }, [imageById, markdownProps])
 
   const segments = useMemo(
     () => (HAS_REMARK_GFM ? [{ kind: "markdown", text: content }] : splitMarkdownSegments(content)),

@@ -5,6 +5,7 @@ import type {
   BuilderFhirConfig,
   BuilderMoisOutputMapping,
   BuilderOscarImportMapping,
+  BuilderRichTextImageAsset,
   BuilderValidationConfig,
   BuilderVisibilityRule,
   HiddenAnswerPolicy,
@@ -623,6 +624,7 @@ export interface ParsedField {
   showCharLimit?: boolean;
   secretInput?: boolean;
   richTextSource?: string | null;
+  richTextImages?: BuilderRichTextImageAsset[];
   richTextReadOnly?: boolean;
   richTextBorderless?: boolean;
   richTextStartingMode?: "edit" | "preview" | "default";

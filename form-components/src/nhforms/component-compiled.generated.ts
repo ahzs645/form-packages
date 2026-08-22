@@ -28925,6 +28925,31 @@ const parseTextColorHref = href => {
   const match = href.match(/^#?mois-text-color:([0-9a-f]{6})$/i);
   return match ? \`#\${match[1].toLowerCase()}\` : null;
 };
+const parseRichImageId = src => {
+  if (typeof src !== "string") return null;
+  const match = src.match(/^#?mois-rich-image:([A-Za-z0-9_.-]+)$/);
+  return match ? match[1] : null;
+};
+const safeRichImageSource = src => {
+  if (typeof src !== "string") return null;
+  if (/^data:image\\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=\\s]+$/i.test(src)) {
+    return src.replace(/\\s+/g, "");
+  }
+  if (/^https?:\\/\\//i.test(src) || /^(?:\\/|\\.\\/|\\.\\.\\/)/.test(src)) return src;
+  return null;
+};
+const richImageStyle = asset => {
+  const numericWidth = Number(asset && asset.widthPercent);
+  const width = Number.isFinite(numericWidth) ? \`\${Math.min(100, Math.max(1, numericWidth))}%\` : "auto";
+  return {
+    display: "block",
+    width,
+    maxWidth: "100%",
+    height: "auto",
+    marginLeft: asset && asset.alignment === "center" ? "auto" : undefined,
+    marginRight: asset && asset.alignment !== "left" ? "auto" : undefined
+  };
+};
 
 // Parse a MOIS link href into a module name + optional object id.
 //   #mois:CHARTACTION   -> { moisModule: "CHARTACTION" }
@@ -29323,6 +29348,7 @@ const RichMarkdownBlock = ({
   size,
   source,
   value,
+  images = [],
   height,
   hidden,
   disabled,
@@ -29341,6 +29367,20 @@ const RichMarkdownBlock = ({
   const rawContent = typeof source === "string" ? source : typeof value === "string" ? value : "";
   const content = normalizeMoisLinks(normalizeTextColors(rawContent));
   const effectiveFieldId = fieldId || id;
+  const imageById = useMemo(() => {
+    const result = {};
+    if (!Array.isArray(images)) return result;
+    images.forEach(asset => {
+      if (!asset || typeof asset !== "object" || typeof asset.id !== "string") return;
+      const src = safeRichImageSource(asset.src);
+      if (!src) return;
+      result[asset.id] = {
+        ...asset,
+        src
+      };
+    });
+    return result;
+  }, [images]);
   const mergedMarkdownProps = useMemo(() => {
     const extra = markdownProps && typeof markdownProps === "object" ? markdownProps : {};
     const extraPlugins = Array.isArray(extra.remarkPlugins) ? extra.remarkPlugins : [];
@@ -29350,10 +29390,32 @@ const RichMarkdownBlock = ({
       rehypePlugins: [...defaultRehypePlugins, ...(Array.isArray(extra.rehypePlugins) ? extra.rehypePlugins : [])],
       components: {
         ...baseComponents,
+        img: ({
+          src,
+          alt,
+          title,
+          node,
+          ...props
+        }) => {
+          const imageId = parseRichImageId(src);
+          const asset = imageId ? imageById[imageId] : null;
+          if (imageId && !asset) return null;
+          const safeSrc = asset ? asset.src : safeRichImageSource(src);
+          if (!safeSrc) return null;
+          return /*#__PURE__*/React.createElement("img", _extends({}, props, {
+            src: safeSrc,
+            alt: asset && asset.alt || alt || "Image",
+            title: asset && asset.title || title || undefined,
+            style: asset ? richImageStyle(asset) : {
+              maxWidth: "100%",
+              height: "auto"
+            }
+          }));
+        },
         ...(extra.components && typeof extra.components === "object" ? extra.components : {})
       }
     };
-  }, [markdownProps]);
+  }, [imageById, markdownProps]);
   const segments = useMemo(() => HAS_REMARK_GFM ? [{
     kind: "markdown",
     text: content
@@ -36846,7 +36908,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './PlannedActions/index.jsx': ["PlannedActions","PlannedActionsFields","plannedActionsActiveOnly","plannedActionsColumns"],
   './ReferralSource/index.jsx': ["ReferralSource","codeSystem","defaultValue","optionList","referralValueSet","sd"],
   './RelationshipStatus/index.jsx': ["RelationshipStatus"],
-  './RichMarkdownBlock/index.jsx': ["HAS_REACT_MARKDOWN","HAS_REHYPE_RAW","HAS_REMARK_GFM","INLINE_PATTERN","MarkdownSegment","PreviewMarkdownRenderer","RichMarkdownBlock","TEXT_COLOR_SPAN_PATTERN","align","baseComponents","buffer","cellAlignment","cells","char","content","current","cursor","defaultRehypePlugins","defaultRemarkPlugins","effectiveFieldId","endsWithColon","escapeMarkdownLinkLabel","extra","extraPlugins","flush","fullWidthStyle","hasVisibleChildren","header","i","inFence","index","isTableDelimiterRow","key","lastIndex","line","lines","linkStyle","marginTop","match","mergedMarkdownProps","mois","moisLinkWrapperStyle","moisModule","next","nodes","normalizeMoisLinks","normalizeTextColors","parseMoisHref","parseTextColorHref","parsedId","rawContent","renderInlineMarkdown","renderMoisLink","renderTableSegment","rowLine","rows","segments","source","splitMarkdownSegments","splitTableRow","startsWithColon","tableStyle","tableWrapperStyle","tdStyle","textColor","thStyle","theadStyle","trStyle","trimmed"],
+  './RichMarkdownBlock/index.jsx': ["HAS_REACT_MARKDOWN","HAS_REHYPE_RAW","HAS_REMARK_GFM","INLINE_PATTERN","MarkdownSegment","PreviewMarkdownRenderer","RichMarkdownBlock","TEXT_COLOR_SPAN_PATTERN","align","asset","baseComponents","buffer","cellAlignment","cells","char","content","current","cursor","defaultRehypePlugins","defaultRemarkPlugins","effectiveFieldId","endsWithColon","escapeMarkdownLinkLabel","extra","extraPlugins","flush","fullWidthStyle","hasVisibleChildren","header","i","imageById","imageId","inFence","index","isTableDelimiterRow","key","lastIndex","line","lines","linkStyle","marginTop","match","mergedMarkdownProps","mois","moisLinkWrapperStyle","moisModule","next","nodes","normalizeMoisLinks","normalizeTextColors","numericWidth","parseMoisHref","parseRichImageId","parseTextColorHref","parsedId","rawContent","renderInlineMarkdown","renderMoisLink","renderTableSegment","result","richImageStyle","rowLine","rows","safeRichImageSource","safeSrc","segments","source","splitMarkdownSegments","splitTableRow","src","startsWithColon","tableStyle","tableWrapperStyle","tdStyle","textColor","thStyle","theadStyle","trStyle","trimmed","width"],
   './SaveOnClose/index.jsx': ["DEFAULT_WINDOW_HOURS","SaveOnClose","_buildDefaultSavePayload","_nhAuthPrepareSave","_normalizeSaveOnCloseOptions","_stripComponentPayloads","_useChangeAwareDirtyState","actor","actorFrom","addHoursIso","baselineRef","buildKey","c","changed","ck","claim","claims","commitSave","current","d","data","dirtyRef","disabled","editableUntil","euDate","existing","expired","fieldData","formatTimestamp","isDirty","isNonEmpty","isOwner","keepStatus","key","label","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","markSaved","nextStatus","normalizeStore","normalizedOptions","now","nowIso","ownerId","ownerName","ownerRefresh","pad2","pending","policyAppliesToAction","prepareSave","prepared","raw","readStore","release","renderCountRef","resolveNow","sameActor","saveData","sd","store","trackedValue","ts","untilSelf","useSaveOnClose","windowHours"],
   './ScaleField/index.jsx': ["CHOICE_FIELD_STYLE","LABEL_COLUMN_STYLE","LABEL_STYLE","ScaleField","ScaleFieldEndpointLabels","ScaleFieldLegend","ScaleFieldTooltip","_getInlineMinWidth","_renderOptionTooltipContent","choiceGroupStyles","choiceOptions","containerStyle","currentData","fieldContent","firstDescription","handleChange","hasDescriptions","inlineMinWidth","label","lastDescription","legendItemStyle","legendRowStyle","normalizedTooltipMode","readOnly","scaleOptions","selectedOption","shouldShowAllTooltip","theme"],
   './ScoringModule/index.jsx': ["CompactScoringQuestion","GroupedChecklistQuestion","GroupedChecklistSection","INTERPRETATION_BOX_STYLE","MatrixScoringRow","MatrixScoringTable","QUESTION_CONTAINER_STYLE","ScoringModule","ScoringModuleSchema","ScoringOptionTooltip","ScoringQuestion","ScoringScales","ScoringTotal","TOTAL_CONTAINER_STYLE","_cloneMirrorValue","_getQuestionMirrorFieldIds","_safeSerialize","allEntries","answer","answerScore","answerValue","answered","answers","buildScoreMap","calculatedTotals","candidateKeys","candidates","checked","checkedFromConfig","checkedOption","checklist","checklistUngroupedQuestions","collectScoreCandidates","containerStyle","continuumLabels","countsBySignature","createScoringConfig","createScoringQuestion","createScoringTotal","currentData","direct","effectiveShowProgress","errorContainerStyle","explicitShared","formatBounds","getAnswers","getInterpretation","getScoreFromValue","groupedQuestionIds","handleSelect","handleToggle","hasChanges","hasDescription","headerLabelStyle","headerOptionStyle","headerStyle","ids","interpretation","interpretationStyle","isComplete","isDarkMode","isInRange","keyValue","labelCellStyle","labelStyle","map","matrixQuestionIds","matrixQuestions","matrixSignature","max","maxContinuumLabel","maxSymbol","meetsMax","meetsMin","min","minContinuumLabel","minSymbol","mirrorIds","nextChecked","nextOption","normalizeQuestionIds","normalizeScoreToken","normalizeScoringOption","normalizeScoringOptions","normalizedLayout","normalizedOptionMap","optionCellStyle","optionControl","optionMap","optionScoreMap","options","optionsBySignature","progress","progressStyle","question","questionGroups","questionMirrorEntries","questionOptions","questions","questionsById","resolveChecklistOptions","resolveMatrixOptions","resolveQuestionOptions","resolvedOptions","results","rowStyle","scaleGridStyle","scaleWrapStyle","score","scoreMap","scoreValue","sectionQuestions","selected","serializeOptionSignature","sharedOptions","shouldRenderCompact","shouldRenderGroupedChecklist","shouldRenderMatrix","signature","stackedQuestions","tableStyle","targetIds","termQuestionId","textValue","theme","token","total","totalMirrorEntries","totals","uncheckedFromConfig","uncheckedOption","value","winnerCount","winnerSignature","wrapperStyle"],
