@@ -217,7 +217,7 @@ export interface FhirValueSet {
 
 export type WorkflowStep = "review" | "layout" | "pagination" | "branching" | "preview";
 
-export type LlmProvider = "google" | "openai" | "anthropic" | "local-codex";
+export type LlmProvider = "openrouter" | "local-codex";
 
 export interface GroupPageStats {
   primaryPage: number | null;
@@ -2371,6 +2371,16 @@ export {
   type BuilderFieldDefinition,
   type BuilderFieldPalette,
 } from "./field-definitions";
+export {
+  BUILDER_FIELD_AUTHORING_CONTRACTS,
+  BUILDER_FIELD_COMMON_AUTHORING_PROPERTIES,
+  buildBuilderFieldAuthoringSchema,
+  getBuilderFieldAuthoringContract,
+  getBuilderFieldAuthoringDefaults,
+  validateBuilderFieldAuthoringValue,
+  type BuilderAuthoringJsonSchema,
+  type BuilderFieldAuthoringContract,
+} from "./field-authoring-contracts";
 
 export * from "./choice-options";
 export * from "./document";
