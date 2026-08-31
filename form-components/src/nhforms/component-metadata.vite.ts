@@ -112,7 +112,6 @@ function loadAllMetadata(): NHFormsComponentMetadata[] {
     return a.name.localeCompare(b.name);
   });
 
-  console.log(`Loaded metadata for ${components.length} NHForms components`);
   return components;
 }
 

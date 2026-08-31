@@ -217,7 +217,11 @@ export interface FhirValueSet {
 
 export type WorkflowStep = "review" | "layout" | "pagination" | "branching" | "preview";
 
-export type LlmProvider = "openrouter" | "local-codex";
+export type LlmProvider =
+  | "openrouter"
+  | "local-codex"
+  | "local-claude"
+  | "local-gemini";
 
 export interface GroupPageStats {
   primaryPage: number | null;

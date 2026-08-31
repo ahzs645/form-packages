@@ -639,8 +639,6 @@ function loadAllComponents(): Record<string, any> {
 
   applyRegistryModuleAliases(nhformsRegistry);
 
-  // Summary log (single line instead of verbose per-component logs)
-  console.log(`NHForms: Loaded ${Object.keys(nhformsRegistry).length} exports from ${componentSources.length} components`);
   return { ...nhformsRegistry };
 }
 
