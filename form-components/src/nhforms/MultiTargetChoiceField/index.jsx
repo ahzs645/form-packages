@@ -7,13 +7,15 @@
 //
 // option = {
 //   code, display,
-//   target: { fieldId, mode: "scalar" | "arrayMember" | "flag" | "yesNo", value?, offValue?, system? },
+//   target: { fieldId, mode: "scalar" | "arrayMember" | "flag" | "yesNo", value?, display?, offValue?, system? },
 //   force?: { fieldId, value, whenAnyOf?: string[] }   // value may be a coding or a code string
 // }
 //
 // target.mode:
 //   "scalar"      — field holds a coding; checked ⇔ code === value (or, if no
 //                   value, the field is non-empty). Toggle on → set; off → clear.
+//                   `display` preserves the target field's native label when it
+//                   differs from the aggregate checkbox label.
 //   "arrayMember" — field holds an array of codings; checked ⇔ value is a member.
 //                   Toggle on → add the member; off → remove it.
 //   "flag"        — field is a boolean envelope { checked }; checked ⇔ field.checked.
@@ -166,7 +168,7 @@ const computeToggledData = (prevData, option, next, options, aggregateFieldId) =
     const currentArr = asArray(data[target.fieldId])
     const has = currentArr.some((entry) => codeOf(entry) === target.value)
     if (next && !has) {
-      data[target.fieldId] = [...currentArr, toCoding(target.value, option.display, target.system)]
+      data[target.fieldId] = [...currentArr, toCoding(target.value, target.display ?? option.display, target.system)]
     } else if (!next && has) {
       data[target.fieldId] = currentArr.filter((entry) => codeOf(entry) !== target.value)
     }
@@ -177,7 +179,7 @@ const computeToggledData = (prevData, option, next, options, aggregateFieldId) =
       ? String(target.value ?? "YES")
       : String(target.offValue ?? "NO")
   } else {
-    data[target.fieldId] = next ? toCoding(target.value, option.display, target.system) : null
+    data[target.fieldId] = next ? toCoding(target.value, target.display ?? option.display, target.system) : null
   }
   applyForces(data, options)
   if (aggregateFieldId) {

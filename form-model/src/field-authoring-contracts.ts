@@ -24,6 +24,29 @@ export const BUILDER_FIELD_COMMON_AUTHORING_PROPERTIES: Record<string, BuilderAu
   placeholder: { type: "string" },
   helpText: { type: "string" },
   helpPosition: { type: "string", enum: ["above_input", "below_input"] },
+  fhirConfig: {
+    type: ["object", "null"],
+    description:
+      "FHIR questionnaire-item clinical coding. This object replaces the stored fhirConfig, so when patching, copy forward every existing key you are not changing (read the field first). code entries use system \"http://loinc.org\" with a code returned by searchClinicalCodes.",
+    properties: {
+      code: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            system: { type: "string" },
+            code: { type: "string" },
+            display: { type: "string" },
+          },
+          required: ["system", "code"],
+          additionalProperties: false,
+        },
+      },
+    },
+    // Existing configs carry importer-owned keys (linkId, definitions, unit…);
+    // permitting them lets a careful patch copy them forward unchanged.
+    additionalProperties: true,
+  },
 };
 
 const SPECIALIZED_CONTRACTS: Partial<Record<BuilderFieldType, Omit<BuilderFieldAuthoringContract, "type">>> = {
@@ -108,7 +131,7 @@ const SPECIALIZED_CONTRACTS: Partial<Record<BuilderFieldType, Omit<BuilderFieldA
   computed: {
     properties: { computedConfig: nullableObject },
     defaultConfig: { computedConfig: { expression: "", resultType: "number" } },
-    guidance: "computedConfig.expression references field IDs; resultType is number or text.",
+    guidance: "computedConfig.expression references field IDs. Supported keys: expression, precision (decimal places on the result — there is no decimalPlaces key), resultType (number|text), displaySuffix + showDisplaySuffix (presentation-only units), incompleteBehavior, incompleteText.",
   },
   choice: {
     properties: {
