@@ -1,0 +1,139 @@
+//Themes
+
+:local {
+  .demographics-banner {
+    background-clip: border-box;
+    background-color: var(--terra-demographics-banner-background-color, #004c76);
+    background-image: var(--terra-demographics-banner-background-image);
+    box-shadow: var(--terra-demographics-banner-box-shadow);
+    color: var(--terra-demographics-banner-color, #fff);
+    line-height: 1;
+    padding: var(--terra-demographics-banner-padding, 0.714em);
+  }
+
+  .profile-photo {
+    margin: var(--terra-demographics-banner-profile-photo-margin);
+  }
+
+  .value {
+    display: inline-block;
+    margin-right: var(--terra-demographics-banner-value-margin-right, 0.357em);
+    margin-top: var(--terra-demographics-banner-value-margin-top);
+
+    &:last-child {
+      margin-right: 0;
+    }
+  }
+
+  .value-text {
+    display: inline-block;
+    font-weight: var(--terra-demographics-banner-value-text-font-weight, bold);
+    margin-left: 0;
+  }
+
+  .value-label {
+    margin-right: 0.357em;
+  }
+
+  .value-term {
+    display: inline-block;
+  }
+
+  .person-name {
+    flex: 2;
+    font-size: 1.143rem;
+    line-height: 1;
+    margin: 0;
+    padding-bottom: 0.2rem;
+  }
+
+  .identifiers {
+    flex: 1;
+    margin-right: auto;
+  }
+
+  .person-details {
+    flex: 1;
+    margin-bottom: 0;
+    margin-top: var(--terra-demographics-banner-person-details-margin-top, 0);
+  }
+
+  .preferred-first-name {
+    margin: 0 0.357em;
+  }
+
+  .deceased {
+    background-clip: border-box;
+    background-color: var(--terra-demographics-banner-deceased-background-color, #1c1f21);
+    background-image: var(--terra-demographics-banner-deceased-background-image);
+    color: var(--terra-demographics-banner-deceased-color, #fff);
+
+    .profile-photo {
+      opacity: var(--terra-demographics-banner-deceased-profile-photo-opacity, 0.7);
+    }
+  }
+
+  .abbreviation {
+    text-decoration: none;
+  }
+
+  .identifier-row {
+    display: flex;
+    flex: 0 0 auto;
+    order: 3; // Places row after person-name and application-content visually as the third flex item (this element must be rendered immediately following person-name element for assistive technology support).
+    width: 100%;
+  }
+
+  .content {
+    display: flex;
+    flex-direction: row;
+    flex-grow: 1;
+    flex-wrap: wrap;
+    margin: var(--terra-demographics-banner-content-margin, auto 0.714em);
+
+    // IE 11
+    @media screen and (-ms-high-contrast: active), (-ms-high-contrast: none) {
+      align-self: center;
+      width: 100%;
+    }
+  }
+
+  .application-content {
+    flex: 1;
+    margin-right: auto;
+    margin-top: var(--terra-demographics-banner-application-content-margin-top);
+    padding-bottom: 0.2rem;
+  }
+
+  .large-demographics-banner {
+    box-shadow: var(--terra-demographics-banner-large-box-shadow);
+    display: flex;
+    flex-direction: row;
+    padding: var(--terra-demographics-banner-large-padding, 0.714em);
+
+    .application-content {
+      margin-top: 0;
+      text-align: right;
+
+      // IE 11
+      @media screen and (-ms-high-contrast: active), (-ms-high-contrast: none) {
+        flex-basis: 33.33%;
+      }
+    }
+
+    .person-name {
+      font-size: var(--terra-demographics-banner-large-person-name-font-size, 1.286rem);
+
+      // IE 11
+      @media screen and (-ms-high-contrast: active), (-ms-high-contrast: none) {
+        flex-basis: 66.66%;
+      }
+    }
+
+    .identifiers {
+      margin-bottom: 0;
+      margin-top: 0;
+      text-align: right;
+    }
+  }
+}

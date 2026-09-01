@@ -1,0 +1,13 @@
+This package vendors component source from Cerner Terra Core
+(https://github.com/cerner/terra-core), Copyright Cerner Innovation, Inc.,
+licensed under the Apache License, Version 2.0.
+
+Terra Core was archived in 2024 with peer dependencies pinned to React 16.
+The sources under src/vendor are copied and mechanically adapted for React 19
+by scripts/vendor.mjs; component bodies are otherwise unmodified. Adaptations:
+defaultProps on function components replaced by an equivalent wrapper,
+react-intl and terra-theme-context replaced by local shims, and terra-icon
+imports replaced by local stubs.
+
+You may obtain a copy of the Apache 2.0 License at
+    http://www.apache.org/licenses/LICENSE-2.0

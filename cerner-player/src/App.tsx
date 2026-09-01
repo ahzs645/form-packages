@@ -14,6 +14,7 @@ import "./terra/terra-tokens.scss";
 import { DiscernActionsBar } from "./DiscernActionsBar";
 import { FormHost, type FormIdentityLike } from "./FormHost";
 import { MoisToastHost } from "./MoisToastHost";
+import { TerraProbe } from "./terra/TerraProbe";
 
 const frameStyle: React.CSSProperties = {
   backgroundColor: "#fff",
@@ -258,6 +259,9 @@ export const App: React.FC<{ host?: PlayerHost }> = ({ host = null }) => {
             chart={chart}
           />
         )}
+        {new URLSearchParams(window.location.search).get("terraProbe") === "1" ? (
+          <TerraProbe />
+        ) : null}
         {loadError ? (
           <div style={{ color: "#a4262c" }}>Failed to load form: {loadError}</div>
         ) : !form ? (

@@ -1,7 +1,11 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
     "module": "ESNext",
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
@@ -10,12 +14,30 @@
     "skipLibCheck": true,
     "isolatedModules": true,
     "paths": {
-      "@mois/form-components/nhforms/next": ["../form-components/src/nhforms/index.next.ts"],
-      "@mois/form-components": ["../form-components/src/index.ts"],
-      "@mois/form-engine-core": ["../form-engine-core/src/index.ts"],
-      "@webforms/cerner-core": ["../cerner-core/src/index.ts"],
-      "@webforms/form-model": ["../form-model/src/index.ts"]
-    }
+      "@mois/form-components/nhforms/next": [
+        "../form-components/src/nhforms/index.next.ts"
+      ],
+      "@mois/form-components": [
+        "../form-components/src/index.ts"
+      ],
+      "@mois/form-engine-core": [
+        "../form-engine-core/src/index.ts"
+      ],
+      "@webforms/cerner-core": [
+        "../cerner-core/src/index.ts"
+      ],
+      "@webforms/form-model": [
+        "../form-model/src/index.ts"
+      ],
+      "@webforms/cerner-terra": [
+        "../cerner-terra/src/index.ts"
+      ]
+    },
+    "allowJs": true,
+    "checkJs": false
   },
-  "include": ["src", "vite.config.ts"]
+  "include": [
+    "src",
+    "vite.config.ts"
+  ]
 }

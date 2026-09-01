@@ -1,0 +1,31 @@
+{
+  "name": "@webforms/cerner-terra",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "vendor": "node scripts/vendor.mjs",
+    "lint": "eslint --no-ignore src/runtime",
+    "typecheck": "tsc -p tsconfig.typecheck.json"
+  },
+  "dependencies": {
+    "classnames": "^2.5.1",
+    "keycode-js": "^3.1.0",
+    "lodash.uniqueid": "^4.0.1",
+    "prop-types": "^15.8.1",
+    "resize-observer-polyfill": "^1.5.1",
+    "uuid": "^14.0.2"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5"
+  }
+}
