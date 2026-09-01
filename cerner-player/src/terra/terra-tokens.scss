@@ -352,17 +352,19 @@ $terra-banner-name-size:    18px;    // Terra 1.286rem
     &:focus-visible { @include terra-focus-outline; border-radius: $terra-input-radius; }
   }
 
-  // Headings (terra-heading). Scoped away from our own chrome, which paints
-  // its own colours.
+  // Headings (terra-heading).
   h1, h2, h3, h4, h5, h6 {
     margin: 0;
   }
-  :not(.terra-demographics-banner) > h1,
-  :not(.terra-demographics-banner) > h2,
-  :not(.terra-demographics-banner) > h3,
-  :not(.terra-demographics-banner) > h4,
-  :not(.terra-demographics-banner) > h5,
-  :not(.terra-demographics-banner) > h6 { color: #333; }
+  // Colour only when this file is the one approximating Terra. Under the real
+  // components <TerraBase> marks the document and Terra's own CSS owns every
+  // heading colour — including the demographics banner's white-on-blue name,
+  // which this rule otherwise repainted #333 on a dark background. Excluding
+  // by our own chrome's class name did not survive swapping in Terra's real
+  // banner, whose classes are CSS-module hashes.
+  html:not(.terra-base) & {
+    h1, h2, h3, h4, h5, h6 { color: #333; }
+  }
   h1 { font-size: 32px; }
   h2 { font-size: 24px; }
   h3 { font-size: 20px; }

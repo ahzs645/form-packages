@@ -11,389 +11,7 @@
   <meta http-equiv="Expires" content="-1">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Web Forms Player</title>
-<style data-load-themed-styles="true">.pickerText_9f838726{display:-webkit-box;display:-ms-flexbox;display:flex;-ms-flex-wrap:wrap;flex-wrap:wrap;-webkit-box-align:center;-ms-flex-align:center;align-items:center;-webkit-box-sizing:border-box;box-sizing:border-box;border:1px solid #a19f9d;min-width:180px;padding:1px;min-height:32px}.pickerText_9f838726:hover{border-color:#c7e0f4}.pickerInput_9f838726{height:34px;border:none;-webkit-box-flex:1;-ms-flex-positive:1;flex-grow:1;outline:0;padding:0 6px 0;margin:1px}.pickerInput_9f838726::-ms-clear{display:none}</style><style data-load-themed-styles="true">.resultContent_4cc31f3f{display:table-row}.resultContent_4cc31f3f .resultItem_4cc31f3f{display:table-cell;vertical-align:bottom}.peoplePickerPersona_4cc31f3f{width:180px}.peoplePickerPersona_4cc31f3f .ms-Persona-details{width:100%}.peoplePicker_4cc31f3f .ms-BasePicker-text{min-height:40px}.peoplePickerPersonaContent_4cc31f3f{display:-webkit-box;display:-ms-flexbox;display:flex;width:100%;-webkit-box-pack:justify;-ms-flex-pack:justify;justify-content:space-between;-webkit-box-align:center;-ms-flex-align:center;align-items:center}</style><style data-load-themed-styles="true">.callout_ad5629e1 .ms-Suggestions-itemButton{padding:0;border:none}.callout_ad5629e1 .ms-Suggestions{min-width:300px}</style><style data-load-themed-styles="true">.root_8c91000a{min-width:260px}.suggestionsItem_8c91000a{display:-webkit-box;display:-ms-flexbox;display:flex;-webkit-box-align:stretch;-ms-flex-align:stretch;align-items:stretch;-webkit-box-sizing:border-box;box-sizing:border-box;width:100%;position:relative;overflow:hidden}.suggestionsItem_8c91000a:hover{background:#f3f2f1}.suggestionsItem_8c91000a:hover .closeButton_8c91000a{display:block}.suggestionsItem_8c91000a.suggestionsItemIsSuggested_8c91000a{background:#edebe9}.suggestionsItem_8c91000a.suggestionsItemIsSuggested_8c91000a:hover{background:#c8c6c4}@media screen and (-ms-high-contrast:active),screen and (forced-colors:active){.suggestionsItem_8c91000a.suggestionsItemIsSuggested_8c91000a:hover{background:Highlight;color:HighlightText}}@media screen and (-ms-high-contrast:active),screen and (forced-colors:active){.suggestionsItem_8c91000a.suggestionsItemIsSuggested_8c91000a{background:Highlight;color:HighlightText;-ms-high-contrast-adjust:none}}.suggestionsItem_8c91000a.suggestionsItemIsSuggested_8c91000a .closeButton_8c91000a:hover{background:#a19f9d;color:#323130}@media screen and (-ms-high-contrast:active),screen and (forced-colors:active){.suggestionsItem_8c91000a.suggestionsItemIsSuggested_8c91000a .itemButton_8c91000a{color:HighlightText}}.suggestionsItem_8c91000a .closeButton_8c91000a{display:none;color:#605e5c}.suggestionsItem_8c91000a .closeButton_8c91000a:hover{background:#edebe9}.actionButton_8c91000a{background-color:transparent;border:0;cursor:pointer;margin:0;position:relative;border-top:1px solid #edebe9;height:40px;width:100%;font-size:12px}[dir=ltr] .actionButton_8c91000a{padding-left:8px}[dir=rtl] .actionButton_8c91000a{padding-right:8px}html[dir=ltr] .actionButton_8c91000a{text-align:left}html[dir=rtl] .actionButton_8c91000a{text-align:right}.actionButton_8c91000a:hover{background-color:#edebe9;cursor:pointer}.actionButton_8c91000a:active,.actionButton_8c91000a:focus{background-color:#c7e0f4}.actionButton_8c91000a .ms-Button-icon{font-size:16px;width:25px}.actionButton_8c91000a .ms-Button-label{margin:0 4px 0 9px}html[dir=rtl] .actionButton_8c91000a .ms-Button-label{margin:0 9px 0 4px}.buttonSelected_8c91000a{background-color:#c7e0f4}.suggestionsTitle_8c91000a{padding:0 12px;color:#0078d4;font-size:12px;line-height:40px;border-bottom:1px solid #edebe9}.suggestionsContainer_8c91000a{overflow-y:auto;overflow-x:hidden;max-height:300px;border-bottom:1px solid #edebe9}.suggestionsNone_8c91000a{text-align:center;color:#797775;font-size:12px;line-height:30px}.suggestionsSpinner_8c91000a{margin:5px 0;white-space:nowrap;line-height:20px;font-size:12px}html[dir=ltr] .suggestionsSpinner_8c91000a{padding-left:14px}html[dir=rtl] .suggestionsSpinner_8c91000a{padding-right:14px}html[dir=ltr] .suggestionsSpinner_8c91000a{text-align:left}html[dir=rtl] .suggestionsSpinner_8c91000a{text-align:right}.suggestionsSpinner_8c91000a .ms-Spinner-circle{display:inline-block;vertical-align:middle}.suggestionsSpinner_8c91000a .ms-Spinner-label{display:inline-block;margin:0 10px 0 16px;vertical-align:middle}html[dir=rtl] .suggestionsSpinner_8c91000a .ms-Spinner-label{margin:0 16px 0 10px}.itemButton_8c91000a.itemButton_8c91000a{width:100%;padding:0;min-width:0;height:100%}@media screen and (-ms-high-contrast:active),screen and (forced-colors:active){.itemButton_8c91000a.itemButton_8c91000a{color:WindowText}}.itemButton_8c91000a.itemButton_8c91000a:hover{color:#201f1e}.closeButton_8c91000a.closeButton_8c91000a{padding:0 4px;height:auto;width:32px}@media screen and (-ms-high-contrast:active),screen and (forced-colors:active){.closeButton_8c91000a.closeButton_8c91000a{color:WindowText}}.closeButton_8c91000a.closeButton_8c91000a:hover{background:#c8c6c4;color:#201f1e}.suggestionsAvailable_8c91000a{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0}</style><style data-load-themed-styles="true">.picker_94f06b16{position:relative}.pickerText_94f06b16{display:-webkit-box;display:-ms-flexbox;display:flex;-ms-flex-wrap:wrap;flex-wrap:wrap;-webkit-box-align:center;-ms-flex-align:center;align-items:center;-webkit-box-sizing:border-box;box-sizing:border-box;border:1px solid #a19f9d;min-width:180px;min-height:30px}.pickerText_94f06b16:hover{border-color:#323130}.pickerText_94f06b16.inputFocused_94f06b16{position:relative;border-color:#0078d4}.pickerText_94f06b16.inputFocused_94f06b16:after{pointer-events:none;content:"";position:absolute;left:-1px;top:-1px;bottom:-1px;right:-1px;border:2px solid #0078d4}@media screen and (-ms-high-contrast:active),screen and (forced-colors:active){.pickerText_94f06b16.inputDisabled_94f06b16{position:relative;border-color:GrayText}.pickerText_94f06b16.inputDisabled_94f06b16:after{pointer-events:none;content:"";position:absolute;left:0;top:0;bottom:0;right:0;background-color:Window}}.pickerInput_94f06b16{height:34px;border:none;-webkit-box-flex:1;-ms-flex-positive:1;flex-grow:1;outline:0;padding:0 6px 0;-ms-flex-item-align:end;align-self:flex-end}.pickerItems_94f06b16{display:-webkit-box;display:-ms-flexbox;display:flex;-ms-flex-wrap:wrap;flex-wrap:wrap;max-width:100%}.screenReaderOnly_94f06b16{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0}</style><style data-load-themed-styles="true">.suggestionsContainer_44c59fda{overflow-y:auto;overflow-x:hidden;max-height:300px}.suggestionsContainer_44c59fda .ms-Suggestion-item:hover{background-color:#f3f2f1;cursor:pointer}.suggestionsContainer_44c59fda .is-suggested{background-color:#deecf9}.suggestionsContainer_44c59fda .is-suggested:hover{background-color:#c7e0f4;cursor:pointer}</style><style data-load-themed-styles="true">.root_ade399af{min-width:260px}.actionButton_ade399af{background:0 0;background-color:transparent;border:0;cursor:pointer;margin:0;padding:0;position:relative;width:100%;font-size:12px}html[dir=ltr] .actionButton_ade399af{text-align:left}html[dir=rtl] .actionButton_ade399af{text-align:right}.actionButton_ade399af:hover{background-color:#f3f2f1;cursor:pointer}.actionButton_ade399af:active,.actionButton_ade399af:focus{background-color:#c7e0f4}.actionButton_ade399af .ms-Button-icon{font-size:16px;width:25px}.actionButton_ade399af .ms-Button-label{margin:0 4px 0 9px}html[dir=rtl] .actionButton_ade399af .ms-Button-label{margin:0 9px 0 4px}.buttonSelected_ade399af{background-color:#deecf9}.buttonSelected_ade399af:hover{background-color:#c7e0f4;cursor:pointer}@media screen and (-ms-high-contrast:active),screen and (forced-colors:active){.buttonSelected_ade399af:hover{background-color:Highlight;color:HighlightText}}@media screen and (-ms-high-contrast:active),screen and (forced-colors:active){.buttonSelected_ade399af{background-color:Highlight;color:HighlightText;-ms-high-contrast-adjust:none}}.suggestionsTitle_ade399af{font-size:12px}.suggestionsSpinner_ade399af{margin:5px 0;white-space:nowrap;line-height:20px;font-size:12px}html[dir=ltr] .suggestionsSpinner_ade399af{padding-left:14px}html[dir=rtl] .suggestionsSpinner_ade399af{padding-right:14px}html[dir=ltr] .suggestionsSpinner_ade399af{text-align:left}html[dir=rtl] .suggestionsSpinner_ade399af{text-align:right}.suggestionsSpinner_ade399af .ms-Spinner-circle{display:inline-block;vertical-align:middle}.suggestionsSpinner_ade399af .ms-Spinner-label{display:inline-block;margin:0 10px 0 16px;vertical-align:middle}html[dir=rtl] .suggestionsSpinner_ade399af .ms-Spinner-label{margin:0 16px 0 10px}.itemButton_ade399af{height:100%;width:100%;padding:7px 12px}@media screen and (-ms-high-contrast:active),screen and (forced-colors:active){.itemButton_ade399af{color:WindowText}}.screenReaderOnly_ade399af{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0}</style><style data-load-themed-styles="true">.resultContent_f73be5be{display:table-row}.resultContent_f73be5be .resultItem_f73be5be{display:table-cell;vertical-align:bottom}.peoplePickerPersona_f73be5be{width:180px}.peoplePickerPersona_f73be5be .ms-Persona-details{width:100%}.peoplePicker_f73be5be .ms-BasePicker-text{min-height:40px}.peoplePickerPersonaContent_f73be5be{display:-webkit-box;display:-ms-flexbox;display:flex;width:100%;-webkit-box-pack:justify;-ms-flex-pack:justify;justify-content:space-between;-webkit-box-align:center;-ms-flex-align:center;align-items:center;padding:7px 12px}</style><style data-load-themed-styles="true">.personaContainer_6625fd9a{border-radius:15px;display:-webkit-inline-box;display:-ms-inline-flexbox;display:inline-flex;-webkit-box-align:center;-ms-flex-align:center;align-items:center;background:#eff6fc;margin:4px;cursor:default;-webkit-user-select:none;-moz-user-select:none;-ms-user-select:none;user-select:none;vertical-align:middle;position:relative}.personaContainer_6625fd9a::-moz-focus-inner{border:0}.personaContainer_6625fd9a{outline:transparent}.personaContainer_6625fd9a{position:relative}.ms-Fabric--isFocusVisible .personaContainer_6625fd9a:focus:after{-webkit-box-sizing:border-box;box-sizing:border-box;content:"";position:absolute;top:-2px;right:-2px;bottom:-2px;left:-2px;pointer-events:none;border:1px solid #605e5c;border-radius:0}.personaContainer_6625fd9a .ms-Persona-primaryText{color:#005a9e;font-size:14px;font-weight:400}.personaContainer_6625fd9a .ms-Persona-primaryText.hover_6625fd9a{color:#005a9e}@media screen and (-ms-high-contrast:active),screen and (forced-colors:active){.personaContainer_6625fd9a .ms-Persona-primaryText{color:HighlightText}}.personaContainer_6625fd9a .actionButton_6625fd9a:hover{background:#c7e0f4}.personaContainer_6625fd9a .actionButton_6625fd9a .ms-Button-icon{color:#005a9e}@media screen and (-ms-high-contrast:active),screen and (forced-colors:active){.personaContainer_6625fd9a .actionButton_6625fd9a .ms-Button-icon{color:HighlightText}}.personaContainer_6625fd9a:hover{background:#deecf9}.personaContainer_6625fd9a:hover .ms-Persona-primaryText{color:#005a9e;font-size:14px;font-weight:400}@media screen and (-ms-high-contrast:active),screen and (forced-colors:active){.personaContainer_6625fd9a:hover .ms-Persona-primaryText{color:HighlightText}}.personaContainer_6625fd9a.personaContainerIsSelected_6625fd9a{background:#0078d4}.personaContainer_6625fd9a.personaContainerIsSelected_6625fd9a .ms-Persona-primaryText{color:#ffffff}@media screen and (-ms-high-contrast:active),screen and (forced-colors:active){.personaContainer_6625fd9a.personaContainerIsSelected_6625fd9a .ms-Persona-primaryText{color:HighlightText}}.personaContainer_6625fd9a.personaContainerIsSelected_6625fd9a .actionButton_6625fd9a{color:#ffffff}.personaContainer_6625fd9a.personaContainerIsSelected_6625fd9a .actionButton_6625fd9a .ms-Button-icon{color:#005a9e}.personaContainer_6625fd9a.personaContainerIsSelected_6625fd9a .actionButton_6625fd9a .ms-Button-icon:hover{background:#005a9e}@media screen and (-ms-high-contrast:active),screen and (forced-colors:active){.personaContainer_6625fd9a.personaContainerIsSelected_6625fd9a .actionButton_6625fd9a .ms-Button-icon{color:HighlightText}}@media screen and (-ms-high-contrast:active),screen and (forced-colors:active){.personaContainer_6625fd9a.personaContainerIsSelected_6625fd9a{border-color:Highlight;background:Highlight;-ms-high-contrast-adjust:none}}.personaContainer_6625fd9a.validationError_6625fd9a .ms-Persona-primaryText{color:#e81123}.personaContainer_6625fd9a.validationError_6625fd9a .ms-Persona-initials{font-size:20px}@media screen and (-ms-high-contrast:active),screen and (forced-colors:active){.personaContainer_6625fd9a{border:1px solid WindowText}}.personaContainer_6625fd9a .itemContent_6625fd9a{-webkit-box-flex:0;-ms-flex:0 1 auto;flex:0 1 auto;min-width:0;max-width:100%}.personaContainer_6625fd9a .removeButton_6625fd9a{border-radius:15px;-webkit-box-flex:0;-ms-flex:0 0 auto;flex:0 0 auto;width:33px;height:33px;-ms-flex-preferred-size:32px;flex-basis:32px}.personaContainer_6625fd9a .expandButton_6625fd9a{border-radius:15px 0 0 15px;height:33px;width:44px;padding-right:16px;position:inherit;display:-webkit-box;display:-ms-flexbox;display:flex;margin-right:-17px}.personaContainer_6625fd9a .personaWrapper_6625fd9a{position:relative;display:inherit}.personaContainer_6625fd9a .personaWrapper_6625fd9a .ms-Persona-details{padding:0 8px}.personaContainer_6625fd9a .personaDetails_6625fd9a{-webkit-box-flex:0;-ms-flex:0 1 auto;flex:0 1 auto}.itemContainer_6625fd9a{display:inline-block;vertical-align:top}</style><style type="text/css" data-vite-dev-id="/Users/ahmadjalil/github/webforms/packages/cerner-player/src/terra/terra-tokens.scss">.terra-root {
-  --terra-base-font-family: Helvetica Neue, Helvetica, Arial, sans-serif;
-  --terra-base-color: #1c1f21;
-  --terra-base-background-color: #fff;
-  --terra-primary: #0079be;
-  --terra-primary-active: #004c76;
-  --terra-error: #e50000;
-  --terra-chrome-bg: #f9f9f9;
-  --terra-divider: #dedfe0;
-  --terra-demographics-banner-background-color: #004c76;
-  background-color: #fff;
-  color: #1c1f21;
-  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
-  font-size: 14px;
-  line-height: 1.4285714286;
-}
-.terra-root .terra-demographics-banner {
-  background-color: #004c76;
-  color: #fff;
-  padding: 10px;
-}
-.terra-root .terra-demographics-banner.is-deceased {
-  background-color: #1c1f21;
-}
-.terra-root .terra-demographics-banner .person-name {
-  color: inherit;
-  font-size: 18px;
-  font-weight: bold;
-  margin: 0;
-}
-.terra-root .terra-demographics-banner .preferred-first-name {
-  font-weight: normal;
-  margin-left: 5px;
-}
-.terra-root .terra-demographics-banner .identifier-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0 20px;
-  margin-top: 2px;
-}
-.terra-root .terra-demographics-banner dl {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0 12px;
-  margin: 0;
-}
-.terra-root .terra-demographics-banner dt {
-  display: inline;
-  font-weight: normal;
-  opacity: 0.85;
-}
-.terra-root .terra-demographics-banner dd {
-  display: inline;
-  font-weight: bold;
-  margin: 0 5px 0 4px;
-}
-.terra-root .terra-action-footer {
-  align-items: center;
-  background-color: #f9f9f9;
-  border-top: 1px solid #dedfe0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  min-height: 40px;
-  padding: 9px 10px;
-}
-.terra-root .ms-TextField,
-.terra-root .ms-Dropdown-container,
-.terra-root .ms-ComboBox-container,
-.terra-root .ms-ChoiceFieldGroup,
-.terra-root .ms-Checkbox {
-  margin-bottom: 20px;
-}
-.terra-root .ms-Label {
-  color: #1c1f21;
-  font-size: 14px;
-  font-weight: bold;
-  line-height: 1.29;
-  margin: 0 0 5px;
-  padding: 0;
-}
-.terra-root .ms-Label--required::after {
-  content: none;
-}
-.terra-root .ms-Label--required::before {
-  color: #e50000;
-  content: "*";
-  display: inline-block;
-  padding-right: 5px;
-}
-.terra-root .ms-TextField-description {
-  color: rgba(28, 31, 33, 0.63);
-  font-size: 12px;
-  font-weight: normal;
-  line-height: 1.25;
-  margin-top: 5px;
-}
-.terra-root .ms-TextField-errorMessage {
-  color: #e50000;
-  font-size: 12px;
-  font-weight: normal;
-  line-height: 1.25;
-  margin-top: 5px;
-}
-.terra-root .ms-TextField-fieldGroup {
-  background-color: #fff;
-  border: 1px solid #dedfe0;
-  border-radius: 3px;
-  min-height: 30px;
-}
-.terra-root .ms-TextField-fieldGroup:hover {
-  border-color: #dedfe0;
-}
-.terra-root .ms-TextField-fieldGroup:focus-within {
-  border: 1px solid #4cb2e9;
-  box-shadow: none;
-  outline: none;
-}
-.terra-root .ms-TextField-field {
-  background-color: transparent;
-  color: #1c1f21;
-  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
-  font-size: 16px;
-  line-height: 1.25;
-  padding: 4px;
-}
-.terra-root .ms-TextField-field::-moz-placeholder {
-  color: rgba(21, 33, 41, 0.62);
-  font-style: italic;
-  opacity: 1;
-}
-.terra-root .ms-TextField-field::placeholder {
-  color: rgba(21, 33, 41, 0.62);
-  font-style: italic;
-  opacity: 1;
-}
-.terra-root .ms-TextField.is-required .ms-TextField-fieldGroup {
-  background-color: #ffc;
-}
-.terra-root .ms-TextField--error .ms-TextField-fieldGroup,
-.terra-root .ms-TextField-fieldGroup.ms-TextField-fieldGroup--error {
-  border: 1px solid #e50000;
-  box-shadow: 0 0 0 1px #e50000;
-}
-.terra-root .ms-TextField.is-disabled .ms-TextField-fieldGroup {
-  background-color: rgba(111, 116, 119, 0.2);
-  border: 1px solid #868a8c;
-  opacity: 0.25;
-  pointer-events: none;
-}
-.terra-root .ms-TextField--multiline .ms-TextField-field {
-  color: #000;
-  transition: background-size 0.2s ease;
-}
-.terra-root .ms-TextField--multiline .ms-TextField-fieldGroup:focus-within {
-  border: 1px solid #4cb2e9;
-  box-shadow: 0 0 8px #a6d9f4;
-}
-.terra-root .ms-Dropdown-title,
-.terra-root .ms-ComboBox {
-  background-color: #fff;
-  border: 1px solid #dedfe0;
-  border-radius: 3px;
-  color: #1c1f21;
-  font-size: 16px;
-  line-height: 1.75;
-  min-height: 30px;
-  padding: 0 0 0 6px;
-}
-.terra-root .ms-Dropdown-caretDownWrapper {
-  padding: 0 6px;
-}
-.terra-root .ms-Dropdown-caretDown {
-  color: #1c1f21;
-  font-size: 14px;
-}
-.terra-root .ms-Dropdown:focus-visible .ms-Dropdown-title {
-  outline: 2px dashed #000;
-  outline-offset: 1px;
-  box-shadow: none;
-}
-.terra-root .ms-Dropdown.is-disabled .ms-Dropdown-title {
-  background-color: rgba(111, 116, 119, 0.2);
-  border-color: #dedfe0;
-  color: #1c1f21;
-  opacity: 0.4;
-}
-.terra-root .ms-DatePicker .ms-TextField-field {
-  padding-right: 32px;
-}
-.terra-root .ms-DatePicker .ms-TextField-fieldGroup {
-  border-radius: 3px;
-}
-.terra-root .ms-DatePicker-event--without-label,
-.terra-root .ms-DatePicker-event--with-label {
-  color: #1c1f21;
-  font-size: 14px;
-}
-.terra-root .ms-DatePicker-goToday,
-.terra-root .ms-DatePicker-day--today {
-  color: #0079be;
-}
-.terra-root .ms-DatePicker-day--highlighted,
-.terra-root .ms-DatePicker-day--highlighted:hover {
-  background-color: #0079be;
-  color: #fff;
-}
-.terra-root .ms-ChoiceField-field::before {
-  border-color: #c8cacb;
-}
-.terra-root .ms-ChoiceField.is-checked .ms-ChoiceField-field::after {
-  background-color: #0079be;
-}
-.terra-root .ms-Checkbox-checkbox {
-  border-color: #c8cacb;
-  border-radius: 2px;
-}
-.terra-root .ms-Checkbox.is-checked .ms-Checkbox-checkbox {
-  background-color: #0079be;
-  border-color: #01639e;
-}
-.terra-root .ms-ChoiceField-field,
-.terra-root .ms-Checkbox-text {
-  font-size: 14px;
-  line-height: 1.33;
-}
-.terra-root .ms-Button {
-  border-radius: 3px;
-  border-style: solid;
-  border-width: 1px;
-  font-size: 14px;
-  line-height: 1.429;
-  margin: 2px;
-  min-height: 30px;
-  padding: 4px 10px;
-}
-.terra-root .ms-Button:focus-visible {
-  outline: 2px dashed #000;
-  outline-offset: 1px;
-  box-shadow: none;
-}
-.terra-root .ms-Button:disabled, .terra-root .ms-Button.is-disabled {
-  opacity: 0.3;
-}
-.terra-root .ms-Button--primary {
-  background-color: #0079be;
-  border-color: #01639e;
-  color: #fff;
-}
-.terra-root .ms-Button--primary:hover {
-  background-color: #0065a3;
-  border-color: #01639e;
-}
-.terra-root .ms-Button--primary:active {
-  background-color: #004c76;
-  border-color: #0065a3;
-}
-.terra-root .ms-Button--primary:active:focus {
-  box-shadow: 0 0 1px 3px rgba(76, 178, 233, 0.5), 0 0 7px 4px rgba(76, 178, 233, 0.35);
-}
-.terra-root .ms-Button--default {
-  background-color: #dedfe0;
-  border-color: #c8cacb;
-  color: #1c1f21;
-}
-.terra-root .ms-Button--default:hover {
-  background-color: #b9bbbc;
-  color: #000;
-}
-.terra-root .ms-Button--default:active {
-  background-color: #6f7477;
-  border-color: #52585b;
-  color: #fff;
-}
-.terra-root .ms-Link {
-  color: #006fc3;
-  text-decoration: underline;
-}
-.terra-root .ms-Link:hover, .terra-root .ms-Link:active {
-  color: #001f67;
-  text-decoration: underline;
-}
-.terra-root .ms-Link:focus-visible {
-  outline: 2px dashed #000;
-  outline-offset: 1px;
-  box-shadow: none;
-  border-radius: 3px;
-}
-.terra-root h1, .terra-root h2, .terra-root h3, .terra-root h4, .terra-root h5, .terra-root h6 {
-  margin: 0;
-}
-.terra-root :not(.terra-demographics-banner) > h1,
-.terra-root :not(.terra-demographics-banner) > h2,
-.terra-root :not(.terra-demographics-banner) > h3,
-.terra-root :not(.terra-demographics-banner) > h4,
-.terra-root :not(.terra-demographics-banner) > h5,
-.terra-root :not(.terra-demographics-banner) > h6 {
-  color: #333;
-}
-.terra-root h1 {
-  font-size: 32px;
-}
-.terra-root h2 {
-  font-size: 24px;
-}
-.terra-root h3 {
-  font-size: 20px;
-}
-.terra-root h4 {
-  font-size: 18px;
-}
-.terra-root h5 {
-  font-size: 16px;
-}
-.terra-root h6 {
-  font-size: 14px;
-}
-.terra-root table {
-  border-collapse: collapse;
-  border-spacing: 0;
-  max-width: 100%;
-  width: 100%;
-}
-.terra-root table th, .terra-root table td {
-  border: 0;
-  color: #1c1f21;
-  font-size: 14px;
-  padding: 7px 10.5px;
-  text-align: left;
-}
-.terra-root table td {
-  vertical-align: top;
-}
-.terra-root table thead {
-  background-color: #f1f1f2;
-  box-shadow: 0 4px 4px -3.5px rgba(134, 138, 140, 0.75), inset 0 0 0 1px #fff, inset 0.5px 0.5px 0 2px rgba(255, 255, 255, 0.5);
-}
-.terra-root table thead tr {
-  border-bottom: 1px solid #b9bbbc;
-  border-top: 1px solid #dedfe0;
-}
-.terra-root table thead th {
-  border-right: 1px solid rgba(200, 202, 203, 0.5);
-  font-weight: bold;
-  vertical-align: bottom;
-}
-.terra-root table tbody tr {
-  border-top: 1px solid #dedfe0;
-}
-.terra-root table tbody tr:first-of-type {
-  border-top: 0;
-}
-.terra-root table tbody tr:last-of-type {
-  border-bottom: 1px solid #dedfe0;
-}
-.terra-root .ms-MessageBar--error {
-  background-color: #fedcdc;
-  box-shadow: 2px 0 0 #c00 inset;
-}
-.terra-root .ms-MessageBar--error .ms-MessageBar-icon {
-  color: #c00;
-  font-size: 18px;
-  margin-right: 7px;
-}
-.terra-root .ms-MessageBar--warning {
-  background-color: #fff3ce;
-  box-shadow: 2px 0 0 #ffc20a inset;
-}
-.terra-root .ms-MessageBar--info {
-  background-color: #f4f4f4;
-  box-shadow: 2px 0 0 #0092e0 inset;
-}
-.terra-root .ms-MessageBar--success {
-  background-color: #f4f4f4;
-  box-shadow: 2px 0 0 #78c346 inset;
-}
-.terra-root [data-builder-name-block] {
-  display: none;
-}
-.terra-root div.ms-Stack:has(> .ms-Stack-inner > button) {
-  background: #f9f9f9 !important;
-  border-top: 1px solid #dedfe0;
-}</style><style type="text/css" data-vite-dev-id="/Users/ahmadjalil/github/webforms/packages/cerner-terra/src/vendor/terra-button/Button.module.scss">button._button_156dv_1, html input[type=button]._button_156dv_1, input[type=reset]._button_156dv_1, input[type=submit]._button_156dv_1 {
+<style data-load-themed-styles="true">.pickerText_9f838726{display:-webkit-box;display:-ms-flexbox;display:flex;-ms-flex-wrap:wrap;flex-wrap:wrap;-webkit-box-align:center;-ms-flex-align:center;align-items:center;-webkit-box-sizing:border-box;box-sizing:border-box;border:1px solid #a19f9d;min-width:180px;padding:1px;min-height:32px}.pickerText_9f838726:hover{border-color:#c7e0f4}.pickerInput_9f838726{height:34px;border:none;-webkit-box-flex:1;-ms-flex-positive:1;flex-grow:1;outline:0;padding:0 6px 0;margin:1px}.pickerInput_9f838726::-ms-clear{display:none}</style><style data-load-themed-styles="true">.resultContent_4cc31f3f{display:table-row}.resultContent_4cc31f3f .resultItem_4cc31f3f{display:table-cell;vertical-align:bottom}.peoplePickerPersona_4cc31f3f{width:180px}.peoplePickerPersona_4cc31f3f .ms-Persona-details{width:100%}.peoplePicker_4cc31f3f .ms-BasePicker-text{min-height:40px}.peoplePickerPersonaContent_4cc31f3f{display:-webkit-box;display:-ms-flexbox;display:flex;width:100%;-webkit-box-pack:justify;-ms-flex-pack:justify;justify-content:space-between;-webkit-box-align:center;-ms-flex-align:center;align-items:center}</style><style data-load-themed-styles="true">.callout_ad5629e1 .ms-Suggestions-itemButton{padding:0;border:none}.callout_ad5629e1 .ms-Suggestions{min-width:300px}</style><style data-load-themed-styles="true">.root_8c91000a{min-width:260px}.suggestionsItem_8c91000a{display:-webkit-box;display:-ms-flexbox;display:flex;-webkit-box-align:stretch;-ms-flex-align:stretch;align-items:stretch;-webkit-box-sizing:border-box;box-sizing:border-box;width:100%;position:relative;overflow:hidden}.suggestionsItem_8c91000a:hover{background:#f3f2f1}.suggestionsItem_8c91000a:hover .closeButton_8c91000a{display:block}.suggestionsItem_8c91000a.suggestionsItemIsSuggested_8c91000a{background:#edebe9}.suggestionsItem_8c91000a.suggestionsItemIsSuggested_8c91000a:hover{background:#c8c6c4}@media screen and (-ms-high-contrast:active),screen and (forced-colors:active){.suggestionsItem_8c91000a.suggestionsItemIsSuggested_8c91000a:hover{background:Highlight;color:HighlightText}}@media screen and (-ms-high-contrast:active),screen and (forced-colors:active){.suggestionsItem_8c91000a.suggestionsItemIsSuggested_8c91000a{background:Highlight;color:HighlightText;-ms-high-contrast-adjust:none}}.suggestionsItem_8c91000a.suggestionsItemIsSuggested_8c91000a .closeButton_8c91000a:hover{background:#a19f9d;color:#323130}@media screen and (-ms-high-contrast:active),screen and (forced-colors:active){.suggestionsItem_8c91000a.suggestionsItemIsSuggested_8c91000a .itemButton_8c91000a{color:HighlightText}}.suggestionsItem_8c91000a .closeButton_8c91000a{display:none;color:#605e5c}.suggestionsItem_8c91000a .closeButton_8c91000a:hover{background:#edebe9}.actionButton_8c91000a{background-color:transparent;border:0;cursor:pointer;margin:0;position:relative;border-top:1px solid #edebe9;height:40px;width:100%;font-size:12px}[dir=ltr] .actionButton_8c91000a{padding-left:8px}[dir=rtl] .actionButton_8c91000a{padding-right:8px}html[dir=ltr] .actionButton_8c91000a{text-align:left}html[dir=rtl] .actionButton_8c91000a{text-align:right}.actionButton_8c91000a:hover{background-color:#edebe9;cursor:pointer}.actionButton_8c91000a:active,.actionButton_8c91000a:focus{background-color:#c7e0f4}.actionButton_8c91000a .ms-Button-icon{font-size:16px;width:25px}.actionButton_8c91000a .ms-Button-label{margin:0 4px 0 9px}html[dir=rtl] .actionButton_8c91000a .ms-Button-label{margin:0 9px 0 4px}.buttonSelected_8c91000a{background-color:#c7e0f4}.suggestionsTitle_8c91000a{padding:0 12px;color:#0078d4;font-size:12px;line-height:40px;border-bottom:1px solid #edebe9}.suggestionsContainer_8c91000a{overflow-y:auto;overflow-x:hidden;max-height:300px;border-bottom:1px solid #edebe9}.suggestionsNone_8c91000a{text-align:center;color:#797775;font-size:12px;line-height:30px}.suggestionsSpinner_8c91000a{margin:5px 0;white-space:nowrap;line-height:20px;font-size:12px}html[dir=ltr] .suggestionsSpinner_8c91000a{padding-left:14px}html[dir=rtl] .suggestionsSpinner_8c91000a{padding-right:14px}html[dir=ltr] .suggestionsSpinner_8c91000a{text-align:left}html[dir=rtl] .suggestionsSpinner_8c91000a{text-align:right}.suggestionsSpinner_8c91000a .ms-Spinner-circle{display:inline-block;vertical-align:middle}.suggestionsSpinner_8c91000a .ms-Spinner-label{display:inline-block;margin:0 10px 0 16px;vertical-align:middle}html[dir=rtl] .suggestionsSpinner_8c91000a .ms-Spinner-label{margin:0 16px 0 10px}.itemButton_8c91000a.itemButton_8c91000a{width:100%;padding:0;min-width:0;height:100%}@media screen and (-ms-high-contrast:active),screen and (forced-colors:active){.itemButton_8c91000a.itemButton_8c91000a{color:WindowText}}.itemButton_8c91000a.itemButton_8c91000a:hover{color:#201f1e}.closeButton_8c91000a.closeButton_8c91000a{padding:0 4px;height:auto;width:32px}@media screen and (-ms-high-contrast:active),screen and (forced-colors:active){.closeButton_8c91000a.closeButton_8c91000a{color:WindowText}}.closeButton_8c91000a.closeButton_8c91000a:hover{background:#c8c6c4;color:#201f1e}.suggestionsAvailable_8c91000a{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0}</style><style data-load-themed-styles="true">.picker_94f06b16{position:relative}.pickerText_94f06b16{display:-webkit-box;display:-ms-flexbox;display:flex;-ms-flex-wrap:wrap;flex-wrap:wrap;-webkit-box-align:center;-ms-flex-align:center;align-items:center;-webkit-box-sizing:border-box;box-sizing:border-box;border:1px solid #a19f9d;min-width:180px;min-height:30px}.pickerText_94f06b16:hover{border-color:#323130}.pickerText_94f06b16.inputFocused_94f06b16{position:relative;border-color:#0078d4}.pickerText_94f06b16.inputFocused_94f06b16:after{pointer-events:none;content:"";position:absolute;left:-1px;top:-1px;bottom:-1px;right:-1px;border:2px solid #0078d4}@media screen and (-ms-high-contrast:active),screen and (forced-colors:active){.pickerText_94f06b16.inputDisabled_94f06b16{position:relative;border-color:GrayText}.pickerText_94f06b16.inputDisabled_94f06b16:after{pointer-events:none;content:"";position:absolute;left:0;top:0;bottom:0;right:0;background-color:Window}}.pickerInput_94f06b16{height:34px;border:none;-webkit-box-flex:1;-ms-flex-positive:1;flex-grow:1;outline:0;padding:0 6px 0;-ms-flex-item-align:end;align-self:flex-end}.pickerItems_94f06b16{display:-webkit-box;display:-ms-flexbox;display:flex;-ms-flex-wrap:wrap;flex-wrap:wrap;max-width:100%}.screenReaderOnly_94f06b16{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0}</style><style data-load-themed-styles="true">.suggestionsContainer_44c59fda{overflow-y:auto;overflow-x:hidden;max-height:300px}.suggestionsContainer_44c59fda .ms-Suggestion-item:hover{background-color:#f3f2f1;cursor:pointer}.suggestionsContainer_44c59fda .is-suggested{background-color:#deecf9}.suggestionsContainer_44c59fda .is-suggested:hover{background-color:#c7e0f4;cursor:pointer}</style><style data-load-themed-styles="true">.root_ade399af{min-width:260px}.actionButton_ade399af{background:0 0;background-color:transparent;border:0;cursor:pointer;margin:0;padding:0;position:relative;width:100%;font-size:12px}html[dir=ltr] .actionButton_ade399af{text-align:left}html[dir=rtl] .actionButton_ade399af{text-align:right}.actionButton_ade399af:hover{background-color:#f3f2f1;cursor:pointer}.actionButton_ade399af:active,.actionButton_ade399af:focus{background-color:#c7e0f4}.actionButton_ade399af .ms-Button-icon{font-size:16px;width:25px}.actionButton_ade399af .ms-Button-label{margin:0 4px 0 9px}html[dir=rtl] .actionButton_ade399af .ms-Button-label{margin:0 9px 0 4px}.buttonSelected_ade399af{background-color:#deecf9}.buttonSelected_ade399af:hover{background-color:#c7e0f4;cursor:pointer}@media screen and (-ms-high-contrast:active),screen and (forced-colors:active){.buttonSelected_ade399af:hover{background-color:Highlight;color:HighlightText}}@media screen and (-ms-high-contrast:active),screen and (forced-colors:active){.buttonSelected_ade399af{background-color:Highlight;color:HighlightText;-ms-high-contrast-adjust:none}}.suggestionsTitle_ade399af{font-size:12px}.suggestionsSpinner_ade399af{margin:5px 0;white-space:nowrap;line-height:20px;font-size:12px}html[dir=ltr] .suggestionsSpinner_ade399af{padding-left:14px}html[dir=rtl] .suggestionsSpinner_ade399af{padding-right:14px}html[dir=ltr] .suggestionsSpinner_ade399af{text-align:left}html[dir=rtl] .suggestionsSpinner_ade399af{text-align:right}.suggestionsSpinner_ade399af .ms-Spinner-circle{display:inline-block;vertical-align:middle}.suggestionsSpinner_ade399af .ms-Spinner-label{display:inline-block;margin:0 10px 0 16px;vertical-align:middle}html[dir=rtl] .suggestionsSpinner_ade399af .ms-Spinner-label{margin:0 16px 0 10px}.itemButton_ade399af{height:100%;width:100%;padding:7px 12px}@media screen and (-ms-high-contrast:active),screen and (forced-colors:active){.itemButton_ade399af{color:WindowText}}.screenReaderOnly_ade399af{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0}</style><style data-load-themed-styles="true">.resultContent_f73be5be{display:table-row}.resultContent_f73be5be .resultItem_f73be5be{display:table-cell;vertical-align:bottom}.peoplePickerPersona_f73be5be{width:180px}.peoplePickerPersona_f73be5be .ms-Persona-details{width:100%}.peoplePicker_f73be5be .ms-BasePicker-text{min-height:40px}.peoplePickerPersonaContent_f73be5be{display:-webkit-box;display:-ms-flexbox;display:flex;width:100%;-webkit-box-pack:justify;-ms-flex-pack:justify;justify-content:space-between;-webkit-box-align:center;-ms-flex-align:center;align-items:center;padding:7px 12px}</style><style data-load-themed-styles="true">.personaContainer_6625fd9a{border-radius:15px;display:-webkit-inline-box;display:-ms-inline-flexbox;display:inline-flex;-webkit-box-align:center;-ms-flex-align:center;align-items:center;background:#eff6fc;margin:4px;cursor:default;-webkit-user-select:none;-moz-user-select:none;-ms-user-select:none;user-select:none;vertical-align:middle;position:relative}.personaContainer_6625fd9a::-moz-focus-inner{border:0}.personaContainer_6625fd9a{outline:transparent}.personaContainer_6625fd9a{position:relative}.ms-Fabric--isFocusVisible .personaContainer_6625fd9a:focus:after{-webkit-box-sizing:border-box;box-sizing:border-box;content:"";position:absolute;top:-2px;right:-2px;bottom:-2px;left:-2px;pointer-events:none;border:1px solid #605e5c;border-radius:0}.personaContainer_6625fd9a .ms-Persona-primaryText{color:#005a9e;font-size:14px;font-weight:400}.personaContainer_6625fd9a .ms-Persona-primaryText.hover_6625fd9a{color:#005a9e}@media screen and (-ms-high-contrast:active),screen and (forced-colors:active){.personaContainer_6625fd9a .ms-Persona-primaryText{color:HighlightText}}.personaContainer_6625fd9a .actionButton_6625fd9a:hover{background:#c7e0f4}.personaContainer_6625fd9a .actionButton_6625fd9a .ms-Button-icon{color:#005a9e}@media screen and (-ms-high-contrast:active),screen and (forced-colors:active){.personaContainer_6625fd9a .actionButton_6625fd9a .ms-Button-icon{color:HighlightText}}.personaContainer_6625fd9a:hover{background:#deecf9}.personaContainer_6625fd9a:hover .ms-Persona-primaryText{color:#005a9e;font-size:14px;font-weight:400}@media screen and (-ms-high-contrast:active),screen and (forced-colors:active){.personaContainer_6625fd9a:hover .ms-Persona-primaryText{color:HighlightText}}.personaContainer_6625fd9a.personaContainerIsSelected_6625fd9a{background:#0078d4}.personaContainer_6625fd9a.personaContainerIsSelected_6625fd9a .ms-Persona-primaryText{color:#ffffff}@media screen and (-ms-high-contrast:active),screen and (forced-colors:active){.personaContainer_6625fd9a.personaContainerIsSelected_6625fd9a .ms-Persona-primaryText{color:HighlightText}}.personaContainer_6625fd9a.personaContainerIsSelected_6625fd9a .actionButton_6625fd9a{color:#ffffff}.personaContainer_6625fd9a.personaContainerIsSelected_6625fd9a .actionButton_6625fd9a .ms-Button-icon{color:#005a9e}.personaContainer_6625fd9a.personaContainerIsSelected_6625fd9a .actionButton_6625fd9a .ms-Button-icon:hover{background:#005a9e}@media screen and (-ms-high-contrast:active),screen and (forced-colors:active){.personaContainer_6625fd9a.personaContainerIsSelected_6625fd9a .actionButton_6625fd9a .ms-Button-icon{color:HighlightText}}@media screen and (-ms-high-contrast:active),screen and (forced-colors:active){.personaContainer_6625fd9a.personaContainerIsSelected_6625fd9a{border-color:Highlight;background:Highlight;-ms-high-contrast-adjust:none}}.personaContainer_6625fd9a.validationError_6625fd9a .ms-Persona-primaryText{color:#e81123}.personaContainer_6625fd9a.validationError_6625fd9a .ms-Persona-initials{font-size:20px}@media screen and (-ms-high-contrast:active),screen and (forced-colors:active){.personaContainer_6625fd9a{border:1px solid WindowText}}.personaContainer_6625fd9a .itemContent_6625fd9a{-webkit-box-flex:0;-ms-flex:0 1 auto;flex:0 1 auto;min-width:0;max-width:100%}.personaContainer_6625fd9a .removeButton_6625fd9a{border-radius:15px;-webkit-box-flex:0;-ms-flex:0 0 auto;flex:0 0 auto;width:33px;height:33px;-ms-flex-preferred-size:32px;flex-basis:32px}.personaContainer_6625fd9a .expandButton_6625fd9a{border-radius:15px 0 0 15px;height:33px;width:44px;padding-right:16px;position:inherit;display:-webkit-box;display:-ms-flexbox;display:flex;margin-right:-17px}.personaContainer_6625fd9a .personaWrapper_6625fd9a{position:relative;display:inherit}.personaContainer_6625fd9a .personaWrapper_6625fd9a .ms-Persona-details{padding:0 8px}.personaContainer_6625fd9a .personaDetails_6625fd9a{-webkit-box-flex:0;-ms-flex:0 1 auto;flex:0 1 auto}.itemContainer_6625fd9a{display:inline-block;vertical-align:top}</style><style type="text/css" data-vite-dev-id="/Users/ahmadjalil/github/webforms/packages/cerner-terra/src/vendor/terra-button/Button.module.scss">button._button_156dv_1, html input[type=button]._button_156dv_1, input[type=reset]._button_156dv_1, input[type=submit]._button_156dv_1 {
   -webkit-appearance: button;
      -moz-appearance: button;
           appearance: button;
@@ -3669,6 +3287,383 @@ html.terra-base *,
 html.terra-base *::before,
 html.terra-base *::after {
   box-sizing: inherit;
+}</style><style type="text/css" data-vite-dev-id="/Users/ahmadjalil/github/webforms/packages/cerner-player/src/terra/terra-tokens.scss">.terra-root {
+  --terra-base-font-family: Helvetica Neue, Helvetica, Arial, sans-serif;
+  --terra-base-color: #1c1f21;
+  --terra-base-background-color: #fff;
+  --terra-primary: #0079be;
+  --terra-primary-active: #004c76;
+  --terra-error: #e50000;
+  --terra-chrome-bg: #f9f9f9;
+  --terra-divider: #dedfe0;
+  --terra-demographics-banner-background-color: #004c76;
+  background-color: #fff;
+  color: #1c1f21;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.4285714286;
+}
+.terra-root .terra-demographics-banner {
+  background-color: #004c76;
+  color: #fff;
+  padding: 10px;
+}
+.terra-root .terra-demographics-banner.is-deceased {
+  background-color: #1c1f21;
+}
+.terra-root .terra-demographics-banner .person-name {
+  color: inherit;
+  font-size: 18px;
+  font-weight: bold;
+  margin: 0;
+}
+.terra-root .terra-demographics-banner .preferred-first-name {
+  font-weight: normal;
+  margin-left: 5px;
+}
+.terra-root .terra-demographics-banner .identifier-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 20px;
+  margin-top: 2px;
+}
+.terra-root .terra-demographics-banner dl {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 12px;
+  margin: 0;
+}
+.terra-root .terra-demographics-banner dt {
+  display: inline;
+  font-weight: normal;
+  opacity: 0.85;
+}
+.terra-root .terra-demographics-banner dd {
+  display: inline;
+  font-weight: bold;
+  margin: 0 5px 0 4px;
+}
+.terra-root .terra-action-footer {
+  align-items: center;
+  background-color: #f9f9f9;
+  border-top: 1px solid #dedfe0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 40px;
+  padding: 9px 10px;
+}
+.terra-root .ms-TextField,
+.terra-root .ms-Dropdown-container,
+.terra-root .ms-ComboBox-container,
+.terra-root .ms-ChoiceFieldGroup,
+.terra-root .ms-Checkbox {
+  margin-bottom: 20px;
+}
+.terra-root .ms-Label {
+  color: #1c1f21;
+  font-size: 14px;
+  font-weight: bold;
+  line-height: 1.29;
+  margin: 0 0 5px;
+  padding: 0;
+}
+.terra-root .ms-Label--required::after {
+  content: none;
+}
+.terra-root .ms-Label--required::before {
+  color: #e50000;
+  content: "*";
+  display: inline-block;
+  padding-right: 5px;
+}
+.terra-root .ms-TextField-description {
+  color: rgba(28, 31, 33, 0.63);
+  font-size: 12px;
+  font-weight: normal;
+  line-height: 1.25;
+  margin-top: 5px;
+}
+.terra-root .ms-TextField-errorMessage {
+  color: #e50000;
+  font-size: 12px;
+  font-weight: normal;
+  line-height: 1.25;
+  margin-top: 5px;
+}
+.terra-root .ms-TextField-fieldGroup {
+  background-color: #fff;
+  border: 1px solid #dedfe0;
+  border-radius: 3px;
+  min-height: 30px;
+}
+.terra-root .ms-TextField-fieldGroup:hover {
+  border-color: #dedfe0;
+}
+.terra-root .ms-TextField-fieldGroup:focus-within {
+  border: 1px solid #4cb2e9;
+  box-shadow: none;
+  outline: none;
+}
+.terra-root .ms-TextField-field {
+  background-color: transparent;
+  color: #1c1f21;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-size: 16px;
+  line-height: 1.25;
+  padding: 4px;
+}
+.terra-root .ms-TextField-field::-moz-placeholder {
+  color: rgba(21, 33, 41, 0.62);
+  font-style: italic;
+  opacity: 1;
+}
+.terra-root .ms-TextField-field::placeholder {
+  color: rgba(21, 33, 41, 0.62);
+  font-style: italic;
+  opacity: 1;
+}
+.terra-root .ms-TextField.is-required .ms-TextField-fieldGroup {
+  background-color: #ffc;
+}
+.terra-root .ms-TextField--error .ms-TextField-fieldGroup,
+.terra-root .ms-TextField-fieldGroup.ms-TextField-fieldGroup--error {
+  border: 1px solid #e50000;
+  box-shadow: 0 0 0 1px #e50000;
+}
+.terra-root .ms-TextField.is-disabled .ms-TextField-fieldGroup {
+  background-color: rgba(111, 116, 119, 0.2);
+  border: 1px solid #868a8c;
+  opacity: 0.25;
+  pointer-events: none;
+}
+.terra-root .ms-TextField--multiline .ms-TextField-field {
+  color: #000;
+  transition: background-size 0.2s ease;
+}
+.terra-root .ms-TextField--multiline .ms-TextField-fieldGroup:focus-within {
+  border: 1px solid #4cb2e9;
+  box-shadow: 0 0 8px #a6d9f4;
+}
+.terra-root .ms-Dropdown-title,
+.terra-root .ms-ComboBox {
+  background-color: #fff;
+  border: 1px solid #dedfe0;
+  border-radius: 3px;
+  color: #1c1f21;
+  font-size: 16px;
+  line-height: 1.75;
+  min-height: 30px;
+  padding: 0 0 0 6px;
+}
+.terra-root .ms-Dropdown-caretDownWrapper {
+  padding: 0 6px;
+}
+.terra-root .ms-Dropdown-caretDown {
+  color: #1c1f21;
+  font-size: 14px;
+}
+.terra-root .ms-Dropdown:focus-visible .ms-Dropdown-title {
+  outline: 2px dashed #000;
+  outline-offset: 1px;
+  box-shadow: none;
+}
+.terra-root .ms-Dropdown.is-disabled .ms-Dropdown-title {
+  background-color: rgba(111, 116, 119, 0.2);
+  border-color: #dedfe0;
+  color: #1c1f21;
+  opacity: 0.4;
+}
+.terra-root .ms-DatePicker .ms-TextField-field {
+  padding-right: 32px;
+}
+.terra-root .ms-DatePicker .ms-TextField-fieldGroup {
+  border-radius: 3px;
+}
+.terra-root .ms-DatePicker-event--without-label,
+.terra-root .ms-DatePicker-event--with-label {
+  color: #1c1f21;
+  font-size: 14px;
+}
+.terra-root .ms-DatePicker-goToday,
+.terra-root .ms-DatePicker-day--today {
+  color: #0079be;
+}
+.terra-root .ms-DatePicker-day--highlighted,
+.terra-root .ms-DatePicker-day--highlighted:hover {
+  background-color: #0079be;
+  color: #fff;
+}
+.terra-root .ms-ChoiceField-field::before {
+  border-color: #c8cacb;
+}
+.terra-root .ms-ChoiceField.is-checked .ms-ChoiceField-field::after {
+  background-color: #0079be;
+}
+.terra-root .ms-Checkbox-checkbox {
+  border-color: #c8cacb;
+  border-radius: 2px;
+}
+.terra-root .ms-Checkbox.is-checked .ms-Checkbox-checkbox {
+  background-color: #0079be;
+  border-color: #01639e;
+}
+.terra-root .ms-ChoiceField-field,
+.terra-root .ms-Checkbox-text {
+  font-size: 14px;
+  line-height: 1.33;
+}
+.terra-root .ms-Button {
+  border-radius: 3px;
+  border-style: solid;
+  border-width: 1px;
+  font-size: 14px;
+  line-height: 1.429;
+  margin: 2px;
+  min-height: 30px;
+  padding: 4px 10px;
+}
+.terra-root .ms-Button:focus-visible {
+  outline: 2px dashed #000;
+  outline-offset: 1px;
+  box-shadow: none;
+}
+.terra-root .ms-Button:disabled, .terra-root .ms-Button.is-disabled {
+  opacity: 0.3;
+}
+.terra-root .ms-Button--primary {
+  background-color: #0079be;
+  border-color: #01639e;
+  color: #fff;
+}
+.terra-root .ms-Button--primary:hover {
+  background-color: #0065a3;
+  border-color: #01639e;
+}
+.terra-root .ms-Button--primary:active {
+  background-color: #004c76;
+  border-color: #0065a3;
+}
+.terra-root .ms-Button--primary:active:focus {
+  box-shadow: 0 0 1px 3px rgba(76, 178, 233, 0.5), 0 0 7px 4px rgba(76, 178, 233, 0.35);
+}
+.terra-root .ms-Button--default {
+  background-color: #dedfe0;
+  border-color: #c8cacb;
+  color: #1c1f21;
+}
+.terra-root .ms-Button--default:hover {
+  background-color: #b9bbbc;
+  color: #000;
+}
+.terra-root .ms-Button--default:active {
+  background-color: #6f7477;
+  border-color: #52585b;
+  color: #fff;
+}
+.terra-root .ms-Link {
+  color: #006fc3;
+  text-decoration: underline;
+}
+.terra-root .ms-Link:hover, .terra-root .ms-Link:active {
+  color: #001f67;
+  text-decoration: underline;
+}
+.terra-root .ms-Link:focus-visible {
+  outline: 2px dashed #000;
+  outline-offset: 1px;
+  box-shadow: none;
+  border-radius: 3px;
+}
+.terra-root h1, .terra-root h2, .terra-root h3, .terra-root h4, .terra-root h5, .terra-root h6 {
+  margin: 0;
+}
+html:not(.terra-base) .terra-root h1, html:not(.terra-base) .terra-root h2, html:not(.terra-base) .terra-root h3, html:not(.terra-base) .terra-root h4, html:not(.terra-base) .terra-root h5, html:not(.terra-base) .terra-root h6 {
+  color: #333;
+}
+.terra-root h1 {
+  font-size: 32px;
+}
+.terra-root h2 {
+  font-size: 24px;
+}
+.terra-root h3 {
+  font-size: 20px;
+}
+.terra-root h4 {
+  font-size: 18px;
+}
+.terra-root h5 {
+  font-size: 16px;
+}
+.terra-root h6 {
+  font-size: 14px;
+}
+.terra-root table {
+  border-collapse: collapse;
+  border-spacing: 0;
+  max-width: 100%;
+  width: 100%;
+}
+.terra-root table th, .terra-root table td {
+  border: 0;
+  color: #1c1f21;
+  font-size: 14px;
+  padding: 7px 10.5px;
+  text-align: left;
+}
+.terra-root table td {
+  vertical-align: top;
+}
+.terra-root table thead {
+  background-color: #f1f1f2;
+  box-shadow: 0 4px 4px -3.5px rgba(134, 138, 140, 0.75), inset 0 0 0 1px #fff, inset 0.5px 0.5px 0 2px rgba(255, 255, 255, 0.5);
+}
+.terra-root table thead tr {
+  border-bottom: 1px solid #b9bbbc;
+  border-top: 1px solid #dedfe0;
+}
+.terra-root table thead th {
+  border-right: 1px solid rgba(200, 202, 203, 0.5);
+  font-weight: bold;
+  vertical-align: bottom;
+}
+.terra-root table tbody tr {
+  border-top: 1px solid #dedfe0;
+}
+.terra-root table tbody tr:first-of-type {
+  border-top: 0;
+}
+.terra-root table tbody tr:last-of-type {
+  border-bottom: 1px solid #dedfe0;
+}
+.terra-root .ms-MessageBar--error {
+  background-color: #fedcdc;
+  box-shadow: 2px 0 0 #c00 inset;
+}
+.terra-root .ms-MessageBar--error .ms-MessageBar-icon {
+  color: #c00;
+  font-size: 18px;
+  margin-right: 7px;
+}
+.terra-root .ms-MessageBar--warning {
+  background-color: #fff3ce;
+  box-shadow: 2px 0 0 #ffc20a inset;
+}
+.terra-root .ms-MessageBar--info {
+  background-color: #f4f4f4;
+  box-shadow: 2px 0 0 #0092e0 inset;
+}
+.terra-root .ms-MessageBar--success {
+  background-color: #f4f4f4;
+  box-shadow: 2px 0 0 #78c346 inset;
+}
+.terra-root [data-builder-name-block] {
+  display: none;
+}
+.terra-root div.ms-Stack:has(> .ms-Stack-inner > button) {
+  background: #f9f9f9 !important;
+  border-top: 1px solid #dedfe0;
 }</style><style type="text/css" data-vite-dev-id="/Users/ahmadjalil/github/webforms/packages/cerner-terra-forms/src/terra-fallbacks.css">/*
  * Styling for the controls Terra leaves unstyled.
  *
@@ -3730,9 +3725,9 @@ html.terra-base *::after {
 [data-terra-control="table"] table { margin-bottom: 8px; }
 </style></head>
 <body>
-  <div id="root"><div class=""><div class="terra-root" style="background-color: rgb(244, 244, 244); color: rgb(50, 49, 48); line-height: 1.3; min-height: 100vh; padding: 12px 16px;"><div style="margin: -12px -16px 12px;"><section class="terra-demographics-banner" aria-label="Patient demographics"><h2 class="person-name">MOUSE, MICKEY BOB</h2><div class="identifier-row"><dl><dt>Age</dt><dd>46 Years</dd><dt>Gender</dt><dd>Male</dd><dt>DOB</dt><dd>1980-01-01</dd></dl><dl><dt>PHN</dt><dd>9876 543 210</dd><dt>MRN</dt><dd>700001234</dd><dt>Encounter</dt><dd>97953477</dd></dl></div></section></div><div style="background: rgb(244, 244, 244); border: 1px solid rgb(222, 223, 224); font-size: 12px; margin-bottom: 12px; padding: 6px 10px;">Terra render target — 29 of 30 fields supported, 18 distinct controls · 1 unsupported</div><div data-terra-form="true"><section data-terra-section="true"><div data-terra-control="number" data-field-id="birth_weight_g" data-field-width="1/3"><div class="_field_14ugb_1"><div class="_label-group_14ugb_14"><label for="birth_weight_g" class="_label_14ugb_14">Birth Weight</label><div class="_error-icon-hidden_14ugb_36"><svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" role="presentation" style="display: inline-block; vertical-align: -0.15em; fill: currentcolor;"><path fill="#E50000" d="M24 0c13.3 0 24 10.7 24 24S37.3 48 24 48 0 37.3 0 24C0 10.8 10.7 0 23.9 0h.1z"></path><path fill="#FFF" d="M7 21.5h34v5H7v-5z"></path></svg></div></div><input id="birth_weight_g" class="_form-input_q1eky_1" type="number" value="" disabled="" style=""></div></div><div data-terra-control="number" data-field-id="apgar_1min" data-field-width="1/3"><div class="_field_14ugb_1"><div class="_label-group_14ugb_14"><label for="apgar_1min" class="_label_14ugb_14">Apgar Score — 1 minute</label><div class="_error-icon-hidden_14ugb_36"><svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" role="presentation" style="display: inline-block; vertical-align: -0.15em; fill: currentcolor;"><path fill="#E50000" d="M24 0c13.3 0 24 10.7 24 24S37.3 48 24 48 0 37.3 0 24C0 10.8 10.7 0 23.9 0h.1z"></path><path fill="#FFF" d="M7 21.5h34v5H7v-5z"></path></svg></div></div><input id="apgar_1min" class="_form-input_q1eky_1" type="number" value="" disabled="" style=""></div></div><div data-terra-control="number" data-field-id="apgar_5min" data-field-width="1/3"><div class="_field_14ugb_1"><div class="_label-group_14ugb_14"><label for="apgar_5min" class="_label_14ugb_14">Apgar Score — 5 minutes</label><div class="_error-icon-hidden_14ugb_36"><svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" role="presentation" style="display: inline-block; vertical-align: -0.15em; fill: currentcolor;"><path fill="#E50000" d="M24 0c13.3 0 24 10.7 24 24S37.3 48 24 48 0 37.3 0 24C0 10.8 10.7 0 23.9 0h.1z"></path><path fill="#FFF" d="M7 21.5h34v5H7v-5z"></path></svg></div></div><input id="apgar_5min" class="_form-input_q1eky_1" type="number" value="" disabled="" style=""></div></div><div data-terra-control="computed-display" data-field-id="apgar_total" data-field-width="1/3"><div class="_field_14ugb_1"><div class="_label-group_14ugb_14"><label for="apgar_total" class="_label_14ugb_14">Apgar Total (1 min + 5 min)</label><div class="_error-icon-hidden_14ugb_36"><svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" role="presentation" style="display: inline-block; vertical-align: -0.15em; fill: currentcolor;"><path fill="#E50000" d="M24 0c13.3 0 24 10.7 24 24S37.3 48 24 48 0 37.3 0 24C0 10.8 10.7 0 23.9 0h.1z"></path><path fill="#FFF" d="M7 21.5h34v5H7v-5z"></path></svg></div></div><output id="apgar_total">—</output></div></div></section><section data-terra-section="true"><div data-terra-control="section" data-field-id="sec_maternal"><h2 class="_heading_2zc35_1 _level-2_2zc35_10 _size-medium_2zc35_31 _weight-700_2zc35_49">Maternal &amp; Delivery History</h2></div><div data-terra-control="text" data-field-id="mother_full_name" data-field-width="1/2"><div class="_field_14ugb_1"><div class="_label-group_14ugb_14"><label for="mother_full_name" class="_label_14ugb_14"><div class="_required_14ugb_43" aria-hidden="true">*</div>Mother's Full Name</label><div class="_error-icon-hidden_14ugb_36"><svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" role="presentation" style="display: inline-block; vertical-align: -0.15em; fill: currentcolor;"><path fill="#E50000" d="M24 0c13.3 0 24 10.7 24 24S37.3 48 24 48 0 37.3 0 24C0 10.8 10.7 0 23.9 0h.1z"></path><path fill="#FFF" d="M7 21.5h34v5H7v-5z"></path></svg></div></div><input id="mother_full_name" aria-required="true" required="" class="_form-input_q1eky_1 _form-incomplete_q1eky_85" type="text" value="" disabled="" style=""></div></div><div data-terra-control="text" data-field-id="mother_phn" data-field-width="1/2"><div class="_field_14ugb_1"><div class="_label-group_14ugb_14"><label for="mother_phn" class="_label_14ugb_14">Personal Health Number (PHN)</label><div class="_error-icon-hidden_14ugb_36"><svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" role="presentation" style="display: inline-block; vertical-align: -0.15em; fill: currentcolor;"><path fill="#E50000" d="M24 0c13.3 0 24 10.7 24 24S37.3 48 24 48 0 37.3 0 24C0 10.8 10.7 0 23.9 0h.1z"></path><path fill="#FFF" d="M7 21.5h34v5H7v-5z"></path></svg></div></div><input id="mother_phn" class="_form-input_q1eky_1" type="text" value="" disabled="" style=""><div id="mother_phn-help" class="_help-text_14ugb_57">10-digit BC PHN from the CareCard or the ADT banner.</div></div></div><div data-terra-control="text" data-field-id="chart_mrn" data-field-width="1/2"><div class="_field_14ugb_1 _field-inline_14ugb_9"><div class="_label-group_14ugb_14"><label for="chart_mrn" class="_label_14ugb_14">Facility MRN</label><div class="_error-icon-hidden_14ugb_36"><svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" role="presentation" style="display: inline-block; vertical-align: -0.15em; fill: currentcolor;"><path fill="#E50000" d="M24 0c13.3 0 24 10.7 24 24S37.3 48 24 48 0 37.3 0 24C0 10.8 10.7 0 23.9 0h.1z"></path><path fill="#FFF" d="M7 21.5h34v5H7v-5z"></path></svg></div></div><input id="chart_mrn" disabled="" class="_form-input_q1eky_1" type="text" value="" style=""><div id="chart_mrn-help" class="_help-text_14ugb_57">Populated from the encounter; not editable on this form.</div></div></div><div data-terra-control="date" data-field-id="delivery_date" data-field-width="1/3"><div class="_field_14ugb_1"><div class="_label-group_14ugb_14"><label for="delivery_date" class="_label_14ugb_14"><div class="_required_14ugb_43" aria-hidden="true">*</div>Date of Delivery</label><div class="_error-icon-hidden_14ugb_36"><svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" role="presentation" style="display: inline-block; vertical-align: -0.15em; fill: currentcolor;"><path fill="#E50000" d="M24 0c13.3 0 24 10.7 24 24S37.3 48 24 48 0 37.3 0 24C0 10.8 10.7 0 23.9 0h.1z"></path><path fill="#FFF" d="M7 21.5h34v5H7v-5z"></path></svg></div></div><div class="_date-picker_befxs_1"><div class="_react-datepicker-input-container_1yryo_222"><div class=""><div class="_date-input-container_befxs_4"><div class="_date-input_befxs_4"><input data-terra-date-input-hidden="true" type="hidden" value="" name="delivery_date" disabled="" style=""><span class="_visually-hidden-text_jvs0j_1">Date</span><span aria-atomic="true" aria-relevant="all" aria-live="assertive" class="_visually-hidden-text_jvs0j_1"></span><input class="_form-input_q1eky_1 _date-input-year_befxs_68" maxlength="4" size="4" aria-invalid="false" aria-required="false" aria-label="Year" aria-describedby="terra-date-picker-description-format-2b7c28d8-a28e-4aea-9ca3-a2bf68ccb9e8 " pattern="\d*" type="number" value="" name="terra-date-year-delivery_date" disabled="" style=""><span class="_date-spacer_befxs_122">-</span><input class="_form-input_q1eky_1 _date-input-month_befxs_66" maxlength="2" size="2" aria-invalid="false" aria-required="false" aria-label="Month" aria-describedby="terra-date-picker-description-format-2b7c28d8-a28e-4aea-9ca3-a2bf68ccb9e8 " pattern="\d*" type="number" value="" name="terra-date-month-delivery_date" disabled="" style=""><span class="_date-spacer_befxs_122">-</span><input class="_form-input_q1eky_1 _date-input-day_befxs_67" maxlength="2" size="2" aria-invalid="false" aria-required="false" aria-label="Day" aria-describedby="terra-date-picker-description-format-2b7c28d8-a28e-4aea-9ca3-a2bf68ccb9e8 " pattern="\d*" type="number" value="" name="terra-date-day-delivery_date" disabled="" style=""></div><button data-terra-open-calendar-button="true" class="_button_156dv_1 _neutral_156dv_87 _compact_156dv_319 _button_befxs_126" aria-label=" Open Calendar" type="button" aria-disabled="false" title="Open Calendar"><span class="_button-label-mac_156dv_78 _icon-only_156dv_329"><span class="_icon_156dv_329"><svg class="_icon-svg_156dv_347" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" role="presentation" style="display: inline-block; vertical-align: -0.15em; fill: currentcolor;"><path d="M43 6h-4V2.2C39 1 38 0 36.8 0h-1.7C33.9.1 33 1 33 2.2V6H15V2.2C15 1 14 0 12.8 0h-1.7C9.9.1 9 1 9 2.2V6H5c-1.1 0-2 .9-2 2v38c0 1.1.9 2 2 2h24c1.3-.1 2.5-.6 3.4-1.4l11.2-11.1c.8-.9 1.3-2.1 1.4-3.4V8c0-1.1-.9-2-2-2zM6 21h36v10H30c-1.1 0-2 .9-2 2v12H6V21zm25 22.8V34h9.8L31 43.8z"></path></svg></span></span></button></div><div id="terra-date-picker-description-format-2b7c28d8-a28e-4aea-9ca3-a2bf68ccb9e8" class="_format-text_befxs_157"><span aria-live="polite" class="_visually-hidden-text_jvs0j_1">
+  <div id="root"><div class=""><div class="terra-root" style="color: rgb(50, 49, 48); line-height: 1.3; min-height: 100vh; padding: 12px 16px;"><div style="margin: -12px -16px 12px;"><section class="_demographics-banner_gepyc_1 _large-demographics-banner_gepyc_88"><div class="_content_gepyc_69"><h2 class="_person-name_gepyc_32">MOUSE, MICKEY BOB</h2><div class="_identifier-row_gepyc_63"><dl class="_person-details_gepyc_43"><div class="_value_gepyc_13"><dt class="_value-term_gepyc_29"><span class="_visually-hidden-text_jvs0j_1">Age</span></dt><dd class="_value-text_gepyc_21">46 Years</dd></div><div class="_value_gepyc_13"><dt class="_value-term_gepyc_29"><span class="_visually-hidden-text_jvs0j_1">Gender</span></dt><dd class="_value-text_gepyc_21">Male</dd></div><div class="_value_gepyc_13"><dt class="_value-term_gepyc_29"><span class="_visually-hidden-text_jvs0j_1">Date of Birth</span><span class="_value-label_gepyc_26"><abbr class="_abbreviation_gepyc_60" title="Date of Birth" aria-hidden="true">DOB:</abbr></span></dt><dd class="_value-text_gepyc_21">1980-01-01</dd></div></dl><dl class="_identifiers_gepyc_39"><div class="_value_gepyc_13"><dt class="_value-term_gepyc_29"><span class="_value-label_gepyc_26">PHN:</span></dt><dd class="_value-text_gepyc_21">9876 543 210</dd></div><div class="_value_gepyc_13"><dt class="_value-term_gepyc_29"><span class="_value-label_gepyc_26">MRN:</span></dt><dd class="_value-text_gepyc_21">700001234</dd></div><div class="_value_gepyc_13"><dt class="_value-term_gepyc_29"><span class="_value-label_gepyc_26">Encounter:</span></dt><dd class="_value-text_gepyc_21">97953477</dd></div></dl></div><div class="_application-content_gepyc_82"></div></div></section></div><div style="background: rgb(244, 244, 244); border: 1px solid rgb(222, 223, 224); font-size: 12px; margin-bottom: 12px; padding: 6px 10px;">Terra render target — 29 of 30 fields supported, 18 distinct controls · 1 unsupported</div><div data-terra-form="true"><section data-terra-section="true"><div data-terra-control="number" data-field-id="birth_weight_g" data-field-width="1/3"><div class="_field_14ugb_1"><div class="_label-group_14ugb_14"><label for="birth_weight_g" class="_label_14ugb_14">Birth Weight</label><div class="_error-icon-hidden_14ugb_36"><svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" role="presentation" style="display: inline-block; vertical-align: -0.15em; fill: currentcolor;"><path fill="#E50000" d="M24 0c13.3 0 24 10.7 24 24S37.3 48 24 48 0 37.3 0 24C0 10.8 10.7 0 23.9 0h.1z"></path><path fill="#FFF" d="M7 21.5h34v5H7v-5z"></path></svg></div></div><input id="birth_weight_g" class="_form-input_q1eky_1" type="number" value="" disabled="" style=""></div></div><div data-terra-control="number" data-field-id="apgar_1min" data-field-width="1/3"><div class="_field_14ugb_1"><div class="_label-group_14ugb_14"><label for="apgar_1min" class="_label_14ugb_14">Apgar Score — 1 minute</label><div class="_error-icon-hidden_14ugb_36"><svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" role="presentation" style="display: inline-block; vertical-align: -0.15em; fill: currentcolor;"><path fill="#E50000" d="M24 0c13.3 0 24 10.7 24 24S37.3 48 24 48 0 37.3 0 24C0 10.8 10.7 0 23.9 0h.1z"></path><path fill="#FFF" d="M7 21.5h34v5H7v-5z"></path></svg></div></div><input id="apgar_1min" class="_form-input_q1eky_1" type="number" value="" disabled="" style=""></div></div><div data-terra-control="number" data-field-id="apgar_5min" data-field-width="1/3"><div class="_field_14ugb_1"><div class="_label-group_14ugb_14"><label for="apgar_5min" class="_label_14ugb_14">Apgar Score — 5 minutes</label><div class="_error-icon-hidden_14ugb_36"><svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" role="presentation" style="display: inline-block; vertical-align: -0.15em; fill: currentcolor;"><path fill="#E50000" d="M24 0c13.3 0 24 10.7 24 24S37.3 48 24 48 0 37.3 0 24C0 10.8 10.7 0 23.9 0h.1z"></path><path fill="#FFF" d="M7 21.5h34v5H7v-5z"></path></svg></div></div><input id="apgar_5min" class="_form-input_q1eky_1" type="number" value="" disabled="" style=""></div></div><div data-terra-control="computed-display" data-field-id="apgar_total" data-field-width="1/3"><div class="_field_14ugb_1"><div class="_label-group_14ugb_14"><label for="apgar_total" class="_label_14ugb_14">Apgar Total (1 min + 5 min)</label><div class="_error-icon-hidden_14ugb_36"><svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" role="presentation" style="display: inline-block; vertical-align: -0.15em; fill: currentcolor;"><path fill="#E50000" d="M24 0c13.3 0 24 10.7 24 24S37.3 48 24 48 0 37.3 0 24C0 10.8 10.7 0 23.9 0h.1z"></path><path fill="#FFF" d="M7 21.5h34v5H7v-5z"></path></svg></div></div><output id="apgar_total">—</output></div></div></section><section data-terra-section="true"><div data-terra-control="section" data-field-id="sec_maternal"><h2 class="_heading_2zc35_1 _level-2_2zc35_10 _size-medium_2zc35_31 _weight-700_2zc35_49">Maternal &amp; Delivery History</h2></div><div data-terra-control="text" data-field-id="mother_full_name" data-field-width="1/2"><div class="_field_14ugb_1"><div class="_label-group_14ugb_14"><label for="mother_full_name" class="_label_14ugb_14"><div class="_required_14ugb_43" aria-hidden="true">*</div>Mother's Full Name</label><div class="_error-icon-hidden_14ugb_36"><svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" role="presentation" style="display: inline-block; vertical-align: -0.15em; fill: currentcolor;"><path fill="#E50000" d="M24 0c13.3 0 24 10.7 24 24S37.3 48 24 48 0 37.3 0 24C0 10.8 10.7 0 23.9 0h.1z"></path><path fill="#FFF" d="M7 21.5h34v5H7v-5z"></path></svg></div></div><input id="mother_full_name" aria-required="true" required="" class="_form-input_q1eky_1 _form-incomplete_q1eky_85" type="text" value="" disabled="" style=""></div></div><div data-terra-control="text" data-field-id="mother_phn" data-field-width="1/2"><div class="_field_14ugb_1"><div class="_label-group_14ugb_14"><label for="mother_phn" class="_label_14ugb_14">Personal Health Number (PHN)</label><div class="_error-icon-hidden_14ugb_36"><svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" role="presentation" style="display: inline-block; vertical-align: -0.15em; fill: currentcolor;"><path fill="#E50000" d="M24 0c13.3 0 24 10.7 24 24S37.3 48 24 48 0 37.3 0 24C0 10.8 10.7 0 23.9 0h.1z"></path><path fill="#FFF" d="M7 21.5h34v5H7v-5z"></path></svg></div></div><input id="mother_phn" class="_form-input_q1eky_1" type="text" value="" disabled="" style=""><div id="mother_phn-help" class="_help-text_14ugb_57">10-digit BC PHN from the CareCard or the ADT banner.</div></div></div><div data-terra-control="text" data-field-id="chart_mrn" data-field-width="1/2"><div class="_field_14ugb_1 _field-inline_14ugb_9"><div class="_label-group_14ugb_14"><label for="chart_mrn" class="_label_14ugb_14">Facility MRN</label><div class="_error-icon-hidden_14ugb_36"><svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" role="presentation" style="display: inline-block; vertical-align: -0.15em; fill: currentcolor;"><path fill="#E50000" d="M24 0c13.3 0 24 10.7 24 24S37.3 48 24 48 0 37.3 0 24C0 10.8 10.7 0 23.9 0h.1z"></path><path fill="#FFF" d="M7 21.5h34v5H7v-5z"></path></svg></div></div><input id="chart_mrn" disabled="" class="_form-input_q1eky_1" type="text" value="" style=""><div id="chart_mrn-help" class="_help-text_14ugb_57">Populated from the encounter; not editable on this form.</div></div></div><div data-terra-control="date" data-field-id="delivery_date" data-field-width="1/3"><div class="_field_14ugb_1"><div class="_label-group_14ugb_14"><label for="delivery_date" class="_label_14ugb_14"><div class="_required_14ugb_43" aria-hidden="true">*</div>Date of Delivery</label><div class="_error-icon-hidden_14ugb_36"><svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" role="presentation" style="display: inline-block; vertical-align: -0.15em; fill: currentcolor;"><path fill="#E50000" d="M24 0c13.3 0 24 10.7 24 24S37.3 48 24 48 0 37.3 0 24C0 10.8 10.7 0 23.9 0h.1z"></path><path fill="#FFF" d="M7 21.5h34v5H7v-5z"></path></svg></div></div><div class="_date-picker_befxs_1"><div class="_react-datepicker-input-container_1yryo_222"><div class=""><div class="_date-input-container_befxs_4"><div class="_date-input_befxs_4"><input data-terra-date-input-hidden="true" type="hidden" value="" name="delivery_date" disabled="" style=""><span class="_visually-hidden-text_jvs0j_1">Date</span><span aria-atomic="true" aria-relevant="all" aria-live="assertive" class="_visually-hidden-text_jvs0j_1"></span><input class="_form-input_q1eky_1 _date-input-year_befxs_68" maxlength="4" size="4" aria-invalid="false" aria-required="false" aria-label="Year" aria-describedby="terra-date-picker-description-format-0c3b4a53-e06d-4a73-a226-5992cb0eb98f " pattern="\d*" type="number" value="" name="terra-date-year-delivery_date" disabled="" style=""><span class="_date-spacer_befxs_122">-</span><input class="_form-input_q1eky_1 _date-input-month_befxs_66" maxlength="2" size="2" aria-invalid="false" aria-required="false" aria-label="Month" aria-describedby="terra-date-picker-description-format-0c3b4a53-e06d-4a73-a226-5992cb0eb98f " pattern="\d*" type="number" value="" name="terra-date-month-delivery_date" disabled="" style=""><span class="_date-spacer_befxs_122">-</span><input class="_form-input_q1eky_1 _date-input-day_befxs_67" maxlength="2" size="2" aria-invalid="false" aria-required="false" aria-label="Day" aria-describedby="terra-date-picker-description-format-0c3b4a53-e06d-4a73-a226-5992cb0eb98f " pattern="\d*" type="number" value="" name="terra-date-day-delivery_date" disabled="" style=""></div><button data-terra-open-calendar-button="true" class="_button_156dv_1 _neutral_156dv_87 _compact_156dv_319 _button_befxs_126" aria-label=" Open Calendar" type="button" aria-disabled="false" title="Open Calendar"><span class="_button-label-mac_156dv_78 _icon-only_156dv_329"><span class="_icon_156dv_329"><svg class="_icon-svg_156dv_347" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" role="presentation" style="display: inline-block; vertical-align: -0.15em; fill: currentcolor;"><path d="M43 6h-4V2.2C39 1 38 0 36.8 0h-1.7C33.9.1 33 1 33 2.2V6H15V2.2C15 1 14 0 12.8 0h-1.7C9.9.1 9 1 9 2.2V6H5c-1.1 0-2 .9-2 2v38c0 1.1.9 2 2 2h24c1.3-.1 2.5-.6 3.4-1.4l11.2-11.1c.8-.9 1.3-2.1 1.4-3.4V8c0-1.1-.9-2-2-2zM6 21h36v10H30c-1.1 0-2 .9-2 2v12H6V21zm25 22.8V34h9.8L31 43.8z"></path></svg></span></span></button></div><div id="terra-date-picker-description-format-0c3b4a53-e06d-4a73-a226-5992cb0eb98f" class="_format-text_befxs_157"><span aria-live="polite" class="_visually-hidden-text_jvs0j_1">
             Date Format:
-            YYYY-MM-DD.  Press T to set current date, plus key for next date and minus key for previous date, </span><div aria-hidden="true">(YYYY-MM-DD)</div></div></div></div></div></div></div><div data-terra-control="time" data-field-id="birth_time" data-field-width="1/3"><div class="_field_14ugb_1"><div class="_label-group_14ugb_14"><label for="birth_time" class="_label_14ugb_14">Time of Birth</label><div class="_error-icon-hidden_14ugb_36"><svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" role="presentation" style="display: inline-block; vertical-align: -0.15em; fill: currentcolor;"><path fill="#E50000" d="M24 0c13.3 0 24 10.7 24 24S37.3 48 24 48 0 37.3 0 24C0 10.8 10.7 0 23.9 0h.1z"></path><path fill="#FFF" d="M7 21.5h34v5H7v-5z"></path></svg></div></div><input id="birth_time" class="" type="time" value="" disabled="" style=""></div></div><div data-terra-control="datetime" data-field-id="admission_datetime" data-field-width="1/3"><div class="_field_14ugb_1"><div class="_label-group_14ugb_14"><label for="admission_datetime" class="_label_14ugb_14">Nursery Admission Date &amp; Time</label><div class="_error-icon-hidden_14ugb_36"><svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" role="presentation" style="display: inline-block; vertical-align: -0.15em; fill: currentcolor;"><path fill="#E50000" d="M24 0c13.3 0 24 10.7 24 24S37.3 48 24 48 0 37.3 0 24C0 10.8 10.7 0 23.9 0h.1z"></path><path fill="#FFF" d="M7 21.5h34v5H7v-5z"></path></svg></div></div><input id="admission_datetime" class="" type="datetime-local" value="" disabled="" style=""></div></div><div data-terra-control="number" data-field-id="gravida" data-field-width="1/3"><div class="_field_14ugb_1"><div class="_label-group_14ugb_14"><label for="gravida" class="_label_14ugb_14">Gravida</label><div class="_error-icon-hidden_14ugb_36"><svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" role="presentation" style="display: inline-block; vertical-align: -0.15em; fill: currentcolor;"><path fill="#E50000" d="M24 0c13.3 0 24 10.7 24 24S37.3 48 24 48 0 37.3 0 24C0 10.8 10.7 0 23.9 0h.1z"></path><path fill="#FFF" d="M7 21.5h34v5H7v-5z"></path></svg></div></div><input id="gravida" class="_form-input_q1eky_1" type="number" value="" disabled="" style=""><div id="gravida-help" class="_help-text_14ugb_57">Total number of pregnancies, including this one.</div></div></div><div data-terra-control="number" data-field-id="para" data-field-width="1/3"><div class="_field_14ugb_1"><div class="_label-group_14ugb_14"><label for="para" class="_label_14ugb_14">Para</label><div class="_error-icon-hidden_14ugb_36"><svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" role="presentation" style="display: inline-block; vertical-align: -0.15em; fill: currentcolor;"><path fill="#E50000" d="M24 0c13.3 0 24 10.7 24 24S37.3 48 24 48 0 37.3 0 24C0 10.8 10.7 0 23.9 0h.1z"></path><path fill="#FFF" d="M7 21.5h34v5H7v-5z"></path></svg></div></div><input id="para" class="_form-input_q1eky_1" type="number" value="" disabled="" style=""></div></div><div data-terra-control="select" data-field-id="delivery_type" data-field-width="1/2"><div class="_field_14ugb_1"><div class="_label-group_14ugb_14"><label for="delivery_type" class="_label_14ugb_14">Type of Delivery</label><div class="_error-icon-hidden_14ugb_36"><svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" role="presentation" style="display: inline-block; vertical-align: -0.15em; fill: currentcolor;"><path fill="#E50000" d="M24 0c13.3 0 24 10.7 24 24S37.3 48 24 48 0 37.3 0 24C0 10.8 10.7 0 23.9 0h.1z"></path><path fill="#FFF" d="M7 21.5h34v5H7v-5z"></path></svg></div></div><div data-terra-select="true" role="combobox" data-terra-select-combobox="true" aria-disabled="false" aria-expanded="false" aria-label="- Select -, " aria-haspopup="true" aria-describedby="terra-select-screen-reader-description-25" aria-required="false" class="_select_3pqwd_3 _default_3pqwd_12" tabindex="0" aria-invalid="false"><label hidden=""><input type="text" disabled="" style=""></label><div class="_visually-hidden-component_3pqwd_360" hidden=""><span id="terra-select-screen-reader-description-25">Collapsed combobox. List of options. Use up and down arrow keys to navigate through options. Press enter to select an option.</span></div><div class="_display_3pqwd_22" aria-hidden="false"><div id="terra-select-screen-reader-placeholder-24" class="_placeholder_3pqwd_113" aria-hidden="true">- Select -</div></div><div data-terra-form-select-toggle="true" class="_toggle_3pqwd_117"><span class="_arrow-icon_3pqwd_88"></span></div></div></div></div><div data-terra-control="select" data-field-id="maternal_blood_type" data-field-width="1/2"><div class="_field_14ugb_1"><div class="_label-group_14ugb_14"><label for="maternal_blood_type" class="_label_14ugb_14">Maternal Blood Type &amp; Rh</label><div class="_error-icon-hidden_14ugb_36"><svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" role="presentation" style="display: inline-block; vertical-align: -0.15em; fill: currentcolor;"><path fill="#E50000" d="M24 0c13.3 0 24 10.7 24 24S37.3 48 24 48 0 37.3 0 24C0 10.8 10.7 0 23.9 0h.1z"></path><path fill="#FFF" d="M7 21.5h34v5H7v-5z"></path></svg></div></div><div data-terra-select="true" role="combobox" data-terra-select-combobox="true" aria-disabled="false" aria-expanded="false" aria-label="- Select -, " aria-haspopup="true" aria-describedby="terra-select-screen-reader-description-29" aria-required="false" class="_select_3pqwd_3 _default_3pqwd_12" tabindex="0" aria-invalid="false"><label hidden=""><input type="text" disabled="" style=""></label><div class="_visually-hidden-component_3pqwd_360" hidden=""><span id="terra-select-screen-reader-description-29">Collapsed combobox. List of options. Use up and down arrow keys to navigate through options. Press enter to select an option.</span></div><div class="_display_3pqwd_22" aria-hidden="false"><div id="terra-select-screen-reader-placeholder-28" class="_placeholder_3pqwd_113" aria-hidden="true">- Select -</div></div><div data-terra-form-select-toggle="true" class="_toggle_3pqwd_117"><span class="_arrow-icon_3pqwd_88"></span></div></div></div></div><div data-terra-control="select-search" data-field-id="maternal_allergies" data-field-width="full"><div class="_field_14ugb_1"><div class="_label-group_14ugb_14"><label for="maternal_allergies" class="_label_14ugb_14">Known Maternal Allergies</label><div class="_error-icon-hidden_14ugb_36"><svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" role="presentation" style="display: inline-block; vertical-align: -0.15em; fill: currentcolor;"><path fill="#E50000" d="M24 0c13.3 0 24 10.7 24 24S37.3 48 24 48 0 37.3 0 24C0 10.8 10.7 0 23.9 0h.1z"></path><path fill="#FFF" d="M7 21.5h34v5H7v-5z"></path></svg></div></div><div data-terra-select="true" data-terra-select-combobox="true" aria-disabled="false" aria-haspopup="true" class="_select_3pqwd_3 _search_3pqwd_112" tabindex="-1"><div class="_visually-hidden-component_3pqwd_360" hidden=""><span id="terra-select-screen-reader-description-31">List of options. Enter text or use up and down arrow keys to navigate through options. Press enter to select an option.</span></div><div class="_display_3pqwd_22"><div class="_content_3pqwd_140"><input placeholder="- Select -" aria-label="Search" aria-describedby="terra-select-screen-reader-description-31" aria-disabled="false" aria-expanded="false" class="_search-input_3pqwd_112" aria-required="false" role="combobox" aria-invalid="false" type="text" value="" disabled="" style=""></div></div><div data-terra-form-select-toggle="true" class="_toggle_3pqwd_117"><span class="_arrow-icon_3pqwd_88"></span></div><span aria-atomic="true" aria-live="assertive" aria-relevant="additions text" class="_visually-hidden-component_3pqwd_360"></span></div></div></div><div data-terra-control="radio-group" data-field-id="gbs_status" data-field-width="1/2"><div class="_field_14ugb_1"><div class="_label-group_14ugb_14"><label for="gbs_status" class="_label_14ugb_14">Group B Streptococcus screen positive?</label><div class="_error-icon-hidden_14ugb_36"><svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" role="presentation" style="display: inline-block; vertical-align: -0.15em; fill: currentcolor;"><path fill="#E50000" d="M24 0c13.3 0 24 10.7 24 24S37.3 48 24 48 0 37.3 0 24C0 10.8 10.7 0 23.9 0h.1z"></path><path fill="#FFF" d="M7 21.5h34v5H7v-5z"></path></svg></div></div><div class="_radio_1ofn8_1"><label for="gbs_status-true" class="_label_1ofn8_13"><input id="gbs_status-true" class="_native-input_1ofn8_28" type="radio" value="true" name="gbs_status" disabled="" style=""><span class="_outer-ring_1ofn8_48"><span class="_inner-ring_1ofn8_63"></span></span><span class="_label-text_1ofn8_40">Positive</span></label></div><div class="_radio_1ofn8_1"><label for="gbs_status-false" class="_label_1ofn8_13"><input id="gbs_status-false" class="_native-input_1ofn8_28" type="radio" value="false" name="gbs_status" disabled="" style=""><span class="_outer-ring_1ofn8_48"><span class="_inner-ring_1ofn8_63"></span></span><span class="_label-text_1ofn8_40">Negative</span></label></div></div></div><div data-terra-control="textarea" data-field-id="gbs_prophylaxis_notes" data-field-width="full"><div class="_field_14ugb_1"><div class="_label-group_14ugb_14"><label for="gbs_prophylaxis_notes" class="_label_14ugb_14">Intrapartum Antibiotic Prophylaxis Given</label><div class="_error-icon-hidden_14ugb_36"><svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" role="presentation" style="display: inline-block; vertical-align: -0.15em; fill: currentcolor;"><path fill="#E50000" d="M24 0c13.3 0 24 10.7 24 24S37.3 48 24 48 0 37.3 0 24C0 10.8 10.7 0 23.9 0h.1z"></path><path fill="#FFF" d="M7 21.5h34v5H7v-5z"></path></svg></div></div><textarea id="gbs_prophylaxis_notes" aria-invalid="false" rows="3" class="_textarea_h23q5_1" disabled="" style="min-height: 78px;"></textarea><div id="gbs_prophylaxis_notes-help" class="_help-text_14ugb_57">Agent, dose, and time of the last pre-delivery dose.</div></div></div><div data-terra-control="select-search" data-field-id="delivery_complications" data-field-width="full"><div class="_field_14ugb_1"><div class="_label-group_14ugb_14"><label for="delivery_complications" class="_label_14ugb_14">Delivery Complications</label><div class="_error-icon-hidden_14ugb_36"><svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" role="presentation" style="display: inline-block; vertical-align: -0.15em; fill: currentcolor;"><path fill="#E50000" d="M24 0c13.3 0 24 10.7 24 24S37.3 48 24 48 0 37.3 0 24C0 10.8 10.7 0 23.9 0h.1z"></path><path fill="#FFF" d="M7 21.5h34v5H7v-5z"></path></svg></div></div><div data-terra-select="true" data-terra-select-combobox="true" aria-disabled="false" aria-haspopup="true" class="_select_3pqwd_3 _search_3pqwd_112" tabindex="-1"><div class="_visually-hidden-component_3pqwd_360" hidden=""><span id="terra-select-screen-reader-description-32">List of options. Enter text or use up and down arrow keys to navigate through options. Press enter to select an option.</span></div><div class="_display_3pqwd_22"><div class="_content_3pqwd_140"><input placeholder="- Select -" aria-label="Search" aria-describedby="terra-select-screen-reader-description-32" aria-disabled="false" aria-expanded="false" class="_search-input_3pqwd_112" aria-required="false" role="combobox" aria-invalid="false" type="text" value="" disabled="" style=""></div></div><div data-terra-form-select-toggle="true" class="_toggle_3pqwd_117"><span class="_arrow-icon_3pqwd_88"></span></div><span aria-atomic="true" aria-live="assertive" aria-relevant="additions text" class="_visually-hidden-component_3pqwd_360"></span></div></div></div><div data-terra-control="textarea" data-field-id="labour_notes" data-field-width="full"><div class="_field_14ugb_1"><div class="_label-group_14ugb_14"><label for="labour_notes" class="_label_14ugb_14">Labour &amp; Delivery Narrative</label><div class="_error-icon-hidden_14ugb_36"><svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" role="presentation" style="display: inline-block; vertical-align: -0.15em; fill: currentcolor;"><path fill="#E50000" d="M24 0c13.3 0 24 10.7 24 24S37.3 48 24 48 0 37.3 0 24C0 10.8 10.7 0 23.9 0h.1z"></path><path fill="#FFF" d="M7 21.5h34v5H7v-5z"></path></svg></div></div><textarea id="labour_notes" aria-invalid="false" rows="6" class="_textarea_h23q5_1" disabled="" style="min-height: 146px;"></textarea></div></div></section><section data-terra-section="true"><div data-terra-control="section" data-field-id="sec_newborn"><h2 class="_heading_2zc35_1 _level-2_2zc35_10 _size-medium_2zc35_31 _weight-700_2zc35_49">Newborn Assessment &amp; Discharge</h2></div><div data-terra-control="heading" data-field-id="hdg_newborn_measurements"><h3 class="_heading_2zc35_1 _level-3_2zc35_13 _size-medium_2zc35_31 _weight-700_2zc35_49">Birth Measurements &amp; Apgar</h3></div><div data-terra-control="radio-group" data-field-id="feeding_method" data-field-width="full"><div class="_field_14ugb_1"><div class="_label-group_14ugb_14"><label for="feeding_method" class="_label_14ugb_14">Feeding Method at Discharge</label><div class="_error-icon-hidden_14ugb_36"><svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" role="presentation" style="display: inline-block; vertical-align: -0.15em; fill: currentcolor;"><path fill="#E50000" d="M24 0c13.3 0 24 10.7 24 24S37.3 48 24 48 0 37.3 0 24C0 10.8 10.7 0 23.9 0h.1z"></path><path fill="#FFF" d="M7 21.5h34v5H7v-5z"></path></svg></div></div><div class="_radio_1ofn8_1"><label for="feeding_method-BREAST" class="_label_1ofn8_13"><input id="feeding_method-BREAST" class="_native-input_1ofn8_28" type="radio" value="BREAST" name="feeding_method" disabled="" style=""><span class="_outer-ring_1ofn8_48"><span class="_inner-ring_1ofn8_63"></span></span><span class="_label-text_1ofn8_40">Exclusively breastfed</span></label></div><div class="_radio_1ofn8_1"><label for="feeding_method-MIXED" class="_label_1ofn8_13"><input id="feeding_method-MIXED" class="_native-input_1ofn8_28" type="radio" value="MIXED" name="feeding_method" disabled="" style=""><span class="_outer-ring_1ofn8_48"><span class="_inner-ring_1ofn8_63"></span></span><span class="_label-text_1ofn8_40">Breast milk + formula supplement</span></label></div><div class="_radio_1ofn8_1"><label for="feeding_method-FORMULA" class="_label_1ofn8_13"><input id="feeding_method-FORMULA" class="_native-input_1ofn8_28" type="radio" value="FORMULA" name="feeding_method" disabled="" style=""><span class="_outer-ring_1ofn8_48"><span class="_inner-ring_1ofn8_63"></span></span><span class="_label-text_1ofn8_40">Formula only</span></label></div><div class="_radio_1ofn8_1"><label for="feeding_method-EBM-TUBE" class="_label_1ofn8_13"><input id="feeding_method-EBM-TUBE" class="_native-input_1ofn8_28" type="radio" value="EBM-TUBE" name="feeding_method" disabled="" style=""><span class="_outer-ring_1ofn8_48"><span class="_inner-ring_1ofn8_63"></span></span><span class="_label-text_1ofn8_40">Expressed breast milk by tube</span></label></div></div></div><div data-terra-control="checkbox-group" data-field-id="newborn_risk_factors" data-field-width="full"><div class="_field_14ugb_1"><div class="_label-group_14ugb_14"><label for="newborn_risk_factors" class="_label_14ugb_14">Newborn Risk Factors Identified</label><div class="_error-icon-hidden_14ugb_36"><svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" role="presentation" style="display: inline-block; vertical-align: -0.15em; fill: currentcolor;"><path fill="#E50000" d="M24 0c13.3 0 24 10.7 24 24S37.3 48 24 48 0 37.3 0 24C0 10.8 10.7 0 23.9 0h.1z"></path><path fill="#FFF" d="M7 21.5h34v5H7v-5z"></path></svg></div></div><div class="_checkbox_12h73_1"><label for="newborn_risk_factors-PRETERM" class="_label_12h73_13"><input id="newborn_risk_factors-PRETERM" class="_native-input_12h73_28" type="checkbox" value="PRETERM" disabled="" style=""><span class="_label-text_12h73_43">Preterm (&lt; 37 weeks)</span></label></div><div class="_checkbox_12h73_1"><label for="newborn_risk_factors-SGA" class="_label_12h73_13"><input id="newborn_risk_factors-SGA" class="_native-input_12h73_28" type="checkbox" value="SGA" disabled="" style=""><span class="_label-text_12h73_43">Small for gestational age</span></label></div><div class="_checkbox_12h73_1"><label for="newborn_risk_factors-MAT-DM" class="_label_12h73_13"><input id="newborn_risk_factors-MAT-DM" class="_native-input_12h73_28" type="checkbox" value="MAT-DM" disabled="" style=""><span class="_label-text_12h73_43">Maternal diabetes (GDM or pre-existing)</span></label></div><div class="_checkbox_12h73_1"><label for="newborn_risk_factors-PROM" class="_label_12h73_13"><input id="newborn_risk_factors-PROM" class="_native-input_12h73_28" type="checkbox" value="PROM" disabled="" style=""><span class="_label-text_12h73_43">Prolonged rupture of membranes (&gt; 18 h)</span></label></div><div class="_checkbox_12h73_1"><label for="newborn_risk_factors-HYPOTHERM" class="_label_12h73_13"><input id="newborn_risk_factors-HYPOTHERM" class="_native-input_12h73_28" type="checkbox" value="HYPOTHERM" disabled="" style=""><span class="_label-text_12h73_43">Hypothermia on admission</span></label></div><div class="_checkbox_12h73_1"><label for="newborn_risk_factors-JAUNDICE" class="_label_12h73_13"><input id="newborn_risk_factors-JAUNDICE" class="_native-input_12h73_28" type="checkbox" value="JAUNDICE" disabled="" style=""><span class="_label-text_12h73_43">Jaundice requiring phototherapy</span></label></div></div></div><div data-terra-control="checkbox" data-field-id="vitamin_k_given" data-field-width="full"><div class="_field_14ugb_1"><div class="_label-group_14ugb_14"><label for="vitamin_k_given" class="_label_14ugb_14">Vitamin K (phytonadione) 1 mg IM administered</label><div class="_error-icon-hidden_14ugb_36"><svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" role="presentation" style="display: inline-block; vertical-align: -0.15em; fill: currentcolor;"><path fill="#E50000" d="M24 0c13.3 0 24 10.7 24 24S37.3 48 24 48 0 37.3 0 24C0 10.8 10.7 0 23.9 0h.1z"></path><path fill="#FFF" d="M7 21.5h34v5H7v-5z"></path></svg></div></div><div class="_checkbox_12h73_1"><label for="vitamin_k_given" class="_label_12h73_13"><input aria-label="Vitamin K (phytonadione) 1 mg IM administered" id="vitamin_k_given" class="_native-input_12h73_28" type="checkbox" disabled="" style=""><span class="_label-text_12h73_43 _is-hidden_12h73_107"></span></label></div></div></div><div data-terra-control="component-placeholder" data-field-id="newborn_weight_trend" data-field-width="full"><div><strong>Newborn Weight Trend</strong><div>Rendered by the MOIS component <code>ObservationChart</code>; no Terra equivalent.</div></div></div><div data-terra-control="table" data-field-id="newborn_feed_log" data-field-width="full"><div class="_field_14ugb_1"><div class="_label-group_14ugb_14"><label for="newborn_feed_log" class="_label_14ugb_14">Feeding &amp; Output Log</label><div class="_error-icon-hidden_14ugb_36"><svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" role="presentation" style="display: inline-block; vertical-align: -0.15em; fill: currentcolor;"><path fill="#E50000" d="M24 0c13.3 0 24 10.7 24 24S37.3 48 24 48 0 37.3 0 24C0 10.8 10.7 0 23.9 0h.1z"></path><path fill="#FFF" d="M7 21.5h34v5H7v-5z"></path></svg></div></div><table class="_table_z5e43_2 _striped_z5e43_106 _padding-compact_z5e43_88"><thead><tr><th scope="col">Time</th><th scope="col">Type</th><th scope="col">Volume (mL)</th><th scope="col">Void / Stool</th><th scope="col">Latch adequate</th></tr></thead><tbody><tr class="row"><td><input id="newborn_feed_log-0-feed_time" class="" type="time" disabled="" style=""></td><td><select id="newborn_feed_log-0-feed_type" disabled=""><option value="" selected=""></option><option value="BREAST">Breast</option><option value="EBM">Expressed breast milk</option><option value="FORMULA">Formula</option></select></td><td><input id="newborn_feed_log-0-feed_volume_ml" class="_form-input_q1eky_1" type="number" disabled="" style=""></td><td><input id="newborn_feed_log-0-void_stool" class="_form-input_q1eky_1" type="text" disabled="" style=""></td><td><div class="_checkbox_12h73_1"><label for="newborn_feed_log-0-latch_adequate" class="_label_12h73_13"><input aria-label="Latch adequate" id="newborn_feed_log-0-latch_adequate" class="_native-input_12h73_28" type="checkbox" disabled="" style=""><span class="_label-text_12h73_43 _is-hidden_12h73_107"></span></label></div></td></tr></tbody></table><button class="_button_156dv_1 _neutral_156dv_87 _compact_156dv_319" type="button" aria-disabled="false"><span class="_button-label-mac_156dv_78 _text-only_156dv_324"><span class="">Add feed</span></span></button></div></div><div data-terra-control="unsupported" data-field-id="newborn_id_band"><em>Identification Band Verification</em> — Layout tables are not supported yet; the Terra table renders data rows only.</div><div data-terra-control="rich-text" data-field-id="discharge_instructions" data-field-width="full"><h3>Before you go home</h3>
+            YYYY-MM-DD.  Press T to set current date, plus key for next date and minus key for previous date, </span><div aria-hidden="true">(YYYY-MM-DD)</div></div></div></div></div></div></div><div data-terra-control="time" data-field-id="birth_time" data-field-width="1/3"><div class="_field_14ugb_1"><div class="_label-group_14ugb_14"><label for="birth_time" class="_label_14ugb_14">Time of Birth</label><div class="_error-icon-hidden_14ugb_36"><svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" role="presentation" style="display: inline-block; vertical-align: -0.15em; fill: currentcolor;"><path fill="#E50000" d="M24 0c13.3 0 24 10.7 24 24S37.3 48 24 48 0 37.3 0 24C0 10.8 10.7 0 23.9 0h.1z"></path><path fill="#FFF" d="M7 21.5h34v5H7v-5z"></path></svg></div></div><input id="birth_time" class="" type="time" value="" disabled="" style=""></div></div><div data-terra-control="datetime" data-field-id="admission_datetime" data-field-width="1/3"><div class="_field_14ugb_1"><div class="_label-group_14ugb_14"><label for="admission_datetime" class="_label_14ugb_14">Nursery Admission Date &amp; Time</label><div class="_error-icon-hidden_14ugb_36"><svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" role="presentation" style="display: inline-block; vertical-align: -0.15em; fill: currentcolor;"><path fill="#E50000" d="M24 0c13.3 0 24 10.7 24 24S37.3 48 24 48 0 37.3 0 24C0 10.8 10.7 0 23.9 0h.1z"></path><path fill="#FFF" d="M7 21.5h34v5H7v-5z"></path></svg></div></div><input id="admission_datetime" class="" type="datetime-local" value="" disabled="" style=""></div></div><div data-terra-control="number" data-field-id="gravida" data-field-width="1/3"><div class="_field_14ugb_1"><div class="_label-group_14ugb_14"><label for="gravida" class="_label_14ugb_14">Gravida</label><div class="_error-icon-hidden_14ugb_36"><svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" role="presentation" style="display: inline-block; vertical-align: -0.15em; fill: currentcolor;"><path fill="#E50000" d="M24 0c13.3 0 24 10.7 24 24S37.3 48 24 48 0 37.3 0 24C0 10.8 10.7 0 23.9 0h.1z"></path><path fill="#FFF" d="M7 21.5h34v5H7v-5z"></path></svg></div></div><input id="gravida" class="_form-input_q1eky_1" type="number" value="" disabled="" style=""><div id="gravida-help" class="_help-text_14ugb_57">Total number of pregnancies, including this one.</div></div></div><div data-terra-control="number" data-field-id="para" data-field-width="1/3"><div class="_field_14ugb_1"><div class="_label-group_14ugb_14"><label for="para" class="_label_14ugb_14">Para</label><div class="_error-icon-hidden_14ugb_36"><svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" role="presentation" style="display: inline-block; vertical-align: -0.15em; fill: currentcolor;"><path fill="#E50000" d="M24 0c13.3 0 24 10.7 24 24S37.3 48 24 48 0 37.3 0 24C0 10.8 10.7 0 23.9 0h.1z"></path><path fill="#FFF" d="M7 21.5h34v5H7v-5z"></path></svg></div></div><input id="para" class="_form-input_q1eky_1" type="number" value="" disabled="" style=""></div></div><div data-terra-control="select" data-field-id="delivery_type" data-field-width="1/2"><div class="_field_14ugb_1"><div class="_label-group_14ugb_14"><label for="delivery_type" class="_label_14ugb_14">Type of Delivery</label><div class="_error-icon-hidden_14ugb_36"><svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" role="presentation" style="display: inline-block; vertical-align: -0.15em; fill: currentcolor;"><path fill="#E50000" d="M24 0c13.3 0 24 10.7 24 24S37.3 48 24 48 0 37.3 0 24C0 10.8 10.7 0 23.9 0h.1z"></path><path fill="#FFF" d="M7 21.5h34v5H7v-5z"></path></svg></div></div><div data-terra-select="true" role="combobox" data-terra-select-combobox="true" aria-disabled="false" aria-expanded="false" aria-label="- Select -, " aria-haspopup="true" aria-describedby="terra-select-screen-reader-description-25" aria-required="false" class="_select_3pqwd_3 _default_3pqwd_12" tabindex="0" aria-invalid="false"><label hidden=""><input type="text" disabled="" style=""></label><div class="_visually-hidden-component_3pqwd_360" hidden=""><span id="terra-select-screen-reader-description-25">Collapsed combobox. List of options. Use up and down arrow keys to navigate through options. Press enter to select an option.</span></div><div class="_display_3pqwd_22" aria-hidden="false"><div id="terra-select-screen-reader-placeholder-24" class="_placeholder_3pqwd_113" aria-hidden="true">- Select -</div></div><div data-terra-form-select-toggle="true" class="_toggle_3pqwd_117"><span class="_arrow-icon_3pqwd_88"></span></div></div></div></div><div data-terra-control="select" data-field-id="maternal_blood_type" data-field-width="1/2"><div class="_field_14ugb_1"><div class="_label-group_14ugb_14"><label for="maternal_blood_type" class="_label_14ugb_14">Maternal Blood Type &amp; Rh</label><div class="_error-icon-hidden_14ugb_36"><svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" role="presentation" style="display: inline-block; vertical-align: -0.15em; fill: currentcolor;"><path fill="#E50000" d="M24 0c13.3 0 24 10.7 24 24S37.3 48 24 48 0 37.3 0 24C0 10.8 10.7 0 23.9 0h.1z"></path><path fill="#FFF" d="M7 21.5h34v5H7v-5z"></path></svg></div></div><div data-terra-select="true" role="combobox" data-terra-select-combobox="true" aria-disabled="false" aria-expanded="false" aria-label="- Select -, " aria-haspopup="true" aria-describedby="terra-select-screen-reader-description-29" aria-required="false" class="_select_3pqwd_3 _default_3pqwd_12" tabindex="0" aria-invalid="false"><label hidden=""><input type="text" disabled="" style=""></label><div class="_visually-hidden-component_3pqwd_360" hidden=""><span id="terra-select-screen-reader-description-29">Collapsed combobox. List of options. Use up and down arrow keys to navigate through options. Press enter to select an option.</span></div><div class="_display_3pqwd_22" aria-hidden="false"><div id="terra-select-screen-reader-placeholder-28" class="_placeholder_3pqwd_113" aria-hidden="true">- Select -</div></div><div data-terra-form-select-toggle="true" class="_toggle_3pqwd_117"><span class="_arrow-icon_3pqwd_88"></span></div></div></div></div><div data-terra-control="select-search" data-field-id="maternal_allergies" data-field-width="full"><div class="_field_14ugb_1"><div class="_label-group_14ugb_14"><label for="maternal_allergies" class="_label_14ugb_14">Known Maternal Allergies</label><div class="_error-icon-hidden_14ugb_36"><svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" role="presentation" style="display: inline-block; vertical-align: -0.15em; fill: currentcolor;"><path fill="#E50000" d="M24 0c13.3 0 24 10.7 24 24S37.3 48 24 48 0 37.3 0 24C0 10.8 10.7 0 23.9 0h.1z"></path><path fill="#FFF" d="M7 21.5h34v5H7v-5z"></path></svg></div></div><div data-terra-select="true" data-terra-select-combobox="true" aria-disabled="false" aria-haspopup="true" class="_select_3pqwd_3 _search_3pqwd_112" tabindex="-1"><div class="_visually-hidden-component_3pqwd_360" hidden=""><span id="terra-select-screen-reader-description-31">List of options. Enter text or use up and down arrow keys to navigate through options. Press enter to select an option.</span></div><div class="_display_3pqwd_22"><div class="_content_3pqwd_140"><input placeholder="- Select -" aria-label="Search" aria-describedby="terra-select-screen-reader-description-31" aria-disabled="false" aria-expanded="false" class="_search-input_3pqwd_112" aria-required="false" role="combobox" aria-invalid="false" type="text" value="" disabled="" style=""></div></div><div data-terra-form-select-toggle="true" class="_toggle_3pqwd_117"><span class="_arrow-icon_3pqwd_88"></span></div><span aria-atomic="true" aria-live="assertive" aria-relevant="additions text" class="_visually-hidden-component_3pqwd_360"></span></div></div></div><div data-terra-control="radio-group" data-field-id="gbs_status" data-field-width="1/2"><div class="_field_14ugb_1"><div class="_label-group_14ugb_14"><label for="gbs_status" class="_label_14ugb_14">Group B Streptococcus screen positive?</label><div class="_error-icon-hidden_14ugb_36"><svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" role="presentation" style="display: inline-block; vertical-align: -0.15em; fill: currentcolor;"><path fill="#E50000" d="M24 0c13.3 0 24 10.7 24 24S37.3 48 24 48 0 37.3 0 24C0 10.8 10.7 0 23.9 0h.1z"></path><path fill="#FFF" d="M7 21.5h34v5H7v-5z"></path></svg></div></div><div class="_radio_1ofn8_1"><label for="gbs_status-true" class="_label_1ofn8_13"><input id="gbs_status-true" class="_native-input_1ofn8_28" type="radio" value="true" name="gbs_status" disabled="" style=""><span class="_outer-ring_1ofn8_48"><span class="_inner-ring_1ofn8_63"></span></span><span class="_label-text_1ofn8_40">Positive</span></label></div><div class="_radio_1ofn8_1"><label for="gbs_status-false" class="_label_1ofn8_13"><input id="gbs_status-false" class="_native-input_1ofn8_28" type="radio" value="false" name="gbs_status" disabled="" style=""><span class="_outer-ring_1ofn8_48"><span class="_inner-ring_1ofn8_63"></span></span><span class="_label-text_1ofn8_40">Negative</span></label></div></div></div><div data-terra-control="textarea" data-field-id="gbs_prophylaxis_notes" data-field-width="full"><div class="_field_14ugb_1"><div class="_label-group_14ugb_14"><label for="gbs_prophylaxis_notes" class="_label_14ugb_14">Intrapartum Antibiotic Prophylaxis Given</label><div class="_error-icon-hidden_14ugb_36"><svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" role="presentation" style="display: inline-block; vertical-align: -0.15em; fill: currentcolor;"><path fill="#E50000" d="M24 0c13.3 0 24 10.7 24 24S37.3 48 24 48 0 37.3 0 24C0 10.8 10.7 0 23.9 0h.1z"></path><path fill="#FFF" d="M7 21.5h34v5H7v-5z"></path></svg></div></div><textarea id="gbs_prophylaxis_notes" aria-invalid="false" rows="3" class="_textarea_h23q5_1" disabled="" style="min-height: 68px;"></textarea><div id="gbs_prophylaxis_notes-help" class="_help-text_14ugb_57">Agent, dose, and time of the last pre-delivery dose.</div></div></div><div data-terra-control="select-search" data-field-id="delivery_complications" data-field-width="full"><div class="_field_14ugb_1"><div class="_label-group_14ugb_14"><label for="delivery_complications" class="_label_14ugb_14">Delivery Complications</label><div class="_error-icon-hidden_14ugb_36"><svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" role="presentation" style="display: inline-block; vertical-align: -0.15em; fill: currentcolor;"><path fill="#E50000" d="M24 0c13.3 0 24 10.7 24 24S37.3 48 24 48 0 37.3 0 24C0 10.8 10.7 0 23.9 0h.1z"></path><path fill="#FFF" d="M7 21.5h34v5H7v-5z"></path></svg></div></div><div data-terra-select="true" data-terra-select-combobox="true" aria-disabled="false" aria-haspopup="true" class="_select_3pqwd_3 _search_3pqwd_112" tabindex="-1"><div class="_visually-hidden-component_3pqwd_360" hidden=""><span id="terra-select-screen-reader-description-32">List of options. Enter text or use up and down arrow keys to navigate through options. Press enter to select an option.</span></div><div class="_display_3pqwd_22"><div class="_content_3pqwd_140"><input placeholder="- Select -" aria-label="Search" aria-describedby="terra-select-screen-reader-description-32" aria-disabled="false" aria-expanded="false" class="_search-input_3pqwd_112" aria-required="false" role="combobox" aria-invalid="false" type="text" value="" disabled="" style=""></div></div><div data-terra-form-select-toggle="true" class="_toggle_3pqwd_117"><span class="_arrow-icon_3pqwd_88"></span></div><span aria-atomic="true" aria-live="assertive" aria-relevant="additions text" class="_visually-hidden-component_3pqwd_360"></span></div></div></div><div data-terra-control="textarea" data-field-id="labour_notes" data-field-width="full"><div class="_field_14ugb_1"><div class="_label-group_14ugb_14"><label for="labour_notes" class="_label_14ugb_14">Labour &amp; Delivery Narrative</label><div class="_error-icon-hidden_14ugb_36"><svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" role="presentation" style="display: inline-block; vertical-align: -0.15em; fill: currentcolor;"><path fill="#E50000" d="M24 0c13.3 0 24 10.7 24 24S37.3 48 24 48 0 37.3 0 24C0 10.8 10.7 0 23.9 0h.1z"></path><path fill="#FFF" d="M7 21.5h34v5H7v-5z"></path></svg></div></div><textarea id="labour_notes" aria-invalid="false" rows="6" class="_textarea_h23q5_1" disabled="" style="min-height: 128px;"></textarea></div></div></section><section data-terra-section="true"><div data-terra-control="section" data-field-id="sec_newborn"><h2 class="_heading_2zc35_1 _level-2_2zc35_10 _size-medium_2zc35_31 _weight-700_2zc35_49">Newborn Assessment &amp; Discharge</h2></div><div data-terra-control="heading" data-field-id="hdg_newborn_measurements"><h3 class="_heading_2zc35_1 _level-3_2zc35_13 _size-medium_2zc35_31 _weight-700_2zc35_49">Birth Measurements &amp; Apgar</h3></div><div data-terra-control="radio-group" data-field-id="feeding_method" data-field-width="full"><div class="_field_14ugb_1"><div class="_label-group_14ugb_14"><label for="feeding_method" class="_label_14ugb_14">Feeding Method at Discharge</label><div class="_error-icon-hidden_14ugb_36"><svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" role="presentation" style="display: inline-block; vertical-align: -0.15em; fill: currentcolor;"><path fill="#E50000" d="M24 0c13.3 0 24 10.7 24 24S37.3 48 24 48 0 37.3 0 24C0 10.8 10.7 0 23.9 0h.1z"></path><path fill="#FFF" d="M7 21.5h34v5H7v-5z"></path></svg></div></div><div class="_radio_1ofn8_1"><label for="feeding_method-BREAST" class="_label_1ofn8_13"><input id="feeding_method-BREAST" class="_native-input_1ofn8_28" type="radio" value="BREAST" name="feeding_method" disabled="" style=""><span class="_outer-ring_1ofn8_48"><span class="_inner-ring_1ofn8_63"></span></span><span class="_label-text_1ofn8_40">Exclusively breastfed</span></label></div><div class="_radio_1ofn8_1"><label for="feeding_method-MIXED" class="_label_1ofn8_13"><input id="feeding_method-MIXED" class="_native-input_1ofn8_28" type="radio" value="MIXED" name="feeding_method" disabled="" style=""><span class="_outer-ring_1ofn8_48"><span class="_inner-ring_1ofn8_63"></span></span><span class="_label-text_1ofn8_40">Breast milk + formula supplement</span></label></div><div class="_radio_1ofn8_1"><label for="feeding_method-FORMULA" class="_label_1ofn8_13"><input id="feeding_method-FORMULA" class="_native-input_1ofn8_28" type="radio" value="FORMULA" name="feeding_method" disabled="" style=""><span class="_outer-ring_1ofn8_48"><span class="_inner-ring_1ofn8_63"></span></span><span class="_label-text_1ofn8_40">Formula only</span></label></div><div class="_radio_1ofn8_1"><label for="feeding_method-EBM-TUBE" class="_label_1ofn8_13"><input id="feeding_method-EBM-TUBE" class="_native-input_1ofn8_28" type="radio" value="EBM-TUBE" name="feeding_method" disabled="" style=""><span class="_outer-ring_1ofn8_48"><span class="_inner-ring_1ofn8_63"></span></span><span class="_label-text_1ofn8_40">Expressed breast milk by tube</span></label></div></div></div><div data-terra-control="checkbox-group" data-field-id="newborn_risk_factors" data-field-width="full"><div class="_field_14ugb_1"><div class="_label-group_14ugb_14"><label for="newborn_risk_factors" class="_label_14ugb_14">Newborn Risk Factors Identified</label><div class="_error-icon-hidden_14ugb_36"><svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" role="presentation" style="display: inline-block; vertical-align: -0.15em; fill: currentcolor;"><path fill="#E50000" d="M24 0c13.3 0 24 10.7 24 24S37.3 48 24 48 0 37.3 0 24C0 10.8 10.7 0 23.9 0h.1z"></path><path fill="#FFF" d="M7 21.5h34v5H7v-5z"></path></svg></div></div><div class="_checkbox_12h73_1"><label for="newborn_risk_factors-PRETERM" class="_label_12h73_13"><input id="newborn_risk_factors-PRETERM" class="_native-input_12h73_28" type="checkbox" value="PRETERM" disabled="" style=""><span class="_label-text_12h73_43">Preterm (&lt; 37 weeks)</span></label></div><div class="_checkbox_12h73_1"><label for="newborn_risk_factors-SGA" class="_label_12h73_13"><input id="newborn_risk_factors-SGA" class="_native-input_12h73_28" type="checkbox" value="SGA" disabled="" style=""><span class="_label-text_12h73_43">Small for gestational age</span></label></div><div class="_checkbox_12h73_1"><label for="newborn_risk_factors-MAT-DM" class="_label_12h73_13"><input id="newborn_risk_factors-MAT-DM" class="_native-input_12h73_28" type="checkbox" value="MAT-DM" disabled="" style=""><span class="_label-text_12h73_43">Maternal diabetes (GDM or pre-existing)</span></label></div><div class="_checkbox_12h73_1"><label for="newborn_risk_factors-PROM" class="_label_12h73_13"><input id="newborn_risk_factors-PROM" class="_native-input_12h73_28" type="checkbox" value="PROM" disabled="" style=""><span class="_label-text_12h73_43">Prolonged rupture of membranes (&gt; 18 h)</span></label></div><div class="_checkbox_12h73_1"><label for="newborn_risk_factors-HYPOTHERM" class="_label_12h73_13"><input id="newborn_risk_factors-HYPOTHERM" class="_native-input_12h73_28" type="checkbox" value="HYPOTHERM" disabled="" style=""><span class="_label-text_12h73_43">Hypothermia on admission</span></label></div><div class="_checkbox_12h73_1"><label for="newborn_risk_factors-JAUNDICE" class="_label_12h73_13"><input id="newborn_risk_factors-JAUNDICE" class="_native-input_12h73_28" type="checkbox" value="JAUNDICE" disabled="" style=""><span class="_label-text_12h73_43">Jaundice requiring phototherapy</span></label></div></div></div><div data-terra-control="checkbox" data-field-id="vitamin_k_given" data-field-width="full"><div class="_field_14ugb_1"><div class="_label-group_14ugb_14"><label for="vitamin_k_given" class="_label_14ugb_14">Vitamin K (phytonadione) 1 mg IM administered</label><div class="_error-icon-hidden_14ugb_36"><svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" role="presentation" style="display: inline-block; vertical-align: -0.15em; fill: currentcolor;"><path fill="#E50000" d="M24 0c13.3 0 24 10.7 24 24S37.3 48 24 48 0 37.3 0 24C0 10.8 10.7 0 23.9 0h.1z"></path><path fill="#FFF" d="M7 21.5h34v5H7v-5z"></path></svg></div></div><div class="_checkbox_12h73_1"><label for="vitamin_k_given" class="_label_12h73_13"><input aria-label="Vitamin K (phytonadione) 1 mg IM administered" id="vitamin_k_given" class="_native-input_12h73_28" type="checkbox" disabled="" style=""><span class="_label-text_12h73_43 _is-hidden_12h73_107"></span></label></div></div></div><div data-terra-control="component-placeholder" data-field-id="newborn_weight_trend" data-field-width="full"><div><strong>Newborn Weight Trend</strong><div>Rendered by the MOIS component <code>ObservationChart</code>; no Terra equivalent.</div></div></div><div data-terra-control="table" data-field-id="newborn_feed_log" data-field-width="full"><div class="_field_14ugb_1"><div class="_label-group_14ugb_14"><label for="newborn_feed_log" class="_label_14ugb_14">Feeding &amp; Output Log</label><div class="_error-icon-hidden_14ugb_36"><svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" focusable="false" role="presentation" style="display: inline-block; vertical-align: -0.15em; fill: currentcolor;"><path fill="#E50000" d="M24 0c13.3 0 24 10.7 24 24S37.3 48 24 48 0 37.3 0 24C0 10.8 10.7 0 23.9 0h.1z"></path><path fill="#FFF" d="M7 21.5h34v5H7v-5z"></path></svg></div></div><table class="_table_z5e43_2 _striped_z5e43_106 _padding-compact_z5e43_88"><thead><tr><th scope="col">Time</th><th scope="col">Type</th><th scope="col">Volume (mL)</th><th scope="col">Void / Stool</th><th scope="col">Latch adequate</th></tr></thead><tbody><tr class="row"><td><input id="newborn_feed_log-0-feed_time" class="" type="time" disabled="" style=""></td><td><select id="newborn_feed_log-0-feed_type" disabled=""><option value="" selected=""></option><option value="BREAST">Breast</option><option value="EBM">Expressed breast milk</option><option value="FORMULA">Formula</option></select></td><td><input id="newborn_feed_log-0-feed_volume_ml" class="_form-input_q1eky_1" type="number" disabled="" style=""></td><td><input id="newborn_feed_log-0-void_stool" class="_form-input_q1eky_1" type="text" disabled="" style=""></td><td><div class="_checkbox_12h73_1"><label for="newborn_feed_log-0-latch_adequate" class="_label_12h73_13"><input aria-label="Latch adequate" id="newborn_feed_log-0-latch_adequate" class="_native-input_12h73_28" type="checkbox" disabled="" style=""><span class="_label-text_12h73_43 _is-hidden_12h73_107"></span></label></div></td></tr></tbody></table><button class="_button_156dv_1 _neutral_156dv_87 _compact_156dv_319" type="button" aria-disabled="false"><span class="_button-label-mac_156dv_78 _text-only_156dv_324"><span class="">Add feed</span></span></button></div></div><div data-terra-control="unsupported" data-field-id="newborn_id_band"><em>Identification Band Verification</em> — Layout tables are not supported yet; the Terra table renders data rows only.</div><div data-terra-control="rich-text" data-field-id="discharge_instructions" data-field-width="full"><h3>Before you go home</h3>
 <ul>
 <li>Feed on demand — at least <strong>8 feeds in 24 hours</strong>.</li>
 <li>Expect one wet diaper per day of life, up to six per day by day 5.</li>

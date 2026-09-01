@@ -64,6 +64,16 @@ that is not ours — the player renders MOIS forms through Fluent on the same
 document. `<TerraBase>` also stamps `dir`, which the `[dir=ltr]` rewrite above
 otherwise works around.
 
+### Messages
+
+`runtime/terra-messages.ts` is generated from each vendored package's own
+`translations/` (en-CA, falling back to en). It used to be hand-written, which
+meant it covered only the components someone had remembered: Terra's
+`DemographicsBanner` asks for ten message ids and the map had one, so the
+banner rendered the literal string `Terra.demographicsBanner.dateOfBirth` on
+screen. Generating it also makes Terra authoritative for
+`Terra.datePicker.dateFormat`, whose en-CA value is `YYYY-MM-DD`.
+
 ### Locale
 
 The fork defaults to **en-CA**, so terra-date-picker renders `YYYY-MM-DD`

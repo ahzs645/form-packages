@@ -9,6 +9,8 @@ import {
 import React, { useEffect, useMemo, useState } from "react";
 
 import { TerraDemographicsBanner } from "./terra/TerraDemographicsBanner";
+import { DemographicsBanner, TerraBase } from "@webforms/cerner-terra";
+
 import { terraFluentTheme, TERRA_PAGE_BACKGROUND } from "./terra/terra-theme";
 import "./terra/terra-tokens.scss";
 import { DiscernActionsBar } from "./DiscernActionsBar";
@@ -200,6 +202,11 @@ export const App: React.FC<{ host?: PlayerHost }> = ({ host = null }) => {
     };
   }, [environment, context, host]);
 
+  const terraTarget = useMemo(
+    () => new URLSearchParams(window.location.search).get("render") === "terra",
+    [],
+  );
+
   const cernerLook = useMemo(() => {
     const fromQuery = new URLSearchParams(window.location.search).get("theme");
     return (
@@ -225,32 +232,43 @@ export const App: React.FC<{ host?: PlayerHost }> = ({ host = null }) => {
     [],
   );
 
-  return (
+  // Terra's own DemographicsBanner in the Terra target; the Fluent-era
+  // reproduction stays on the MOIS path, which has no terra-base to size it.
+  const BannerComponent = terraTarget ? DemographicsBanner : TerraDemographicsBanner;
+  const bannerIdentifiers = useMemo(() => {
+    const entries: Array<[string, string]> = (person?.aliases ?? [])
+      .filter((alias) => alias.alias)
+      .map((alias) => [alias.aliasType ?? "ID", String(alias.alias)]);
+    if (chart?.encntrId) entries.push(["Encounter", String(chart.encntrId)]);
+    return Object.fromEntries(entries);
+  }, [person?.aliases, chart?.encntrId]);
+
+  const shell = (
     <ThemeProvider theme={cernerLook ? terraFluentTheme : moisPreviewTheme} applyTo="none">
       <div
         className={cernerLook ? "terra-root" : undefined}
         style={
           cernerLook
-            ? { ...frameStyle, backgroundColor: TERRA_PAGE_BACKGROUND, fontFamily: undefined, fontSize: undefined }
+            ? {
+                ...frameStyle,
+                // In Terra mode <TerraBase> paints the document per terra-base
+                // (#fff, as on Terra's own docs site); only the Fluent/MOIS
+                // path wants the PowerChart chrome grey.
+                backgroundColor: terraTarget ? undefined : TERRA_PAGE_BACKGROUND,
+                fontFamily: undefined,
+                fontSize: undefined,
+              }
             : frameStyle
         }
       >
         {cernerLook ? (
           <div style={{ margin: "-12px -16px 12px" }}>
-            <TerraDemographicsBanner
+            <BannerComponent
               personName={chart?.nameFullFormatted ?? "No patient in context"}
               age={person?.age}
               gender={person?.gender}
               dateOfBirth={person?.birthDtTm ? person.birthDtTm.substring(0, 10) : undefined}
-              identifiers={[
-                ...(person?.aliases ?? [])
-                  .filter((alias) => alias.alias)
-                  .map((alias) => ({
-                    label: alias.aliasType ?? "ID",
-                    value: alias.alias as string,
-                  })),
-                ...(chart?.encntrId ? [{ label: "Encounter", value: chart.encntrId }] : []),
-              ]}
+              identifiers={bannerIdentifiers}
             />
           </div>
         ) : (
@@ -263,7 +281,7 @@ export const App: React.FC<{ host?: PlayerHost }> = ({ host = null }) => {
         {new URLSearchParams(window.location.search).get("terraProbe") === "1" ? (
           <TerraProbe />
         ) : null}
-        {new URLSearchParams(window.location.search).get("render") === "terra" ? (
+        {terraTarget ? (
           <TerraFormView
             documentUrl={
               new URLSearchParams(window.location.search).get("documentUrl") ??
@@ -297,4 +315,9 @@ export const App: React.FC<{ host?: PlayerHost }> = ({ host = null }) => {
       </div>
     </ThemeProvider>
   );
+
+  // terra-base has to reach the document, so it wraps the shell rather than
+  // sitting inside it. It is reference-counted, so TerraFormView keeping its
+  // own <TerraBase> — which it needs to stand alone — is harmless.
+  return terraTarget ? <TerraBase>{shell}</TerraBase> : shell;
 };

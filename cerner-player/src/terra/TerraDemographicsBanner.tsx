@@ -3,8 +3,12 @@ import React from "react";
 /**
  * Patient banner mirroring Terra's demographics banner markup and tokens
  * (section > person-name + identifier-row of <dl> label/value pairs, values
- * bold). Terra's own React package targets React 16/17, so this reproduces
- * the presentation rather than depending on it.
+ * bold).
+ *
+ * The Terra target now renders Terra's real `DemographicsBanner` — see
+ * App.tsx. This reproduction stays for the MOIS-in-Cerner-look path, which
+ * draws through Fluent and so has no terra-base to size a Terra component
+ * against. Prop shapes are kept interchangeable with the real one.
  */
 
 export interface TerraBannerIdentifier {
@@ -19,7 +23,8 @@ export interface TerraDemographicsBannerProps {
   gender?: string;
   dateOfBirth?: string;
   deceasedDate?: string;
-  identifiers?: TerraBannerIdentifier[];
+  /** Label → value, matching Terra's own DemographicsBanner prop shape. */
+  identifiers?: Record<string, string>;
   applicationContent?: React.ReactNode;
 }
 
@@ -42,7 +47,7 @@ export const TerraDemographicsBanner: React.FC<TerraDemographicsBannerProps> = (
   gender,
   dateOfBirth,
   deceasedDate,
-  identifiers = [],
+  identifiers = {},
   applicationContent,
 }) => {
   const details: TerraBannerIdentifier[] = [];
@@ -64,7 +69,9 @@ export const TerraDemographicsBanner: React.FC<TerraDemographicsBannerProps> = (
       </h2>
       <div className="identifier-row">
         <DetailList items={details} />
-        <DetailList items={identifiers} />
+        <DetailList
+          items={Object.entries(identifiers).map(([label, value]) => ({ label, value }))}
+        />
       </div>
       {applicationContent ? <div className="application-content">{applicationContent}</div> : null}
     </section>
