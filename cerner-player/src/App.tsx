@@ -8,11 +8,9 @@ import {
 } from "@webforms/cerner-core";
 import React, { useEffect, useMemo, useState } from "react";
 
-import {
-  CERNER_BANNER_BACKGROUND,
-  CERNER_PAGE_BACKGROUND,
-  cernerPlayerTheme,
-} from "./cerner-theme";
+import { TerraDemographicsBanner } from "./terra/TerraDemographicsBanner";
+import { terraFluentTheme, TERRA_PAGE_BACKGROUND } from "./terra/terra-theme";
+import "./terra/terra-tokens.css";
 import { DiscernActionsBar } from "./DiscernActionsBar";
 import { FormHost, type FormIdentityLike } from "./FormHost";
 import { MoisToastHost } from "./MoisToastHost";
@@ -27,27 +25,18 @@ const frameStyle: React.CSSProperties = {
   padding: "12px 16px",
 };
 
-const CernerBanner: React.FC<{ chart: ChartId | null }> = ({ chart }) => (
-  <div
-    style={{
-      alignItems: "baseline",
-      background: CERNER_BANNER_BACKGROUND,
-      color: "#fff",
-      display: "flex",
-      flexWrap: "wrap",
-      gap: "4px 24px",
-      margin: "-12px -16px 12px",
-      padding: "8px 16px",
-    }}
-  >
-    <span style={{ fontSize: 16, fontWeight: 600 }}>
-      {chart?.nameFullFormatted ?? "No patient in context"}
-    </span>
-    {chart?.personId ? <span style={{ fontSize: 12 }}>Person ID: {chart.personId}</span> : null}
-    {chart?.encntrId ? <span style={{ fontSize: 12 }}>Encounter: {chart.encntrId}</span> : null}
-    <span style={{ fontSize: 12, marginLeft: "auto", opacity: 0.8 }}>Web Forms</span>
-  </div>
-);
+interface PersonAlias {
+  alias?: string;
+  aliasType?: string;
+}
+
+interface PersonRecord {
+  age?: string;
+  gender?: string;
+  birthDtTm?: string;
+  nameFirst?: string;
+  aliases?: PersonAlias[];
+}
 
 interface LoadedForm {
   source: string;
@@ -138,6 +127,7 @@ export const App: React.FC<{ host?: PlayerHost }> = ({ host = null }) => {
   const [chart, setChart] = useState<ChartId | null>(null);
   const [mock, setMock] = useState(false);
   const [client, setClient] = useState<CclClient | null>(null);
+  const [person, setPerson] = useState<PersonRecord | null>(null);
 
   const environment = useMemo(() => detectHostEnvironment(window), []);
   const context = useMemo(
@@ -178,11 +168,18 @@ export const App: React.FC<{ host?: PlayerHost }> = ({ host = null }) => {
         });
         setClient(cclClient);
         cclClient
-          .ping()
-          .then((reply) => {
-            if (!cancelled && reply.chartId) setChart(reply.chartId);
+          .execute({
+            patientSource: [{ personId: context.personId, encntrId: context.encntrId }],
+            person: { aliases: true },
+            encounter: { aliases: true },
           })
-          .catch((e) => console.warn("CCL ping failed:", e));
+          .then((reply) => {
+            if (cancelled) return;
+            if (reply.chartId) setChart(reply.chartId);
+            const person = (reply.persons as PersonRecord[] | undefined)?.[0];
+            if (person) setPerson(person);
+          })
+          .catch((e) => console.warn("CCL chart load failed:", e));
       }
 
       loadForm(host).then(
@@ -227,16 +224,33 @@ export const App: React.FC<{ host?: PlayerHost }> = ({ host = null }) => {
   );
 
   return (
-    <ThemeProvider theme={cernerLook ? cernerPlayerTheme : moisPreviewTheme} applyTo="none">
+    <ThemeProvider theme={cernerLook ? terraFluentTheme : moisPreviewTheme} applyTo="none">
       <div
+        className={cernerLook ? "terra-root" : undefined}
         style={
           cernerLook
-            ? { ...frameStyle, backgroundColor: CERNER_PAGE_BACKGROUND }
+            ? { ...frameStyle, backgroundColor: TERRA_PAGE_BACKGROUND, fontFamily: undefined, fontSize: undefined }
             : frameStyle
         }
       >
         {cernerLook ? (
-          <CernerBanner chart={chart} />
+          <div style={{ margin: "-12px -16px 12px" }}>
+            <TerraDemographicsBanner
+              personName={chart?.nameFullFormatted ?? "No patient in context"}
+              age={person?.age}
+              gender={person?.gender}
+              dateOfBirth={person?.birthDtTm ? person.birthDtTm.substring(0, 10) : undefined}
+              identifiers={[
+                ...(person?.aliases ?? [])
+                  .filter((alias) => alias.alias)
+                  .map((alias) => ({
+                    label: alias.aliasType ?? "ID",
+                    value: alias.alias as string,
+                  })),
+                ...(chart?.encntrId ? [{ label: "Encounter", value: chart.encntrId }] : []),
+              ]}
+            />
+          </div>
         ) : (
           <StatusBar
             inPowerChart={environment.inPowerChart || mock}

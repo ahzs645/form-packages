@@ -185,6 +185,15 @@ describe("CclClient in PowerChart", () => {
     await expect(memoryError).rejects.toThrow(/493 \(Memory Error\)/);
   });
 
+  it("classifies a PDF body as a missing CCL program", async () => {
+    const requests: FakeRequest[] = [];
+    const client = makeClient(powerChartWindow, requests, { personId: 1, encntrId: 1 });
+    const pending = client.execute({});
+    requests[0].respond(200, "%PDF-1.4 ...error document...");
+    await expect(pending).rejects.toMatchObject({ status: 404 });
+    await expect(pending).rejects.toThrow(/CCL program not found/);
+  });
+
   it("releases the slot after a failure", async () => {
     const requests: FakeRequest[] = [];
     const client = makeClient(powerChartWindow, requests, {

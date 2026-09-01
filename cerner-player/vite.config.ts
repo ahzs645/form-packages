@@ -14,6 +14,9 @@ const EXAMPLE_ROOTS: Record<string, string> = {
   cst: "/Users/ahmadjalil/Downloads/Cerner/cst-future-orders-edge-master",
   ets: "/Users/ahmadjalil/Downloads/Cerner/ets-clinical-framework-main",
   dash: "/Users/ahmadjalil/Downloads/Cerner/cer-dashboard-main",
+  ccls: "/Users/ahmadjalil/Downloads/Cerner/CCLS_Demo-v1",
+  lab: "/Users/ahmadjalil/Downloads/Cerner/code-learning-lab-main",
+  terra: "/Users/ahmadjalil/Downloads/Cerner/terra-core-main",
 };
 
 const MIME: Record<string, string> = {

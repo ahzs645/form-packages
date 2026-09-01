@@ -39,11 +39,17 @@ export interface ResolveChartContextInput {
  *   &uId=$USR_PERSONID$&pCd=$USR_PositionCd$&...
  * and an embedded component shares that page's location, so these are the
  * names that actually carry context in component mode.
+ *
+ * The PAT_/VIS_/USR_ forms cover launch URLs written against Cerner's macro
+ * substitution. Chart and Organizer views substitute $PAT_PersonId$-style
+ * tokens; Summary/Workflow views substitute {person_id}-style ones — the
+ * dialects differ but registrations conventionally name the parameters this
+ * way, so accept them too.
  */
 const QUERY_KEYS: Array<[keyof ChartContext, string[]]> = [
-  ["personId", ["personId", "pId"]],
-  ["encntrId", ["encounterId", "eId"]],
-  ["prsnlId", ["userId", "uId"]],
+  ["personId", ["personId", "pId", "PAT_PersonId"]],
+  ["encntrId", ["encounterId", "eId", "VIS_EncntrId"]],
+  ["prsnlId", ["userId", "uId", "USR_PersonId"]],
 ];
 
 const ATTRIBUTE_KEYS: Array<[keyof ChartContext, string[]]> = [

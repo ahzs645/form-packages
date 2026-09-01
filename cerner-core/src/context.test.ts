@@ -49,6 +49,14 @@ describe("resolveChartContext", () => {
     ).toEqual({ personId: 555, encntrId: 666, prsnlId: 777 });
   });
 
+  it("reads Cerner macro-style parameter names", () => {
+    expect(
+      resolveChartContext({
+        search: "?PAT_PersonId=11&VIS_EncntrId=22&USR_PersonId=33&PAT_PPRCode=9",
+      }),
+    ).toEqual({ personId: 11, encntrId: 22, prsnlId: 33 });
+  });
+
   it("prefers our long param names when both are present", () => {
     expect(
       resolveChartContext({ search: "?personId=1&pId=2&encounterId=3&eId=4" }),

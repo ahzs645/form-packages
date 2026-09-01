@@ -281,6 +281,18 @@ export class CclClient {
             );
             return;
           }
+          // A missing CCL program does not 404 — the Discern layer answers
+          // with a PDF error document, so this is the reliable sentinel.
+          if (request.responseText.substring(0, 4) === "%PDF") {
+            reject(
+              new CclTransportError(
+                "CCL program not found: " + this.options.scriptName,
+                404,
+                "",
+              ),
+            );
+            return;
+          }
           let text = stripControlChars(request.responseText);
           try {
             if (hexMode) text = hexDecode(text);

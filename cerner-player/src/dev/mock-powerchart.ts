@@ -55,6 +55,8 @@ class MockCclRequest implements CclRequestLike {
       .replace("$VIS_EncntrId$", String(this.chart.encntrId));
     let payload: {
       customScript?: { script?: Array<{ id?: string; name?: string; run?: string; parameters?: unknown }> };
+      person?: unknown;
+      encounter?: unknown;
     } = {};
     try {
       payload = (JSON.parse(this.blob) as { payload?: typeof payload }).payload ?? {};
@@ -74,7 +76,37 @@ class MockCclRequest implements CclRequestLike {
       };
       (script.run === "post" ? customPost : customPre).push(entry);
     }
+    const sections: Record<string, unknown> = {};
+    if ((payload as { person?: unknown }).person) {
+      sections.persons = [
+        {
+          personId: this.chart.personId,
+          nameFullFormatted: this.chart.nameFullFormatted,
+          nameFirst: "MICKEY",
+          nameLast: "MOUSE",
+          birthDtTm: "1980-01-01T08:00:00.000+00:00",
+          age: "46 Years",
+          gender: "Male",
+          aliases: [
+            { alias: "9876 543 210", aliasType: "PHN" },
+            { alias: "700001234", aliasType: "MRN" },
+          ],
+        },
+      ];
+    }
+    if ((payload as { encounter?: unknown }).encounter) {
+      sections.encounters = [
+        {
+          encntrId: this.chart.encntrId,
+          personId: this.chart.personId,
+          encntrType: "Outpatient",
+          location: "Mock Demo Clinic",
+          aliases: [{ alias: "FIN-0001234", aliasType: "FIN NBR" }],
+        },
+      ];
+    }
     const reply = {
+      ...sections,
       runStats: {
         status: "ok",
         domain: "mock",

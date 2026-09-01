@@ -464,10 +464,25 @@ if (cCUSTOM_POST > " ")
 endif
 set cREPLY = concat(cREPLY, "}")
 
+; The reply can exceed the session's maximum variable length once a form
+; definition or a large section is included. Grow maxvarlen to fit, write,
+; then restore it so we do not leak the change into the caller's session.
+declare nOrigMaxVarLen = i4 with noconstant(curmaxvarlen)
+declare nNeedMaxVarLen = i4 with noconstant(0)
+
 if (run_stats->hex_mode = 1)
-    set _Memory_Reply_String = cnvtrawhex(cREPLY)
-else
-    set _Memory_Reply_String = cREPLY
+    set cREPLY = cnvtrawhex(cREPLY)
+endif
+
+set nNeedMaxVarLen = textlen(cREPLY) + 1000
+if (nNeedMaxVarLen > nOrigMaxVarLen)
+    set modify maxvarlen nNeedMaxVarLen
+endif
+
+set _Memory_Reply_String = cREPLY
+
+if (nNeedMaxVarLen > nOrigMaxVarLen)
+    set modify maxvarlen nOrigMaxVarLen
 endif
 
 end

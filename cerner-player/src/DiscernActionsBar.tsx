@@ -73,17 +73,8 @@ export const DiscernActionsBar: React.FC<DiscernActionsBarProps> = ({
 
   return (
     <div
-      style={{
-        alignItems: "center",
-        background: "#f2f6fa",
-        border: "1px solid #c7d6e4",
-        borderRadius: 2,
-        display: "flex",
-        flexWrap: "wrap",
-        gap: 8,
-        marginTop: 16,
-        padding: "8px 12px",
-      }}
+      className="terra-action-footer"
+      style={{ marginTop: 16 }}
     >
       <span style={{ fontSize: 12, fontWeight: 600, marginRight: 4 }}>Chart actions</span>
       <PrimaryButton
