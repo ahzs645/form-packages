@@ -1,3 +1,4 @@
+import { TerraBase } from "@webforms/cerner-terra";
 import { TerraFormRenderer, getTerraCompatibilityReport } from "@webforms/cerner-terra-forms";
 import type { BuilderField } from "@webforms/form-model";
 import React, { useEffect, useMemo, useState } from "react";
@@ -49,7 +50,7 @@ export const TerraFormView: React.FC<{ documentUrl: string }> = ({ documentUrl }
   if (!fields || !report) return <div>Loading form definition…</div>;
 
   return (
-    <div>
+    <TerraBase>
       <div
         style={{
           background: "#f4f4f4",
@@ -64,6 +65,6 @@ export const TerraFormView: React.FC<{ documentUrl: string }> = ({ documentUrl }
         {report.unsupportedCount > 0 ? ` · ${report.unsupportedCount} unsupported` : ""}
       </div>
       <TerraFormRenderer fields={fields} />
-    </div>
+    </TerraBase>
   );
 };
