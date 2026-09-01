@@ -48,41 +48,47 @@ for (const dir of formDirs.length ? formDirs : [join(here, "public/forms/demo")]
 
 writeFileSync(
   join(out, "REGISTER.md"),
-  `# Registering the webforms-player Workflow component
+  `# Registering the ${TAG} Workflow component
+
+Full procedure: packages/cerner-player/DEPLOYMENT.md
 
 Deploy: copy this folder to
-  <CONTENT_SERVICE_URL>/custom_mpage_content/${TAG}/
-(base URL = dm_info row INS / CONTENT_SERVICE_URL). The folder name must stay
-"${TAG}" — component hosts derive the custom-element tag from the last URL
-segment.
+  I:\\Winintel\\Static_Content\\custom_mpage_content\\${TAG}
+(or an HTTPS origin), then Refresh custom_mpage_content from the MPages
+Static Content Management Page.
 
-## 1. Bedrock
-Create the custom Workflow/Chart component and note its mp_label
-(convention: filter_mean CUSTOM_COMP_* with an mp_label value).
+KEEP THE FOLDER NAME "${TAG}". The component framework derives both the
+script filename and the custom-element tag from the last path segment:
+  <script type="module" src="{path}/${TAG}.js{cache}">
+  <${TAG} title="{Bedrock label}" path="{path}"></${TAG}>
 
-## 2. Mapping row (dm_info)
-| column | value |
-|---|---|
-| info_domain | Clinical Office Component (or the site's own component domain) |
-| info_name   | <the Bedrock mp_label> |
-| info_char   | custom_mpage_content/${TAG} (or an absolute https URL) |
+## 1. Per-domain, once
+The Workflow host page needs a component namespace that resolves a Bedrock
+label to a URL and mounts the element as above (Clinical Office ships
+clinical_office.mpage_component in
+custom_mpage_content\\custom-components\\js\\custom-components.js). Our
+element implements that exact contract.
 
-Insert via the site's component-registration tooling, or:
-  insert into dm_info d
-  set d.info_domain = "Clinical Office Component",
-      d.info_name = "<mp_label>",
-      d.info_char = "custom_mpage_content/${TAG}",
-      d.info_number = 0 ;commit
+## 2. Bedrock
+Quality Reporting and MPage Setup -> View Builder -> Build and Maintain Views:
+add a view with N Workflow Custom Components + Workflow MPage-level Settings.
+Then MPage Setup -> Define MPage Layout -> components in column 1 -> set each
+component's label and Namespace.
 
-## 3. Placement attributes
-  <${TAG} person_id="$PAT_PersonId$" encntr_id="$VIS_EncntrId$"
-      form-id="${formIds[0] ?? "demo"}" theme="cerner"
-      content-root="<CONTENT_SERVICE_URL>/custom_mpage_content/${TAG}">
-Bundled forms: ${formIds.join(", ") || "(none)"} — one placement per form via
-form-id. content-root is required when embedded (relative fetches resolve
-against the host page otherwise).
+## 3. Label -> path mapping (dm_info)
+  info_domain = "Clinical Office Component"   (or the site's own domain)
+  info_name   = <the Bedrock label>
+  info_char   = custom_mpage_content/${TAG}   (or an absolute URL)
 
-## 4. Server side
+## 4. prefmaint (Chart branch only — components need patient context)
+Add a Discern Report tab pointing at the Workflow host page; patient context
+travels in ITS query string, which our component reads (pId/eId/uId):
+  <url>$DM_INFO:CONTENT_SERVICE_URL$/mp-content/idx.html?m=^CHT^&pId=$PAT_PERSONID$&eId=$VIS_ENCNTRID$&uId=$USR_PERSONID$&pCd=$USR_PositionCd$&ppr=$PAT_PPRCode$&app=^$APP_AppName$^&vId="<BEDROCK_VIEW_ID>"&sLoc=""
+
+Bundled forms: ${formIds.join(", ") || "(none)"} — select per placement with
+the form-id attribute; theme="cerner" for PowerChart chrome.
+
+## 5. Server side
 Requires nh_wf_entry:group1 and friends compiled in the domain
 (packages/cerner-ccl).
 `,

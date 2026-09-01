@@ -22,13 +22,15 @@
   <div class="workflow-chrome">Mock Workflow MPage — component framework harness</div>
   <div class="workflow-card">
     <header>Web Forms (custom component)</header>
+    <!-- Exactly what Cerner's component framework renders: only title and
+         path. Patient context comes from THIS page's query string
+         (pId/eId/uId), the way mp-content/idx.html receives it. Open as
+         component-host.html?m=^CHT^&pId=12724066&eId=97953477&uId=4122622 -->
     <webforms-player
-      person_id="12724066"
-      encntr_id="97953477"
-      prsnl_id="4122622"
+      title="Web Forms"
+      path="."
       form-id="demo"
-      theme="cerner"
-      content-root=".">Loading, please wait.</webforms-player>
+      theme="cerner">Loading, please wait.</webforms-player>
   </div>
   <script type="module" src="/src/element.tsx"></script>
 </body>

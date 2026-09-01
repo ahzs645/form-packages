@@ -42,6 +42,19 @@ describe("resolveChartContext", () => {
     ).toEqual({ personId: 7, encntrId: 0, prsnlId: 0 });
   });
 
+  it("reads the Cerner workflow host's short param names", () => {
+    // prefmaint opens mp-content/idx.html?m=^CHT^&pId=..&eId=..&uId=..
+    expect(
+      resolveChartContext({ search: "?m=%5ECHT%5E&pId=555&eId=666&uId=777&pCd=441" }),
+    ).toEqual({ personId: 555, encntrId: 666, prsnlId: 777 });
+  });
+
+  it("prefers our long param names when both are present", () => {
+    expect(
+      resolveChartContext({ search: "?personId=1&pId=2&encounterId=3&eId=4" }),
+    ).toMatchObject({ personId: 1, encntrId: 3 });
+  });
+
   it("accepts a search string without the leading question mark", () => {
     expect(resolveChartContext({ search: "personId=5" }).personId).toBe(5);
   });

@@ -29,10 +29,21 @@ export interface ResolveChartContextInput {
   defaults?: Partial<ChartContext>;
 }
 
-const QUERY_KEYS: Array<[keyof ChartContext, string]> = [
-  ["personId", "personId"],
-  ["encntrId", "encounterId"],
-  ["prsnlId", "userId"],
+/**
+ * Query-parameter aliases, most specific first.
+ *
+ * `personId`/`encounterId`/`userId` are our own launch convention. The
+ * short forms are Cerner's: a Workflow MPage host page is opened by
+ * prefmaint with
+ *   .../mp-content/idx.html?m=^CHT^&pId=$PAT_PERSONID$&eId=$VIS_ENCNTRID$
+ *   &uId=$USR_PERSONID$&pCd=$USR_PositionCd$&...
+ * and an embedded component shares that page's location, so these are the
+ * names that actually carry context in component mode.
+ */
+const QUERY_KEYS: Array<[keyof ChartContext, string[]]> = [
+  ["personId", ["personId", "pId"]],
+  ["encntrId", ["encounterId", "eId"]],
+  ["prsnlId", ["userId", "uId"]],
 ];
 
 const ATTRIBUTE_KEYS: Array<[keyof ChartContext, string[]]> = [
@@ -86,9 +97,14 @@ export function resolveChartContext(input: ResolveChartContextInput): ChartConte
   if (input.search) {
     const query = parseQuery(input.search);
     for (let i = 0; i < QUERY_KEYS.length; i++) {
-      const [field, name] = QUERY_KEYS[i];
-      const value = parseId(query[name]);
-      if (value !== undefined) context[field] = value;
+      const [field, names] = QUERY_KEYS[i];
+      for (let n = 0; n < names.length; n++) {
+        const value = parseId(query[names[n]]);
+        if (value !== undefined) {
+          context[field] = value;
+          break;
+        }
+      }
     }
   }
 

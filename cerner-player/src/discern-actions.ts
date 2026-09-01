@@ -29,6 +29,11 @@ export interface DiscernActionResult {
   detail: string;
 }
 
+/**
+ * Launch a blank PowerForm for the chart in context.
+ * `powerFormId` is DCP_FORMS_REF_ID from DCP_FORMS_REF — ask the apps team
+ * for the id of the form to launch, or query that table in the domain.
+ */
 export async function launchPowerForm(
   context: ChartContext,
   powerFormId: number,
@@ -48,6 +53,12 @@ export async function launchPowerForm(
   };
 }
 
+/**
+ * Open a new dynamic document workspace.
+ * `referenceTemplateId` is DD_REF_TEMPLATE_ID from DD_REF_TEMPLATE; the
+ * optional `noteTypeCd` is a code set 72 value (supplying it switches the
+ * bridge to the by-template-and-note-type call).
+ */
 export async function openDynDoc(
   context: ChartContext,
   referenceTemplateId: number,

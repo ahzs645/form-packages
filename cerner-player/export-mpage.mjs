@@ -74,28 +74,40 @@ rmSync(join(out, "examples.html"), { force: true });
 const title = identity.title || formId;
 writeFileSync(
   join(out, "DEPLOY.md"),
-  `# Deploying ${title} as a Cerner MPage
-
-1. Copy this folder to the Cerner content server:
-   <CONTENT_SERVICE_URL>/custom_mpage_content/${appName}/
-   (CONTENT_SERVICE_URL is the dm_info row INS / CONTENT_SERVICE_URL.)
-
-2. Full-screen MPage: point the chart-level MPage's CCL redirect at
-   "custom_mpage_content/${appName}/index.html" (relative path resolves
-   against the content service; an absolute https URL to another host also
-   works if the workstation can reach it).
-
-3. Workflow component (optional): create the Bedrock custom component with
-   an mp_label, then register the mapping row:
-   info_domain = "Clinical Office Component" (or our own domain),
-   info_name   = <mp_label>,
-   info_char   = path or absolute URL to this folder.
-
-4. Freshness: file names are stable on purpose; the page carries no-cache
-   metas and the component path should be served with a cache-busting query
-   by the resolving script.
+  `# Deploying ${title} as a full-page Cerner MPage
 
 Entry: index.html (form "${formId}" baked in via WEBFORMS_PLAYER_CONFIG).
+Full procedure and the Workflow-component variant: packages/cerner-player/DEPLOYMENT.md
+
+1. Copy this folder to either
+     I:\\Winintel\\Static_Content\\custom_mpage_content\\${appName}
+   or any HTTPS origin the clinical workstations can reach.
+
+2. WebSphere only: open the MPages Static Content Management Page, find
+   custom_mpage_content and click Refresh. Files are not live until you do.
+     select manager_url = build(info_char, "/manager")
+     from dm_info where info_domain = "INS" and info_name = "CONTENT_SERVICE_URL"
+     with maxrec = 1
+
+3. prefmaint -> PowerChart -> Position -> expand Chart (patient context) or
+   Organizer -> Add Tab -> move "Discern Report" across -> OK.
+
+4. On the new tab set:
+     VIEW_CAPTION          = the name clinicians see
+     WEB_BROWSER_SELECTION = 1-Edge Chromium   (per-tab; our tab can be modern
+                             even if other MPages in the domain are not)
+
+5. Expand the tab's Discern Report sub-branch and set REPORT_NAME
+   (keep the <url> prefix and the explicit index.html):
+     <url>$DM_INFO:CONTENT_SERVICE_URL$/custom_mpage_content/${appName}/index.html
+   or, hosting it ourselves:
+     <url>https://your.host/${appName}/index.html
+
+6. Server side: nh_wf_entry:group1 and its whitelisted scripts must be
+   compiled in the domain (packages/cerner-ccl).
+
+Serving from a non-Cerner origin also needs CORS headers for the PowerChart
+origin (index.jsx is fetched, and component scripts are modules).
 `,
 );
 

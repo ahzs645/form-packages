@@ -82,9 +82,11 @@ function formBaseUrl(host: PlayerHost): string {
     "demo";
   const explicit = params.get("formUrl");
   if (explicit) return explicit.replace(/\/$/, "");
-  // Embedded in someone else's page, "./" resolves against the host page —
-  // the content-root attribute points back at our deployed folder.
-  const contentRoot = hostAttribute(host, "content-root", "content_root");
+  // Embedded in someone else's page, "./" resolves against the host page.
+  // Cerner's component framework passes our deployed folder as `path`
+  // (custom-components.js renders <tag title="..." path="{url}">), so that
+  // name comes first; content-root is our own alias for other hosts.
+  const contentRoot = hostAttribute(host, "path", "content-root", "content_root");
   const prefix = contentRoot ? contentRoot.replace(/\/$/, "") : ".";
   return prefix + "/forms/" + encodeURIComponent(formId);
 }

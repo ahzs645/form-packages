@@ -7,12 +7,19 @@ import { App } from "./App";
 /**
  * Workflow-component packaging: one custom element the host page drops in.
  *
- *   <webforms-player person_id="..." encntr_id="..." prsnl_id="..."
- *                    form-id="demo" theme="cerner"
- *                    content-root="https://host/custom_mpage_content/webforms-player">
+ *   <webforms-player title="Web Forms" path="https://host/custom_mpage_content/webforms-player"
+ *                    form-id="demo" theme="cerner">
  *
- * Light DOM on purpose (the production PHAS MPage does the same): Fluent 8
- * injects styles into document.head, which a shadow root would not see.
+ * Cerner's component framework renders exactly `title` and `path` (see
+ * custom-components.js in the domain's static content), and carries patient
+ * context in the *host page's* query string (pId/eId/uId) rather than on our
+ * element — resolveChartContext reads both. person_id/encntr_id attributes
+ * still work for hosts that supply them.
+ *
+ * Light DOM on purpose: Fluent 8 injects styles into document.head, which a
+ * shadow root would not see. The trade-off vs the vendor's :host{all:initial}
+ * isolation is that the surrounding Workflow page's CSS can reach our form;
+ * revisit with Fluent's MergeStylesShadowRoot provider if that bites.
  * Registration guard included — Workflow hosts can load a bundle twice.
  */
 
