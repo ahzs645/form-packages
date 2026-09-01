@@ -1,5 +1,7 @@
 import React from "react";
 
+import { hoistStatics } from "./hoist-statics";
+
 /**
  * Minimal stand-in for the parts of `react-intl` Terra uses.
  *
@@ -30,33 +32,109 @@ const DEFAULT_MESSAGES: Record<string, string> = {
   "Terra.alert.unsatisfied": "Unsatisfied",
   "Terra.alert.unverified": "Unverified",
   "Terra.demographicsBanner.deceased": "Deceased",
+  "Terra.popup.header.close": "Close",
+  "Terra.form.select.add": 'Add "{text}"',
+  "Terra.form.select.defaultDisplay": "- Select -",
+  "Terra.form.select.defaultComboboxDisplay": "Select or Enter",
+  "Terra.form.select.noResults": 'No matching results for "{text}"',
+  "Terra.form.select.resultsText": 'Results that contain "{text}"',
+  "Terra.form.select.maxSelectionHelp": "Limit {text} items.",
+  "Terra.form.select.maxSelectionOption": "Maximum number of {text} items selected",
+  "Terra.form.select.ariaLabel": "Search",
+  "Terra.form.select.selectedText": "{text} Selected. {index} of {totalOptions}.",
+  "Terra.form.select.activeOption": "{text} {index} of {totalOptions}.",
+  "Terra.form.select.of": "of",
+  "Terra.form.select.unselectedText": "{text} Unselected.",
+  "Terra.form.select.selected": "Selected.",
+  "Terra.form.select.unselected": "Unselected.",
+  "Terra.form.select.disabled": "Disabled.",
+  "Terra.form.select.dimmed": "Dimmed.",
+  "Terra.form.select.expanded": "Expanded combobox.",
+  "Terra.form.select.collapsed": "Collapsed combobox.",
+  "Terra.form.select.listOfTotalOptions": "List of options.",
+  "Terra.form.select.defaultUsageGuidance":
+    "Use up and down arrow keys to navigate through options. Press enter to select an option.",
+  "Terra.form.select.mobileUsageGuidance": "Swipe right to navigate to options.",
+  "Terra.form.select.mobileButtonUsageGuidance": "Tap to navigate to options.",
+  "Terra.form.select.multiSelectUsageGuidance":
+    "Enter text or use up and down arrow keys to navigate through options. Press enter to select or unselect an option.",
+  "Terra.form.select.searchUsageGuidance":
+    "Enter text or use up and down arrow keys to navigate through options. Press enter to select an option.",
+  "Terra.form.select.clearSelect": "Clear select",
+  "Terra.form.select.selectCleared": "Select value cleared",
+  "Terra.form.select.menu": "Menu",
+  "Terra.form.select.option": "Options",
+  "Terra.form.select.optGroup": "Group {text}",
+  "Terra.form.select.deselect": "Deselect {text}",
+  "Terra.datePicker.dateFormat": "MM/DD/YYYY",
+  "Terra.datePicker.disabled": "Disabled",
+  "Terra.datePicker.openCalendar": "Open Calendar",
+  "Terra.datePicker.closeCalendar": "Close",
+  "Terra.datePicker.today": "Today",
+  "Terra.datePicker.dayLabel": "Day",
+  "Terra.datePicker.monthLabel": "Month",
+  "Terra.datePicker.yearLabel": "Year",
+  "Terra.datePicker.date": "Date",
+  "Terra.datePicker.nextMonth": "Next month",
+  "Terra.datePicker.previousMonth": "Previous month",
+  "Terra.datePicker.calendarInstructions":
+    "To change the selection, use the arrow keys. Press Enter to select a date. Press Escape to close the date picker pop-up.",
+  "Terra.datePicker.dateFormatLabel": "Date Format:",
+  "Terra.datePicker.invalidDate": "Please enter a valid Date",
+  "Terra.datePicker.selected": "selected.",
+  "Terra.datePicker.hotKey":
+    "Press T to set current date, plus key for next date and minus key for previous date",
 };
 
 export interface TerraIntl {
+  /** BCP 47 tag; the date picker reads it to pick a calendar locale. */
+  locale: string;
   formatMessage(descriptor: { id: string }, values?: Record<string, unknown>): string;
 }
 
-const IntlContext = React.createContext<Record<string, string>>(DEFAULT_MESSAGES);
+interface IntlValue {
+  locale: string;
+  messages: Record<string, string>;
+}
+
+const DEFAULT_LOCALE = "en-US";
+
+const IntlContext = React.createContext<IntlValue>({
+  locale: DEFAULT_LOCALE,
+  messages: DEFAULT_MESSAGES,
+});
 
 export const TerraIntlProvider: React.FC<{
+  locale?: string;
   messages?: Record<string, string>;
   children?: React.ReactNode;
-}> = ({ messages, children }) => (
-  <IntlContext.Provider value={{ ...DEFAULT_MESSAGES, ...messages }}>
-    {children}
-  </IntlContext.Provider>
-);
+}> = ({ locale, messages, children }) => {
+  const value = React.useMemo(
+    () => ({ locale: locale ?? DEFAULT_LOCALE, messages: { ...DEFAULT_MESSAGES, ...messages } }),
+    [locale, messages],
+  );
+  return <IntlContext.Provider value={value}>{children}</IntlContext.Provider>;
+};
 
-function format(messages: Record<string, string>, id: string): string {
-  return messages[id] ?? id;
+/**
+ * ICU messages in Terra's translations only ever use simple `{name}`
+ * placeholders — no plural/select forms — so substitution is enough.
+ */
+function format(messages: Record<string, string>, id: string, values?: Record<string, unknown>): string {
+  const template = messages[id] ?? id;
+  if (!values) return template;
+  return template.replace(/\{(\w+)\}/g, (match, key: string) =>
+    key in values ? String(values[key]) : match,
+  );
 }
 
 export const FormattedMessage: React.FC<{
   id: string;
+  values?: Record<string, unknown>;
   children?: (formatted: string) => React.ReactNode;
-}> = ({ id, children }) => {
-  const messages = React.useContext(IntlContext);
-  const text = format(messages, id);
+}> = ({ id, values, children }) => {
+  const { messages } = React.useContext(IntlContext);
+  const text = format(messages, id, values);
   return <>{typeof children === "function" ? children(text) : text}</>;
 };
 
@@ -65,14 +143,20 @@ export function injectIntl<P extends { intl?: TerraIntl }>(
   Component: React.ComponentType<P>,
 ): React.ComponentType<Omit<P, "intl">> {
   const Wrapped = (props: Omit<P, "intl">) => {
-    const messages = React.useContext(IntlContext);
-    const intl: TerraIntl = {
-      formatMessage: (descriptor) => format(messages, descriptor.id),
-    };
+    const { locale, messages } = React.useContext(IntlContext);
+    const intl: TerraIntl = React.useMemo(
+      () => ({
+        locale,
+        formatMessage: (descriptor, values) => format(messages, descriptor.id, values),
+      }),
+      [locale, messages],
+    );
     return React.createElement(Component, { ...(props as P), intl });
   };
   Wrapped.displayName = `injectIntl(${Component.displayName || Component.name || "Component"})`;
-  return Wrapped;
+  // react-intl hoists non-React statics here; Terra relies on it for
+  // `SingleSelect.Option` and friends.
+  return hoistStatics(Wrapped, Component);
 }
 
 export const intlShape = {};

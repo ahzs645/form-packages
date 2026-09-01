@@ -1,13 +1,23 @@
 This package vendors component source from Cerner Terra Core
-(https://github.com/cerner/terra-core), Copyright Cerner Innovation, Inc.,
-licensed under the Apache License, Version 2.0.
+(https://github.com/cerner/terra-core) and Cerner Terra Framework
+(https://github.com/cerner/terra-framework) — the latter via its published npm
+tarballs, which ship src/ — Copyright Cerner Innovation, Inc., licensed under
+the Apache License, Version 2.0.
 
-Terra Core was archived in 2024 with peer dependencies pinned to React 16.
-The sources under src/vendor are copied and mechanically adapted for React 19
-by scripts/vendor.mjs; component bodies are otherwise unmodified. Adaptations:
-defaultProps on function components replaced by an equivalent wrapper,
-react-intl and terra-theme-context replaced by local shims, and terra-icon
-imports replaced by local stubs.
+terra-date-picker's src/react-datepicker is Cerner's own fork of react-datepicker
+(https://github.com/Hacker0x01/react-datepicker, originally MIT, Copyright
+HackerOne Inc. and individual contributors). Cerner redistributes it inside
+terra-date-picker under Apache-2.0 with no separate notice; it is vendored here
+as it ships, as part of that package's source tree.
+
+Both Terra projects were archived in 2024 with peer dependencies pinned to
+React 16. The sources under src/vendor are copied and mechanically adapted for
+React 19 by scripts/vendor.mjs; component bodies are otherwise unmodified.
+Adaptations: defaultProps on function components replaced by an equivalent
+wrapper, react-intl / terra-theme-context / react-onclickoutside /
+react-lifecycles-compat replaced by local shims, terra-icon imports replaced by
+local stubs, string refs and dead IE-era polyfill imports removed, and
+writing-direction-scoped CSS extended to match documents that do not set `dir`.
 
 You may obtain a copy of the Apache 2.0 License at
     http://www.apache.org/licenses/LICENSE-2.0

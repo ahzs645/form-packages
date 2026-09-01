@@ -1,0 +1,59 @@
+
+/* stylelint-disable selector-max-compound-selectors */
+:local {
+  .content-container-static {
+    display: flex;
+    flex-direction: column;
+
+    // reset scroll styles to standard div defaults to handle stack/block style layout.
+    // IE10 does not properly support 'initial', so we need to be explicit.
+    > .main > .normalizer {
+      height: auto;
+      overflow: visible;
+      position: static;
+      width: auto;
+    }
+  }
+
+  .content-container-fill {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    width: 100%;
+
+    > .header,
+    > .footer {
+      flex: 0 0 auto;
+    }
+
+    > .main {
+      flex: 1 1 auto;
+      height: 100%;
+      min-height: 50px;
+      overflow: hidden;
+      position: relative;
+      width: 100%;
+
+      > .normalizer {
+        position: absolute;
+      }
+    }
+  }
+
+  .content-container-focused-padding {
+    padding-left: 0.7142857143rem;
+    padding-right: 0.7142857143rem;
+  }
+
+  .dark:focus {
+    outline: 2px dashed var(--terra-content-container-dark-focus-outline, #c8cacb);
+    outline-offset: -2px;
+  }
+
+  .light:focus {
+    outline: 2px dashed var(--terra-content-container-light-focus-outline, #000);
+    outline-offset: -2px;
+  }
+
+}
+/* stylelint-enable */

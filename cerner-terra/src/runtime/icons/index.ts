@@ -1,5 +1,6 @@
 export { default as IconAlert } from "./IconAlert";
 export { default as IconAudio } from "./IconAudio";
+export { default as IconCalendar } from "./IconCalendar";
 export { default as IconDiamondSymbol } from "./IconDiamondSymbol";
 export { default as IconDocuments } from "./IconDocuments";
 export { default as IconError } from "./IconError";

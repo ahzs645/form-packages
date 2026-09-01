@@ -1,0 +1,3 @@
+# npm-pack cache for the terra-framework packages vendored by scripts/vendor.mjs.
+# Safe to delete; the script refetches on the next run.
+.terra-cache/

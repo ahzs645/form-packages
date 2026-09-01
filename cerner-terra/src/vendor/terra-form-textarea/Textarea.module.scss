@@ -62,7 +62,8 @@
       opacity: var(--terra-form-textarea-focus-opacity, 1);
       outline: none;
 
-      [dir=ltr] & {
+      [dir=ltr] &,
+      :root:not([dir]) & {
         box-shadow: var(--terra-form-textarea-focus-ltr-box-shadow, 0 0 8px #a6d9f4);
       }
 
@@ -127,7 +128,8 @@
       color: var(--terra-form-textarea-error-focus-color, #000);
       opacity: var(--terra-form-textarea-error-focus-opacity, 1);
 
-      [dir=ltr] & {
+      [dir=ltr] &,
+      :root:not([dir]) & {
         box-shadow: var(--terra-form-textarea-error-focus-ltr-box-shadow, 0 0 0 1px #e50000);
       }
 

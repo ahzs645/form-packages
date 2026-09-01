@@ -1,5 +1,7 @@
 import React from "react";
 
+import { hoistStatics } from "./hoist-statics";
+
 /**
  * React 19 removed `defaultProps` for function components. Terra sets
  * defaults with the uniform pattern
@@ -29,5 +31,12 @@ export function withDefaults<P extends object>(
     return React.createElement(Component, merged as P);
   };
   Wrapped.displayName = `withDefaults(${Component.displayName || Component.name || "Component"})`;
-  return Wrapped;
+  // Some Terra internals dispatch on `child.type.name` — TableUtils.addScope
+  // compares it against "TableHeaderCell" to decide where `scope` goes — so the
+  // wrapper has to carry the wrapped component's name, not "Wrapped".
+  if (Component.name) {
+    Object.defineProperty(Wrapped, "name", { value: Component.name, configurable: true });
+  }
+  // Terra hangs subcomponents off the default export (`Select.Option`).
+  return hoistStatics(Wrapped, Component);
 }

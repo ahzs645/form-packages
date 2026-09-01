@@ -51,7 +51,8 @@
       color: var(--terra-form-input-focus-color);
       outline: none;
 
-      [dir=ltr] & {
+      [dir=ltr] &,
+      :root:not([dir]) & {
         box-shadow: var(--terra-form-input-focus-ltr-box-shadow);
       }
 
@@ -89,7 +90,8 @@
       border: var(--terra-form-input-error-focus-border, 1px solid #e50000);
       box-shadow: var(--terra-form-input-error-focus-box-shadow, 0 0 0 1px #e50000);
 
-      [dir=ltr] & {
+      [dir=ltr] &,
+      :root:not([dir]) & {
         box-shadow: var(--terra-form-input-error-focus-ltr-box-shadow, 0 0 0 1px #e50000);
       }
 
