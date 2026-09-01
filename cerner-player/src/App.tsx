@@ -10,7 +10,7 @@ import React, { useEffect, useMemo, useState } from "react";
 
 import { TerraDemographicsBanner } from "./terra/TerraDemographicsBanner";
 import { terraFluentTheme, TERRA_PAGE_BACKGROUND } from "./terra/terra-theme";
-import "./terra/terra-tokens.css";
+import "./terra/terra-tokens.scss";
 import { DiscernActionsBar } from "./DiscernActionsBar";
 import { FormHost, type FormIdentityLike } from "./FormHost";
 import { MoisToastHost } from "./MoisToastHost";

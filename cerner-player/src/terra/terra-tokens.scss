@@ -1,0 +1,248 @@
+// Terra design tokens (Cerner's design system, Apache-2.0) applied to the
+// player's Cerner theme.
+//
+// Values are Terra Core's own defaults, read from each package's
+// `var(--terra-*, <default>)` fallbacks. SCSS variables are the source of
+// truth here; they are emitted as CSS custom properties so the same names
+// Terra uses are available to anything we render, and so a site could
+// re-theme by overriding the properties alone.
+//
+// Terra sets html { font-size: 87.5% } so 1rem = 14px. A Workflow component
+// lives inside someone else's page, so we cannot rely on the host root size:
+// .terra-root pins 14px and everything below is computed from that base.
+
+// ---------------------------------------------------------------- palette
+$terra-text:                #1c1f21;
+$terra-text-muted:          #4e5558;
+$terra-help-text:           rgba(28, 31, 33, 0.63);
+$terra-background:          #fff;
+
+$terra-primary:             #0079be;
+$terra-primary-border:      #01639e;
+$terra-primary-active:      #004c76;
+$terra-primary-active-brd:  #0065a3;
+$terra-de-emphasis:         #0059a8;
+
+$terra-neutral-bg:          #dedfe0;
+$terra-neutral-border:      #c8cacb;
+$terra-divider:             #dedfe0;
+$terra-chrome-bg:           #f9f9f9;
+$terra-chrome-border:       #d3d4d5;
+
+$terra-error:               #e50000;
+$terra-error-bg:            #fedcdc;
+$terra-error-accent:        #c00;
+
+$terra-focus-ring:          0 0 1px 3px rgba(76, 178, 233, 0.5);
+
+// ------------------------------------------------------------- typography
+$terra-font-family:         'Helvetica Neue', Helvetica, Arial, sans-serif;
+$terra-font-size:           14px;    // Terra 1rem
+$terra-font-size-small:     12px;    // Terra 0.857rem
+$terra-line-height:         1.4285714285714286;
+
+// ------------------------------------------------------------- components
+$terra-input-radius:        3px;
+$terra-input-border:        1px solid $terra-divider;
+$terra-control-min-height:  30px;    // Terra 2.14285rem
+$terra-banner-bg:           #004c76;
+$terra-banner-deceased-bg:  $terra-text;
+$terra-banner-padding:      10px;    // Terra 0.714em
+$terra-banner-name-size:    18px;    // Terra 1.286rem
+
+@mixin terra-focus-ring {
+  box-shadow: $terra-focus-ring;
+  outline: none;
+}
+
+.terra-root {
+  // Expose Terra's own custom-property names for downstream overrides.
+  --terra-base-font-family: #{$terra-font-family};
+  --terra-base-color: #{$terra-text};
+  --terra-base-background-color: #{$terra-background};
+  --terra-primary: #{$terra-primary};
+  --terra-primary-active: #{$terra-primary-active};
+  --terra-error: #{$terra-error};
+  --terra-chrome-bg: #{$terra-chrome-bg};
+  --terra-divider: #{$terra-divider};
+  --terra-demographics-banner-background-color: #{$terra-banner-bg};
+
+  background-color: $terra-background;
+  color: $terra-text;
+  font-family: $terra-font-family;
+  font-size: $terra-font-size;
+  line-height: $terra-line-height;
+
+  // ---- demographics banner (mirrors terra-demographics-banner markup) ----
+  .terra-demographics-banner {
+    background-color: $terra-banner-bg;
+    color: #fff;
+    padding: $terra-banner-padding;
+
+    &.is-deceased { background-color: $terra-banner-deceased-bg; }
+
+    .person-name {
+      font-size: $terra-banner-name-size;
+      font-weight: bold;
+      margin: 0;
+    }
+    .preferred-first-name { font-weight: normal; margin-left: 5px; }
+
+    .identifier-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0 20px;
+      margin-top: 2px;
+    }
+    dl { display: flex; flex-wrap: wrap; gap: 0 12px; margin: 0; }
+    dt { display: inline; font-weight: normal; opacity: 0.85; }
+    dd { display: inline; font-weight: bold; margin: 0 5px 0 4px; }
+  }
+
+  // ---- action footer (terra-action-footer) ----
+  .terra-action-footer {
+    align-items: center;
+    background-color: $terra-chrome-bg;
+    border-top: 1px solid $terra-divider;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    min-height: 40px;
+    padding: 9px 10px;
+  }
+
+  // ---- Fluent controls, Terra-ised -------------------------------------
+  // The form body is Fluent 8 markup emitted by the form generator, so the
+  // Terra look is applied to Fluent's stable class names.
+  .ms-TextField-fieldGroup,
+  .ms-Dropdown-title,
+  .ms-ComboBox {
+    background-color: $terra-background;
+    border: $terra-input-border;
+    border-radius: $terra-input-radius;
+    min-height: $terra-control-min-height;
+  }
+
+  // MOIS tints required fields yellow; Terra marks them with an asterisk on
+  // the label instead, so drop the fill and keep the neutral field. The tint
+  // lands on the inner input as well as the group, so clear both.
+  .ms-TextField.is-required .ms-TextField-fieldGroup {
+    background-color: $terra-background;
+  }
+  .ms-TextField-field,
+  .ms-TextField.is-required .ms-TextField-field {
+    background-color: transparent;
+  }
+
+  .ms-TextField-field,
+  .ms-Dropdown-title,
+  .ms-ComboBox-Input {
+    color: $terra-text;
+    font-family: $terra-font-family;
+    font-size: $terra-font-size;
+  }
+  .ms-TextField-field::placeholder { color: $terra-help-text; }
+
+  // Focus / error states
+  .ms-TextField-fieldGroup:focus-within,
+  .ms-Dropdown:focus .ms-Dropdown-title {
+    border-color: $terra-primary;
+    @include terra-focus-ring;
+  }
+  .ms-TextField--error .ms-TextField-fieldGroup,
+  .ms-TextField-fieldGroup.ms-TextField-fieldGroup--error {
+    border: 1px solid $terra-error;
+    box-shadow: 0 0 0 1px $terra-error;
+  }
+  .ms-TextField-errorMessage {
+    color: $terra-error;
+    font-size: $terra-font-size-small;
+  }
+
+  // Date picker: Fluent renders a TextField plus a calendar affordance.
+  .ms-DatePicker,
+  .ms-DatePicker .ms-TextField-fieldGroup {
+    border-radius: $terra-input-radius;
+  }
+  .ms-DatePicker-event--without-label,
+  .ms-DatePicker-event--with-label {
+    color: $terra-text-muted;
+    font-size: 16px;
+    &:hover { color: $terra-primary; }
+  }
+  // Calendar flyout
+  .ms-DatePicker-goToday,
+  .ms-DatePicker-day--today { color: $terra-primary; }
+  .ms-DatePicker-day--highlighted,
+  .ms-DatePicker-day--highlighted:hover {
+    background-color: $terra-primary;
+    color: #fff;
+  }
+
+  // Labels and help text (terra-form-field)
+  .ms-Label {
+    color: $terra-text;
+    font-size: $terra-font-size;
+    font-weight: bold;
+  }
+  .ms-TextField-description {
+    color: $terra-help-text;
+    font-size: $terra-font-size-small;
+  }
+
+  // Choice / checkbox
+  .ms-ChoiceField-field::before { border-color: $terra-neutral-border; }
+  .ms-ChoiceField.is-checked .ms-ChoiceField-field::after { background-color: $terra-primary; }
+  .ms-Checkbox-checkbox { border-color: $terra-neutral-border; border-radius: 2px; }
+  .ms-Checkbox.is-checked .ms-Checkbox-checkbox {
+    background-color: $terra-primary;
+    border-color: $terra-primary-border;
+  }
+
+  // Buttons (terra-button)
+  .ms-Button {
+    border-radius: $terra-input-radius;
+    font-size: $terra-font-size;
+    min-height: $terra-control-min-height;
+    &:focus { @include terra-focus-ring; }
+  }
+  .ms-Button--primary {
+    background-color: $terra-primary;
+    border-color: $terra-primary-border;
+    &:hover, &:active {
+      background-color: $terra-primary-active;
+      border-color: $terra-primary-active-brd;
+    }
+  }
+  .ms-Button--default {
+    background-color: $terra-neutral-bg;
+    border-color: $terra-neutral-border;
+    color: $terra-text;
+    &:hover { background-color: darken($terra-neutral-bg, 5%); }
+  }
+  .ms-Link { color: $terra-de-emphasis; }
+
+  // Tables (terra-html-table)
+  table {
+    border-collapse: collapse;
+    th, td {
+      color: $terra-text;
+      font-size: $terra-font-size;
+      padding: 0.5rem 0.75rem;
+    }
+    th { border-bottom: 1px solid $terra-divider; text-align: left; }
+  }
+
+  // The Terra demographics banner is the chart header in Cerner mode, so the
+  // generated form's own MOIS name block would duplicate it. The generator
+  // emits a stable hook for exactly this.
+  [data-builder-name-block] { display: none; }
+
+  // The generated footer ButtonBar paints itself through a Fluent Stack with
+  // a mergeStyles class and no stable hook; retint just that bar. :has() is
+  // available in the Edge WebView2 control MPages run in.
+  div.ms-Stack:has(> .ms-Stack-inner > button) {
+    background: $terra-chrome-bg !important;
+    border-top: 1px solid $terra-divider;
+  }
+}
