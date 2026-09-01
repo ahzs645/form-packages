@@ -30,15 +30,32 @@ $terra-chrome-bg:           #f9f9f9;
 $terra-chrome-border:       #d3d4d5;
 
 $terra-error:               #e50000;
+$terra-incomplete-bg:       #ffc;      // Terra .form-incomplete (required + empty)
+$terra-input-focus-border:  #4cb2e9;
+$terra-textarea-focus-glow: 0 0 8px #a6d9f4;
+$terra-disabled-bg:         rgba(111, 116, 119, 0.2);
+$terra-disabled-border:     #868a8c;
+$terra-placeholder:         rgba(21, 33, 41, 0.62);
+$terra-link:                #006fc3;
+$terra-link-hover:          #001f67;
+$terra-table-header-bg:     #f1f1f2;
+$terra-table-header-border: #b9bbbc;
+$terra-neutral-hover-bg:    #b9bbbc;
+$terra-neutral-active-bg:   #6f7477;
+$terra-neutral-active-brd:  #52585b;
+$terra-primary-hover:       #0065a3;
 $terra-error-bg:            #fedcdc;
 $terra-error-accent:        #c00;
 
-$terra-focus-ring:          0 0 1px 3px rgba(76, 178, 233, 0.5);
+$terra-focus-ring:          0 0 1px 3px rgba(76, 178, 233, 0.5);  // active+focus only
 
 // ------------------------------------------------------------- typography
 $terra-font-family:         'Helvetica Neue', Helvetica, Arial, sans-serif;
 $terra-font-size:           14px;    // Terra 1rem
+$terra-font-size-input:     16px;    // Terra 1.142857rem — inputs read larger than labels
 $terra-font-size-small:     12px;    // Terra 0.857rem
+$terra-field-gap:           20px;    // Terra .field margin-bottom 1.428em
+$terra-label-gap:           5px;     // Terra label margin-bottom 0.357em
 $terra-line-height:         1.4285714285714286;
 
 // ------------------------------------------------------------- components
@@ -50,9 +67,16 @@ $terra-banner-deceased-bg:  $terra-text;
 $terra-banner-padding:      10px;    // Terra 0.714em
 $terra-banner-name-size:    18px;    // Terra 1.286rem
 
-@mixin terra-focus-ring {
-  box-shadow: $terra-focus-ring;
-  outline: none;
+// Terra's keyboard-focus look is a dashed outline; the blue glow appears only
+// in the active-and-focused state, so it is a separate mixin.
+@mixin terra-focus-outline {
+  outline: 2px dashed #000;
+  outline-offset: 1px;
+  box-shadow: none;
+}
+
+@mixin terra-active-focus-glow {
+  box-shadow: $terra-focus-ring, 0 0 7px 4px rgba(76, 178, 233, 0.35);
 }
 
 .terra-root {
@@ -82,6 +106,7 @@ $terra-banner-name-size:    18px;    // Terra 1.286rem
     &.is-deceased { background-color: $terra-banner-deceased-bg; }
 
     .person-name {
+      color: inherit;   // the banner sets its own colour; do not inherit the heading colour
       font-size: $terra-banner-name-size;
       font-weight: bold;
       margin: 0;
@@ -113,64 +138,146 @@ $terra-banner-name-size:    18px;    // Terra 1.286rem
 
   // ---- Fluent controls, Terra-ised -------------------------------------
   // The form body is Fluent 8 markup emitted by the form generator, so the
-  // Terra look is applied to Fluent's stable class names.
-  .ms-TextField-fieldGroup,
-  .ms-Dropdown-title,
-  .ms-ComboBox {
+  // Terra look is applied to Fluent's stable class names. Values come from
+  // terra-form-input / -textarea / -select / -field / -button / -html-table /
+  // -hyperlink / -alert. Lengths are px computed from Terra's 14px root: a
+  // `rem` here would resolve against the host page, not .terra-root.
+
+  // Vertical rhythm (terra-form-field .field margin-bottom 1.428em)
+  .ms-TextField,
+  .ms-Dropdown-container,
+  .ms-ComboBox-container,
+  .ms-ChoiceFieldGroup,
+  .ms-Checkbox { margin-bottom: $terra-field-gap; }
+
+  // Labels, required marker, help and error text (terra-form-field)
+  .ms-Label {
+    color: $terra-text;
+    font-size: $terra-font-size;
+    font-weight: bold;
+    line-height: 1.29;
+    margin: 0 0 $terra-label-gap;
+    padding: 0;
+  }
+  // Terra renders the asterisk BEFORE the label text in #e50000; Fluent
+  // appends its own in #a4262c, so replace it.
+  .ms-Label--required::after { content: none; }
+  .ms-Label--required::before {
+    color: $terra-error;
+    content: '*';
+    display: inline-block;
+    padding-right: $terra-label-gap;
+  }
+  .ms-TextField-description {
+    color: $terra-help-text;
+    font-size: $terra-font-size-small;
+    font-weight: normal;
+    line-height: 1.25;
+    margin-top: $terra-label-gap;
+  }
+  .ms-TextField-errorMessage {
+    color: $terra-error;
+    font-size: $terra-font-size-small;
+    font-weight: normal;
+    line-height: 1.25;
+    margin-top: $terra-label-gap;
+  }
+
+  // Single-line input
+  .ms-TextField-fieldGroup {
     background-color: $terra-background;
     border: $terra-input-border;
     border-radius: $terra-input-radius;
     min-height: $terra-control-min-height;
-  }
 
-  // MOIS tints required fields yellow; Terra marks them with an asterisk on
-  // the label instead, so drop the fill and keep the neutral field. The tint
-  // lands on the inner input as well as the group, so clear both.
-  .ms-TextField.is-required .ms-TextField-fieldGroup {
-    background-color: $terra-background;
+    &:hover { border-color: $terra-divider; }
+    &:focus-within {
+      border: 1px solid $terra-input-focus-border;
+      box-shadow: none;   // Terra has no glow on plain input focus
+      outline: none;
+    }
   }
-  .ms-TextField-field,
-  .ms-TextField.is-required .ms-TextField-field {
+  .ms-TextField-field {
     background-color: transparent;
-  }
-
-  .ms-TextField-field,
-  .ms-Dropdown-title,
-  .ms-ComboBox-Input {
     color: $terra-text;
     font-family: $terra-font-family;
-    font-size: $terra-font-size;
-  }
-  .ms-TextField-field::placeholder { color: $terra-help-text; }
+    font-size: $terra-font-size-input;
+    line-height: 1.25;
+    padding: 4px;
 
-  // Focus / error states
-  .ms-TextField-fieldGroup:focus-within,
-  .ms-Dropdown:focus .ms-Dropdown-title {
-    border-color: $terra-primary;
-    @include terra-focus-ring;
+    &::placeholder {
+      color: $terra-placeholder;
+      font-style: italic;
+      opacity: 1;
+    }
   }
+
+  // Terra's own convention for a required-but-empty field is a pale yellow
+  // fill (.form-incomplete #ffc) *in addition to* the asterisk — MOIS tints
+  // the same state, so keep it and just align the colour.
+  .ms-TextField.is-required .ms-TextField-fieldGroup {
+    background-color: $terra-incomplete-bg;
+  }
+
   .ms-TextField--error .ms-TextField-fieldGroup,
   .ms-TextField-fieldGroup.ms-TextField-fieldGroup--error {
     border: 1px solid $terra-error;
     box-shadow: 0 0 0 1px $terra-error;
   }
-  .ms-TextField-errorMessage {
-    color: $terra-error;
-    font-size: $terra-font-size-small;
+  .ms-TextField.is-disabled .ms-TextField-fieldGroup {
+    background-color: $terra-disabled-bg;
+    border: 1px solid $terra-disabled-border;
+    opacity: 0.25;
+    pointer-events: none;
   }
 
-  // Date picker: Fluent renders a TextField plus a calendar affordance.
-  .ms-DatePicker,
-  .ms-DatePicker .ms-TextField-fieldGroup {
+  // Textarea differs from the input: darker text, a transition, and the one
+  // place Terra does use a focus glow.
+  .ms-TextField--multiline {
+    .ms-TextField-field {
+      color: #000;
+      transition: background-size 0.2s ease;
+    }
+    .ms-TextField-fieldGroup:focus-within {
+      border: 1px solid $terra-input-focus-border;
+      box-shadow: $terra-textarea-focus-glow;
+    }
+  }
+
+  // Select / dropdown (terra-form-select Frame)
+  .ms-Dropdown-title,
+  .ms-ComboBox {
+    background-color: $terra-background;
+    border: $terra-input-border;
     border-radius: $terra-input-radius;
+    color: $terra-text;
+    font-size: $terra-font-size-input;
+    line-height: 1.75;
+    min-height: $terra-control-min-height;
+    padding: 0 0 0 6px;
+  }
+  .ms-Dropdown-caretDownWrapper { padding: 0 6px; }
+  .ms-Dropdown-caretDown { color: $terra-text; font-size: $terra-font-size; }
+  .ms-Dropdown:focus-visible .ms-Dropdown-title { @include terra-focus-outline; }
+  .ms-Dropdown.is-disabled .ms-Dropdown-title {
+    background-color: $terra-disabled-bg;
+    border-color: $terra-divider;
+    color: $terra-text;
+    opacity: 0.4;   // Terra's select disables at 0.4, inputs at 0.25
+  }
+
+  // Date field: terra-core ships no date picker, so this composes Terra's
+  // input geometry with its trailing-affordance pattern (terra-search-field).
+  .ms-DatePicker {
+    .ms-TextField-field { padding-right: 32px; }
+    .ms-TextField-fieldGroup { border-radius: $terra-input-radius; }
   }
   .ms-DatePicker-event--without-label,
   .ms-DatePicker-event--with-label {
-    color: $terra-text-muted;
-    font-size: 16px;
-    &:hover { color: $terra-primary; }
+    color: $terra-text;
+    font-size: $terra-font-size;
   }
-  // Calendar flyout
+  // Calendar flyout has no Terra source; extrapolated from button emphasis.
   .ms-DatePicker-goToday,
   .ms-DatePicker-day--today { color: $terra-primary; }
   .ms-DatePicker-day--highlighted,
@@ -179,18 +286,9 @@ $terra-banner-name-size:    18px;    // Terra 1.286rem
     color: #fff;
   }
 
-  // Labels and help text (terra-form-field)
-  .ms-Label {
-    color: $terra-text;
-    font-size: $terra-font-size;
-    font-weight: bold;
-  }
-  .ms-TextField-description {
-    color: $terra-help-text;
-    font-size: $terra-font-size-small;
-  }
-
-  // Choice / checkbox
+  // Choice / checkbox. Terra's default theme uses the native controls, so
+  // there is no Terra token for a checked fill; these follow the emphasis
+  // scheme as the closest sourced analogue.
   .ms-ChoiceField-field::before { border-color: $terra-neutral-border; }
   .ms-ChoiceField.is-checked .ms-ChoiceField-field::after { background-color: $terra-primary; }
   .ms-Checkbox-checkbox { border-color: $terra-neutral-border; border-radius: 2px; }
@@ -198,39 +296,129 @@ $terra-banner-name-size:    18px;    // Terra 1.286rem
     background-color: $terra-primary;
     border-color: $terra-primary-border;
   }
+  .ms-ChoiceField-field,
+  .ms-Checkbox-text {
+    font-size: $terra-font-size;
+    line-height: 1.33;
+  }
 
   // Buttons (terra-button)
   .ms-Button {
     border-radius: $terra-input-radius;
+    border-style: solid;
+    border-width: 1px;
     font-size: $terra-font-size;
+    line-height: 1.429;
+    margin: 2px;
     min-height: $terra-control-min-height;
-    &:focus { @include terra-focus-ring; }
+    padding: 4px 10px;
+
+    &:focus-visible { @include terra-focus-outline; }
+    &:disabled,
+    &.is-disabled { opacity: 0.3; }
   }
   .ms-Button--primary {
     background-color: $terra-primary;
     border-color: $terra-primary-border;
-    &:hover, &:active {
+    color: #fff;
+
+    &:hover { background-color: $terra-primary-hover; border-color: $terra-primary-border; }
+    &:active {
       background-color: $terra-primary-active;
       border-color: $terra-primary-active-brd;
+      &:focus { @include terra-active-focus-glow; }
     }
   }
   .ms-Button--default {
     background-color: $terra-neutral-bg;
     border-color: $terra-neutral-border;
     color: $terra-text;
-    &:hover { background-color: darken($terra-neutral-bg, 5%); }
+
+    &:hover { background-color: $terra-neutral-hover-bg; color: #000; }
+    &:active {
+      background-color: $terra-neutral-active-bg;
+      border-color: $terra-neutral-active-brd;
+      color: #fff;
+    }
   }
-  .ms-Link { color: $terra-de-emphasis; }
+
+  // Hyperlink (terra-hyperlink)
+  .ms-Link {
+    color: $terra-link;
+    text-decoration: underline;
+
+    &:hover,
+    &:active { color: $terra-link-hover; text-decoration: underline; }
+    &:focus-visible { @include terra-focus-outline; border-radius: $terra-input-radius; }
+  }
+
+  // Headings (terra-heading). Scoped away from our own chrome, which paints
+  // its own colours.
+  h1, h2, h3, h4, h5, h6 {
+    margin: 0;
+  }
+  :not(.terra-demographics-banner) > h1,
+  :not(.terra-demographics-banner) > h2,
+  :not(.terra-demographics-banner) > h3,
+  :not(.terra-demographics-banner) > h4,
+  :not(.terra-demographics-banner) > h5,
+  :not(.terra-demographics-banner) > h6 { color: #333; }
+  h1 { font-size: 32px; }
+  h2 { font-size: 24px; }
+  h3 { font-size: 20px; }
+  h4 { font-size: 18px; }
+  h5 { font-size: 16px; }
+  h6 { font-size: $terra-font-size; }
 
   // Tables (terra-html-table)
   table {
     border-collapse: collapse;
+    border-spacing: 0;
+    max-width: 100%;
+    width: 100%;
+
     th, td {
+      border: 0;
       color: $terra-text;
       font-size: $terra-font-size;
-      padding: 0.5rem 0.75rem;
+      padding: 7px 10.5px;   // Terra 0.5rem 0.75rem at a 14px root
+      text-align: left;
     }
-    th { border-bottom: 1px solid $terra-divider; text-align: left; }
+    td { vertical-align: top; }
+    thead {
+      background-color: $terra-table-header-bg;
+      box-shadow: 0 4px 4px -3.5px rgba(134, 138, 140, 0.75),
+        inset 0 0 0 1px #fff,
+        inset 0.5px 0.5px 0 2px rgba(255, 255, 255, 0.5);
+
+      tr { border-bottom: 1px solid $terra-table-header-border; border-top: 1px solid $terra-divider; }
+      th { border-right: 1px solid rgba(200, 202, 203, 0.5); font-weight: bold; vertical-align: bottom; }
+    }
+    tbody {
+      tr { border-top: 1px solid $terra-divider; }
+      tr:first-of-type { border-top: 0; }
+      tr:last-of-type { border-bottom: 1px solid $terra-divider; }
+    }
+  }
+
+  // Alerts / message bars (terra-alert) — a 2px inset accent bar, not a border
+  .ms-MessageBar--error {
+    background-color: $terra-error-bg;
+    box-shadow: 2px 0 0 $terra-error-accent inset;
+
+    .ms-MessageBar-icon { color: $terra-error-accent; font-size: 18px; margin-right: 7px; }
+  }
+  .ms-MessageBar--warning {
+    background-color: #fff3ce;
+    box-shadow: 2px 0 0 #ffc20a inset;
+  }
+  .ms-MessageBar--info {
+    background-color: #f4f4f4;
+    box-shadow: 2px 0 0 #0092e0 inset;
+  }
+  .ms-MessageBar--success {
+    background-color: #f4f4f4;
+    box-shadow: 2px 0 0 #78c346 inset;
   }
 
   // The Terra demographics banner is the chart header in Cerner mode, so the
