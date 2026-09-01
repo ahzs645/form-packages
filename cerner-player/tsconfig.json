@@ -31,6 +31,9 @@
       ],
       "@webforms/cerner-terra": [
         "../cerner-terra/src/index.ts"
+      ],
+      "@webforms/cerner-terra-forms": [
+        "../cerner-terra-forms/src/index.ts"
       ]
     },
     "allowJs": true,

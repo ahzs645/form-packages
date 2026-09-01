@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "allowJs": true,
+    "checkJs": false,
+    "types": ["vitest/globals"],
+    "paths": {
+      "@webforms/cerner-terra": ["../cerner-terra/src/index.ts"],
+      "@webforms/form-model": ["../form-model/src/index.ts"]
+    }
+  },
+  "include": ["src"]
+}

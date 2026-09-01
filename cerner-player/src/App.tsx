@@ -15,6 +15,7 @@ import { DiscernActionsBar } from "./DiscernActionsBar";
 import { FormHost, type FormIdentityLike } from "./FormHost";
 import { MoisToastHost } from "./MoisToastHost";
 import { TerraProbe } from "./terra/TerraProbe";
+import { TerraFormView } from "./terra/TerraFormView";
 
 const frameStyle: React.CSSProperties = {
   backgroundColor: "#fff",
@@ -262,7 +263,14 @@ export const App: React.FC<{ host?: PlayerHost }> = ({ host = null }) => {
         {new URLSearchParams(window.location.search).get("terraProbe") === "1" ? (
           <TerraProbe />
         ) : null}
-        {loadError ? (
+        {new URLSearchParams(window.location.search).get("render") === "terra" ? (
+          <TerraFormView
+            documentUrl={
+              new URLSearchParams(window.location.search).get("documentUrl") ??
+              "./forms/hcc-ltc.workspace.json"
+            }
+          />
+        ) : loadError ? (
           <div style={{ color: "#a4262c" }}>Failed to load form: {loadError}</div>
         ) : !form ? (
           <div>Loading form…</div>

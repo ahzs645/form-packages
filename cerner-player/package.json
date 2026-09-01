@@ -19,6 +19,7 @@
     "@mois/form-engine-core": "workspace:*",
     "@webforms/cerner-core": "workspace:*",
     "@webforms/cerner-terra": "workspace:*",
+    "@webforms/cerner-terra-forms": "workspace:*",
     "@webforms/form-model": "workspace:*",
     "fhirclient": "^2.6.3",
     "fluent-cerner-js": "^1.1.1",

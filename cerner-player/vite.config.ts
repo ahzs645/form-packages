@@ -115,6 +115,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, "../form-engine-core/src/index.ts"),
       },
       {
+        find: "@webforms/cerner-terra-forms",
+        replacement: path.resolve(__dirname, "../cerner-terra-forms/src/index.ts"),
+      },
+      {
         find: "@webforms/cerner-terra",
         replacement: path.resolve(__dirname, "../cerner-terra/src/index.ts"),
       },
