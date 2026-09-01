@@ -76,4 +76,14 @@ describe("TerraFormRenderer coverage", () => {
       expect(markup).toContain(escape(field.label));
     }
   });
+
+  it("gives table headers a scope, which Terra derives from the component name", () => {
+    // TableUtils.addScope dispatches on `child.type.name`. The React 19
+    // `withDefaults` wrapper has to preserve that name or every header cell
+    // silently loses its scope — an accessibility regression invisible to
+    // the coverage assertions above.
+    const header = markup.match(/<thead[\s\S]*?<\/thead>/)?.[0];
+    expect(header).toBeDefined();
+    expect(header).toContain('scope="col"');
+  });
 });

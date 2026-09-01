@@ -5,15 +5,24 @@
   "type": "module",
   "main": "src/index.ts",
   "types": "src/index.ts",
-  "exports": { ".": "./src/index.ts" },
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "scripts": {
     "lint": "eslint --no-ignore src",
     "typecheck": "tsc -p tsconfig.typecheck.json"
   },
   "dependencies": {
     "@webforms/cerner-terra": "workspace:*",
-    "@webforms/form-model": "workspace:*"
+    "@webforms/form-model": "workspace:*",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
   },
-  "peerDependencies": { "react": "^19.0.0" },
-  "devDependencies": { "@types/react": "^19.0.0", "typescript": "^5.4.5" }
+  "peerDependencies": {
+    "react": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "typescript": "^5.4.5"
+  }
 }
