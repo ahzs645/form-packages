@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="discern" content="APPLINK,CCLLINK,MPAGES_EVENT,MPAGES_SVC_EVENT,XMLCCLREQUEST,CCLNEWSESSIONWINDOW" http-equiv="Content-Type">
+  <meta http-equiv="cache-control" content="no-cache, must-revalidate, post-check=0, pre-check=0">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="-1">
+  <base href="./index.html">
+  <title>Web Forms</title>
+  <style>
+    body { font-family: "Segoe UI", Arial, sans-serif; margin: 2rem; color: #1a1a1a; background: #ffffff; }
+    #shell-root h1 { font-size: 1.25rem; }
+    .shell-launch-button {
+      display: inline-block; padding: 0.5rem 1.25rem; border: 1px solid #005a9e;
+      background: #0078d4; color: #ffffff; text-decoration: none; border-radius: 2px;
+    }
+  </style>
+  <script>
+    /* Edited per environment at deploy time; the shell js reads it. */
+    window.CERNER_SHELL_CONFIG = {
+      "playerUrl": "https://REPLACE-ME.example/cerner-player/index.html",
+      "launchOutUrl": "",
+      "formId": "",
+      "title": "Web Form",
+      /* Optional: on the IE launch-out tier, poll the form store and flip
+         the panel to "Submitted" when a marker row appears:
+         "poll": { "refName": "<formId>", "refTask": "submission" } */
+      "poll": null
+    };
+  </script>
+</head>
+<body>
+  <div id="shell-root">Loading, please wait.</div>
+  <script src="./cerner-shell.js"></script>
+</body>
+</html>

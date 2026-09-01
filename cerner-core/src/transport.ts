@@ -48,6 +48,8 @@ export interface CclClientOptions {
   proxyPath?: string;
   personId?: number;
   encntrId?: number;
+  /** Force whole-number *Cd/*Id/*Float values to f8-typed floats on the wire (default true). */
+  forceF8Ids?: boolean;
   timeoutMs?: number;
   credentials?: { username: string; password: string };
   windowRef?: HostWindowLike & { location?: { hostname?: string; origin?: string } };
@@ -60,6 +62,20 @@ export interface ExecuteOptions {
   encntrId?: number;
   debugIndicator?: number;
 }
+
+/**
+ * Status codes the XMLCclRequest bridge reports. 492 (non-fatal error) still
+ * carries a usable reply and is treated as success; everything else non-200
+ * is a failure.
+ */
+export const CCL_STATUS_TEXT: Record<number, string> = {
+  200: "Success",
+  405: "Method Not Allowed",
+  409: "Invalid State",
+  492: "Non-Fatal Error",
+  493: "Memory Error",
+  500: "Internal Server Exception",
+};
 
 export class CclTransportError extends Error {
   readonly status: number;
@@ -158,6 +174,21 @@ export class CclClient {
     );
   }
 
+  /**
+   * Replies echo the resolved chart context; a page that bootstrapped from
+   * macro tokens learns its concrete ids from the first round-trip.
+   */
+  private absorbChartContext(response: MPageResponse): void {
+    const chartId = response.chartId;
+    if (!chartId) return;
+    if (this.personId === 0 && typeof chartId.personId === "number" && chartId.personId > 0) {
+      this.personId = chartId.personId;
+    }
+    if (this.encntrId === 0 && typeof chartId.encntrId === "number" && chartId.encntrId > 0) {
+      this.encntrId = chartId.encntrId;
+    }
+  }
+
   private releaseSlot(index: number): void {
     const next = this.waiters.shift();
     if (next) {
@@ -200,7 +231,7 @@ export class CclClient {
       }
 
       const hexMode = !this.inPowerChart;
-      const blob = toAsciiJson({ payload });
+      const blob = toAsciiJson({ payload }, { forceF8Ids: this.options.forceF8Ids ?? true });
       const parameterString = buildParameterString({
         mode: this.mode,
         personId: executeOptions?.personId ?? this.personId,
@@ -237,10 +268,13 @@ export class CclClient {
       request.onreadystatechange = () => {
         if (request.readyState !== 4) return;
         settle(() => {
-          if (request.status !== 200) {
+          if (request.status !== 200 && request.status !== 492) {
+            const statusText = CCL_STATUS_TEXT[request.status];
             reject(
               new CclTransportError(
-                "CCL request failed with status " + request.status,
+                "CCL request failed with status " +
+                  request.status +
+                  (statusText ? " (" + statusText + ")" : ""),
                 request.status,
                 request.responseText,
               ),
@@ -250,7 +284,9 @@ export class CclClient {
           let text = stripControlChars(request.responseText);
           try {
             if (hexMode) text = hexDecode(text);
-            resolve(JSON.parse(text) as T);
+            const parsed = JSON.parse(text) as T;
+            this.absorbChartContext(parsed);
+            resolve(parsed);
           } catch {
             reject(
               new CclTransportError(

@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "paths": {
+      "@mois/form-components/nhforms/next": ["../form-components/src/nhforms/index.next.ts"],
+      "@mois/form-components": ["../form-components/src/index.ts"],
+      "@mois/form-engine-core": ["../form-engine-core/src/index.ts"],
+      "@webforms/cerner-core": ["../cerner-core/src/index.ts"],
+      "@webforms/form-model": ["../form-model/src/index.ts"]
+    }
+  },
+  "include": ["src", "vite.config.ts"]
+}

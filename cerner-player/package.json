@@ -1,0 +1,35 @@
+{
+  "name": "@webforms/cerner-player",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "build:element": "vite build --config vite.element.config.ts",
+    "export:mpage": "node export-mpage.mjs",
+    "export:component": "node export-component.mjs",
+    "lint": "eslint --no-ignore src",
+    "typecheck": "tsc -p tsconfig.typecheck.json"
+  },
+  "dependencies": {
+    "@babel/standalone": "^7.26.0",
+    "@fluentui/react": "^8.121.0",
+    "@mois/form-components": "workspace:*",
+    "@mois/form-engine-core": "workspace:*",
+    "@webforms/cerner-core": "workspace:*",
+    "@webforms/form-model": "workspace:*",
+    "fhirclient": "^2.6.3",
+    "fluent-cerner-js": "^1.1.1",
+    "immer": "^11.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.4.5",
+    "vite": "6.4.3"
+  }
+}

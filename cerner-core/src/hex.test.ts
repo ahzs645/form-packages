@@ -44,6 +44,22 @@ describe("toAsciiJson", () => {
   it("throws on non-serializable values", () => {
     expect(() => toAsciiJson(undefined)).toThrow(/not JSON-serializable/);
   });
+
+  it("forces whole-number id/code keys to unquoted floats for CCL f8 typing", () => {
+    const json = toAsciiJson(
+      { personId: 12724066, positionCd: 441, scoreFloat: 3, count: 5, ratio: 1.5, encntrId: 0 },
+      { forceF8Ids: true },
+    );
+    expect(json).toBe(
+      '{"personId":12724066.0,"positionCd":441.0,"scoreFloat":3.0,"count":5,"ratio":1.5,"encntrId":0.0}',
+    );
+  });
+
+  it("leaves fractional ids and non-matching keys alone under forceF8Ids", () => {
+    expect(toAsciiJson({ oddId: 1.25, name: "Id" }, { forceF8Ids: true })).toBe(
+      '{"oddId":1.25,"name":"Id"}',
+    );
+  });
 });
 
 describe("stripControlChars", () => {

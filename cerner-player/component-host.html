@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="discern" content="APPLINK,CCLLINK,MPAGES_EVENT,MPAGES_SVC_EVENT,XMLCCLREQUEST,CCLNEWSESSIONWINDOW" http-equiv="Content-Type">
+  <title>Workflow Component Harness</title>
+  <script src="/mock-powerchart-global.js"></script>
+  <style>
+    body { font-family: "Segoe UI", Arial, sans-serif; margin: 0; background: #dfe5eb; }
+    .workflow-chrome { background: #2a5785; color: #fff; padding: 10px 16px; font-size: 14px; }
+    .workflow-card {
+      background: #fff; border: 1px solid #b9c6d2; border-radius: 3px;
+      margin: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+    }
+    .workflow-card > header {
+      background: #eef2f6; border-bottom: 1px solid #d4dde5;
+      font-weight: 600; font-size: 13px; padding: 6px 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="workflow-chrome">Mock Workflow MPage — component framework harness</div>
+  <div class="workflow-card">
+    <header>Web Forms (custom component)</header>
+    <webforms-player
+      person_id="12724066"
+      encntr_id="97953477"
+      prsnl_id="4122622"
+      form-id="demo"
+      theme="cerner"
+      content-root=".">Loading, please wait.</webforms-player>
+  </div>
+  <script type="module" src="/src/element.tsx"></script>
+</body>
+</html>

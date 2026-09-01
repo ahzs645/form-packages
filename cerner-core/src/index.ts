@@ -15,7 +15,20 @@ export {
   type HostWindowLike,
   type RenderTier,
 } from "./environment";
-export { hexDecode, hexEncode, stripControlChars, toAsciiJson } from "./hex";
+export {
+  hexDecode,
+  hexEncode,
+  stripControlChars,
+  toAsciiJson,
+  type AsciiJsonOptions,
+} from "./hex";
+export {
+  hydrateFhirResource,
+  FHIR_JSON_ACCEPT,
+  type FhirReference,
+  type FhirResourceLike,
+  type FhirWriteContext,
+} from "./fhir";
 export {
   buildParameterString,
   getCustomResult,
@@ -41,6 +54,7 @@ export {
 export {
   CclClient,
   CclTransportError,
+  CCL_STATUS_TEXT,
   type CclClientOptions,
   type CclRequestLike,
   type ExecuteOptions,

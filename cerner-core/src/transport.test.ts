@@ -92,6 +92,31 @@ describe("CclClient in PowerChart", () => {
     });
   });
 
+  it("forces f8 typing for id keys in the blob", async () => {
+    const requests: FakeRequest[] = [];
+    const client = makeClient(powerChartWindow, requests, { personId: 1, encntrId: 1 });
+    const pending = client.execute({ patientSource: [{ personId: 12724066, encntrId: 0 }] });
+    expect(requests[0].blobIn).toBe(
+      '{"payload":{"patientSource":[{"personId":12724066.0,"encntrId":0.0}]}}',
+    );
+    requests[0].respond(200, "{}");
+    await pending;
+  });
+
+  it("absorbs chart context echoed back by the entry script", async () => {
+    const requests: FakeRequest[] = [];
+    const client = makeClient(powerChartWindow, requests);
+    const first = client.execute({});
+    expect(requests[0].sentBody).toContain("$PAT_PersonId$");
+    requests[0].respond(200, '{"chartId":{"personId":42,"encntrId":77}}');
+    await first;
+
+    const second = client.execute({});
+    expect(requests[1].sentBody).toContain("^MINE^,42,77,");
+    requests[1].respond(200, "{}");
+    await second;
+  });
+
   it("uses macro tokens when chart context is unknown", async () => {
     const requests: FakeRequest[] = [];
     const client = makeClient(powerChartWindow, requests);
@@ -145,6 +170,19 @@ describe("CclClient in PowerChart", () => {
     const garbled = client.execute({});
     requests[1].respond(200, "not json");
     await expect(garbled).rejects.toThrow(/not parseable JSON/);
+  });
+
+  it("treats 492 non-fatal errors as success and names known statuses in failures", async () => {
+    const requests: FakeRequest[] = [];
+    const client = makeClient(powerChartWindow, requests, { personId: 1, encntrId: 1 });
+
+    const nonFatal = client.execute({});
+    requests[0].respond(492, '{"runStats":{"status":"warn"}}');
+    await expect(nonFatal).resolves.toEqual({ runStats: { status: "warn" } });
+
+    const memoryError = client.execute({});
+    requests[1].respond(493, "");
+    await expect(memoryError).rejects.toThrow(/493 \(Memory Error\)/);
   });
 
   it("releases the slot after a failure", async () => {

@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Cerner Example Gallery</title>
+  <style>
+    body { font-family: "Segoe UI", Arial, sans-serif; margin: 0; background: #f4f6f8; color: #1a1a1a; }
+    header { background: #2a5785; color: #fff; padding: 14px 24px; }
+    header h1 { font-size: 18px; margin: 0; }
+    header p { margin: 4px 0 0; font-size: 12px; opacity: 0.85; }
+    main { padding: 20px 24px; max-width: 980px; }
+    h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.04em; color: #2a5785; border-bottom: 1px solid #cdd7e1; padding-bottom: 4px; margin-top: 28px; }
+    ul { list-style: none; padding: 0; margin: 8px 0; }
+    li { margin: 6px 0; }
+    a { color: #0b5aa0; text-decoration: none; font-size: 14px; }
+    a:hover { text-decoration: underline; }
+    .note { color: #5a6b7c; font-size: 12px; margin-left: 6px; }
+    .banner { background: #fdf3e7; border: 1px solid #e8b873; border-radius: 3px; font-size: 12px; padding: 8px 12px; margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Cerner Example Gallery</h1>
+    <p>Vendor and community MPage examples served from ~/Downloads behind the mock PowerChart bridge (dev server only, nothing checked in).</p>
+  </header>
+  <main>
+    <div class="banner">Every page below gets a fake <code>window.external.XMLCclRequest</code> answering in the Clinical Office envelope with a demo chart (MOUSE, MICKEY BOB). Watch each app's own console / in-page log to see the transport traffic.</div>
+
+    <h2>Our player</h2>
+    <ul>
+      <li><a href="/?formId=demo">Web Forms player — MOIS theme</a><span class="note">generated demo form, mock CCL round-trip</span></li>
+      <li><a href="/?formId=demo&theme=cerner">Web Forms player — Cerner theme</a><span class="note">same form, PowerChart-style chrome</span></li>
+      <li><a href="/component-host.html">Workflow component harness</a><span class="note">&lt;webforms-player&gt; custom element inside a mock Workflow card</span></li>
+      <li><a href="/smart-app.html?open=1">SMART FHIR app — open sandbox</a><span class="note">reads a patient from r4.smarthealthit.org and writes a QuestionnaireResponse</span></li>
+    </ul>
+
+    <h2>Clinical Office (Precision Healthcare Solutions) — shipped builds</h2>
+    <ul>
+      <li><a href="/cerner-examples/co/clinical-office-mpage-suite-ccl-5-main/clinical-office-mpage-setup/index.html">MPage Suite v5 setup app</a><span class="note">Angular 21, zoneless — the admin MPage</span></li>
+      <li><a href="/cerner-examples/co/patient-information-component-master/dist/patient-information-component/index.html">Patient Information component</a><span class="note">Workflow custom element + harness</span></li>
+      <li><a href="/cerner-examples/co/organizer-appointments-by-resource-master/dist/organizer-appointments-by-resource/index.html">Organizer: appointments by resource</a><span class="note">organizer-level MPage with prompts</span></li>
+    </ul>
+
+    <h2>CST Future Orders (PHSA production MPage)</h2>
+    <ul>
+      <li><a href="/cerner-examples/cst/dist/cst-future-orders-edge/index.html">Future Orders</a><span class="note">Angular 16 + PrimeNG; drives MOEW via DiscernObjectFactory (mocked)</span></li>
+    </ul>
+
+    <h2>Terra-style component gallery (MIT, "batcat-ui")</h2>
+    <ul>
+      <li><a href="/cerner-examples/ets/index.html">Portfolio home</a></li>
+      <li><a href="/cerner-examples/ets/components/worklists/patient-list.html">Patient list worklist</a></li>
+      <li><a href="/cerner-examples/ets/components/full-pages/patient-summary.html">Patient summary full page</a></li>
+      <li><a href="/cerner-examples/ets/components/summaries/dashboard.html">Clinical dashboard</a></li>
+      <li><a href="/cerner-examples/ets/components/workflows/medication-administration.html">Medication administration workflow</a></li>
+      <li><a href="/cerner-examples/ets/components/reports/clinical-report.html">Clinical report</a></li>
+      <li><a href="/cerner-examples/ets/components/alerts/alert-system.html">Alert system</a></li>
+      <li><a href="/cerner-examples/ets/components/batcat-ui/index.html">batcat-ui component index</a><span class="note">static markup, hardcoded demo patients</span></li>
+    </ul>
+
+    <h2>SMART on FHIR</h2>
+    <ul>
+      <li><a href="/cerner-examples/dash/index.html">Discharge readiness dashboard</a><span class="note">needs a real SMART launch — loads UI shell only</span></li>
+    </ul>
+  </main>
+</body>
+</html>

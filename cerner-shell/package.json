@@ -1,0 +1,17 @@
+{
+  "name": "@webforms/cerner-shell",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/shell-core.ts",
+  "types": "src/shell-core.ts",
+  "scripts": {
+    "build": "node build.mjs",
+    "lint": "eslint --no-ignore src",
+    "typecheck": "tsc -p tsconfig.typecheck.json"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "typescript": "^5.4.5"
+  }
+}

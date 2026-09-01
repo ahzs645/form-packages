@@ -39,6 +39,18 @@ export function hexDecode(value: string): string {
   return out;
 }
 
+const F8_SENTINEL = "{forcef8}";
+const F8_KEY_PATTERN = /(Cd|Id|Float)$/;
+
+export interface AsciiJsonOptions {
+  /**
+   * Emit whole-number values whose key ends in Cd/Id/Float as unquoted
+   * floats ("personId":123 becomes "personId":123.0) so CCL's
+   * CNVTJSONTOREC types them f8 instead of i4 — Millennium ids overflow i4.
+   */
+  forceF8Ids?: boolean;
+}
+
 /**
  * JSON.stringify that escapes every character above U+007E as \uXXXX.
  *
@@ -47,10 +59,19 @@ export function hexDecode(value: string): string {
  * control characters from CCL replies before parsing — \uXXXX escapes are
  * plain ASCII and survive both.
  */
-export function toAsciiJson(value: unknown): string {
-  const json = JSON.stringify(value);
+export function toAsciiJson(value: unknown, options?: AsciiJsonOptions): string {
+  const replacer = options?.forceF8Ids
+    ? (key: string, val: unknown) =>
+        typeof val === "number" && val === Math.floor(val) && F8_KEY_PATTERN.test(key)
+          ? F8_SENTINEL + val + ".0" + F8_SENTINEL
+          : val
+    : undefined;
+  let json = JSON.stringify(value, replacer as never);
   if (json === undefined) {
     throw new Error("toAsciiJson: value is not JSON-serializable");
+  }
+  if (options?.forceF8Ids) {
+    json = json.replace(/"\{forcef8\}|\{forcef8\}"/g, "");
   }
   return json.replace(/[\u007f-\uffff]/g, (ch) => {
     const hex = ch.charCodeAt(0).toString(16);
