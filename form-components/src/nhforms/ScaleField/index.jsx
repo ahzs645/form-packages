@@ -24,6 +24,9 @@ const {
  * - showTooltip: boolean - Whether to show the row tooltip when descriptions exist
  * - tooltipMode: "all" | "option" - Whether tooltips show all definitions or only the hovered option
  * - disableHorizontalScroll: boolean - Let a parent provide one shared horizontal scrollbar
+ * - value: optional controlled primitive or {selectedKey, value, response} answer
+ * - onChange: optional controlled callback receiving the normalized answer
+ * - hideLabel: boolean - Hide the built-in label column when a composite renders it
  * - required: boolean - Whether the field is required
  * - readOnly: boolean - Whether the field is read-only
  */
@@ -190,6 +193,9 @@ const ScaleField = ({
   showTooltip = false,
   tooltipMode = "all",
   disableHorizontalScroll = false,
+  value: controlledValue,
+  onChange: onControlledChange,
+  hideLabel = false,
   required = false,
   readOnly: readOnlyProp = false,
   disabled = false,
@@ -199,6 +205,7 @@ const ScaleField = ({
   const readOnly = readOnlyProp || disabled
   const [fieldData, setFieldData] = useActiveData(fd => fd?.field?.data || {})
   const theme = useTheme()
+  const isControlled = controlledValue !== undefined
 
   // Default options if none provided (0-5 scale)
   const scaleOptions = options && options.length > 0 ? options : [
@@ -233,12 +240,42 @@ const ScaleField = ({
     styles: CHOICE_FIELD_STYLE,
   }))
 
-  // Get current value from field data
-  const currentData = fieldData?.[fieldId] || { selectedKey: null, value: null }
+  const normalizeControlledValue = (value) => {
+    if (value && typeof value === "object") {
+      const selectedKey = value.selectedKey ?? value.code ?? null
+      const selectedOption = scaleOptions.find(
+        (option) => (option.key ?? String(option.value)) === String(selectedKey ?? value.value)
+      )
+      return {
+        selectedKey: selectedKey == null ? null : String(selectedKey),
+        value: value.value ?? selectedOption?.value ?? null,
+        response: value.response ?? value.display ?? selectedOption?.label ?? null,
+        detailResponse: value.detailResponse ?? selectedOption?.description ?? value.response ?? value.display ?? null,
+      }
+    }
+    if (value === null || value === "") return { selectedKey: null, value: null }
+    const selectedOption = scaleOptions.find(
+      (option) => (option.key ?? String(option.value)) === String(value) || option.value === value
+    )
+    return selectedOption
+      ? {
+          selectedKey: String(selectedOption.key ?? selectedOption.value),
+          value: selectedOption.value,
+          response: selectedOption.label ?? String(selectedOption.value),
+          detailResponse: selectedOption.description ?? selectedOption.label ?? String(selectedOption.value),
+        }
+      : { selectedKey: String(value), value }
+  }
+
+  // A controlled composite owns the answer; standalone fields keep the legacy
+  // ActiveData object shape used by calculations and exported forms.
+  const currentData = isControlled
+    ? normalizeControlledValue(controlledValue)
+    : (fieldData?.[fieldId] || { selectedKey: null, value: null })
 
   // Initialize field data if needed
   useEffect(() => {
-    if (!fieldData?.[fieldId]) {
+    if (!isControlled && fieldId && !fieldData?.[fieldId]) {
       setFieldData({
         [fieldId]: {
           selectedKey: null,
@@ -247,7 +284,7 @@ const ScaleField = ({
         }
       })
     }
-  }, [fieldId, fieldData, setFieldData])
+  }, [fieldId, fieldData, isControlled, setFieldData])
 
   // Handle selection change
   const handleChange = (ev, option) => {
@@ -255,14 +292,17 @@ const ScaleField = ({
 
     const selectedOption = scaleOptions.find(o => (o.key ?? String(o.value)) === option.key)
 
-    setFieldData({
-      [fieldId]: {
-        selectedKey: option.key,
-        value: selectedOption?.value ?? parseInt(option.key, 10),
-        response: selectedOption?.label || option.key,
-        detailResponse: selectedOption?.description || selectedOption?.label || option.key,
-      }
-    })
+    const nextValue = {
+      selectedKey: option.key,
+      value: selectedOption?.value ?? parseInt(option.key, 10),
+      response: selectedOption?.label || option.key,
+      detailResponse: selectedOption?.description || selectedOption?.label || option.key,
+    }
+    if (isControlled) {
+      if (typeof onControlledChange === "function") onControlledChange(nextValue, option, ev)
+      return
+    }
+    setFieldData({ [fieldId]: nextValue })
   }
 
   // Styling based on selection state
@@ -280,14 +320,16 @@ const ScaleField = ({
   const inlineMinWidth = _getInlineMinWidth(scaleOptions.length)
   const fieldContent = (
     <Stack horizontal verticalAlign="center" style={{ minWidth: inlineMinWidth }}>
-      <StackItem disableShrink styles={LABEL_COLUMN_STYLE}>
-        <Label
-          styles={LABEL_STYLE}
-          required={required}
-        >
-          {label}
-        </Label>
-      </StackItem>
+      {hideLabel ? null : (
+        <StackItem disableShrink styles={LABEL_COLUMN_STYLE}>
+          <Label
+            styles={LABEL_STYLE}
+            required={required}
+          >
+            {label}
+          </Label>
+        </StackItem>
+      )}
       <StackItem grow>
         <ChoiceGroup
           key={`scale-${fieldId}-${currentData.selectedKey ?? "empty"}`}

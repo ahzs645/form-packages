@@ -784,6 +784,8 @@ EditableTable = ({
   authorshipColumnLabel = "Lock",
   sourceFieldIds = {},
   sourceFieldIdsByRow = {},
+  rowsPath,
+  countPath,
   ...props
 }) => {
   const [fd] = useActiveData()
@@ -883,7 +885,7 @@ EditableTable = ({
 
   const getRows = () => {
     try {
-      const data = fd?.field?.data?.[id]
+      const data = _getValueAtPath(fd?.field?.data, rowsPath || id)
       return _normalizeRows(data)
     } catch (error) {
       console.log("Error getting rows:", error)
@@ -913,7 +915,8 @@ EditableTable = ({
       if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
       if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
       const data = draft.field.data
-      data[id] = nextRows
+      _setValueAtPath(data, rowsPath || id, nextRows)
+      if (countPath) _setValueAtPath(data, countPath, Array.isArray(nextRows) ? nextRows.length : 0)
 
       mirroredFieldIds.forEach((fieldId) => {
         data[fieldId] = null
@@ -962,7 +965,7 @@ EditableTable = ({
         ? initialSeedRows
         : Array.from({ length: initialRowCount }, (_, index) => _makeEmptyRow(columns, index))
     setRows(seededRows)
-  }, [rows, isModalMode, initialSeedRows, initialRowCount, id, columns])
+  }, [rows, isModalMode, initialSeedRows, initialRowCount, id, columns, rowsPath, countPath])
 
   useEffect(() => {
     if (sourceSeedRows.length === 0) return

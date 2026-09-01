@@ -1602,6 +1602,10 @@ export interface BuilderField {
     uniqueBy?: string[];
     sourceFieldIds?: Record<string, string>;
     sourceFieldIdsByRow?: Record<number, Record<string, string>>;
+    /** Optional nested ActiveData path holding the rows array (defaults to the field id). */
+    rowsPath?: string;
+    /** Optional nested ActiveData path mirrored to the current row count. */
+    countPath?: string;
     modalEditorPresetId?: string;
     modalEditorConfig?: Record<string, unknown> | null;
   } | null;

@@ -1,7 +1,10 @@
 {
   "name": "ObservationPanelEditor",
   "title": "Observation Panel Editor",
-  "description": "Config-driven panel editor with totals and history display",
+  "description": "Legacy compatibility alias for PanelEntryGrid. Retained for saved forms; hidden from new authoring.",
   "category": "Clinical",
-  "version": "1.0.0"
+  "version": "1.1.0",
+  "components": [
+    "PanelEntryGrid"
+  ]
 }

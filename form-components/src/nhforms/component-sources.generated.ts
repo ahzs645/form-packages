@@ -8357,6 +8357,8 @@ EditableTable = ({
   authorshipColumnLabel = "Lock",
   sourceFieldIds = {},
   sourceFieldIdsByRow = {},
+  rowsPath,
+  countPath,
   ...props
 }) => {
   const [fd] = useActiveData()
@@ -8456,7 +8458,7 @@ EditableTable = ({
 
   const getRows = () => {
     try {
-      const data = fd?.field?.data?.[id]
+      const data = _getValueAtPath(fd?.field?.data, rowsPath || id)
       return _normalizeRows(data)
     } catch (error) {
       console.log("Error getting rows:", error)
@@ -8486,7 +8488,8 @@ EditableTable = ({
       if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
       if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
       const data = draft.field.data
-      data[id] = nextRows
+      _setValueAtPath(data, rowsPath || id, nextRows)
+      if (countPath) _setValueAtPath(data, countPath, Array.isArray(nextRows) ? nextRows.length : 0)
 
       mirroredFieldIds.forEach((fieldId) => {
         data[fieldId] = null
@@ -8535,7 +8538,7 @@ EditableTable = ({
         ? initialSeedRows
         : Array.from({ length: initialRowCount }, (_, index) => _makeEmptyRow(columns, index))
     setRows(seededRows)
-  }, [rows, isModalMode, initialSeedRows, initialRowCount, id, columns])
+  }, [rows, isModalMode, initialSeedRows, initialRowCount, id, columns, rowsPath, countPath])
 
   useEffect(() => {
     if (sourceSeedRows.length === 0) return
@@ -23497,613 +23500,14 @@ const ObservationKit = (() => {
   }
 })()
 `,
-  './ObservationPanelEditor/index.jsx': `/**
- * __nhAuth — self-contained field/row authorship runtime for NHForms components.
- *
- * WHY THIS EXISTS
- * Export hosts may execute generated component sources without importing the
- * webforms package helpers. This runtime is therefore INLINED into each
- * authorship-aware component's source (prepended by the nhforms generator and
- * the Vite loader for any component that references \`__nhAuth\`). The generated
- * component remains self-contained in SMOIS/FormTester and in other browser
- * hosts that implement the same source-data/active-data contract.
- *
- * COLLISION SAFETY
- * Everything lives inside a single anonymous IIFE that assigns \`window.__nhAuth\`
- * exactly once (idempotent). There are NO top-level declarations, so prepending
- * this snippet to several components in a concatenating host can never produce
- * a duplicate-declaration SyntaxError.
- *
- * SCOPE / LIMITS (see docs runtime/mois-locking-signing-audit.md)
- * - Advisory, client-side only: the host stores \`field.data.__authorship\` as an
- *   opaque blob and enforcement remains in the generated UI. Not a security
- *   boundary.
- * - A component can only enforce read-only on inputs IT renders. Authored values
- *   must live inside an authorship-aware component, not as loose native fields.
- * - Claims persist in \`field.data.__authorship\` (that is what MOIS saves).
- *
- * Mirror of packages/form-components/src/authorship.ts — keep in rough sync.
- */
-;(function () {
-  if (typeof window === "undefined" || !window || window.__nhAuth) return;
+  './ObservationPanelEditor/index.jsx': `// Legacy compatibility alias. Saved forms keep their component key and their
+// historical dual DCO + panel write behavior; new authoring uses PanelEntryGrid.
+const ObservationPanelEditor = (props) => {
+  const RuntimePanelEntryGrid =
+    (typeof window !== "undefined" && window.__nhformsRegistry__?.PanelEntryGrid) ||
+    PanelEntryGrid
 
-  var DEFAULT_WINDOW_HOURS = 72;
-
-  function isNonEmpty(v) {
-    if (v === null || v === undefined) return false;
-    if (typeof v === "string") return v.trim().length > 0;
-    if (Array.isArray(v)) return v.length > 0;
-    if (typeof v === "object") return Object.keys(v).length > 0;
-    return true;
-  }
-
-  function buildKey(q) {
-    q = q || {};
-    if (q.scope === "row") {
-      return "row:" + (q.componentId || "component") + ":" + (q.rowKey || q.fieldId || "");
-    }
-    return "field:" + (q.fieldId || q.rowKey || q.componentId || "");
-  }
-
-  function normalizeStore(input) {
-    var claims = {};
-    if (input && typeof input === "object" && input.claims && typeof input.claims === "object") {
-      Object.keys(input.claims).forEach(function (k) {
-        var c = input.claims[k];
-        if (c && typeof c === "object") {
-          var ck = c.claimKey || k;
-          if (ck) claims[ck] = c;
-        }
-      });
-    }
-    return { version: 1, claims: claims };
-  }
-
-  function readStore(state) {
-    var data =
-      state && state.field && state.field.data
-        ? state.field.data
-        : state && state.formData
-          ? state.formData
-          : null;
-    return normalizeStore(data && data.__authorship);
-  }
-
-  function addHoursIso(ts, hours) {
-    var d = ts ? new Date(ts) : new Date();
-    if (isNaN(d.getTime())) return undefined;
-    return new Date(d.getTime() + hours * 3600000).toISOString();
-  }
-
-  function pad2(n) {
-    return String(n).length < 2 ? "0" + n : String(n);
-  }
-
-  function formatTimestamp(ts) {
-    if (!ts) return "";
-    var d = new Date(ts);
-    if (isNaN(d.getTime())) return String(ts);
-    return (
-      d.getFullYear() +
-      "." + pad2(d.getMonth() + 1) +
-      "." + pad2(d.getDate()) +
-      " - " + pad2(d.getHours()) +
-      ":" + pad2(d.getMinutes())
-    );
-  }
-
-  function sameActor(claim, actor) {
-    if (!claim || !actor) return false;
-    if (
-      actor.ownerId !== undefined && actor.ownerId !== null &&
-      claim.ownerId !== undefined && claim.ownerId !== null
-    ) {
-      return String(actor.ownerId) === String(claim.ownerId);
-    }
-    return !!actor.ownerName && !!claim.ownerName && actor.ownerName === claim.ownerName;
-  }
-
-  // Identity is read from the genuine MOIS session. Prefer sd.userProfile so the
-  // live actor matches the visible logged-in profile; fall back to sd.auth for
-  // runtimes that only expose the auth id.
-  function actorFrom(sd, state) {
-    var ownerId =
-      sd && sd.userProfile && sd.userProfile.userProfileId !== undefined && sd.userProfile.userProfileId !== null
-          ? sd.userProfile.userProfileId
-          : sd && sd.auth && sd.auth.userProfileId !== undefined && sd.auth.userProfileId !== null
-            ? sd.auth.userProfileId
-            : undefined;
-    var ownerName =
-      (sd && sd.userProfile && sd.userProfile.identity && sd.userProfile.identity.fullName) ||
-      (state && state.field && state.field.data && state.field.data.createdBy) ||
-      (sd && sd.webform && sd.webform.provider && sd.webform.provider.name) ||
-      "";
-    return { ownerId: ownerId, ownerName: ownerName };
-  }
-
-  function resolveNow(sd, opts) {
-    var raw =
-      opts && opts.now !== undefined && opts.now !== null
-        ? opts.now
-        : sd && sd.previewOptions
-          ? sd.previewOptions.authorshipNow
-          : undefined;
-    return raw ? new Date(raw) : new Date();
-  }
-
-  // Read: compute lock state for a target. \`opts\` carries the current actor
-  // (ownerId/ownerName) and an optional \`now\` override (preview clock).
-  // A "pending" claim (lock-on-save, not yet saved) is NOT enforced.
-  function lockInfo(state, sd, query, opts) {
-    opts = opts || {};
-    var store = readStore(state);
-    var claim = store.claims[buildKey(query)];
-    if (!claim || claim.status === "unlocked" || claim.status === "pending") return { locked: false };
-
-    var ownerName = claim.ownerName || "Unknown";
-    var ts = formatTimestamp(claim.timestamp);
-    var actor = { ownerId: opts.ownerId, ownerName: opts.ownerName };
-    var isOwner = sameActor(claim, actor);
-    var editableUntil = claim.editableUntil || addHoursIso(claim.claimedAt || claim.timestamp, DEFAULT_WINDOW_HOURS);
-    var now = resolveNow(sd, opts);
-    var euDate = editableUntil ? new Date(editableUntil) : null;
-    var expired = !!euDate && !isNaN(euDate.getTime()) && now.getTime() > euDate.getTime();
-
-    if (claim.status !== "signed" && isOwner && !expired) {
-      var untilSelf = formatTimestamp(editableUntil);
-      return {
-        locked: false,
-        claim: claim,
-        isOwner: true,
-        expired: false,
-        ownerName: ownerName,
-        note: untilSelf ? "Locked to you until " + untilSelf : "Locked to you",
-      };
-    }
-
-    var label = claim.status === "signed"
-      ? "Signed by"
-      : expired
-        ? "Editing window expired for"
-        : "Locked by";
-    return {
-      locked: true,
-      claim: claim,
-      isOwner: isOwner,
-      expired: expired,
-      ownerName: ownerName,
-      note: ts ? label + " " + ownerName + " at " + ts : label + " " + ownerName,
-    };
-  }
-
-  // Write: mutate a produce() draft to upsert/refresh the current actor's claim
-  // for a target. Returns true when the claim store changed. Call inside the
-  // component's own setFormData(produce(draft => ...)) on value change.
-  function claim(draft, sd, query, value, policy, opts) {
-    opts = opts || {};
-    policy = policy || {};
-    if (policy.enabled === false) return false;
-    if (!draft || typeof draft !== "object") return false;
-    if (!draft.field) draft.field = { data: {}, status: {}, history: [] };
-    if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {};
-
-    var store = normalizeStore(draft.field.data.__authorship);
-    var key = buildKey(query);
-    var existing = store.claims[key];
-    var actor = actorFrom(sd, draft);
-    var now = resolveNow(sd, opts);
-    var nowIso = now.toISOString();
-    var windowHours =
-      typeof policy.editableWindowHours === "number" && policy.editableWindowHours > 0
-        ? policy.editableWindowHours
-        : DEFAULT_WINDOW_HOURS;
-
-    var lockOn = policy.lockOn || "edit";
-    // lock-on-edit enforces immediately; lock-on-save/submit/sign records a
-    // non-enforced "pending" claim that a later save promotes to "locked".
-    var pending = lockOn !== "edit";
-
-    // Enforcement: a signed claim is terminal; a LOCKED claim owned by someone
-    // else blocks until its window expires; a PENDING claim is not yet enforced
-    // so anyone may take it over.
-    if (existing && existing.status === "signed") return false;
-    if (existing && existing.status === "locked" && !sameActor(existing, actor)) {
-      var lockedUntil = existing.editableUntil || addHoursIso(existing.claimedAt || existing.timestamp, DEFAULT_WINDOW_HOURS);
-      var lockedUntilDate = lockedUntil ? new Date(lockedUntil) : null;
-      var lockExpired = !!lockedUntilDate && !isNaN(lockedUntilDate.getTime()) && now.getTime() > lockedUntilDate.getTime();
-      if (!lockExpired) return false;
-    }
-
-    var ownerRefresh = existing && existing.status !== "unlocked" && sameActor(existing, actor);
-    if (ownerRefresh) {
-      // Owner edit: refresh value/timestamp, keep the original window. A claim
-      // already promoted to locked/signed stays so; a pending one stays pending.
-      var keepStatus = (existing.status === "locked" || existing.status === "signed")
-        ? existing.status
-        : (pending ? "pending" : "locked");
-      store.claims[key] = Object.assign({}, existing, {
-        status: keepStatus,
-        timestamp: nowIso,
-        lastSavedAt: nowIso,
-        currentValue: value,
-        ownerName: actor.ownerName || existing.ownerName,
-        ownerId: actor.ownerId !== undefined && actor.ownerId !== null ? actor.ownerId : existing.ownerId,
-      });
-    } else {
-      // New / taken-over / released claim: only claim a meaningful value.
-      if (!isNonEmpty(value)) return false;
-      store.claims[key] = {
-        claimKey: key,
-        scope: query.scope === "row" ? "row" : "field",
-        fieldId: query.fieldId,
-        rowKey: query.rowKey,
-        componentId: query.componentId,
-        ownerName: actor.ownerName,
-        ownerId: actor.ownerId,
-        timestamp: nowIso,
-        claimedAt: nowIso,
-        lastSavedAt: nowIso,
-        editableUntil: addHoursIso(nowIso, windowHours),
-        status: pending ? "pending" : "locked",
-        lockOn: lockOn,
-        editableWindowHours: windowHours,
-        currentValue: value,
-      };
-    }
-
-    draft.field.data.__authorship = store;
-    return true;
-  }
-
-  function policyAppliesToAction(lockOn, action) {
-    lockOn = lockOn || "save";
-    if (action === "save") return lockOn === "save";
-    if (action === "submit") return lockOn === "save" || lockOn === "submit";
-    if (action === "sign") return true; // a sign finalizes everything pending
-    return false;
-  }
-
-  // Lock-on-save: promote the current actor's PENDING claims to locked/signed.
-  // Pure — returns { changed, formData, nextState }; commitSave persists it.
-  // Called by save components (UnsavedChangesGuard / SaveOnClose) at save time.
-  function prepareSave(state, sd, action) {
-    action = action || "save";
-    var fieldData = state && state.field && state.field.data ? state.field.data : {};
-    var nextFieldData;
-    try {
-      nextFieldData = JSON.parse(JSON.stringify(fieldData));
-    } catch (e) {
-      nextFieldData = Object.assign({}, fieldData);
-    }
-    var store = normalizeStore(nextFieldData.__authorship);
-    var actor = actorFrom(sd, state);
-    var nowIso = new Date().toISOString();
-    var changed = false;
-
-    Object.keys(store.claims).forEach(function (k) {
-      var c = store.claims[k];
-      if (!c || c.status !== "pending") return;
-      if (!sameActor(c, actor)) return;
-      if (!policyAppliesToAction(c.lockOn || "save", action)) return;
-      var windowHours =
-        typeof c.editableWindowHours === "number" && c.editableWindowHours > 0
-          ? c.editableWindowHours
-          : DEFAULT_WINDOW_HOURS;
-      var nextStatus = action === "sign" || c.lockOn === "sign" ? "signed" : "locked";
-      // The owner-editable window starts when the claim actually locks (now).
-      store.claims[k] = Object.assign({}, c, {
-        status: nextStatus,
-        timestamp: nowIso,
-        lastSavedAt: nowIso,
-        claimedAt: nowIso,
-        editableUntil: addHoursIso(nowIso, windowHours),
-      });
-      changed = true;
-    });
-
-    if (changed) nextFieldData.__authorship = store;
-    return {
-      changed: changed,
-      formData: nextFieldData,
-      nextState: Object.assign({}, state, {
-        field: Object.assign({}, state && state.field ? state.field : { status: {}, history: [] }, { data: nextFieldData }),
-      }),
-    };
-  }
-
-  function commitSave(state, prepared) {
-    if (!prepared || !prepared.changed) return prepared ? prepared.nextState : undefined;
-    if (state && typeof state.setFormData === "function") {
-      state.setFormData(prepared.nextState);
-    }
-    return prepared.nextState;
-  }
-
-  // Release (unlock) a claim on a produce() draft. Returns true if it changed.
-  function release(draft, query) {
-    if (!draft || !draft.field || !draft.field.data) return false;
-    var store = normalizeStore(draft.field.data.__authorship);
-    var key = buildKey(query);
-    var current = store.claims[key];
-    if (!current || current.status === "unlocked") return false;
-    store.claims[key] = Object.assign({}, current, {
-      status: "unlocked",
-      releasedAt: new Date().toISOString(),
-    });
-    draft.field.data.__authorship = store;
-    return true;
-  }
-
-  window.__nhAuth = {
-    version: 1,
-    buildKey: buildKey,
-    lockInfo: lockInfo,
-    claim: claim,
-    release: release,
-    actor: actorFrom,
-    formatTimestamp: formatTimestamp,
-    // lock-on-save
-    prepareSave: prepareSave,
-    commitSave: commitSave,
-  };
-})();
-
-const { useEffect, useMemo } = React
-const { Stack, Text, TextField, Label, Separator, ChoiceGroup } = Fluent
-
-const normalizePanelRows = (rows) => Array.isArray(rows) ? rows.filter((row) => row && typeof row === "object" && typeof row.id === "string") : []
-const normalizePanelTotals = (totals) => Array.isArray(totals) ? totals.filter((row) => row && typeof row === "object" && typeof row.id === "string") : []
-const panelDateKey = (value) => {
-  const raw = String(value ?? "")
-  return raw.includes("T") ? raw.split("T")[0] : raw
-}
-const stripVolatilePayloadFields = (value) => {
-  if (Array.isArray(value)) {
-    return value.map((item) => stripVolatilePayloadFields(item))
-  }
-  if (value && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value)
-        .filter(([key]) => key !== "collectedDateTime")
-        .map(([key, nestedValue]) => [key, stripVolatilePayloadFields(nestedValue)])
-    )
-  }
-  return value
-}
-const payloadsEqual = (left, right) => (
-  JSON.stringify(stripVolatilePayloadFields(left ?? null)) ===
-  JSON.stringify(stripVolatilePayloadFields(right ?? null))
-)
-const getPanelValue = (values, key) => values && typeof values === "object" ? values[key] : undefined
-const toNumericValue = (value) => {
-  const numeric = Number(value)
-  return Number.isFinite(numeric) ? numeric : 0
-}
-
-const getCurrentActorName = (sd, fd) => (
-  fd?.field?.data?.createdBy
-  || fd?.formData?.createdBy
-  || sd?.userProfile?.identity?.fullName
-  || sd?.webform?.provider?.name
-  || ""
-)
-// Shared authorship engine (inlined as window.__nhAuth by the nhforms generator /
-// Vite loader). Replaces the preview-only getAuthorshipLockInfo/registerAuthorshipRowTarget
-// globals so row locking actually runs in real MOIS instead of ReferenceError-ing.
-const getNhAuth = () => (typeof window !== "undefined" && window.__nhAuth) || null
-// setFormData must receive a produce()-wrapped recipe: the real MOIS runtime
-// hands back the raw React state setter, so a bare mutator would replace the
-// active form data with undefined.
-const setPanelPayload = (setFormData, componentId, payloadType, payload) => {
-  setFormData(produce((draft) => {
-    if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
-    if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
-    const container = draft.field.data.__componentPayloads ?? {}
-    const key = payloadType === "webform" ? "webformUpdatesByComponent" : "dcoUpdatesByComponent"
-    const nextGroup = container[key] ?? {}
-    const currentPayload = nextGroup[componentId]
-    if (payloadsEqual(currentPayload, payload)) {
-      return
-    }
-    if (payload == null || (Array.isArray(payload) && payload.length === 0)) {
-      delete nextGroup[componentId]
-    } else {
-      nextGroup[componentId] = payload
-    }
-    container[key] = nextGroup
-    draft.field.data.__componentPayloads = container
-  }))
-}
-
-const ObservationPanelEditor = ({
-  id,
-  fieldId,
-  title = "Observation Panel",
-  panelCode = "",
-  rows = [],
-  totals = [],
-  history = false,
-  historyConfig,
-  saveMode = "panel",
-}) => {
-  const [fd, setFormData] = useActiveData()
-  const sd = useSourceData()
-  const section = useSection()
-  const componentId = id || fieldId || "ObservationPanelEditor"
-  const effectiveFieldId = fieldId || componentId
-  const rootValue = fd?.field?.data?.[effectiveFieldId] ?? {}
-  const rowDefs = useMemo(() => normalizePanelRows(rows), [rows])
-  const totalDefs = useMemo(() => normalizePanelTotals(totals), [totals])
-  const maxHistory = Number(historyConfig?.maxRows) > 0 ? Number(historyConfig.maxRows) : 5
-  const createdBy = fd?.field?.data?.createdBy ?? sd?.userProfile?.identity?.fullName
-  const currentActorName = getCurrentActorName(sd, fd)
-  const authorshipPolicy = section?.authorshipPolicy || { enabled: false, granularity: "row", lockOn: "edit" }
-  const nhAuth = getNhAuth()
-  const actor = nhAuth ? nhAuth.actor(sd, fd) : { ownerName: currentActorName }
-  // No target registry needed: with the inlined __nhAuth engine, each row claims
-  // its own ownership directly on edit (setRowValue below) and lockInfo reads it
-  // back from field.data.__authorship.
-
-  const computedTotals = useMemo(() => {
-    const next = {}
-    totalDefs.forEach((total) => {
-      const sourceIds = Array.isArray(total.sourceRowIds) ? total.sourceRowIds : []
-      next[total.id] = sourceIds.reduce((sum, sourceId) => sum + toNumericValue(getPanelValue(rootValue, sourceId)), 0)
-    })
-    return next
-  }, [rootValue, totalDefs])
-
-  useEffect(() => {
-    const dcoUpdates = []
-    rowDefs.forEach((row) => {
-      const value = getPanelValue(rootValue, row.id)
-      const hasValue = value !== undefined && value !== null && value !== ""
-      if (!row.observationCode || !hasValue) return
-      const oldObs = sd?.webform?.observations?.find((item) => item.observationCode === row.observationCode)
-      dcoUpdates.push({
-        observationId: oldObs?.observationId ?? 0,
-        observationCode: row.observationCode,
-        observationClass: "DCOBS",
-        value,
-        valueType: row.type === "numeric" ? "NUMBER" : "TEXT",
-        status: oldObs?.observationId ? "C" : "F",
-        description: row.label,
-        orderedBy: createdBy,
-        collectedBy: createdBy,
-        collectedDateTime: getDateTimeString(new Date()),
-      })
-    })
-    totalDefs.forEach((total) => {
-      if (!total.observationCode) return
-      const oldObs = sd?.webform?.observations?.find((item) => item.observationCode === total.observationCode)
-      dcoUpdates.push({
-        observationId: oldObs?.observationId ?? 0,
-        observationCode: total.observationCode,
-        observationClass: "DCOBS",
-        value: computedTotals[total.id] ?? 0,
-        valueType: "NUMBER",
-        status: oldObs?.observationId ? "C" : "F",
-        description: total.label,
-        orderedBy: createdBy,
-        collectedBy: createdBy,
-        collectedDateTime: getDateTimeString(new Date()),
-      })
-    })
-    setPanelPayload(setFormData, componentId, "dco", dcoUpdates)
-    if (saveMode === "panel") {
-      setPanelPayload(setFormData, componentId, "webform", {
-        panelUpdates: [{
-          panelCode,
-          title,
-          rows: rowDefs.map((row) => ({ id: row.id, label: row.label, value: getPanelValue(rootValue, row.id), observationCode: row.observationCode })),
-          totals: totalDefs.map((total) => ({ id: total.id, label: total.label, value: computedTotals[total.id] ?? 0, observationCode: total.observationCode })),
-        }],
-      })
-    }
-  }, [componentId, computedTotals, createdBy, panelCode, rootValue, rowDefs, saveMode, sd, setFormData, title, totalDefs])
-
-  const historyRows = useMemo(() => {
-    if (!history) return []
-    const codeSet = new Set([...rowDefs, ...totalDefs].map((item) => item.observationCode).filter(Boolean))
-    const source = Array.isArray(sd?.patient?.observations) ? sd.patient.observations : []
-    const grouped = new Map()
-    source.forEach((entry) => {
-      if (!codeSet.has(entry.observationCode)) return
-      const key = panelDateKey(entry.collectedDateTime)
-      const current = grouped.get(key) ?? { date: key }
-      current[entry.observationCode] = entry.value
-      grouped.set(key, current)
-    })
-    return Array.from(grouped.values()).sort((a, b) => String(b.date).localeCompare(String(a.date))).slice(0, maxHistory)
-  }, [history, maxHistory, rowDefs, sd, totalDefs])
-
-  const setRowValue = (rowId, nextValue) => {
-    setFormData(produce((draft) => {
-      if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
-      if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
-      const current = draft.field.data[effectiveFieldId] && typeof draft.field.data[effectiveFieldId] === "object"
-        ? draft.field.data[effectiveFieldId]
-        : {}
-      const { __authorship, ...rowValues } = current
-      draft.field.data[effectiveFieldId] = { ...rowValues, [rowId]: nextValue }
-      // Lock-on-edit: claim this row for the current author in the same write.
-      if (nhAuth && authorshipPolicy?.enabled) {
-        nhAuth.claim(draft, sd, { scope: "row", componentId, rowKey: rowId }, nextValue, authorshipPolicy, {
-          now: sd?.previewOptions?.authorshipNow,
-        })
-      }
-    }))
-  }
-
-  return (
-    <Stack tokens={{ childrenGap: 10 }}>
-      <Label>{title}</Label>
-      {rowDefs.map((row) => {
-        const value = getPanelValue(rootValue, row.id)
-        const rowLockInfo = nhAuth && authorshipPolicy?.enabled
-          ? nhAuth.lockInfo(fd, sd, { scope: "row", componentId, rowKey: row.id }, {
-            ownerName: actor.ownerName,
-            ownerId: actor.ownerId,
-            now: sd?.previewOptions?.authorshipNow,
-          })
-          : { locked: false }
-        const rowReadOnly = !!rowLockInfo.locked
-        if (row.type === "coded") {
-          const optionList = Array.isArray(row.options)
-            ? row.options.map((option) => ({ key: String(option), text: String(option) }))
-            : []
-          return (
-            <Stack key={row.id} tokens={{ childrenGap: 4 }}>
-              <ChoiceGroup
-                label={row.label}
-                options={optionList}
-                selectedKey={value == null ? undefined : String(value)}
-                onChange={rowReadOnly ? undefined : (_event, option) => setRowValue(row.id, option?.key ?? "")}
-                disabled={rowReadOnly}
-              />
-              {rowLockInfo.note ? (
-                <Text variant="small" styles={{ root: { color: "#605e5c" } }}>
-                  {rowLockInfo.note}
-                </Text>
-              ) : null}
-            </Stack>
-          )
-        }
-        return (
-          <Stack key={row.id} tokens={{ childrenGap: 4 }}>
-            <TextField
-              label={row.label}
-              value={value ?? ""}
-              onChange={rowReadOnly ? undefined : (_event, nextValue) => setRowValue(row.id, row.type === "numeric" ? Number(nextValue ?? 0) : (nextValue ?? ""))}
-              multiline={row.type === "text"}
-              readOnly={rowReadOnly}
-            />
-            {rowLockInfo.note ? (
-              <Text variant="small" styles={{ root: { color: "#605e5c" } }}>
-                {rowLockInfo.note}
-              </Text>
-            ) : null}
-          </Stack>
-        )
-      })}
-      {totalDefs.length > 0 ? <Separator /> : null}
-      {totalDefs.map((total) => (
-        <Text key={total.id} variant="mediumPlus">
-          {total.label}: {computedTotals[total.id] ?? 0}
-        </Text>
-      ))}
-      {history && historyRows.length > 0 ? (
-        <Stack tokens={{ childrenGap: 6 }}>
-          <Label>History</Label>
-          {historyRows.map((entry) => (
-            <Text key={entry.date} variant="small">
-              {entry.date}: {rowDefs.concat(totalDefs).map((item) => \`\${item.label} \${entry[item.observationCode] ?? "-"}\`).join(" | ")}
-            </Text>
-          ))}
-        </Stack>
-      ) : null}
-    </Stack>
-  )
+  return <RuntimePanelEntryGrid {...props} legacyDcoWrites />
 }
 `,
   './ObservationQuery/index.jsx': `const { useMemo } = React
@@ -24518,6 +23922,220 @@ const ObservationValueDisplay = ({
   )
 }
 `,
+  './ObservationValueKit/index.jsx': `// ObservationValueKit — non-rendering value/write kernel for panel-entry
+// composites. It follows the real NHForms CommonSchemaDefn pattern: keep the
+// observation data contract in one shared helper and let renderers focus on UI.
+//
+// Consumers must read ObservationValueKit inside component functions because
+// NHForms modules have no guaranteed evaluation order in the MOIS engine.
+
+const ObservationValueKit = (() => {
+  const toText = (value) => value === null || value === undefined ? "" : String(value)
+
+  const normalizeOptions = (options) => (Array.isArray(options) ? options : [])
+    .map((option) => {
+      if (option && typeof option === "object") {
+        const value = option.value ?? option.key ?? option.code
+        if (value === undefined || value === null) return null
+        return {
+          ...option,
+          key: toText(option.key ?? option.code ?? value),
+          value,
+          label: toText(option.label ?? option.text ?? option.display ?? value),
+          description: toText(option.description ?? option.detail ?? option.label ?? option.text ?? option.display ?? value),
+          system: toText(option.system),
+        }
+      }
+      if (option === undefined || option === null) return null
+      return {
+        key: toText(option),
+        value: option,
+        label: toText(option),
+        description: toText(option),
+        system: "",
+      }
+    })
+    .filter(Boolean)
+
+  const isEmpty = (value) => {
+    if (value === undefined || value === null || value === "") return true
+    if (Array.isArray(value)) return value.length === 0
+    if (value && typeof value === "object") {
+      if (Object.prototype.hasOwnProperty.call(value, "selectedKey")) {
+        return value.selectedKey === undefined || value.selectedKey === null || value.selectedKey === ""
+      }
+      if (Object.prototype.hasOwnProperty.call(value, "code") || Object.prototype.hasOwnProperty.call(value, "display")) {
+        return !toText(value.code ?? value.display).trim()
+      }
+      if (Object.prototype.hasOwnProperty.call(value, "value")) return isEmpty(value.value)
+    }
+    return false
+  }
+
+  const normalizeAnswer = (value, options) => {
+    const optionList = normalizeOptions(options)
+    const rawKey = value && typeof value === "object"
+      ? value.selectedKey ?? value.code ?? value.key ?? value.value
+      : value
+    const option = optionList.find((candidate) => (
+      candidate.key === toText(rawKey) || candidate.value === rawKey || toText(candidate.value) === toText(rawKey)
+    ))
+    const rawValue = value && typeof value === "object" && Object.prototype.hasOwnProperty.call(value, "value")
+      ? value.value
+      : (option?.value ?? value)
+    const numeric = Number(rawValue)
+    return {
+      raw: rawValue,
+      code: toText(
+        value && typeof value === "object"
+          ? value.selectedKey ?? value.code ?? value.key ?? option?.key ?? rawValue
+          : option?.key ?? rawValue
+      ),
+      display: toText(
+        value && typeof value === "object"
+          ? value.response ?? value.display ?? value.text ?? option?.label ?? rawValue
+          : option?.label ?? rawValue
+      ),
+      detail: toText(
+        value && typeof value === "object"
+          ? value.detailResponse ?? value.description ?? option?.description ?? value.response ?? value.display ?? rawValue
+          : option?.description ?? option?.label ?? rawValue
+      ),
+      numeric: Number.isFinite(numeric) ? numeric : null,
+      system: toText(
+        value && typeof value === "object" ? value.system ?? option?.system : option?.system
+      ),
+      empty: isEmpty(value),
+    }
+  }
+
+  const valueType = (row) => {
+    const explicit = toText(row?.valueType).trim().toUpperCase()
+    if (explicit === "VALUESET" || explicit === "NUMERIC" || explicit === "TEXT") return explicit
+    const type = toText(row?.type).trim().toLowerCase()
+    if (type === "scale" || type === "coded" || type === "choice") return "VALUESET"
+    if (type === "number" || type === "numeric") return "NUMERIC"
+    return "TEXT"
+  }
+
+  const buildObservation = (row, value, index) => {
+    const answer = normalizeAnswer(value, row?.options)
+    const type = valueType(row)
+    const observation = {
+      description: row?.description ?? row?.label,
+      observationCode: row?.observationCode,
+      ...(row?.loincCode ? { loincCode: row.loincCode } : {}),
+      observationClass: "DCOBS",
+      panelSequenceNumber: row?.panelSequenceNumber ?? index + 1,
+      valueType: type,
+      status: row?.status ?? "F",
+      units: row?.units,
+      rangeNormalLow: row?.rangeNormalLow,
+      rangeNormalHigh: row?.rangeNormalHigh,
+      rangeAbsurdLow: row?.rangeAbsurdLow,
+      rangeAbsurdHigh: row?.rangeAbsurdHigh,
+      referenceRangeText: row?.referenceRangeText,
+    }
+    if (type === "VALUESET") {
+      observation.codedValue = {
+        code: answer.empty ? null : answer.code,
+        display: answer.empty ? null : answer.display,
+        system: row?.system ?? answer.system,
+      }
+    } else if (type === "NUMERIC") {
+      observation.value = answer.empty ? null : answer.numeric
+    } else {
+      observation.value = answer.empty ? null : answer.display
+    }
+    return observation
+  }
+
+  const nowString = () => typeof getDateTimeString === "function"
+    ? getDateTimeString(new Date())
+    : new Date().toISOString()
+
+  const buildPanelUpdate = ({
+    sd,
+    panelCode,
+    panelName,
+    title,
+    rows,
+    totals,
+    values,
+    totalValues,
+    includeEmptyRows = false,
+    orderedBy,
+    facility,
+    notes,
+  }) => {
+    const normalizedName = panelName && typeof panelName === "object"
+      ? panelName
+      : { code: panelCode, display: title, system: "MOIS" }
+    if (!toText(normalizedName?.code).trim()) return null
+    const existingPanels = Array.isArray(sd?.webform?.observationPanels) ? sd.webform.observationPanels : []
+    const existing = existingPanels.find((panel) => panel?.panelName?.code === normalizedName.code)
+    const rowObservations = (Array.isArray(rows) ? rows : [])
+      .map((row, index) => ({ row, value: values?.[row.id], index }))
+      .filter(({ value }) => includeEmptyRows || !isEmpty(value))
+      .map(({ row, value, index }) => buildObservation(row, value, index))
+    const totalObservations = (Array.isArray(totals) ? totals : [])
+      .map((total, index) => ({ total, value: totalValues?.[total.id], index: rowObservations.length + index }))
+      .filter(({ value }) => includeEmptyRows || !isEmpty(value))
+      .map(({ total, value, index }) => buildObservation({ ...total, type: "numeric", valueType: "NUMERIC" }, value, index))
+    const observations = [...rowObservations, ...totalObservations]
+    if (observations.length === 0) return null
+    const timestamp = nowString()
+    return {
+      observationPanelId: existing?.observationPanelId ?? 0,
+      collectedDate: timestamp,
+      reportedDate: timestamp,
+      orderedBy: orderedBy ?? sd?.userProfile?.identity?.fullName,
+      status: "F",
+      panelName: normalizedName,
+      observations,
+      ...(facility ? { facility } : {}),
+      ...(notes ? { notes } : {}),
+    }
+  }
+
+  const buildDcoUpdates = ({ sd, rows, totals, values, totalValues, collectedBy }) => (
+    [...(Array.isArray(rows) ? rows : []), ...(Array.isArray(totals) ? totals : [])]
+      .map((row) => {
+        const value = (Array.isArray(totals) ? totals : []).includes(row)
+          ? totalValues?.[row.id]
+          : values?.[row.id]
+        if (!row?.observationCode || isEmpty(value)) return null
+        const answer = normalizeAnswer(value, row.options)
+        const type = valueType(row)
+        const oldObs = sd?.webform?.observations?.find((item) => item.observationCode === row.observationCode)
+        return {
+          observationId: oldObs?.observationId ?? 0,
+          observationCode: row.observationCode,
+          observationClass: "DCOBS",
+          value: type === "NUMERIC" ? answer.numeric : (type === "VALUESET" ? answer.code : answer.display),
+          valueType: type === "NUMERIC" ? "NUMBER" : "TEXT",
+          status: oldObs?.observationId ? "C" : "F",
+          description: row.label,
+          orderedBy: collectedBy,
+          collectedBy,
+          collectedDateTime: nowString(),
+        }
+      })
+      .filter(Boolean)
+  )
+
+  return {
+    toText,
+    normalizeOptions,
+    isEmpty,
+    normalizeAnswer,
+    valueType,
+    buildObservation,
+    buildPanelUpdate,
+    buildDcoUpdates,
+  }
+})()
+`,
   './Occupations/index.jsx': `/**
  * Display a list of patient's employers and occupations. By default, it will
  * display all occupations in the patient chart and then allows selection of
@@ -24582,6 +24200,673 @@ employer
 classification { code display system }
 hoursPerWeek
 \`
+`,
+  './PanelEntryGrid/index.jsx': `/**
+ * __nhAuth — self-contained field/row authorship runtime for NHForms components.
+ *
+ * WHY THIS EXISTS
+ * Export hosts may execute generated component sources without importing the
+ * webforms package helpers. This runtime is therefore INLINED into each
+ * authorship-aware component's source (prepended by the nhforms generator and
+ * the Vite loader for any component that references \`__nhAuth\`). The generated
+ * component remains self-contained in SMOIS/FormTester and in other browser
+ * hosts that implement the same source-data/active-data contract.
+ *
+ * COLLISION SAFETY
+ * Everything lives inside a single anonymous IIFE that assigns \`window.__nhAuth\`
+ * exactly once (idempotent). There are NO top-level declarations, so prepending
+ * this snippet to several components in a concatenating host can never produce
+ * a duplicate-declaration SyntaxError.
+ *
+ * SCOPE / LIMITS (see docs runtime/mois-locking-signing-audit.md)
+ * - Advisory, client-side only: the host stores \`field.data.__authorship\` as an
+ *   opaque blob and enforcement remains in the generated UI. Not a security
+ *   boundary.
+ * - A component can only enforce read-only on inputs IT renders. Authored values
+ *   must live inside an authorship-aware component, not as loose native fields.
+ * - Claims persist in \`field.data.__authorship\` (that is what MOIS saves).
+ *
+ * Mirror of packages/form-components/src/authorship.ts — keep in rough sync.
+ */
+;(function () {
+  if (typeof window === "undefined" || !window || window.__nhAuth) return;
+
+  var DEFAULT_WINDOW_HOURS = 72;
+
+  function isNonEmpty(v) {
+    if (v === null || v === undefined) return false;
+    if (typeof v === "string") return v.trim().length > 0;
+    if (Array.isArray(v)) return v.length > 0;
+    if (typeof v === "object") return Object.keys(v).length > 0;
+    return true;
+  }
+
+  function buildKey(q) {
+    q = q || {};
+    if (q.scope === "row") {
+      return "row:" + (q.componentId || "component") + ":" + (q.rowKey || q.fieldId || "");
+    }
+    return "field:" + (q.fieldId || q.rowKey || q.componentId || "");
+  }
+
+  function normalizeStore(input) {
+    var claims = {};
+    if (input && typeof input === "object" && input.claims && typeof input.claims === "object") {
+      Object.keys(input.claims).forEach(function (k) {
+        var c = input.claims[k];
+        if (c && typeof c === "object") {
+          var ck = c.claimKey || k;
+          if (ck) claims[ck] = c;
+        }
+      });
+    }
+    return { version: 1, claims: claims };
+  }
+
+  function readStore(state) {
+    var data =
+      state && state.field && state.field.data
+        ? state.field.data
+        : state && state.formData
+          ? state.formData
+          : null;
+    return normalizeStore(data && data.__authorship);
+  }
+
+  function addHoursIso(ts, hours) {
+    var d = ts ? new Date(ts) : new Date();
+    if (isNaN(d.getTime())) return undefined;
+    return new Date(d.getTime() + hours * 3600000).toISOString();
+  }
+
+  function pad2(n) {
+    return String(n).length < 2 ? "0" + n : String(n);
+  }
+
+  function formatTimestamp(ts) {
+    if (!ts) return "";
+    var d = new Date(ts);
+    if (isNaN(d.getTime())) return String(ts);
+    return (
+      d.getFullYear() +
+      "." + pad2(d.getMonth() + 1) +
+      "." + pad2(d.getDate()) +
+      " - " + pad2(d.getHours()) +
+      ":" + pad2(d.getMinutes())
+    );
+  }
+
+  function sameActor(claim, actor) {
+    if (!claim || !actor) return false;
+    if (
+      actor.ownerId !== undefined && actor.ownerId !== null &&
+      claim.ownerId !== undefined && claim.ownerId !== null
+    ) {
+      return String(actor.ownerId) === String(claim.ownerId);
+    }
+    return !!actor.ownerName && !!claim.ownerName && actor.ownerName === claim.ownerName;
+  }
+
+  // Identity is read from the genuine MOIS session. Prefer sd.userProfile so the
+  // live actor matches the visible logged-in profile; fall back to sd.auth for
+  // runtimes that only expose the auth id.
+  function actorFrom(sd, state) {
+    var ownerId =
+      sd && sd.userProfile && sd.userProfile.userProfileId !== undefined && sd.userProfile.userProfileId !== null
+          ? sd.userProfile.userProfileId
+          : sd && sd.auth && sd.auth.userProfileId !== undefined && sd.auth.userProfileId !== null
+            ? sd.auth.userProfileId
+            : undefined;
+    var ownerName =
+      (sd && sd.userProfile && sd.userProfile.identity && sd.userProfile.identity.fullName) ||
+      (state && state.field && state.field.data && state.field.data.createdBy) ||
+      (sd && sd.webform && sd.webform.provider && sd.webform.provider.name) ||
+      "";
+    return { ownerId: ownerId, ownerName: ownerName };
+  }
+
+  function resolveNow(sd, opts) {
+    var raw =
+      opts && opts.now !== undefined && opts.now !== null
+        ? opts.now
+        : sd && sd.previewOptions
+          ? sd.previewOptions.authorshipNow
+          : undefined;
+    return raw ? new Date(raw) : new Date();
+  }
+
+  // Read: compute lock state for a target. \`opts\` carries the current actor
+  // (ownerId/ownerName) and an optional \`now\` override (preview clock).
+  // A "pending" claim (lock-on-save, not yet saved) is NOT enforced.
+  function lockInfo(state, sd, query, opts) {
+    opts = opts || {};
+    var store = readStore(state);
+    var claim = store.claims[buildKey(query)];
+    if (!claim || claim.status === "unlocked" || claim.status === "pending") return { locked: false };
+
+    var ownerName = claim.ownerName || "Unknown";
+    var ts = formatTimestamp(claim.timestamp);
+    var actor = { ownerId: opts.ownerId, ownerName: opts.ownerName };
+    var isOwner = sameActor(claim, actor);
+    var editableUntil = claim.editableUntil || addHoursIso(claim.claimedAt || claim.timestamp, DEFAULT_WINDOW_HOURS);
+    var now = resolveNow(sd, opts);
+    var euDate = editableUntil ? new Date(editableUntil) : null;
+    var expired = !!euDate && !isNaN(euDate.getTime()) && now.getTime() > euDate.getTime();
+
+    if (claim.status !== "signed" && isOwner && !expired) {
+      var untilSelf = formatTimestamp(editableUntil);
+      return {
+        locked: false,
+        claim: claim,
+        isOwner: true,
+        expired: false,
+        ownerName: ownerName,
+        note: untilSelf ? "Locked to you until " + untilSelf : "Locked to you",
+      };
+    }
+
+    var label = claim.status === "signed"
+      ? "Signed by"
+      : expired
+        ? "Editing window expired for"
+        : "Locked by";
+    return {
+      locked: true,
+      claim: claim,
+      isOwner: isOwner,
+      expired: expired,
+      ownerName: ownerName,
+      note: ts ? label + " " + ownerName + " at " + ts : label + " " + ownerName,
+    };
+  }
+
+  // Write: mutate a produce() draft to upsert/refresh the current actor's claim
+  // for a target. Returns true when the claim store changed. Call inside the
+  // component's own setFormData(produce(draft => ...)) on value change.
+  function claim(draft, sd, query, value, policy, opts) {
+    opts = opts || {};
+    policy = policy || {};
+    if (policy.enabled === false) return false;
+    if (!draft || typeof draft !== "object") return false;
+    if (!draft.field) draft.field = { data: {}, status: {}, history: [] };
+    if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {};
+
+    var store = normalizeStore(draft.field.data.__authorship);
+    var key = buildKey(query);
+    var existing = store.claims[key];
+    var actor = actorFrom(sd, draft);
+    var now = resolveNow(sd, opts);
+    var nowIso = now.toISOString();
+    var windowHours =
+      typeof policy.editableWindowHours === "number" && policy.editableWindowHours > 0
+        ? policy.editableWindowHours
+        : DEFAULT_WINDOW_HOURS;
+
+    var lockOn = policy.lockOn || "edit";
+    // lock-on-edit enforces immediately; lock-on-save/submit/sign records a
+    // non-enforced "pending" claim that a later save promotes to "locked".
+    var pending = lockOn !== "edit";
+
+    // Enforcement: a signed claim is terminal; a LOCKED claim owned by someone
+    // else blocks until its window expires; a PENDING claim is not yet enforced
+    // so anyone may take it over.
+    if (existing && existing.status === "signed") return false;
+    if (existing && existing.status === "locked" && !sameActor(existing, actor)) {
+      var lockedUntil = existing.editableUntil || addHoursIso(existing.claimedAt || existing.timestamp, DEFAULT_WINDOW_HOURS);
+      var lockedUntilDate = lockedUntil ? new Date(lockedUntil) : null;
+      var lockExpired = !!lockedUntilDate && !isNaN(lockedUntilDate.getTime()) && now.getTime() > lockedUntilDate.getTime();
+      if (!lockExpired) return false;
+    }
+
+    var ownerRefresh = existing && existing.status !== "unlocked" && sameActor(existing, actor);
+    if (ownerRefresh) {
+      // Owner edit: refresh value/timestamp, keep the original window. A claim
+      // already promoted to locked/signed stays so; a pending one stays pending.
+      var keepStatus = (existing.status === "locked" || existing.status === "signed")
+        ? existing.status
+        : (pending ? "pending" : "locked");
+      store.claims[key] = Object.assign({}, existing, {
+        status: keepStatus,
+        timestamp: nowIso,
+        lastSavedAt: nowIso,
+        currentValue: value,
+        ownerName: actor.ownerName || existing.ownerName,
+        ownerId: actor.ownerId !== undefined && actor.ownerId !== null ? actor.ownerId : existing.ownerId,
+      });
+    } else {
+      // New / taken-over / released claim: only claim a meaningful value.
+      if (!isNonEmpty(value)) return false;
+      store.claims[key] = {
+        claimKey: key,
+        scope: query.scope === "row" ? "row" : "field",
+        fieldId: query.fieldId,
+        rowKey: query.rowKey,
+        componentId: query.componentId,
+        ownerName: actor.ownerName,
+        ownerId: actor.ownerId,
+        timestamp: nowIso,
+        claimedAt: nowIso,
+        lastSavedAt: nowIso,
+        editableUntil: addHoursIso(nowIso, windowHours),
+        status: pending ? "pending" : "locked",
+        lockOn: lockOn,
+        editableWindowHours: windowHours,
+        currentValue: value,
+      };
+    }
+
+    draft.field.data.__authorship = store;
+    return true;
+  }
+
+  function policyAppliesToAction(lockOn, action) {
+    lockOn = lockOn || "save";
+    if (action === "save") return lockOn === "save";
+    if (action === "submit") return lockOn === "save" || lockOn === "submit";
+    if (action === "sign") return true; // a sign finalizes everything pending
+    return false;
+  }
+
+  // Lock-on-save: promote the current actor's PENDING claims to locked/signed.
+  // Pure — returns { changed, formData, nextState }; commitSave persists it.
+  // Called by save components (UnsavedChangesGuard / SaveOnClose) at save time.
+  function prepareSave(state, sd, action) {
+    action = action || "save";
+    var fieldData = state && state.field && state.field.data ? state.field.data : {};
+    var nextFieldData;
+    try {
+      nextFieldData = JSON.parse(JSON.stringify(fieldData));
+    } catch (e) {
+      nextFieldData = Object.assign({}, fieldData);
+    }
+    var store = normalizeStore(nextFieldData.__authorship);
+    var actor = actorFrom(sd, state);
+    var nowIso = new Date().toISOString();
+    var changed = false;
+
+    Object.keys(store.claims).forEach(function (k) {
+      var c = store.claims[k];
+      if (!c || c.status !== "pending") return;
+      if (!sameActor(c, actor)) return;
+      if (!policyAppliesToAction(c.lockOn || "save", action)) return;
+      var windowHours =
+        typeof c.editableWindowHours === "number" && c.editableWindowHours > 0
+          ? c.editableWindowHours
+          : DEFAULT_WINDOW_HOURS;
+      var nextStatus = action === "sign" || c.lockOn === "sign" ? "signed" : "locked";
+      // The owner-editable window starts when the claim actually locks (now).
+      store.claims[k] = Object.assign({}, c, {
+        status: nextStatus,
+        timestamp: nowIso,
+        lastSavedAt: nowIso,
+        claimedAt: nowIso,
+        editableUntil: addHoursIso(nowIso, windowHours),
+      });
+      changed = true;
+    });
+
+    if (changed) nextFieldData.__authorship = store;
+    return {
+      changed: changed,
+      formData: nextFieldData,
+      nextState: Object.assign({}, state, {
+        field: Object.assign({}, state && state.field ? state.field : { status: {}, history: [] }, { data: nextFieldData }),
+      }),
+    };
+  }
+
+  function commitSave(state, prepared) {
+    if (!prepared || !prepared.changed) return prepared ? prepared.nextState : undefined;
+    if (state && typeof state.setFormData === "function") {
+      state.setFormData(prepared.nextState);
+    }
+    return prepared.nextState;
+  }
+
+  // Release (unlock) a claim on a produce() draft. Returns true if it changed.
+  function release(draft, query) {
+    if (!draft || !draft.field || !draft.field.data) return false;
+    var store = normalizeStore(draft.field.data.__authorship);
+    var key = buildKey(query);
+    var current = store.claims[key];
+    if (!current || current.status === "unlocked") return false;
+    store.claims[key] = Object.assign({}, current, {
+      status: "unlocked",
+      releasedAt: new Date().toISOString(),
+    });
+    draft.field.data.__authorship = store;
+    return true;
+  }
+
+  window.__nhAuth = {
+    version: 1,
+    buildKey: buildKey,
+    lockInfo: lockInfo,
+    claim: claim,
+    release: release,
+    actor: actorFrom,
+    formatTimestamp: formatTimestamp,
+    // lock-on-save
+    prepareSave: prepareSave,
+    commitSave: commitSave,
+  };
+})();
+
+const { useEffect, useMemo } = React
+const { Dropdown, Label, Separator, Stack, Text, TextField } = Fluent
+
+const panelGridRows = (rows) => Array.isArray(rows)
+  ? rows.filter((row) => row && typeof row === "object" && typeof row.id === "string")
+  : []
+const panelGridTotals = (totals) => Array.isArray(totals)
+  ? totals.filter((total) => total && typeof total === "object" && typeof total.id === "string")
+  : []
+const panelGridDateKey = (value) => {
+  const raw = String(value ?? "")
+  return raw.includes("T") ? raw.split("T")[0] : raw
+}
+const stripPanelGridVolatileFields = (value) => {
+  if (Array.isArray(value)) return value.map(stripPanelGridVolatileFields)
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([key]) => key !== "collectedDate" && key !== "reportedDate" && key !== "collectedDateTime")
+        .map(([key, nested]) => [key, stripPanelGridVolatileFields(nested)])
+    )
+  }
+  return value
+}
+const panelGridPayloadsEqual = (left, right) => (
+  JSON.stringify(stripPanelGridVolatileFields(left ?? null)) ===
+  JSON.stringify(stripPanelGridVolatileFields(right ?? null))
+)
+const setPanelGridPayload = (setFormData, componentId, payloadType, payload) => {
+  setFormData(produce((draft) => {
+    if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
+    if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
+    const container = draft.field.data.__componentPayloads ?? {}
+    const key = payloadType === "webform" ? "webformUpdatesByComponent" : "dcoUpdatesByComponent"
+    const group = container[key] ?? {}
+    if (panelGridPayloadsEqual(group[componentId], payload)) return
+    if (payload == null || (Array.isArray(payload) && payload.length === 0)) delete group[componentId]
+    else group[componentId] = payload
+    container[key] = group
+    draft.field.data.__componentPayloads = container
+  }))
+}
+const getPanelGridAuth = () => (typeof window !== "undefined" && window.__nhAuth) || null
+
+const PANEL_GRID_TABLE_STYLE = {
+  borderCollapse: "collapse",
+  tableLayout: "fixed",
+  width: "100%",
+}
+const PANEL_GRID_CELL_STYLE = {
+  border: "1px solid #d2d0ce",
+  padding: "8px",
+  verticalAlign: "middle",
+}
+
+/**
+ * Shared observation-panel entry surface.
+ *
+ * Row types: scale/coded, numeric/number, text, and choice. Values stay nested
+ * under fieldId while ObservationValueKit emits one MOIS observation panel.
+ * Historical panels are transposed into date columns beside the current entry.
+ */
+const PanelEntryGrid = ({
+  id,
+  fieldId,
+  title = "Observation Panel",
+  panelCode = "",
+  panelName,
+  rows = [],
+  totals = [],
+  history = false,
+  historyConfig,
+  saveMode = "panel",
+  includeEmptyRows = false,
+  legacyDcoWrites = false,
+  authorshipPolicy: authorshipPolicyProp,
+  orderedByFieldId,
+  facilityFieldId,
+  notesFieldId,
+}) => {
+  const kit = ObservationValueKit
+  const [fd, setFormData] = useActiveData()
+  const sd = useSourceData()
+  const section = useSection()
+  const componentId = id || fieldId || "PanelEntryGrid"
+  const effectiveFieldId = fieldId || componentId
+  const values = fd?.field?.data?.[effectiveFieldId] && typeof fd.field.data[effectiveFieldId] === "object"
+    ? fd.field.data[effectiveFieldId]
+    : {}
+  const rowDefs = useMemo(() => panelGridRows(rows), [rows])
+  const totalDefs = useMemo(() => panelGridTotals(totals), [totals])
+  const historyEnabled = history || historyConfig?.enabled === true
+  const maxHistory = Number(historyConfig?.maxRows) > 0 ? Number(historyConfig.maxRows) : 5
+  const authorshipPolicy = authorshipPolicyProp || section?.authorshipPolicy || { enabled: false, granularity: "row", lockOn: "edit" }
+  const nhAuth = getPanelGridAuth()
+  const actor = nhAuth
+    ? nhAuth.actor(sd, fd)
+    : { ownerName: fd?.field?.data?.createdBy ?? sd?.userProfile?.identity?.fullName ?? "" }
+
+  const computedTotals = useMemo(() => {
+    const next = {}
+    totalDefs.forEach((total) => {
+      const sourceIds = Array.isArray(total.sourceRowIds) ? total.sourceRowIds : []
+      const answers = sourceIds.map((sourceId) => kit.normalizeAnswer(values[sourceId], rowDefs.find((row) => row.id === sourceId)?.options))
+      const requireComplete = total.requireComplete !== false
+      if (answers.length === 0 || (requireComplete && answers.some((answer) => answer.empty || answer.numeric === null))) {
+        next[total.id] = null
+        return
+      }
+      const numbers = answers.filter((answer) => !answer.empty && answer.numeric !== null).map((answer) => answer.numeric)
+      if (numbers.length === 0) {
+        next[total.id] = null
+      } else if (total.method === "average") {
+        next[total.id] = numbers.reduce((sum, value) => sum + value, 0) / numbers.length
+      } else if (total.method === "min") {
+        next[total.id] = Math.min(...numbers)
+      } else if (total.method === "max") {
+        next[total.id] = Math.max(...numbers)
+      } else {
+        next[total.id] = numbers.reduce((sum, value) => sum + value, 0)
+      }
+    })
+    return next
+  }, [kit, rowDefs, totalDefs, values])
+
+  useEffect(() => {
+    const data = fd?.field?.data ?? {}
+    const collectedBy = data.createdBy ?? sd?.userProfile?.identity?.fullName
+    const shouldWriteDcos = legacyDcoWrites || saveMode === "dco" || saveMode === "both"
+    setPanelGridPayload(
+      setFormData,
+      componentId,
+      "dco",
+      shouldWriteDcos
+        ? kit.buildDcoUpdates({ sd, rows: rowDefs, totals: totalDefs, values, totalValues: computedTotals, collectedBy })
+        : null
+    )
+    const shouldWritePanel = saveMode === "panel" || saveMode === "both"
+    const panelUpdate = shouldWritePanel
+      ? kit.buildPanelUpdate({
+          sd,
+          panelCode,
+          panelName,
+          title,
+          rows: rowDefs,
+          totals: totalDefs,
+          values,
+          totalValues: computedTotals,
+          includeEmptyRows,
+          orderedBy: orderedByFieldId ? data[orderedByFieldId] : collectedBy,
+          facility: facilityFieldId ? data[facilityFieldId] : undefined,
+          notes: notesFieldId ? data[notesFieldId] : undefined,
+        })
+      : null
+    setPanelGridPayload(setFormData, componentId, "webform", panelUpdate ? { panelUpdates: [panelUpdate] } : null)
+  }, [componentId, computedTotals, fd, facilityFieldId, includeEmptyRows, kit, legacyDcoWrites, notesFieldId, orderedByFieldId, panelCode, panelName, rowDefs, saveMode, sd, setFormData, title, totalDefs, values])
+
+  const historyColumns = useMemo(() => {
+    if (!historyEnabled) return []
+    const definitions = [...rowDefs, ...totalDefs]
+    const observations = Array.isArray(sd?.patient?.observations)
+      ? sd.patient.observations
+      : (Array.isArray(sd?.queryResult?.patient?.[0]?.observations) ? sd.queryResult.patient[0].observations : [])
+    const grouped = new Map()
+    observations.forEach((entry) => {
+      const definition = definitions.find((candidate) => (
+        (candidate.observationCode && candidate.observationCode === entry?.observationCode) ||
+        (candidate.loincCode && candidate.loincCode === entry?.loincCode)
+      ))
+      if (!definition) return
+      const date = panelGridDateKey(entry?.collectedDateTime ?? entry?.collectedDate ?? entry?.reportedDate)
+      if (!date) return
+      const column = grouped.get(date) ?? { date, values: {} }
+      column.values[definition.id] = entry?.codedValue?.display ?? entry?.display ?? entry?.value ?? entry?.report ?? ""
+      grouped.set(date, column)
+    })
+    return Array.from(grouped.values())
+      .sort((left, right) => String(right.date).localeCompare(String(left.date)))
+      .slice(0, maxHistory)
+  }, [historyEnabled, maxHistory, rowDefs, sd, totalDefs])
+
+  const setRowValue = (rowId, nextValue) => {
+    setFormData(produce((draft) => {
+      if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
+      if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
+      const current = draft.field.data[effectiveFieldId] && typeof draft.field.data[effectiveFieldId] === "object"
+        ? draft.field.data[effectiveFieldId]
+        : {}
+      draft.field.data[effectiveFieldId] = { ...current, [rowId]: nextValue }
+      if (nhAuth && authorshipPolicy?.enabled) {
+        nhAuth.claim(draft, sd, { scope: "row", componentId, rowKey: rowId }, nextValue, authorshipPolicy, {
+          now: sd?.previewOptions?.authorshipNow,
+        })
+      }
+    }))
+  }
+
+  const renderCurrentValue = (row, value, readOnly) => {
+    const type = String(row.type ?? "text").toLowerCase()
+    const normalizedOptions = kit.normalizeOptions(row.options)
+    const scaleLike = type === "scale" || (type === "coded" && normalizedOptions.length > 0 && normalizedOptions.every((option) => Number.isFinite(Number(option.value))))
+    if (scaleLike) {
+      return (
+        <ScaleField
+          fieldId={\`\${effectiveFieldId}_\${row.id}\`}
+          label={row.label}
+          options={normalizedOptions}
+          value={value}
+          onChange={(nextValue) => setRowValue(row.id, nextValue)}
+          hideLabel
+          disableHorizontalScroll
+          showInlineLabels={row.showInlineLabels !== false}
+          showTooltip={row.showTooltip === true}
+          tooltipMode={row.tooltipMode ?? "option"}
+          required={row.required === true}
+          readOnly={readOnly}
+        />
+      )
+    }
+    if (type === "choice" || type === "coded") {
+      const answer = kit.normalizeAnswer(value, normalizedOptions)
+      return (
+        <Dropdown
+          options={normalizedOptions.map((option) => ({ key: option.key, text: option.label }))}
+          selectedKey={answer.empty ? undefined : answer.code}
+          onChange={readOnly ? undefined : (_event, option) => {
+            const selected = normalizedOptions.find((candidate) => candidate.key === String(option?.key ?? ""))
+            setRowValue(row.id, selected ? {
+              code: selected.key,
+              display: selected.label,
+              system: row.system ?? selected.system,
+            } : null)
+          }}
+          disabled={readOnly}
+        />
+      )
+    }
+    if (type === "numeric" || type === "number") {
+      const answer = kit.normalizeAnswer(value, row.options)
+      return (
+        <TextField
+          type="number"
+          value={answer.empty ? "" : String(answer.raw)}
+          min={row.min}
+          max={row.max}
+          step={row.step}
+          onChange={readOnly ? undefined : (_event, nextValue) => setRowValue(row.id, nextValue === "" ? "" : Number(nextValue))}
+          readOnly={readOnly}
+        />
+      )
+    }
+    return (
+      <TextField
+        value={kit.normalizeAnswer(value, row.options).display}
+        multiline={row.multiline !== false}
+        onChange={readOnly ? undefined : (_event, nextValue) => setRowValue(row.id, nextValue ?? "")}
+        readOnly={readOnly}
+      />
+    )
+  }
+
+  return (
+    <Stack tokens={{ childrenGap: 10 }}>
+      <Label>{title}</Label>
+      <div style={{ overflowX: "auto" }}>
+        <table style={PANEL_GRID_TABLE_STYLE}>
+          <thead>
+            <tr>
+              <th style={{ ...PANEL_GRID_CELL_STYLE, minWidth: 180, textAlign: "left" }}>Measure</th>
+              <th style={{ ...PANEL_GRID_CELL_STYLE, minWidth: 320 }}>Current</th>
+              {historyColumns.map((column) => (
+                <th key={column.date} style={{ ...PANEL_GRID_CELL_STYLE, minWidth: 110 }}>{column.date}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rowDefs.map((row) => {
+              const value = values[row.id]
+              const lockInfo = nhAuth && authorshipPolicy?.enabled
+                ? nhAuth.lockInfo(fd, sd, { scope: "row", componentId, rowKey: row.id }, {
+                    ownerName: actor.ownerName,
+                    ownerId: actor.ownerId,
+                    now: sd?.previewOptions?.authorshipNow,
+                  })
+                : { locked: false }
+              return (
+                <tr key={row.id}>
+                  <th scope="row" style={{ ...PANEL_GRID_CELL_STYLE, textAlign: "left" }}>
+                    {row.label}
+                    {row.units ? <Text variant="small"> {\`(\${row.units})\`}</Text> : null}
+                    {lockInfo.note ? (
+                      <Text block variant="small" styles={{ root: { color: "#605e5c", fontWeight: 400 } }}>{lockInfo.note}</Text>
+                    ) : null}
+                  </th>
+                  <td style={PANEL_GRID_CELL_STYLE}>{renderCurrentValue(row, value, !!lockInfo.locked)}</td>
+                  {historyColumns.map((column) => (
+                    <td key={column.date} style={{ ...PANEL_GRID_CELL_STYLE, textAlign: "center" }}>
+                      {column.values[row.id] === undefined || column.values[row.id] === "" ? "—" : String(column.values[row.id])}
+                    </td>
+                  ))}
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+      {totalDefs.length > 0 ? <Separator /> : null}
+      {totalDefs.map((total) => (
+        <Text key={total.id} variant="mediumPlus">
+          {total.label}: {computedTotals[total.id] === null ? "—" : computedTotals[total.id]}
+        </Text>
+      ))}
+    </Stack>
+  )
+}
 `,
   './PastMeasurementField/index.jsx': `const { useEffect, useMemo, useState } = React
 const { Stack, StackItem, Link, SpinButton, Text, TextField } = Fluent
@@ -28357,6 +28642,9 @@ const {
  * - showTooltip: boolean - Whether to show the row tooltip when descriptions exist
  * - tooltipMode: "all" | "option" - Whether tooltips show all definitions or only the hovered option
  * - disableHorizontalScroll: boolean - Let a parent provide one shared horizontal scrollbar
+ * - value: optional controlled primitive or {selectedKey, value, response} answer
+ * - onChange: optional controlled callback receiving the normalized answer
+ * - hideLabel: boolean - Hide the built-in label column when a composite renders it
  * - required: boolean - Whether the field is required
  * - readOnly: boolean - Whether the field is read-only
  */
@@ -28523,6 +28811,9 @@ const ScaleField = ({
   showTooltip = false,
   tooltipMode = "all",
   disableHorizontalScroll = false,
+  value: controlledValue,
+  onChange: onControlledChange,
+  hideLabel = false,
   required = false,
   readOnly: readOnlyProp = false,
   disabled = false,
@@ -28532,6 +28823,7 @@ const ScaleField = ({
   const readOnly = readOnlyProp || disabled
   const [fieldData, setFieldData] = useActiveData(fd => fd?.field?.data || {})
   const theme = useTheme()
+  const isControlled = controlledValue !== undefined
 
   // Default options if none provided (0-5 scale)
   const scaleOptions = options && options.length > 0 ? options : [
@@ -28566,12 +28858,42 @@ const ScaleField = ({
     styles: CHOICE_FIELD_STYLE,
   }))
 
-  // Get current value from field data
-  const currentData = fieldData?.[fieldId] || { selectedKey: null, value: null }
+  const normalizeControlledValue = (value) => {
+    if (value && typeof value === "object") {
+      const selectedKey = value.selectedKey ?? value.code ?? null
+      const selectedOption = scaleOptions.find(
+        (option) => (option.key ?? String(option.value)) === String(selectedKey ?? value.value)
+      )
+      return {
+        selectedKey: selectedKey == null ? null : String(selectedKey),
+        value: value.value ?? selectedOption?.value ?? null,
+        response: value.response ?? value.display ?? selectedOption?.label ?? null,
+        detailResponse: value.detailResponse ?? selectedOption?.description ?? value.response ?? value.display ?? null,
+      }
+    }
+    if (value === null || value === "") return { selectedKey: null, value: null }
+    const selectedOption = scaleOptions.find(
+      (option) => (option.key ?? String(option.value)) === String(value) || option.value === value
+    )
+    return selectedOption
+      ? {
+          selectedKey: String(selectedOption.key ?? selectedOption.value),
+          value: selectedOption.value,
+          response: selectedOption.label ?? String(selectedOption.value),
+          detailResponse: selectedOption.description ?? selectedOption.label ?? String(selectedOption.value),
+        }
+      : { selectedKey: String(value), value }
+  }
+
+  // A controlled composite owns the answer; standalone fields keep the legacy
+  // ActiveData object shape used by calculations and exported forms.
+  const currentData = isControlled
+    ? normalizeControlledValue(controlledValue)
+    : (fieldData?.[fieldId] || { selectedKey: null, value: null })
 
   // Initialize field data if needed
   useEffect(() => {
-    if (!fieldData?.[fieldId]) {
+    if (!isControlled && fieldId && !fieldData?.[fieldId]) {
       setFieldData({
         [fieldId]: {
           selectedKey: null,
@@ -28580,7 +28902,7 @@ const ScaleField = ({
         }
       })
     }
-  }, [fieldId, fieldData, setFieldData])
+  }, [fieldId, fieldData, isControlled, setFieldData])
 
   // Handle selection change
   const handleChange = (ev, option) => {
@@ -28588,14 +28910,17 @@ const ScaleField = ({
 
     const selectedOption = scaleOptions.find(o => (o.key ?? String(o.value)) === option.key)
 
-    setFieldData({
-      [fieldId]: {
-        selectedKey: option.key,
-        value: selectedOption?.value ?? parseInt(option.key, 10),
-        response: selectedOption?.label || option.key,
-        detailResponse: selectedOption?.description || selectedOption?.label || option.key,
-      }
-    })
+    const nextValue = {
+      selectedKey: option.key,
+      value: selectedOption?.value ?? parseInt(option.key, 10),
+      response: selectedOption?.label || option.key,
+      detailResponse: selectedOption?.description || selectedOption?.label || option.key,
+    }
+    if (isControlled) {
+      if (typeof onControlledChange === "function") onControlledChange(nextValue, option, ev)
+      return
+    }
+    setFieldData({ [fieldId]: nextValue })
   }
 
   // Styling based on selection state
@@ -28613,14 +28938,16 @@ const ScaleField = ({
   const inlineMinWidth = _getInlineMinWidth(scaleOptions.length)
   const fieldContent = (
     <Stack horizontal verticalAlign="center" style={{ minWidth: inlineMinWidth }}>
-      <StackItem disableShrink styles={LABEL_COLUMN_STYLE}>
-        <Label
-          styles={LABEL_STYLE}
-          required={required}
-        >
-          {label}
-        </Label>
-      </StackItem>
+      {hideLabel ? null : (
+        <StackItem disableShrink styles={LABEL_COLUMN_STYLE}>
+          <Label
+            styles={LABEL_STYLE}
+            required={required}
+          >
+            {label}
+          </Label>
+        </StackItem>
+      )}
       <StackItem grow>
         <ChoiceGroup
           key={\`scale-\${fieldId}-\${currentData.selectedKey ?? "empty"}\`}
@@ -36330,9 +36657,12 @@ export const componentIdentities: Record<string, any> = {
   'ObservationPanelEditor': {
     "name": "ObservationPanelEditor",
     "title": "Observation Panel Editor",
-    "description": "Config-driven panel editor with totals and history display",
+    "description": "Legacy compatibility alias for PanelEntryGrid. Retained for saved forms; hidden from new authoring.",
     "category": "Clinical",
-    "version": "1.0.0"
+    "version": "1.1.0",
+    "components": [
+      "PanelEntryGrid"
+    ]
   },
   'ObservationQuery': {
     "name": "ObservationQuery",
@@ -36392,6 +36722,32 @@ export const componentIdentities: Record<string, any> = {
       "ObservationKit"
     ]
   },
+  'ObservationValueKit': {
+    "name": "ObservationValueKit",
+    "title": "Observation value helper kit",
+    "description": "Non-rendering shared observation answer normalization and panel-output builder used by panel-entry composites.",
+    "version": {
+      "major": 1,
+      "minor": 0,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "Northern Health",
+    "author": "Codex",
+    "publisher": "Northern Health",
+    "globalIdentifier": "",
+    "requiredFormViewerVersion": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "requiredMoisVersion": {
+      "major": 2,
+      "minor": 28,
+      "patch": 10
+    },
+    "components": []
+  },
   'Occupations': {
     "name": "Occupations",
     "title": "Show employment history",
@@ -36416,6 +36772,35 @@ export const componentIdentities: Record<string, any> = {
       "minor": 26,
       "patch": 12
     }
+  },
+  'PanelEntryGrid': {
+    "name": "PanelEntryGrid",
+    "title": "Panel Entry Grid",
+    "description": "Shared config-driven observation panel entry grid with scale, number, text, and choice rows; transposed history; totals; row authorship; and one panel output.",
+    "version": {
+      "major": 1,
+      "minor": 0,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "Northern Health",
+    "author": "Codex",
+    "publisher": "Northern Health",
+    "globalIdentifier": "",
+    "requiredFormViewerVersion": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "requiredMoisVersion": {
+      "major": 2,
+      "minor": 28,
+      "patch": 10
+    },
+    "components": [
+      "ObservationValueKit",
+      "ScaleField"
+    ]
   },
   'PastMeasurementField': {
     "name": "PastMeasurementField",

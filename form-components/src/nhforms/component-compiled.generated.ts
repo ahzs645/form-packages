@@ -8300,6 +8300,8 @@ EditableTable = ({
   authorshipColumnLabel = "Lock",
   sourceFieldIds = {},
   sourceFieldIdsByRow = {},
+  rowsPath,
+  countPath,
   ...props
 }) => {
   const [fd] = useActiveData();
@@ -8400,7 +8402,7 @@ EditableTable = ({
   const saveAndAddNextLabel = typeof saveAndAddNextConfig?.label === "string" && saveAndAddNextConfig.label.trim() ? saveAndAddNextConfig.label.trim() : "Save & Add Next";
   const getRows = () => {
     try {
-      const data = fd?.field?.data?.[id];
+      const data = _getValueAtPath(fd?.field?.data, rowsPath || id);
       return _normalizeRows(data);
     } catch (error) {
       console.log("Error getting rows:", error);
@@ -8432,7 +8434,8 @@ EditableTable = ({
       };
       if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {};
       const data = draft.field.data;
-      data[id] = nextRows;
+      _setValueAtPath(data, rowsPath || id, nextRows);
+      if (countPath) _setValueAtPath(data, countPath, Array.isArray(nextRows) ? nextRows.length : 0);
       mirroredFieldIds.forEach(fieldId => {
         data[fieldId] = null;
       });
@@ -8477,7 +8480,7 @@ EditableTable = ({
       length: initialRowCount
     }, (_, index) => _makeEmptyRow(columns, index));
     setRows(seededRows);
-  }, [rows, isModalMode, initialSeedRows, initialRowCount, id, columns]);
+  }, [rows, isModalMode, initialSeedRows, initialRowCount, id, columns, rowsPath, countPath]);
   useEffect(() => {
     if (sourceSeedRows.length === 0) return;
     const existingRows = Array.isArray(rows) ? rows : [];
@@ -25284,599 +25287,14 @@ const ObservationKit = (() => {
     flagCellStyle
   };
 })();`,
-  './ObservationPanelEditor/index.jsx': `/**
- * __nhAuth — self-contained field/row authorship runtime for NHForms components.
- *
- * WHY THIS EXISTS
- * Export hosts may execute generated component sources without importing the
- * webforms package helpers. This runtime is therefore INLINED into each
- * authorship-aware component's source (prepended by the nhforms generator and
- * the Vite loader for any component that references \`__nhAuth\`). The generated
- * component remains self-contained in SMOIS/FormTester and in other browser
- * hosts that implement the same source-data/active-data contract.
- *
- * COLLISION SAFETY
- * Everything lives inside a single anonymous IIFE that assigns \`window.__nhAuth\`
- * exactly once (idempotent). There are NO top-level declarations, so prepending
- * this snippet to several components in a concatenating host can never produce
- * a duplicate-declaration SyntaxError.
- *
- * SCOPE / LIMITS (see docs runtime/mois-locking-signing-audit.md)
- * - Advisory, client-side only: the host stores \`field.data.__authorship\` as an
- *   opaque blob and enforcement remains in the generated UI. Not a security
- *   boundary.
- * - A component can only enforce read-only on inputs IT renders. Authored values
- *   must live inside an authorship-aware component, not as loose native fields.
- * - Claims persist in \`field.data.__authorship\` (that is what MOIS saves).
- *
- * Mirror of packages/form-components/src/authorship.ts — keep in rough sync.
- */
-;
-(function () {
-  if (typeof window === "undefined" || !window || window.__nhAuth) return;
-  var DEFAULT_WINDOW_HOURS = 72;
-  function isNonEmpty(v) {
-    if (v === null || v === undefined) return false;
-    if (typeof v === "string") return v.trim().length > 0;
-    if (Array.isArray(v)) return v.length > 0;
-    if (typeof v === "object") return Object.keys(v).length > 0;
-    return true;
-  }
-  function buildKey(q) {
-    q = q || {};
-    if (q.scope === "row") {
-      return "row:" + (q.componentId || "component") + ":" + (q.rowKey || q.fieldId || "");
-    }
-    return "field:" + (q.fieldId || q.rowKey || q.componentId || "");
-  }
-  function normalizeStore(input) {
-    var claims = {};
-    if (input && typeof input === "object" && input.claims && typeof input.claims === "object") {
-      Object.keys(input.claims).forEach(function (k) {
-        var c = input.claims[k];
-        if (c && typeof c === "object") {
-          var ck = c.claimKey || k;
-          if (ck) claims[ck] = c;
-        }
-      });
-    }
-    return {
-      version: 1,
-      claims: claims
-    };
-  }
-  function readStore(state) {
-    var data = state && state.field && state.field.data ? state.field.data : state && state.formData ? state.formData : null;
-    return normalizeStore(data && data.__authorship);
-  }
-  function addHoursIso(ts, hours) {
-    var d = ts ? new Date(ts) : new Date();
-    if (isNaN(d.getTime())) return undefined;
-    return new Date(d.getTime() + hours * 3600000).toISOString();
-  }
-  function pad2(n) {
-    return String(n).length < 2 ? "0" + n : String(n);
-  }
-  function formatTimestamp(ts) {
-    if (!ts) return "";
-    var d = new Date(ts);
-    if (isNaN(d.getTime())) return String(ts);
-    return d.getFullYear() + "." + pad2(d.getMonth() + 1) + "." + pad2(d.getDate()) + " - " + pad2(d.getHours()) + ":" + pad2(d.getMinutes());
-  }
-  function sameActor(claim, actor) {
-    if (!claim || !actor) return false;
-    if (actor.ownerId !== undefined && actor.ownerId !== null && claim.ownerId !== undefined && claim.ownerId !== null) {
-      return String(actor.ownerId) === String(claim.ownerId);
-    }
-    return !!actor.ownerName && !!claim.ownerName && actor.ownerName === claim.ownerName;
-  }
-
-  // Identity is read from the genuine MOIS session. Prefer sd.userProfile so the
-  // live actor matches the visible logged-in profile; fall back to sd.auth for
-  // runtimes that only expose the auth id.
-  function actorFrom(sd, state) {
-    var ownerId = sd && sd.userProfile && sd.userProfile.userProfileId !== undefined && sd.userProfile.userProfileId !== null ? sd.userProfile.userProfileId : sd && sd.auth && sd.auth.userProfileId !== undefined && sd.auth.userProfileId !== null ? sd.auth.userProfileId : undefined;
-    var ownerName = sd && sd.userProfile && sd.userProfile.identity && sd.userProfile.identity.fullName || state && state.field && state.field.data && state.field.data.createdBy || sd && sd.webform && sd.webform.provider && sd.webform.provider.name || "";
-    return {
-      ownerId: ownerId,
-      ownerName: ownerName
-    };
-  }
-  function resolveNow(sd, opts) {
-    var raw = opts && opts.now !== undefined && opts.now !== null ? opts.now : sd && sd.previewOptions ? sd.previewOptions.authorshipNow : undefined;
-    return raw ? new Date(raw) : new Date();
-  }
-
-  // Read: compute lock state for a target. \`opts\` carries the current actor
-  // (ownerId/ownerName) and an optional \`now\` override (preview clock).
-  // A "pending" claim (lock-on-save, not yet saved) is NOT enforced.
-  function lockInfo(state, sd, query, opts) {
-    opts = opts || {};
-    var store = readStore(state);
-    var claim = store.claims[buildKey(query)];
-    if (!claim || claim.status === "unlocked" || claim.status === "pending") return {
-      locked: false
-    };
-    var ownerName = claim.ownerName || "Unknown";
-    var ts = formatTimestamp(claim.timestamp);
-    var actor = {
-      ownerId: opts.ownerId,
-      ownerName: opts.ownerName
-    };
-    var isOwner = sameActor(claim, actor);
-    var editableUntil = claim.editableUntil || addHoursIso(claim.claimedAt || claim.timestamp, DEFAULT_WINDOW_HOURS);
-    var now = resolveNow(sd, opts);
-    var euDate = editableUntil ? new Date(editableUntil) : null;
-    var expired = !!euDate && !isNaN(euDate.getTime()) && now.getTime() > euDate.getTime();
-    if (claim.status !== "signed" && isOwner && !expired) {
-      var untilSelf = formatTimestamp(editableUntil);
-      return {
-        locked: false,
-        claim: claim,
-        isOwner: true,
-        expired: false,
-        ownerName: ownerName,
-        note: untilSelf ? "Locked to you until " + untilSelf : "Locked to you"
-      };
-    }
-    var label = claim.status === "signed" ? "Signed by" : expired ? "Editing window expired for" : "Locked by";
-    return {
-      locked: true,
-      claim: claim,
-      isOwner: isOwner,
-      expired: expired,
-      ownerName: ownerName,
-      note: ts ? label + " " + ownerName + " at " + ts : label + " " + ownerName
-    };
-  }
-
-  // Write: mutate a produce() draft to upsert/refresh the current actor's claim
-  // for a target. Returns true when the claim store changed. Call inside the
-  // component's own setFormData(produce(draft => ...)) on value change.
-  function claim(draft, sd, query, value, policy, opts) {
-    opts = opts || {};
-    policy = policy || {};
-    if (policy.enabled === false) return false;
-    if (!draft || typeof draft !== "object") return false;
-    if (!draft.field) draft.field = {
-      data: {},
-      status: {},
-      history: []
-    };
-    if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {};
-    var store = normalizeStore(draft.field.data.__authorship);
-    var key = buildKey(query);
-    var existing = store.claims[key];
-    var actor = actorFrom(sd, draft);
-    var now = resolveNow(sd, opts);
-    var nowIso = now.toISOString();
-    var windowHours = typeof policy.editableWindowHours === "number" && policy.editableWindowHours > 0 ? policy.editableWindowHours : DEFAULT_WINDOW_HOURS;
-    var lockOn = policy.lockOn || "edit";
-    // lock-on-edit enforces immediately; lock-on-save/submit/sign records a
-    // non-enforced "pending" claim that a later save promotes to "locked".
-    var pending = lockOn !== "edit";
-
-    // Enforcement: a signed claim is terminal; a LOCKED claim owned by someone
-    // else blocks until its window expires; a PENDING claim is not yet enforced
-    // so anyone may take it over.
-    if (existing && existing.status === "signed") return false;
-    if (existing && existing.status === "locked" && !sameActor(existing, actor)) {
-      var lockedUntil = existing.editableUntil || addHoursIso(existing.claimedAt || existing.timestamp, DEFAULT_WINDOW_HOURS);
-      var lockedUntilDate = lockedUntil ? new Date(lockedUntil) : null;
-      var lockExpired = !!lockedUntilDate && !isNaN(lockedUntilDate.getTime()) && now.getTime() > lockedUntilDate.getTime();
-      if (!lockExpired) return false;
-    }
-    var ownerRefresh = existing && existing.status !== "unlocked" && sameActor(existing, actor);
-    if (ownerRefresh) {
-      // Owner edit: refresh value/timestamp, keep the original window. A claim
-      // already promoted to locked/signed stays so; a pending one stays pending.
-      var keepStatus = existing.status === "locked" || existing.status === "signed" ? existing.status : pending ? "pending" : "locked";
-      store.claims[key] = Object.assign({}, existing, {
-        status: keepStatus,
-        timestamp: nowIso,
-        lastSavedAt: nowIso,
-        currentValue: value,
-        ownerName: actor.ownerName || existing.ownerName,
-        ownerId: actor.ownerId !== undefined && actor.ownerId !== null ? actor.ownerId : existing.ownerId
-      });
-    } else {
-      // New / taken-over / released claim: only claim a meaningful value.
-      if (!isNonEmpty(value)) return false;
-      store.claims[key] = {
-        claimKey: key,
-        scope: query.scope === "row" ? "row" : "field",
-        fieldId: query.fieldId,
-        rowKey: query.rowKey,
-        componentId: query.componentId,
-        ownerName: actor.ownerName,
-        ownerId: actor.ownerId,
-        timestamp: nowIso,
-        claimedAt: nowIso,
-        lastSavedAt: nowIso,
-        editableUntil: addHoursIso(nowIso, windowHours),
-        status: pending ? "pending" : "locked",
-        lockOn: lockOn,
-        editableWindowHours: windowHours,
-        currentValue: value
-      };
-    }
-    draft.field.data.__authorship = store;
-    return true;
-  }
-  function policyAppliesToAction(lockOn, action) {
-    lockOn = lockOn || "save";
-    if (action === "save") return lockOn === "save";
-    if (action === "submit") return lockOn === "save" || lockOn === "submit";
-    if (action === "sign") return true; // a sign finalizes everything pending
-    return false;
-  }
-
-  // Lock-on-save: promote the current actor's PENDING claims to locked/signed.
-  // Pure — returns { changed, formData, nextState }; commitSave persists it.
-  // Called by save components (UnsavedChangesGuard / SaveOnClose) at save time.
-  function prepareSave(state, sd, action) {
-    action = action || "save";
-    var fieldData = state && state.field && state.field.data ? state.field.data : {};
-    var nextFieldData;
-    try {
-      nextFieldData = JSON.parse(JSON.stringify(fieldData));
-    } catch (e) {
-      nextFieldData = Object.assign({}, fieldData);
-    }
-    var store = normalizeStore(nextFieldData.__authorship);
-    var actor = actorFrom(sd, state);
-    var nowIso = new Date().toISOString();
-    var changed = false;
-    Object.keys(store.claims).forEach(function (k) {
-      var c = store.claims[k];
-      if (!c || c.status !== "pending") return;
-      if (!sameActor(c, actor)) return;
-      if (!policyAppliesToAction(c.lockOn || "save", action)) return;
-      var windowHours = typeof c.editableWindowHours === "number" && c.editableWindowHours > 0 ? c.editableWindowHours : DEFAULT_WINDOW_HOURS;
-      var nextStatus = action === "sign" || c.lockOn === "sign" ? "signed" : "locked";
-      // The owner-editable window starts when the claim actually locks (now).
-      store.claims[k] = Object.assign({}, c, {
-        status: nextStatus,
-        timestamp: nowIso,
-        lastSavedAt: nowIso,
-        claimedAt: nowIso,
-        editableUntil: addHoursIso(nowIso, windowHours)
-      });
-      changed = true;
-    });
-    if (changed) nextFieldData.__authorship = store;
-    return {
-      changed: changed,
-      formData: nextFieldData,
-      nextState: Object.assign({}, state, {
-        field: Object.assign({}, state && state.field ? state.field : {
-          status: {},
-          history: []
-        }, {
-          data: nextFieldData
-        })
-      })
-    };
-  }
-  function commitSave(state, prepared) {
-    if (!prepared || !prepared.changed) return prepared ? prepared.nextState : undefined;
-    if (state && typeof state.setFormData === "function") {
-      state.setFormData(prepared.nextState);
-    }
-    return prepared.nextState;
-  }
-
-  // Release (unlock) a claim on a produce() draft. Returns true if it changed.
-  function release(draft, query) {
-    if (!draft || !draft.field || !draft.field.data) return false;
-    var store = normalizeStore(draft.field.data.__authorship);
-    var key = buildKey(query);
-    var current = store.claims[key];
-    if (!current || current.status === "unlocked") return false;
-    store.claims[key] = Object.assign({}, current, {
-      status: "unlocked",
-      releasedAt: new Date().toISOString()
-    });
-    draft.field.data.__authorship = store;
-    return true;
-  }
-  window.__nhAuth = {
-    version: 1,
-    buildKey: buildKey,
-    lockInfo: lockInfo,
-    claim: claim,
-    release: release,
-    actor: actorFrom,
-    formatTimestamp: formatTimestamp,
-    // lock-on-save
-    prepareSave: prepareSave,
-    commitSave: commitSave
-  };
-})();
-const {
-  useEffect,
-  useMemo
-} = React;
-const {
-  Stack,
-  Text,
-  TextField,
-  Label,
-  Separator,
-  ChoiceGroup
-} = Fluent;
-const normalizePanelRows = rows => Array.isArray(rows) ? rows.filter(row => row && typeof row === "object" && typeof row.id === "string") : [];
-const normalizePanelTotals = totals => Array.isArray(totals) ? totals.filter(row => row && typeof row === "object" && typeof row.id === "string") : [];
-const panelDateKey = value => {
-  const raw = String(value ?? "");
-  return raw.includes("T") ? raw.split("T")[0] : raw;
-};
-const stripVolatilePayloadFields = value => {
-  if (Array.isArray(value)) {
-    return value.map(item => stripVolatilePayloadFields(item));
-  }
-  if (value && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value).filter(([key]) => key !== "collectedDateTime").map(([key, nestedValue]) => [key, stripVolatilePayloadFields(nestedValue)]));
-  }
-  return value;
-};
-const payloadsEqual = (left, right) => JSON.stringify(stripVolatilePayloadFields(left ?? null)) === JSON.stringify(stripVolatilePayloadFields(right ?? null));
-const getPanelValue = (values, key) => values && typeof values === "object" ? values[key] : undefined;
-const toNumericValue = value => {
-  const numeric = Number(value);
-  return Number.isFinite(numeric) ? numeric : 0;
-};
-const getCurrentActorName = (sd, fd) => fd?.field?.data?.createdBy || fd?.formData?.createdBy || sd?.userProfile?.identity?.fullName || sd?.webform?.provider?.name || "";
-// Shared authorship engine (inlined as window.__nhAuth by the nhforms generator /
-// Vite loader). Replaces the preview-only getAuthorshipLockInfo/registerAuthorshipRowTarget
-// globals so row locking actually runs in real MOIS instead of ReferenceError-ing.
-const getNhAuth = () => typeof window !== "undefined" && window.__nhAuth || null;
-// setFormData must receive a produce()-wrapped recipe: the real MOIS runtime
-// hands back the raw React state setter, so a bare mutator would replace the
-// active form data with undefined.
-const setPanelPayload = (setFormData, componentId, payloadType, payload) => {
-  setFormData(produce(draft => {
-    if (!draft.field) draft.field = {
-      data: {},
-      status: {},
-      history: []
-    };
-    if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {};
-    const container = draft.field.data.__componentPayloads ?? {};
-    const key = payloadType === "webform" ? "webformUpdatesByComponent" : "dcoUpdatesByComponent";
-    const nextGroup = container[key] ?? {};
-    const currentPayload = nextGroup[componentId];
-    if (payloadsEqual(currentPayload, payload)) {
-      return;
-    }
-    if (payload == null || Array.isArray(payload) && payload.length === 0) {
-      delete nextGroup[componentId];
-    } else {
-      nextGroup[componentId] = payload;
-    }
-    container[key] = nextGroup;
-    draft.field.data.__componentPayloads = container;
+  './ObservationPanelEditor/index.jsx': `function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
+// Legacy compatibility alias. Saved forms keep their component key and their
+// historical dual DCO + panel write behavior; new authoring uses PanelEntryGrid.
+const ObservationPanelEditor = props => {
+  const RuntimePanelEntryGrid = typeof window !== "undefined" && window.__nhformsRegistry__?.PanelEntryGrid || PanelEntryGrid;
+  return /*#__PURE__*/React.createElement(RuntimePanelEntryGrid, _extends({}, props, {
+    legacyDcoWrites: true
   }));
-};
-const ObservationPanelEditor = ({
-  id,
-  fieldId,
-  title = "Observation Panel",
-  panelCode = "",
-  rows = [],
-  totals = [],
-  history = false,
-  historyConfig,
-  saveMode = "panel"
-}) => {
-  const [fd, setFormData] = useActiveData();
-  const sd = useSourceData();
-  const section = useSection();
-  const componentId = id || fieldId || "ObservationPanelEditor";
-  const effectiveFieldId = fieldId || componentId;
-  const rootValue = fd?.field?.data?.[effectiveFieldId] ?? {};
-  const rowDefs = useMemo(() => normalizePanelRows(rows), [rows]);
-  const totalDefs = useMemo(() => normalizePanelTotals(totals), [totals]);
-  const maxHistory = Number(historyConfig?.maxRows) > 0 ? Number(historyConfig.maxRows) : 5;
-  const createdBy = fd?.field?.data?.createdBy ?? sd?.userProfile?.identity?.fullName;
-  const currentActorName = getCurrentActorName(sd, fd);
-  const authorshipPolicy = section?.authorshipPolicy || {
-    enabled: false,
-    granularity: "row",
-    lockOn: "edit"
-  };
-  const nhAuth = getNhAuth();
-  const actor = nhAuth ? nhAuth.actor(sd, fd) : {
-    ownerName: currentActorName
-  };
-  // No target registry needed: with the inlined __nhAuth engine, each row claims
-  // its own ownership directly on edit (setRowValue below) and lockInfo reads it
-  // back from field.data.__authorship.
-
-  const computedTotals = useMemo(() => {
-    const next = {};
-    totalDefs.forEach(total => {
-      const sourceIds = Array.isArray(total.sourceRowIds) ? total.sourceRowIds : [];
-      next[total.id] = sourceIds.reduce((sum, sourceId) => sum + toNumericValue(getPanelValue(rootValue, sourceId)), 0);
-    });
-    return next;
-  }, [rootValue, totalDefs]);
-  useEffect(() => {
-    const dcoUpdates = [];
-    rowDefs.forEach(row => {
-      const value = getPanelValue(rootValue, row.id);
-      const hasValue = value !== undefined && value !== null && value !== "";
-      if (!row.observationCode || !hasValue) return;
-      const oldObs = sd?.webform?.observations?.find(item => item.observationCode === row.observationCode);
-      dcoUpdates.push({
-        observationId: oldObs?.observationId ?? 0,
-        observationCode: row.observationCode,
-        observationClass: "DCOBS",
-        value,
-        valueType: row.type === "numeric" ? "NUMBER" : "TEXT",
-        status: oldObs?.observationId ? "C" : "F",
-        description: row.label,
-        orderedBy: createdBy,
-        collectedBy: createdBy,
-        collectedDateTime: getDateTimeString(new Date())
-      });
-    });
-    totalDefs.forEach(total => {
-      if (!total.observationCode) return;
-      const oldObs = sd?.webform?.observations?.find(item => item.observationCode === total.observationCode);
-      dcoUpdates.push({
-        observationId: oldObs?.observationId ?? 0,
-        observationCode: total.observationCode,
-        observationClass: "DCOBS",
-        value: computedTotals[total.id] ?? 0,
-        valueType: "NUMBER",
-        status: oldObs?.observationId ? "C" : "F",
-        description: total.label,
-        orderedBy: createdBy,
-        collectedBy: createdBy,
-        collectedDateTime: getDateTimeString(new Date())
-      });
-    });
-    setPanelPayload(setFormData, componentId, "dco", dcoUpdates);
-    if (saveMode === "panel") {
-      setPanelPayload(setFormData, componentId, "webform", {
-        panelUpdates: [{
-          panelCode,
-          title,
-          rows: rowDefs.map(row => ({
-            id: row.id,
-            label: row.label,
-            value: getPanelValue(rootValue, row.id),
-            observationCode: row.observationCode
-          })),
-          totals: totalDefs.map(total => ({
-            id: total.id,
-            label: total.label,
-            value: computedTotals[total.id] ?? 0,
-            observationCode: total.observationCode
-          }))
-        }]
-      });
-    }
-  }, [componentId, computedTotals, createdBy, panelCode, rootValue, rowDefs, saveMode, sd, setFormData, title, totalDefs]);
-  const historyRows = useMemo(() => {
-    if (!history) return [];
-    const codeSet = new Set([...rowDefs, ...totalDefs].map(item => item.observationCode).filter(Boolean));
-    const source = Array.isArray(sd?.patient?.observations) ? sd.patient.observations : [];
-    const grouped = new Map();
-    source.forEach(entry => {
-      if (!codeSet.has(entry.observationCode)) return;
-      const key = panelDateKey(entry.collectedDateTime);
-      const current = grouped.get(key) ?? {
-        date: key
-      };
-      current[entry.observationCode] = entry.value;
-      grouped.set(key, current);
-    });
-    return Array.from(grouped.values()).sort((a, b) => String(b.date).localeCompare(String(a.date))).slice(0, maxHistory);
-  }, [history, maxHistory, rowDefs, sd, totalDefs]);
-  const setRowValue = (rowId, nextValue) => {
-    setFormData(produce(draft => {
-      if (!draft.field) draft.field = {
-        data: {},
-        status: {},
-        history: []
-      };
-      if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {};
-      const current = draft.field.data[effectiveFieldId] && typeof draft.field.data[effectiveFieldId] === "object" ? draft.field.data[effectiveFieldId] : {};
-      const {
-        __authorship,
-        ...rowValues
-      } = current;
-      draft.field.data[effectiveFieldId] = {
-        ...rowValues,
-        [rowId]: nextValue
-      };
-      // Lock-on-edit: claim this row for the current author in the same write.
-      if (nhAuth && authorshipPolicy?.enabled) {
-        nhAuth.claim(draft, sd, {
-          scope: "row",
-          componentId,
-          rowKey: rowId
-        }, nextValue, authorshipPolicy, {
-          now: sd?.previewOptions?.authorshipNow
-        });
-      }
-    }));
-  };
-  return /*#__PURE__*/React.createElement(Stack, {
-    tokens: {
-      childrenGap: 10
-    }
-  }, /*#__PURE__*/React.createElement(Label, null, title), rowDefs.map(row => {
-    const value = getPanelValue(rootValue, row.id);
-    const rowLockInfo = nhAuth && authorshipPolicy?.enabled ? nhAuth.lockInfo(fd, sd, {
-      scope: "row",
-      componentId,
-      rowKey: row.id
-    }, {
-      ownerName: actor.ownerName,
-      ownerId: actor.ownerId,
-      now: sd?.previewOptions?.authorshipNow
-    }) : {
-      locked: false
-    };
-    const rowReadOnly = !!rowLockInfo.locked;
-    if (row.type === "coded") {
-      const optionList = Array.isArray(row.options) ? row.options.map(option => ({
-        key: String(option),
-        text: String(option)
-      })) : [];
-      return /*#__PURE__*/React.createElement(Stack, {
-        key: row.id,
-        tokens: {
-          childrenGap: 4
-        }
-      }, /*#__PURE__*/React.createElement(ChoiceGroup, {
-        label: row.label,
-        options: optionList,
-        selectedKey: value == null ? undefined : String(value),
-        onChange: rowReadOnly ? undefined : (_event, option) => setRowValue(row.id, option?.key ?? ""),
-        disabled: rowReadOnly
-      }), rowLockInfo.note ? /*#__PURE__*/React.createElement(Text, {
-        variant: "small",
-        styles: {
-          root: {
-            color: "#605e5c"
-          }
-        }
-      }, rowLockInfo.note) : null);
-    }
-    return /*#__PURE__*/React.createElement(Stack, {
-      key: row.id,
-      tokens: {
-        childrenGap: 4
-      }
-    }, /*#__PURE__*/React.createElement(TextField, {
-      label: row.label,
-      value: value ?? "",
-      onChange: rowReadOnly ? undefined : (_event, nextValue) => setRowValue(row.id, row.type === "numeric" ? Number(nextValue ?? 0) : nextValue ?? ""),
-      multiline: row.type === "text",
-      readOnly: rowReadOnly
-    }), rowLockInfo.note ? /*#__PURE__*/React.createElement(Text, {
-      variant: "small",
-      styles: {
-        root: {
-          color: "#605e5c"
-        }
-      }
-    }, rowLockInfo.note) : null);
-  }), totalDefs.length > 0 ? /*#__PURE__*/React.createElement(Separator, null) : null, totalDefs.map(total => /*#__PURE__*/React.createElement(Text, {
-    key: total.id,
-    variant: "mediumPlus"
-  }, total.label, ": ", computedTotals[total.id] ?? 0)), history && historyRows.length > 0 ? /*#__PURE__*/React.createElement(Stack, {
-    tokens: {
-      childrenGap: 6
-    }
-  }, /*#__PURE__*/React.createElement(Label, null, "History"), historyRows.map(entry => /*#__PURE__*/React.createElement(Text, {
-    key: entry.date,
-    variant: "small"
-  }, entry.date, ": ", rowDefs.concat(totalDefs).map(item => \`\${item.label} \${entry[item.observationCode] ?? "-"}\`).join(" | ")))) : null);
 };`,
   './ObservationQuery/index.jsx': `const {
   useMemo
@@ -26352,6 +25770,213 @@ const ObservationValueDisplay = ({
     }
   }, windowLabel) : null);
 };`,
+  './ObservationValueKit/index.jsx': `// ObservationValueKit — non-rendering value/write kernel for panel-entry
+// composites. It follows the real NHForms CommonSchemaDefn pattern: keep the
+// observation data contract in one shared helper and let renderers focus on UI.
+//
+// Consumers must read ObservationValueKit inside component functions because
+// NHForms modules have no guaranteed evaluation order in the MOIS engine.
+
+const ObservationValueKit = (() => {
+  const toText = value => value === null || value === undefined ? "" : String(value);
+  const normalizeOptions = options => (Array.isArray(options) ? options : []).map(option => {
+    if (option && typeof option === "object") {
+      const value = option.value ?? option.key ?? option.code;
+      if (value === undefined || value === null) return null;
+      return {
+        ...option,
+        key: toText(option.key ?? option.code ?? value),
+        value,
+        label: toText(option.label ?? option.text ?? option.display ?? value),
+        description: toText(option.description ?? option.detail ?? option.label ?? option.text ?? option.display ?? value),
+        system: toText(option.system)
+      };
+    }
+    if (option === undefined || option === null) return null;
+    return {
+      key: toText(option),
+      value: option,
+      label: toText(option),
+      description: toText(option),
+      system: ""
+    };
+  }).filter(Boolean);
+  const isEmpty = value => {
+    if (value === undefined || value === null || value === "") return true;
+    if (Array.isArray(value)) return value.length === 0;
+    if (value && typeof value === "object") {
+      if (Object.prototype.hasOwnProperty.call(value, "selectedKey")) {
+        return value.selectedKey === undefined || value.selectedKey === null || value.selectedKey === "";
+      }
+      if (Object.prototype.hasOwnProperty.call(value, "code") || Object.prototype.hasOwnProperty.call(value, "display")) {
+        return !toText(value.code ?? value.display).trim();
+      }
+      if (Object.prototype.hasOwnProperty.call(value, "value")) return isEmpty(value.value);
+    }
+    return false;
+  };
+  const normalizeAnswer = (value, options) => {
+    const optionList = normalizeOptions(options);
+    const rawKey = value && typeof value === "object" ? value.selectedKey ?? value.code ?? value.key ?? value.value : value;
+    const option = optionList.find(candidate => candidate.key === toText(rawKey) || candidate.value === rawKey || toText(candidate.value) === toText(rawKey));
+    const rawValue = value && typeof value === "object" && Object.prototype.hasOwnProperty.call(value, "value") ? value.value : option?.value ?? value;
+    const numeric = Number(rawValue);
+    return {
+      raw: rawValue,
+      code: toText(value && typeof value === "object" ? value.selectedKey ?? value.code ?? value.key ?? option?.key ?? rawValue : option?.key ?? rawValue),
+      display: toText(value && typeof value === "object" ? value.response ?? value.display ?? value.text ?? option?.label ?? rawValue : option?.label ?? rawValue),
+      detail: toText(value && typeof value === "object" ? value.detailResponse ?? value.description ?? option?.description ?? value.response ?? value.display ?? rawValue : option?.description ?? option?.label ?? rawValue),
+      numeric: Number.isFinite(numeric) ? numeric : null,
+      system: toText(value && typeof value === "object" ? value.system ?? option?.system : option?.system),
+      empty: isEmpty(value)
+    };
+  };
+  const valueType = row => {
+    const explicit = toText(row?.valueType).trim().toUpperCase();
+    if (explicit === "VALUESET" || explicit === "NUMERIC" || explicit === "TEXT") return explicit;
+    const type = toText(row?.type).trim().toLowerCase();
+    if (type === "scale" || type === "coded" || type === "choice") return "VALUESET";
+    if (type === "number" || type === "numeric") return "NUMERIC";
+    return "TEXT";
+  };
+  const buildObservation = (row, value, index) => {
+    const answer = normalizeAnswer(value, row?.options);
+    const type = valueType(row);
+    const observation = {
+      description: row?.description ?? row?.label,
+      observationCode: row?.observationCode,
+      ...(row?.loincCode ? {
+        loincCode: row.loincCode
+      } : {}),
+      observationClass: "DCOBS",
+      panelSequenceNumber: row?.panelSequenceNumber ?? index + 1,
+      valueType: type,
+      status: row?.status ?? "F",
+      units: row?.units,
+      rangeNormalLow: row?.rangeNormalLow,
+      rangeNormalHigh: row?.rangeNormalHigh,
+      rangeAbsurdLow: row?.rangeAbsurdLow,
+      rangeAbsurdHigh: row?.rangeAbsurdHigh,
+      referenceRangeText: row?.referenceRangeText
+    };
+    if (type === "VALUESET") {
+      observation.codedValue = {
+        code: answer.empty ? null : answer.code,
+        display: answer.empty ? null : answer.display,
+        system: row?.system ?? answer.system
+      };
+    } else if (type === "NUMERIC") {
+      observation.value = answer.empty ? null : answer.numeric;
+    } else {
+      observation.value = answer.empty ? null : answer.display;
+    }
+    return observation;
+  };
+  const nowString = () => typeof getDateTimeString === "function" ? getDateTimeString(new Date()) : new Date().toISOString();
+  const buildPanelUpdate = ({
+    sd,
+    panelCode,
+    panelName,
+    title,
+    rows,
+    totals,
+    values,
+    totalValues,
+    includeEmptyRows = false,
+    orderedBy,
+    facility,
+    notes
+  }) => {
+    const normalizedName = panelName && typeof panelName === "object" ? panelName : {
+      code: panelCode,
+      display: title,
+      system: "MOIS"
+    };
+    if (!toText(normalizedName?.code).trim()) return null;
+    const existingPanels = Array.isArray(sd?.webform?.observationPanels) ? sd.webform.observationPanels : [];
+    const existing = existingPanels.find(panel => panel?.panelName?.code === normalizedName.code);
+    const rowObservations = (Array.isArray(rows) ? rows : []).map((row, index) => ({
+      row,
+      value: values?.[row.id],
+      index
+    })).filter(({
+      value
+    }) => includeEmptyRows || !isEmpty(value)).map(({
+      row,
+      value,
+      index
+    }) => buildObservation(row, value, index));
+    const totalObservations = (Array.isArray(totals) ? totals : []).map((total, index) => ({
+      total,
+      value: totalValues?.[total.id],
+      index: rowObservations.length + index
+    })).filter(({
+      value
+    }) => includeEmptyRows || !isEmpty(value)).map(({
+      total,
+      value,
+      index
+    }) => buildObservation({
+      ...total,
+      type: "numeric",
+      valueType: "NUMERIC"
+    }, value, index));
+    const observations = [...rowObservations, ...totalObservations];
+    if (observations.length === 0) return null;
+    const timestamp = nowString();
+    return {
+      observationPanelId: existing?.observationPanelId ?? 0,
+      collectedDate: timestamp,
+      reportedDate: timestamp,
+      orderedBy: orderedBy ?? sd?.userProfile?.identity?.fullName,
+      status: "F",
+      panelName: normalizedName,
+      observations,
+      ...(facility ? {
+        facility
+      } : {}),
+      ...(notes ? {
+        notes
+      } : {})
+    };
+  };
+  const buildDcoUpdates = ({
+    sd,
+    rows,
+    totals,
+    values,
+    totalValues,
+    collectedBy
+  }) => [...(Array.isArray(rows) ? rows : []), ...(Array.isArray(totals) ? totals : [])].map(row => {
+    const value = (Array.isArray(totals) ? totals : []).includes(row) ? totalValues?.[row.id] : values?.[row.id];
+    if (!row?.observationCode || isEmpty(value)) return null;
+    const answer = normalizeAnswer(value, row.options);
+    const type = valueType(row);
+    const oldObs = sd?.webform?.observations?.find(item => item.observationCode === row.observationCode);
+    return {
+      observationId: oldObs?.observationId ?? 0,
+      observationCode: row.observationCode,
+      observationClass: "DCOBS",
+      value: type === "NUMERIC" ? answer.numeric : type === "VALUESET" ? answer.code : answer.display,
+      valueType: type === "NUMERIC" ? "NUMBER" : "TEXT",
+      status: oldObs?.observationId ? "C" : "F",
+      description: row.label,
+      orderedBy: collectedBy,
+      collectedBy,
+      collectedDateTime: nowString()
+    };
+  }).filter(Boolean);
+  return {
+    toText,
+    normalizeOptions,
+    isEmpty,
+    normalizeAnswer,
+    valueType,
+    buildObservation,
+    buildPanelUpdate,
+    buildDcoUpdates
+  };
+})();`,
   './Occupations/index.jsx': `function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /**
  * Display a list of patient's employers and occupations. By default, it will
@@ -26408,6 +26033,645 @@ employer
 classification { code display system }
 hoursPerWeek
 \`;`,
+  './PanelEntryGrid/index.jsx': `/**
+ * __nhAuth — self-contained field/row authorship runtime for NHForms components.
+ *
+ * WHY THIS EXISTS
+ * Export hosts may execute generated component sources without importing the
+ * webforms package helpers. This runtime is therefore INLINED into each
+ * authorship-aware component's source (prepended by the nhforms generator and
+ * the Vite loader for any component that references \`__nhAuth\`). The generated
+ * component remains self-contained in SMOIS/FormTester and in other browser
+ * hosts that implement the same source-data/active-data contract.
+ *
+ * COLLISION SAFETY
+ * Everything lives inside a single anonymous IIFE that assigns \`window.__nhAuth\`
+ * exactly once (idempotent). There are NO top-level declarations, so prepending
+ * this snippet to several components in a concatenating host can never produce
+ * a duplicate-declaration SyntaxError.
+ *
+ * SCOPE / LIMITS (see docs runtime/mois-locking-signing-audit.md)
+ * - Advisory, client-side only: the host stores \`field.data.__authorship\` as an
+ *   opaque blob and enforcement remains in the generated UI. Not a security
+ *   boundary.
+ * - A component can only enforce read-only on inputs IT renders. Authored values
+ *   must live inside an authorship-aware component, not as loose native fields.
+ * - Claims persist in \`field.data.__authorship\` (that is what MOIS saves).
+ *
+ * Mirror of packages/form-components/src/authorship.ts — keep in rough sync.
+ */
+;
+(function () {
+  if (typeof window === "undefined" || !window || window.__nhAuth) return;
+  var DEFAULT_WINDOW_HOURS = 72;
+  function isNonEmpty(v) {
+    if (v === null || v === undefined) return false;
+    if (typeof v === "string") return v.trim().length > 0;
+    if (Array.isArray(v)) return v.length > 0;
+    if (typeof v === "object") return Object.keys(v).length > 0;
+    return true;
+  }
+  function buildKey(q) {
+    q = q || {};
+    if (q.scope === "row") {
+      return "row:" + (q.componentId || "component") + ":" + (q.rowKey || q.fieldId || "");
+    }
+    return "field:" + (q.fieldId || q.rowKey || q.componentId || "");
+  }
+  function normalizeStore(input) {
+    var claims = {};
+    if (input && typeof input === "object" && input.claims && typeof input.claims === "object") {
+      Object.keys(input.claims).forEach(function (k) {
+        var c = input.claims[k];
+        if (c && typeof c === "object") {
+          var ck = c.claimKey || k;
+          if (ck) claims[ck] = c;
+        }
+      });
+    }
+    return {
+      version: 1,
+      claims: claims
+    };
+  }
+  function readStore(state) {
+    var data = state && state.field && state.field.data ? state.field.data : state && state.formData ? state.formData : null;
+    return normalizeStore(data && data.__authorship);
+  }
+  function addHoursIso(ts, hours) {
+    var d = ts ? new Date(ts) : new Date();
+    if (isNaN(d.getTime())) return undefined;
+    return new Date(d.getTime() + hours * 3600000).toISOString();
+  }
+  function pad2(n) {
+    return String(n).length < 2 ? "0" + n : String(n);
+  }
+  function formatTimestamp(ts) {
+    if (!ts) return "";
+    var d = new Date(ts);
+    if (isNaN(d.getTime())) return String(ts);
+    return d.getFullYear() + "." + pad2(d.getMonth() + 1) + "." + pad2(d.getDate()) + " - " + pad2(d.getHours()) + ":" + pad2(d.getMinutes());
+  }
+  function sameActor(claim, actor) {
+    if (!claim || !actor) return false;
+    if (actor.ownerId !== undefined && actor.ownerId !== null && claim.ownerId !== undefined && claim.ownerId !== null) {
+      return String(actor.ownerId) === String(claim.ownerId);
+    }
+    return !!actor.ownerName && !!claim.ownerName && actor.ownerName === claim.ownerName;
+  }
+
+  // Identity is read from the genuine MOIS session. Prefer sd.userProfile so the
+  // live actor matches the visible logged-in profile; fall back to sd.auth for
+  // runtimes that only expose the auth id.
+  function actorFrom(sd, state) {
+    var ownerId = sd && sd.userProfile && sd.userProfile.userProfileId !== undefined && sd.userProfile.userProfileId !== null ? sd.userProfile.userProfileId : sd && sd.auth && sd.auth.userProfileId !== undefined && sd.auth.userProfileId !== null ? sd.auth.userProfileId : undefined;
+    var ownerName = sd && sd.userProfile && sd.userProfile.identity && sd.userProfile.identity.fullName || state && state.field && state.field.data && state.field.data.createdBy || sd && sd.webform && sd.webform.provider && sd.webform.provider.name || "";
+    return {
+      ownerId: ownerId,
+      ownerName: ownerName
+    };
+  }
+  function resolveNow(sd, opts) {
+    var raw = opts && opts.now !== undefined && opts.now !== null ? opts.now : sd && sd.previewOptions ? sd.previewOptions.authorshipNow : undefined;
+    return raw ? new Date(raw) : new Date();
+  }
+
+  // Read: compute lock state for a target. \`opts\` carries the current actor
+  // (ownerId/ownerName) and an optional \`now\` override (preview clock).
+  // A "pending" claim (lock-on-save, not yet saved) is NOT enforced.
+  function lockInfo(state, sd, query, opts) {
+    opts = opts || {};
+    var store = readStore(state);
+    var claim = store.claims[buildKey(query)];
+    if (!claim || claim.status === "unlocked" || claim.status === "pending") return {
+      locked: false
+    };
+    var ownerName = claim.ownerName || "Unknown";
+    var ts = formatTimestamp(claim.timestamp);
+    var actor = {
+      ownerId: opts.ownerId,
+      ownerName: opts.ownerName
+    };
+    var isOwner = sameActor(claim, actor);
+    var editableUntil = claim.editableUntil || addHoursIso(claim.claimedAt || claim.timestamp, DEFAULT_WINDOW_HOURS);
+    var now = resolveNow(sd, opts);
+    var euDate = editableUntil ? new Date(editableUntil) : null;
+    var expired = !!euDate && !isNaN(euDate.getTime()) && now.getTime() > euDate.getTime();
+    if (claim.status !== "signed" && isOwner && !expired) {
+      var untilSelf = formatTimestamp(editableUntil);
+      return {
+        locked: false,
+        claim: claim,
+        isOwner: true,
+        expired: false,
+        ownerName: ownerName,
+        note: untilSelf ? "Locked to you until " + untilSelf : "Locked to you"
+      };
+    }
+    var label = claim.status === "signed" ? "Signed by" : expired ? "Editing window expired for" : "Locked by";
+    return {
+      locked: true,
+      claim: claim,
+      isOwner: isOwner,
+      expired: expired,
+      ownerName: ownerName,
+      note: ts ? label + " " + ownerName + " at " + ts : label + " " + ownerName
+    };
+  }
+
+  // Write: mutate a produce() draft to upsert/refresh the current actor's claim
+  // for a target. Returns true when the claim store changed. Call inside the
+  // component's own setFormData(produce(draft => ...)) on value change.
+  function claim(draft, sd, query, value, policy, opts) {
+    opts = opts || {};
+    policy = policy || {};
+    if (policy.enabled === false) return false;
+    if (!draft || typeof draft !== "object") return false;
+    if (!draft.field) draft.field = {
+      data: {},
+      status: {},
+      history: []
+    };
+    if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {};
+    var store = normalizeStore(draft.field.data.__authorship);
+    var key = buildKey(query);
+    var existing = store.claims[key];
+    var actor = actorFrom(sd, draft);
+    var now = resolveNow(sd, opts);
+    var nowIso = now.toISOString();
+    var windowHours = typeof policy.editableWindowHours === "number" && policy.editableWindowHours > 0 ? policy.editableWindowHours : DEFAULT_WINDOW_HOURS;
+    var lockOn = policy.lockOn || "edit";
+    // lock-on-edit enforces immediately; lock-on-save/submit/sign records a
+    // non-enforced "pending" claim that a later save promotes to "locked".
+    var pending = lockOn !== "edit";
+
+    // Enforcement: a signed claim is terminal; a LOCKED claim owned by someone
+    // else blocks until its window expires; a PENDING claim is not yet enforced
+    // so anyone may take it over.
+    if (existing && existing.status === "signed") return false;
+    if (existing && existing.status === "locked" && !sameActor(existing, actor)) {
+      var lockedUntil = existing.editableUntil || addHoursIso(existing.claimedAt || existing.timestamp, DEFAULT_WINDOW_HOURS);
+      var lockedUntilDate = lockedUntil ? new Date(lockedUntil) : null;
+      var lockExpired = !!lockedUntilDate && !isNaN(lockedUntilDate.getTime()) && now.getTime() > lockedUntilDate.getTime();
+      if (!lockExpired) return false;
+    }
+    var ownerRefresh = existing && existing.status !== "unlocked" && sameActor(existing, actor);
+    if (ownerRefresh) {
+      // Owner edit: refresh value/timestamp, keep the original window. A claim
+      // already promoted to locked/signed stays so; a pending one stays pending.
+      var keepStatus = existing.status === "locked" || existing.status === "signed" ? existing.status : pending ? "pending" : "locked";
+      store.claims[key] = Object.assign({}, existing, {
+        status: keepStatus,
+        timestamp: nowIso,
+        lastSavedAt: nowIso,
+        currentValue: value,
+        ownerName: actor.ownerName || existing.ownerName,
+        ownerId: actor.ownerId !== undefined && actor.ownerId !== null ? actor.ownerId : existing.ownerId
+      });
+    } else {
+      // New / taken-over / released claim: only claim a meaningful value.
+      if (!isNonEmpty(value)) return false;
+      store.claims[key] = {
+        claimKey: key,
+        scope: query.scope === "row" ? "row" : "field",
+        fieldId: query.fieldId,
+        rowKey: query.rowKey,
+        componentId: query.componentId,
+        ownerName: actor.ownerName,
+        ownerId: actor.ownerId,
+        timestamp: nowIso,
+        claimedAt: nowIso,
+        lastSavedAt: nowIso,
+        editableUntil: addHoursIso(nowIso, windowHours),
+        status: pending ? "pending" : "locked",
+        lockOn: lockOn,
+        editableWindowHours: windowHours,
+        currentValue: value
+      };
+    }
+    draft.field.data.__authorship = store;
+    return true;
+  }
+  function policyAppliesToAction(lockOn, action) {
+    lockOn = lockOn || "save";
+    if (action === "save") return lockOn === "save";
+    if (action === "submit") return lockOn === "save" || lockOn === "submit";
+    if (action === "sign") return true; // a sign finalizes everything pending
+    return false;
+  }
+
+  // Lock-on-save: promote the current actor's PENDING claims to locked/signed.
+  // Pure — returns { changed, formData, nextState }; commitSave persists it.
+  // Called by save components (UnsavedChangesGuard / SaveOnClose) at save time.
+  function prepareSave(state, sd, action) {
+    action = action || "save";
+    var fieldData = state && state.field && state.field.data ? state.field.data : {};
+    var nextFieldData;
+    try {
+      nextFieldData = JSON.parse(JSON.stringify(fieldData));
+    } catch (e) {
+      nextFieldData = Object.assign({}, fieldData);
+    }
+    var store = normalizeStore(nextFieldData.__authorship);
+    var actor = actorFrom(sd, state);
+    var nowIso = new Date().toISOString();
+    var changed = false;
+    Object.keys(store.claims).forEach(function (k) {
+      var c = store.claims[k];
+      if (!c || c.status !== "pending") return;
+      if (!sameActor(c, actor)) return;
+      if (!policyAppliesToAction(c.lockOn || "save", action)) return;
+      var windowHours = typeof c.editableWindowHours === "number" && c.editableWindowHours > 0 ? c.editableWindowHours : DEFAULT_WINDOW_HOURS;
+      var nextStatus = action === "sign" || c.lockOn === "sign" ? "signed" : "locked";
+      // The owner-editable window starts when the claim actually locks (now).
+      store.claims[k] = Object.assign({}, c, {
+        status: nextStatus,
+        timestamp: nowIso,
+        lastSavedAt: nowIso,
+        claimedAt: nowIso,
+        editableUntil: addHoursIso(nowIso, windowHours)
+      });
+      changed = true;
+    });
+    if (changed) nextFieldData.__authorship = store;
+    return {
+      changed: changed,
+      formData: nextFieldData,
+      nextState: Object.assign({}, state, {
+        field: Object.assign({}, state && state.field ? state.field : {
+          status: {},
+          history: []
+        }, {
+          data: nextFieldData
+        })
+      })
+    };
+  }
+  function commitSave(state, prepared) {
+    if (!prepared || !prepared.changed) return prepared ? prepared.nextState : undefined;
+    if (state && typeof state.setFormData === "function") {
+      state.setFormData(prepared.nextState);
+    }
+    return prepared.nextState;
+  }
+
+  // Release (unlock) a claim on a produce() draft. Returns true if it changed.
+  function release(draft, query) {
+    if (!draft || !draft.field || !draft.field.data) return false;
+    var store = normalizeStore(draft.field.data.__authorship);
+    var key = buildKey(query);
+    var current = store.claims[key];
+    if (!current || current.status === "unlocked") return false;
+    store.claims[key] = Object.assign({}, current, {
+      status: "unlocked",
+      releasedAt: new Date().toISOString()
+    });
+    draft.field.data.__authorship = store;
+    return true;
+  }
+  window.__nhAuth = {
+    version: 1,
+    buildKey: buildKey,
+    lockInfo: lockInfo,
+    claim: claim,
+    release: release,
+    actor: actorFrom,
+    formatTimestamp: formatTimestamp,
+    // lock-on-save
+    prepareSave: prepareSave,
+    commitSave: commitSave
+  };
+})();
+const {
+  useEffect,
+  useMemo
+} = React;
+const {
+  Dropdown,
+  Label,
+  Separator,
+  Stack,
+  Text,
+  TextField
+} = Fluent;
+const panelGridRows = rows => Array.isArray(rows) ? rows.filter(row => row && typeof row === "object" && typeof row.id === "string") : [];
+const panelGridTotals = totals => Array.isArray(totals) ? totals.filter(total => total && typeof total === "object" && typeof total.id === "string") : [];
+const panelGridDateKey = value => {
+  const raw = String(value ?? "");
+  return raw.includes("T") ? raw.split("T")[0] : raw;
+};
+const stripPanelGridVolatileFields = value => {
+  if (Array.isArray(value)) return value.map(stripPanelGridVolatileFields);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).filter(([key]) => key !== "collectedDate" && key !== "reportedDate" && key !== "collectedDateTime").map(([key, nested]) => [key, stripPanelGridVolatileFields(nested)]));
+  }
+  return value;
+};
+const panelGridPayloadsEqual = (left, right) => JSON.stringify(stripPanelGridVolatileFields(left ?? null)) === JSON.stringify(stripPanelGridVolatileFields(right ?? null));
+const setPanelGridPayload = (setFormData, componentId, payloadType, payload) => {
+  setFormData(produce(draft => {
+    if (!draft.field) draft.field = {
+      data: {},
+      status: {},
+      history: []
+    };
+    if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {};
+    const container = draft.field.data.__componentPayloads ?? {};
+    const key = payloadType === "webform" ? "webformUpdatesByComponent" : "dcoUpdatesByComponent";
+    const group = container[key] ?? {};
+    if (panelGridPayloadsEqual(group[componentId], payload)) return;
+    if (payload == null || Array.isArray(payload) && payload.length === 0) delete group[componentId];else group[componentId] = payload;
+    container[key] = group;
+    draft.field.data.__componentPayloads = container;
+  }));
+};
+const getPanelGridAuth = () => typeof window !== "undefined" && window.__nhAuth || null;
+const PANEL_GRID_TABLE_STYLE = {
+  borderCollapse: "collapse",
+  tableLayout: "fixed",
+  width: "100%"
+};
+const PANEL_GRID_CELL_STYLE = {
+  border: "1px solid #d2d0ce",
+  padding: "8px",
+  verticalAlign: "middle"
+};
+
+/**
+ * Shared observation-panel entry surface.
+ *
+ * Row types: scale/coded, numeric/number, text, and choice. Values stay nested
+ * under fieldId while ObservationValueKit emits one MOIS observation panel.
+ * Historical panels are transposed into date columns beside the current entry.
+ */
+const PanelEntryGrid = ({
+  id,
+  fieldId,
+  title = "Observation Panel",
+  panelCode = "",
+  panelName,
+  rows = [],
+  totals = [],
+  history = false,
+  historyConfig,
+  saveMode = "panel",
+  includeEmptyRows = false,
+  legacyDcoWrites = false,
+  authorshipPolicy: authorshipPolicyProp,
+  orderedByFieldId,
+  facilityFieldId,
+  notesFieldId
+}) => {
+  const kit = ObservationValueKit;
+  const [fd, setFormData] = useActiveData();
+  const sd = useSourceData();
+  const section = useSection();
+  const componentId = id || fieldId || "PanelEntryGrid";
+  const effectiveFieldId = fieldId || componentId;
+  const values = fd?.field?.data?.[effectiveFieldId] && typeof fd.field.data[effectiveFieldId] === "object" ? fd.field.data[effectiveFieldId] : {};
+  const rowDefs = useMemo(() => panelGridRows(rows), [rows]);
+  const totalDefs = useMemo(() => panelGridTotals(totals), [totals]);
+  const historyEnabled = history || historyConfig?.enabled === true;
+  const maxHistory = Number(historyConfig?.maxRows) > 0 ? Number(historyConfig.maxRows) : 5;
+  const authorshipPolicy = authorshipPolicyProp || section?.authorshipPolicy || {
+    enabled: false,
+    granularity: "row",
+    lockOn: "edit"
+  };
+  const nhAuth = getPanelGridAuth();
+  const actor = nhAuth ? nhAuth.actor(sd, fd) : {
+    ownerName: fd?.field?.data?.createdBy ?? sd?.userProfile?.identity?.fullName ?? ""
+  };
+  const computedTotals = useMemo(() => {
+    const next = {};
+    totalDefs.forEach(total => {
+      const sourceIds = Array.isArray(total.sourceRowIds) ? total.sourceRowIds : [];
+      const answers = sourceIds.map(sourceId => kit.normalizeAnswer(values[sourceId], rowDefs.find(row => row.id === sourceId)?.options));
+      const requireComplete = total.requireComplete !== false;
+      if (answers.length === 0 || requireComplete && answers.some(answer => answer.empty || answer.numeric === null)) {
+        next[total.id] = null;
+        return;
+      }
+      const numbers = answers.filter(answer => !answer.empty && answer.numeric !== null).map(answer => answer.numeric);
+      if (numbers.length === 0) {
+        next[total.id] = null;
+      } else if (total.method === "average") {
+        next[total.id] = numbers.reduce((sum, value) => sum + value, 0) / numbers.length;
+      } else if (total.method === "min") {
+        next[total.id] = Math.min(...numbers);
+      } else if (total.method === "max") {
+        next[total.id] = Math.max(...numbers);
+      } else {
+        next[total.id] = numbers.reduce((sum, value) => sum + value, 0);
+      }
+    });
+    return next;
+  }, [kit, rowDefs, totalDefs, values]);
+  useEffect(() => {
+    const data = fd?.field?.data ?? {};
+    const collectedBy = data.createdBy ?? sd?.userProfile?.identity?.fullName;
+    const shouldWriteDcos = legacyDcoWrites || saveMode === "dco" || saveMode === "both";
+    setPanelGridPayload(setFormData, componentId, "dco", shouldWriteDcos ? kit.buildDcoUpdates({
+      sd,
+      rows: rowDefs,
+      totals: totalDefs,
+      values,
+      totalValues: computedTotals,
+      collectedBy
+    }) : null);
+    const shouldWritePanel = saveMode === "panel" || saveMode === "both";
+    const panelUpdate = shouldWritePanel ? kit.buildPanelUpdate({
+      sd,
+      panelCode,
+      panelName,
+      title,
+      rows: rowDefs,
+      totals: totalDefs,
+      values,
+      totalValues: computedTotals,
+      includeEmptyRows,
+      orderedBy: orderedByFieldId ? data[orderedByFieldId] : collectedBy,
+      facility: facilityFieldId ? data[facilityFieldId] : undefined,
+      notes: notesFieldId ? data[notesFieldId] : undefined
+    }) : null;
+    setPanelGridPayload(setFormData, componentId, "webform", panelUpdate ? {
+      panelUpdates: [panelUpdate]
+    } : null);
+  }, [componentId, computedTotals, fd, facilityFieldId, includeEmptyRows, kit, legacyDcoWrites, notesFieldId, orderedByFieldId, panelCode, panelName, rowDefs, saveMode, sd, setFormData, title, totalDefs, values]);
+  const historyColumns = useMemo(() => {
+    if (!historyEnabled) return [];
+    const definitions = [...rowDefs, ...totalDefs];
+    const observations = Array.isArray(sd?.patient?.observations) ? sd.patient.observations : Array.isArray(sd?.queryResult?.patient?.[0]?.observations) ? sd.queryResult.patient[0].observations : [];
+    const grouped = new Map();
+    observations.forEach(entry => {
+      const definition = definitions.find(candidate => candidate.observationCode && candidate.observationCode === entry?.observationCode || candidate.loincCode && candidate.loincCode === entry?.loincCode);
+      if (!definition) return;
+      const date = panelGridDateKey(entry?.collectedDateTime ?? entry?.collectedDate ?? entry?.reportedDate);
+      if (!date) return;
+      const column = grouped.get(date) ?? {
+        date,
+        values: {}
+      };
+      column.values[definition.id] = entry?.codedValue?.display ?? entry?.display ?? entry?.value ?? entry?.report ?? "";
+      grouped.set(date, column);
+    });
+    return Array.from(grouped.values()).sort((left, right) => String(right.date).localeCompare(String(left.date))).slice(0, maxHistory);
+  }, [historyEnabled, maxHistory, rowDefs, sd, totalDefs]);
+  const setRowValue = (rowId, nextValue) => {
+    setFormData(produce(draft => {
+      if (!draft.field) draft.field = {
+        data: {},
+        status: {},
+        history: []
+      };
+      if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {};
+      const current = draft.field.data[effectiveFieldId] && typeof draft.field.data[effectiveFieldId] === "object" ? draft.field.data[effectiveFieldId] : {};
+      draft.field.data[effectiveFieldId] = {
+        ...current,
+        [rowId]: nextValue
+      };
+      if (nhAuth && authorshipPolicy?.enabled) {
+        nhAuth.claim(draft, sd, {
+          scope: "row",
+          componentId,
+          rowKey: rowId
+        }, nextValue, authorshipPolicy, {
+          now: sd?.previewOptions?.authorshipNow
+        });
+      }
+    }));
+  };
+  const renderCurrentValue = (row, value, readOnly) => {
+    const type = String(row.type ?? "text").toLowerCase();
+    const normalizedOptions = kit.normalizeOptions(row.options);
+    const scaleLike = type === "scale" || type === "coded" && normalizedOptions.length > 0 && normalizedOptions.every(option => Number.isFinite(Number(option.value)));
+    if (scaleLike) {
+      return /*#__PURE__*/React.createElement(ScaleField, {
+        fieldId: \`\${effectiveFieldId}_\${row.id}\`,
+        label: row.label,
+        options: normalizedOptions,
+        value: value,
+        onChange: nextValue => setRowValue(row.id, nextValue),
+        hideLabel: true,
+        disableHorizontalScroll: true,
+        showInlineLabels: row.showInlineLabels !== false,
+        showTooltip: row.showTooltip === true,
+        tooltipMode: row.tooltipMode ?? "option",
+        required: row.required === true,
+        readOnly: readOnly
+      });
+    }
+    if (type === "choice" || type === "coded") {
+      const answer = kit.normalizeAnswer(value, normalizedOptions);
+      return /*#__PURE__*/React.createElement(Dropdown, {
+        options: normalizedOptions.map(option => ({
+          key: option.key,
+          text: option.label
+        })),
+        selectedKey: answer.empty ? undefined : answer.code,
+        onChange: readOnly ? undefined : (_event, option) => {
+          const selected = normalizedOptions.find(candidate => candidate.key === String(option?.key ?? ""));
+          setRowValue(row.id, selected ? {
+            code: selected.key,
+            display: selected.label,
+            system: row.system ?? selected.system
+          } : null);
+        },
+        disabled: readOnly
+      });
+    }
+    if (type === "numeric" || type === "number") {
+      const answer = kit.normalizeAnswer(value, row.options);
+      return /*#__PURE__*/React.createElement(TextField, {
+        type: "number",
+        value: answer.empty ? "" : String(answer.raw),
+        min: row.min,
+        max: row.max,
+        step: row.step,
+        onChange: readOnly ? undefined : (_event, nextValue) => setRowValue(row.id, nextValue === "" ? "" : Number(nextValue)),
+        readOnly: readOnly
+      });
+    }
+    return /*#__PURE__*/React.createElement(TextField, {
+      value: kit.normalizeAnswer(value, row.options).display,
+      multiline: row.multiline !== false,
+      onChange: readOnly ? undefined : (_event, nextValue) => setRowValue(row.id, nextValue ?? ""),
+      readOnly: readOnly
+    });
+  };
+  return /*#__PURE__*/React.createElement(Stack, {
+    tokens: {
+      childrenGap: 10
+    }
+  }, /*#__PURE__*/React.createElement(Label, null, title), /*#__PURE__*/React.createElement("div", {
+    style: {
+      overflowX: "auto"
+    }
+  }, /*#__PURE__*/React.createElement("table", {
+    style: PANEL_GRID_TABLE_STYLE
+  }, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", {
+    style: {
+      ...PANEL_GRID_CELL_STYLE,
+      minWidth: 180,
+      textAlign: "left"
+    }
+  }, "Measure"), /*#__PURE__*/React.createElement("th", {
+    style: {
+      ...PANEL_GRID_CELL_STYLE,
+      minWidth: 320
+    }
+  }, "Current"), historyColumns.map(column => /*#__PURE__*/React.createElement("th", {
+    key: column.date,
+    style: {
+      ...PANEL_GRID_CELL_STYLE,
+      minWidth: 110
+    }
+  }, column.date)))), /*#__PURE__*/React.createElement("tbody", null, rowDefs.map(row => {
+    const value = values[row.id];
+    const lockInfo = nhAuth && authorshipPolicy?.enabled ? nhAuth.lockInfo(fd, sd, {
+      scope: "row",
+      componentId,
+      rowKey: row.id
+    }, {
+      ownerName: actor.ownerName,
+      ownerId: actor.ownerId,
+      now: sd?.previewOptions?.authorshipNow
+    }) : {
+      locked: false
+    };
+    return /*#__PURE__*/React.createElement("tr", {
+      key: row.id
+    }, /*#__PURE__*/React.createElement("th", {
+      scope: "row",
+      style: {
+        ...PANEL_GRID_CELL_STYLE,
+        textAlign: "left"
+      }
+    }, row.label, row.units ? /*#__PURE__*/React.createElement(Text, {
+      variant: "small"
+    }, " ", \`(\${row.units})\`) : null, lockInfo.note ? /*#__PURE__*/React.createElement(Text, {
+      block: true,
+      variant: "small",
+      styles: {
+        root: {
+          color: "#605e5c",
+          fontWeight: 400
+        }
+      }
+    }, lockInfo.note) : null), /*#__PURE__*/React.createElement("td", {
+      style: PANEL_GRID_CELL_STYLE
+    }, renderCurrentValue(row, value, !!lockInfo.locked)), historyColumns.map(column => /*#__PURE__*/React.createElement("td", {
+      key: column.date,
+      style: {
+        ...PANEL_GRID_CELL_STYLE,
+        textAlign: "center"
+      }
+    }, column.values[row.id] === undefined || column.values[row.id] === "" ? "—" : String(column.values[row.id]))));
+  })))), totalDefs.length > 0 ? /*#__PURE__*/React.createElement(Separator, null) : null, totalDefs.map(total => /*#__PURE__*/React.createElement(Text, {
+    key: total.id,
+    variant: "mediumPlus"
+  }, total.label, ": ", computedTotals[total.id] === null ? "—" : computedTotals[total.id])));
+};`,
   './PastMeasurementField/index.jsx': `function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 const {
   useEffect,
@@ -29976,6 +30240,9 @@ const {
  * - showTooltip: boolean - Whether to show the row tooltip when descriptions exist
  * - tooltipMode: "all" | "option" - Whether tooltips show all definitions or only the hovered option
  * - disableHorizontalScroll: boolean - Let a parent provide one shared horizontal scrollbar
+ * - value: optional controlled primitive or {selectedKey, value, response} answer
+ * - onChange: optional controlled callback receiving the normalized answer
+ * - hideLabel: boolean - Hide the built-in label column when a composite renders it
  * - required: boolean - Whether the field is required
  * - readOnly: boolean - Whether the field is read-only
  */
@@ -30160,6 +30427,9 @@ const ScaleField = ({
   showTooltip = false,
   tooltipMode = "all",
   disableHorizontalScroll = false,
+  value: controlledValue,
+  onChange: onControlledChange,
+  hideLabel = false,
   required = false,
   readOnly: readOnlyProp = false,
   disabled = false
@@ -30169,6 +30439,7 @@ const ScaleField = ({
   const readOnly = readOnlyProp || disabled;
   const [fieldData, setFieldData] = useActiveData(fd => fd?.field?.data || {});
   const theme = useTheme();
+  const isControlled = controlledValue !== undefined;
 
   // Default options if none provided (0-5 scale)
   const scaleOptions = options && options.length > 0 ? options : [{
@@ -30212,16 +30483,43 @@ const ScaleField = ({
     }, defaultRender ? defaultRender(optionProps) : null)) : undefined,
     styles: CHOICE_FIELD_STYLE
   }));
+  const normalizeControlledValue = value => {
+    if (value && typeof value === "object") {
+      const selectedKey = value.selectedKey ?? value.code ?? null;
+      const selectedOption = scaleOptions.find(option => (option.key ?? String(option.value)) === String(selectedKey ?? value.value));
+      return {
+        selectedKey: selectedKey == null ? null : String(selectedKey),
+        value: value.value ?? selectedOption?.value ?? null,
+        response: value.response ?? value.display ?? selectedOption?.label ?? null,
+        detailResponse: value.detailResponse ?? selectedOption?.description ?? value.response ?? value.display ?? null
+      };
+    }
+    if (value === null || value === "") return {
+      selectedKey: null,
+      value: null
+    };
+    const selectedOption = scaleOptions.find(option => (option.key ?? String(option.value)) === String(value) || option.value === value);
+    return selectedOption ? {
+      selectedKey: String(selectedOption.key ?? selectedOption.value),
+      value: selectedOption.value,
+      response: selectedOption.label ?? String(selectedOption.value),
+      detailResponse: selectedOption.description ?? selectedOption.label ?? String(selectedOption.value)
+    } : {
+      selectedKey: String(value),
+      value
+    };
+  };
 
-  // Get current value from field data
-  const currentData = fieldData?.[fieldId] || {
+  // A controlled composite owns the answer; standalone fields keep the legacy
+  // ActiveData object shape used by calculations and exported forms.
+  const currentData = isControlled ? normalizeControlledValue(controlledValue) : fieldData?.[fieldId] || {
     selectedKey: null,
     value: null
   };
 
   // Initialize field data if needed
   useEffect(() => {
-    if (!fieldData?.[fieldId]) {
+    if (!isControlled && fieldId && !fieldData?.[fieldId]) {
       setFieldData({
         [fieldId]: {
           selectedKey: null,
@@ -30230,19 +30528,24 @@ const ScaleField = ({
         }
       });
     }
-  }, [fieldId, fieldData, setFieldData]);
+  }, [fieldId, fieldData, isControlled, setFieldData]);
 
   // Handle selection change
   const handleChange = (ev, option) => {
     if (readOnly) return;
     const selectedOption = scaleOptions.find(o => (o.key ?? String(o.value)) === option.key);
+    const nextValue = {
+      selectedKey: option.key,
+      value: selectedOption?.value ?? parseInt(option.key, 10),
+      response: selectedOption?.label || option.key,
+      detailResponse: selectedOption?.description || selectedOption?.label || option.key
+    };
+    if (isControlled) {
+      if (typeof onControlledChange === "function") onControlledChange(nextValue, option, ev);
+      return;
+    }
     setFieldData({
-      [fieldId]: {
-        selectedKey: option.key,
-        value: selectedOption?.value ?? parseInt(option.key, 10),
-        response: selectedOption?.label || option.key,
-        detailResponse: selectedOption?.description || selectedOption?.label || option.key
-      }
+      [fieldId]: nextValue
     });
   };
 
@@ -30262,7 +30565,7 @@ const ScaleField = ({
     style: {
       minWidth: inlineMinWidth
     }
-  }, /*#__PURE__*/React.createElement(StackItem, {
+  }, hideLabel ? null : /*#__PURE__*/React.createElement(StackItem, {
     disableShrink: true,
     styles: LABEL_COLUMN_STYLE
   }, /*#__PURE__*/React.createElement(Label, {
@@ -36897,10 +37200,12 @@ export const componentDefinedNames: Record<string, string[]> = {
   './ObservationChart/index.jsx': ["$","$e","$l","$n","$t","A","Ae","Ai","Al","An","B","Be","Bl","Bt","C","Ce","Ci","Cl","Ct","D","De","Di","Dl","Dn","Dt","E","El","En","F","Fe","Ft","G","Gt","H","He","Hi","Hl","Ht","I","Ii","Il","It","J","Je","Jl","Jn","Jt","Ke","Kl","Kn","Kt","L","Li","Ll","Lt","M","Mn","Mt","N","Nl","O","OBSERVATION_CHART_LIVE_POINT_COLOR","OBSERVATION_CHART_PALETTE","OBSERVATION_CHART_STYLE_ID","ObservationChart","Ol","Ot","P","Pe","Pi","Pl","Pn","Q","Qn","Qt","R","Re","Ri","Rt","S","Sn","St","T","TREND_SERIES_STROKE","Tn","Tt","UPlotCssText","UPlotLib","Ut","Vl","Vt","W","We","Wi","Wl","Wt","X","Xl","Xn","Xt","Y","Ye","Yi","Yl","Yt","Z","Zl","Zn","Zt","_","_i","_l","_n","_t","a","ai","anchorIndex","applyLiveSeriesValues","at","b","be","bi","bl","bn","bt","buildChartPayload","buildChartPayloadFromObservations","buildChartPayloadFromRows","buildLiveSeriesDefinitions","buildSeriesDefinitions","buildTrendColumn","buildUPlotOptions","c","candidate","chartPayload","chartSeries","ci","codeCandidates","coerceNumber","coercePositiveInt","columns","container","containerRef","count","current","d","dataKey","day","dayMs","denominator","di","direct","document","dt","e","ee","effectiveHeight","effectiveLiveData","effectiveLiveKey","effectiveTitle","ei","el","en","ensureObservationChartStyles","entryCode","entryDescription","entryLoinc","et","explicitDate","f","fi","finalDefs","finalizeChartRows","firstLiveIndex","formatDate","formatXValue","frameStyle","fromPatient","fromQueryResult","ft","g","gi","gn","gt","h","hi","hl","ht","i","ie","ii","includes","insertAt","intercept","isEvenSpacing","isNonEmptyString","isRecord","it","jl","jt","k","keys","ki","kn","kt","l","latestLiveDataRef","liveDateFieldId","liveEntries","liveFieldData","liveFieldId","liveUpdate","liveValuesKey","ll","ln","loincCodes","m","match","matchesObservationSeries","maxPoints","maxX","mi","minX","mode","month","mt","n","ne","ni","normalizeString","normalizeStringArray","normalized","normalizedCodePath","normalizedCodes","normalizedDateOnly","normalizedDescriptionPath","normalizedLoincPath","nt","numericDate","numericValue","o","observationCodes","oi","origin","p","parseDateValue","parseMeasurementValue","parseNumericValue","parsed","parsedDateOnly","patientPath","plot","plotRef","points","predicted","pt","qe","qn","qt","r","rawValue","renderWidth","resizeChart","resizeObserver","resolveLiveUpdateConfig","resolveMoisValue","resolvePathValue","resolveXSpacing","root","rowIndex","rowMap","s","sd","segments","self","seriesDefs","seriesPointSize","seriesShowsPoints","showAxes","showGrid","showLegend","showPoints","single","singleCode","singleLoinc","slope","slotDate","slotIndex","sortedRows","sourceItems","sourcePath","sourceRows","stringifyValue","style","sumX","sumXX","sumXY","sumY","summaryParts","t","target","te","text","timeValue","timer","timestamp","tl","tn","toPathSegments","trendColumn","trimmed","tt","u","uPlot","units","v","value","valueText","ve","vi","vl","vn","vt","w","wi","window","wl","wn","wrapperStyle","wt","x","xAxis","xDates","xKey","xSpacing","xValues","xi","xl","xn","xt","y","year","yi","yn","yt","z","ze","zi","zl","zn"],
   './ObservationEntryGrid/index.jsx': ["GRID_FLAG_DISPLAYS","GridDetailPane","GridRangeBands","ObservationEntryGrid","abnormalFlag","allRows","best","bestTime","buildGridAbnormalFlag","candidate","cellStyle","cells","centerText","chartRows","classifyGridFlag","codeIndex","codeList","commitEntryCode","componentId","container","createdBy","current","currentPayload","cutoff","deleteEntry","detailBandLabelStyle","detailLabelStyle","detailValueStyle","displayFlag","displayValue","editByObservationId","editPayload","edits","editsKey","entries","entriesKey","entryCode","entryLoinc","entryRows","explicitFlag","fields","findRangesForCode","flagCode","gridPayloadsEqual","handleKeyDown","hasBands","hasRanges","headStyle","inlineCodeFieldStyles","inlineNameFieldStyles","inlineTextFieldStyles","key","lookupCodeList","lookupEntry","lower","map","match","newPayload","newRowBackground","next","nextGroup","observationId","parsed","pendingCorrection","pendingDelete","pendingEdit","rangeText","ranges","readGridRows","resolveEntryCode","resolved","rowId","rows","sd","selectedPendingEdit","selectedRow","setGridNestedPayload","source","stageChartDelete","startCorrection","startEntry","stored","stripVolatileGridFields","testNameFieldRefs","text","time","undoChartEdit","updateCorrection","updateEntry","value","valueFieldRefs","withHotkeys","writeRows","zebraRowBackground"],
   './ObservationKit/index.jsx': ["ObservationKit","amount","classifyFlag","classifyRanges","code","codeText","criticalHigh","criticalLow","current","cutoff","cutoffDate","dateKey","dayTime","displayDate","displayText","entryCode","entryLoinc","explicit","extractValue","flagCellStyle","getPath","index","loinc","lookbackLabel","matchCodeIndex","matchesCode","normalHigh","normalLow","normalizeCodes","parseDate","parsed","raw","singular","steps","text","toNumber","toText","unit","value"],
-  './ObservationPanelEditor/index.jsx': ["DEFAULT_WINDOW_HOURS","ObservationPanelEditor","actor","actorFrom","addHoursIso","authorshipPolicy","buildKey","c","changed","ck","claim","claims","codeSet","commitSave","componentId","computedTotals","container","createdBy","current","currentActorName","currentPayload","d","data","dcoUpdates","editableUntil","effectiveFieldId","euDate","existing","expired","fieldData","formatTimestamp","getCurrentActorName","getNhAuth","getPanelValue","grouped","hasValue","historyRows","isNonEmpty","isOwner","keepStatus","key","label","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","maxHistory","next","nextGroup","nextStatus","nhAuth","normalizePanelRows","normalizePanelTotals","normalizeStore","now","nowIso","numeric","oldObs","optionList","ownerId","ownerName","ownerRefresh","pad2","panelDateKey","payloadsEqual","pending","policyAppliesToAction","prepareSave","raw","readStore","release","resolveNow","rootValue","rowDefs","rowLockInfo","rowReadOnly","sameActor","sd","section","setPanelPayload","setRowValue","source","sourceIds","store","stripVolatilePayloadFields","toNumericValue","totalDefs","ts","untilSelf","value","windowHours"],
+  './ObservationPanelEditor/index.jsx': ["ObservationPanelEditor","RuntimePanelEntryGrid"],
   './ObservationQuery/index.jsx': ["ObservationQuery","ObservationQueryLatest","ObservationQueryTable","body","cell","cellStyle","chartRows","codeIndex","codeList","cutoff","effectiveMaxRows","existing","grouped","headerStyle","latest","latestByCode","limited","matches","parsedDate","recentFirst","row","rows","runObservationQuery","sd","series","source","value","windowLabel"],
   './ObservationValueDisplay/index.jsx': ["ObservationValueDisplay","body","candidate","collectObservationValues","commentFilter","cutoff","graph","hasCode","inline","items","limit","measurementSummary","parsedDate","rows","sd","showLabel","value","windowLabel"],
+  './ObservationValueKit/index.jsx': ["ObservationValueKit","answer","buildDcoUpdates","buildObservation","buildPanelUpdate","existing","existingPanels","explicit","isEmpty","normalizeAnswer","normalizeOptions","normalizedName","nowString","numeric","observation","observations","oldObs","option","optionList","rawKey","rawValue","rowObservations","timestamp","toText","totalObservations","type","value","valueType"],
   './Occupations/index.jsx': ["Occupations","OccupationsFields"],
+  './PanelEntryGrid/index.jsx': ["DEFAULT_WINDOW_HOURS","PANEL_GRID_CELL_STYLE","PANEL_GRID_TABLE_STYLE","PanelEntryGrid","actor","actorFrom","addHoursIso","answer","answers","authorshipPolicy","buildKey","c","changed","ck","claim","claims","collectedBy","column","commitSave","componentId","computedTotals","container","current","d","data","date","definition","definitions","editableUntil","effectiveFieldId","euDate","existing","expired","fieldData","formatTimestamp","getPanelGridAuth","group","grouped","historyColumns","historyEnabled","isNonEmpty","isOwner","keepStatus","key","kit","label","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","maxHistory","next","nextStatus","nhAuth","normalizeStore","normalizedOptions","now","nowIso","numbers","observations","ownerId","ownerName","ownerRefresh","pad2","panelGridDateKey","panelGridPayloadsEqual","panelGridRows","panelGridTotals","panelUpdate","pending","policyAppliesToAction","prepareSave","raw","readStore","release","renderCurrentValue","requireComplete","resolveNow","rowDefs","sameActor","scaleLike","sd","section","selected","setPanelGridPayload","setRowValue","shouldWriteDcos","shouldWritePanel","sourceIds","store","stripPanelGridVolatileFields","totalDefs","ts","type","untilSelf","value","values","windowHours"],
   './PastMeasurementField/index.jsx': ["PastMeasurementField","abnormalFlag","abnormalHighValue","abnormalLowValue","canPullLatest","candidate","candidates","codeFilter","coercePositiveInt","commentFilter","componentId","container","createdBy","criticalHighValue","criticalLowValue","current","currentPayload","currentWebformId","currentWebformObservations","day","defaultSpinStep","direct","displayedCurrentValue","documentDate","effectiveFieldId","effectiveHistorySize","effectiveLabelPosition","effectiveMeasurementSize","entryCode","entryComment","entryDate","entryUnits","entryValue","explicitValue","fieldData","flagCode","flagDisplays","formHistoryItems","formatDate","fromPatient","fromQueryResult","handleValueChange","hasAbnormalHigh","hasAbnormalLow","hasExplicitValue","hasMeaningfulValue","hasNumericCurrentValue","hasRangeMetadata","hasStoredValue","historicalFormRowDate","historyItems","historySummary","index","inputSuffix","isAbnormal","isHistoricalFormValue","isNonEmptyString","isNumericInput","key","latestHistoryItem","legacyRangePayload","linkedObservationItem","linkedWebformId","matchingKey","measurementWidthBySize","month","nextGroup","normalizeObservationItems","normalizedDateOnly","normalizedPullTargets","numericCurrentValue","numericExplicitValue","numericTime","observationHistoryItems","observationWebformId","oldId","oldObs","optionalString","parseDateValue","parsed","parsedDate","parsedDateOnly","patientPath","payloadsEqual","pullLatestIntoTargets","raw","rawDate","recentHistoryText","resolveHistoricalFormRows","resolveMeasurementContainerStyle","resolveMoisValue","resolvePathValue","resolvedAbnormalHigh","resolvedAbnormalLow","resolvedCriticalHigh","resolvedCriticalLow","resolvedCurrentValue","resolvedUnits","role","roots","sd","segments","setNestedPayload","shouldReserveHistory","shouldShowHistory","storedValue","stringifyValue","stripVolatilePayloadFields","targetFieldId","text","toObservationList","toPathSegments","updatedValue","value","valueFromHistoricalFormRow","valueIsDate","valueKeys","valuePart","valueText","width","year"],
   './PatientFileSections/index.jsx': ["PatientFileSections","activeText","addressText","cityLine","compactLines","contactText","countryLine","createdDate","editButtonStyle","encounter","fieldWrapStyle","formatAddress","formatContact","formatDate","getPatientFromData","gridStyle","healthNumber","insuranceBy","insuranceNumber","insuranceText","lines","match","mergeObjects","nextPatient","optionCode","optionDisplay","patient","preferredCode","preferredPhoneOptions","providerName","queryPatient","raw","renderClientDemographics","renderDocumentDetails","renderEncounterDetails","renderTitle","requested","sd","section","sectionTitleStyle","textValue","updateContactText","visibleSections","whiteDropdownStyles","whiteFlexTextFieldStyles","whiteTextFieldStyles","writePatientUpdates"],
   './PatientValueField/index.jsx': ["PatientValueField","age","applyPatientTransform","candidates","coercePatientValue","collectionCandidateValues","collectionItemMatches","computeAgeYears","dob","effectiveFieldId","expected","items","monthDelta","normalizedExpected","now","raw","resolveCollectionItemPath","resolvePatientContextPath","resolved","root","sd","stored","values"],
@@ -36910,7 +37215,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './RelationshipStatus/index.jsx': ["RelationshipStatus"],
   './RichMarkdownBlock/index.jsx': ["HAS_REACT_MARKDOWN","HAS_REHYPE_RAW","HAS_REMARK_GFM","INLINE_PATTERN","MarkdownSegment","PreviewMarkdownRenderer","RichMarkdownBlock","TEXT_COLOR_SPAN_PATTERN","align","asset","baseComponents","buffer","cellAlignment","cells","char","content","current","cursor","defaultRehypePlugins","defaultRemarkPlugins","effectiveFieldId","endsWithColon","escapeMarkdownLinkLabel","extra","extraPlugins","flush","fullWidthStyle","hasVisibleChildren","header","i","imageById","imageId","inFence","index","isTableDelimiterRow","key","lastIndex","line","lines","linkStyle","marginTop","match","mergedMarkdownProps","mois","moisLinkWrapperStyle","moisModule","next","nodes","normalizeMoisLinks","normalizeTextColors","numericWidth","parseMoisHref","parseRichImageId","parseTextColorHref","parsedId","rawContent","renderInlineMarkdown","renderMoisLink","renderTableSegment","result","richImageStyle","rowLine","rows","safeRichImageSource","safeSrc","segments","source","splitMarkdownSegments","splitTableRow","src","startsWithColon","tableStyle","tableWrapperStyle","tdStyle","textColor","thStyle","theadStyle","trStyle","trimmed","width"],
   './SaveOnClose/index.jsx': ["DEFAULT_WINDOW_HOURS","SaveOnClose","_buildDefaultSavePayload","_nhAuthPrepareSave","_normalizeSaveOnCloseOptions","_stripComponentPayloads","_useChangeAwareDirtyState","actor","actorFrom","addHoursIso","baselineRef","buildKey","c","changed","ck","claim","claims","commitSave","current","d","data","dirtyRef","disabled","editableUntil","euDate","existing","expired","fieldData","formatTimestamp","isDirty","isNonEmpty","isOwner","keepStatus","key","label","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","markSaved","nextStatus","normalizeStore","normalizedOptions","now","nowIso","ownerId","ownerName","ownerRefresh","pad2","pending","policyAppliesToAction","prepareSave","prepared","raw","readStore","release","renderCountRef","resolveNow","sameActor","saveData","sd","store","trackedValue","ts","untilSelf","useSaveOnClose","windowHours"],
-  './ScaleField/index.jsx': ["CHOICE_FIELD_STYLE","LABEL_COLUMN_STYLE","LABEL_STYLE","ScaleField","ScaleFieldEndpointLabels","ScaleFieldLegend","ScaleFieldTooltip","_getInlineMinWidth","_renderOptionTooltipContent","choiceGroupStyles","choiceOptions","containerStyle","currentData","fieldContent","firstDescription","handleChange","hasDescriptions","inlineMinWidth","label","lastDescription","legendItemStyle","legendRowStyle","normalizedTooltipMode","readOnly","scaleOptions","selectedOption","shouldShowAllTooltip","theme"],
+  './ScaleField/index.jsx': ["CHOICE_FIELD_STYLE","LABEL_COLUMN_STYLE","LABEL_STYLE","ScaleField","ScaleFieldEndpointLabels","ScaleFieldLegend","ScaleFieldTooltip","_getInlineMinWidth","_renderOptionTooltipContent","choiceGroupStyles","choiceOptions","containerStyle","currentData","fieldContent","firstDescription","handleChange","hasDescriptions","inlineMinWidth","isControlled","label","lastDescription","legendItemStyle","legendRowStyle","nextValue","normalizeControlledValue","normalizedTooltipMode","readOnly","scaleOptions","selectedKey","selectedOption","shouldShowAllTooltip","theme"],
   './ScoringModule/index.jsx': ["CompactScoringQuestion","GroupedChecklistQuestion","GroupedChecklistSection","INTERPRETATION_BOX_STYLE","MatrixScoringRow","MatrixScoringTable","QUESTION_CONTAINER_STYLE","ScoringModule","ScoringModuleSchema","ScoringOptionTooltip","ScoringQuestion","ScoringScales","ScoringTotal","TOTAL_CONTAINER_STYLE","_cloneMirrorValue","_getQuestionMirrorFieldIds","_safeSerialize","allEntries","answer","answerScore","answerValue","answered","answers","buildScoreMap","calculatedTotals","candidateKeys","candidates","checked","checkedFromConfig","checkedOption","checklist","checklistUngroupedQuestions","collectScoreCandidates","containerStyle","continuumLabels","countsBySignature","createScoringConfig","createScoringQuestion","createScoringTotal","currentData","direct","effectiveShowProgress","errorContainerStyle","explicitShared","formatBounds","getAnswers","getInterpretation","getScoreFromValue","groupedQuestionIds","handleSelect","handleToggle","hasChanges","hasDescription","headerLabelStyle","headerOptionStyle","headerStyle","ids","interpretation","interpretationStyle","isComplete","isDarkMode","isInRange","keyValue","labelCellStyle","labelStyle","map","matrixQuestionIds","matrixQuestions","matrixSignature","max","maxContinuumLabel","maxSymbol","meetsMax","meetsMin","min","minContinuumLabel","minSymbol","mirrorIds","nextChecked","nextOption","normalizeQuestionIds","normalizeScoreToken","normalizeScoringOption","normalizeScoringOptions","normalizedLayout","normalizedOptionMap","optionCellStyle","optionControl","optionMap","optionScoreMap","options","optionsBySignature","progress","progressStyle","question","questionGroups","questionMirrorEntries","questionOptions","questions","questionsById","resolveChecklistOptions","resolveMatrixOptions","resolveQuestionOptions","resolvedOptions","results","rowStyle","scaleGridStyle","scaleWrapStyle","score","scoreMap","scoreValue","sectionQuestions","selected","serializeOptionSignature","sharedOptions","shouldRenderCompact","shouldRenderGroupedChecklist","shouldRenderMatrix","signature","stackedQuestions","tableStyle","targetIds","termQuestionId","textValue","theme","token","total","totalMirrorEntries","totals","uncheckedFromConfig","uncheckedOption","value","winnerCount","winnerSignature","wrapperStyle"],
   './ServiceEpisodes/index.jsx': ["ServiceEpisodes","ServiceEpisodesFields","activeServiceEpisodes","startDateDesc"],
   './ServiceRequests/index.jsx': ["ServiceRequests","ServiceRequestsFields","activeServiceRequests","orderDateDesc"],
@@ -36985,10 +37290,12 @@ export const componentDependencies: Record<string, string[]> = {
   './ObservationChart/index.jsx': [],
   './ObservationEntryGrid/index.jsx': ["ObservationKit"],
   './ObservationKit/index.jsx': [],
-  './ObservationPanelEditor/index.jsx': [],
+  './ObservationPanelEditor/index.jsx': ["PanelEntryGrid"],
   './ObservationQuery/index.jsx': ["ObservationChart","ObservationKit"],
   './ObservationValueDisplay/index.jsx': ["ObservationKit"],
+  './ObservationValueKit/index.jsx': [],
   './Occupations/index.jsx': [],
+  './PanelEntryGrid/index.jsx': ["ObservationValueKit","ScaleField"],
   './PastMeasurementField/index.jsx': [],
   './PatientFileSections/index.jsx': [],
   './PatientValueField/index.jsx': [],

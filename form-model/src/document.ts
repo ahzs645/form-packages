@@ -378,6 +378,8 @@ export interface ParsedField {
     uniqueBy?: string[];
     sourceFieldIds?: Record<string, string>;
     sourceFieldIdsByRow?: Record<number, Record<string, string>>;
+    rowsPath?: string;
+    countPath?: string;
     modalEditorPresetId?: string;
     modalEditorConfig?: Record<string, unknown> | null;
   };

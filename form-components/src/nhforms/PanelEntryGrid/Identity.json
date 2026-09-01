@@ -1,0 +1,29 @@
+{
+  "name": "PanelEntryGrid",
+  "title": "Panel Entry Grid",
+  "description": "Shared config-driven observation panel entry grid with scale, number, text, and choice rows; transposed history; totals; row authorship; and one panel output.",
+  "version": {
+    "major": 1,
+    "minor": 0,
+    "patch": 0
+  },
+  "type": "component",
+  "owner": "Northern Health",
+  "author": "Codex",
+  "publisher": "Northern Health",
+  "globalIdentifier": "",
+  "requiredFormViewerVersion": {
+    "major": 0,
+    "minor": 1,
+    "patch": 0
+  },
+  "requiredMoisVersion": {
+    "major": 2,
+    "minor": 28,
+    "patch": 10
+  },
+  "components": [
+    "ObservationValueKit",
+    "ScaleField"
+  ]
+}
