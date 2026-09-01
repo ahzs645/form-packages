@@ -2,8 +2,9 @@
 
 What the MPage platform provides, what it expects of us, and which pieces we
 had to build ourselves. Companion to `DEPLOYMENT.md` (procedure),
-`MPAGE-SURVEY.md` (what ten production MPages actually do with all this), and
-`../cerner-ccl/PAYLOAD-REFERENCE.md` (server payload vocabulary).
+`EXPORT-SHAPE.md` (what the builder's Cerner export contains, channel by
+channel), `MPAGE-SURVEY.md` (what ten production MPages actually do with all
+this), and `../cerner-ccl/PAYLOAD-REFERENCE.md` (server payload vocabulary).
 
 ## Where an MPage can run
 

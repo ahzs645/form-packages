@@ -1,7 +1,10 @@
 # Deploying the Web Forms player into PowerChart
 
 Two deployment shapes, both verified against Oracle Health / Clinical Office
-documented procedure. Nothing here requires the Clinical Office product — the
+documented procedure. What the per-form export contains — file by file, plus
+the request and document it sends — is in `EXPORT-SHAPE.md`; the builder's
+**Export → Cerner** target produces that artifact and embeds this procedure
+with the form's own ids substituted. Nothing here requires the Clinical Office product — the
 mechanisms (static content folder, prefmaint tabs, Bedrock components) are
 Cerner's own.
 
