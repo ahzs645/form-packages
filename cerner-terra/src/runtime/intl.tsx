@@ -1,3 +1,7 @@
+import moment from "moment-timezone";
+
+import "./moment-locale";
+
 import React from "react";
 
 import { hoistStatics } from "./hoist-statics";
@@ -15,7 +19,15 @@ import { hoistStatics } from "./hoist-statics";
  * TerraIntlProvider to localise.
  */
 
-const DEFAULT_MESSAGES: Record<string, string> = {
+/** moment's short date format (`L`) for a locale, e.g. "YYYY-MM-DD". */
+function dateFormatForLocale(locale: string): string {
+  const probe = moment();
+  probe.locale(locale);
+  return probe.localeData().longDateFormat("L");
+}
+
+/** Terra's own en strings, with the date hint derived below. */
+export const DEFAULT_MESSAGES: Record<string, string> = {
   "Terra.form.field.optional": "(optional)",
   "Terra.form.field.hiddenRequired": "Required",
   "Terra.hyperlink.iconLabel.audio": "audio",
@@ -66,7 +78,6 @@ const DEFAULT_MESSAGES: Record<string, string> = {
   "Terra.form.select.option": "Options",
   "Terra.form.select.optGroup": "Group {text}",
   "Terra.form.select.deselect": "Deselect {text}",
-  "Terra.datePicker.dateFormat": "MM/DD/YYYY",
   "Terra.datePicker.disabled": "Disabled",
   "Terra.datePicker.openCalendar": "Open Calendar",
   "Terra.datePicker.closeCalendar": "Close",
@@ -97,7 +108,19 @@ interface IntlValue {
   messages: Record<string, string>;
 }
 
-const DEFAULT_LOCALE = "en-US";
+// terra-date-picker derives its input mask and placeholder from moment's
+// locale data for `intl.locale`. moment bundles only `en`, and an unregistered
+// locale falls back to it silently — which is why an unconfigured date field
+// renders US order (MM/DD/YYYY) rather than the YYYY-MM-DD used in BC.
+const DEFAULT_LOCALE = "en-CA";
+
+/**
+ * `Terra.datePicker.dateFormat` is the hint the date picker shows under the
+ * field and reads out to screen readers. Terra ships it per-locale; we derive
+ * it from moment so it cannot drift from the mask the picker actually renders,
+ * which is computed from the same locale data.
+ */
+DEFAULT_MESSAGES["Terra.datePicker.dateFormat"] = dateFormatForLocale(DEFAULT_LOCALE);
 
 const IntlContext = React.createContext<IntlValue>({
   locale: DEFAULT_LOCALE,

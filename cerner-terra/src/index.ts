@@ -130,6 +130,7 @@ export const DatePickerField =
   DatePickerFieldImpl as unknown as React.ComponentType<DatePickerFieldProps>;
 
 export * from "./types";
+export { TerraBase } from "./runtime/terra-base";
 export { TerraIntlProvider, type TerraIntl } from "./runtime/intl";
 export { default as ThemeContext, type TerraTheme } from "./runtime/theme-context";
 export { withDefaults } from "./runtime/with-defaults";

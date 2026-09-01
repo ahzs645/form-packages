@@ -1,23 +1,25 @@
 /*
- * Styling for the native controls this target still falls back to.
+ * Styling for the controls Terra leaves unstyled.
  *
- * Terra's Input deliberately refuses to style date, datetime-local, time,
- * month, week, color, file and range (see the `supportedTypes` allowlist in
- * terra-form-input) because Terra expects a dedicated picker component for
- * those. Until terra-date-picker and terra-form-select are vendored, we
- * render native controls and match them to Terra's documented input spec so
- * a form does not look half-styled.
+ * terra-form-input carries an explicit allowlist — text, number, password,
+ * email, search, tel, url, hidden — and for anything else it renders a bare
+ * `<input>` with no Terra class at all, because Terra expects a dedicated
+ * picker component instead. We have real Terra components for date and
+ * select, so what is left is `time` and `datetime-local` (Terra Core ships no
+ * picker for either) plus the native `<select>` a table's choice column uses.
+ *
+ * These are matched on the input's own `type`, NOT on `data-terra-control`.
+ * A control-kind selector would also hit the Terra components that now back
+ * date, select and select-search, drawing a second border inside their own
+ * chrome — which is exactly what this file used to do.
  *
  * Values are Terra Core defaults: 1px #dedfe0 border, 3px radius, 30px tall,
- * 16px text on a 14px root, 4px padding, #4cb2e9 focus border with no glow.
+ * 16px text on the 14px root that <TerraBase> establishes, 4px padding,
+ * #4cb2e9 focus border with no glow.
  */
 
-[data-terra-control="date"] input,
-[data-terra-control="datetime"] input,
-[data-terra-control="time"] input,
-[data-terra-control="select"] select,
-[data-terra-control="select-search"] input,
-[data-terra-form] td input,
+[data-terra-form] input[type="time"],
+[data-terra-form] input[type="datetime-local"],
 [data-terra-form] td select {
   background-color: #fff;
   border: 1px solid #dedfe0;
@@ -31,11 +33,9 @@
   width: 100%;
 }
 
-[data-terra-control="date"] input:focus,
-[data-terra-control="datetime"] input:focus,
-[data-terra-control="time"] input:focus,
-[data-terra-control="select"] select:focus,
-[data-terra-control="select-search"] input:focus {
+[data-terra-form] input[type="time"]:focus,
+[data-terra-form] input[type="datetime-local"]:focus,
+[data-terra-form] td select:focus {
   border-color: #4cb2e9;
   box-shadow: none;
   outline: none;

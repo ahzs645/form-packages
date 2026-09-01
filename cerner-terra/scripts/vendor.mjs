@@ -11,8 +11,8 @@
  *      React 19 ignores defaultProps on function components.
  *   2. external `terra-*` / `react-intl` imports -> our runtime shims or
  *      sibling vendored components.
- *   3. `terra-icon/lib/icon/IconX` -> a generated local SVG stub, so the
- *      1.37 MB icon package stays out of the tree.
+ *   3. `terra-icon/lib/icon/IconX` -> a local component carrying that icon's
+ *      real SVG path, so the 1.37 MB icon package stays out of the tree.
  *   4. dead IE/legacy polyfill imports dropped, and the two React-19-illegal
  *      constructs Terra still ships (string refs, react-lifecycles-compat)
  *      neutralised.
@@ -37,6 +37,9 @@ const here = dirname(fileURLToPath(import.meta.url));
 const pkgRoot = join(here, "..");
 const outRoot = join(pkgRoot, "src", "vendor");
 const cacheRoot = join(pkgRoot, ".terra-cache");
+
+// terra-icon supplies the glyph geometry; pinned so re-runs are reproducible.
+const ICON_VERSION = "3.62.0";
 
 const sourceRoots = process.argv.slice(2);
 if (!sourceRoots.length || !existsSync(join(sourceRoots[0], "packages"))) {
@@ -229,6 +232,16 @@ function rewriteScss(css, fileDir) {
   for (const theme of SKIP_THEMES) {
     out = out.replace(new RegExp(`@import '[^']*${theme}/[^']*';\\n?`, "g"), "");
   }
+  // Several sheets call `inline-svg()` — the Sass function that turns Terra's
+  // caret, checkmark and dismiss glyphs into data-URI backgrounds — but reach
+  // its definition only transitively, through the theme sheets we just
+  // dropped. Left unresolved it is not a build error: the literal text
+  // `inline-svg('<svg…>')` is emitted, the browser rejects the declaration as
+  // invalid, and the glyph silently renders blank. Import Mixins directly
+  // wherever the function is used.
+  if (/\binline-svg\(/.test(out) && !/terra-mixins\/Mixins/.test(out)) {
+    out = `@import '${prefix}/terra-mixins/Mixins';\n\n${out}`;
+  }
   return out;
 }
 
@@ -297,20 +310,95 @@ for (const pkg of SCSS_PACKAGES) {
   cpSync(join(pkgDir, "src"), join(outRoot, pkg), { recursive: true });
 }
 
-// Generate the icon stubs actually referenced.
+// Generate the icons actually referenced, carrying terra-icon's real glyph
+// geometry. Only the handful of icons our components import are emitted, so
+// the 1.37 MB / 1,646-file package stays out of the tree while the rendering
+// still matches Terra. terra-icon is Apache-2.0, same as terra-core.
 const iconDir = join(pkgRoot, "src", "runtime", "icons");
 mkdirSync(iconDir, { recursive: true });
+const iconSrc = join(fetchFromNpm("terra-icon", ICON_VERSION), "src", "icon");
+
+/** Pull the viewBox and the SVG body out of one terra-icon source file. */
+function readGlyph(name) {
+  const file = join(iconSrc, `${name}.jsx`);
+  if (!existsSync(file)) return null;
+  const jsx = readFileSync(file, "utf8");
+  const body = jsx.match(/<IconBase\b[^>]*>([\s\S]*?)<\/IconBase>/)?.[1];
+  const viewBox = jsx.match(/"viewBox":"([^"]+)"/)?.[1];
+  if (!body || !viewBox) return null;
+  // Terra writes ` >` before closing; JSX is otherwise already valid for us.
+  return { viewBox, body: body.trim().replace(/\s+>/g, ">") };
+}
+
+const missing = [];
 for (const name of icons) {
+  const glyph = readGlyph(name);
+  if (!glyph) {
+    missing.push(name);
+    continue;
+  }
   writeFileSync(
     join(iconDir, `${name}.tsx`),
     `import React from "react";\n\n` +
-      `/** Stand-in for terra-icon/${name}; the icon package is 1.37 MB for 1,646 files. */\n` +
+      `/**\n` +
+      ` * terra-icon/${name}, inlined. Only the icons our components reference are\n` +
+      ` * vendored; the full package is 1.37 MB across 1,646 files.\n` +
+      ` *\n` +
+      ` * Sized in \`em\` and filled with \`currentColor\`, matching terra-icon's\n` +
+      ` * IconBase, so an icon inherits the size and colour of surrounding text.\n` +
+      ` */\n` +
       `const ${name}: React.FC<{ a11yLabel?: string; className?: string }> = ({ a11yLabel, className }) => (\n` +
-      `  <span className={className} role={a11yLabel ? "img" : undefined} aria-label={a11yLabel} aria-hidden={a11yLabel ? undefined : true}>\n` +
-      `    &#9888;\n` +
-      `  </span>\n` +
+      `  <svg\n` +
+      `    className={className}\n` +
+      `    viewBox="${glyph.viewBox}"\n` +
+      `    xmlns="http://www.w3.org/2000/svg"\n` +
+      `    width="1em"\n` +
+      `    height="1em"\n` +
+      `    focusable="false"\n` +
+      `    style={{ display: "inline-block", verticalAlign: "-0.15em", fill: "currentColor" }}\n` +
+      `    role={a11yLabel ? "img" : "presentation"}\n` +
+      `    aria-label={a11yLabel}\n` +
+      `  >\n` +
+      `    {a11yLabel ? <title>{a11yLabel}</title> : null}\n` +
+      `    ${glyph.body}\n` +
+      `  </svg>\n` +
       `);\n\nexport default ${name};\n`,
   );
+}
+if (missing.length) {
+  console.warn(`  no glyph in terra-icon for: ${missing.join(", ")}`);
+}
+
+// terra-base normalises the document: it is where Terra's whole `rem` scale
+// comes from (`font-size: 87.5%` => a 14px root) and where box-sizing is set.
+// Without it every Terra dimension renders 16/14 too large and padded elements
+// overflow. We cannot apply it to `html` unconditionally — the player also
+// renders MOIS forms through Fluent on the same document, and a Cerner
+// Component slot belongs to the host page — so the selectors are scoped to a
+// `terra-base` class that <TerraBase> puts on the document only while a Terra
+// tree is mounted.
+{
+  const basePkg = findPackage("terra-base");
+  if (basePkg) {
+    const raw = readFileSync(join(basePkg, "src", "Base.scss"), "utf8");
+    const scoped = raw
+      // Alternate themes are not vendored.
+      .replace(/^@import\s+'\.\/[^']*';\s*$/gm, "")
+      .replace(/^html\s*\{/m, "html.terra-base {")
+      .replace(/^body\s*\{/m, "html.terra-base body {")
+      .replace(/^\*,\n\*::before,\n\*::after\s*\{/m,
+        "html.terra-base *,\nhtml.terra-base *::before,\nhtml.terra-base *::after {")
+      .replace(/\n{3,}/g, "\n\n")
+      .trimStart();
+    writeFileSync(
+      join(pkgRoot, "src", "runtime", "terra-base.scss"),
+      `/*\n * Generated from terra-base/src/Base.scss by scripts/vendor.mjs.\n` +
+        ` * Selectors are scoped to \`html.terra-base\`; see <TerraBase>.\n */\n` +
+        scoped,
+    );
+  } else {
+    console.warn("  terra-base not found in any source root; terra-base.scss not regenerated");
+  }
 }
 
 writeFileSync(
@@ -318,4 +406,4 @@ writeFileSync(
   [...icons].sort().map((n) => `export { default as ${n} } from "./${n}";`).join("\n") + "\n",
 );
 
-console.log(`vendored ${copied} files from ${allPackages.length} packages; generated ${icons.size} icon stubs`);
+console.log(`vendored ${copied} files from ${allPackages.length} packages; generated ${icons.size} icons`);

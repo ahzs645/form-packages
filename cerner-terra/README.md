@@ -27,19 +27,55 @@ these rewrites are applied:
 | `terra-theme-context` → `runtime/theme-context` | Upstream also pins React 16; components only read `{ className }`. |
 | `react-onclickoutside` → `runtime/on-click-outside` | It locates its target with `ReactDOM.findDOMNode`, which React 19 removed — importing it throws. |
 | `react-lifecycles-compat` → `runtime/lifecycles-compat` | Back-ports `getDerivedStateFromProps` to React &lt; 16.3; React 19 has it natively, so `polyfill` is the identity. |
-| `terra-icon/...` → `runtime/icons/*` | The icon package is 1.37 MB across 1,646 files; we generate stubs for the ~13 icons actually referenced. |
+| `terra-icon/...` → `runtime/icons/*` | The icon package is 1.37 MB across 1,646 files. The script pulls each referenced icon's real SVG path out of `terra-icon` (Apache-2.0, pinned) and emits a component for it — ~13 icons instead of 1,646. |
 | `ref="options"` dropped | String refs are gone in React 19. The two in the date picker's dropdowns are write-only — nothing reads `this.refs`. |
 | `mutationobserver-shim`, `classlist-polyfill`, `require('wicg-inert')` dropped | IE10/11 polyfills. The `require` is also unresolvable in an ES module. |
 | `@import '~pkg/...'` → vendored path | Webpack's `~` prefix; sass and Vite do not resolve it. |
 | `[dir=ltr]` selectors also match `:root:not([dir])` | Terra scopes direction-sensitive rules on `dir`, which `terra-base` stamps onto `<html>`. We do not vendor `terra-base`, so those rules never matched — silently dropping `position: absolute` from Hookshot's content and laying every dropdown and popup out in the page flow. An absent `dir` means ltr per the HTML spec. |
 | alternate theme sheets dropped | Terra sheets import all bundled themes unconditionally — the main reason one component ships ~38 KB of CSS. Re-enable `clinical-lowlight-theme` in `SKIP_THEMES` for PowerChart dark mode. |
 | `module.exports =` → `export default` | A few helpers are CommonJS. |
+| `@import 'terra-mixins/Mixins'` injected where `inline-svg()` is used | Terra's caret, checkmark and dismiss glyphs are data-URI backgrounds built by that Sass function, but five sheets reach its definition only *through* the theme sheets on the row above. Unresolved it is not a build error — the literal text `inline-svg('<svg…>')` is emitted, the browser rejects the declaration, and the glyph renders blank. |
+| `terra-base/src/Base.scss` → `runtime/terra-base.scss`, scoped to `html.terra-base` | Terra's whole `rem` scale depends on terra-base's 14px root; see [terra-base](#terra-base). |
 
 `withDefaults` and `injectIntl` both hoist non-React statics, so Terra's
 `Select.Option` / `Hookshot.Content` subcomponent API survives wrapping.
 
+`withDefaults` also preserves the wrapped component's `name`. Terra dispatches
+on `child.type.name` in places — `TableUtils.addScope` compares it against
+`"TableHeaderCell"` to decide where `scope` goes — so a wrapper named
+`Wrapped` silently strips the scope attribute from every table header.
+
 Types are hand-written in `src/types.ts` (Terra is PropTypes-based) and
 attached at the barrel in `src/index.ts`.
+
+### terra-base
+
+`terra-base` is where Terra normalises the document: `font-size: 87.5%` on
+`html` (the **14px root** every `rem` in Terra is authored against),
+`box-sizing: border-box`, the font stack, and body colour/line-height.
+Skipping it does not fail — it just renders everything 16/14 too large with
+`content-box` sizing.
+
+Because `rem` resolves against the root element, it cannot be scoped to a
+container. The script therefore emits `runtime/terra-base.scss` with the
+selectors rewritten to `html.terra-base`, and the `<TerraBase>` component adds
+that class only while a Terra tree is mounted. That keeps it off a host page
+that is not ours — the player renders MOIS forms through Fluent on the same
+document. `<TerraBase>` also stamps `dir`, which the `[dir=ltr]` rewrite above
+otherwise works around.
+
+### Locale
+
+The fork defaults to **en-CA**, so terra-date-picker renders `YYYY-MM-DD`
+rather than US order — on a clinical form `05/06` is genuinely ambiguous.
+
+`runtime/moment-locale.ts` registers it, and does so through `moment-timezone`
+rather than by importing `moment/locale/en-ca`. That file registers against
+the `moment` *it* imports; pnpm resolves both to one package on disk, but Vite
+pre-bundles CJS dependencies per entry and ends up with two module instances,
+so the registration lands on the copy `DateUtil` never reads. It registers
+only when a probe shows the format is actually wrong, so under Node — where
+moment lazily `require`s the real locale file — nothing is redefined.
 
 ### terra-framework packages
 
@@ -76,3 +112,6 @@ they share the Frame the tested variants use. `TagSelect` is vendored but not
 exported — nothing needs it yet.
 
 Attribution and the full list of modifications are in `NOTICE`.
+
+The form renderer built on these components is
+`@webforms/cerner-terra-forms`.
