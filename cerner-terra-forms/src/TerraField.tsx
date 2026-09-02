@@ -178,12 +178,12 @@ export const TerraField: React.FC<TerraFieldProps> = ({
   }
   if (control === "rich-text") {
     const source = field.richTextConfig?.source;
+    // No label to paint, so a highlight paints the block.
+    const blockStyle = field.labelStyle?.highlight ? { background: field.labelStyle.highlight } : undefined;
     return stamp(
-      source ? (
-        <Markdown remarkPlugins={[remarkGfm]}>{source}</Markdown>
-      ) : (
-        <div>{field.label}</div>
-      ),
+      <div style={blockStyle}>
+        {source ? <Markdown remarkPlugins={[remarkGfm]}>{source}</Markdown> : field.label}
+      </div>,
       control,
     );
   }
@@ -200,12 +200,19 @@ export const TerraField: React.FC<TerraFieldProps> = ({
     );
   }
 
+  // Terra spreads labelAttrs onto the <label>, which is where a form's own
+  // label styling belongs — the same colours MOIS and PowerChart draw.
+  const labelStyle: React.CSSProperties = {};
+  if (field.labelStyle?.color) labelStyle.color = field.labelStyle.color;
+  if (field.labelStyle?.highlight) labelStyle.background = field.labelStyle.highlight;
+  if (field.labelStyle?.bold) labelStyle.fontWeight = 600;
   const fieldProps = {
     label: field.label,
     htmlFor: field.id,
     required: field.required,
     help: field.helpText,
     isInline: field.labelPosition === "left",
+    ...(Object.keys(labelStyle).length > 0 ? { labelAttrs: { style: labelStyle } } : {}),
   };
 
   const inner = (() => {

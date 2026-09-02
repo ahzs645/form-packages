@@ -8,11 +8,45 @@ import React, { useEffect, useMemo, useState } from "react";
  * render target, as opposed to the MOIS path (generated JSX played by the
  * MOIS runtime). Selected with ?render=terra.
  */
-export const TerraFormView: React.FC<{ documentUrl: string }> = ({ documentUrl }) => {
+/**
+ * Messages exchanged with a parent window when the document comes from it
+ * (`?documentSource=parent`) — how the builder previews this target: it
+ * embeds the built player in an iframe and posts the live builder fields.
+ */
+export const TERRA_PARENT_READY = "webforms-terra:ready";
+export const TERRA_PARENT_DOCUMENT = "webforms-terra:document";
+
+interface ParentDocumentMessage {
+  type: typeof TERRA_PARENT_DOCUMENT;
+  fields: BuilderField[];
+  /** CSS zoom for the whole form, 1 = 100%. */
+  zoom?: number;
+}
+
+export const TerraFormView: React.FC<{ documentUrl: string; fromParent?: boolean }> = ({
+  documentUrl,
+  fromParent = false,
+}) => {
   const [fields, setFields] = useState<BuilderField[] | null>(null);
+  const [zoom, setZoom] = useState(1);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!fromParent) return;
+    const onMessage = (event: MessageEvent<ParentDocumentMessage>) => {
+      // Only the embedding window may supply the document.
+      if (event.source !== window.parent) return;
+      if (event.data?.type !== TERRA_PARENT_DOCUMENT || !Array.isArray(event.data.fields)) return;
+      setFields(event.data.fields);
+      if (typeof event.data.zoom === "number" && event.data.zoom > 0) setZoom(event.data.zoom);
+    };
+    window.addEventListener("message", onMessage);
+    window.parent.postMessage({ type: TERRA_PARENT_READY }, "*");
+    return () => window.removeEventListener("message", onMessage);
+  }, [fromParent]);
+
+  useEffect(() => {
+    if (fromParent) return;
     let cancelled = false;
     fetch(documentUrl)
       .then((response) => {
@@ -39,7 +73,7 @@ export const TerraFormView: React.FC<{ documentUrl: string }> = ({ documentUrl }
     return () => {
       cancelled = true;
     };
-  }, [documentUrl]);
+  }, [documentUrl, fromParent]);
 
   const report = useMemo(
     () => (fields ? getTerraCompatibilityReport(fields) : null),
@@ -47,10 +81,11 @@ export const TerraFormView: React.FC<{ documentUrl: string }> = ({ documentUrl }
   );
 
   if (error) return <div style={{ color: "#e50000" }}>Terra render failed: {error}</div>;
-  if (!fields || !report) return <div>Loading form definition…</div>;
+  if (!fields || !report) return <div>{fromParent ? "Waiting for the form definition…" : "Loading form definition…"}</div>;
 
   return (
     <TerraBase>
+      <div style={{ zoom }}>
       <div
         style={{
           background: "#f4f4f4",
@@ -65,6 +100,7 @@ export const TerraFormView: React.FC<{ documentUrl: string }> = ({ documentUrl }
         {report.unsupportedCount > 0 ? ` · ${report.unsupportedCount} unsupported` : ""}
       </div>
       <TerraFormRenderer fields={fields} />
+      </div>
     </TerraBase>
   );
 };

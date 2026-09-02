@@ -107,6 +107,8 @@ export function compactChoiceOption(option: BuilderChoiceOption): BuilderChoiceO
     typeof option.presentationDepth === "number" && Number.isInteger(option.presentationDepth) && option.presentationDepth >= 0;
   const hasPresentationParentValue =
     typeof option.presentationParentValue === "string" && option.presentationParentValue !== "";
+  const hasCernerNomenclatureId =
+    typeof option.cernerNomenclatureId === "string" && option.cernerNomenclatureId !== "";
   if (
     !hasValue &&
     !hasScore &&
@@ -114,7 +116,8 @@ export function compactChoiceOption(option: BuilderChoiceOption): BuilderChoiceO
     !hasHotKey &&
     !hasOrder &&
     !hasPresentationDepth &&
-    !hasPresentationParentValue
+    !hasPresentationParentValue &&
+    !hasCernerNomenclatureId
   ) return label;
   const next: ExtendedChoiceOptionObject = { label };
   if (hasValue) next.value = option.value;
@@ -124,6 +127,7 @@ export function compactChoiceOption(option: BuilderChoiceOption): BuilderChoiceO
   if (hasOrder) next.order = extended.order;
   if (hasPresentationDepth) next.presentationDepth = option.presentationDepth;
   if (hasPresentationParentValue) next.presentationParentValue = option.presentationParentValue;
+  if (hasCernerNomenclatureId) next.cernerNomenclatureId = option.cernerNomenclatureId;
   return next;
 }
 
@@ -137,7 +141,7 @@ export function withOptionLabel(
 }
 
 /**
- * Merge a partial patch (label/value/score/description) into an option and
+ * Merge a partial patch (label/value/score/description/Cerner concept) into an option and
  * compact the result. Clears a field when the patch sets it to `undefined`,
  * empty string, or NaN (for score). Used by the option detail dialog.
  */
@@ -167,6 +171,11 @@ export function withOptionPatch(
   if ("order" in patch) {
     if (patch.order == null || !Number.isFinite(patch.order)) delete base.order;
     else base.order = patch.order;
+  }
+  if ("cernerNomenclatureId" in patch) {
+    const id = (patch.cernerNomenclatureId ?? "").trim();
+    if (!id) delete base.cernerNomenclatureId;
+    else base.cernerNomenclatureId = id;
   }
   return compactChoiceOption(base);
 }

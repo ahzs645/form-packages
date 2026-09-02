@@ -199,20 +199,143 @@ CCL and no compile cycle. Verified end to end against the SMART Health IT
 reference server only; which write operations Cerner Ignite supports per
 resource still has to be confirmed against the R4 catalogue.
 
-## Channel C — PowerForm build spec (`mode: "powerform"`)
+## Channel C — native PowerForm (`mode: "powerform"`)
 
 ZIP: `<formId>.cerner-powerform.zip`.
 
 | Path | What it is |
 |---|---|
-| `powerform-build-spec.json` | Sections and controls mapped from the form with input families, task-assay and event-code placeholders marked `unresolved`, and a compatibility report. Schema `cerner-powerform-build-spec/v0`. |
-| `powerform-build-worksheet.md` | The same, as an analyst worksheet. |
+| `dcp-export/<form> <date> PF.xml` | The PowerForm definition in Cerner's own DCP export format: sections → pixel-positioned inputs → PVC preferences, each DTA input merged to its task assay by `MERGE_ID`. |
+| `dcp-export/<form> <date> PF-DTA.xml` | The discrete task assays with their alpha responses (answer options, nomenclature ids, result values, defaults). |
+| `dcp-export/<form> <date> PF-INTERP.xml` | Interpretation tables (decision tables) for every computed field that carries one — regenerated from the preserved rows, in Cerner's element order. Empty for forms without. |
+| `dcp-export/<form> <date> PF-NOMEN.xml`, `PF-EQUATION.xml` | Nomenclature terms referenced by alpha responses; equations (always empty — none seen in the wild). |
+| `dcp-export/README.md` | What the domain can use directly and what an analyst still resolves. |
+| `dcp-export/RESOLUTION.md` | Only when something is unresolved: every `TEMP!` form-event, task-assay, event-code and alpha-response id this writer minted, one row each, for an analyst to replace in the target domain. Absent for a form that came from Cerner. |
+| `dcp-export/INTERP-NOTES.md` | Only when an interp's rows are unavailable (a hand-authored computed field): the rule as text for an analyst to build as a table. |
+| `powerform-build-spec.json` | The earlier analyst spec: input families, unresolved code refs, compatibility report. Schema `cerner-powerform-build-spec/v0`. |
+| `powerform-build-worksheet.md` | The same, as a worksheet. |
 | `manifest.json` | |
 
-The only channel that yields chartable discrete results, and the only one
-with nothing runnable in it: an analyst builds the PowerForm in DCP Tools /
-DTA Wizard from the worksheet, resolving code values in the target domain.
-Experimental and untested in Cerner.
+This is the only channel that yields chartable discrete results (DTAs in
+iView / results review). The bundle format was reverse-engineered from a
+real export — the CSSRS screen exported from NH's build domain on
+2026-09-01 — and the same code imports that export back into the builder
+(**Open Form/PDF** → select the `PF.xml` with its `PF-DTA` / `PF-INTERP` /
+`PF-NOMEN` companions, or drop the folder as a ZIP). A Cerner-authored form
+round-trips: ids, positions, task-assay ids, event-code UIDs and
+nomenclature ids survive import → edit → export.
+
+What Cerner's own tooling can use directly: layout, DTA definitions and
+interpretation tables. Code values carry `TEMP!` GUIDs unless they came
+from a Cerner import, and nomenclature ids are 0 for options authored here —
+`RESOLUTION.md` lists each one for the analyst.
+
+**Interpretation tables run here and go back as tables.** An interp DTA
+(Cerner's decision table — the CSSRS risk calculation is 7 inputs, 234
+states, 642 rows) is imported as a *computed* field whose expression is the
+table compiled into nested `iif([field] == "value", …, "")`, so the risk
+value updates live in Preview and in the MOIS/Terra players. The rows stay
+on the field verbatim (`cernerConfig.interp.rows`), and the export writes
+the `INTERP_OBJ` back from them; the fidelity suite checks the regenerated
+table against Cerner's own file row for row.
+
+**Verified structurally, not operationally.** The fidelity suite
+(`lib/__tests__/cerner-powerform-fidelity.test.ts`) imports Cerner's real
+CSSRS export, writes it back, and compares element by element: the form
+record, every section, every DTA-bound input's preferences and merge, every
+label's caption and position, every DTA's identity and alpha responses, the
+interp table, and the companion files' byte-for-byte framing (declaration,
+CDATA schema template, compact single-line data). The only differences are
+the ones chosen — timestamp and form-instance id. What has *not* happened is
+a Content Manager import of a bundle from this writer into a Millennium
+domain; that is the validation step, and it needs a build-domain analyst.
+
+**Preview follows the channel and renderer.** With Export target = Cerner,
+the Preview tab shows what the chosen channel plays:
+
+| Channel | Renderer | Preview tab shows |
+|---|---|---|
+| MPage / Workflow component | MOIS | The MOIS player, as for the MOIS export target. |
+| MPage / Workflow component | Terra | The *built player* (`public/cerner-player/`, staged by `pnpm build:cerner-player`) in an iframe with `?render=terra&documentSource=parent`; the builder posts it the live fields. Terra's Sass CSS Modules use impure selectors Next's CSS pipeline rejects, so the player — the artifact PowerChart runs — is the renderer, not a re-compilation of Terra inside the builder. |
+| Native PowerForm | PowerChart (fixed) | `CernerPowerFormPreview`: the exported `PF.xml` drawn as the DCP form viewer draws it — window title, *Performed on* bar, section list, every input at its pixel position in its COLORREF colours, alpha responses as radio boxes, interp DTAs as read-only dropdowns that compute live. DTA defaults apply on open, as in the chart. |
+| SMART on FHIR | MOIS (fixed) | The MOIS player. |
+
+The **Details… → PowerForm canvas** tab is the static designer view of the
+same `PF.xml` with the resolution list beneath. Neither is an editor — the
+builder has no pixel-layout authoring mode; forms authored here are
+auto-laid-out label-left / answer-right, imported forms replay their
+original positions.
+
+### The export format itself
+
+`PF.xml` is a `DOMAIN_LIST > POWERFORM_DOMAIN > POWERFORM_OBJ` tree. Each
+`SECTION_OBJ` is a page; each `INPUT` is one control on a pixel canvas
+(`position = "x1,y1,x2,y2"`) whose properties are `MODULE` name/value pairs
+(`caption`, `facename`, `pointsize`, `fonteffects`, `forecolor`/`backcolor`
+as Windows COLORREF integers, `default`, `multi_select`, `freetext`,
+`reference_text`, `question_role`). `INPUT_TYPE` seen in the wild: **1**
+label, **4** alpha group (radio/checkbox), **6** free text, **9** alpha
+list (dropdown), **18** provider search. A DTA-bound input carries one
+`MODULE` with `MERGE_NAME = DISCRETE_TASK_ASSAY` and the task assay id in
+`MERGE_ID`. The companion files wrap a CDATA *template* copy of their
+schema (every element self-closed with `node_data_type`) before the data.
+
+How the importer turns that canvas into a document: each PowerForm
+*section* becomes a builder **page** (PowerChart lists sections down the
+left the way the player pages a form); within a page, a canvas row holding
+two or more answer inputs becomes a **grid section** with that many
+columns, and runs of full-width rows stack in one section, so the
+side-by-side layout survives. A DTA input absorbs the bold label to its
+left on the same row as its field label, and the short coloured chips to
+its right as help text; blue regular text and the legend bars become
+read-only rich text in reading order; the 16pt title bar is the page's
+title. Everything absorbed is recorded by `INPUT_REF_SEQ` in
+`cernerConfig`, so nothing is lost.
+
+Everything Cerner encoded stays *editable*, not merely preserved, and its
+styling is a property of the form rather than of the Cerner provenance:
+`labelStyle` on a field carries text colour, highlight and bold to whichever
+target renders it. A rich-text block's highlight is drawn on every target, so
+an imported legend bar stays yellow or red in the MOIS preview, in Terra and
+back in PowerChart. A question label's colours reach Terra and the PowerForm
+writer; the MOIS runtime draws its own controls' labels and drops the label
+props it is handed, which the builder states plainly instead of pretending.
+Point size stays Cerner-only, because Cerner's points and the MOIS type scale
+have no faithful mapping.
+ A
+caption's colour rides in the markdown itself, as the reserved
+`[text](#mois-text-color:rrggbb)` link the rich-text editor and the MOIS
+runtime already share, so the CSSRS blue reference text imports blue and an
+author recolours it in the ordinary editor. Bold is markdown bold. What
+markdown cannot say — the highlight behind a legend bar, the point size, a
+question label's own colour — is edited in **PowerForm appearance** on the
+field's Settings tab, which writes the `forecolor` / `backcolor` /
+`fonteffects` / `pointsize` preferences directly. On export each of these is
+compared with what was imported: an unchanged input replays byte for byte,
+and only what the author actually changed is rewritten. Editing a question's
+label or its help text likewise rewrites the caption of the label input
+absorbed beside the answer, since those absorbed inputs record what they
+became.
+
+The exporter rejoins the builder
+sections of one page into a single `SECTION_OBJ`. The page *is* the
+PowerForm section: rename a page in the builder and the section
+PowerChart lists (its `SECTION_DESCRIPTION` and its title-bar caption)
+takes the new name. Imported sections set `hideTitle` — PowerForms draw no
+bar over a block of inputs — which the Section settings expose as "Show
+the section title bar in the form". A PowerForm import also lands on the
+PowerForm channel, so Preview opens as PowerChart would draw it.
+
+A field's Cerner identity is editable rather than import-only: the
+inspector's **Data Binding** group carries a "Cerner · Discrete task assay"
+section beside MOIS and AlayaCare, holding the DTA mnemonic and
+description, the task assay id and GUID, and the event code display and
+UID. Those are what `PF-DTA.xml` and the input's `MERGE` are written from,
+so a field authored in the builder can name a real DTA in the target
+domain and stop appearing in `RESOLUTION.md`. The result type is not
+editable — it follows the field type. Nor are the pixel position, the
+input type, the PVC preferences, the per-option nomenclature ids or the
+interpretation rows; those are replayed as imported.
 
 ## `manifest.json`
 

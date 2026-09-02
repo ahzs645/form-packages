@@ -287,6 +287,7 @@ export const App: React.FC<{ host?: PlayerHost }> = ({ host = null }) => {
               new URLSearchParams(window.location.search).get("documentUrl") ??
               "./forms/hcc-ltc.workspace.json"
             }
+            fromParent={new URLSearchParams(window.location.search).get("documentSource") === "parent"}
           />
         ) : loadError ? (
           <div style={{ color: "#a4262c" }}>Failed to load form: {loadError}</div>

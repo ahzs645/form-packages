@@ -1061,6 +1061,120 @@ export interface BuilderFormioConfig {
   formRoot?: Record<string, unknown>;
 }
 
+/** Import fidelity for a field brought in from a Cerner PowerForm export. */
+export type BuilderCernerImportStatus = "exact" | "lossy" | "unsupported";
+
+/** One STATE row of a Cerner interpretation table: in `state`, if `input` equals `value`, go to `next` (or yield `result`). */
+export interface BuilderCernerInterpRow {
+  state: number;
+  /** DTA mnemonic of the input tested. */
+  input: string;
+  value: string;
+  nomenId?: string;
+  next: number;
+  result?: string;
+  resultNomenId?: string;
+  resultValue?: string;
+  inputDtaCd?: string;
+  inputTaskAssayUid?: string;
+}
+
+/**
+ * A Cerner interpretation (decision table) kept verbatim so it can be both
+ * compiled into a builder expression and written back on export.
+ */
+export interface BuilderCernerInterp {
+  targetMnemonic: string;
+  targetDtaCd?: string;
+  dcpInterpId?: string;
+  dcpInterpUid?: string;
+  taskAssayUid?: string;
+  ageToMinutes?: string;
+  components?: Array<{ mnemonic: string; description?: string; taskAssayUid?: string; dtaCd?: string }>;
+  componentMnemonics: string[];
+  /** Distinct outcome strings the table can produce. */
+  outcomes: string[];
+  stateCount: number;
+  rows?: BuilderCernerInterpRow[];
+}
+
+/**
+ * Source metadata retained when a field is imported from a Cerner PowerForm
+ * export (the DCP_FORMS_REF XML bundle: PF, PF-DTA, PF-INTERP, PF-NOMEN).
+ * Everything here is provenance for round-tripping and analyst review; the
+ * runtime never reads it.
+ */
+export interface BuilderCernerConfig {
+  version: 1;
+  /**
+   * `powerform` — imported from a DCP export, so the coordinates, preferences
+   * and absorbed labels here are Cerner's own and are replayed verbatim.
+   * `authored` — bound in the builder's Data Binding panel; only the DTA
+   * identity is meaningful and the export lays the input out itself.
+   */
+  sourceKind: "powerform" | "authored";
+  /** FORM_DESCRIPTION of the PowerForm this field came from. */
+  formName: string;
+  /** SECTION_DESCRIPTION of the containing section. */
+  sectionName: string;
+  /** Raw INPUT_TYPE (1 label, 4 alpha, 6 freetext, 9 alpha list, 18 provider, …). */
+  inputType: number;
+  inputRefSeq: number;
+  /** INPUT_DESCRIPTION — the input's own name, independent of its DTA's. */
+  inputDescription?: string;
+  /** PowerForm designer coordinates, `x1,y1,x2,y2` in form pixels. */
+  position?: { x1: number; y1: number; x2: number; y2: number } | null;
+  /** Every PVC_NAME → PVC_VALUE preference on the input, verbatim. */
+  preferences: Record<string, string>;
+  /** The discrete task assay the input writes, when it has one. */
+  dta?: {
+    mnemonic: string;
+    description: string;
+    taskAssayId?: string;
+    taskAssayGuid?: string;
+    eventCodeDisplay?: string;
+    eventCodeUid?: string;
+    eventSetName?: string;
+    activityType?: string;
+    /** DEFAULT_RESULT_TYPE_DISP_KEY: ALPHA, MULTIALPHA, FREETEXT, PROVIDER, INTERP, … */
+    resultType?: string;
+    conceptCki?: string;
+    /** REF_TEXT_FILES — the chart-guide reference text attached to the DTA. */
+    refTextFiles?: string;
+  } | null;
+  /** Alpha responses with the nomenclature ids the domain expects back. */
+  alphaResponses?: Array<{
+    display: string;
+    nomenclatureId?: string;
+    resultValue?: string;
+    sequence?: number;
+    isDefault?: boolean;
+  }>;
+  /** A Cerner interpretation (decision table) that computes this field's value. */
+  interp?: BuilderCernerInterp | null;
+  /**
+   * Label inputs absorbed into this field (its question label, the chips
+   * beside it) or into a section (its title bar and marker), kept verbatim
+   * so the export replays them at their original coordinates.
+   */
+  absorbedInputs?: Array<{
+    seq: number;
+    description: string;
+    type: number;
+    prefs: Record<string, string>;
+    /** What this input became: the field's label, its help text, or section chrome. */
+    role?: "label" | "chip";
+  }>;
+  importStatus: BuilderCernerImportStatus;
+  importNotes?: string[];
+  /**
+   * Form-level metadata, stored on the first imported field so it survives
+   * builder/session/share persistence: everything the export needs to write
+   * the same PowerForm back.
+   */
+  formRoot?: Record<string, unknown>;
+}
+
 export interface BuilderFhirCoding {
   system?: string;
   code?: string;
@@ -1242,6 +1356,12 @@ export interface BuilderChoiceOptionObject {
   presentationDepth?: number;
   /** Stored value of the preceding visual parent, for rendering/auditing only. */
   presentationParentValue?: string;
+  /**
+   * Cerner nomenclature id for this answer. Cerner stores an answer as a coded
+   * concept, not a string, and the same concept is shared across a form (every
+   * "Yes" is one id). Unset exports as 0 and lands in RESOLUTION.md.
+   */
+  cernerNomenclatureId?: string;
 }
 
 export type BuilderChoiceOption = string | BuilderChoiceOptionObject;
@@ -1417,6 +1537,7 @@ export interface BuilderField {
   // Form.io import provenance and loss/round-trip metadata
   formioConfig?: BuilderFormioConfig | null;
 
+  cernerConfig?: BuilderCernerConfig | null;
   // FHIR Questionnaire import/export metadata
   fhirConfig?: BuilderFhirConfig | null;
 
@@ -1812,6 +1933,18 @@ export interface BuilderField {
   } | null;
 
   // Rich text / markdown field config
+  /**
+   * How this field's label is drawn, independent of the export target.
+   *
+   * MOIS renders it through the label's own styles, Terra through the
+   * label element's attributes, and the Cerner PowerForm writer through the
+   * `forecolor` / `backcolor` / `fonteffects` preferences of the label input
+   * beside the answer. A rich-text block has no label, so a `highlight` set
+   * on one paints the block itself — which is how an imported PowerForm
+   * legend bar keeps its colour on every target.
+   */
+  labelStyle?: BuilderLabelStyle | null;
+
   richTextConfig?: {
     source?: string | null;
     /** Managed images referenced as `#mois-rich-image:<id>` from source. */
@@ -1824,6 +1957,15 @@ export interface BuilderField {
 
   // Validation rules
   validation?: BuilderValidationConfig | null;
+}
+
+/** Target-neutral label styling. Colours are `#rrggbb`. */
+export interface BuilderLabelStyle {
+  /** Text colour. Omitted means the target's own default. */
+  color?: string | null;
+  /** Background behind the label (or, for a rich-text block, behind the block). */
+  highlight?: string | null;
+  bold?: boolean;
 }
 
 /** Subgroup within a section (simplified for form builder) */
@@ -1895,6 +2037,8 @@ export interface SectionConfig {
   subtitlePadding?: string;
   collapsible?: boolean;
   defaultCollapsed?: boolean;
+  /** Draw no subtitle bar for this section; the title stays for the builder and navigation. */
+  hideTitle?: boolean;
   childFieldIds: string[];
   /** Layout type: "grid" for side-by-side fields, "stacked" for vertical column */
   layoutType?: "grid" | "stacked";

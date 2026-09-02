@@ -86,4 +86,21 @@ describe("TerraFormRenderer coverage", () => {
     expect(header).toBeDefined();
     expect(header).toContain('scope="col"');
   });
+
+  it("draws a field's label in the colours the form carries", () => {
+    const styled = renderToStaticMarkup(
+      <TerraFormRenderer
+        fields={[
+          { id: "risk", label: "Risk", type: "text", labelStyle: { color: "#0000ff", highlight: "#ffff80", bold: true } },
+          { id: "legend", label: "\u200B", type: "richText", richTextConfig: { source: "**High risk**" }, labelStyle: { highlight: "#ff0000" } },
+        ]}
+      />,
+    );
+    // The label element carries the colours; a text block has no label, so
+    // its highlight paints the block.
+    expect(styled).toContain("color:#0000ff");
+    expect(styled).toContain("background:#ffff80");
+    expect(styled).toContain("font-weight:600");
+    expect(styled).toContain("background:#ff0000");
+  });
 });

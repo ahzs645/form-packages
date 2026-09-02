@@ -66,6 +66,31 @@ export interface MarkdownEditorProps {
   className?: string;
   /** Show MOIS module insertion control in the formatting toolbar. */
   allowMoisLinks?: boolean;
+  /**
+   * Background behind the whole block, offered beside the text colours.
+   *
+   * This is a property of the field rather than of a text range — markdown
+   * cannot express a highlight — so the host owns the value and this control
+   * only sets it. Omit the prop and no highlight control is drawn.
+   */
+  blockHighlight?: {
+    value?: string | null;
+    onChange: (value: string | null) => void;
+  };
+  /**
+   * Point size for the whole block, offered beside the highlight.
+   *
+   * Like the highlight this belongs to the field rather than to a text range,
+   * and it means something only where the target measures text in points, so
+   * the host supplies the label as well as the value.
+   */
+  blockFontSize?: {
+    value?: number | null;
+    onChange: (points: number) => void;
+    label?: string;
+    min?: number;
+    max?: number;
+  };
   /** Optional host-app tooltip renderer for toolbar controls. */
   renderTooltip?: MarkdownEditorTooltipRenderer;
   /** Emit Markdown on every editor change. Disable for large documents and flush manually. Default true. */
@@ -83,6 +108,14 @@ const EMPTY_MOIS_LINK_PATTERN = /\[\]\((mois:[^)]+)\)/gi;
 const PLACEHOLDER_MOIS_LINK_PATTERN = /\[\u200B\]\((mois:[^)]+)\)/gi;
 const DISPLAY_MOIS_LINK_PATTERN = /\[MOIS: [^\]]+\]\((mois:[^)]+)\)/gi;
 const COLOR_HEX_PATTERN = /^#[0-9a-f]{6}$/i;
+const BLOCK_HIGHLIGHT_OPTIONS = [
+  { label: "Yellow", value: "#ffff80" },
+  { label: "Orange", value: "#ffc069" },
+  { label: "Red", value: "#ff8080" },
+  { label: "Green", value: "#b7f7c2" },
+  { label: "Blue", value: "#b3d9ff" },
+] as const;
+
 const TEXT_COLOR_OPTIONS = [
   { label: "Red", value: "#d13438" },
   { label: "Amber", value: "#986f0b" },
@@ -115,12 +148,34 @@ const EDITOR_STYLES = `
 .dark .mois-md-editor__color-swatch:hover:not(:disabled){background:rgb(30 41 59)}
 .mois-md-editor__color-swatch:disabled{opacity:0.35;cursor:not-allowed}
 .mois-md-editor__color-dot{width:0.95rem;height:0.95rem;border-radius:999px;border:1px solid rgba(15,23,42,0.22);box-shadow:inset 0 0 0 1px rgba(255,255,255,0.5)}
+.mois-md-editor__color-dot.is-square{border-radius:0.2rem}
+.mois-md-editor__color-swatch[aria-pressed="true"]{background:rgb(219 234 254)}
+.dark .mois-md-editor__color-swatch[aria-pressed="true"]{background:rgb(30 58 138)}
 .dark .mois-md-editor__color-dot{border-color:rgba(226,232,240,0.35)}
 .mois-md-editor__color-input{width:1.85rem;height:1.85rem;border:0;border-radius:0.375rem;background:transparent;padding:0.35rem;cursor:pointer}
 .mois-md-editor__color-input:hover:not(:disabled){background:rgb(226 232 240)}
 .dark .mois-md-editor__color-input:hover:not(:disabled){background:rgb(30 41 59)}
 .mois-md-editor__color-input:disabled{opacity:0.35;cursor:not-allowed}
+.mois-md-editor__color-trigger{display:inline-flex;align-items:center;gap:0.15rem;min-width:auto;padding:0 0.3rem}
+.mois-md-editor__color-bar{display:block;width:0.95rem;height:0.3rem;border-radius:0.1rem;border:1px solid rgba(15,23,42,0.18)}
+.mois-md-editor__color-caret{font-size:8px;line-height:1;opacity:0.65}
+.mois-md-editor__color-menu{position:absolute;left:0;top:calc(100% + 0.35rem);z-index:60;width:max-content;border:1px solid rgb(226 232 240);border-radius:0.5rem;background:white;padding:0.5rem;box-shadow:0 16px 36px rgba(15,23,42,0.18)}
+.dark .mois-md-editor__color-menu{border-color:rgb(51 65 85);background:rgb(15 23 42)}
+.mois-md-editor__color-menu-title{display:block;margin-bottom:0.35rem;font-size:10px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:rgb(100 116 139)}
+.mois-md-editor__color-grid{display:grid;grid-template-columns:repeat(6,1.85rem);gap:0.15rem}
+.mois-md-editor__color-menu-row{display:flex;align-items:center;justify-content:space-between;gap:0.5rem;margin-top:0.45rem;padding-top:0.45rem;border-top:1px solid rgb(241 245 249);font-size:11px;font-weight:600;color:rgb(51 65 85)}
+.dark .mois-md-editor__color-menu-row{border-color:rgb(30 41 59);color:rgb(203 213 225)}
+.mois-md-editor__color-menu-clear{border:0;border-radius:0.375rem;background:transparent;padding:0.2rem 0.4rem;font-size:11px;font-weight:600;color:rgb(51 65 85);cursor:pointer}
+.mois-md-editor__color-menu-clear:hover{background:rgb(241 245 249)}
+.dark .mois-md-editor__color-menu-clear{color:rgb(203 213 225)}
+.dark .mois-md-editor__color-menu-clear:hover{background:rgb(30 41 59)}
+.mois-md-editor__size-input{width:3rem;height:1.85rem;border:1px solid rgb(226 232 240);border-radius:0.375rem;background:#fff;padding:0 0.3rem;font-size:11px;font-weight:600;color:rgb(51 65 85)}
+.dark .mois-md-editor__size-input{border-color:rgb(51 65 85);background:rgb(15 23 42);color:rgb(226 232 240)}
+.mois-md-editor__size-input:disabled{opacity:0.35;cursor:not-allowed}
 .mois-md-editor__mois-icon{width:16px;height:16px;display:block}
+.milkdown-prose a[href^="mois:"]{display:inline-flex;align-items:center;justify-content:center;width:1.35rem;height:1.35rem;overflow:hidden;vertical-align:-0.25rem;border:1px solid rgb(191 219 254);border-radius:0.3rem;background:rgb(239 246 255) url("/img/GotoRecord.png") center/14px 14px no-repeat;color:transparent;font-size:0;text-decoration:none;cursor:pointer}
+.milkdown-prose a[href^="mois:"]:hover{border-color:rgb(96 165 250);background-color:rgb(219 234 254)}
+.dark .milkdown-prose a[href^="mois:"]{border-color:rgb(30 58 138);background-color:rgb(30 41 59)}
 .mois-md-editor__module-menu{position:absolute;right:0;top:calc(100% + 0.35rem);z-index:60;width:15rem;max-height:18rem;overflow:auto;border:1px solid rgb(226 232 240);border-radius:0.5rem;background:white;padding:0.25rem;box-shadow:0 16px 36px rgba(15,23,42,0.18)}
 .mois-md-editor__module-menu.is-context{position:fixed;right:auto;top:auto;z-index:80}
 .dark .mois-md-editor__module-menu{border-color:rgb(51 65 85);background:rgb(15 23 42)}
@@ -130,8 +185,8 @@ const EDITOR_STYLES = `
 .dark .mois-md-editor__module-option:hover{background:rgb(30 41 59);color:rgb(248 250 252)}
 .mois-md-editor__separator{width:1px;height:1.25rem;margin:0 0.2rem;background:rgb(203 213 225)}
 .dark .mois-md-editor__separator{background:rgb(51 65 85)}
-.mois-md-editor__tooltip{position:absolute;left:50%;bottom:calc(100% + 0.35rem);z-index:50;transform:translateX(-50%);white-space:nowrap;border-radius:0.375rem;background:rgb(15 23 42);color:white;padding:0.25rem 0.45rem;font-size:11px;font-weight:600;line-height:1;box-shadow:0 6px 16px rgba(15,23,42,0.18);opacity:0;pointer-events:none;transition:opacity 120ms ease, transform 120ms ease}
-.mois-md-editor__tool-wrap:hover .mois-md-editor__tooltip,.mois-md-editor__tool-wrap:focus-within .mois-md-editor__tooltip{opacity:1;transform:translateX(-50%) translateY(-1px)}
+.mois-md-editor__tooltip{position:absolute;left:50%;top:calc(100% + 0.35rem);z-index:50;transform:translateX(-50%);white-space:nowrap;border-radius:0.375rem;background:rgb(15 23 42);color:white;padding:0.25rem 0.45rem;font-size:11px;font-weight:600;line-height:1;box-shadow:0 6px 16px rgba(15,23,42,0.18);opacity:0;pointer-events:none;transition:opacity 120ms ease, transform 120ms ease}
+.mois-md-editor__tool-wrap:hover .mois-md-editor__tooltip,.mois-md-editor__tool-wrap:focus-within .mois-md-editor__tooltip{opacity:1;transform:translateX(-50%) translateY(1px)}
 .dark .mois-md-editor__tooltip{background:rgb(226 232 240);color:rgb(15 23 42)}
 .mois-md-editor__source{display:block;width:100%;border:none;outline:none;resize:vertical;padding:0.5rem 0.75rem;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:rgb(15 23 42);background:transparent}
 .dark .mois-md-editor__source{color:rgb(226 232 240)}
@@ -267,6 +322,35 @@ function updateMoisLinkAtSelection(ctx: Ctx, module: string): boolean {
   return true;
 }
 
+/**
+ * Insert a module link at the cursor as a single transaction.
+ *
+ * The alternative — rewriting the markdown and calling `replaceAll` — re-parses
+ * and re-renders the whole document, which is a visible stall on a form of any
+ * size and happens twice, since the host's `onChange` then feeds the new value
+ * back in. A transaction touches only the selection.
+ */
+function insertMoisLinkAtSelection(ctx: Ctx, module: string): boolean {
+  const view = ctx.get(editorViewCtx);
+  const linkType = view.state.schema.marks.link;
+  if (!linkType) return false;
+
+  const label = getMoisEditorLabel(module);
+  const { from, to, empty } = view.state.selection;
+  // A link needs a space to live beside when it lands mid-sentence.
+  const prefix = empty && from > 1 && view.state.doc.textBetween(from - 1, from) !== " " ? " " : "";
+  const text = `${prefix}${label}`;
+  const tr = view.state.tr.insertText(text, from, to);
+  const start = from + prefix.length;
+  tr.addMark(start, start + label.length, linkType.create({ href: `mois:${module}` }));
+  // Leave the caret after the link rather than inside its mark, so the next
+  // thing typed is ordinary text.
+  tr.removeStoredMark(linkType);
+  view.dispatch(tr.scrollIntoView());
+  view.focus();
+  return true;
+}
+
 function updateMoisLinkAtRange(ctx: Ctx, module: string, from: number, to: number): boolean {
   const view = ctx.get(editorViewCtx);
   const linkType = view.state.schema.marks.link;
@@ -390,6 +474,36 @@ function MarkdownEditorInner({
           attributes: { class: "milkdown-prose", "aria-label": ariaLabel ?? "Markdown editor" },
           handleDOMEvents: {
             ...prev.handleDOMEvents,
+            // Both buttons open the module menu: an inserted link is a
+            // control, and an author who wants a different module should not
+            // have to guess that only the right button offers one.
+            click: (view, event) => {
+              if ((event as MouseEvent).button !== 0) return false;
+              const anchor = findMoisAnchor(event.target);
+              const callback = onMoisLinkContextMenuRef.current;
+              if (!anchor || !callback || disabledRef.current) return false;
+              event.preventDefault();
+              // The menu closes on the next window click, so this one must
+              // not reach the window that just opened it.
+              event.stopPropagation();
+              const href = anchor.getAttribute("href") ?? "";
+              const text = anchor.textContent ?? "";
+              const textNode = anchor.firstChild;
+              let from = 0;
+              let to = 0;
+              if (textNode) {
+                from = view.posAtDOM(textNode, 0);
+                to = view.posAtDOM(textNode, text.length);
+              }
+              callback({
+                x: (event as MouseEvent).clientX,
+                y: (event as MouseEvent).clientY,
+                module: href.replace(/^mois:/i, ""),
+                from,
+                to,
+              });
+              return true;
+            },
             contextmenu: (view, event) => {
               const anchor = findMoisAnchor(event.target);
               const callback = onMoisLinkContextMenuRef.current;
@@ -481,6 +595,8 @@ export function MarkdownEditor({
   ariaLabel,
   className,
   allowMoisLinks = false,
+  blockHighlight,
+  blockFontSize,
   renderTooltip,
   liveUpdates = true,
   onFlushReady,
@@ -489,6 +605,10 @@ export function MarkdownEditor({
   const [mode, setMode] = useState<"wysiwyg" | "source">(startInSource ? "source" : "wysiwyg");
   const [commandRunner, setCommandRunner] = useState<CommandRunner | null>(null);
   const [moduleMenuOpen, setModuleMenuOpen] = useState(false);
+  // Colour and highlight are pickers rather than a dozen inline swatches: the
+  // toolbar has to stay readable beside everything else on it.
+  const [colorMenu, setColorMenu] = useState<"text" | "highlight" | null>(null);
+  const [lastTextColor, setLastTextColor] = useState<string>(TEXT_COLOR_OPTIONS[0].value);
   const [moduleContextMenu, setModuleContextMenu] = useState<{
     x: number;
     y: number;
@@ -506,10 +626,11 @@ export function MarkdownEditor({
     return () => window.cancelAnimationFrame(frame);
   }, []);
   useEffect(() => {
-    if (!moduleMenuOpen && !moduleContextMenu) return;
+    if (!moduleMenuOpen && !moduleContextMenu && !colorMenu) return;
     const closeMenus = () => {
       setModuleMenuOpen(false);
       setModuleContextMenu(null);
+      setColorMenu(null);
     };
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") closeMenus();
@@ -520,7 +641,7 @@ export function MarkdownEditor({
       window.removeEventListener("click", closeMenus);
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [moduleMenuOpen, moduleContextMenu]);
+  }, [moduleMenuOpen, moduleContextMenu, colorMenu]);
 
   const wrapperClass = ["mois-md-editor", borderless ? "is-borderless" : "", className ?? ""]
     .filter(Boolean)
@@ -553,6 +674,22 @@ export function MarkdownEditor({
     [commandRunner, onEdit]
   );
   const toolbarDisabled = disabled || !commandRunner;
+  /**
+   * The host's tooltip when it supplies one, the inline fallback otherwise.
+   * The fallback is a child of the toolbar, so a narrow editor clips it at the
+   * pane edge; the host's is portalled and stays visible.
+   */
+  const withTooltip = (label: string, trigger: React.ReactElement) =>
+    renderTooltip ? (
+      renderTooltip(label, trigger)
+    ) : (
+      <>
+        {trigger}
+        <span role="tooltip" className="mois-md-editor__tooltip">
+          {label}
+        </span>
+      </>
+    );
   const handleCommandReady = useCallback((runner: CommandRunner | null) => {
     setCommandRunner(() => runner);
   }, []);
@@ -576,6 +713,21 @@ export function MarkdownEditor({
         });
       }
       if (updatedExistingLink) {
+        onEdit?.();
+        setModuleMenuOpen(false);
+        setModuleContextMenu(null);
+        return;
+      }
+
+      let inserted = false;
+      commandRunner?.((ctx) => {
+        inserted = insertMoisLinkAtSelection(ctx, module);
+      });
+      if (inserted) {
+        // Flushing serializes once and records what was emitted, so the value
+        // coming back from the host is recognised and no re-parse follows.
+        const flushed = flushRef.current?.();
+        if (typeof flushed === "string") onChange(flushed);
         onEdit?.();
         setModuleMenuOpen(false);
         setModuleContextMenu(null);
@@ -613,34 +765,164 @@ export function MarkdownEditor({
           <ToolbarButton label="Heading 2" className="is-wide" disabled={toolbarDisabled} renderTooltip={renderTooltip} onClick={() => runCommand(wrapInHeadingCommand, 2)}>H2</ToolbarButton>
           <ToolbarButton label="Inline code" disabled={toolbarDisabled} renderTooltip={renderTooltip} onClick={() => runCommand(toggleInlineCodeCommand)}>{"<>"}</ToolbarButton>
           <span className="mois-md-editor__separator" />
-          <span className="mois-md-editor__color-group" aria-label="Text color">
-            {TEXT_COLOR_OPTIONS.map((option) => (
-              <span key={option.value} className="mois-md-editor__tool-wrap">
-                <button
-                  type="button"
-                  className="mois-md-editor__color-swatch"
-                  aria-label={`Text color ${option.label}`}
-                  disabled={toolbarDisabled}
-                  onClick={() => applyTextColor(option.value)}
-                >
-                  <span className="mois-md-editor__color-dot" style={{ backgroundColor: option.value }} />
-                </button>
-                <span role="tooltip" className="mois-md-editor__tooltip">
-                  {option.label}
-                </span>
-              </span>
-            ))}
-            <input
-              type="color"
-              className="mois-md-editor__color-input"
-              aria-label="Custom text color"
-              title="Custom text color"
-              disabled={toolbarDisabled}
-              defaultValue="#d13438"
-              onMouseDown={(event) => event.stopPropagation()}
-              onChange={(event) => applyTextColor(event.target.value)}
-            />
+          <span className="mois-md-editor__tool-wrap">
+            {withTooltip(
+              "Text colour",
+              <button
+                type="button"
+                className="mois-md-editor__tool mois-md-editor__color-trigger"
+                aria-label="Text colour"
+                aria-haspopup="menu"
+                aria-expanded={colorMenu === "text"}
+                disabled={toolbarDisabled}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setColorMenu((current) => (current === "text" ? null : "text"));
+                }}
+              >
+                <span aria-hidden="true">A</span>
+                <span className="mois-md-editor__color-bar" style={{ backgroundColor: lastTextColor }} />
+                <span className="mois-md-editor__color-caret" aria-hidden="true">▾</span>
+              </button>,
+            )}
+            {colorMenu === "text" ? (
+              <div className="mois-md-editor__color-menu" role="menu" onClick={(event) => event.stopPropagation()}>
+                <span className="mois-md-editor__color-menu-title">Text colour</span>
+                <div className="mois-md-editor__color-grid">
+                  {TEXT_COLOR_OPTIONS.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      className="mois-md-editor__color-swatch"
+                      aria-label={`Text color ${option.label}`}
+                      title={option.label}
+                      onClick={() => {
+                        setLastTextColor(option.value);
+                        applyTextColor(option.value);
+                        setColorMenu(null);
+                      }}
+                    >
+                      <span className="mois-md-editor__color-dot" style={{ backgroundColor: option.value }} />
+                    </button>
+                  ))}
+                </div>
+                <div className="mois-md-editor__color-menu-row">
+                  <span>Custom</span>
+                  <input
+                    type="color"
+                    className="mois-md-editor__color-input"
+                    aria-label="Custom text color"
+                    value={lastTextColor}
+                    onMouseDown={(event) => event.stopPropagation()}
+                    onChange={(event) => {
+                      setLastTextColor(event.target.value);
+                      applyTextColor(event.target.value);
+                    }}
+                  />
+                </div>
+              </div>
+            ) : null}
           </span>
+          {blockHighlight ? (
+            <>
+              <span className="mois-md-editor__separator" />
+              <span className="mois-md-editor__tool-wrap">
+                {withTooltip(
+                  "Block highlight",
+                  <button
+                    type="button"
+                    className="mois-md-editor__tool mois-md-editor__color-trigger"
+                    aria-label="Block highlight"
+                    aria-haspopup="menu"
+                    aria-expanded={colorMenu === "highlight"}
+                    disabled={disabled}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setColorMenu((current) => (current === "highlight" ? null : "highlight"));
+                    }}
+                  >
+                    <span
+                      className="mois-md-editor__color-dot is-square"
+                      style={{ backgroundColor: blockHighlight.value ?? "transparent" }}
+                    />
+                    <span className="mois-md-editor__color-caret" aria-hidden="true">▾</span>
+                  </button>,
+                )}
+                {colorMenu === "highlight" ? (
+                  <div className="mois-md-editor__color-menu" role="menu" onClick={(event) => event.stopPropagation()}>
+                    <span className="mois-md-editor__color-menu-title">Block highlight</span>
+                    <div className="mois-md-editor__color-grid">
+                      {BLOCK_HIGHLIGHT_OPTIONS.map((option) => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          className="mois-md-editor__color-swatch"
+                          aria-label={`Highlight ${option.label}`}
+                          title={option.label}
+                          aria-pressed={blockHighlight.value?.toLowerCase() === option.value}
+                          onClick={() => {
+                            blockHighlight.onChange(option.value);
+                            setColorMenu(null);
+                          }}
+                        >
+                          <span className="mois-md-editor__color-dot is-square" style={{ backgroundColor: option.value }} />
+                        </button>
+                      ))}
+                    </div>
+                    <div className="mois-md-editor__color-menu-row">
+                      <span>Custom</span>
+                      <input
+                        type="color"
+                        className="mois-md-editor__color-input"
+                        aria-label="Custom highlight"
+                        value={blockHighlight.value ?? "#ffff80"}
+                        onMouseDown={(event) => event.stopPropagation()}
+                        onChange={(event) => blockHighlight.onChange(event.target.value)}
+                      />
+                    </div>
+                    {blockHighlight.value ? (
+                      <div className="mois-md-editor__color-menu-row">
+                        <button
+                          type="button"
+                          className="mois-md-editor__color-menu-clear"
+                          onClick={() => {
+                            blockHighlight.onChange(null);
+                            setColorMenu(null);
+                          }}
+                        >
+                          No highlight
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+              </span>
+            </>
+          ) : null}
+          {blockFontSize ? (
+            <>
+              <span className="mois-md-editor__separator" />
+              <span className="mois-md-editor__tool-wrap">
+                {withTooltip(
+                  blockFontSize.label ?? "Text size in points",
+                  <input
+                    type="number"
+                    className="mois-md-editor__size-input"
+                    aria-label={blockFontSize.label ?? "Text size in points"}
+                    min={blockFontSize.min ?? 6}
+                    max={blockFontSize.max ?? 36}
+                    disabled={disabled}
+                    value={blockFontSize.value ?? ""}
+                    onMouseDown={(event) => event.stopPropagation()}
+                    onChange={(event) => {
+                      const points = Number(event.target.value);
+                      if (Number.isFinite(points) && points > 0) blockFontSize.onChange(points);
+                    }}
+                  />,
+                )}
+              </span>
+            </>
+          ) : null}
           <span className="mois-md-editor__separator" />
           <ToolbarButton label="Bullet list" disabled={toolbarDisabled} renderTooltip={renderTooltip} onClick={() => runCommand(wrapInBulletListCommand)}>•</ToolbarButton>
           <ToolbarButton label="Numbered list" disabled={toolbarDisabled} renderTooltip={renderTooltip} onClick={() => runCommand(wrapInOrderedListCommand)}>1.</ToolbarButton>

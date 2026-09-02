@@ -757,6 +757,8 @@ export interface GroupLayoutDraft {
   sectionSubtitleBackground?: string;
   sectionSubtitleBorder?: string;
   sectionSubtitlePadding?: string;
+  /** Draw no subtitle bar for this section. */
+  sectionHideTitle?: boolean;
   // Scale legend settings (for HoNOS-style sections)
   showScaleLegend?: boolean;
   scaleLegendOptions?: Array<{

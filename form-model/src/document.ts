@@ -300,6 +300,10 @@ export interface ParsedField {
     operator?: "truthy" | "equals" | "notEquals";
     value?: string | number | boolean | null;
   } | null;
+  /** Label styling carried to whichever target renders the form. */
+  labelColor?: string | null;
+  labelHighlight?: string | null;
+  labelBold?: boolean;
   booleanStyle?: "single" | "yesNo";
   booleanLabels?: { on: string; off: string } | null;
   booleanNeutralMode?: "cycle" | "initial" | "none";
@@ -648,6 +652,7 @@ export interface ParsedField {
   sectionSubtitleBackground?: string;
   sectionSubtitleBorder?: string;
   sectionSubtitlePadding?: string;
+  sectionHideTitle?: boolean;
   sectionCollapsible?: boolean;
   sectionDefaultCollapsed?: boolean;
   sectionLayoutType?: "grid" | "stacked";
