@@ -242,8 +242,169 @@ const ensureObservationChartStyles = () => {
     ".observation-chart-runtime { width: 100%; }",
     ".observation-chart-runtime .uplot { width: 100% !important; }",
     ".observation-chart-runtime .u-legend { text-align: left; }",
+    // The x row ("Date: ...") stays left; auto margin pushes the series
+    // readouts to the right edge of the plot, MOIS flow-sheet style.
+    ".observation-chart-runtime .u-legend.u-inline > tbody { display: flex; flex-wrap: wrap; align-items: baseline; width: 100%; }",
+    ".observation-chart-runtime .u-legend.u-inline > tbody > tr.u-series:first-child { margin-right: auto; }",
+    ".observation-chart-runtime .u-legend.u-inline > tbody > tr.u-series:last-child { margin-right: 0; }",
   ].join("\n")
   document.head.appendChild(style)
+}
+
+// Point shapes. uPlot only draws circles, so a shaped series turns its own
+// points off and is painted by the draw hook below; the legend swatch is
+// clipped to the same silhouette so the two read as one marker.
+const OBSERVATION_CHART_POINT_SHAPES = ["circle", "square", "diamond", "triangle", "star", "cross"]
+
+const OBSERVATION_CHART_LEGEND_MARKER_CLIP = {
+  square: "",
+  diamond: "polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)",
+  triangle: "polygon(50% 0%, 100% 100%, 0% 100%)",
+  star: "polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%)",
+  cross: "polygon(36% 0%, 64% 0%, 64% 36%, 100% 36%, 100% 64%, 64% 64%, 64% 100%, 36% 100%, 36% 64%, 0% 64%, 0% 36%, 36% 36%)",
+}
+
+const normalizePointShape = (value, fallback) => {
+  const normalized = normalizeString(value).toLowerCase()
+  if (OBSERVATION_CHART_POINT_SHAPES.indexOf(normalized) >= 0) return normalized
+  const normalizedFallback = normalizeString(fallback).toLowerCase()
+  return OBSERVATION_CHART_POINT_SHAPES.indexOf(normalizedFallback) >= 0 ? normalizedFallback : "circle"
+}
+
+// A series draws its connecting line unless the chart (or the series) turns it
+// off; a line-less series shows its points instead, or it would vanish.
+const resolveSeriesShowsLine = (entry, props) => {
+  if (isRecord(entry) && typeof entry.showLine === "boolean") return entry.showLine
+  return props.showLine !== false
+}
+
+const traceObservationPointShape = (ctx, shape, cx, cy, radius) => {
+  ctx.beginPath()
+  if (shape === "square") {
+    ctx.rect(cx - radius, cy - radius, radius * 2, radius * 2)
+    return
+  }
+  if (shape === "diamond") {
+    ctx.moveTo(cx, cy - radius)
+    ctx.lineTo(cx + radius, cy)
+    ctx.lineTo(cx, cy + radius)
+    ctx.lineTo(cx - radius, cy)
+    ctx.closePath()
+    return
+  }
+  if (shape === "triangle") {
+    ctx.moveTo(cx, cy - radius)
+    ctx.lineTo(cx + radius, cy + radius)
+    ctx.lineTo(cx - radius, cy + radius)
+    ctx.closePath()
+    return
+  }
+  if (shape === "cross") {
+    const arm = radius * 0.38
+    ctx.moveTo(cx - arm, cy - radius)
+    ctx.lineTo(cx + arm, cy - radius)
+    ctx.lineTo(cx + arm, cy - arm)
+    ctx.lineTo(cx + radius, cy - arm)
+    ctx.lineTo(cx + radius, cy + arm)
+    ctx.lineTo(cx + arm, cy + arm)
+    ctx.lineTo(cx + arm, cy + radius)
+    ctx.lineTo(cx - arm, cy + radius)
+    ctx.lineTo(cx - arm, cy + arm)
+    ctx.lineTo(cx - radius, cy + arm)
+    ctx.lineTo(cx - radius, cy - arm)
+    ctx.lineTo(cx - arm, cy - arm)
+    ctx.closePath()
+    return
+  }
+  if (shape === "star") {
+    const innerRadius = radius * 0.45
+    for (let corner = 0; corner < 10; corner += 1) {
+      const cornerRadius = corner % 2 === 0 ? radius : innerRadius
+      const angle = (Math.PI / 5) * corner - Math.PI / 2
+      const x = cx + Math.cos(angle) * cornerRadius
+      const y = cy + Math.sin(angle) * cornerRadius
+      if (corner === 0) ctx.moveTo(x, y)
+      else ctx.lineTo(x, y)
+    }
+    ctx.closePath()
+    return
+  }
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2)
+}
+
+const buildShapedPointsDrawHook = (seriesDefs) => (u) => {
+  const shaped = seriesDefs.some((seriesDef) => seriesDef.pointShape && seriesDef.pointShape !== "circle")
+  if (!shaped || !u || !u.ctx) return
+
+  const pxRatio = coerceNumber(u.pxRatio, typeof devicePixelRatio === "number" ? devicePixelRatio : 1)
+  const ctx = u.ctx
+  seriesDefs.forEach((seriesDef, index) => {
+    const shape = normalizeString(seriesDef.pointShape, "circle")
+    if (shape === "circle") return
+    const seriesIndex = index + 1
+    const uplotSeries = u.series && u.series[seriesIndex]
+    if (uplotSeries && uplotSeries.show === false) return
+    const values = u.data && u.data[seriesIndex]
+    const xValues = u.data && u.data[0]
+    if (!Array.isArray(values) || !Array.isArray(xValues)) return
+
+    // A star encloses far less ink than a disc of the same radius, so it is
+    // scaled up to read at the same weight as uPlot's circular points.
+    const size = Math.max(4, coerceNumber(seriesDef.pointSize, 0) || 8)
+    const radius = (size / 2) * (shape === "star" ? 1.5 : 1) * pxRatio
+    ctx.save()
+    ctx.beginPath()
+    // Padded by the marker radius so a reading sitting on the first or last
+    // tick still draws whole instead of being sliced by the plot edge.
+    ctx.rect(
+      u.bbox.left - radius,
+      u.bbox.top - radius,
+      u.bbox.width + radius * 2,
+      u.bbox.height + radius * 2
+    )
+    ctx.clip()
+    ctx.lineWidth = 2 * pxRatio
+    ctx.strokeStyle = normalizeString(seriesDef.pointStroke, seriesDef.stroke)
+    ctx.fillStyle = normalizeString(seriesDef.pointFill, seriesDef.stroke)
+    for (let i = 0; i < values.length; i += 1) {
+      const value = values[i]
+      if (value === null || value === undefined || !Number.isFinite(Number(value))) continue
+      traceObservationPointShape(
+        ctx,
+        shape,
+        u.valToPos(xValues[i], "x", true),
+        u.valToPos(Number(value), "y", true),
+        radius
+      )
+      ctx.fill()
+      ctx.stroke()
+    }
+    ctx.restore()
+  })
+}
+
+// uPlot builds the legend rows in series order, so row 0 is the x ("Date") row
+// and row n+1 belongs to seriesDefs[n].
+const applyLegendSeriesMarkers = (plot, seriesDefs) => {
+  if (!plot || !plot.root) return
+  const rows = plot.root.querySelectorAll(".u-legend tr.u-series")
+  seriesDefs.forEach((seriesDef, index) => {
+    const row = rows[index + 1]
+    if (!row) return
+    if (seriesDef.hideFromLegend) {
+      row.style.display = "none"
+      return
+    }
+    const clipPath = OBSERVATION_CHART_LEGEND_MARKER_CLIP[normalizeString(seriesDef.pointShape)]
+    if (!clipPath) return
+    const marker = row.querySelector(".u-marker")
+    if (!marker) return
+    // uPlot draws the swatch as a hollow bordered box; clipping that to a
+    // silhouette would leave slivers, so the shape is filled instead.
+    marker.style.clipPath = clipPath
+    marker.style.borderRadius = "0"
+    marker.style.background = normalizeString(seriesDef.pointFill, seriesDef.stroke)
+  })
 }
 
 const buildSeriesDefinitions = (props) => {
@@ -253,10 +414,13 @@ const buildSeriesDefinitions = (props) => {
       .map((entry, index) => ({
         label: normalizeString(entry.label, "Series " + (index + 1)),
         stroke: normalizeString(entry.stroke, OBSERVATION_CHART_PALETTE[index % OBSERVATION_CHART_PALETTE.length]),
-        width: coerceNumber(entry.width, 2),
+        width: resolveSeriesShowsLine(entry, props) ? coerceNumber(entry.width, 2) : 0,
         dash: Array.isArray(entry.dash) ? entry.dash.map((item) => Number(item)).filter(Number.isFinite) : undefined,
         pointSize: coerceNumber(entry.pointSize, 0),
-        showPoints: typeof entry.showPoints === "boolean" ? entry.showPoints : undefined,
+        showPoints: typeof entry.showPoints === "boolean"
+          ? entry.showPoints
+          : (resolveSeriesShowsLine(entry, props) ? undefined : true),
+        pointShape: normalizePointShape(entry.pointShape, props.pointShape),
         pointStroke: normalizeString(entry.pointStroke, normalizeString(entry.stroke, OBSERVATION_CHART_PALETTE[index % OBSERVATION_CHART_PALETTE.length])),
         pointFill: normalizeString(entry.pointFill, normalizeString(entry.stroke, OBSERVATION_CHART_PALETTE[index % OBSERVATION_CHART_PALETTE.length])),
         includeInSummary: entry.includeInSummary !== false,
@@ -288,10 +452,13 @@ const buildSeriesDefinitions = (props) => {
     {
       label: normalizeString(props.seriesLabel || props.label || props.title, "Value"),
       stroke: normalizeString(props.stroke, OBSERVATION_CHART_PALETTE[0]),
-      width: coerceNumber(props.strokeWidth, 2),
+      width: props.showLine !== false ? coerceNumber(props.strokeWidth, 2) : 0,
       dash: undefined,
       pointSize: coerceNumber(props.pointSize, 0),
-      showPoints: typeof props.showPoints === "boolean" ? props.showPoints : undefined,
+      showPoints: typeof props.showPoints === "boolean"
+        ? props.showPoints
+        : (props.showLine !== false ? undefined : true),
+      pointShape: normalizePointShape(props.pointShape),
       pointStroke: normalizeString(props.pointStroke, normalizeString(props.stroke, OBSERVATION_CHART_PALETTE[0])),
       pointFill: normalizeString(props.pointFill, normalizeString(props.stroke, OBSERVATION_CHART_PALETTE[0])),
       includeInSummary: props.includeInSummary !== false,
@@ -357,26 +524,51 @@ const matchesObservationSeries = (entry, seriesDef) => {
 // stays a pure READER of that field — it never owns or writes the value.
 const OBSERVATION_CHART_LIVE_POINT_COLOR = "#d97706"
 
-const buildLiveSeriesDefinitions = (props) => {
+// How much today's reading is set apart from the history it extends:
+//   "label"  - its own name and colour (an amber "Current entry" by default)
+//   "marker" - the mirrored series' name and colour, told apart by point shape
+//   "none"   - indistinguishable from the history, and absent from the legend
+const resolveLiveSeriesDistinction = (value) => {
+  const normalized = normalizeString(value, "label").toLowerCase()
+  return normalized === "marker" || normalized === "none" ? normalized : "label"
+}
+
+const buildLiveSeriesDefinitions = (props, historyDefs) => {
   if (!Array.isArray(props.liveSeries)) return []
+  const mode = resolveLiveSeriesDistinction(props.liveSeriesDistinction)
+  const mirrors = Array.isArray(historyDefs) ? historyDefs : []
   return props.liveSeries
     .filter((entry) => isRecord(entry) && isNonEmptyString(entry.fieldId))
-    .map((entry) => ({
-      label: normalizeString(entry.label, "Current entry"),
-      stroke: normalizeString(entry.stroke, OBSERVATION_CHART_LIVE_POINT_COLOR),
-      width: 0,
-      dash: undefined,
-      pointSize: Math.max(1, coerceNumber(entry.pointSize, 8)),
-      showPoints: true,
-      pointStroke: normalizeString(entry.stroke, OBSERVATION_CHART_LIVE_POINT_COLOR),
-      pointFill: normalizeString(entry.stroke, OBSERVATION_CHART_LIVE_POINT_COLOR),
-      // Live points are in-progress entries, so they stay out of summaryText.
-      includeInSummary: false,
-      parser: normalizeString(entry.parser, normalizeString(props.parser, "number")),
-      isLive: true,
-      fieldId: normalizeString(entry.fieldId),
-      dateFieldId: normalizeString(entry.dateFieldId),
-    }))
+    .map((entry, index) => {
+      // Live entry n mirrors history series n, so a two-series chart pairs each
+      // in-progress value with the history it belongs to.
+      const mirror = mode === "label" ? null : (mirrors[index] || mirrors[0] || null)
+      const stroke = normalizeString(
+        entry.stroke,
+        mirror ? mirror.stroke : OBSERVATION_CHART_LIVE_POINT_COLOR
+      )
+      const shapeFallback = mode === "marker"
+        ? "star"
+        : (mirror ? normalizeString(mirror.pointShape, "circle") : "circle")
+      return {
+        label: normalizeString(entry.label, mirror ? mirror.label : "Current entry"),
+        stroke,
+        width: 0,
+        dash: undefined,
+        pointSize: Math.max(1, coerceNumber(entry.pointSize, 8)),
+        showPoints: true,
+        pointStroke: normalizeString(entry.pointStroke, stroke),
+        pointFill: normalizeString(entry.pointFill, stroke),
+        pointShape: normalizePointShape(entry.pointShape, shapeFallback),
+        hideFromLegend: mode === "none",
+        // Live points are in-progress entries, so they stay out of summaryText.
+        includeInSummary: false,
+        parser: normalizeString(entry.parser, normalizeString(props.parser, "number")),
+        isLive: true,
+        fieldId: normalizeString(entry.fieldId),
+        dateFieldId: normalizeString(entry.dateFieldId),
+      }
+    })
 }
 
 // Live update timing: "immediate" repaints the live point on every keystroke;
@@ -615,7 +807,8 @@ const buildChartPayload = (props, sourceData, liveFieldData) => {
   // Live series render after (on top of) the regular series so the highlighted
   // in-progress point is drawn over the history lines and listed last in the
   // legend.
-  const seriesDefs = buildSeriesDefinitions(props).concat(buildLiveSeriesDefinitions(props))
+  const historyDefs = buildSeriesDefinitions(props)
+  const seriesDefs = historyDefs.concat(buildLiveSeriesDefinitions(props, historyDefs))
   if (seriesDefs.length === 0) {
     return {
       data: [[], []],
@@ -668,13 +861,17 @@ const buildUPlotOptions = (props, width, height, chartPayload) => {
       ? seriesDef.showPoints
       : showPoints || seriesPointSize > 0
 
+    // A shaped series paints its own points in the draw hook, so uPlot's
+    // circles are turned off to avoid drawing both.
+    const seriesShape = normalizeString(seriesDef.pointShape, "circle")
+
     chartSeries.push({
       label: seriesDef.label,
       stroke: seriesDef.stroke,
       width: coerceNumber(seriesDef.width, 2),
       dash: Array.isArray(seriesDef.dash) && seriesDef.dash.length > 0 ? seriesDef.dash : undefined,
       points: {
-        show: seriesShowsPoints,
+        show: seriesShowsPoints && seriesShape === "circle",
         size: Math.max(4, seriesPointSize || 4),
         width: 2,
         stroke: normalizeString(seriesDef.pointStroke, seriesDef.stroke),
@@ -711,6 +908,9 @@ const buildUPlotOptions = (props, width, height, chartPayload) => {
     // spacing, and uPlot responds by hiding the x axis (and its date labels)
     // entirely. ms: 1 declares the true unit.
     ms: 1,
+    hooks: {
+      draw: [buildShapedPointsDrawHook(chartPayload.seriesDefs)],
+    },
     legend: {
       show: showLegend,
       live: true,
@@ -780,6 +980,9 @@ const ObservationChart = ({
   loincCode = "",
   loincCodes = [],
   liveSeries,
+  liveSeriesDistinction = "label",
+  showLine = true,
+  pointShape = "circle",
   showTrendLine = false,
   xSpacing = "time",
   liveUpdateMode = "immediate",
@@ -864,6 +1067,9 @@ const ObservationChart = ({
     loincCode,
     loincCodes,
     liveSeries,
+    liveSeriesDistinction,
+    showLine,
+    pointShape,
     showTrendLine,
     xSpacing,
   }, sd, effectiveLiveData), [
@@ -896,6 +1102,9 @@ const ObservationChart = ({
     loincCode,
     loincCodes,
     liveSeries,
+    liveSeriesDistinction,
+    showLine,
+    pointShape,
     showTrendLine,
     xSpacing,
     effectiveLiveKey,
@@ -939,6 +1148,7 @@ const ObservationChart = ({
         container
       )
       plotRef.current = plot
+      applyLegendSeriesMarkers(plot, chartPayload.seriesDefs)
 
       const resizeChart = () => {
         if (!plotRef.current) return
