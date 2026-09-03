@@ -2242,6 +2242,9 @@ const SubformScoringInner = ({
 
   const renderDataEntryField = (field, renderOptions = {}) => {
     if (_isHeadingField(field)) {
+      // MOIS questionnaires lead with the stem question in sentence case
+      // ("1. Over the past 2 weeks, ..."); only band headers are shouted.
+      const isPrompt = field.headingStyle === "prompt"
       return (
         <Text
           key={`field-${field.id}`}
@@ -2250,9 +2253,9 @@ const SubformScoringInner = ({
               marginTop: "12px",
               marginBottom: "2px",
               fontSize: "13px",
-              fontWeight: 700,
-              textTransform: "uppercase",
-              letterSpacing: "0.03em",
+              fontWeight: isPrompt ? 600 : 700,
+              textTransform: isPrompt ? "none" : "uppercase",
+              letterSpacing: isPrompt ? "normal" : "0.03em",
               color: isDarkMode ? "#d9d9d9" : "#333",
               borderBottom: `1px solid ${isDarkMode ? "#404040" : "#e5e5e5"}`,
               paddingBottom: "4px"

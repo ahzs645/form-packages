@@ -866,6 +866,11 @@ export interface SubformDataEntryFieldConfig {
   id: string;
   label: string;
   type: "text" | "textarea" | "number" | "date" | "datetime" | "choice" | "booleanYesNo" | "heading" | "hotspotMap" | "scale";
+  /**
+   * Presentation for `heading` items: "section" (default) shouts a band header,
+   * "prompt" keeps a questionnaire stem question in sentence case.
+   */
+  headingStyle?: "section" | "prompt";
   mapLibraryId?: string;
   width?: "auto" | "1/1" | "1/2" | "1/3" | "2/3" | "1/4" | "3/4";
   required?: boolean;
