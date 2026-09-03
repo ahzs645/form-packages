@@ -45,6 +45,24 @@ describe("TerraFormRenderer coverage", () => {
     expect(markup).toContain("data-terra-section");
   });
 
+  it("honours a section's hideTitle: the group stays, the heading goes", () => {
+    const hidden = renderToStaticMarkup(
+      <TerraFormRenderer
+        fields={[
+          { id: "sec_quiet", label: "Quiet Section Title", type: "section", sectionConfig: { hideTitle: true, childFieldIds: ["q1"] } },
+          { id: "q1", label: "First question", type: "text" },
+          { id: "sec_loud", label: "Loud Section Title", type: "section", sectionConfig: { childFieldIds: ["q2"] } },
+          { id: "q2", label: "Second question", type: "text" },
+        ]}
+      />,
+    );
+    expect(hidden).not.toContain("Quiet Section Title");
+    expect(hidden).toContain("Loud Section Title");
+    // The section still groups and stamps, so navigation and tests find it.
+    expect(hidden).toContain('data-field-id="sec_quiet"');
+    expect(hidden).toContain("First question");
+  });
+
   it("keeps a MOIS component field visible as a named placeholder", () => {
     const component = allFieldKindsFixture.find((field) => field.type === "component");
     expect(component).toBeDefined();

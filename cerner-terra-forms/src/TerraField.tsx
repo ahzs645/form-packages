@@ -159,7 +159,12 @@ export const TerraField: React.FC<TerraFieldProps> = ({
     );
   }
 
-  // Structural controls carry no Field wrapper.
+  // Structural controls carry no Field wrapper. A section whose title is
+  // hidden keeps its stamp — it still groups its children — but draws no
+  // heading, as the MOIS target already does.
+  if (control === "section" && field.sectionConfig?.hideTitle) {
+    return stamp(null, control);
+  }
   if (control === "section" || control === "heading") {
     return stamp(
       <Heading level={control === "section" ? 2 : 3} size="medium">
