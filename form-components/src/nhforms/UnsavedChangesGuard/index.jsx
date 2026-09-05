@@ -200,6 +200,7 @@ const UnsavedChangesGuard = ({
   getSaveData,
   getSubmitData,
   preparePersist,
+  validateSubmit,
 }) => {
   const sd = useSourceData()
   const [fd, setFormData] = useActiveData()
@@ -357,10 +358,23 @@ const UnsavedChangesGuard = ({
       })
     }
 
-    // Sign & Save is the form submit transport. It must use submit authorship
-    // semantics; an explicit document Sign action is the only path that
-    // finalizes data claims as signed.
-    const persistAction = actionId === "sign" || actionId === "submit" ? "submit" : "save"
+    // A combined save/sign enforces sign policies only when MOIS can actually
+    // sign a document. Without a documentId, its transport falls back to submit.
+    const persistAction = actionId === "sign" && sd?.formParams?.documentId ? "sign" : actionId === "sign" || actionId === "submit" ? "submit" : "save"
+    const prepared = prepareStateForPersist(persistFd, persistAction)
+    // Sign/submit should persist the full submit payload (mapped
+    // observation updates, document comment) when the form provides it.
+    const isSubmitAction = actionId === "sign" || actionId === "submit"
+    const payload = isSubmitAction
+      ? (typeof getSubmitData === "function"
+          ? getSubmitData(prepared)
+          : buildDefaultSubmitPayload(persistFd, prepared?.formData))
+      : (typeof getSaveData === "function"
+          ? getSaveData(prepared)
+          : buildDefaultSavePayload(persistFd, prepared?.formData))
+
+    if (isSubmitAction && typeof validateSubmit === "function" && !validateSubmit(payload)) return
+
     // Encounter-note writes: the generated form registers a direct-mutation
     // flush (window.__builderEncounterNoteFlush — same handshake pattern as
     // window.__nhAuth) because the engine's save payload does not consume
@@ -380,17 +394,6 @@ const UnsavedChangesGuard = ({
         return
       }
     }
-    const prepared = prepareStateForPersist(persistFd, persistAction)
-    // Sign/submit should persist the full submit payload (mapped
-    // observation updates, document comment) when the form provides it.
-    const isSubmitAction = actionId === "sign" || actionId === "submit"
-    const payload = isSubmitAction
-      ? (typeof getSubmitData === "function"
-          ? getSubmitData(prepared)
-          : buildDefaultSubmitPayload(persistFd, prepared?.formData))
-      : (typeof getSaveData === "function"
-          ? getSaveData(prepared)
-          : buildDefaultSavePayload(persistFd, prepared?.formData))
 
     // Field-level MOIS write bindings are direct, catalog-backed mutations.
     // Like encounter notes, they are intentionally submit-only and must finish
@@ -494,7 +497,7 @@ const UnsavedChangesGuard = ({
   const primaryAction = actionItems.find((action) => action.primary) ?? actionItems[0]
   const secondaryActions = actionItems.filter((action) => action.id !== primaryAction?.id)
   const promptText = promptMessage || promptBody
-  const isSigned = sd?.webform?.recordState === "SIGNED" || sd?.webform?.isDraft === "N"
+  const isSigned = sd?.webform?.recordState === "SIGNED"
 
   const renderFooterAction = (action) => {
     if (action.hiddenWhenSigned && isSigned) return null
@@ -544,7 +547,11 @@ const UnsavedChangesGuard = ({
               padding: "8px 10px",
             }}
           >
-            {footerActionItems.map(renderFooterAction)}
+             {footerActionItems.map(renderFooterAction)}
+             {isSigned ? <DocumentSignButton
+               preparePersist={prepareStateForPersist}
+               getSaveData={getSaveData || ((prepared) => buildDefaultSavePayload(fd, prepared?.formData))}
+             /> : null}
             <SaveStatus noHide />
           </div>
         </div>

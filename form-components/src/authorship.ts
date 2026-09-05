@@ -1,6 +1,8 @@
+import { preparePortableAuthorship } from "./runtime/authorship-persist";
+
 export type AuthorshipScope = 'field' | 'row';
 export type AuthorshipLockOn = 'save' | 'sign' | 'submit';
-export type AuthorshipState = 'locked' | 'signed' | 'unlocked';
+export type AuthorshipState = 'pending' | 'locked' | 'signed' | 'unlocked';
 
 export interface AuthorshipPolicy {
   enabled?: boolean;
@@ -22,6 +24,7 @@ export interface AuthorshipClaim {
   claimedAt?: string;
   lastSavedAt?: string;
   editableUntil?: string;
+  editableWindowHours?: number;
   status: AuthorshipState;
   lockOn: AuthorshipLockOn;
   releasedAt?: string;
@@ -146,7 +149,8 @@ const buildNormalizedAuthorshipStore = (input?: any): AuthorshipStore => {
       claimedAt,
       lastSavedAt: value.lastSavedAt || timestamp,
       editableUntil: value.editableUntil,
-      status: value.status === 'signed' || value.status === 'unlocked' ? value.status : 'locked',
+      editableWindowHours: value.editableWindowHours,
+      status: value.status === 'pending' || value.status === 'signed' || value.status === 'unlocked' ? value.status : 'locked',
       lockOn: value.lockOn === 'sign' || value.lockOn === 'submit' ? value.lockOn : 'save',
       releasedAt: value.releasedAt,
       releasedBy: value.releasedBy,
@@ -265,7 +269,7 @@ export const getAuthorshipClaim = (
 };
 
 export const isClaimLocked = (claim?: AuthorshipClaim) => {
-  return !!claim && claim.status !== 'unlocked';
+  return !!claim && claim.status !== 'unlocked' && claim.status !== 'pending';
 };
 
 const addHoursIso = (timestamp: string | undefined, hours: number) => {
@@ -646,22 +650,6 @@ export const clearAuthorshipClaim = (
   return state;
 };
 
-const shouldApplyPolicyForAction = (policy: Required<AuthorshipPolicy>, action: AuthorshipPersistAction) => {
-  if (!policy.enabled) return false;
-  if (action === 'save') return policy.lockOn === 'save';
-  if (action === 'submit') return policy.lockOn === 'save' || policy.lockOn === 'submit';
-  return policy.lockOn === 'save' || policy.lockOn === 'sign';
-};
-
-const nextClaimStatusForAction = (
-  action: AuthorshipPersistAction,
-  currentClaim?: AuthorshipClaim
-): AuthorshipState => {
-  if (action === 'sign') return 'signed';
-  if (currentClaim?.status === 'signed') return 'signed';
-  return 'locked';
-};
-
 const ensurePersistableState = (input?: any) => {
   const nextState = syncAuthorshipMirrors(deepClone(input || {}));
   if (!nextState.field || typeof nextState.field !== 'object') {
@@ -686,169 +674,20 @@ export const prepareAuthorshipPersist = (
   overrides?: { ownerName?: string; ownerId?: string | number; now?: Date | string | number }
 ) => {
   const nextState = ensurePersistableState(activeData);
-  const registry = normalizeAuthorshipTargetRegistry(nextState.uiState?.__authorshipTargets);
-  const store = normalizeAuthorshipStore(nextState.field.data.__authorship ?? nextState.formData.__authorship);
-  const currentFormData = nextState.field.data;
-  const sourceFormData =
-    sourceData?.sourceFormData && typeof sourceData.sourceFormData === 'object'
-      ? sourceData.sourceFormData
-      : {};
-  const ownerName = getAuthorshipOwnerName(sourceData, nextState, overrides?.ownerName);
-  const ownerId = overrides?.ownerId ?? sourceData?.userProfile?.userProfileId;
-  const previewNow = sourceData?.previewOptions?.authorshipNow;
-  const now = overrides?.now ? new Date(overrides.now) : previewNow ? new Date(previewNow) : new Date();
-  const nowIso = now.toISOString();
-  let changed = false;
-
-  const canUpdateClaim = (existingClaim?: AuthorshipClaim) => {
-    if (!existingClaim || existingClaim.status === 'unlocked') return true;
-    if (existingClaim.status === 'signed') return false;
-    const editableUntil = existingClaim.editableUntil || addHoursIso(existingClaim.claimedAt || existingClaim.timestamp, DEFAULT_EDITABLE_WINDOW_HOURS);
-    const editableUntilDate = editableUntil ? new Date(editableUntil) : null;
-    const expired = !!editableUntilDate && !Number.isNaN(editableUntilDate.getTime()) && now.getTime() > editableUntilDate.getTime();
-    if (expired) return false;
-    return isSameAuthorshipActor(existingClaim, { ownerName, ownerId });
-  };
-
-  const updateExistingClaim = (
-    existingClaim: AuthorshipClaim,
-    currentValue: any,
-    sourceValue: any,
-    nextStatus: AuthorshipState
-  ): AuthorshipClaim => ({
-    ...existingClaim,
-    status: nextStatus,
-    timestamp: nowIso,
-    lastSavedAt: nowIso,
-    currentValue,
-    sourceValue,
-  });
-
-  Object.values(registry.fields).forEach((target) => {
-    const policy = normalizeAuthorshipPolicy(target.policy);
-    if (!shouldApplyPolicyForAction(policy, action)) return;
-
-    const currentValue = currentFormData[target.fieldId];
-    const sourceValue = sourceFormData?.[target.fieldId];
-    const claimKey = buildAuthorshipClaimKey({ scope: 'field', fieldId: target.fieldId });
-    const existingClaim = store.claims[claimKey];
-    const hasChange = hasMeaningfulAuthorshipChange(currentValue, sourceValue);
-
-    if (!hasChange) {
-      if (action === 'sign' && existingClaim && existingClaim.lockOn === 'save' && existingClaim.status !== 'unlocked') {
-        const nextStatus = nextClaimStatusForAction(action, existingClaim);
-        if (existingClaim.status !== nextStatus) {
-          store.claims[claimKey] = updateExistingClaim(existingClaim, currentValue, sourceValue, nextStatus);
-          changed = true;
-        }
-      }
-      return;
-    }
-
-    if (!canUpdateClaim(existingClaim)) return;
-
-    if (existingClaim && existingClaim.status !== 'unlocked') {
-      store.claims[claimKey] = updateExistingClaim(
-        existingClaim,
-        currentValue,
-        sourceValue,
-        nextClaimStatusForAction(action, existingClaim)
-      );
-      changed = true;
-      return;
-    }
-
-    store.claims[claimKey] = createAuthorshipClaim({
-      scope: 'field',
-      fieldId: target.fieldId,
-      lockOn: policy.lockOn,
-      ownerName,
-      ownerId,
-      timestamp: nowIso,
-      editableWindowHours: policy.editableWindowHours,
-      currentValue,
-      sourceValue,
-      status: nextClaimStatusForAction(action, existingClaim),
-    });
-    changed = true;
-  });
-
-  Object.values(registry.rows).forEach((target) => {
-    const policy = normalizeAuthorshipPolicy(target.policy);
-    if (!shouldApplyPolicyForAction(policy, action)) return;
-
-    const currentRows =
-      currentFormData?.[target.fieldId] && typeof currentFormData[target.fieldId] === 'object'
-        ? currentFormData[target.fieldId]
-        : {};
-    const sourceRows =
-      sourceFormData?.[target.fieldId] && typeof sourceFormData[target.fieldId] === 'object'
-        ? sourceFormData[target.fieldId]
-        : {};
-
-    target.rowIds.forEach((rowId) => {
-      const currentValue = currentRows?.[rowId];
-      const sourceValue = sourceRows?.[rowId];
-      const claimKey = buildAuthorshipClaimKey({ scope: 'row', rowKey: rowId, componentId: target.componentId });
-      const existingClaim = store.claims[claimKey];
-      const hasChange = hasMeaningfulAuthorshipChange(currentValue, sourceValue);
-
-      if (!hasChange) {
-        if (action === 'sign' && existingClaim && existingClaim.lockOn === 'save' && existingClaim.status !== 'unlocked') {
-          const nextStatus = nextClaimStatusForAction(action, existingClaim);
-          if (existingClaim.status !== nextStatus) {
-              store.claims[claimKey] = updateExistingClaim(existingClaim, currentValue, sourceValue, nextStatus);
-              changed = true;
-            }
-          }
-        return;
-      }
-
-      if (!canUpdateClaim(existingClaim)) return;
-
-      if (existingClaim && existingClaim.status !== 'unlocked') {
-        store.claims[claimKey] = updateExistingClaim(
-          existingClaim,
-          currentValue,
-          sourceValue,
-          nextClaimStatusForAction(action, existingClaim)
-        );
-        changed = true;
-        return;
-      }
-
-      store.claims[claimKey] = createAuthorshipClaim({
-        scope: 'row',
-        rowKey: rowId,
-        componentId: target.componentId,
-        lockOn: policy.lockOn,
-        ownerName,
-        ownerId,
-        timestamp: nowIso,
-        editableWindowHours: policy.editableWindowHours,
-        currentValue,
-        sourceValue,
-        status: nextClaimStatusForAction(action, existingClaim),
-      });
-      changed = true;
-    });
-  });
-
-  if (changed) {
-    nextState.field.data.__authorship = store;
-    nextState.formData = {
-      ...deepClone(nextState.formData),
-      ...deepClone(nextState.field.data),
-      __authorship: store,
-    };
-  }
-
-  return {
-    changed,
-    nextState,
-    formData: nextState.field.data,
-    store,
-  };
+  const now = overrides?.now ?? sourceData?.previewOptions?.authorshipNow ?? new Date();
+  const prepared = preparePortableAuthorship(
+    nextState.field.data,
+    sourceData?.sourceFormData || {},
+    normalizeAuthorshipTargetRegistry(nextState.uiState?.__authorshipTargets),
+    {
+      ownerName: getAuthorshipOwnerName(sourceData, nextState, overrides?.ownerName),
+      ownerId: overrides?.ownerId ?? sourceData?.userProfile?.userProfileId ?? sourceData?.auth?.userProfileId,
+    },
+    action, new Date(now).toISOString()
+  );
+  nextState.field.data = prepared.formData;
+  nextState.formData = { ...nextState.formData, ...prepared.formData };
+  return { ...prepared, nextState };
 };
 
 export const commitPreparedAuthorshipPersist = (activeData: any, prepared: { nextState?: any; changed?: boolean } | undefined) => {

@@ -857,7 +857,7 @@ export const buildScope = (): Record<string, any> => ({
     const fd = hasNote ? fdOrData : sdOrFd;
     const data = hasNote ? maybeData : fdOrData;
     console.log('signSubmit called', { sd, fd, data });
-    applyShimmedMoisLifecyclePreviewState(sd, 'signSubmit', data);
+    applyShimmedMoisLifecyclePreviewState(sd, 'signSubmit', { ...data, signatureRecord: { documentId: sd?.formParams?.documentId, recordState: 'SIGNED', note: hasNote ? noteOrSd : '' } });
     if (data?.formData && typeof fd?.setFormData === 'function') {
       fd.setFormData((draft: any) => {
         draft.field = draft.field || { data: {}, status: {}, history: [] };

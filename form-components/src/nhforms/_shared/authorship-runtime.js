@@ -208,11 +208,10 @@
     // else blocks until its window expires; a PENDING claim is not yet enforced
     // so anyone may take it over.
     if (existing && existing.status === "signed") return false;
-    if (existing && existing.status === "locked" && !sameActor(existing, actor)) {
+    if (existing && existing.status === "locked") {
       var lockedUntil = existing.editableUntil || addHoursIso(existing.claimedAt || existing.timestamp, DEFAULT_WINDOW_HOURS);
-      var lockedUntilDate = lockedUntil ? new Date(lockedUntil) : null;
-      var lockExpired = !!lockedUntilDate && !isNaN(lockedUntilDate.getTime()) && now.getTime() > lockedUntilDate.getTime();
-      if (!lockExpired) return false;
+      var lockExpired = lockedUntil && now.getTime() > new Date(lockedUntil).getTime();
+      if (!sameActor(existing, actor) || lockExpired) return false;
     }
 
     var ownerRefresh = existing && existing.status !== "unlocked" && sameActor(existing, actor);
@@ -264,7 +263,7 @@
     return false;
   }
 
-  // Lock-on-save: promote the current actor's PENDING claims to locked/signed.
+  // Promote eligible pending contributions while preserving each author.
   // Pure — returns { changed, formData, nextState }; commitSave persists it.
   // Called by save components (UnsavedChangesGuard / SaveOnClose) at save time.
   function prepareSave(state, sd, action) {
@@ -278,19 +277,18 @@
     }
     var store = normalizeStore(nextFieldData.__authorship);
     var actor = actorFrom(sd, state);
-    var nowIso = new Date().toISOString();
+    var nowIso = resolveNow(sd).toISOString();
     var changed = false;
 
     Object.keys(store.claims).forEach(function (k) {
       var c = store.claims[k];
       if (!c || c.status !== "pending") return;
-      if (!sameActor(c, actor)) return;
       if (!policyAppliesToAction(c.lockOn || "save", action)) return;
       var windowHours =
         typeof c.editableWindowHours === "number" && c.editableWindowHours > 0
           ? c.editableWindowHours
           : DEFAULT_WINDOW_HOURS;
-      var nextStatus = action === "sign" || c.lockOn === "sign" ? "signed" : "locked";
+      var nextStatus = "locked";
       // The owner-editable window starts when the claim actually locks (now).
       store.claims[k] = Object.assign({}, c, {
         status: nextStatus,

@@ -619,6 +619,18 @@ export function applyShimmedMoisLifecyclePreviewState(
       break;
   }
 
+  if (action === "sign" || action === "signSubmit" || action === "unsign") {
+    // Preview-only evidence; real signature authorization/history belongs to MOIS.
+    const previous = Array.isArray(webform.signatureHistory) ? webform.signatureHistory : [];
+    webform.signatureHistory = [...previous, {
+      recordState: webform.recordState,
+      note: payload?.signatureRecord?.note || "",
+      userProfileId: sourceData.userProfile?.userProfileId ?? sourceData.auth?.userProfileId,
+      timestamp: new Date().toISOString(),
+      formData: cloneValue(sourceData.sourceFormData || {}),
+    }];
+  }
+
   sourceData.lifecycleState = lifecycleState;
   sourceData.webform = webform;
   sourceData.formParams = formParams;

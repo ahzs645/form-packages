@@ -918,11 +918,10 @@ const AttestationSignOff = ({
     // else blocks until its window expires; a PENDING claim is not yet enforced
     // so anyone may take it over.
     if (existing && existing.status === "signed") return false;
-    if (existing && existing.status === "locked" && !sameActor(existing, actor)) {
+    if (existing && existing.status === "locked") {
       var lockedUntil = existing.editableUntil || addHoursIso(existing.claimedAt || existing.timestamp, DEFAULT_WINDOW_HOURS);
-      var lockedUntilDate = lockedUntil ? new Date(lockedUntil) : null;
-      var lockExpired = !!lockedUntilDate && !isNaN(lockedUntilDate.getTime()) && now.getTime() > lockedUntilDate.getTime();
-      if (!lockExpired) return false;
+      var lockExpired = lockedUntil && now.getTime() > new Date(lockedUntil).getTime();
+      if (!sameActor(existing, actor) || lockExpired) return false;
     }
 
     var ownerRefresh = existing && existing.status !== "unlocked" && sameActor(existing, actor);
@@ -974,7 +973,7 @@ const AttestationSignOff = ({
     return false;
   }
 
-  // Lock-on-save: promote the current actor's PENDING claims to locked/signed.
+  // Promote eligible pending contributions while preserving each author.
   // Pure — returns { changed, formData, nextState }; commitSave persists it.
   // Called by save components (UnsavedChangesGuard / SaveOnClose) at save time.
   function prepareSave(state, sd, action) {
@@ -988,19 +987,18 @@ const AttestationSignOff = ({
     }
     var store = normalizeStore(nextFieldData.__authorship);
     var actor = actorFrom(sd, state);
-    var nowIso = new Date().toISOString();
+    var nowIso = resolveNow(sd).toISOString();
     var changed = false;
 
     Object.keys(store.claims).forEach(function (k) {
       var c = store.claims[k];
       if (!c || c.status !== "pending") return;
-      if (!sameActor(c, actor)) return;
       if (!policyAppliesToAction(c.lockOn || "save", action)) return;
       var windowHours =
         typeof c.editableWindowHours === "number" && c.editableWindowHours > 0
           ? c.editableWindowHours
           : DEFAULT_WINDOW_HOURS;
-      var nextStatus = action === "sign" || c.lockOn === "sign" ? "signed" : "locked";
+      var nextStatus = "locked";
       // The owner-editable window starts when the claim actually locks (now).
       store.claims[k] = Object.assign({}, c, {
         status: nextStatus,
@@ -7220,6 +7218,87 @@ const DentalWeightConverterSchema = {
   cWeightlb: { type: "string" },
 }
 `,
+  './DocumentSignButton/index.jsx': `const DocumentSignButton = ({ disabled = false, preparePersist, getSaveData }) => {
+  const sd = useSourceData();
+  const [fd, setFormData] = useActiveData();
+  const [open, setOpen] = React.useState(false);
+  const [reason, setReason] = React.useState("");
+  const [error, setError] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  const running = React.useRef(false);
+  const signed = sd?.webform?.recordState === "SIGNED";
+  const available = signed || (sd?.webform?.isDraft === "N" && fd?.uiState?.sections?.[0]?.isComplete !== false);
+  const dismiss = () => { if (!running.current) { setOpen(false); setReason(""); setError(""); } };
+  const confirm = async () => {
+    if (running.current || disabled || !available) return;
+    const note = reason.trim();
+    if (signed && !note) { setError("Enter a reason for unsigning this form."); return; }
+    running.current = true;
+    setBusy(true);
+    setError("");
+    try {
+      let prepared = null;
+      let success;
+      if (signed) {
+        // MOIS module 53: third argument is an optional callback, not active data.
+        success = await unsign(note, sd);
+      } else {
+        if (typeof preparePersist !== "function" || typeof getSaveData !== "function") {
+          throw new Error("This form does not provide signature persistence.");
+        }
+        prepared = preparePersist(fd, "sign");
+        // MOIS sign alone cannot persist claims. Its combined transport writes
+        // the prepared snapshot and signature record in the same request.
+        success = await signSubmit(note, sd, fd, getSaveData(prepared));
+      }
+      if (success !== true) throw new Error("The signature action was not confirmed. Please try again.");
+      setFormData(produce((draft) => {
+        draft.uiState = draft.uiState || {};
+        draft.uiState.sections = draft.uiState.sections || {};
+        for (const key of new Set(["0", ...Object.keys(draft.uiState.sections)])) {
+          draft.uiState.sections[key] = { ...(draft.uiState.sections[key] || {}), isComplete: !signed };
+        }
+        if (prepared?.formData) {
+          draft.field = draft.field || {};
+          draft.field.data = prepared.formData;
+          draft.formData = { ...(draft.formData || {}), ...prepared.formData };
+        }
+      }));
+      setOpen(false);
+      setReason("");
+    } catch (failure) {
+      setError(failure?.message || "Unable to change the signature state.");
+    } finally {
+      running.current = false;
+      setBusy(false);
+    }
+  };
+  return <>
+    <Fluent.DefaultButton text={signed ? "Unsign" : "Sign"}
+      disabled={disabled || busy || !available || !sd?.formParams?.documentId}
+      onClick={() => { setReason(""); setError(""); setOpen(true); }} />
+    <Fluent.Dialog hidden={!open} onDismiss={dismiss}
+      dialogContentProps={{ title: signed ? "Unsign current record" : "Sign current record" }}
+      modalProps={{ isBlocking: true }}>
+      <Fluent.Stack tokens={{ childrenGap: 12 }}>
+        <Fluent.Text>{sd?.userProfile?.identity?.fullName || "Current user"}</Fluent.Text>
+        <Fluent.Text>{signed
+          ? "Unsigning reopens the form. Existing author ownership and editing windows still apply."
+          : "Signing makes this form read-only for all users."}</Fluent.Text>
+        <Fluent.TextField label={signed ? "Reason for unsigning" : "Reason (optional)"}
+          required={signed} multiline rows={3} value={reason} disabled={busy}
+          onChange={(_, value) => setReason(value || "")} />
+        {error ? <div role="alert">{error}</div> : null}
+      </Fluent.Stack>
+      <Fluent.DialogFooter>
+        <Fluent.PrimaryButton text={signed ? "Unsign" : "Sign"} onClick={confirm}
+          disabled={busy || (signed && !reason.trim())} />
+        <Fluent.DefaultButton text="Cancel" onClick={dismiss} disabled={busy} />
+      </Fluent.DialogFooter>
+    </Fluent.Dialog>
+  </>;
+};
+`,
   './EditableTable/index.jsx': `/**
  * __nhAuth — self-contained field/row authorship runtime for NHForms components.
  *
@@ -7430,11 +7509,10 @@ const DentalWeightConverterSchema = {
     // else blocks until its window expires; a PENDING claim is not yet enforced
     // so anyone may take it over.
     if (existing && existing.status === "signed") return false;
-    if (existing && existing.status === "locked" && !sameActor(existing, actor)) {
+    if (existing && existing.status === "locked") {
       var lockedUntil = existing.editableUntil || addHoursIso(existing.claimedAt || existing.timestamp, DEFAULT_WINDOW_HOURS);
-      var lockedUntilDate = lockedUntil ? new Date(lockedUntil) : null;
-      var lockExpired = !!lockedUntilDate && !isNaN(lockedUntilDate.getTime()) && now.getTime() > lockedUntilDate.getTime();
-      if (!lockExpired) return false;
+      var lockExpired = lockedUntil && now.getTime() > new Date(lockedUntil).getTime();
+      if (!sameActor(existing, actor) || lockExpired) return false;
     }
 
     var ownerRefresh = existing && existing.status !== "unlocked" && sameActor(existing, actor);
@@ -7486,7 +7564,7 @@ const DentalWeightConverterSchema = {
     return false;
   }
 
-  // Lock-on-save: promote the current actor's PENDING claims to locked/signed.
+  // Promote eligible pending contributions while preserving each author.
   // Pure — returns { changed, formData, nextState }; commitSave persists it.
   // Called by save components (UnsavedChangesGuard / SaveOnClose) at save time.
   function prepareSave(state, sd, action) {
@@ -7500,19 +7578,18 @@ const DentalWeightConverterSchema = {
     }
     var store = normalizeStore(nextFieldData.__authorship);
     var actor = actorFrom(sd, state);
-    var nowIso = new Date().toISOString();
+    var nowIso = resolveNow(sd).toISOString();
     var changed = false;
 
     Object.keys(store.claims).forEach(function (k) {
       var c = store.claims[k];
       if (!c || c.status !== "pending") return;
-      if (!sameActor(c, actor)) return;
       if (!policyAppliesToAction(c.lockOn || "save", action)) return;
       var windowHours =
         typeof c.editableWindowHours === "number" && c.editableWindowHours > 0
           ? c.editableWindowHours
           : DEFAULT_WINDOW_HOURS;
-      var nextStatus = action === "sign" || c.lockOn === "sign" ? "signed" : "locked";
+      var nextStatus = "locked";
       // The owner-editable window starts when the claim actually locks (now).
       store.claims[k] = Object.assign({}, c, {
         status: nextStatus,
@@ -24413,11 +24490,10 @@ hoursPerWeek
     // else blocks until its window expires; a PENDING claim is not yet enforced
     // so anyone may take it over.
     if (existing && existing.status === "signed") return false;
-    if (existing && existing.status === "locked" && !sameActor(existing, actor)) {
+    if (existing && existing.status === "locked") {
       var lockedUntil = existing.editableUntil || addHoursIso(existing.claimedAt || existing.timestamp, DEFAULT_WINDOW_HOURS);
-      var lockedUntilDate = lockedUntil ? new Date(lockedUntil) : null;
-      var lockExpired = !!lockedUntilDate && !isNaN(lockedUntilDate.getTime()) && now.getTime() > lockedUntilDate.getTime();
-      if (!lockExpired) return false;
+      var lockExpired = lockedUntil && now.getTime() > new Date(lockedUntil).getTime();
+      if (!sameActor(existing, actor) || lockExpired) return false;
     }
 
     var ownerRefresh = existing && existing.status !== "unlocked" && sameActor(existing, actor);
@@ -24469,7 +24545,7 @@ hoursPerWeek
     return false;
   }
 
-  // Lock-on-save: promote the current actor's PENDING claims to locked/signed.
+  // Promote eligible pending contributions while preserving each author.
   // Pure — returns { changed, formData, nextState }; commitSave persists it.
   // Called by save components (UnsavedChangesGuard / SaveOnClose) at save time.
   function prepareSave(state, sd, action) {
@@ -24483,19 +24559,18 @@ hoursPerWeek
     }
     var store = normalizeStore(nextFieldData.__authorship);
     var actor = actorFrom(sd, state);
-    var nowIso = new Date().toISOString();
+    var nowIso = resolveNow(sd).toISOString();
     var changed = false;
 
     Object.keys(store.claims).forEach(function (k) {
       var c = store.claims[k];
       if (!c || c.status !== "pending") return;
-      if (!sameActor(c, actor)) return;
       if (!policyAppliesToAction(c.lockOn || "save", action)) return;
       var windowHours =
         typeof c.editableWindowHours === "number" && c.editableWindowHours > 0
           ? c.editableWindowHours
           : DEFAULT_WINDOW_HOURS;
-      var nextStatus = action === "sign" || c.lockOn === "sign" ? "signed" : "locked";
+      var nextStatus = "locked";
       // The owner-editable window starts when the claim actually locks (now).
       store.claims[k] = Object.assign({}, c, {
         status: nextStatus,
@@ -28276,11 +28351,10 @@ const RichMarkdownBlock = ({
     // else blocks until its window expires; a PENDING claim is not yet enforced
     // so anyone may take it over.
     if (existing && existing.status === "signed") return false;
-    if (existing && existing.status === "locked" && !sameActor(existing, actor)) {
+    if (existing && existing.status === "locked") {
       var lockedUntil = existing.editableUntil || addHoursIso(existing.claimedAt || existing.timestamp, DEFAULT_WINDOW_HOURS);
-      var lockedUntilDate = lockedUntil ? new Date(lockedUntil) : null;
-      var lockExpired = !!lockedUntilDate && !isNaN(lockedUntilDate.getTime()) && now.getTime() > lockedUntilDate.getTime();
-      if (!lockExpired) return false;
+      var lockExpired = lockedUntil && now.getTime() > new Date(lockedUntil).getTime();
+      if (!sameActor(existing, actor) || lockExpired) return false;
     }
 
     var ownerRefresh = existing && existing.status !== "unlocked" && sameActor(existing, actor);
@@ -28332,7 +28406,7 @@ const RichMarkdownBlock = ({
     return false;
   }
 
-  // Lock-on-save: promote the current actor's PENDING claims to locked/signed.
+  // Promote eligible pending contributions while preserving each author.
   // Pure — returns { changed, formData, nextState }; commitSave persists it.
   // Called by save components (UnsavedChangesGuard / SaveOnClose) at save time.
   function prepareSave(state, sd, action) {
@@ -28346,19 +28420,18 @@ const RichMarkdownBlock = ({
     }
     var store = normalizeStore(nextFieldData.__authorship);
     var actor = actorFrom(sd, state);
-    var nowIso = new Date().toISOString();
+    var nowIso = resolveNow(sd).toISOString();
     var changed = false;
 
     Object.keys(store.claims).forEach(function (k) {
       var c = store.claims[k];
       if (!c || c.status !== "pending") return;
-      if (!sameActor(c, actor)) return;
       if (!policyAppliesToAction(c.lockOn || "save", action)) return;
       var windowHours =
         typeof c.editableWindowHours === "number" && c.editableWindowHours > 0
           ? c.editableWindowHours
           : DEFAULT_WINDOW_HOURS;
-      var nextStatus = action === "sign" || c.lockOn === "sign" ? "signed" : "locked";
+      var nextStatus = "locked";
       // The owner-editable window starts when the claim actually locks (now).
       store.claims[k] = Object.assign({}, c, {
         status: nextStatus,
@@ -34530,11 +34603,10 @@ const SubformScoring = (props) => {
     // else blocks until its window expires; a PENDING claim is not yet enforced
     // so anyone may take it over.
     if (existing && existing.status === "signed") return false;
-    if (existing && existing.status === "locked" && !sameActor(existing, actor)) {
+    if (existing && existing.status === "locked") {
       var lockedUntil = existing.editableUntil || addHoursIso(existing.claimedAt || existing.timestamp, DEFAULT_WINDOW_HOURS);
-      var lockedUntilDate = lockedUntil ? new Date(lockedUntil) : null;
-      var lockExpired = !!lockedUntilDate && !isNaN(lockedUntilDate.getTime()) && now.getTime() > lockedUntilDate.getTime();
-      if (!lockExpired) return false;
+      var lockExpired = lockedUntil && now.getTime() > new Date(lockedUntil).getTime();
+      if (!sameActor(existing, actor) || lockExpired) return false;
     }
 
     var ownerRefresh = existing && existing.status !== "unlocked" && sameActor(existing, actor);
@@ -34586,7 +34658,7 @@ const SubformScoring = (props) => {
     return false;
   }
 
-  // Lock-on-save: promote the current actor's PENDING claims to locked/signed.
+  // Promote eligible pending contributions while preserving each author.
   // Pure — returns { changed, formData, nextState }; commitSave persists it.
   // Called by save components (UnsavedChangesGuard / SaveOnClose) at save time.
   function prepareSave(state, sd, action) {
@@ -34600,19 +34672,18 @@ const SubformScoring = (props) => {
     }
     var store = normalizeStore(nextFieldData.__authorship);
     var actor = actorFrom(sd, state);
-    var nowIso = new Date().toISOString();
+    var nowIso = resolveNow(sd).toISOString();
     var changed = false;
 
     Object.keys(store.claims).forEach(function (k) {
       var c = store.claims[k];
       if (!c || c.status !== "pending") return;
-      if (!sameActor(c, actor)) return;
       if (!policyAppliesToAction(c.lockOn || "save", action)) return;
       var windowHours =
         typeof c.editableWindowHours === "number" && c.editableWindowHours > 0
           ? c.editableWindowHours
           : DEFAULT_WINDOW_HOURS;
-      var nextStatus = action === "sign" || c.lockOn === "sign" ? "signed" : "locked";
+      var nextStatus = "locked";
       // The owner-editable window starts when the claim actually locks (now).
       store.claims[k] = Object.assign({}, c, {
         status: nextStatus,
@@ -34873,6 +34944,7 @@ const UnsavedChangesGuard = ({
   getSaveData,
   getSubmitData,
   preparePersist,
+  validateSubmit,
 }) => {
   const sd = useSourceData()
   const [fd, setFormData] = useActiveData()
@@ -35030,10 +35102,23 @@ const UnsavedChangesGuard = ({
       })
     }
 
-    // Sign & Save is the form submit transport. It must use submit authorship
-    // semantics; an explicit document Sign action is the only path that
-    // finalizes data claims as signed.
-    const persistAction = actionId === "sign" || actionId === "submit" ? "submit" : "save"
+    // A combined save/sign enforces sign policies only when MOIS can actually
+    // sign a document. Without a documentId, its transport falls back to submit.
+    const persistAction = actionId === "sign" && sd?.formParams?.documentId ? "sign" : actionId === "sign" || actionId === "submit" ? "submit" : "save"
+    const prepared = prepareStateForPersist(persistFd, persistAction)
+    // Sign/submit should persist the full submit payload (mapped
+    // observation updates, document comment) when the form provides it.
+    const isSubmitAction = actionId === "sign" || actionId === "submit"
+    const payload = isSubmitAction
+      ? (typeof getSubmitData === "function"
+          ? getSubmitData(prepared)
+          : buildDefaultSubmitPayload(persistFd, prepared?.formData))
+      : (typeof getSaveData === "function"
+          ? getSaveData(prepared)
+          : buildDefaultSavePayload(persistFd, prepared?.formData))
+
+    if (isSubmitAction && typeof validateSubmit === "function" && !validateSubmit(payload)) return
+
     // Encounter-note writes: the generated form registers a direct-mutation
     // flush (window.__builderEncounterNoteFlush — same handshake pattern as
     // window.__nhAuth) because the engine's save payload does not consume
@@ -35053,17 +35138,6 @@ const UnsavedChangesGuard = ({
         return
       }
     }
-    const prepared = prepareStateForPersist(persistFd, persistAction)
-    // Sign/submit should persist the full submit payload (mapped
-    // observation updates, document comment) when the form provides it.
-    const isSubmitAction = actionId === "sign" || actionId === "submit"
-    const payload = isSubmitAction
-      ? (typeof getSubmitData === "function"
-          ? getSubmitData(prepared)
-          : buildDefaultSubmitPayload(persistFd, prepared?.formData))
-      : (typeof getSaveData === "function"
-          ? getSaveData(prepared)
-          : buildDefaultSavePayload(persistFd, prepared?.formData))
 
     // Field-level MOIS write bindings are direct, catalog-backed mutations.
     // Like encounter notes, they are intentionally submit-only and must finish
@@ -35167,7 +35241,7 @@ const UnsavedChangesGuard = ({
   const primaryAction = actionItems.find((action) => action.primary) ?? actionItems[0]
   const secondaryActions = actionItems.filter((action) => action.id !== primaryAction?.id)
   const promptText = promptMessage || promptBody
-  const isSigned = sd?.webform?.recordState === "SIGNED" || sd?.webform?.isDraft === "N"
+  const isSigned = sd?.webform?.recordState === "SIGNED"
 
   const renderFooterAction = (action) => {
     if (action.hiddenWhenSigned && isSigned) return null
@@ -35217,7 +35291,11 @@ const UnsavedChangesGuard = ({
               padding: "8px 10px",
             }}
           >
-            {footerActionItems.map(renderFooterAction)}
+             {footerActionItems.map(renderFooterAction)}
+             {isSigned ? <DocumentSignButton
+               preparePersist={prepareStateForPersist}
+               getSaveData={getSaveData || ((prepared) => buildDefaultSavePayload(fd, prepared?.formData))}
+             /> : null}
             <SaveStatus noHide />
           </div>
         </div>
@@ -35880,6 +35958,19 @@ export const componentIdentities: Record<string, any> = {
       "minor": 28,
       "patch": 5
     },
+    "components": []
+  },
+  'DocumentSignButton': {
+    "name": "DocumentSignButton",
+    "title": "Document signature",
+    "description": "Signs a prepared document or reopens it for amendment with a required reason, preserving contribution ownership.",
+    "version": {
+      "major": 1,
+      "minor": 0,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "MOIS Exporter",
     "components": []
   },
   'EditableTable': {
@@ -37150,7 +37241,10 @@ export const componentIdentities: Record<string, any> = {
     "title": "Unsaved Changes Guard",
     "description": "Dirty-state guard with unload prompt and configurable save/discard/cancel dialog actions",
     "category": "Utility",
-    "version": "1.0.0"
+    "version": "1.0.0",
+    "components": [
+      "DocumentSignButton"
+    ]
   },
   'UseChangeWatch': {
     "name": "UseChangeWatch",

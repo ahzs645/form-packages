@@ -915,11 +915,10 @@ const AttestationSignOff = ({
     // else blocks until its window expires; a PENDING claim is not yet enforced
     // so anyone may take it over.
     if (existing && existing.status === "signed") return false;
-    if (existing && existing.status === "locked" && !sameActor(existing, actor)) {
+    if (existing && existing.status === "locked") {
       var lockedUntil = existing.editableUntil || addHoursIso(existing.claimedAt || existing.timestamp, DEFAULT_WINDOW_HOURS);
-      var lockedUntilDate = lockedUntil ? new Date(lockedUntil) : null;
-      var lockExpired = !!lockedUntilDate && !isNaN(lockedUntilDate.getTime()) && now.getTime() > lockedUntilDate.getTime();
-      if (!lockExpired) return false;
+      var lockExpired = lockedUntil && now.getTime() > new Date(lockedUntil).getTime();
+      if (!sameActor(existing, actor) || lockExpired) return false;
     }
     var ownerRefresh = existing && existing.status !== "unlocked" && sameActor(existing, actor);
     if (ownerRefresh) {
@@ -966,7 +965,7 @@ const AttestationSignOff = ({
     return false;
   }
 
-  // Lock-on-save: promote the current actor's PENDING claims to locked/signed.
+  // Promote eligible pending contributions while preserving each author.
   // Pure — returns { changed, formData, nextState }; commitSave persists it.
   // Called by save components (UnsavedChangesGuard / SaveOnClose) at save time.
   function prepareSave(state, sd, action) {
@@ -980,15 +979,14 @@ const AttestationSignOff = ({
     }
     var store = normalizeStore(nextFieldData.__authorship);
     var actor = actorFrom(sd, state);
-    var nowIso = new Date().toISOString();
+    var nowIso = resolveNow(sd).toISOString();
     var changed = false;
     Object.keys(store.claims).forEach(function (k) {
       var c = store.claims[k];
       if (!c || c.status !== "pending") return;
-      if (!sameActor(c, actor)) return;
       if (!policyAppliesToAction(c.lockOn || "save", action)) return;
       var windowHours = typeof c.editableWindowHours === "number" && c.editableWindowHours > 0 ? c.editableWindowHours : DEFAULT_WINDOW_HOURS;
-      var nextStatus = action === "sign" || c.lockOn === "sign" ? "signed" : "locked";
+      var nextStatus = "locked";
       // The owner-editable window starts when the claim actually locks (now).
       store.claims[k] = Object.assign({}, c, {
         status: nextStatus,
@@ -7340,6 +7338,121 @@ const DentalWeightConverterSchema = {
     type: "string"
   }
 };`,
+  './DocumentSignButton/index.jsx': `const DocumentSignButton = ({
+  disabled = false,
+  preparePersist,
+  getSaveData
+}) => {
+  const sd = useSourceData();
+  const [fd, setFormData] = useActiveData();
+  const [open, setOpen] = React.useState(false);
+  const [reason, setReason] = React.useState("");
+  const [error, setError] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  const running = React.useRef(false);
+  const signed = sd?.webform?.recordState === "SIGNED";
+  const available = signed || sd?.webform?.isDraft === "N" && fd?.uiState?.sections?.[0]?.isComplete !== false;
+  const dismiss = () => {
+    if (!running.current) {
+      setOpen(false);
+      setReason("");
+      setError("");
+    }
+  };
+  const confirm = async () => {
+    if (running.current || disabled || !available) return;
+    const note = reason.trim();
+    if (signed && !note) {
+      setError("Enter a reason for unsigning this form.");
+      return;
+    }
+    running.current = true;
+    setBusy(true);
+    setError("");
+    try {
+      let prepared = null;
+      let success;
+      if (signed) {
+        // MOIS module 53: third argument is an optional callback, not active data.
+        success = await unsign(note, sd);
+      } else {
+        if (typeof preparePersist !== "function" || typeof getSaveData !== "function") {
+          throw new Error("This form does not provide signature persistence.");
+        }
+        prepared = preparePersist(fd, "sign");
+        // MOIS sign alone cannot persist claims. Its combined transport writes
+        // the prepared snapshot and signature record in the same request.
+        success = await signSubmit(note, sd, fd, getSaveData(prepared));
+      }
+      if (success !== true) throw new Error("The signature action was not confirmed. Please try again.");
+      setFormData(produce(draft => {
+        draft.uiState = draft.uiState || {};
+        draft.uiState.sections = draft.uiState.sections || {};
+        for (const key of new Set(["0", ...Object.keys(draft.uiState.sections)])) {
+          draft.uiState.sections[key] = {
+            ...(draft.uiState.sections[key] || {}),
+            isComplete: !signed
+          };
+        }
+        if (prepared?.formData) {
+          draft.field = draft.field || {};
+          draft.field.data = prepared.formData;
+          draft.formData = {
+            ...(draft.formData || {}),
+            ...prepared.formData
+          };
+        }
+      }));
+      setOpen(false);
+      setReason("");
+    } catch (failure) {
+      setError(failure?.message || "Unable to change the signature state.");
+    } finally {
+      running.current = false;
+      setBusy(false);
+    }
+  };
+  return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(Fluent.DefaultButton, {
+    text: signed ? "Unsign" : "Sign",
+    disabled: disabled || busy || !available || !sd?.formParams?.documentId,
+    onClick: () => {
+      setReason("");
+      setError("");
+      setOpen(true);
+    }
+  }), /*#__PURE__*/React.createElement(Fluent.Dialog, {
+    hidden: !open,
+    onDismiss: dismiss,
+    dialogContentProps: {
+      title: signed ? "Unsign current record" : "Sign current record"
+    },
+    modalProps: {
+      isBlocking: true
+    }
+  }, /*#__PURE__*/React.createElement(Fluent.Stack, {
+    tokens: {
+      childrenGap: 12
+    }
+  }, /*#__PURE__*/React.createElement(Fluent.Text, null, sd?.userProfile?.identity?.fullName || "Current user"), /*#__PURE__*/React.createElement(Fluent.Text, null, signed ? "Unsigning reopens the form. Existing author ownership and editing windows still apply." : "Signing makes this form read-only for all users."), /*#__PURE__*/React.createElement(Fluent.TextField, {
+    label: signed ? "Reason for unsigning" : "Reason (optional)",
+    required: signed,
+    multiline: true,
+    rows: 3,
+    value: reason,
+    disabled: busy,
+    onChange: (_, value) => setReason(value || "")
+  }), error ? /*#__PURE__*/React.createElement("div", {
+    role: "alert"
+  }, error) : null), /*#__PURE__*/React.createElement(Fluent.DialogFooter, null, /*#__PURE__*/React.createElement(Fluent.PrimaryButton, {
+    text: signed ? "Unsign" : "Sign",
+    onClick: confirm,
+    disabled: busy || signed && !reason.trim()
+  }), /*#__PURE__*/React.createElement(Fluent.DefaultButton, {
+    text: "Cancel",
+    onClick: dismiss,
+    disabled: busy
+  }))));
+};`,
   './EditableTable/index.jsx': `/**
  * __nhAuth — self-contained field/row authorship runtime for NHForms components.
  *
@@ -7516,11 +7629,10 @@ const DentalWeightConverterSchema = {
     // else blocks until its window expires; a PENDING claim is not yet enforced
     // so anyone may take it over.
     if (existing && existing.status === "signed") return false;
-    if (existing && existing.status === "locked" && !sameActor(existing, actor)) {
+    if (existing && existing.status === "locked") {
       var lockedUntil = existing.editableUntil || addHoursIso(existing.claimedAt || existing.timestamp, DEFAULT_WINDOW_HOURS);
-      var lockedUntilDate = lockedUntil ? new Date(lockedUntil) : null;
-      var lockExpired = !!lockedUntilDate && !isNaN(lockedUntilDate.getTime()) && now.getTime() > lockedUntilDate.getTime();
-      if (!lockExpired) return false;
+      var lockExpired = lockedUntil && now.getTime() > new Date(lockedUntil).getTime();
+      if (!sameActor(existing, actor) || lockExpired) return false;
     }
     var ownerRefresh = existing && existing.status !== "unlocked" && sameActor(existing, actor);
     if (ownerRefresh) {
@@ -7567,7 +7679,7 @@ const DentalWeightConverterSchema = {
     return false;
   }
 
-  // Lock-on-save: promote the current actor's PENDING claims to locked/signed.
+  // Promote eligible pending contributions while preserving each author.
   // Pure — returns { changed, formData, nextState }; commitSave persists it.
   // Called by save components (UnsavedChangesGuard / SaveOnClose) at save time.
   function prepareSave(state, sd, action) {
@@ -7581,15 +7693,14 @@ const DentalWeightConverterSchema = {
     }
     var store = normalizeStore(nextFieldData.__authorship);
     var actor = actorFrom(sd, state);
-    var nowIso = new Date().toISOString();
+    var nowIso = resolveNow(sd).toISOString();
     var changed = false;
     Object.keys(store.claims).forEach(function (k) {
       var c = store.claims[k];
       if (!c || c.status !== "pending") return;
-      if (!sameActor(c, actor)) return;
       if (!policyAppliesToAction(c.lockOn || "save", action)) return;
       var windowHours = typeof c.editableWindowHours === "number" && c.editableWindowHours > 0 ? c.editableWindowHours : DEFAULT_WINDOW_HOURS;
-      var nextStatus = action === "sign" || c.lockOn === "sign" ? "signed" : "locked";
+      var nextStatus = "locked";
       // The owner-editable window starts when the claim actually locks (now).
       store.claims[k] = Object.assign({}, c, {
         status: nextStatus,
@@ -26211,11 +26322,10 @@ hoursPerWeek
     // else blocks until its window expires; a PENDING claim is not yet enforced
     // so anyone may take it over.
     if (existing && existing.status === "signed") return false;
-    if (existing && existing.status === "locked" && !sameActor(existing, actor)) {
+    if (existing && existing.status === "locked") {
       var lockedUntil = existing.editableUntil || addHoursIso(existing.claimedAt || existing.timestamp, DEFAULT_WINDOW_HOURS);
-      var lockedUntilDate = lockedUntil ? new Date(lockedUntil) : null;
-      var lockExpired = !!lockedUntilDate && !isNaN(lockedUntilDate.getTime()) && now.getTime() > lockedUntilDate.getTime();
-      if (!lockExpired) return false;
+      var lockExpired = lockedUntil && now.getTime() > new Date(lockedUntil).getTime();
+      if (!sameActor(existing, actor) || lockExpired) return false;
     }
     var ownerRefresh = existing && existing.status !== "unlocked" && sameActor(existing, actor);
     if (ownerRefresh) {
@@ -26262,7 +26372,7 @@ hoursPerWeek
     return false;
   }
 
-  // Lock-on-save: promote the current actor's PENDING claims to locked/signed.
+  // Promote eligible pending contributions while preserving each author.
   // Pure — returns { changed, formData, nextState }; commitSave persists it.
   // Called by save components (UnsavedChangesGuard / SaveOnClose) at save time.
   function prepareSave(state, sd, action) {
@@ -26276,15 +26386,14 @@ hoursPerWeek
     }
     var store = normalizeStore(nextFieldData.__authorship);
     var actor = actorFrom(sd, state);
-    var nowIso = new Date().toISOString();
+    var nowIso = resolveNow(sd).toISOString();
     var changed = false;
     Object.keys(store.claims).forEach(function (k) {
       var c = store.claims[k];
       if (!c || c.status !== "pending") return;
-      if (!sameActor(c, actor)) return;
       if (!policyAppliesToAction(c.lockOn || "save", action)) return;
       var windowHours = typeof c.editableWindowHours === "number" && c.editableWindowHours > 0 ? c.editableWindowHours : DEFAULT_WINDOW_HOURS;
-      var nextStatus = action === "sign" || c.lockOn === "sign" ? "signed" : "locked";
+      var nextStatus = "locked";
       // The owner-editable window starts when the claim actually locks (now).
       store.claims[k] = Object.assign({}, c, {
         status: nextStatus,
@@ -29903,11 +30012,10 @@ const RichMarkdownBlock = ({
     // else blocks until its window expires; a PENDING claim is not yet enforced
     // so anyone may take it over.
     if (existing && existing.status === "signed") return false;
-    if (existing && existing.status === "locked" && !sameActor(existing, actor)) {
+    if (existing && existing.status === "locked") {
       var lockedUntil = existing.editableUntil || addHoursIso(existing.claimedAt || existing.timestamp, DEFAULT_WINDOW_HOURS);
-      var lockedUntilDate = lockedUntil ? new Date(lockedUntil) : null;
-      var lockExpired = !!lockedUntilDate && !isNaN(lockedUntilDate.getTime()) && now.getTime() > lockedUntilDate.getTime();
-      if (!lockExpired) return false;
+      var lockExpired = lockedUntil && now.getTime() > new Date(lockedUntil).getTime();
+      if (!sameActor(existing, actor) || lockExpired) return false;
     }
     var ownerRefresh = existing && existing.status !== "unlocked" && sameActor(existing, actor);
     if (ownerRefresh) {
@@ -29954,7 +30062,7 @@ const RichMarkdownBlock = ({
     return false;
   }
 
-  // Lock-on-save: promote the current actor's PENDING claims to locked/signed.
+  // Promote eligible pending contributions while preserving each author.
   // Pure — returns { changed, formData, nextState }; commitSave persists it.
   // Called by save components (UnsavedChangesGuard / SaveOnClose) at save time.
   function prepareSave(state, sd, action) {
@@ -29968,15 +30076,14 @@ const RichMarkdownBlock = ({
     }
     var store = normalizeStore(nextFieldData.__authorship);
     var actor = actorFrom(sd, state);
-    var nowIso = new Date().toISOString();
+    var nowIso = resolveNow(sd).toISOString();
     var changed = false;
     Object.keys(store.claims).forEach(function (k) {
       var c = store.claims[k];
       if (!c || c.status !== "pending") return;
-      if (!sameActor(c, actor)) return;
       if (!policyAppliesToAction(c.lockOn || "save", action)) return;
       var windowHours = typeof c.editableWindowHours === "number" && c.editableWindowHours > 0 ? c.editableWindowHours : DEFAULT_WINDOW_HOURS;
-      var nextStatus = action === "sign" || c.lockOn === "sign" ? "signed" : "locked";
+      var nextStatus = "locked";
       // The owner-editable window starts when the claim actually locks (now).
       store.claims[k] = Object.assign({}, c, {
         status: nextStatus,
@@ -36363,11 +36470,10 @@ const SubformScoring = props => {
     // else blocks until its window expires; a PENDING claim is not yet enforced
     // so anyone may take it over.
     if (existing && existing.status === "signed") return false;
-    if (existing && existing.status === "locked" && !sameActor(existing, actor)) {
+    if (existing && existing.status === "locked") {
       var lockedUntil = existing.editableUntil || addHoursIso(existing.claimedAt || existing.timestamp, DEFAULT_WINDOW_HOURS);
-      var lockedUntilDate = lockedUntil ? new Date(lockedUntil) : null;
-      var lockExpired = !!lockedUntilDate && !isNaN(lockedUntilDate.getTime()) && now.getTime() > lockedUntilDate.getTime();
-      if (!lockExpired) return false;
+      var lockExpired = lockedUntil && now.getTime() > new Date(lockedUntil).getTime();
+      if (!sameActor(existing, actor) || lockExpired) return false;
     }
     var ownerRefresh = existing && existing.status !== "unlocked" && sameActor(existing, actor);
     if (ownerRefresh) {
@@ -36414,7 +36520,7 @@ const SubformScoring = props => {
     return false;
   }
 
-  // Lock-on-save: promote the current actor's PENDING claims to locked/signed.
+  // Promote eligible pending contributions while preserving each author.
   // Pure — returns { changed, formData, nextState }; commitSave persists it.
   // Called by save components (UnsavedChangesGuard / SaveOnClose) at save time.
   function prepareSave(state, sd, action) {
@@ -36428,15 +36534,14 @@ const SubformScoring = props => {
     }
     var store = normalizeStore(nextFieldData.__authorship);
     var actor = actorFrom(sd, state);
-    var nowIso = new Date().toISOString();
+    var nowIso = resolveNow(sd).toISOString();
     var changed = false;
     Object.keys(store.claims).forEach(function (k) {
       var c = store.claims[k];
       if (!c || c.status !== "pending") return;
-      if (!sameActor(c, actor)) return;
       if (!policyAppliesToAction(c.lockOn || "save", action)) return;
       var windowHours = typeof c.editableWindowHours === "number" && c.editableWindowHours > 0 ? c.editableWindowHours : DEFAULT_WINDOW_HOURS;
-      var nextStatus = action === "sign" || c.lockOn === "sign" ? "signed" : "locked";
+      var nextStatus = "locked";
       // The owner-editable window starts when the claim actually locks (now).
       store.claims[k] = Object.assign({}, c, {
         status: nextStatus,
@@ -36723,7 +36828,8 @@ const UnsavedChangesGuard = ({
   skipWhenSigned = true,
   getSaveData,
   getSubmitData,
-  preparePersist
+  preparePersist,
+  validateSubmit
 }) => {
   const sd = useSourceData();
   const [fd, setFormData] = useActiveData();
@@ -36872,10 +36978,16 @@ const UnsavedChangesGuard = ({
       });
     }
 
-    // Sign & Save is the form submit transport. It must use submit authorship
-    // semantics; an explicit document Sign action is the only path that
-    // finalizes data claims as signed.
-    const persistAction = actionId === "sign" || actionId === "submit" ? "submit" : "save";
+    // A combined save/sign enforces sign policies only when MOIS can actually
+    // sign a document. Without a documentId, its transport falls back to submit.
+    const persistAction = actionId === "sign" && sd?.formParams?.documentId ? "sign" : actionId === "sign" || actionId === "submit" ? "submit" : "save";
+    const prepared = prepareStateForPersist(persistFd, persistAction);
+    // Sign/submit should persist the full submit payload (mapped
+    // observation updates, document comment) when the form provides it.
+    const isSubmitAction = actionId === "sign" || actionId === "submit";
+    const payload = isSubmitAction ? typeof getSubmitData === "function" ? getSubmitData(prepared) : buildDefaultSubmitPayload(persistFd, prepared?.formData) : typeof getSaveData === "function" ? getSaveData(prepared) : buildDefaultSavePayload(persistFd, prepared?.formData);
+    if (isSubmitAction && typeof validateSubmit === "function" && !validateSubmit(payload)) return;
+
     // Encounter-note writes: the generated form registers a direct-mutation
     // flush (window.__builderEncounterNoteFlush — same handshake pattern as
     // window.__nhAuth) because the engine's save payload does not consume
@@ -36891,11 +37003,6 @@ const UnsavedChangesGuard = ({
         return;
       }
     }
-    const prepared = prepareStateForPersist(persistFd, persistAction);
-    // Sign/submit should persist the full submit payload (mapped
-    // observation updates, document comment) when the form provides it.
-    const isSubmitAction = actionId === "sign" || actionId === "submit";
-    const payload = isSubmitAction ? typeof getSubmitData === "function" ? getSubmitData(prepared) : buildDefaultSubmitPayload(persistFd, prepared?.formData) : typeof getSaveData === "function" ? getSaveData(prepared) : buildDefaultSavePayload(persistFd, prepared?.formData);
 
     // Field-level MOIS write bindings are direct, catalog-backed mutations.
     // Like encounter notes, they are intentionally submit-only and must finish
@@ -36975,7 +37082,7 @@ const UnsavedChangesGuard = ({
   const primaryAction = actionItems.find(action => action.primary) ?? actionItems[0];
   const secondaryActions = actionItems.filter(action => action.id !== primaryAction?.id);
   const promptText = promptMessage || promptBody;
-  const isSigned = sd?.webform?.recordState === "SIGNED" || sd?.webform?.isDraft === "N";
+  const isSigned = sd?.webform?.recordState === "SIGNED";
   const renderFooterAction = action => {
     if (action.hiddenWhenSigned && isSigned) return null;
     const ButtonComponent = action.primary ? PrimaryButton : DefaultButton;
@@ -37021,7 +37128,10 @@ const UnsavedChangesGuard = ({
       background: footerBackground,
       padding: "8px 10px"
     }
-  }, footerActionItems.map(renderFooterAction), /*#__PURE__*/React.createElement(SaveStatus, {
+  }, footerActionItems.map(renderFooterAction), isSigned ? /*#__PURE__*/React.createElement(DocumentSignButton, {
+    preparePersist: prepareStateForPersist,
+    getSaveData: getSaveData || (prepared => buildDefaultSavePayload(fd, prepared?.formData))
+  }) : null, /*#__PURE__*/React.createElement(SaveStatus, {
     noHide: true
   }))) : null, /*#__PURE__*/React.createElement(Dialog, {
     hidden: !isOpen,
@@ -37157,7 +37267,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './AllergyTable/index.jsx': ["AllergyTable"],
   './AssessmentScoringTable/index.jsx': ["AssessmentScoringTable","getFieldValue","hasValue","inputStyle","labelCellStyle","number","numberOrBlank","raw","renderRow","scoreRows","setScore","sum","tableStyle","total","value","valueCellStyle"],
   './AttestationSignOff/index.jsx': ["AttestationSignOff","cleaned","current","deriveInitials","flatTargets","getCurrentActorName","initials","key","name","nestedTargets","next","normalizeInitialsName","normalizeRoleOptions","normalizeTargets","parts","roleOptions","row","sd","signatureFieldId","signatureValue","signedAt","source","table","text","updateValue","value"],
-  './AuthorshipField/index.jsx': ["AuthorshipField","DEFAULT_WINDOW_HOURS","_defaultPolicy","_nhAuth","_normalizeFieldOptions","actor","actorFrom","addHoursIso","base","buildKey","c","changed","ck","claim","claims","commitSave","commitValue","componentId","current","d","data","editableUntil","effectiveFieldId","euDate","existing","expired","fieldData","formatTimestamp","isNonEmpty","isOwner","keepStatus","key","label","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","nextStatus","nhAuth","normalizeStore","now","nowIso","numeric","optionList","ownerId","ownerName","ownerRefresh","pad2","pending","policy","policyAppliesToAction","prepareSave","query","raw","readOnly","readStore","release","renderInput","resolveNow","sameActor","sd","section","store","text","trimmed","ts","untilSelf","value","windowHours"],
+  './AuthorshipField/index.jsx': ["AuthorshipField","DEFAULT_WINDOW_HOURS","_defaultPolicy","_nhAuth","_normalizeFieldOptions","actor","actorFrom","addHoursIso","base","buildKey","c","changed","ck","claim","claims","commitSave","commitValue","componentId","current","d","data","editableUntil","effectiveFieldId","euDate","existing","expired","fieldData","formatTimestamp","isNonEmpty","isOwner","keepStatus","key","label","lockExpired","lockInfo","lockOn","lockedUntil","nextStatus","nhAuth","normalizeStore","now","nowIso","numeric","optionList","ownerId","ownerName","ownerRefresh","pad2","pending","policy","policyAppliesToAction","prepareSave","query","raw","readOnly","readStore","release","renderInput","resolveNow","sameActor","sd","section","store","text","trimmed","ts","untilSelf","value","windowHours"],
   './BulkSetField/index.jsx': ["BulkSetField","ButtonComponent","apply","comparableAnswer","contradictedFieldIds","current","effectiveControlFieldId","fieldData","fieldId","isApplied","isBlankAnswer","isDisabled","normalizeBulkTargets","normalizedTargets","previous","raw","shouldClearControl","showWarning","unapply","writeControl"],
   './ChartAttachmentUpload/index.jsx': ["BlobClass","ChartAttachmentUpload","FormDataClass","allBatchDocumentTypes","apiServer","appSettings","auth","availableDocumentTypes","batchLimit","body","bytes","canRunAllBatch","canRunSelectedBatch","canUpload","cancelBatchRef","cancelled","clearSelection","code","configuredOption","content","document","documentTypeOptions","documentTypes","downloadBatchResults","encounterId","endpoint","entries","entry","escapeAttachmentCsvCell","fallbackCode","fetchAttachment","fileInputRef","fileTooLarge","firstPositiveId","formatChartAttachmentBytes","hasUploadRuntime","index","inputId","isBatchResult","isCsv","limitedTypes","link","liveEntry","missingRuntime","nextResult","normalizedDocumentTypes","parsed","patientId","persistChartAttachmentResult","rawApiServer","readChartAttachmentResponse","recordResult","response","responseBody","results","rows","runAttachmentBatch","runtime","sd","seen","selected","selectedBatchDocumentTypes","selectedDocumentType","startedAt","statusColor","statusLabel","storedResult","succeeded","targetType","text","toggleBatchDocumentType","uploadAttachment","uploadAttachmentForType","url","urlApi","userProfile","userProfileId","valid","validCodes","waitForAttachmentBatchDelay"],
   './ChartRecordManager/index.jsx': ["CHART_RECORD_MANAGER_TARGETS","ChartRecordCreateButton","ChartRecordEditor","ChartRecordList","ChartRecordManager","__chartRecordEditorChannels","_chartRecordEditorRegister","_chartRecordManagerApplyCascades","_chartRecordManagerDefaultCascades","_chartRecordManagerDefaultFieldPresets","_chartRecordManagerDefaultFields","_chartRecordManagerEditHiddenFields","_chartRecordManagerFieldTransforms","_chartRecordManagerStripKeys","baseFields","chartRefresh","classification","cleaned","code","codeSystem","columns","contextId","createButtons","dataEntryConfig","fallback","fallbackManagerId","fieldPreset","handleClick","handleConfirmDelete","handler","hasWriteTarget","hidden","identity","layered","managerId","mapped","merged","next","openChartRecordEditor","openForCreate","openForEdit","preset","record","recordId","request","resolvedAllowDelete","resolvedCascades","resolvedEditHiddenFieldIds","resolvedFields","resolvedManagerId","resolvedPayloadMap","resolvedRecordIdKey","resolvedStripKeys","resolvedWriteTarget","result","sd","seeded","spec","stripRecord","subject","targetInfo","transform","variables","writeDefinition"],
@@ -37173,7 +37283,8 @@ export const componentDefinedNames: Record<string, string[]> = {
   './ConversionField/index.jsx': ["ConversionField","ConversionFieldSchema","_asPositiveNumber","_asPrecision","_conversionPathSegments","_normalizeConversionRows","_readConversionPath","_readConversionValue","_sanitizeConversionNumber","activeFrom","activeTo","canUseFrom","canUseTo","char","clearValues","convertRow","current","fromValue","hasAnyValue","hasDecimal","index","lastEdited","lastEditedRef","next","nextValue","normalizedFromFieldId","normalizedToFieldId","parsed","parsedFrom","parsedTo","pathValue","rows","segments","setConversionValues","source","sourceFieldId","text","toValue","updateValue","updates"],
   './CustomJsxBlock/index.jsx': ["CustomJsxBlock","displaySource","raw"],
   './DentalWeightConverter/index.jsx': ["DentalWeightConverter","DentalWeightConverterSchema","_positiveNumber","_readDentalField","_sanitizeDentalWeight","cellStyle","clearWeights","convertWeights","data","disabled","factor","fieldWrapperStyle","fixedPrecision","kgValue","kilograms","lastEdited","lastEditedRef","lbValue","nextValue","numeric","parsed","parts","pounds","setDentalValues","text","updateWeight"],
-  './EditableTable/index.jsx': ["ButtonComponent","DEFAULT_WINDOW_HOURS","EditableTable","EditableTableSchema","_addDaysToDateValue","_applyComputedColumns","_applyDefaultValuesToRow","_applyRowProcessingConfig","_buildRowsFromSourceFields","_buildSubformFieldFromColumn","_choiceValueForControl","_choiceValueForStorage","_choiceValueToCoding","_cloneRow","_coerceNumberCellValue","_computeTemplateColumnValue","_evaluateColumnVisibility","_formatCellValue","_formatLocalDate","_formatProcessedNumber","_getDefaultCellValue","_getLocalStampLock","_getValueAtPath","_hasPersistedAuthorshipClaim","_hasStampedLockValue","_isMeaningfulValue","_isRowEmpty","_makeEmptyRow","_normalizeChoiceOptions","_normalizeInitialRowCount","_normalizeInitialRows","_normalizeMirroredCellValue","_normalizeNumberConfig","_normalizeRows","_normalizeSourceCellValue","_normalizeStampCellValue","_normalizeTableColumns","_normalizeUniqueToken","_normalizeValidationMessage","_normalizeZeroLikeValue","_resolveFieldDefaultValue","_resolveLiteralValue","_resolvePathValue","_resolveStampCellValue","_rowContentSignature","_setValueAtPath","_sortRowsByPath","_stampColumnLocksRow","_stringifyValue","_toFiniteNumber","_toPathSegments","_todayDateValue","_validateRowWithConfig","actor","actorFrom","addHoursIso","addInlineRow","authorshipEnabled","authorshipHeaderCellStyle","authorshipPolicy","bodyCellStyle","buildKey","buildRowContext","c","cadNumber","cadPath","cadPrecision","canDeleteInline","canResign","canSaveAndAddNext","candidate","changed","ck","claim","claims","closeDialog","code","column","columns","commitRows","commitSave","computed","config","configMessage","containerStyle","control","controllerId","copy","count","createTableColumns","current","currentRowCount","currentRows","currentValue","customMessage","customResult","d","data","date","defaultSubformDataEntryConfig","deletedRow","disabledStamp","display","displayRows","displayValue","draftLocalStampLock","draftLockState","dropdownOptions","duplicateIndex","editableUntil","effectiveMaxRows","effectiveReadOnly","euDate","existing","existingRows","expired","explicitRowIndexes","explicitRowMapping","factor","fallback","fieldData","fieldId","first","formatTimestamp","getRowLock","getRows","getSourceFieldId","hasMeaningfulRows","hasMeaningfulValue","hasStampedValue","hasValue","headerCellStyle","headerRowStyle","id","index","inferredRowCount","initialRowCount","initialSeedRows","isDarkMode","isEmpty","isLocked","isModalMode","isNonEmpty","isOwner","isVertical","keepStatus","key","label","lastMeaningfulRowIndex","left","leftDate","leftValue","localStampLock","localStampLocked","lockColumns","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","makeDraftRow","match","message","mirroredFieldIds","modalColumns","modalEditorConfig","modalEditorType","nextDate","nextDraft","nextRow","nextRows","nextStatus","nextValue","nhAuth","normalizeStore","normalizedConfig","normalizedRow","normalizedValue","now","nowIso","numberConfig","numericValue","omitEmptyLines","onBeforeSaveRow","onRowDeleted","onRowSaved","onRowsChange","openCreateDialog","openEditDialog","option","owner","ownerId","ownerName","ownerRefresh","pad2","pairCadPrecision","pairFactor","pairPrefer","pairUsPrecision","pairs","parsed","path","paths","pending","policyAppliesToAction","prefer","prepareSave","processingConfig","raw","rawCad","rawKey","rawUs","rawValue","readStore","realRowReadOnly","release","remaining","removeRowAt","renderEditorControl","renderEditorInput","renderRowAuthorshipStatus","renderVerticalTable","rendered","requireAnyGroups","requiredPaths","resolveNow","resolvedFactor","resolvedRow","right","rightDate","rightValue","row","rowIndex","rowLock","rowLockState","rowNumberCellStyle","rowNumberHeaderStyle","rowReadOnly","rows","rowsForVerticalLayout","rule","safeFactor","safePrecision","sameActor","saveAndAddNextConfig","saveAndAddNextLabel","saveDraftRow","saved","savedAt","savedRowIndex","sd","section","seededRows","segments","selectionType","setRows","shouldShowActions","shouldToggleLocalLock","showRowAuthorshipColumn","sign","signedAt","sortedRows","sourceColumn","sourceFieldId","sourcePath","sourceSeedRows","spinButtonProps","stampCanUnlockLocalRow","stampCell","stampConfig","stampDraftCell","stampPath","stampedValue","store","subformModalConfig","tableColumns","tableContainerStyle","tableStyle","text","theme","thisStampLocksRow","transformedRow","trimTrailingZero","trimmed","ts","untilSelf","updateCell","updateDraftCell","updateDraftValueAtPath","usNumber","usPath","usPrecision","usesSubformEditor","validateResolvedRow","validateRow","validationConfig","validationError","value","values","verticalBodyCellStyle","verticalLabelCellStyle","visibility","windowHours","withCommon","zeroIsEmpty"],
+  './DocumentSignButton/index.jsx': ["DocumentSignButton","available","confirm","dismiss","note","prepared","running","sd","signed"],
+  './EditableTable/index.jsx': ["ButtonComponent","DEFAULT_WINDOW_HOURS","EditableTable","EditableTableSchema","_addDaysToDateValue","_applyComputedColumns","_applyDefaultValuesToRow","_applyRowProcessingConfig","_buildRowsFromSourceFields","_buildSubformFieldFromColumn","_choiceValueForControl","_choiceValueForStorage","_choiceValueToCoding","_cloneRow","_coerceNumberCellValue","_computeTemplateColumnValue","_evaluateColumnVisibility","_formatCellValue","_formatLocalDate","_formatProcessedNumber","_getDefaultCellValue","_getLocalStampLock","_getValueAtPath","_hasPersistedAuthorshipClaim","_hasStampedLockValue","_isMeaningfulValue","_isRowEmpty","_makeEmptyRow","_normalizeChoiceOptions","_normalizeInitialRowCount","_normalizeInitialRows","_normalizeMirroredCellValue","_normalizeNumberConfig","_normalizeRows","_normalizeSourceCellValue","_normalizeStampCellValue","_normalizeTableColumns","_normalizeUniqueToken","_normalizeValidationMessage","_normalizeZeroLikeValue","_resolveFieldDefaultValue","_resolveLiteralValue","_resolvePathValue","_resolveStampCellValue","_rowContentSignature","_setValueAtPath","_sortRowsByPath","_stampColumnLocksRow","_stringifyValue","_toFiniteNumber","_toPathSegments","_todayDateValue","_validateRowWithConfig","actor","actorFrom","addHoursIso","addInlineRow","authorshipEnabled","authorshipHeaderCellStyle","authorshipPolicy","bodyCellStyle","buildKey","buildRowContext","c","cadNumber","cadPath","cadPrecision","canDeleteInline","canResign","canSaveAndAddNext","candidate","changed","ck","claim","claims","closeDialog","code","column","columns","commitRows","commitSave","computed","config","configMessage","containerStyle","control","controllerId","copy","count","createTableColumns","current","currentRowCount","currentRows","currentValue","customMessage","customResult","d","data","date","defaultSubformDataEntryConfig","deletedRow","disabledStamp","display","displayRows","displayValue","draftLocalStampLock","draftLockState","dropdownOptions","duplicateIndex","editableUntil","effectiveMaxRows","effectiveReadOnly","euDate","existing","existingRows","expired","explicitRowIndexes","explicitRowMapping","factor","fallback","fieldData","fieldId","first","formatTimestamp","getRowLock","getRows","getSourceFieldId","hasMeaningfulRows","hasMeaningfulValue","hasStampedValue","hasValue","headerCellStyle","headerRowStyle","id","index","inferredRowCount","initialRowCount","initialSeedRows","isDarkMode","isEmpty","isLocked","isModalMode","isNonEmpty","isOwner","isVertical","keepStatus","key","label","lastMeaningfulRowIndex","left","leftDate","leftValue","localStampLock","localStampLocked","lockColumns","lockExpired","lockInfo","lockOn","lockedUntil","makeDraftRow","match","message","mirroredFieldIds","modalColumns","modalEditorConfig","modalEditorType","nextDate","nextDraft","nextRow","nextRows","nextStatus","nextValue","nhAuth","normalizeStore","normalizedConfig","normalizedRow","normalizedValue","now","nowIso","numberConfig","numericValue","omitEmptyLines","onBeforeSaveRow","onRowDeleted","onRowSaved","onRowsChange","openCreateDialog","openEditDialog","option","owner","ownerId","ownerName","ownerRefresh","pad2","pairCadPrecision","pairFactor","pairPrefer","pairUsPrecision","pairs","parsed","path","paths","pending","policyAppliesToAction","prefer","prepareSave","processingConfig","raw","rawCad","rawKey","rawUs","rawValue","readStore","realRowReadOnly","release","remaining","removeRowAt","renderEditorControl","renderEditorInput","renderRowAuthorshipStatus","renderVerticalTable","rendered","requireAnyGroups","requiredPaths","resolveNow","resolvedFactor","resolvedRow","right","rightDate","rightValue","row","rowIndex","rowLock","rowLockState","rowNumberCellStyle","rowNumberHeaderStyle","rowReadOnly","rows","rowsForVerticalLayout","rule","safeFactor","safePrecision","sameActor","saveAndAddNextConfig","saveAndAddNextLabel","saveDraftRow","saved","savedAt","savedRowIndex","sd","section","seededRows","segments","selectionType","setRows","shouldShowActions","shouldToggleLocalLock","showRowAuthorshipColumn","sign","signedAt","sortedRows","sourceColumn","sourceFieldId","sourcePath","sourceSeedRows","spinButtonProps","stampCanUnlockLocalRow","stampCell","stampConfig","stampDraftCell","stampPath","stampedValue","store","subformModalConfig","tableColumns","tableContainerStyle","tableStyle","text","theme","thisStampLocksRow","transformedRow","trimTrailingZero","trimmed","ts","untilSelf","updateCell","updateDraftCell","updateDraftValueAtPath","usNumber","usPath","usPrecision","usesSubformEditor","validateResolvedRow","validateRow","validationConfig","validationError","value","values","verticalBodyCellStyle","verticalLabelCellStyle","visibility","windowHours","withCommon","zeroIsEmpty"],
   './EducationHistory/index.jsx': ["EducationHistory","EducationHistoryFields"],
   './Ethnicity/index.jsx': ["Ethnicity","firstNationEthnicityCodes","firstNationsEthnicityReferenceSet"],
   './FieldStampButton/index.jsx': ["ButtonComponent","FieldStampButton","buildContext","clearStamp","context","effectiveStampFieldId","fallback","fieldData","fieldId","isDisabled","isSigned","normalizeStampTargets","normalizeStampValue","normalizedTargets","raw","resolveLiteralValue","resolvePathValue","sd","signedAt","signedAtText","sourcePath","stamp","stampRecord","statusText","value","written"],
@@ -37210,7 +37321,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './ObservationValueDisplay/index.jsx': ["ObservationValueDisplay","body","candidate","collectObservationValues","commentFilter","cutoff","graph","hasCode","inline","items","limit","measurementSummary","parsedDate","rows","sd","showLabel","value","windowLabel"],
   './ObservationValueKit/index.jsx': ["ObservationValueKit","answer","buildDcoUpdates","buildObservation","buildPanelUpdate","existing","existingPanels","explicit","isEmpty","normalizeAnswer","normalizeOptions","normalizedName","nowString","numeric","observation","observations","oldObs","option","optionList","rawKey","rawValue","rowObservations","timestamp","toText","totalObservations","type","value","valueType"],
   './Occupations/index.jsx': ["Occupations","OccupationsFields"],
-  './PanelEntryGrid/index.jsx': ["DEFAULT_WINDOW_HOURS","PANEL_GRID_CELL_STYLE","PANEL_GRID_TABLE_STYLE","PanelEntryGrid","actor","actorFrom","addHoursIso","answer","answers","authorshipPolicy","buildKey","c","changed","ck","claim","claims","collectedBy","column","commitSave","componentId","computedTotals","container","current","d","data","date","definition","definitions","editableUntil","effectiveFieldId","euDate","existing","expired","fieldData","formatTimestamp","getPanelGridAuth","group","grouped","historyColumns","historyEnabled","isNonEmpty","isOwner","keepStatus","key","kit","label","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","maxHistory","next","nextStatus","nhAuth","normalizeStore","normalizedOptions","now","nowIso","numbers","observations","ownerId","ownerName","ownerRefresh","pad2","panelGridDateKey","panelGridPayloadsEqual","panelGridRows","panelGridTotals","panelUpdate","pending","policyAppliesToAction","prepareSave","raw","readStore","release","renderCurrentValue","requireComplete","resolveNow","rowDefs","sameActor","scaleLike","sd","section","selected","setPanelGridPayload","setRowValue","shouldWriteDcos","shouldWritePanel","sourceIds","store","stripPanelGridVolatileFields","totalDefs","ts","type","untilSelf","value","values","windowHours"],
+  './PanelEntryGrid/index.jsx': ["DEFAULT_WINDOW_HOURS","PANEL_GRID_CELL_STYLE","PANEL_GRID_TABLE_STYLE","PanelEntryGrid","actor","actorFrom","addHoursIso","answer","answers","authorshipPolicy","buildKey","c","changed","ck","claim","claims","collectedBy","column","commitSave","componentId","computedTotals","container","current","d","data","date","definition","definitions","editableUntil","effectiveFieldId","euDate","existing","expired","fieldData","formatTimestamp","getPanelGridAuth","group","grouped","historyColumns","historyEnabled","isNonEmpty","isOwner","keepStatus","key","kit","label","lockExpired","lockInfo","lockOn","lockedUntil","maxHistory","next","nextStatus","nhAuth","normalizeStore","normalizedOptions","now","nowIso","numbers","observations","ownerId","ownerName","ownerRefresh","pad2","panelGridDateKey","panelGridPayloadsEqual","panelGridRows","panelGridTotals","panelUpdate","pending","policyAppliesToAction","prepareSave","raw","readStore","release","renderCurrentValue","requireComplete","resolveNow","rowDefs","sameActor","scaleLike","sd","section","selected","setPanelGridPayload","setRowValue","shouldWriteDcos","shouldWritePanel","sourceIds","store","stripPanelGridVolatileFields","totalDefs","ts","type","untilSelf","value","values","windowHours"],
   './PastMeasurementField/index.jsx': ["PastMeasurementField","abnormalFlag","abnormalHighValue","abnormalLowValue","canPullLatest","candidate","candidates","codeFilter","coercePositiveInt","commentFilter","componentId","container","createdBy","criticalHighValue","criticalLowValue","current","currentPayload","currentWebformId","currentWebformObservations","day","defaultSpinStep","direct","displayedCurrentValue","documentDate","effectiveFieldId","effectiveHistorySize","effectiveLabelPosition","effectiveMeasurementSize","entryCode","entryComment","entryDate","entryUnits","entryValue","explicitValue","fieldData","flagCode","flagDisplays","formHistoryItems","formatDate","fromPatient","fromQueryResult","handleValueChange","hasAbnormalHigh","hasAbnormalLow","hasExplicitValue","hasMeaningfulValue","hasNumericCurrentValue","hasRangeMetadata","hasStoredValue","historicalFormRowDate","historyItems","historySummary","index","inputSuffix","isAbnormal","isHistoricalFormValue","isNonEmptyString","isNumericInput","key","latestHistoryItem","legacyRangePayload","linkedObservationItem","linkedWebformId","matchingKey","measurementWidthBySize","month","nextGroup","normalizeObservationItems","normalizedDateOnly","normalizedPullTargets","numericCurrentValue","numericExplicitValue","numericTime","observationHistoryItems","observationWebformId","oldId","oldObs","optionalString","parseDateValue","parsed","parsedDate","parsedDateOnly","patientPath","payloadsEqual","pullLatestIntoTargets","raw","rawDate","recentHistoryText","resolveHistoricalFormRows","resolveMeasurementContainerStyle","resolveMoisValue","resolvePathValue","resolvedAbnormalHigh","resolvedAbnormalLow","resolvedCriticalHigh","resolvedCriticalLow","resolvedCurrentValue","resolvedUnits","role","roots","sd","segments","setNestedPayload","shouldReserveHistory","shouldShowHistory","storedValue","stringifyValue","stripVolatilePayloadFields","targetFieldId","text","toObservationList","toPathSegments","updatedValue","value","valueFromHistoricalFormRow","valueIsDate","valueKeys","valuePart","valueText","width","year"],
   './PatientFileSections/index.jsx': ["PatientFileSections","activeText","addressText","cityLine","compactLines","contactText","countryLine","createdDate","editButtonStyle","encounter","fieldWrapStyle","formatAddress","formatContact","formatDate","getPatientFromData","gridStyle","healthNumber","insuranceBy","insuranceNumber","insuranceText","lines","match","mergeObjects","nextPatient","optionCode","optionDisplay","patient","preferredCode","preferredPhoneOptions","providerName","queryPatient","raw","renderClientDemographics","renderDocumentDetails","renderEncounterDetails","renderTitle","requested","sd","section","sectionTitleStyle","textValue","updateContactText","visibleSections","whiteDropdownStyles","whiteFlexTextFieldStyles","whiteTextFieldStyles","writePatientUpdates"],
   './PatientValueField/index.jsx': ["PatientValueField","age","applyPatientTransform","candidates","coercePatientValue","collectionCandidateValues","collectionItemMatches","computeAgeYears","dob","effectiveFieldId","expected","items","monthDelta","normalizedExpected","now","raw","resolveCollectionItemPath","resolvePatientContextPath","resolved","root","sd","stored","values"],
@@ -37219,14 +37330,14 @@ export const componentDefinedNames: Record<string, string[]> = {
   './ReferralSource/index.jsx': ["ReferralSource","codeSystem","defaultValue","optionList","referralValueSet","sd"],
   './RelationshipStatus/index.jsx': ["RelationshipStatus"],
   './RichMarkdownBlock/index.jsx': ["HAS_REACT_MARKDOWN","HAS_REHYPE_RAW","HAS_REMARK_GFM","INLINE_PATTERN","MarkdownSegment","PreviewMarkdownRenderer","RichMarkdownBlock","TEXT_COLOR_SPAN_PATTERN","align","asset","baseComponents","buffer","cellAlignment","cells","char","content","current","cursor","defaultRehypePlugins","defaultRemarkPlugins","effectiveFieldId","endsWithColon","escapeMarkdownLinkLabel","extra","extraPlugins","flush","fullWidthStyle","hasVisibleChildren","header","i","imageById","imageId","inFence","index","isTableDelimiterRow","key","lastIndex","line","lines","linkStyle","marginTop","match","mergedMarkdownProps","mois","moisLinkWrapperStyle","moisModule","next","nodes","normalizeMoisLinks","normalizeTextColors","numericWidth","parseMoisHref","parseRichImageId","parseTextColorHref","parsedId","rawContent","renderInlineMarkdown","renderMoisLink","renderTableSegment","result","richImageStyle","rowLine","rows","safeRichImageSource","safeSrc","segments","source","splitMarkdownSegments","splitTableRow","src","startsWithColon","tableStyle","tableWrapperStyle","tdStyle","textColor","thStyle","theadStyle","trStyle","trimmed","width"],
-  './SaveOnClose/index.jsx': ["DEFAULT_WINDOW_HOURS","SaveOnClose","_buildDefaultSavePayload","_nhAuthPrepareSave","_normalizeSaveOnCloseOptions","_stripComponentPayloads","_useChangeAwareDirtyState","actor","actorFrom","addHoursIso","baselineRef","buildKey","c","changed","ck","claim","claims","commitSave","current","d","data","dirtyRef","disabled","editableUntil","euDate","existing","expired","fieldData","formatTimestamp","isDirty","isNonEmpty","isOwner","keepStatus","key","label","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","markSaved","nextStatus","normalizeStore","normalizedOptions","now","nowIso","ownerId","ownerName","ownerRefresh","pad2","pending","policyAppliesToAction","prepareSave","prepared","raw","readStore","release","renderCountRef","resolveNow","sameActor","saveData","sd","store","trackedValue","ts","untilSelf","useSaveOnClose","windowHours"],
+  './SaveOnClose/index.jsx': ["DEFAULT_WINDOW_HOURS","SaveOnClose","_buildDefaultSavePayload","_nhAuthPrepareSave","_normalizeSaveOnCloseOptions","_stripComponentPayloads","_useChangeAwareDirtyState","actor","actorFrom","addHoursIso","baselineRef","buildKey","c","changed","ck","claim","claims","commitSave","current","d","data","dirtyRef","disabled","editableUntil","euDate","existing","expired","fieldData","formatTimestamp","isDirty","isNonEmpty","isOwner","keepStatus","key","label","lockExpired","lockInfo","lockOn","lockedUntil","markSaved","nextStatus","normalizeStore","normalizedOptions","now","nowIso","ownerId","ownerName","ownerRefresh","pad2","pending","policyAppliesToAction","prepareSave","prepared","raw","readStore","release","renderCountRef","resolveNow","sameActor","saveData","sd","store","trackedValue","ts","untilSelf","useSaveOnClose","windowHours"],
   './ScaleField/index.jsx': ["CHOICE_FIELD_STYLE","LABEL_COLUMN_STYLE","LABEL_STYLE","ScaleField","ScaleFieldEndpointLabels","ScaleFieldLegend","ScaleFieldTooltip","_getInlineMinWidth","_renderOptionTooltipContent","choiceGroupStyles","choiceOptions","containerStyle","currentData","fieldContent","firstDescription","handleChange","hasDescriptions","inlineMinWidth","isControlled","label","lastDescription","legendItemStyle","legendRowStyle","nextValue","normalizeControlledValue","normalizedTooltipMode","readOnly","scaleOptions","selectedKey","selectedOption","shouldShowAllTooltip","theme"],
   './ScoringModule/index.jsx': ["CompactScoringQuestion","GroupedChecklistQuestion","GroupedChecklistSection","INTERPRETATION_BOX_STYLE","MatrixScoringRow","MatrixScoringTable","QUESTION_CONTAINER_STYLE","ScoringModule","ScoringModuleSchema","ScoringOptionTooltip","ScoringQuestion","ScoringScales","ScoringTotal","TOTAL_CONTAINER_STYLE","_cloneMirrorValue","_getQuestionMirrorFieldIds","_safeSerialize","allEntries","answer","answerScore","answerValue","answered","answers","buildScoreMap","calculatedTotals","candidateKeys","candidates","checked","checkedFromConfig","checkedOption","checklist","checklistUngroupedQuestions","collectScoreCandidates","containerStyle","continuumLabels","countsBySignature","createScoringConfig","createScoringQuestion","createScoringTotal","currentData","direct","effectiveShowProgress","errorContainerStyle","explicitShared","formatBounds","getAnswers","getInterpretation","getScoreFromValue","groupedQuestionIds","handleSelect","handleToggle","hasChanges","hasDescription","headerLabelStyle","headerOptionStyle","headerStyle","ids","interpretation","interpretationStyle","isComplete","isDarkMode","isInRange","keyValue","labelCellStyle","labelStyle","map","matrixQuestionIds","matrixQuestions","matrixSignature","max","maxContinuumLabel","maxSymbol","meetsMax","meetsMin","min","minContinuumLabel","minSymbol","mirrorIds","nextChecked","nextOption","normalizeQuestionIds","normalizeScoreToken","normalizeScoringOption","normalizeScoringOptions","normalizedLayout","normalizedOptionMap","optionCellStyle","optionControl","optionMap","optionScoreMap","options","optionsBySignature","progress","progressStyle","question","questionGroups","questionMirrorEntries","questionOptions","questions","questionsById","resolveChecklistOptions","resolveMatrixOptions","resolveQuestionOptions","resolvedOptions","results","rowStyle","scaleGridStyle","scaleWrapStyle","score","scoreMap","scoreValue","sectionQuestions","selected","serializeOptionSignature","sharedOptions","shouldRenderCompact","shouldRenderGroupedChecklist","shouldRenderMatrix","signature","stackedQuestions","tableStyle","targetIds","termQuestionId","textValue","theme","token","total","totalMirrorEntries","totals","uncheckedFromConfig","uncheckedOption","value","winnerCount","winnerSignature","wrapperStyle"],
   './ServiceEpisodes/index.jsx': ["ServiceEpisodes","ServiceEpisodesFields","activeServiceEpisodes","startDateDesc"],
   './ServiceRequests/index.jsx': ["ServiceRequests","ServiceRequestsFields","activeServiceRequests","orderDateDesc"],
   './SignaturePad/index.jsx': ["B","D","L","O","SignaturePad","SignaturePadLib","T","U","W","_","__exports","a","c","canvas","canvasRef","container","containerRef","containerStyle","dataUrl","define","e","exports","f","h","handleClear","handleEndStroke","i","k","l","m","module","o","p","pad","padRef","r","ratio","readOnly","readOnlyImageStyle","resizeCanvas","s","savedDataUrl","t","theme","u","width","y"],
   './SubformScoring/index.jsx': ["AnswerSummaryItem","CalculationSummaryItem","DataFieldSummaryItem","DataInterpretationSummaryItem","FormSessionProvider","InterpretationSummaryItem","MOIS_WRITE_ID_FALLBACK_PATHS","MOIS_WRITE_MUTATIONS","MOIS_WRITE_MUTATION_KEYS","ProgressSummaryItem","ScoreSummaryItem","SubformScoring","SubformScoringInner","_LOCAL_INPUT_STYLE","_LOCAL_RADIO_GROUP_STYLE","_LOCAL_TEXTAREA_STYLE","_REPORT_ITEM_FORMATS","__SubformScoringSessionContext","__cloneSubformScoringSessionValue","_buildDataEntryRenderGroups","_buildDataEntrySnapshot","_buildFormattedObservationReport","_buildMappedPayload","_buildScaleLegendSignature","_buildScaleOptions","_buildScoreMap","_buildSubformFormDataWrites","_buildSubformObservationReport","_buildSubformObservationUpdates","_calculationIncompleteBehavior","_calculationIncompleteText","_calculationPresentationValue","_clampDataEntryNumberValue","_collectScoreCandidates","_computeMorphineEquivalent","_createPreparedSessionSetter","_dataEntryFieldContainerStyle","_evaluateDataEntryVisibility","_evaluateExpression","_findQuestionOptionForAnswer","_formatBounds","_formatCalculatorDisplayValue","_formatNumericValue","_getInterpretation","_getScoreFromValue","_getSelectableOptionNumericValue","_getValueAtPath","_isHeadingField","_isInRange","_isLoincDataEntryField","_isMeaningfulValue","_isScaleChoiceSelected","_isSelectableOptionSelected","_latestObservationDefault","_normalizeChartPreferenceValue","_normalizeScoreToken","_normalizeSelectableOptions","_optionMatchesValue","_recordSubformActionPayload","_resolveChecklistOptions","_resolveDataEntryDisplayValue","_resolveFieldDefaultValue","_resolveFieldEmptyNumericValue","_resolveFieldWidthBasis","_resolveObservationTemplate","_resolvePathValue","_resolveQuestionOptions","_resolveSelectableBinaryOptions","_resolveWriteActionId","_serializeSelectableValue","_setSubformFormDataOutputs","_setSubformObservationPayloads","_setValueAtPath","_shouldShowDataEntryHelpText","_stringifyObservationValue","_toDisplayValue","_toNumericValue","_toPathSegments","_usesStructuredSelectableOptions","abs","action","actionPayload","adjusted","aliases","allValues","allVars","answer","answerScore","answerableFields","answered","answers","aspect","barBg","barFill","baseDose","baseEquivalentDoseMg","baseEquivalentDoseRaw","basis","binding","boundedPrecision","buttonRowStyle","cadFieldId","calc","calculatedExpressions","calculatedTotals","calculation","calculatorFields","candidate","candidateKeys","candidatePaths","candidates","ceil","checked","checkedFromConfig","checkedOption","checklist","cloneFormSessionState","code","columnTemplate","commentsField","commonProps","componentPayloads","computedFallback","configuredDialogMinWidth","configuredField","configuredMatrixGroupId","configuredMax","configuredMin","container","containerStyle","controlLabel","controllerId","conversions","createdBy","current","currentSignature","cursor","dataEntryAction","dataEntryCalculations","dataEntryCalculatorConfig","dataEntryFieldById","dataEntryFields","dataEntryRenderGroups","dataEntrySnapshot","dataEntryValues","dateField","day","defaultValue","defaults","description","desiredDialogMinWidth","dialogContentProps","dialogMinWidth","dialogTitle","direct","displayText","displayValue","dose","doseColumnLabel","effectiveInitialData","entry","equivalentColumnLabel","equivalentDose","equivalentDoseMg","evaluated","explicitDefault","expressionVars","extracted","factor","fallbackOptions","field","fieldExists","fields","fieldsForProgress","floor","flushMatrixBuffer","flushScaleStack","formDataWrites","formatted","fromCalculation","functionNames","generatedIndex","generatedVars","getCalculationConfig","getDataEntryFieldConfig","getQuestionConfig","getTotalConfig","groups","handleCommitToParent","handleOpenChange","hasAnyAnswers","hasAnyRowValue","hasExternalDataEntryStore","hasRequiredId","heading","history","iif","inputFieldId","inputType","inputValue","interpretation","isComplete","isDarkMode","isDataEntryMode","isDialogOpen","isHeading","isMatrixCandidate","isMorphineCalculatorMode","isPrompt","key","label","labelStyle","latest","left","leftDate","lines","map","match","matched","matchedOption","matrixBuffer","matrixGroupId","max","meetsMax","meetsMin","meqCalculationId","meqDisplay","meqValue","mergeFormSessionState","min","minSymbol","mod","modalProps","month","next","nextGroup","nextKey","nextOption","nextRaw","nextState","nextValue","normalize","normalized","normalizedButtonIconName","normalizedOptionMap","normalizedOptions","normalizedSessionData","normalizedType","normalizedValues","numeric","numericValue","numericValues","observationDefault","observationRows","observations","oldId","oldObservation","option","optionCount","optionList","optionMap","optionMatch","optionScoreMap","optionTokens","optionValue","options","parsed","payload","payloadMap","pendingDefaults","places","precision","precisionRaw","prepareCompletionState","prepared","preparedSession","prevIndex","previousEntry","previousField","previousScaleSignature","printScore","printed","progress","providedOptions","question","questionOptions","questionsById","raw","rawConfig","rawOptions","rawRows","rawType","rawValue","renderBloodGlucoseReadingEditor","renderDataEntryField","renderDataEntryScaleMatrix","renderDataEntryScaleStack","renderMorphineCalculator","renderNumberInput","renderStyle","renderSummaryItem","replacement","report","required","requiredFields","resolved","resolvedId","resolvedScore","response","result","resultColumnLabel","results","right","rightDate","root","round","rowId","rowLabels","rowValues","rows","rule","runMutation","runtime","scaleMatch","scaleOptions","scaleStack","scopedSetter","score","scoreMap","sd","segments","selected","selectedOption","selectedWithSetter","sessionContext","sessionSetFormData","sessionState","setDataEntryValue","setDialogOpen","setFormData","shouldClose","shouldHideButtonIcon","shouldUseDefaultButtonIcon","showCalculationsInModal","showItems","showLegend","showLegendForScale","showRequiredHint","signature","snapshot","source","sourceRoot","spec","stackMinWidth","stackedGroups","step","style","subformIncomplete","summaryContainerStyle","summaryItemsStyle","summaryLayout","target","termQuestionId","text","theme","today","token","tokenMatches","total","totalCalculationId","totalFallback","totalFromCalculation","totalLabel","totalValue","totals","triggerButtonIconProps","trimmed","uncheckedFromConfig","uncheckedOption","uniqueTokens","usFieldId","useBloodGlucoseReadingLayout","useFormSessionData","useRadio","useToggleSwitch","value","values","variableFieldIds","variables","vars","widestScaleMinWidth","writeDefinition","writeKey","writeMutationRunners","year"],
-  './UnsavedChangesGuard/index.jsx': ["ButtonComponent","DCOUpdates","DEFAULT_WINDOW_HOURS","UnsavedChangesGuard","actionItems","actor","actorFrom","addHoursIso","baselineRef","buildDefaultSavePayload","buildDefaultSubmitPayload","buildKey","c","changed","ck","claim","claims","closeWindow","collectComponentPayloads","collectDomFieldValues","commitPreparedState","commitSave","componentPayload","confirmUnloadActive","current","d","data","dcoGroups","disabled","domFieldValues","editableUntil","encounterNotesSaved","euDate","existing","expired","field","fieldData","fieldId","footerActionItems","footerActions","formData","formatTimestamp","guardSkipsWhenSigned","handleAction","handler","hasLifecycleSignals","host","inputType","isNonEmpty","isOwner","isSettling","isSigned","isSubmitAction","keepStatus","key","label","lifecycle","linkedPanels","lockExpired","lockInfo","lockOn","lockedUntil","lockedUntilDate","markSaved","mergeFieldValuesIntoState","narratives","nextStatus","nextValue","normalizeFooterActions","normalizeGuardActions","normalizeGuardValue","normalizeStore","now","nowIso","ownerId","ownerName","ownerRefresh","pad2","panelUpdates","panels","payload","payloads","pending","persistAction","persistFd","policyAppliesToAction","prepareSave","prepareStateForPersist","prepared","primaryAction","promptText","raw","readStore","release","renderFooterAction","resolveNow","sameActor","saveSettleRef","savedWebform","sd","secondaryActions","serializeGuardValue","store","stripComponentPayloads","submitSd","success","tagName","trackedSnapshot","trackedValue","ts","untilSelf","useHostConfirmUnload","values","warmupRef","webformGroups","webformUpdate","windowHours"],
+  './UnsavedChangesGuard/index.jsx': ["ButtonComponent","DCOUpdates","DEFAULT_WINDOW_HOURS","UnsavedChangesGuard","actionItems","actor","actorFrom","addHoursIso","baselineRef","buildDefaultSavePayload","buildDefaultSubmitPayload","buildKey","c","changed","ck","claim","claims","closeWindow","collectComponentPayloads","collectDomFieldValues","commitPreparedState","commitSave","componentPayload","confirmUnloadActive","current","d","data","dcoGroups","disabled","domFieldValues","editableUntil","encounterNotesSaved","euDate","existing","expired","field","fieldData","fieldId","footerActionItems","footerActions","formData","formatTimestamp","guardSkipsWhenSigned","handleAction","handler","hasLifecycleSignals","host","inputType","isNonEmpty","isOwner","isSettling","isSigned","isSubmitAction","keepStatus","key","label","lifecycle","linkedPanels","lockExpired","lockInfo","lockOn","lockedUntil","markSaved","mergeFieldValuesIntoState","narratives","nextStatus","nextValue","normalizeFooterActions","normalizeGuardActions","normalizeGuardValue","normalizeStore","now","nowIso","ownerId","ownerName","ownerRefresh","pad2","panelUpdates","panels","payload","payloads","pending","persistAction","persistFd","policyAppliesToAction","prepareSave","prepareStateForPersist","prepared","primaryAction","promptText","raw","readStore","release","renderFooterAction","resolveNow","sameActor","saveSettleRef","savedWebform","sd","secondaryActions","serializeGuardValue","store","stripComponentPayloads","submitSd","success","tagName","trackedSnapshot","trackedValue","ts","untilSelf","useHostConfirmUnload","values","warmupRef","webformGroups","webformUpdate","windowHours"],
   './UseChangeWatch/index.jsx': ["_defaultCompare","_normalizeWatchOptions","baselineRef","compare","delayCount","dirtyRef","disabled","forcedDirtyRef","isDirty","normalizedOptions","onDirtyChange","renderCountRef","setChanged","useChangeWatch"],
   './ValueSetObservationField/index.jsx': ["RuntimeCodedChoice","ValueSetObservationField"],
 };
@@ -37263,6 +37374,7 @@ export const componentDependencies: Record<string, string[]> = {
   './ConversionField/index.jsx': [],
   './CustomJsxBlock/index.jsx': [],
   './DentalWeightConverter/index.jsx': [],
+  './DocumentSignButton/index.jsx': [],
   './EditableTable/index.jsx': ["SubformScoring"],
   './EducationHistory/index.jsx': [],
   './Ethnicity/index.jsx': [],
@@ -37316,7 +37428,7 @@ export const componentDependencies: Record<string, string[]> = {
   './ServiceRequests/index.jsx': [],
   './SignaturePad/index.jsx': [],
   './SubformScoring/index.jsx': ["ConversionField","ComputedField","FormSessionRuntime","HotspotMapField","ScoringModule","ScaleField","FindCodeSelect"],
-  './UnsavedChangesGuard/index.jsx': [],
+  './UnsavedChangesGuard/index.jsx': ["DocumentSignButton"],
   './UseChangeWatch/index.jsx': [],
   './ValueSetObservationField/index.jsx': ["CodedObservationChoiceField"],
 };

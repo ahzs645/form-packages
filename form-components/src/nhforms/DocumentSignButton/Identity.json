@@ -1,0 +1,9 @@
+{
+  "name": "DocumentSignButton",
+  "title": "Document signature",
+  "description": "Signs a prepared document or reopens it for amendment with a required reason, preserving contribution ownership.",
+  "version": { "major": 1, "minor": 0, "patch": 0 },
+  "type": "component",
+  "owner": "MOIS Exporter",
+  "components": []
+}

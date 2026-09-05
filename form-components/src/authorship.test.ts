@@ -231,7 +231,7 @@ describe("multi-author editable windows", () => {
     ).toBe(false);
   });
 
-  it("keeps submit ownership separate from explicit signing", () => {
+  it("preserves contribution ownership and its window when the document is signed", () => {
     const saved = prepareAuthorshipPersist(sourceData, activeData, "save", {
       now: "2026-06-01T10:00:00.000Z",
     });
@@ -249,6 +249,6 @@ describe("multi-author editable windows", () => {
     );
 
     expect(submitted.store.claims["field:clinicalNote"].status).toBe("locked");
-    expect(signed.store.claims["field:clinicalNote"].status).toBe("signed");
+    expect(signed.store.claims["field:clinicalNote"]).toEqual(submitted.store.claims["field:clinicalNote"]);
   });
 });

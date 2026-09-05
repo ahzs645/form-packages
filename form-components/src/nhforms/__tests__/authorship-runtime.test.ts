@@ -108,11 +108,12 @@ describe("__nhAuth engine — lock-on-save (pending → promote)", () => {
     expect(lockB.locked).toBe(true);
   });
 
-  it("a save by a different user does not promote another author's pending claim", () => {
+  it("a save by a different user preserves the pending contribution's author", () => {
     const state: any = { field: { data: { note: "draft by A" } } };
     A.claim(state, sdFor(1, "Dr A"), FIELD, "draft by A", { enabled: true, lockOn: "save" }, { now: "2026-06-29T10:00:00Z" });
     const prepared = A.prepareSave(state, sdFor(2, "Nurse B"), "save");
-    expect(prepared.changed).toBe(false);
+    expect(prepared.changed).toBe(true);
+    expect(prepared.formData.__authorship.claims["field:note"].ownerId).toBe(1);
   });
 
   it("uses the active session name when persisted data has another createdBy value", () => {
@@ -143,11 +144,11 @@ describe("__nhAuth engine — lock-on-save (pending → promote)", () => {
     expect(A.lockInfo(secondSave.nextState, sdFor(2, "Nurse B"), rowB, { ownerId: 2, ownerName: "Nurse B" }).locked).toBe(false);
   });
 
-  it("sign promotes a lockOn:'save' pending claim to signed (terminal)", () => {
+  it("sign enforces a pending contribution without replacing document-level locking", () => {
     const state: any = { field: { data: { note: "draft by A" } } };
     A.claim(state, sdFor(1, "Dr A"), FIELD, "draft by A", { enabled: true, lockOn: "save" }, { now: "2026-06-29T10:00:00Z" });
     const prepared = A.prepareSave(state, sdFor(1, "Dr A"), "sign");
-    expect(prepared.formData.__authorship.claims["field:note"].status).toBe("signed");
+    expect(prepared.formData.__authorship.claims["field:note"].status).toBe("locked");
   });
 
   it("a save action does NOT promote a lockOn:'sign' pending claim (waits for sign)", () => {
@@ -156,7 +157,7 @@ describe("__nhAuth engine — lock-on-save (pending → promote)", () => {
     const onSave = A.prepareSave(state, sdFor(1, "Dr A"), "save");
     expect(onSave.changed).toBe(false);
     const onSign = A.prepareSave(state, sdFor(1, "Dr A"), "sign");
-    expect(onSign.formData.__authorship.claims["field:note"].status).toBe("signed");
+    expect(onSign.formData.__authorship.claims["field:note"].status).toBe("locked");
   });
 });
 
@@ -165,7 +166,7 @@ describe("portable persistence handshakes", () => {
     expect(guardSource).toContain("preparePersist,");
     expect(guardSource).toContain('if (typeof preparePersist === "function") return preparePersist(state, action)');
     expect(guardSource).toContain('const prepared = prepareStateForPersist(persistFd, persistAction)');
-    expect(guardSource).toContain('const persistAction = actionId === "sign" || actionId === "submit" ? "submit" : "save"');
+    expect(guardSource).toContain('const persistAction = actionId === "sign" && sd?.formParams?.documentId ? "sign" : actionId === "sign" || actionId === "submit" ? "submit" : "save"');
   });
 
   it("uses the same injected preparation callback for save-on-close", () => {
