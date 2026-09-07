@@ -1628,7 +1628,13 @@ const ChartAttachmentUpload = ({
     const validCodes = new Set(documentTypeOptions.map((option) => String(option.key)))
     setSelectedBatchTypeCodes((current) => {
       const valid = current.map(String).filter((code) => validCodes.has(code))
-      return valid.length > 0 ? valid : [fallbackCode]
+      const next = valid.length > 0 ? valid : [fallbackCode]
+      // Keep the existing array when the selection is unchanged. Hosts are not
+      // required to memoize useCodeList, and a host that returns a fresh array
+      // each render would otherwise make this effect re-render without end.
+      const unchanged = next.length === current.length
+        && next.every((code, index) => code === String(current[index]))
+      return unchanged ? current : next
     })
   }, [documentTypeCode, documentTypeOptions, selectedDocumentTypeCode])
 
