@@ -1,10 +1,10 @@
 {
   "name": "PatientContextQueryTest",
   "title": "Live MOIS Query Test",
-  "description": "User-triggered live schema discovery and read-only patient collection probes using the authenticated MOIS host transport.",
+  "description": "Live MOIS API laboratory: schema discovery, patient and root reads, explicit synthetic mutation probes, read-back verification and JSON reports.",
   "version": {
     "major": 1,
-    "minor": 1,
+    "minor": 2,
     "patch": 0
   },
   "type": "component",

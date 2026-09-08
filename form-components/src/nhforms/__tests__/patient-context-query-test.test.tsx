@@ -48,7 +48,7 @@ describe('PatientContextQueryTest', () => {
     expect(container.textContent).toContain('Read succeeded: empty');
     expect(container.textContent).toContain('observationId');
     expect(container.textContent).not.toContain('secret-token');
-    const report = JSON.parse(container.querySelector('textarea')!.value);
+    const report = JSON.parse(container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Live query results JSON"]')!.value);
     expect(report.reportType).toBe('mois-patient-context-live-query');
     expect(report.schemaFields.map((field: any) => field.name)).toContain('observations');
     expect(report.results.find((row: any) => row.collection === 'observations')).toMatchObject({ status: 'Read succeeded', count: 1 });
@@ -65,7 +65,7 @@ describe('PatientContextQueryTest', () => {
     });
     mount(transport); await run();
     expect(container.textContent).toContain('Introspection disabled');
-    expect(JSON.parse(container.querySelector('textarea')!.value).status).toBe('Introspection disabled');
+    expect(JSON.parse(container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Live query results JSON"]')!.value).status).toBe('Introspection disabled');
     expect(transport).toHaveBeenCalledTimes(1);
   });
   it('shows per-collection errors and continues, rejecting results for another patient', async () => {
@@ -105,8 +105,8 @@ describe('PatientContextQueryTest', () => {
     });
     mount(transport, [{ id: 'test.changeTest', graphqlField: 'changeTest', runtimeStatus: 'supported' }]);
     await act(async () => { Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Inspect read/write API')!.click(); });
-    const report = JSON.parse(container.querySelector('textarea')!.value);
-    expect(report.reportVersion).toBe(2);
+    const report = JSON.parse(container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Live query results JSON"]')!.value);
+    expect(report.reportVersion).toBe(3);
     expect(report.apiInventory.inputTypes).toHaveLength(2);
     expect(report.apiInventory.mutations[0]).toMatchObject({ coverage: 'Mapped adapter; live write untested', executionStatus: 'Not executed' });
     expect(report.apiInventory.mutations[1]).toMatchObject({ coverage: 'Needs a dedicated write test', executionStatus: 'Not executed' });
@@ -114,4 +114,105 @@ describe('PatientContextQueryTest', () => {
     expect(transport).toHaveBeenCalledTimes(5);
   });
 
+});
+
+const liveSchema = JSON.parse(fs.readFileSync('data/mois-live-api-schema.json', 'utf8'));
+const reportValue = () => JSON.parse(container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Live query results JSON"]')!.value);
+const clickButton = async (name: string) => { await act(async () => { Array.from(container.querySelectorAll('button')).find((b) => b.textContent === name)!.click(); }); };
+function testHost(write?: (name: string, variables: any) => any) {
+  const records: any[] = [];
+  return vi.fn(async (operation, _token, _server, query, vars) => {
+    if (operation === 'InspectPatientContextRoots') return { __schema: { queryType: { name: 'Query' }, mutationType: { name: 'Mutation' } } };
+    if (operation === 'InspectPatientContextType') {
+      if (vars.name === 'Query') return { __type: { fields: liveSchema.queries } };
+      if (vars.name === 'Mutation') return { __type: { fields: liveSchema.mutations } };
+      const input = liveSchema.inputTypes.find((t: any) => t.name === vars.name);
+      if (input) return { __type: input };
+      const fieldNames = ['patientId', 'observationId', 'description', 'value', 'documentId', 'note', 'webformId', 'webformDefinitionId', 'templateId', 'shortNote', 'associatedPartyId', 'chartPreferenceId', 'connectionId', 'householdOccupantId', 'longTermMedicationId', 'prescriptionId', 'prescriptionLogId', 'serviceEpisodeId', 'serviceEventId', 'encounterId', 'taskId', 'favouriteMedicationId', 'correspondenceId', 'comment', 'medication', 'preference', 'method', 'officeNote', 'title'];
+      return { __type: { fields: [...fieldNames.map((name) => ({ name, type: name.endsWith('Id') ? scalar : { kind: 'SCALAR', name: 'String' }, args: [] })), ...['observations', 'contacts', 'preferences', 'connections', 'documents', 'householdOccupants', 'longTermMedications', 'prescriptions', 'prescriptionLogs', 'serviceEpisodes', 'encounters', 'favouriteMedications', 'correspondences'].map((name) => ({ name, type: list, args: [] }))] } };
+    }
+    if (operation === 'ProbeMoisWrite') {
+      const name = query.match(/\{\s*(\w+)/)[1];
+      if (write) return write(name, vars);
+      if (name === 'addObservation') { const record = { ...vars.observation, observationId: 501 }; records.push(record); return { addObservation: [record] }; }
+      if (name === 'changeObservations') { Object.assign(records[0], vars.observationChanges[0]); return { changeObservations: [{ patientId: 42, observations: records }] }; }
+      return { [name]: null };
+    }
+    if (operation === 'VerifyMoisWrite') return { patient: [{ patientId: 42, observations: records }] };
+    if (operation === 'ProbePaperTemplates') return { paperFormTemplate: [{ templateId: 3 }] };
+    if (operation === 'ProbeMoisRoot') { const name = query.match(/\{\s*(\w+)/)[1]; return { [name]: [] }; }
+    throw new Error('Unexpected operation ' + operation);
+  });
+}
+
+describe('live write laboratory', () => {
+  it('tests schema-valid default payloads, verifies observation updates and keeps sent operations out of subsequent batch runs', async () => {
+    const transport = testHost(); mount(transport);
+    await clickButton('Inspect read/write API');
+    expect(transport.mock.calls.every((call) => call[3].startsWith('query '))).toBe(true);
+    await clickButton('Run test writes');
+    const report = reportValue();
+    expect(report.writeResults).toHaveLength(40);
+    expect(report.writeResults.find((r: any) => r.operation === 'addObservation')).toMatchObject({ status: 'Write verified', recordId: 501 });
+    expect(report.writeResults.find((r: any) => r.operation === 'changeObservations')).toMatchObject({ status: 'Write verified', recordId: 501 });
+    expect(report.writeResults.find((r: any) => r.operation === 'sendFax')).toMatchObject({ status: 'Not attempted' });
+    expect(report.writeResults.find((r: any) => r.operation === 'query')).toMatchObject({ status: 'Not attempted' });
+    expect(report.writeResults.filter((r: any) => /Unknown input|Unknown argument/.test(r.error || ''))).toEqual([]);
+    expect(JSON.stringify(report)).not.toContain('secret-token');
+    expect(report.writeResults.every((r: any) => !r.variables)).toBe(true);
+    expect(report.createdTestRecordIds.observationId).toBe(501);
+    const count = transport.mock.calls.filter((call) => call[0] === 'ProbeMoisWrite').length;
+    await clickButton('Run test writes');
+    expect(transport.mock.calls.filter((call) => call[0] === 'ProbeMoisWrite')).toHaveLength(count);
+  });
+  it('does not call an accepted mutation a verified write without read-back evidence', async () => {
+    mount(testHost((name) => ({ [name]: [{ __typename: 'Patient', patientId: 42 }] })));
+    await clickButton('Inspect read/write API'); await clickButton('Run test writes');
+    const report = reportValue();
+    expect(report.writeResults.some((r: any) => r.status === 'Mutation accepted; persistence unverified')).toBe(true);
+    expect(report.writeResults.some((r: any) => r.status === 'Write verified')).toBe(false);
+  });
+  it('probes every root query or reports its missing inputs', async () => {
+    mount(testHost()); await clickButton('Inspect read/write API'); await clickButton('Test root queries');
+    const report = reportValue();
+    expect(report.rootQueryResults).toHaveLength(24);
+    expect(report.rootQueryResults.find((r: any) => r.operation === 'patient')).toMatchObject({ status: 'Read succeeded: empty' });
+    expect(report.rootQueryResults.find((r: any) => r.operation === 'document')).toMatchObject({ status: 'Not attempted' });
+  });
+
+  it('can reach all 39 concrete mutation fields with valid dependencies and explicit fax inputs', async () => {
+    const transport = testHost((name, vars) => {
+      const payload: any = Object.values(vars).find((v) => v && typeof v === 'object' && !Array.isArray(v)) || {};
+      const record = { ...payload, patientId: 42, observationId: 501, associatedPartyId: 502, chartPreferenceId: 503, connectionId: 504, documentId: 505, householdOccupantId: 506, longTermMedicationId: 507, prescriptionId: 508, prescriptionLogId: 509, serviceEpisodeId: 510, serviceEventId: 511, encounterId: 512, taskId: 513, favouriteMedicationId: 514, correspondenceId: 515, webformId: 516, webformDefinitionId: 517 };
+      const patientResult = Object.fromEntries(['observations', 'contacts', 'preferences', 'connections', 'documents', 'householdOccupants', 'longTermMedications', 'prescriptions', 'prescriptionLogs', 'serviceEpisodes', 'encounters', 'favouriteMedications', 'correspondences'].map((key) => [key, [record]]));
+      return { [name]: [{ ...record, ...patientResult }] };
+    });
+    mount(transport); await clickButton('Inspect read/write API'); await clickButton('Run test writes');
+    const attempted = transport.mock.calls.filter((call) => call[0] === 'ProbeMoisWrite').map((call) => call[3].match(/\{\s*(\w+)/)[1]);
+    const expected = liveSchema.mutations.map((m: any) => m.name).filter((name: string) => !['sendFax', 'query'].includes(name));
+    expect(attempted.sort()).toEqual(expected.sort());
+    // Fax is available only with an explicit destination and individually selected operation.
+    await act(async () => {
+      const select = container.querySelector<HTMLSelectElement>('select[aria-label="Write operation"]')!;
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(select, 'sendFax'); select.dispatchEvent(new Event('change', { bubbles: true }));
+      const textarea = container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Write variable overrides JSON"]')!;
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, JSON.stringify({ sendFax: { patientId: '$patientId', eFaxAccountId: 1, document: { documentId: '$created.documentId' }, recipients: [{ faxNumber: 'TEST-DESTINATION' }] } })); textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await clickButton('Run test writes');
+    expect(transport.mock.calls.filter((call) => call[0] === 'ProbeMoisWrite' && call[3].includes('sendFax('))).toHaveLength(1);
+  });
+  it('stops after an uncertain mutation timeout and prevents duplicate retries', async () => {
+    vi.useFakeTimers();
+    try {
+      const transport = testHost(() => new Promise(() => {})); mount(transport);
+      await clickButton('Inspect read/write API');
+      await clickButton('Run test writes');
+      await act(async () => { await vi.advanceTimersByTimeAsync(30001); });
+      const report = reportValue();
+      expect(report.writeResults[0].status).toBe('Outcome unknown; do not retry automatically');
+      expect(transport.mock.calls.filter((call) => call[0] === 'ProbeMoisWrite')).toHaveLength(1);
+      const button = Array.from(container.querySelectorAll('button')).find((b) => b.textContent === 'Run test writes')!;
+      expect(button.disabled).toBe(true);
+    } finally { vi.useRealTimers(); }
+  });
 });

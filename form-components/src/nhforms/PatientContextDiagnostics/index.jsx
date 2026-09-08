@@ -70,7 +70,7 @@ const PatientContextDiagnostics = ({
             const capability = registry.get(key)
             return <tr key={`${textValue(patient?.patientId)}:${key}`} data-collection={key}>
               <th scope="row" style={cellStyle}><code>{key}</code></th>
-              <td style={cellStyle}>{labels[capability?.access] || "Unclassified"}{capability?.liveReadVerified ? <div>Live read verified</div> : null}{capability?.note ? <details><summary>Access details</summary><p>{capability.note}</p></details> : null}</td>
+              <td style={cellStyle}>{labels[capability?.access] || "Unclassified"}{capability?.liveReadVerified ? <div>Live read verified</div> : null}{capability?.discoveredMutationFields?.length ? <div>Write API discovered · execution unverified</div> : null}{capability?.note ? <details><summary>Access details</summary><p>{capability.note}</p></details> : null}</td>
               <td style={cellStyle}>{availability}</td>
               <td style={cellStyle}>{isArray ? value.length : "—"}</td>
               <td style={cellStyle}>{isArray && value.length > 0 ? <details><summary>Show samples</summary><pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxWidth: 520, maxHeight: 320, overflow: "auto" }}>{value.slice(0, limit).map(sampleText).join("\n\n")}</pre></details> : "—"}</td>
