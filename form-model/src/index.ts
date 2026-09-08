@@ -2191,6 +2191,14 @@ export interface FieldLinkCondition {
   optionValues?: string[];
   /** For numeric and equality conditions. */
   value?: string | number | boolean | null;
+  /**
+   * Compare against another field's answer instead of `value`. This is what
+   * makes a rule cross-field: "discharge date is before admission date" needs
+   * the right-hand side to be a field, not a constant. Takes precedence over
+   * `value` when set; if the named field is empty the condition is false, so a
+   * half-filled form does not raise errors about answers nobody has given yet.
+   */
+  compareFieldId?: string;
 }
 
 /**
@@ -2203,7 +2211,13 @@ export type FieldLinkAction =
   | "set-required"
   | "clear-required"
   | "set-readonly"
-  | "clear-readonly";
+  | "clear-readonly"
+  /**
+   * The condition describes what is *wrong*: when it holds, the target fields
+   * carry a blocking validation error. Per-field rules cannot express this,
+   * because the fault lies in the relationship between two answers.
+   */
+  | "invalid";
 
 /**
  * A rule that links one field's value to another field's visibility or value
@@ -2237,6 +2251,12 @@ export interface FieldLinkRule {
   protectionMode?: "readOnly" | "disabled" | "both";
   /** For copy-value action, the source field to copy from */
   copyFromFieldId?: string;
+  /**
+   * Shown to the person filling the form when an `invalid` rule fires. Say what
+   * is wrong rather than restating the condition -- "Discharge cannot be before
+   * admission" beats "discharge_date is less than admission_date".
+   */
+  validationMessage?: string;
   /** Optional description for UI display */
   description?: string;
 }
@@ -2510,6 +2530,8 @@ export {
   compileFieldLinkConditionGroup,
   compileFieldLinkProtectionRule,
   compileFieldLinkVisibilityRule,
+  DEFAULT_CROSS_FIELD_VALIDATION_MESSAGE,
+  evaluateCrossFieldValidation,
   evaluateFieldCondition,
   evaluateFieldLinkRuleCondition,
   isConditionValueEmpty,
@@ -2519,6 +2541,7 @@ export {
   type CompiledFieldLinkConditionGroup,
   type CompiledFieldLinkProtectionRule,
   type CompiledFieldLinkVisibilityRule,
+  type CrossFieldValidationError,
   type FieldConditionMetadata,
   type FieldConditionMetadataLookup,
   type SerializedFieldLinkCondition,

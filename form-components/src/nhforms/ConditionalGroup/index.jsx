@@ -510,8 +510,15 @@ const checkComparisonMatch = (fieldValue, operator, expectedValue) => {
   if (normalized === null || normalized === undefined || normalized === '') return false
 
   if (operator && operator.startsWith('number-')) {
-    const left = Number(normalized)
-    const right = Number(expectedValue)
+    // Numbers when both sides are numeric, dates otherwise: cross-field rules
+    // are mostly date order ("discharge before admission"), and Number() of an
+    // ISO date is NaN. Mirrors toOrderedPair in @webforms/form-model.
+    let left = Number(normalized)
+    let right = Number(expectedValue)
+    if (!Number.isFinite(left) || !Number.isFinite(right)) {
+      left = Date.parse(String(normalized))
+      right = Date.parse(String(expectedValue))
+    }
     if (!Number.isFinite(left) || !Number.isFinite(right)) return false
     if (operator === 'number-gt') return left > right
     if (operator === 'number-gte') return left >= right
@@ -539,6 +546,14 @@ const evaluateConditionEntry = (entry, getFieldValue) => {
   if (type === 'boolean-yes') return checkControllerMatch(fieldValue, 'yes')
   if (type === 'boolean-no') return checkControllerMatch(fieldValue, 'no')
   // equals / not-equals / filled / empty / number-* share the comparison matcher.
+  // compareFieldId makes the right-hand side another answer instead of a
+  // constant, which is what a cross-field rule needs. An unanswered compare
+  // field means no match, so a half-filled form raises nothing.
+  if (entry.compareFieldId) {
+    const compareValue = getFieldValue(entry.compareFieldId)
+    if (!checkComparisonMatch(compareValue, 'filled', null)) return false
+    return checkComparisonMatch(fieldValue, type, compareValue)
+  }
   return checkComparisonMatch(fieldValue, type, entry.value)
 }
 

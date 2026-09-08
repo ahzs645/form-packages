@@ -22,6 +22,8 @@ export interface SerializedFieldLinkCondition {
   type: FieldLinkConditionType;
   optionValues?: string[];
   value?: string | number | boolean;
+  /** Right-hand side comes from this field's answer instead of `value`. */
+  compareFieldId?: string;
 }
 
 export interface CompiledFieldLinkConditionGroup {
@@ -55,6 +57,7 @@ export function compileFieldLinkConditionGroup(
     ...(condition.value !== undefined && condition.value !== null
       ? { value: condition.value }
       : {}),
+    ...(condition.compareFieldId ? { compareFieldId: condition.compareFieldId } : {}),
   }));
 
   return {
@@ -146,6 +149,22 @@ export function isConditionValueEmpty(value: unknown): boolean {
   return normalized === null || normalized === undefined || String(normalized).trim() === "";
 }
 
+/**
+ * Numbers where both sides are numeric, dates otherwise. Cross-field rules are
+ * mostly about dates ("discharge before admission"), and Number("2026-01-02")
+ * is NaN, so an ordered comparison that only knew numbers could never express
+ * the commonest case.
+ */
+function toOrderedPair(leftValue: unknown, rightValue: unknown): [number, number] | null {
+  const left = Number(leftValue);
+  const right = Number(rightValue);
+  if (Number.isFinite(left) && Number.isFinite(right)) return [left, right];
+  const leftDate = Date.parse(String(leftValue));
+  const rightDate = Date.parse(String(rightValue));
+  if (Number.isFinite(leftDate) && Number.isFinite(rightDate)) return [leftDate, rightDate];
+  return null;
+}
+
 function evaluateNumericCondition(
   type: FieldLinkConditionType,
   leftValue: unknown,
@@ -153,9 +172,12 @@ function evaluateNumericCondition(
 ): boolean {
   const normalized = normalizeConditionComparable(leftValue);
   if (normalized === null || normalized === undefined || normalized === "") return false;
-  const left = Number(normalized);
-  const right = Number(rightValue);
-  if (!Number.isFinite(left) || !Number.isFinite(right)) return false;
+  // An empty right-hand side means the other answer is not given yet; comparing
+  // against nothing would raise an error about a question nobody has answered.
+  if (isConditionValueEmpty(rightValue)) return false;
+  const pair = toOrderedPair(normalized, rightValue);
+  if (!pair) return false;
+  const [left, right] = pair;
   if (type === "number-gt") return left > right;
   if (type === "number-gte") return left >= right;
   if (type === "number-lt") return left < right;
@@ -207,6 +229,13 @@ export function evaluateFieldCondition(
   }
 }
 
+function asConditionValue(value: unknown): string | number | boolean | null {
+  const normalized = normalizeConditionComparable(value);
+  if (normalized === null || normalized === undefined) return null;
+  if (typeof normalized === "number" || typeof normalized === "boolean") return normalized;
+  return String(normalized);
+}
+
 export function evaluateFieldLinkRuleCondition(
   rule: Pick<
     FieldLinkRule,
@@ -218,11 +247,61 @@ export function evaluateFieldLinkRuleCondition(
   const compiled = compileFieldLinkConditionGroup(rule);
   const evaluate = (entry: SerializedFieldLinkCondition) =>
     evaluateFieldCondition(
-      entry,
+      // A compare field supplies the right-hand side, so the comparison is
+      // against another answer rather than a constant.
+      entry.compareFieldId ? { ...entry, value: asConditionValue(values[entry.compareFieldId]) } : entry,
       values[entry.controllerFieldId],
       metadataByFieldId(entry.controllerFieldId),
     );
   return compiled.match === "any"
     ? compiled.conditions.some(evaluate)
     : compiled.conditions.every(evaluate);
+}
+
+/** A blocking error raised by a cross-field rule. */
+export interface CrossFieldValidationError {
+  /** The field the message is shown against. */
+  fieldId: string;
+  /** The rule that raised it, so the builder can point at the rule. */
+  ruleId: string;
+  message: string;
+}
+
+/** Fallback when the author has not written a message for the rule. */
+export const DEFAULT_CROSS_FIELD_VALIDATION_MESSAGE = "This answer conflicts with another answer.";
+
+/**
+ * Evaluate every `invalid` rule against a set of answers.
+ *
+ * These are the checks a per-field rule cannot make, because the fault is in
+ * the relationship between two answers rather than in either one alone:
+ * discharge before admission, diastolic above systolic, a dose above the
+ * calculated maximum. The rule's condition describes what is *wrong*, so a rule
+ * that fires is an error.
+ */
+export function evaluateCrossFieldValidation(
+  rules: Array<Pick<
+    FieldLinkRule,
+    | "id"
+    | "controllerFieldId"
+    | "condition"
+    | "additionalConditions"
+    | "conditionMatch"
+    | "targetFieldIds"
+    | "action"
+    | "validationMessage"
+  >>,
+  values: Record<string, unknown>,
+  metadataByFieldId: FieldConditionMetadataLookup = () => undefined,
+): CrossFieldValidationError[] {
+  const errors: CrossFieldValidationError[] = [];
+  for (const rule of rules) {
+    if (rule.action !== "invalid") continue;
+    if (!evaluateFieldLinkRuleCondition(rule, metadataByFieldId, values)) continue;
+    const message = rule.validationMessage?.trim() || DEFAULT_CROSS_FIELD_VALIDATION_MESSAGE;
+    for (const fieldId of rule.targetFieldIds) {
+      errors.push({ fieldId, ruleId: rule.id, message });
+    }
+  }
+  return errors;
 }
