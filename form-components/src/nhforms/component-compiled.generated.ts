@@ -27933,6 +27933,142 @@ const PastMeasurementField = ({
     } : undefined
   }, "Recent: ", recentHistoryText) : null));
 };`,
+  './PatientContextDiagnostics/index.jsx': `// Read-only source inspection. Capability metadata is supplied by the builder's
+// shared registry and serialized in the export, not inferred from local arrays.
+const PatientContextDiagnostics = ({
+  title = "Patient Context Diagnostics",
+  engineVersion = "",
+  capabilities = [],
+  sampleLimit = 3
+}) => {
+  const sd = useSourceData();
+  const direct = sd?.patient;
+  const queried = sd?.queryResult?.patient?.[0];
+  const isRecord = value => value !== null && typeof value === "object" && !Array.isArray(value);
+  const patient = isRecord(direct) ? direct : isRecord(queried) ? queried : null;
+  const source = patient === direct ? "patient" : "queryResult.patient[0]";
+  const [filter, setFilter] = React.useState("");
+  const limit = Number.isFinite(Number(sampleLimit)) ? Math.max(1, Math.min(10, Math.floor(Number(sampleLimit)))) : 3;
+  const labels = {
+    "read-write": "Read + write",
+    "read-only": "Read only",
+    "not-queried": "Not queried"
+  };
+  const registry = new Map((Array.isArray(capabilities) ? capabilities : []).filter(entry => entry && typeof entry.collection === "string").map(entry => [entry.collection, entry]));
+  const collections = [...new Set([...registry.keys(), ...Object.keys(patient || {}).filter(key => Array.isArray(patient[key]))])].sort();
+  const textValue = value => {
+    if (value == null) return "—";
+    if (isRecord(value)) return String(value.text ?? value.display ?? value.code ?? "—");
+    return typeof value === "string" || typeof value === "number" ? String(value) : "—";
+  };
+  // Bound depth, keys, strings, and array entries before serialization; charts
+  // can contain large attachment payloads and occasionally circular objects.
+  const sampleText = record => {
+    const seen = new WeakSet();
+    const compact = (value, depth = 0) => {
+      if (typeof value === "string") return value.length > 300 ? value.slice(0, 300) + "… [truncated]" : value;
+      if (typeof value === "bigint") return String(value);
+      if (value === null || typeof value !== "object") return value;
+      if (seen.has(value)) return "[circular reference]";
+      if (depth >= 3) return "[nested content omitted]";
+      seen.add(value);
+      if (Array.isArray(value)) return value.slice(0, 5).map(entry => compact(entry, depth + 1));
+      return Object.fromEntries(Object.keys(value).slice(0, 15).map(key => [key, compact(value[key], depth + 1)]));
+    };
+    try {
+      return JSON.stringify(compact(record), null, 2) ?? "null";
+    } catch {
+      return "Sample could not be displayed.";
+    }
+  };
+  const cellStyle = {
+    padding: "10px 12px",
+    textAlign: "left",
+    verticalAlign: "top",
+    borderBottom: "1px solid #cbd5e1"
+  };
+  const visible = collections.filter(key => key.toLowerCase().includes(filter.trim().toLowerCase()));
+  return /*#__PURE__*/React.createElement("section", {
+    "aria-label": title,
+    style: {
+      padding: 16,
+      color: "#172033",
+      background: "#fff",
+      border: "1px solid #cbd5e1",
+      borderRadius: 8
+    }
+  }, /*#__PURE__*/React.createElement("h2", {
+    style: {
+      margin: "0 0 8px"
+    }
+  }, title), patient ? /*#__PURE__*/React.createElement("p", null, /*#__PURE__*/React.createElement("strong", null, textValue(patient.name)), " \\xB7 Chart ", textValue(patient.chartNumber), " \\xB7 Patient ID ", textValue(patient.patientId), /*#__PURE__*/React.createElement("br", null), "Source: ", /*#__PURE__*/React.createElement("code", null, source)) : /*#__PURE__*/React.createElement("p", {
+    role: "status"
+  }, "No active patient context. Select a patient with Use Active, then open Preview."), /*#__PURE__*/React.createElement("p", null, "API capability snapshot", engineVersion ? \` · MOIS engine \${engineVersion}\` : " unavailable", ". Access labels describe engine support, not your current user's permissions. This panel does not write to the chart."), /*#__PURE__*/React.createElement("p", null, "Unavailable means no collection was supplied; empty means an array with zero records. Imported records can appear locally even when MOIS does not query them."), /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: "block",
+      marginBottom: 12
+    }
+  }, "Filter collections", " ", /*#__PURE__*/React.createElement("input", {
+    type: "search",
+    value: filter,
+    onChange: event => setFilter(event.target.value),
+    placeholder: "e.g. observations",
+    style: {
+      padding: 6,
+      maxWidth: "100%"
+    }
+  })), /*#__PURE__*/React.createElement("p", null, visible.length, " of ", collections.length, " collection types \\xB7 Samples show up to ", limit, " records with long or nested content shortened."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      overflowX: "auto"
+    }
+  }, /*#__PURE__*/React.createElement("table", {
+    style: {
+      width: "100%",
+      borderCollapse: "collapse",
+      fontSize: 13
+    }
+  }, /*#__PURE__*/React.createElement("caption", {
+    style: {
+      textAlign: "left",
+      fontWeight: 600,
+      paddingBottom: 8
+    }
+  }, "Active patient collection diagnostics"), /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, ["Collection", "MOIS API access", "Availability", "Count", "Sample records"].map(label => /*#__PURE__*/React.createElement("th", {
+    key: label,
+    scope: "col",
+    style: cellStyle
+  }, label)))), /*#__PURE__*/React.createElement("tbody", null, visible.map(key => {
+    const value = patient?.[key];
+    const isArray = Array.isArray(value);
+    const availability = value == null ? "Unavailable" : !isArray ? "Invalid: expected array" : value.length ? "Available" : "Empty";
+    const capability = registry.get(key);
+    return /*#__PURE__*/React.createElement("tr", {
+      key: \`\${textValue(patient?.patientId)}:\${key}\`,
+      "data-collection": key
+    }, /*#__PURE__*/React.createElement("th", {
+      scope: "row",
+      style: cellStyle
+    }, /*#__PURE__*/React.createElement("code", null, key)), /*#__PURE__*/React.createElement("td", {
+      style: cellStyle
+    }, labels[capability?.access] || "Unclassified", capability?.note ? /*#__PURE__*/React.createElement("details", null, /*#__PURE__*/React.createElement("summary", null, "Access details"), /*#__PURE__*/React.createElement("p", null, capability.note)) : null), /*#__PURE__*/React.createElement("td", {
+      style: cellStyle
+    }, availability), /*#__PURE__*/React.createElement("td", {
+      style: cellStyle
+    }, isArray ? value.length : "—"), /*#__PURE__*/React.createElement("td", {
+      style: cellStyle
+    }, isArray && value.length > 0 ? /*#__PURE__*/React.createElement("details", null, /*#__PURE__*/React.createElement("summary", null, "Show samples"), /*#__PURE__*/React.createElement("pre", {
+      style: {
+        whiteSpace: "pre-wrap",
+        overflowWrap: "anywhere",
+        maxWidth: 520,
+        maxHeight: 320,
+        overflow: "auto"
+      }
+    }, value.slice(0, limit).map(sampleText).join("\\n\\n"))) : "—"));
+  })))), visible.length === 0 ? /*#__PURE__*/React.createElement("p", {
+    role: "status"
+  }, "No matching collections.") : null);
+};`,
   './PatientFileSections/index.jsx': `const {
   useCallback,
   useMemo
@@ -37723,6 +37859,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './Occupations/index.jsx': ["Occupations","OccupationsFields"],
   './PanelEntryGrid/index.jsx': ["DEFAULT_WINDOW_HOURS","PANEL_GRID_CELL_STYLE","PANEL_GRID_TABLE_STYLE","PanelEntryGrid","actor","actorFrom","addHoursIso","answer","answers","authorshipPolicy","buildKey","c","changed","ck","claim","claims","collectedBy","column","commitSave","componentId","computedTotals","container","current","d","data","date","definition","definitions","editableUntil","effectiveFieldId","euDate","existing","expired","fieldData","formatTimestamp","getPanelGridAuth","group","grouped","historyColumns","historyEnabled","isNonEmpty","isOwner","keepStatus","key","kit","label","lockExpired","lockInfo","lockOn","lockedUntil","maxHistory","next","nextStatus","nhAuth","normalizeStore","normalizedOptions","now","nowIso","numbers","observations","ownerId","ownerName","ownerRefresh","pad2","panelGridDateKey","panelGridPayloadsEqual","panelGridRows","panelGridTotals","panelUpdate","pending","policyAppliesToAction","prepareSave","raw","readStore","release","renderCurrentValue","requireComplete","resolveNow","rowDefs","sameActor","scaleLike","sd","section","selected","setPanelGridPayload","setRowValue","shouldWriteDcos","shouldWritePanel","sourceIds","store","stripPanelGridVolatileFields","totalDefs","ts","type","untilSelf","value","values","windowHours"],
   './PastMeasurementField/index.jsx': ["PastMeasurementField","abnormalFlag","abnormalHighValue","abnormalLowValue","canPullLatest","candidate","candidates","codeFilter","coercePositiveInt","commentFilter","componentId","container","createdBy","criticalHighValue","criticalLowValue","current","currentPayload","currentWebformId","currentWebformObservations","day","defaultSpinStep","direct","displayedCurrentValue","documentDate","effectiveFieldId","effectiveHistorySize","effectiveLabelPosition","effectiveMeasurementSize","entryCode","entryComment","entryDate","entryUnits","entryValue","explicitValue","fieldData","flagCode","flagDisplays","formHistoryItems","formatDate","fromPatient","fromQueryResult","handleValueChange","hasAbnormalHigh","hasAbnormalLow","hasExplicitValue","hasMeaningfulValue","hasNumericCurrentValue","hasRangeMetadata","hasStoredValue","historicalFormRowDate","historyItems","historySummary","index","inputSuffix","isAbnormal","isHistoricalFormValue","isNonEmptyString","isNumericInput","key","latestHistoryItem","legacyRangePayload","linkedObservationItem","linkedWebformId","matchingKey","measurementWidthBySize","month","nextGroup","normalizeObservationItems","normalizedDateOnly","normalizedPullTargets","numericCurrentValue","numericExplicitValue","numericTime","observationHistoryItems","observationWebformId","oldId","oldObs","optionalString","parseDateValue","parsed","parsedDate","parsedDateOnly","patientPath","payloadsEqual","pullLatestIntoTargets","raw","rawDate","recentHistoryText","resolveHistoricalFormRows","resolveMeasurementContainerStyle","resolveMoisValue","resolvePathValue","resolvedAbnormalHigh","resolvedAbnormalLow","resolvedCriticalHigh","resolvedCriticalLow","resolvedCurrentValue","resolvedUnits","role","roots","sd","segments","setNestedPayload","shouldReserveHistory","shouldShowHistory","storedValue","stringifyValue","stripVolatilePayloadFields","targetFieldId","text","toObservationList","toPathSegments","updatedValue","value","valueFromHistoricalFormRow","valueIsDate","valueKeys","valuePart","valueText","width","year"],
+  './PatientContextDiagnostics/index.jsx': ["PatientContextDiagnostics","availability","capability","cellStyle","collections","compact","direct","isArray","isRecord","labels","limit","patient","queried","registry","sampleText","sd","seen","source","textValue","value","visible"],
   './PatientFileSections/index.jsx': ["PatientFileSections","activeText","addressText","cityLine","compactLines","contactText","countryLine","createdDate","editButtonStyle","encounter","fieldWrapStyle","formatAddress","formatContact","formatDate","getPatientFromData","gridStyle","healthNumber","insuranceBy","insuranceNumber","insuranceText","lines","match","mergeObjects","nextPatient","optionCode","optionDisplay","patient","preferredCode","preferredPhoneOptions","providerName","queryPatient","raw","renderClientDemographics","renderDocumentDetails","renderEncounterDetails","renderTitle","requested","sd","section","sectionTitleStyle","textValue","updateContactText","visibleSections","whiteDropdownStyles","whiteFlexTextFieldStyles","whiteTextFieldStyles","writePatientUpdates"],
   './PatientValueField/index.jsx': ["PatientValueField","age","applyPatientTransform","candidates","coercePatientValue","collectionCandidateValues","collectionItemMatches","computeAgeYears","dob","effectiveFieldId","expected","items","monthDelta","normalizedExpected","now","raw","resolveCollectionItemPath","resolvePatientContextPath","resolved","root","sd","stored","values"],
   './PdfRegenerator/index.jsx': ["PDFLib","PDF_LIB_URL","PdfRegenerator","_base64ToBytes","_buildChoiceComponentIndex","_buildDateComponentIndex","_buildTableReverseIndex","_choiceItemMatches","_choiceItems","_collectCandidates","_decodePdfHex","_downloadBytes","_drawGeometryOverlays","_fillField","_geometryChoiceSelected","_geometryClamp","_geometrySignatureDataUrl","_geometryTextLines","_getCheckboxOnStates","_inferBooleanState","_installPdfLibFromSource","_isNonEmptyString","_loadPdfLib","_loadPdfLibFromCdn","_matchMultipleOptions","_matchSingleOption","_normalizeFieldMap","_normalizeToken","_pdfLibPromise","_printBytes","_resolveChoiceComponentValue","_resolveDateComponentValue","_resolveTableCellValue","_resolveValueByPath","_setCheckboxByState","_splitCanonicalDateParts","_statusColor","_toBooleanLike","_toCandidateList","_toText","acro","baseMap","binary","blob","boldFont","boolValue","booleanStates","box","buttonDisabled","byRow","bytes","candidate","candidateKeys","candidates","choiceComponentIndex","choiceComponentValue","choiceEntry","clean","cleaned","cleanup","component","components","current","dataUrl","dateComponentIndex","dateComponentValue","dateEntry","desiredMaxLength","diagnosticsText","didDraw","didFill","direct","disabled","doc","existing","fieldId","filledFieldCount","font","fontSize","form","formData","formKeys","fromData","fromPath","fuzzy","geometryResult","handleGeneratePdf","hasMatchingState","i","iframe","image","includeSet","index","inferredState","inlineSource","installed","isOn","items","knownOptions","left","leftIsFormId","lib","lineHeight","lines","link","map","mapped","match","matches","maxLength","maxLines","maxWidth","maybe","maybeDate","maybeTime","nextFileName","normalized","normalizedAction","normalizedCandidate","normalizedOption","normalizedOptionMap","normalizedRequested","offState","onText","onValue","optionValue","options","otherItem","outputBytes","page","pages","parts","pathByColumnId","payload","pdfFieldId","pdfFieldName","pdfFields","printWindow","rawValue","renderActionButton","renderButton","requested","resolvePath","resolvedPdfSource","right","rightIsFormId","row","rowIndex","rowMapping","rows","runner","script","sd","segments","selected","selectedCount","set","single","size","skippedFieldCount","sourceFieldId","sourceId","sourceLines","sourceValue","sourceValues","state","states","strategy","tableEntry","tableId","tableIndex","targetAction","targetState","targetStateName","targetWidget","text","trimmed","url","warningCount","warnings","widget","widgets","withoutSlash","words"],
@@ -37814,6 +37951,7 @@ export const componentDependencies: Record<string, string[]> = {
   './Occupations/index.jsx': [],
   './PanelEntryGrid/index.jsx': ["ObservationValueKit","ScaleField"],
   './PastMeasurementField/index.jsx': [],
+  './PatientContextDiagnostics/index.jsx': [],
   './PatientFileSections/index.jsx': [],
   './PatientValueField/index.jsx': [],
   './PdfRegenerator/index.jsx': [],

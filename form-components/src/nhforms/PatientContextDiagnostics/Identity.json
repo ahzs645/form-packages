@@ -1,0 +1,9 @@
+{
+  "name": "PatientContextDiagnostics",
+  "title": "Patient Context Diagnostics",
+  "description": "Inspect active patient collections, availability, sample records, and the packaged MOIS API capability snapshot without chart writes.",
+  "version": { "major": 1, "minor": 0, "patch": 0 },
+  "type": "component",
+  "owner": "MOIS Styleguide",
+  "components": []
+}
