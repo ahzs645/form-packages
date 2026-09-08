@@ -7,5 +7,6 @@
     "emitDeclarationOnly": false,
     "noEmit": true
   },
+  "exclude": ["src/**/*.local.test.tsx"],
   "references": []
 }

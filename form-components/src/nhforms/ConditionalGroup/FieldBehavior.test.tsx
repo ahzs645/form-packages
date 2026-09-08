@@ -88,6 +88,25 @@ function mount(
 }
 
 describe("offline field extensions in shipped NHForms source", () => {
+  it.each(["compareFieldId", "valueFieldId"])("preserves nested date comparisons using %s", (property) => {
+    const rule: FieldLinkRule = {
+      id: "date-order", action: "invalid", controllerFieldId: "end",
+      condition: { type: "filled" }, targetFieldIds: ["end"],
+      conditionGroup: { match: "all", conditions: [
+        { match: "any", conditions: [{ controllerFieldId: "end", condition: { type: "number-lt", [property]: "start" } }] },
+      ] },
+    };
+    const group = compileFieldLinkConditionGroup(rule);
+    for (const [values, expected] of [
+      [{ start: "2026-09-08", end: "2026-09-07" }, true],
+      [{ start: "2026-09-08", end: "2026-09-09" }, false],
+      [{ end: "2026-09-07" }, false],
+    ] as const) {
+      expect(evaluateFieldLinkRuleCondition(rule, () => undefined, values)).toBe(expected);
+      expect(runtime.evaluateConditionEntries(group.conditions, group.match, (id: string) => (values as Record<string, unknown>)[id])).toBe(expected);
+    }
+  });
+
   it("matches nested group and comparison-field evaluation with canonical model", () => {
     const rule: FieldLinkRule = {
       id: "nested",
