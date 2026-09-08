@@ -2,6 +2,7 @@ import type {
   FieldLinkCondition,
   FieldLinkConditionType,
   FieldLinkRule,
+  FieldConditionGroup,
 } from "./index";
 
 export interface FieldConditionMetadata {
@@ -18,6 +19,7 @@ export type FieldConditionMetadataLookup = (
  * generated JSX without leaking the builder's nested condition shape.
  */
 export interface SerializedFieldLinkCondition {
+  valueFieldId?: string;
   controllerFieldId: string;
   type: FieldLinkConditionType;
   optionValues?: string[];
@@ -27,7 +29,7 @@ export interface SerializedFieldLinkCondition {
 }
 
 export interface CompiledFieldLinkConditionGroup {
-  conditions: SerializedFieldLinkCondition[];
+  conditions: Array<SerializedFieldLinkCondition | CompiledFieldLinkConditionGroup>;
   match: "all" | "any";
 }
 
@@ -44,15 +46,26 @@ export interface CompiledFieldLinkProtectionRule extends CompiledFieldLinkCondit
 export function compileFieldLinkConditionGroup(
   rule: Pick<
     FieldLinkRule,
-    "controllerFieldId" | "condition" | "additionalConditions" | "conditionMatch"
+    "controllerFieldId" | "condition" | "additionalConditions" | "conditionMatch" | "conditionGroup"
   >,
 ): CompiledFieldLinkConditionGroup {
+  if (rule.conditionGroup) {
+    const compile = (group: FieldConditionGroup): CompiledFieldLinkConditionGroup => ({
+      match: group.match,
+      conditions: group.conditions.map(entry => "conditions" in entry ? compile(entry) : ({
+        controllerFieldId: entry.controllerFieldId, ...entry.condition,
+        value: entry.condition.value ?? undefined,
+      })),
+    });
+    return compile(rule.conditionGroup);
+  }
   const conditions = [
     { controllerFieldId: rule.controllerFieldId, condition: rule.condition },
     ...(rule.additionalConditions ?? []),
   ].map(({ controllerFieldId, condition }) => ({
     controllerFieldId,
     type: condition.type,
+    ...(condition.valueFieldId ? { valueFieldId: condition.valueFieldId } : {}),
     ...(condition.optionValues?.length ? { optionValues: condition.optionValues } : {}),
     ...(condition.value !== undefined && condition.value !== null
       ? { value: condition.value }
@@ -69,7 +82,7 @@ export function compileFieldLinkConditionGroup(
 export function compileFieldLinkVisibilityRule(
   rule: Pick<
     FieldLinkRule,
-    "controllerFieldId" | "condition" | "additionalConditions" | "conditionMatch" | "action"
+    "controllerFieldId" | "condition" | "additionalConditions" | "conditionMatch" | "conditionGroup" | "action"
   >,
 ): CompiledFieldLinkVisibilityRule {
   if (rule.action !== "show" && rule.action !== "hide") {
@@ -88,6 +101,7 @@ export function compileFieldLinkProtectionRule(
     | "condition"
     | "additionalConditions"
     | "conditionMatch"
+    | "conditionGroup"
     | "action"
     | "protectionMode"
   >,
@@ -239,23 +253,39 @@ function asConditionValue(value: unknown): string | number | boolean | null {
 export function evaluateFieldLinkRuleCondition(
   rule: Pick<
     FieldLinkRule,
-    "controllerFieldId" | "condition" | "additionalConditions" | "conditionMatch"
+    "controllerFieldId" | "condition" | "additionalConditions" | "conditionMatch" | "conditionGroup"
   >,
   metadataByFieldId: FieldConditionMetadataLookup,
   values: Record<string, unknown>,
 ): boolean {
-  const compiled = compileFieldLinkConditionGroup(rule);
-  const evaluate = (entry: SerializedFieldLinkCondition) =>
-    evaluateFieldCondition(
-      // A compare field supplies the right-hand side, so the comparison is
-      // against another answer rather than a constant.
-      entry.compareFieldId ? { ...entry, value: asConditionValue(values[entry.compareFieldId]) } : entry,
-      values[entry.controllerFieldId],
-      metadataByFieldId(entry.controllerFieldId),
+  return evaluateConditionGroup(getFieldLinkConditionGroup(rule), metadataByFieldId, values);
+}
+
+export function getFieldLinkConditionGroup(rule: Pick<FieldLinkRule, "controllerFieldId" | "condition" | "additionalConditions" | "conditionMatch" | "conditionGroup">): FieldConditionGroup {
+  return rule.conditionGroup ?? {
+    match: rule.conditionMatch ?? "all",
+    conditions: [{ controllerFieldId: rule.controllerFieldId, condition: rule.condition }, ...(rule.additionalConditions ?? [])],
+  };
+}
+
+export function getFieldLinkConditionEntries(rule: Pick<FieldLinkRule, "controllerFieldId" | "condition" | "additionalConditions" | "conditionMatch" | "conditionGroup">): Array<{ controllerFieldId: string; condition: FieldLinkCondition }> {
+  const flatten = (group: FieldConditionGroup): Array<{ controllerFieldId: string; condition: FieldLinkCondition }> =>
+    group.conditions.flatMap(entry => "conditions" in entry ? flatten(entry) : [entry]);
+  return flatten(getFieldLinkConditionGroup(rule));
+}
+
+export function evaluateConditionGroup(group: FieldConditionGroup, metadata: FieldConditionMetadataLookup, values: Record<string, unknown>): boolean {
+  if (!group.conditions.length) return false;
+  const evaluate = (entry: FieldConditionGroup["conditions"][number]): boolean => {
+    if ("conditions" in entry) return evaluateConditionGroup(entry, metadata, values);
+    const compareFieldId = entry.condition.compareFieldId || entry.condition.valueFieldId;
+    if (compareFieldId && isConditionValueEmpty(values[compareFieldId])) return false;
+    return evaluateFieldCondition(
+      compareFieldId ? { ...entry.condition, value: asConditionValue(values[compareFieldId]) } : entry.condition,
+      values[entry.controllerFieldId], metadata(entry.controllerFieldId),
     );
-  return compiled.match === "any"
-    ? compiled.conditions.some(evaluate)
-    : compiled.conditions.every(evaluate);
+  };
+  return group.match === "any" ? group.conditions.some(evaluate) : group.conditions.every(evaluate);
 }
 
 /** A blocking error raised by a cross-field rule. */
@@ -290,6 +320,7 @@ export function evaluateCrossFieldValidation(
     | "targetFieldIds"
     | "action"
     | "validationMessage"
+    | "conditionGroup"
   >>,
   values: Record<string, unknown>,
   metadataByFieldId: FieldConditionMetadataLookup = () => undefined,

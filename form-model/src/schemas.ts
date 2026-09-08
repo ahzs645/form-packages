@@ -1,11 +1,15 @@
 import { z } from "zod";
-import type { BuilderDocument, BuilderField, WorkspaceDocumentV3 } from "./index";
+import type { BuilderDocument, BuilderField, WorkspaceDocumentV3, FieldConditionGroup } from "./index";
 import { BUILDER_FIELD_TYPES } from "./field-types";
 
 export const BuilderFieldSchema = z.object({
   id: z.string().trim().min(1),
   label: z.string(),
   type: z.enum(BUILDER_FIELD_TYPES),
+  behavior: z.lazy(() => z.object({
+    validations: z.array(z.object({ id: z.string(), message: z.string(), validWhen: FieldConditionGroupSchema, translations: z.record(z.string()).optional() })).optional(),
+    optionRules: z.array(z.object({ value: z.string(), showWhen: FieldConditionGroupSchema.optional(), disableWhen: FieldConditionGroupSchema.optional() })).optional(),
+  })).optional(),
 }).passthrough();
 
 export const BuilderFieldsSchema = z.array(BuilderFieldSchema);
@@ -20,7 +24,8 @@ export const BuilderDocumentSchema = z.object({
     author: z.string().optional(),
     owner: z.string().optional(),
     publisher: z.string().optional(),
-    description: z.string().optional(),
+    validationMessage: z.string().optional(),
+  description: z.string().optional(),
     globalIdentifier: z.string().optional(),
     version: z.object({ major: z.number().int().nonnegative(), minor: z.number().int().nonnegative(), patch: z.number().int().nonnegative() }).optional(),
     requiredFormViewerVersion: z.object({ major: z.number().int().nonnegative(), minor: z.number().int().nonnegative(), patch: z.number().int().nonnegative() }).optional(),
@@ -49,6 +54,8 @@ export const BuilderDocumentSchema = z.object({
 }).passthrough();
 
 const FieldLinkConditionSchema = z.object({
+  valueFieldId: z.string().optional(),
+  compareFieldId: z.string().optional(),
   type: z.enum([
     "boolean-yes",
     "boolean-no",
@@ -68,7 +75,18 @@ const FieldLinkConditionSchema = z.object({
   value: z.union([z.string(), z.number(), z.boolean(), z.null()]).optional(),
 }).passthrough();
 
-const FieldLinkRuleSchema = z.object({
+function conditionGroupSchema(depth: number): z.ZodType<FieldConditionGroup> {
+  const leaf = z.object({ controllerFieldId: z.string().min(1), condition: FieldLinkConditionSchema });
+  return z.object({
+    match: z.enum(["all", "any"]),
+    conditions: z.array(depth < 8 ? z.union([z.lazy(() => conditionGroupSchema(depth + 1)), leaf]) : leaf).min(1).max(100),
+  });
+}
+export const FieldConditionGroupSchema = conditionGroupSchema(0);
+
+export const FieldLinkRuleSchema = z.object({
+  conditionGroup: FieldConditionGroupSchema.optional(),
+  copyPolicy: z.enum(["when-empty", "until-edited", "always"]).optional(),
   id: z.string(),
   controllerFieldId: z.string(),
   condition: FieldLinkConditionSchema,
@@ -86,9 +104,11 @@ const FieldLinkRuleSchema = z.object({
     "clear-required",
     "set-readonly",
     "clear-readonly",
+    "invalid",
   ]),
   protectionMode: z.enum(["readOnly", "disabled", "both"]).optional(),
   copyFromFieldId: z.string().optional(),
+  validationMessage: z.string().optional(),
   description: z.string().optional(),
 }).passthrough();
 

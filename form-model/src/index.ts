@@ -1,3 +1,4 @@
+export type * from "./offline-authoring";
 /**
  * UI-independent authoring model shared by the builder, persistence codecs,
  * previews, and exporters. Keep this package free of app/component imports.
@@ -1516,7 +1517,14 @@ export interface BuilderOscarImportMapping {
   } | null;
 }
 
+export interface BuilderFieldBehavior {
+  validations?: Array<{ id: string; validWhen: FieldConditionGroup; message: string; translations?: Record<string, string> }>;
+  optionRules?: Array<{ value: string; showWhen?: FieldConditionGroup; disableWhen?: FieldConditionGroup }>;
+}
+
 export interface BuilderField {
+  behavior?: BuilderFieldBehavior;
+
   id: string;
   label: string;
   type: BuilderFieldType;
@@ -2186,6 +2194,8 @@ export type FieldLinkConditionType =
   | "empty";            // Field is empty/undefined
 
 export interface FieldLinkCondition {
+  /** Compare against another answer instead of a literal. */
+  valueFieldId?: string;
   type: FieldLinkConditionType;
   /** For choice conditions, which option value(s) to check */
   optionValues?: string[];
@@ -2225,7 +2235,16 @@ export type FieldLinkAction =
  * Example: "When 'Same as Partner' is checked, hide 'Bio Father Surname'"
  * Example: "When 'ART Specify' has 'IVF' selected, show 'IVF Details'"
  */
+export interface FieldConditionGroup {
+  match: "all" | "any";
+  conditions: Array<FieldConditionGroup | { controllerFieldId: string; condition: FieldLinkCondition }>;
+}
+
 export interface FieldLinkRule {
+  /** Recursive conditions override the legacy flat condition pairs when present. */
+  conditionGroup?: FieldConditionGroup;
+  /** Default preserves user answers; always explicitly opts into overwriting. */
+  copyPolicy?: "when-empty" | "until-edited" | "always";
   id: string;
   /** The field whose value triggers the rule */
   controllerFieldId: string;
@@ -2374,6 +2393,7 @@ export interface FormDesign {
   headerSpacing?: FormHeaderSpacing;
   rtlLayout: boolean;
   uppercaseLabels: boolean;
+  uiTranslations?: Record<string, Record<string, string>>;
 
   // Typography
   fontFamily?: string; // Google Fonts name
@@ -2451,6 +2471,7 @@ export const defaultFormSettings: FormSettings = {
 
 /** Canonical builder document; UI layers supply their concrete layout-draft type. */
 export interface BuilderDocument<TLayoutDraft = unknown> {
+  authoring?: import("./offline-authoring").OfflineAuthoringState;
   name: string;
   fields: BuilderField[];
   design: FormDesign;
@@ -2533,6 +2554,9 @@ export {
   DEFAULT_CROSS_FIELD_VALIDATION_MESSAGE,
   evaluateCrossFieldValidation,
   evaluateFieldCondition,
+  getFieldLinkConditionEntries,
+  getFieldLinkConditionGroup,
+  evaluateConditionGroup,
   evaluateFieldLinkRuleCondition,
   isConditionValueEmpty,
   normalizeConditionBoolean,
