@@ -11,6 +11,8 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
   const hostQuery = typeof queryGraphQL === "function" ? queryGraphQL : null
   const ready = Boolean(hostQuery && auth.jwToken && auth.apiServer && Number.isInteger(patientId) && patientId > 0)
   const [state, setState] = React.useState({ patientId, busy: false, message: "No live checks run yet.", rows: [], hasRun: false, schemaFields: [] })
+  const [customQuery, setCustomQuery] = React.useState("query CustomPatientProbe($patientId: Int) { patient(id: $patientId) { patientId } }")
+  const [customVariables, setCustomVariables] = React.useState('{"patientId":"$patientId"}')
   const [writeSelection, setWriteSelection] = React.useState("all")
   const [writeOverrides, setWriteOverrides] = React.useState("{}")
   const uncertainWrite = React.useRef(false)
@@ -47,11 +49,12 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
     let rows = mode !== "reads" ? [...current.rows] : []
     let schemaFields = mode !== "reads" ? current.schemaFields || [] : []
     let createdIds = { ...(current.createdIds || {}) }
+    let customResults = [...(current.customResults || [])]
     let rootResults = [...(current.rootResults || [])]
     let writeResults = [...(current.writeResults || [])]
     let apiInventory = current.apiInventory || null
     const update = (message, running = true) => {
-      if (active()) setState({ patientId, busy: running, message, rows: [...rows], hasRun: true, schemaFields, apiInventory, writeResults: [...writeResults], createdIds: { ...createdIds }, rootResults: [...rootResults] })
+      if (active()) setState({ patientId, busy: running, message, rows: [...rows], hasRun: true, schemaFields, apiInventory, writeResults: [...writeResults], createdIds: { ...createdIds }, rootResults: [...rootResults], customResults: [...customResults] })
     }
     const request = async (operation, query, variables, mutation = false) => {
       if (!active()) throw new Error("Stopped")
@@ -76,6 +79,37 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
     }
     update(mode === "api" ? "Inspecting root queries, mutations and input types…" : "Inspecting the live Patient schema…")
     try {
+      if (mode === "custom") {
+        const match = customQuery.trim().match(/^(query|mutation)\s+([_A-Za-z][_0-9A-Za-z]*)\b/)
+        if (!match) throw new Error("Use a named query or mutation, for example query MyProbe { ... }")
+        const mutation = match[1] === "mutation"
+        if (mutation && (uncertainWrite.current || pendingWrites.current)) throw new Error("A previous write has an uncertain outcome; inspect the chart before reopening this form")
+        const variables = JSON.parse(customVariables || "{}", (_key, value) => {
+          if (value === "$patientId") return patientId
+          if (typeof value === "string" && value.startsWith("$created.")) {
+            const id = createdIds[value.slice(9)]
+            if (!id) throw new Error(`No created record for ${value}`)
+            return id
+          }
+          return value
+        })
+        if (!variables || typeof variables !== "object" || Array.isArray(variables)) throw new Error("Variables must be a JSON object")
+        const row = { operation: match[2], kind: match[1], query: customQuery, status: "Sent; outcome pending", inputFields: Object.keys(variables) }
+        customResults.push(row)
+        update(`Running custom ${match[1]} ${match[2]}…`)
+        try {
+          const result = await request(match[2], customQuery, variables, mutation)
+          row.status = mutation ? "Response received; persistence not independently verified" : "Query response received"
+          row.resultFields = Object.keys(result)
+          row.response = JSON.stringify(result, null, 2).split(String(auth.jwToken || "\u0000")).join("[redacted]")
+        } catch (error) {
+          row.status = mutation ? "Write outcome requires inspection" : "Query failed"
+          row.error = readableError(error.message)
+          if (mutation && /timed out|Stopped/.test(String(error.message))) uncertainWrite.current = true
+        }
+        update(row.status, false)
+        return
+      }
       if (mode === "roots") {
         if (!apiInventory?.queries?.length) throw new Error("Inspect read/write API first.")
         const firstId = (collection, key) => createdIds[key] || patient?.[collection]?.find((row) => Number(row[key]) > 0)?.[key]
@@ -484,13 +518,14 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
     if (pendingWrites.current) uncertainWrite.current = true
     epoch.current += 1
     busy.current = false
-    setState((previous) => ({ ...previous, writeResults: (previous.writeResults || []).map((row) => row.status === "Sent; outcome pending" ? { ...row, status: "Outcome unknown; request may finish" } : row), busy: false, message: "Stopped. Any request already sent may finish; its result will be ignored." }))
+    setState((previous) => ({ ...previous, customResults: (previous.customResults || []).map((row) => row.status === "Sent; outcome pending" ? { ...row, status: "Stopped; request may finish" } : row), writeResults: (previous.writeResults || []).map((row) => row.status === "Sent; outcome pending" ? { ...row, status: "Outcome unknown; request may finish" } : row), busy: false, message: "Stopped. Any request already sent may finish; its result will be ignored." }))
   }
   const report = JSON.stringify({
     reportType: "mois-patient-context-live-query",
     reportVersion: 3,
     writeResults: (current.writeResults || []).map(({ variables, ...result }) => result),
     rootQueryResults: current.rootResults || [],
+    customOperations: (current.customResults || []).map(({ response, ...result }) => result),
     createdTestRecordIds: current.createdIds || {},
     generatedAt: new Date().toISOString(),
     status: current.message,
@@ -520,6 +555,12 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
     <button type="button" disabled={!ready || current.busy} onClick={() => run("api")}>Inspect read/write API</button>{" "}
     <button type="button" disabled={!ready || current.busy || !current.apiInventory} onClick={() => run("roots")}>Test root queries</button>{" "}
     <button type="button" disabled={!ready || current.busy || !current.apiInventory || uncertainWrite.current || pendingWrites.current > 0} onClick={() => run("writes")}>Run test writes</button>{" "}
+    <details><summary>Custom GraphQL probe</summary><p>Run a named query or mutation through this MOIS login. This supports additional fields and operations without rebuilding the form. Mutations execute immediately when Run custom operation is clicked. Responses appear here, but response values are excluded from the diagnostic report. Query text is included, so use variables for patient values.</p>
+      <textarea aria-label="Custom GraphQL query" value={customQuery} disabled={current.busy} onChange={(event) => setCustomQuery(event.target.value)} rows={6} style={{ width: "100%", fontFamily: "monospace" }} />
+      <textarea aria-label="Custom GraphQL variables" value={customVariables} disabled={current.busy} onChange={(event) => setCustomVariables(event.target.value)} rows={4} style={{ width: "100%", fontFamily: "monospace" }} />
+      <button type="button" disabled={!ready || current.busy} onClick={() => run("custom")}>Run custom operation</button>
+      {(current.customResults || []).map((row, index) => <details key={index}><summary>{row.operation} — {row.status}</summary>{row.error ? <p>{row.error}</p> : null}{row.response ? <textarea aria-label={`Custom response ${index + 1}`} readOnly value={row.response} rows={10} style={{ width: "100%", fontFamily: "monospace" }} /> : null}</details>)}
+    </details>
     <label>Write operation <select aria-label="Write operation" value={writeSelection} disabled={current.busy} onChange={(event) => setWriteSelection(event.target.value)}><option value="all">All unattempted operations</option>{(current.apiInventory?.mutations || []).map((operation) => <option key={operation.name} value={operation.name}>{operation.name}</option>)}</select></label>
     <details><summary>Write test inputs</summary>
       <button type="button" disabled={current.busy || writeSelection === "all" || !(current.writeResults || []).some((row) => row.operation === writeSelection && row.variables)} onClick={() => { const row = [...current.writeResults].reverse().find((entry) => entry.operation === writeSelection && entry.variables); setWriteOverrides(JSON.stringify({ [writeSelection]: row.variables }, null, 2)) }}>Load last inputs for selected operation</button><p>Default probes use a unique WEBFORMS TEST marker. For operations requiring local codes or IDs, provide complete GraphQL variables keyed by mutation name (or query:name for root reads). Overrides replace that operation's defaults. Use "$created.encounterId" (or another created ID key) to reference a record from this session and "$patientId" for the active chart. All unattempted skips previously sent mutations; choose one operation explicitly to retry it. Created IDs survive retries until the chart changes or the form closes. Fax delivery requires selecting sendFax individually and providing an account and explicit test recipients. Update and delete defaults target records created during this run.</p>

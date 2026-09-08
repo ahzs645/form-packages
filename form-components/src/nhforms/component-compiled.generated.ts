@@ -28092,6 +28092,8 @@ const PatientContextQueryTest = ({
     hasRun: false,
     schemaFields: []
   });
+  const [customQuery, setCustomQuery] = React.useState("query CustomPatientProbe($patientId: Int) { patient(id: $patientId) { patientId } }");
+  const [customVariables, setCustomVariables] = React.useState('{"patientId":"$patientId"}');
   const [writeSelection, setWriteSelection] = React.useState("all");
   const [writeOverrides, setWriteOverrides] = React.useState("{}");
   const uncertainWrite = React.useRef(false);
@@ -28143,6 +28145,7 @@ const PatientContextQueryTest = ({
     let createdIds = {
       ...(current.createdIds || {})
     };
+    let customResults = [...(current.customResults || [])];
     let rootResults = [...(current.rootResults || [])];
     let writeResults = [...(current.writeResults || [])];
     let apiInventory = current.apiInventory || null;
@@ -28159,7 +28162,8 @@ const PatientContextQueryTest = ({
         createdIds: {
           ...createdIds
         },
-        rootResults: [...rootResults]
+        rootResults: [...rootResults],
+        customResults: [...customResults]
       });
     };
     const request = async (operation, query, variables, mutation = false) => {
@@ -28195,6 +28199,43 @@ const PatientContextQueryTest = ({
     };
     update(mode === "api" ? "Inspecting root queries, mutations and input types…" : "Inspecting the live Patient schema…");
     try {
+      if (mode === "custom") {
+        const match = customQuery.trim().match(/^(query|mutation)\\s+([_A-Za-z][_0-9A-Za-z]*)\\b/);
+        if (!match) throw new Error("Use a named query or mutation, for example query MyProbe { ... }");
+        const mutation = match[1] === "mutation";
+        if (mutation && (uncertainWrite.current || pendingWrites.current)) throw new Error("A previous write has an uncertain outcome; inspect the chart before reopening this form");
+        const variables = JSON.parse(customVariables || "{}", (_key, value) => {
+          if (value === "$patientId") return patientId;
+          if (typeof value === "string" && value.startsWith("$created.")) {
+            const id = createdIds[value.slice(9)];
+            if (!id) throw new Error(\`No created record for \${value}\`);
+            return id;
+          }
+          return value;
+        });
+        if (!variables || typeof variables !== "object" || Array.isArray(variables)) throw new Error("Variables must be a JSON object");
+        const row = {
+          operation: match[2],
+          kind: match[1],
+          query: customQuery,
+          status: "Sent; outcome pending",
+          inputFields: Object.keys(variables)
+        };
+        customResults.push(row);
+        update(\`Running custom \${match[1]} \${match[2]}…\`);
+        try {
+          const result = await request(match[2], customQuery, variables, mutation);
+          row.status = mutation ? "Response received; persistence not independently verified" : "Query response received";
+          row.resultFields = Object.keys(result);
+          row.response = JSON.stringify(result, null, 2).split(String(auth.jwToken || "\\u0000")).join("[redacted]");
+        } catch (error) {
+          row.status = mutation ? "Write outcome requires inspection" : "Query failed";
+          row.error = readableError(error.message);
+          if (mutation && /timed out|Stopped/.test(String(error.message))) uncertainWrite.current = true;
+        }
+        update(row.status, false);
+        return;
+      }
       if (mode === "roots") {
         if (!apiInventory?.queries?.length) throw new Error("Inspect read/write API first.");
         const firstId = (collection, key) => createdIds[key] || patient?.[collection]?.find(row => Number(row[key]) > 0)?.[key];
@@ -29114,6 +29155,10 @@ const PatientContextQueryTest = ({
     busy.current = false;
     setState(previous => ({
       ...previous,
+      customResults: (previous.customResults || []).map(row => row.status === "Sent; outcome pending" ? {
+        ...row,
+        status: "Stopped; request may finish"
+      } : row),
       writeResults: (previous.writeResults || []).map(row => row.status === "Sent; outcome pending" ? {
         ...row,
         status: "Outcome unknown; request may finish"
@@ -29130,6 +29175,10 @@ const PatientContextQueryTest = ({
       ...result
     }) => result),
     rootQueryResults: current.rootResults || [],
+    customOperations: (current.customResults || []).map(({
+      response,
+      ...result
+    }) => result),
     createdTestRecordIds: current.createdIds || {},
     generatedAt: new Date().toISOString(),
     status: current.message,
@@ -29188,7 +29237,42 @@ const PatientContextQueryTest = ({
     type: "button",
     disabled: !ready || current.busy || !current.apiInventory || uncertainWrite.current || pendingWrites.current > 0,
     onClick: () => run("writes")
-  }, "Run test writes"), " ", /*#__PURE__*/React.createElement("label", null, "Write operation ", /*#__PURE__*/React.createElement("select", {
+  }, "Run test writes"), " ", /*#__PURE__*/React.createElement("details", null, /*#__PURE__*/React.createElement("summary", null, "Custom GraphQL probe"), /*#__PURE__*/React.createElement("p", null, "Run a named query or mutation through this MOIS login. This supports additional fields and operations without rebuilding the form. Mutations execute immediately when Run custom operation is clicked. Responses appear here, but response values are excluded from the diagnostic report. Query text is included, so use variables for patient values."), /*#__PURE__*/React.createElement("textarea", {
+    "aria-label": "Custom GraphQL query",
+    value: customQuery,
+    disabled: current.busy,
+    onChange: event => setCustomQuery(event.target.value),
+    rows: 6,
+    style: {
+      width: "100%",
+      fontFamily: "monospace"
+    }
+  }), /*#__PURE__*/React.createElement("textarea", {
+    "aria-label": "Custom GraphQL variables",
+    value: customVariables,
+    disabled: current.busy,
+    onChange: event => setCustomVariables(event.target.value),
+    rows: 4,
+    style: {
+      width: "100%",
+      fontFamily: "monospace"
+    }
+  }), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    disabled: !ready || current.busy,
+    onClick: () => run("custom")
+  }, "Run custom operation"), (current.customResults || []).map((row, index) => /*#__PURE__*/React.createElement("details", {
+    key: index
+  }, /*#__PURE__*/React.createElement("summary", null, row.operation, " \\u2014 ", row.status), row.error ? /*#__PURE__*/React.createElement("p", null, row.error) : null, row.response ? /*#__PURE__*/React.createElement("textarea", {
+    "aria-label": \`Custom response \${index + 1}\`,
+    readOnly: true,
+    value: row.response,
+    rows: 10,
+    style: {
+      width: "100%",
+      fontFamily: "monospace"
+    }
+  }) : null))), /*#__PURE__*/React.createElement("label", null, "Write operation ", /*#__PURE__*/React.createElement("select", {
     "aria-label": "Write operation",
     value: writeSelection,
     disabled: current.busy,
@@ -39077,7 +39161,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './PanelEntryGrid/index.jsx': ["DEFAULT_WINDOW_HOURS","PANEL_GRID_CELL_STYLE","PANEL_GRID_TABLE_STYLE","PanelEntryGrid","actor","actorFrom","addHoursIso","answer","answers","authorshipPolicy","buildKey","c","changed","ck","claim","claims","collectedBy","column","commitSave","componentId","computedTotals","container","current","d","data","date","definition","definitions","editableUntil","effectiveFieldId","euDate","existing","expired","fieldData","formatTimestamp","getPanelGridAuth","group","grouped","historyColumns","historyEnabled","isNonEmpty","isOwner","keepStatus","key","kit","label","lockExpired","lockInfo","lockOn","lockedUntil","maxHistory","next","nextStatus","nhAuth","normalizeStore","normalizedOptions","now","nowIso","numbers","observations","ownerId","ownerName","ownerRefresh","pad2","panelGridDateKey","panelGridPayloadsEqual","panelGridRows","panelGridTotals","panelUpdate","pending","policyAppliesToAction","prepareSave","raw","readStore","release","renderCurrentValue","requireComplete","resolveNow","rowDefs","sameActor","scaleLike","sd","section","selected","setPanelGridPayload","setRowValue","shouldWriteDcos","shouldWritePanel","sourceIds","store","stripPanelGridVolatileFields","totalDefs","ts","type","untilSelf","value","values","windowHours"],
   './PastMeasurementField/index.jsx': ["PastMeasurementField","abnormalFlag","abnormalHighValue","abnormalLowValue","canPullLatest","candidate","candidates","codeFilter","coercePositiveInt","commentFilter","componentId","container","createdBy","criticalHighValue","criticalLowValue","current","currentPayload","currentWebformId","currentWebformObservations","day","defaultSpinStep","direct","displayedCurrentValue","documentDate","effectiveFieldId","effectiveHistorySize","effectiveLabelPosition","effectiveMeasurementSize","entryCode","entryComment","entryDate","entryUnits","entryValue","explicitValue","fieldData","flagCode","flagDisplays","formHistoryItems","formatDate","fromPatient","fromQueryResult","handleValueChange","hasAbnormalHigh","hasAbnormalLow","hasExplicitValue","hasMeaningfulValue","hasNumericCurrentValue","hasRangeMetadata","hasStoredValue","historicalFormRowDate","historyItems","historySummary","index","inputSuffix","isAbnormal","isHistoricalFormValue","isNonEmptyString","isNumericInput","key","latestHistoryItem","legacyRangePayload","linkedObservationItem","linkedWebformId","matchingKey","measurementWidthBySize","month","nextGroup","normalizeObservationItems","normalizedDateOnly","normalizedPullTargets","numericCurrentValue","numericExplicitValue","numericTime","observationHistoryItems","observationWebformId","oldId","oldObs","optionalString","parseDateValue","parsed","parsedDate","parsedDateOnly","patientPath","payloadsEqual","pullLatestIntoTargets","raw","rawDate","recentHistoryText","resolveHistoricalFormRows","resolveMeasurementContainerStyle","resolveMoisValue","resolvePathValue","resolvedAbnormalHigh","resolvedAbnormalLow","resolvedCriticalHigh","resolvedCriticalLow","resolvedCurrentValue","resolvedUnits","role","roots","sd","segments","setNestedPayload","shouldReserveHistory","shouldShowHistory","storedValue","stringifyValue","stripVolatilePayloadFields","targetFieldId","text","toObservationList","toPathSegments","updatedValue","value","valueFromHistoricalFormRow","valueIsDate","valueKeys","valuePart","valueText","width","year"],
   './PatientContextDiagnostics/index.jsx': ["PatientContextDiagnostics","availability","capability","cellStyle","collections","compact","direct","isArray","isRecord","labels","limit","patient","queried","registry","sampleText","sd","seen","source","textValue","value","visible"],
-  './PatientContextQueryTest/index.jsx': ["PatientContextQueryTest","absent","active","adapters","allowed","apiInventory","arg","argName","args","auth","before","bindings","busy","candidate","chart","check","collection","collectionByType","createdIds","current","data","date","declarations","defaults","definitionId","deleteSpec","deletion","demographic","depth","detail","discovered","downloadReport","enqueue","epoch","error","expected","field","fieldMap","fields","firstId","hostQuery","idKey","ids","index","info","inputMap","inspect","isCorrespondence","isList","item","key","link","marked","marker","name","named","namedType","need","nested","nestedDelete","notification","now","observation","op","ordered","ownId","ownKeys","patient","patientId","pending","pendingWrites","preferred","query","rank","readData","readId","readQuery","readRecords","readSelection","readableError","ready","recipes","record","recordType","records","report","request","requiredArgs","resolve","result","resultType","results","returned","root","rootForType","rootName","rootOp","rootResults","roots","row","rows","run","runId","scalarFields","scalarSelection","schema","schemaFields","schemaQuery","sd","selection","sent","settings","spec","status","stop","supplied","targetType","targetTypes","targets","templateId","transport","typeCache","typeRef","typeText","types","uncertainWrite","update","url","urlApi","validName","validResponse","validate","value","vars","varsByRoot","writeResults"],
+  './PatientContextQueryTest/index.jsx': ["PatientContextQueryTest","absent","active","adapters","allowed","apiInventory","arg","argName","args","auth","before","bindings","busy","candidate","chart","check","collection","collectionByType","createdIds","current","customResults","data","date","declarations","defaults","definitionId","deleteSpec","deletion","demographic","depth","detail","discovered","downloadReport","enqueue","epoch","error","expected","field","fieldMap","fields","firstId","hostQuery","id","idKey","ids","index","info","inputMap","inspect","isCorrespondence","isList","item","key","link","marked","marker","match","mutation","name","named","namedType","need","nested","nestedDelete","notification","now","observation","op","ordered","ownId","ownKeys","patient","patientId","pending","pendingWrites","preferred","query","rank","readData","readId","readQuery","readRecords","readSelection","readableError","ready","recipes","record","recordType","records","report","request","requiredArgs","resolve","result","resultType","results","returned","root","rootForType","rootName","rootOp","rootResults","roots","row","rows","run","runId","scalarFields","scalarSelection","schema","schemaFields","schemaQuery","sd","selection","sent","settings","spec","status","stop","supplied","targetType","targetTypes","targets","templateId","transport","typeCache","typeRef","typeText","types","uncertainWrite","update","url","urlApi","validName","validResponse","validate","value","variables","vars","varsByRoot","writeResults"],
   './PatientFileSections/index.jsx': ["PatientFileSections","activeText","addressText","cityLine","compactLines","contactText","countryLine","createdDate","editButtonStyle","encounter","fieldWrapStyle","formatAddress","formatContact","formatDate","getPatientFromData","gridStyle","healthNumber","insuranceBy","insuranceNumber","insuranceText","lines","match","mergeObjects","nextPatient","optionCode","optionDisplay","patient","preferredCode","preferredPhoneOptions","providerName","queryPatient","raw","renderClientDemographics","renderDocumentDetails","renderEncounterDetails","renderTitle","requested","sd","section","sectionTitleStyle","textValue","updateContactText","visibleSections","whiteDropdownStyles","whiteFlexTextFieldStyles","whiteTextFieldStyles","writePatientUpdates"],
   './PatientValueField/index.jsx': ["PatientValueField","age","applyPatientTransform","candidates","coercePatientValue","collectionCandidateValues","collectionItemMatches","computeAgeYears","dob","effectiveFieldId","expected","items","monthDelta","normalizedExpected","now","raw","resolveCollectionItemPath","resolvePatientContextPath","resolved","root","sd","stored","values"],
   './PdfRegenerator/index.jsx': ["PDFLib","PDF_LIB_URL","PdfRegenerator","_base64ToBytes","_buildChoiceComponentIndex","_buildDateComponentIndex","_buildTableReverseIndex","_choiceItemMatches","_choiceItems","_collectCandidates","_decodePdfHex","_downloadBytes","_drawGeometryOverlays","_fillField","_geometryChoiceSelected","_geometryClamp","_geometrySignatureDataUrl","_geometryTextLines","_getCheckboxOnStates","_inferBooleanState","_installPdfLibFromSource","_isNonEmptyString","_loadPdfLib","_loadPdfLibFromCdn","_matchMultipleOptions","_matchSingleOption","_normalizeFieldMap","_normalizeToken","_pdfLibPromise","_printBytes","_resolveChoiceComponentValue","_resolveDateComponentValue","_resolveTableCellValue","_resolveValueByPath","_setCheckboxByState","_splitCanonicalDateParts","_statusColor","_toBooleanLike","_toCandidateList","_toText","acro","baseMap","binary","blob","boldFont","boolValue","booleanStates","box","buttonDisabled","byRow","bytes","candidate","candidateKeys","candidates","choiceComponentIndex","choiceComponentValue","choiceEntry","clean","cleaned","cleanup","component","components","current","dataUrl","dateComponentIndex","dateComponentValue","dateEntry","desiredMaxLength","diagnosticsText","didDraw","didFill","direct","disabled","doc","existing","fieldId","filledFieldCount","font","fontSize","form","formData","formKeys","fromData","fromPath","fuzzy","geometryResult","handleGeneratePdf","hasMatchingState","i","iframe","image","includeSet","index","inferredState","inlineSource","installed","isOn","items","knownOptions","left","leftIsFormId","lib","lineHeight","lines","link","map","mapped","match","matches","maxLength","maxLines","maxWidth","maybe","maybeDate","maybeTime","nextFileName","normalized","normalizedAction","normalizedCandidate","normalizedOption","normalizedOptionMap","normalizedRequested","offState","onText","onValue","optionValue","options","otherItem","outputBytes","page","pages","parts","pathByColumnId","payload","pdfFieldId","pdfFieldName","pdfFields","printWindow","rawValue","renderActionButton","renderButton","requested","resolvePath","resolvedPdfSource","right","rightIsFormId","row","rowIndex","rowMapping","rows","runner","script","sd","segments","selected","selectedCount","set","single","size","skippedFieldCount","sourceFieldId","sourceId","sourceLines","sourceValue","sourceValues","state","states","strategy","tableEntry","tableId","tableIndex","targetAction","targetState","targetStateName","targetWidget","text","trimmed","url","warningCount","warnings","widget","widgets","withoutSlash","words"],

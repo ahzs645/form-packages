@@ -172,6 +172,19 @@ describe('live write laboratory', () => {
     expect(report.writeResults.some((r: any) => r.status === 'Mutation accepted; persistence unverified')).toBe(true);
     expect(report.writeResults.some((r: any) => r.status === 'Write verified')).toBe(false);
   });
+
+  it('runs custom GraphQL through the host and excludes response values from the report', async () => {
+    const transport = vi.fn(async (operation: string, _token, _server, _query, vars) => {
+      expect(operation).toBe('CustomPatientProbe'); expect(vars).toEqual({ patientId: 42 });
+      return { patient: [{ patientId: 42, name: 'PRIVATE RESPONSE' }] };
+    });
+    mount(transport); await clickButton('Run custom operation');
+    expect(container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Custom response 1"]')!.value).toContain('PRIVATE RESPONSE');
+    const report = reportValue();
+    expect(report.customOperations[0]).toMatchObject({ kind: 'query', status: 'Query response received', resultFields: ['patient'] });
+    expect(JSON.stringify(report)).not.toContain('PRIVATE RESPONSE');
+    expect(JSON.stringify(report)).not.toContain('secret-token');
+  });
   it('probes every root query or reports its missing inputs', async () => {
     mount(testHost()); await clickButton('Inspect read/write API'); await clickButton('Test root queries');
     const report = reportValue();
