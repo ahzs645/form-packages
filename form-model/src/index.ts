@@ -2271,6 +2271,8 @@ export interface MoisSemanticVersion {
  * Per-form metadata written to the exported MOIS Identity.json/manifest.
  * The package name and title continue to follow the builder document name.
  */
+import type { BuilderFormLifecycle } from "./lifecycle";
+
 export interface BuilderMoisIdentityMetadata {
   author?: string;
   owner?: string;
@@ -2435,6 +2437,12 @@ export interface BuilderDocument<TLayoutDraft = unknown> {
   identityType: MoisFormType;
   identityCode: string;
   identityMetadata?: BuilderMoisIdentityMetadata;
+  /**
+   * Draft / published / retired, with the governance dates and the change log.
+   * Absent means draft: see `resolveBuilderFormStatus`, which fails closed so a
+   * document written before this existed is not treated as approved for use.
+   */
+  lifecycle?: BuilderFormLifecycle;
   formPresentation?: BuilderFormPresentation;
   investigationTabs?: BuilderInvestigationTab[];
   investigationTabAssignments?: Record<string, string | null>;
@@ -2546,6 +2554,7 @@ export {
   type BuilderInvestigationTab,
 } from "./investigation-tabs";
 export * from "./grouping";
+export * from "./lifecycle";
 export * from "./layout";
 export { backfillOptionScoresFromFormula } from "./score-backfill";
 export {
