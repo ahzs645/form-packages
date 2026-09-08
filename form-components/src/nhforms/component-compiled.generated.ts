@@ -27952,7 +27952,7 @@ const PatientContextDiagnostics = ({
   const labels = {
     "read-write": "Read + write",
     "read-only": "Read only",
-    "not-queried": "Not queried"
+    "not-queried": "Not queried by default"
   };
   const registry = new Map((Array.isArray(capabilities) ? capabilities : []).filter(entry => entry && typeof entry.collection === "string").map(entry => [entry.collection, entry]));
   const collections = [...new Set([...registry.keys(), ...Object.keys(patient || {}).filter(key => Array.isArray(patient[key]))])].sort();
@@ -28050,7 +28050,7 @@ const PatientContextDiagnostics = ({
       style: cellStyle
     }, /*#__PURE__*/React.createElement("code", null, key)), /*#__PURE__*/React.createElement("td", {
       style: cellStyle
-    }, labels[capability?.access] || "Unclassified", capability?.note ? /*#__PURE__*/React.createElement("details", null, /*#__PURE__*/React.createElement("summary", null, "Access details"), /*#__PURE__*/React.createElement("p", null, capability.note)) : null), /*#__PURE__*/React.createElement("td", {
+    }, labels[capability?.access] || "Unclassified", capability?.note ? /*#__PURE__*/React.createElement("details", null, /*#__PURE__*/React.createElement("summary", null, "Access details"), /*#__PURE__*/React.createElement("p", null, capability.access === "not-queried" ? "Absent from the default chart query. This does not establish whether the live API supports an explicit read; run the live checks to find out." : capability.note)) : null), /*#__PURE__*/React.createElement("td", {
       style: cellStyle
     }, availability), /*#__PURE__*/React.createElement("td", {
       style: cellStyle
@@ -28068,6 +28068,303 @@ const PatientContextDiagnostics = ({
   })))), visible.length === 0 ? /*#__PURE__*/React.createElement("p", {
     role: "status"
   }, "No matching collections.") : null);
+};`,
+  './PatientContextQueryTest/index.jsx': `// MOIS 2.30.31 evidence: main.a75cc6b1.chunk.js queryGraphQL export accepts
+// (operationName, jwToken, apiServer, query, variables, statusSetter,
+//  resultCallback, errorDispatch, { formParams }) and returns data or null.
+// Use that host transport; never invent an endpoint or expose credentials.
+const PatientContextQueryTest = ({
+  collections = []
+}) => {
+  const sd = useSourceData();
+  const patient = sd?.patient ?? sd?.queryResult?.patient?.[0];
+  const patientId = Number(patient?.patientId ?? sd?.formParams?.patientId);
+  const settings = typeof sd?.useAppSettings === "function" ? sd.useAppSettings() : null;
+  const auth = sd?.auth || settings?.auth || {};
+  const hostQuery = typeof queryGraphQL === "function" ? queryGraphQL : null;
+  const ready = Boolean(hostQuery && auth.jwToken && auth.apiServer && Number.isInteger(patientId) && patientId > 0);
+  const [state, setState] = React.useState({
+    patientId,
+    busy: false,
+    message: "No live checks run yet.",
+    rows: [],
+    hasRun: false,
+    schemaFields: []
+  });
+  const epoch = React.useRef(0);
+  const busy = React.useRef(false);
+  React.useEffect(() => {
+    epoch.current += 1;
+    busy.current = false;
+    setState({
+      patientId,
+      busy: false,
+      message: "No live checks run yet.",
+      rows: [],
+      hasRun: false,
+      schemaFields: []
+    });
+    return () => {
+      epoch.current += 1;
+      busy.current = false;
+    };
+  }, [patientId, auth.jwToken, auth.apiServer]);
+  const current = state.patientId === patientId ? state : {
+    busy: false,
+    message: "No live checks run yet.",
+    rows: []
+  };
+  const validName = value => typeof value === "string" && /^[_A-Za-z][_0-9A-Za-z]*$/.test(value);
+  const namedType = type => {
+    let item = type;
+    for (let depth = 0; item?.ofType && depth < 10; depth += 1) item = item.ofType;
+    return item;
+  };
+  const isList = type => type?.kind === "LIST" || type?.kind === "NON_NULL" && type.ofType?.kind === "LIST";
+  const requiredArgs = field => (field?.args || []).some(arg => arg.type?.kind === "NON_NULL" && arg.defaultValue == null);
+  const typeRef = "kind name ofType { kind name ofType { kind name ofType { kind name ofType { kind name } } } }";
+  const schemaQuery = \`query InspectPatientContextType($name: String!) { __type(name: $name) { name fields { name args { name defaultValue type { \${typeRef} } } type { \${typeRef} } } } }\`;
+  const readableError = value => String(value || "Unknown query error").split(String(auth.jwToken || "\\u0000")).join("[redacted]").slice(0, 1200);
+  const run = async () => {
+    if (!ready || busy.current) return;
+    busy.current = true;
+    const runId = ++epoch.current;
+    const active = () => epoch.current === runId;
+    let rows = [];
+    let schemaFields = [];
+    const update = (message, running = true) => {
+      if (active()) setState({
+        patientId,
+        busy: running,
+        message,
+        rows: [...rows],
+        hasRun: true,
+        schemaFields
+      });
+    };
+    const request = async (operation, query, variables) => {
+      if (!active()) throw new Error("Stopped");
+      let status = {};
+      let notification = null;
+      let timer;
+      try {
+        const data = await Promise.race([hostQuery(operation, auth.jwToken, auth.apiServer, query, variables, change => {
+          status = typeof change === "function" ? change(status) : change;
+        }, () => {}, event => {
+          notification = event;
+        }, {
+          formParams: {
+            ...sd?.formParams,
+            patientId
+          }
+        }), new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error("Query timed out after 30 seconds.")), 30000);
+        })]);
+        if (!active()) throw new Error("Stopped");
+        const detail = status?.detailErrors || notification?.detailErrors || [];
+        const error = detail.map(entry => entry.message).filter(Boolean).join("; ") || status?.error || notification?.message;
+        if (!data || error) throw new Error(error || "MOIS returned no data.");
+        return data;
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+    update("Inspecting the live Patient schema…");
+    try {
+      const schema = await request("InspectPatientContextType", schemaQuery, {
+        name: "Patient"
+      });
+      const fields = schema?.__type?.fields;
+      if (!Array.isArray(fields)) throw new Error("Patient schema was not returned. Introspection may be disabled or unavailable to this login. No collection probes were attempted.");
+      schemaFields = fields.map(field => ({
+        name: field.name,
+        type: field.type,
+        args: (field.args || []).map(arg => ({
+          name: arg.name,
+          type: arg.type,
+          required: arg.type?.kind === "NON_NULL" && arg.defaultValue == null
+        }))
+      }));
+      const fieldMap = new Map(fields.filter(field => validName(field.name)).map(field => [field.name, field]));
+      const targets = [...new Set([...(Array.isArray(collections) ? collections.filter(validName) : []), ...Object.keys(patient || {}).filter(key => validName(key) && Array.isArray(patient[key])), ...fields.filter(field => validName(field.name) && isList(field.type)).map(field => field.name)])].sort().slice(0, 64);
+      const types = new Map();
+      for (const key of targets) {
+        if (!active()) break;
+        const field = fieldMap.get(key);
+        if (!field) {
+          rows.push({
+            key,
+            status: "Not exposed in Patient schema",
+            count: "—"
+          });
+          update(\`Checked \${rows.length} of \${targets.length} collections\`);
+          continue;
+        }
+        if (!isList(field.type) || requiredArgs(field)) {
+          rows.push({
+            key,
+            status: requiredArgs(field) ? "Skipped: requires arguments" : "Skipped: not a collection",
+            count: "—"
+          });
+          update(\`Checked \${rows.length} of \${targets.length} collections\`);
+          continue;
+        }
+        const resultType = namedType(field.type);
+        let query = "";
+        try {
+          let selection = "";
+          if (["OBJECT", "INTERFACE", "UNION"].includes(resultType?.kind)) {
+            selection = " { __typename }";
+            if (resultType.kind === "OBJECT" && validName(resultType.name)) {
+              if (!types.has(resultType.name)) {
+                const info = await request("InspectPatientContextType", schemaQuery, {
+                  name: resultType.name
+                });
+                types.set(resultType.name, info?.__type?.fields || []);
+              }
+              const preferred = /(^.*Id$|^name$|^description$|^value$|^code$|^status$|Date$)/;
+              // Request small identifying fields, not document bodies, file
+              // payloads, or arbitrary scalar data exposed by introspection.
+              const scalarFields = types.get(resultType.name).filter(item => validName(item.name) && preferred.test(item.name) && !requiredArgs(item) && !isList(item.type) && ["SCALAR", "ENUM"].includes(namedType(item.type)?.kind));
+              scalarFields.sort((a, b) => a.name.localeCompare(b.name));
+              selection = \` { __typename \${scalarFields.slice(0, 8).map(item => item.name).join(" ")} }\`;
+            }
+          } else if (!["SCALAR", "ENUM"].includes(resultType?.kind)) {
+            throw new Error("Unsupported or incomplete GraphQL field type.");
+          }
+          query = \`query ProbePatientContext($patientId: Int) { patient(id: $patientId) { patientId \${key}\${selection} } }\`;
+          update(\`Querying \${key} (\${rows.length + 1} of \${targets.length})…\`);
+          const data = await request("ProbePatientContext", query, {
+            patientId
+          });
+          const returned = data?.patient?.[0];
+          if (!returned || Number(returned.patientId) !== patientId) throw new Error("MOIS did not return the requested patient.");
+          const records = returned[key];
+          rows.push({
+            key,
+            query,
+            status: Array.isArray(records) ? records.length ? "Read succeeded" : "Read succeeded: empty" : "Returned null or non-array",
+            count: Array.isArray(records) ? records.length : "—",
+            sample: Array.isArray(records) ? JSON.stringify(records.slice(0, 3), (_, value) => typeof value === "string" && value.length > 300 ? value.slice(0, 300) + "…" : value, 2) : ""
+          });
+        } catch (error) {
+          if (!active()) break;
+          rows.push({
+            key,
+            query,
+            status: "Query failed",
+            count: "—",
+            error: readableError(error.message)
+          });
+        }
+        update(\`Checked \${rows.length} of \${targets.length} collections\`);
+      }
+      update("Live checks complete. Results are from explicit reads, separate from the initial chart load.", false);
+    } catch (error) {
+      update(readableError(error.message), false);
+    } finally {
+      if (active()) busy.current = false;
+    }
+  };
+  const stop = () => {
+    epoch.current += 1;
+    busy.current = false;
+    setState(previous => ({
+      ...previous,
+      busy: false,
+      message: "Stopped. Any request already sent may finish; its result will be ignored."
+    }));
+  };
+  const report = JSON.stringify({
+    reportType: "mois-patient-context-live-query",
+    reportVersion: 1,
+    generatedAt: new Date().toISOString(),
+    status: current.message,
+    schemaFields: current.schemaFields || [],
+    results: current.rows.map(({
+      key,
+      status,
+      count,
+      query,
+      error
+    }) => ({
+      collection: key,
+      status,
+      count,
+      query,
+      error
+    }))
+  }, null, 2);
+  const downloadReport = () => {
+    if (!current.hasRun || current.busy) return;
+    const urlApi = window.URL;
+    if (!window.Blob || !urlApi?.createObjectURL) return;
+    const url = urlApi.createObjectURL(new window.Blob([report], {
+      type: "application/json;charset=utf-8"
+    }));
+    const link = window.document.createElement("a");
+    link.href = url;
+    link.download = \`mois-live-query-results-\${Date.now()}.json\`;
+    window.document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => urlApi.revokeObjectURL(url), 1000);
+  };
+  return /*#__PURE__*/React.createElement("section", {
+    "aria-label": "Live MOIS query test",
+    style: {
+      padding: 16,
+      border: "1px solid #cbd5e1",
+      borderRadius: 8,
+      marginBottom: 16
+    }
+  }, /*#__PURE__*/React.createElement("h2", null, "Live MOIS query test"), /*#__PURE__*/React.createElement("p", null, "Patient: ", patient?.name?.text || "—", " \\xB7 Chart ", patient?.chartNumber || "—", " \\xB7 Patient ID ", Number.isInteger(patientId) ? patientId : "—"), /*#__PURE__*/React.createElement("p", null, "Run explicit reads against this patient's chart using your current MOIS login. The form inspects the live schema, then queries up to 64 collections one at a time. It does not save or modify chart records."), !ready ? /*#__PURE__*/React.createElement("p", null, "Live checks require the exported form running inside an authenticated MOIS instance. Builder preview cannot perform these checks.") : null, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    disabled: !ready || current.busy,
+    onClick: run
+  }, "Run live chart checks"), " ", current.busy ? /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: stop
+  }, "Stop checks") : null, " ", /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    disabled: !current.hasRun || current.busy,
+    onClick: downloadReport
+  }, "Download results JSON"), /*#__PURE__*/React.createElement("p", {
+    role: "status",
+    "aria-live": "polite"
+  }, current.message), current.hasRun && !current.busy ? /*#__PURE__*/React.createElement("details", null, /*#__PURE__*/React.createElement("summary", null, "JSON report (copy or download)"), /*#__PURE__*/React.createElement("p", null, "Includes schema fields, counts, queries and errors. Patient identity, record samples and login credentials are excluded. Nothing is sent automatically."), /*#__PURE__*/React.createElement("textarea", {
+    "aria-label": "Live query results JSON",
+    readOnly: true,
+    value: report,
+    rows: 12,
+    style: {
+      width: "100%",
+      fontFamily: "monospace"
+    }
+  })) : null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      overflowX: "auto"
+    }
+  }, /*#__PURE__*/React.createElement("table", {
+    style: {
+      width: "100%",
+      textAlign: "left"
+    }
+  }, /*#__PURE__*/React.createElement("caption", null, "Explicit live query results"), /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("th", null, "Collection"), /*#__PURE__*/React.createElement("th", null, "Result"), /*#__PURE__*/React.createElement("th", null, "Count"), /*#__PURE__*/React.createElement("th", null, "Evidence"))), /*#__PURE__*/React.createElement("tbody", null, current.rows.map(row => /*#__PURE__*/React.createElement("tr", {
+    key: row.key
+  }, /*#__PURE__*/React.createElement("th", {
+    scope: "row"
+  }, row.key), /*#__PURE__*/React.createElement("td", null, row.status), /*#__PURE__*/React.createElement("td", null, row.count), /*#__PURE__*/React.createElement("td", null, row.error ? /*#__PURE__*/React.createElement("p", null, row.error) : null, row.query ? /*#__PURE__*/React.createElement("details", null, /*#__PURE__*/React.createElement("summary", null, "Query sent"), /*#__PURE__*/React.createElement("pre", {
+    style: {
+      whiteSpace: "pre-wrap"
+    }
+  }, row.query)) : null, row.sample ? /*#__PURE__*/React.createElement("details", null, /*#__PURE__*/React.createElement("summary", null, "Returned samples"), /*#__PURE__*/React.createElement("pre", {
+    style: {
+      whiteSpace: "pre-wrap",
+      maxHeight: 250,
+      overflow: "auto"
+    }
+  }, row.sample)) : null)))))));
 };`,
   './PatientFileSections/index.jsx': `const {
   useCallback,
@@ -37860,6 +38157,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './PanelEntryGrid/index.jsx': ["DEFAULT_WINDOW_HOURS","PANEL_GRID_CELL_STYLE","PANEL_GRID_TABLE_STYLE","PanelEntryGrid","actor","actorFrom","addHoursIso","answer","answers","authorshipPolicy","buildKey","c","changed","ck","claim","claims","collectedBy","column","commitSave","componentId","computedTotals","container","current","d","data","date","definition","definitions","editableUntil","effectiveFieldId","euDate","existing","expired","fieldData","formatTimestamp","getPanelGridAuth","group","grouped","historyColumns","historyEnabled","isNonEmpty","isOwner","keepStatus","key","kit","label","lockExpired","lockInfo","lockOn","lockedUntil","maxHistory","next","nextStatus","nhAuth","normalizeStore","normalizedOptions","now","nowIso","numbers","observations","ownerId","ownerName","ownerRefresh","pad2","panelGridDateKey","panelGridPayloadsEqual","panelGridRows","panelGridTotals","panelUpdate","pending","policyAppliesToAction","prepareSave","raw","readStore","release","renderCurrentValue","requireComplete","resolveNow","rowDefs","sameActor","scaleLike","sd","section","selected","setPanelGridPayload","setRowValue","shouldWriteDcos","shouldWritePanel","sourceIds","store","stripPanelGridVolatileFields","totalDefs","ts","type","untilSelf","value","values","windowHours"],
   './PastMeasurementField/index.jsx': ["PastMeasurementField","abnormalFlag","abnormalHighValue","abnormalLowValue","canPullLatest","candidate","candidates","codeFilter","coercePositiveInt","commentFilter","componentId","container","createdBy","criticalHighValue","criticalLowValue","current","currentPayload","currentWebformId","currentWebformObservations","day","defaultSpinStep","direct","displayedCurrentValue","documentDate","effectiveFieldId","effectiveHistorySize","effectiveLabelPosition","effectiveMeasurementSize","entryCode","entryComment","entryDate","entryUnits","entryValue","explicitValue","fieldData","flagCode","flagDisplays","formHistoryItems","formatDate","fromPatient","fromQueryResult","handleValueChange","hasAbnormalHigh","hasAbnormalLow","hasExplicitValue","hasMeaningfulValue","hasNumericCurrentValue","hasRangeMetadata","hasStoredValue","historicalFormRowDate","historyItems","historySummary","index","inputSuffix","isAbnormal","isHistoricalFormValue","isNonEmptyString","isNumericInput","key","latestHistoryItem","legacyRangePayload","linkedObservationItem","linkedWebformId","matchingKey","measurementWidthBySize","month","nextGroup","normalizeObservationItems","normalizedDateOnly","normalizedPullTargets","numericCurrentValue","numericExplicitValue","numericTime","observationHistoryItems","observationWebformId","oldId","oldObs","optionalString","parseDateValue","parsed","parsedDate","parsedDateOnly","patientPath","payloadsEqual","pullLatestIntoTargets","raw","rawDate","recentHistoryText","resolveHistoricalFormRows","resolveMeasurementContainerStyle","resolveMoisValue","resolvePathValue","resolvedAbnormalHigh","resolvedAbnormalLow","resolvedCriticalHigh","resolvedCriticalLow","resolvedCurrentValue","resolvedUnits","role","roots","sd","segments","setNestedPayload","shouldReserveHistory","shouldShowHistory","storedValue","stringifyValue","stripVolatilePayloadFields","targetFieldId","text","toObservationList","toPathSegments","updatedValue","value","valueFromHistoricalFormRow","valueIsDate","valueKeys","valuePart","valueText","width","year"],
   './PatientContextDiagnostics/index.jsx': ["PatientContextDiagnostics","availability","capability","cellStyle","collections","compact","direct","isArray","isRecord","labels","limit","patient","queried","registry","sampleText","sd","seen","source","textValue","value","visible"],
+  './PatientContextQueryTest/index.jsx': ["PatientContextQueryTest","active","auth","busy","current","data","depth","detail","downloadReport","epoch","error","field","fieldMap","fields","hostQuery","info","isList","item","link","namedType","notification","patient","patientId","preferred","query","readableError","ready","records","report","request","requiredArgs","resultType","returned","rows","run","runId","scalarFields","schema","schemaFields","schemaQuery","sd","selection","settings","status","stop","targets","typeRef","types","update","url","urlApi","validName"],
   './PatientFileSections/index.jsx': ["PatientFileSections","activeText","addressText","cityLine","compactLines","contactText","countryLine","createdDate","editButtonStyle","encounter","fieldWrapStyle","formatAddress","formatContact","formatDate","getPatientFromData","gridStyle","healthNumber","insuranceBy","insuranceNumber","insuranceText","lines","match","mergeObjects","nextPatient","optionCode","optionDisplay","patient","preferredCode","preferredPhoneOptions","providerName","queryPatient","raw","renderClientDemographics","renderDocumentDetails","renderEncounterDetails","renderTitle","requested","sd","section","sectionTitleStyle","textValue","updateContactText","visibleSections","whiteDropdownStyles","whiteFlexTextFieldStyles","whiteTextFieldStyles","writePatientUpdates"],
   './PatientValueField/index.jsx': ["PatientValueField","age","applyPatientTransform","candidates","coercePatientValue","collectionCandidateValues","collectionItemMatches","computeAgeYears","dob","effectiveFieldId","expected","items","monthDelta","normalizedExpected","now","raw","resolveCollectionItemPath","resolvePatientContextPath","resolved","root","sd","stored","values"],
   './PdfRegenerator/index.jsx': ["PDFLib","PDF_LIB_URL","PdfRegenerator","_base64ToBytes","_buildChoiceComponentIndex","_buildDateComponentIndex","_buildTableReverseIndex","_choiceItemMatches","_choiceItems","_collectCandidates","_decodePdfHex","_downloadBytes","_drawGeometryOverlays","_fillField","_geometryChoiceSelected","_geometryClamp","_geometrySignatureDataUrl","_geometryTextLines","_getCheckboxOnStates","_inferBooleanState","_installPdfLibFromSource","_isNonEmptyString","_loadPdfLib","_loadPdfLibFromCdn","_matchMultipleOptions","_matchSingleOption","_normalizeFieldMap","_normalizeToken","_pdfLibPromise","_printBytes","_resolveChoiceComponentValue","_resolveDateComponentValue","_resolveTableCellValue","_resolveValueByPath","_setCheckboxByState","_splitCanonicalDateParts","_statusColor","_toBooleanLike","_toCandidateList","_toText","acro","baseMap","binary","blob","boldFont","boolValue","booleanStates","box","buttonDisabled","byRow","bytes","candidate","candidateKeys","candidates","choiceComponentIndex","choiceComponentValue","choiceEntry","clean","cleaned","cleanup","component","components","current","dataUrl","dateComponentIndex","dateComponentValue","dateEntry","desiredMaxLength","diagnosticsText","didDraw","didFill","direct","disabled","doc","existing","fieldId","filledFieldCount","font","fontSize","form","formData","formKeys","fromData","fromPath","fuzzy","geometryResult","handleGeneratePdf","hasMatchingState","i","iframe","image","includeSet","index","inferredState","inlineSource","installed","isOn","items","knownOptions","left","leftIsFormId","lib","lineHeight","lines","link","map","mapped","match","matches","maxLength","maxLines","maxWidth","maybe","maybeDate","maybeTime","nextFileName","normalized","normalizedAction","normalizedCandidate","normalizedOption","normalizedOptionMap","normalizedRequested","offState","onText","onValue","optionValue","options","otherItem","outputBytes","page","pages","parts","pathByColumnId","payload","pdfFieldId","pdfFieldName","pdfFields","printWindow","rawValue","renderActionButton","renderButton","requested","resolvePath","resolvedPdfSource","right","rightIsFormId","row","rowIndex","rowMapping","rows","runner","script","sd","segments","selected","selectedCount","set","single","size","skippedFieldCount","sourceFieldId","sourceId","sourceLines","sourceValue","sourceValues","state","states","strategy","tableEntry","tableId","tableIndex","targetAction","targetState","targetStateName","targetWidget","text","trimmed","url","warningCount","warnings","widget","widgets","withoutSlash","words"],
@@ -37952,6 +38250,7 @@ export const componentDependencies: Record<string, string[]> = {
   './PanelEntryGrid/index.jsx': ["ObservationValueKit","ScaleField"],
   './PastMeasurementField/index.jsx': [],
   './PatientContextDiagnostics/index.jsx': [],
+  './PatientContextQueryTest/index.jsx': [],
   './PatientFileSections/index.jsx': [],
   './PatientValueField/index.jsx': [],
   './PdfRegenerator/index.jsx': [],

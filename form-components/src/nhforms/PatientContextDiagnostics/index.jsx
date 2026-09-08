@@ -14,7 +14,7 @@ const PatientContextDiagnostics = ({
   const source = patient === direct ? "patient" : "queryResult.patient[0]"
   const [filter, setFilter] = React.useState("")
   const limit = Number.isFinite(Number(sampleLimit)) ? Math.max(1, Math.min(10, Math.floor(Number(sampleLimit)))) : 3
-  const labels = { "read-write": "Read + write", "read-only": "Read only", "not-queried": "Not queried" }
+  const labels = { "read-write": "Read + write", "read-only": "Read only", "not-queried": "Not queried by default" }
   const registry = new Map((Array.isArray(capabilities) ? capabilities : [])
     .filter((entry) => entry && typeof entry.collection === "string")
     .map((entry) => [entry.collection, entry]))
@@ -70,7 +70,7 @@ const PatientContextDiagnostics = ({
             const capability = registry.get(key)
             return <tr key={`${textValue(patient?.patientId)}:${key}`} data-collection={key}>
               <th scope="row" style={cellStyle}><code>{key}</code></th>
-              <td style={cellStyle}>{labels[capability?.access] || "Unclassified"}{capability?.note ? <details><summary>Access details</summary><p>{capability.note}</p></details> : null}</td>
+              <td style={cellStyle}>{labels[capability?.access] || "Unclassified"}{capability?.note ? <details><summary>Access details</summary><p>{capability.access === "not-queried" ? "Absent from the default chart query. This does not establish whether the live API supports an explicit read; run the live checks to find out." : capability.note}</p></details> : null}</td>
               <td style={cellStyle}>{availability}</td>
               <td style={cellStyle}>{isArray ? value.length : "—"}</td>
               <td style={cellStyle}>{isArray && value.length > 0 ? <details><summary>Show samples</summary><pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxWidth: 520, maxHeight: 320, overflow: "auto" }}>{value.slice(0, limit).map(sampleText).join("\n\n")}</pre></details> : "—"}</td>
