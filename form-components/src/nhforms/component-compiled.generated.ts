@@ -28003,7 +28003,7 @@ const PatientContextDiagnostics = ({
     }
   }, title), patient ? /*#__PURE__*/React.createElement("p", null, /*#__PURE__*/React.createElement("strong", null, textValue(patient.name)), " \\xB7 Chart ", textValue(patient.chartNumber), " \\xB7 Patient ID ", textValue(patient.patientId), /*#__PURE__*/React.createElement("br", null), "Source: ", /*#__PURE__*/React.createElement("code", null, source)) : /*#__PURE__*/React.createElement("p", {
     role: "status"
-  }, "No active patient context. Select a patient with Use Active, then open Preview."), /*#__PURE__*/React.createElement("p", null, "API capability snapshot", engineVersion ? \` · MOIS engine \${engineVersion}\` : " unavailable", ". Access labels describe engine support, not your current user's permissions. This panel does not write to the chart."), /*#__PURE__*/React.createElement("p", null, "Unavailable means no collection was supplied; empty means an array with zero records. Imported records can appear locally even when MOIS does not query them."), /*#__PURE__*/React.createElement("label", {
+  }, "No active patient context. Select a patient with Use Active, then open Preview."), /*#__PURE__*/React.createElement("p", null, "API capability snapshot", engineVersion ? \` · MOIS engine \${engineVersion}\` : " unavailable", ". Read only means no write adapter is mapped; the live read report did not test mutations. Access labels do not establish your current user's permissions. This panel does not write to the chart."), /*#__PURE__*/React.createElement("p", null, "Unavailable means no collection was supplied; empty means an array with zero records. Imported records can appear locally even when MOIS does not query them."), /*#__PURE__*/React.createElement("label", {
     style: {
       display: "block",
       marginBottom: 12
@@ -28050,7 +28050,7 @@ const PatientContextDiagnostics = ({
       style: cellStyle
     }, /*#__PURE__*/React.createElement("code", null, key)), /*#__PURE__*/React.createElement("td", {
       style: cellStyle
-    }, labels[capability?.access] || "Unclassified", capability?.note ? /*#__PURE__*/React.createElement("details", null, /*#__PURE__*/React.createElement("summary", null, "Access details"), /*#__PURE__*/React.createElement("p", null, capability.access === "not-queried" ? "Absent from the default chart query. This does not establish whether the live API supports an explicit read; run the live checks to find out." : capability.note)) : null), /*#__PURE__*/React.createElement("td", {
+    }, labels[capability?.access] || "Unclassified", capability?.liveReadVerified ? /*#__PURE__*/React.createElement("div", null, "Live read verified") : null, capability?.note ? /*#__PURE__*/React.createElement("details", null, /*#__PURE__*/React.createElement("summary", null, "Access details"), /*#__PURE__*/React.createElement("p", null, capability.note)) : null), /*#__PURE__*/React.createElement("td", {
       style: cellStyle
     }, availability), /*#__PURE__*/React.createElement("td", {
       style: cellStyle
@@ -28074,7 +28074,8 @@ const PatientContextDiagnostics = ({
 //  resultCallback, errorDispatch, { formParams }) and returns data or null.
 // Use that host transport; never invent an endpoint or expose credentials.
 const PatientContextQueryTest = ({
-  collections = []
+  collections = [],
+  writeTargets = []
 }) => {
   const sd = useSourceData();
   const patient = sd?.patient ?? sd?.queryResult?.patient?.[0];
@@ -28123,15 +28124,16 @@ const PatientContextQueryTest = ({
   const isList = type => type?.kind === "LIST" || type?.kind === "NON_NULL" && type.ofType?.kind === "LIST";
   const requiredArgs = field => (field?.args || []).some(arg => arg.type?.kind === "NON_NULL" && arg.defaultValue == null);
   const typeRef = "kind name ofType { kind name ofType { kind name ofType { kind name ofType { kind name } } } }";
-  const schemaQuery = \`query InspectPatientContextType($name: String!) { __type(name: $name) { name fields { name args { name defaultValue type { \${typeRef} } } type { \${typeRef} } } } }\`;
+  const schemaQuery = \`query InspectPatientContextType($name: String!) { __type(name: $name) { name kind fields { name args { name defaultValue type { \${typeRef} } } type { \${typeRef} } } inputFields { name defaultValue type { \${typeRef} } } enumValues { name } } }\`;
   const readableError = value => String(value || "Unknown query error").split(String(auth.jwToken || "\\u0000")).join("[redacted]").slice(0, 1200);
-  const run = async () => {
+  const run = async (mode = "reads") => {
     if (!ready || busy.current) return;
     busy.current = true;
     const runId = ++epoch.current;
     const active = () => epoch.current === runId;
-    let rows = [];
-    let schemaFields = [];
+    let rows = mode === "api" ? [...current.rows] : [];
+    let schemaFields = mode === "api" ? current.schemaFields || [] : [];
+    let apiInventory = current.apiInventory || null;
     const update = (message, running = true) => {
       if (active()) setState({
         patientId,
@@ -28139,7 +28141,8 @@ const PatientContextQueryTest = ({
         message,
         rows: [...rows],
         hasRun: true,
-        schemaFields
+        schemaFields,
+        apiInventory
       });
     };
     const request = async (operation, query, variables) => {
@@ -28169,8 +28172,69 @@ const PatientContextQueryTest = ({
         clearTimeout(timer);
       }
     };
-    update("Inspecting the live Patient schema…");
+    update(mode === "api" ? "Inspecting root queries, mutations and input types…" : "Inspecting the live Patient schema…");
     try {
+      if (mode === "api") {
+        apiInventory = {
+          queries: [],
+          mutations: [],
+          inputTypes: [],
+          executionStatus: "Discovery only; no mutations executed"
+        };
+        const roots = await request("InspectPatientContextRoots", "query InspectPatientContextRoots { __schema { queryType { name } mutationType { name } } }", {});
+        if (!roots?.__schema?.queryType?.name) throw new Error("Root schema was not returned. API discovery is unavailable to this login.");
+        for (const [kind, key] of [["queryType", "queries"], ["mutationType", "mutations"]]) {
+          const name = roots.__schema[kind]?.name;
+          if (!name) continue;
+          const result = await request("InspectPatientContextType", schemaQuery, {
+            name
+          });
+          if (!Array.isArray(result?.__type?.fields)) throw new Error(\`Fields for \${name} were not returned.\`);
+          apiInventory[key] = result.__type.fields.map(field => {
+            const adapters = key === "mutations" ? (Array.isArray(writeTargets) ? writeTargets : []).filter(target => (Array.isArray(target.graphqlField) ? target.graphqlField : [target.graphqlField]).includes(field.name)) : [];
+            return {
+              name: field.name,
+              type: field.type,
+              args: field.args || [],
+              adapters: adapters.map(({
+                id,
+                runtimeStatus
+              }) => ({
+                id,
+                runtimeStatus
+              })),
+              executionStatus: "Not executed",
+              coverage: key === "mutations" ? adapters.some(target => target.runtimeStatus === "supported") ? "Mapped adapter; live write untested" : "Needs a dedicated write test" : "Discovered root query; not exercised by Patient collection checks"
+            };
+          });
+        }
+        const pending = [];
+        const enqueue = type => {
+          const named = namedType(type);
+          if (["INPUT_OBJECT", "ENUM"].includes(named?.kind) && validName(named?.name) && !pending.includes(named.name)) pending.push(named.name);
+        };
+        for (const operation of [...apiInventory.queries, ...apiInventory.mutations]) for (const arg of operation.args) enqueue(arg.type);
+        let index = 0;
+        while (index < pending.length && index < 100 && active()) {
+          const name = pending[index++];
+          update(\`Inspecting input type \${name} (\${index})…\`);
+          const result = await request("InspectPatientContextType", schemaQuery, {
+            name
+          });
+          if (!result?.__type) throw new Error(\`Input type \${name} was not returned.\`);
+          const info = {
+            name,
+            kind: result.__type.kind,
+            inputFields: result.__type.inputFields || [],
+            enumValues: result.__type.enumValues || []
+          };
+          apiInventory.inputTypes.push(info);
+          for (const field of info.inputFields) enqueue(field.type);
+        }
+        apiInventory.uninspectedInputTypes = pending.slice(index);
+        update(\`API discovery complete: \${apiInventory.queries.length} root queries, \${apiInventory.mutations.length} mutations, \${apiInventory.inputTypes.length} input/enum types. No writes executed.\`, false);
+        return;
+      }
       const schema = await request("InspectPatientContextType", schemaQuery, {
         name: "Patient"
       });
@@ -28226,7 +28290,9 @@ const PatientContextQueryTest = ({
               // Request small identifying fields, not document bodies, file
               // payloads, or arbitrary scalar data exposed by introspection.
               const scalarFields = types.get(resultType.name).filter(item => validName(item.name) && preferred.test(item.name) && !requiredArgs(item) && !isList(item.type) && ["SCALAR", "ENUM"].includes(namedType(item.type)?.kind));
-              scalarFields.sort((a, b) => a.name.localeCompare(b.name));
+              const ownId = resultType.name[0].toLowerCase() + resultType.name.slice(1) + "Id";
+              const rank = name => name === ownId ? 0 : ["name", "description", "code", "value", "status"].includes(name) ? 1 : name.endsWith("Date") ? 2 : 3;
+              scalarFields.sort((a, b) => rank(a.name) - rank(b.name) || a.name.localeCompare(b.name));
               selection = \` { __typename \${scalarFields.slice(0, 8).map(item => item.name).join(" ")} }\`;
             }
           } else if (!["SCALAR", "ENUM"].includes(resultType?.kind)) {
@@ -28261,6 +28327,7 @@ const PatientContextQueryTest = ({
       }
       update("Live checks complete. Results are from explicit reads, separate from the initial chart load.", false);
     } catch (error) {
+      if (mode === "api" && apiInventory) apiInventory.error = readableError(error.message);
       update(readableError(error.message), false);
     } finally {
       if (active()) busy.current = false;
@@ -28277,10 +28344,11 @@ const PatientContextQueryTest = ({
   };
   const report = JSON.stringify({
     reportType: "mois-patient-context-live-query",
-    reportVersion: 1,
+    reportVersion: 2,
     generatedAt: new Date().toISOString(),
     status: current.message,
     schemaFields: current.schemaFields || [],
+    apiInventory: current.apiInventory || null,
     results: current.rows.map(({
       key,
       status,
@@ -28321,8 +28389,12 @@ const PatientContextQueryTest = ({
   }, /*#__PURE__*/React.createElement("h2", null, "Live MOIS query test"), /*#__PURE__*/React.createElement("p", null, "Patient: ", patient?.name?.text || "—", " \\xB7 Chart ", patient?.chartNumber || "—", " \\xB7 Patient ID ", Number.isInteger(patientId) ? patientId : "—"), /*#__PURE__*/React.createElement("p", null, "Run explicit reads against this patient's chart using your current MOIS login. The form inspects the live schema, then queries up to 64 collections one at a time. It does not save or modify chart records."), !ready ? /*#__PURE__*/React.createElement("p", null, "Live checks require the exported form running inside an authenticated MOIS instance. Builder preview cannot perform these checks.") : null, /*#__PURE__*/React.createElement("button", {
     type: "button",
     disabled: !ready || current.busy,
-    onClick: run
-  }, "Run live chart checks"), " ", current.busy ? /*#__PURE__*/React.createElement("button", {
+    onClick: () => run("reads")
+  }, "Run live chart checks"), " ", /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    disabled: !ready || current.busy,
+    onClick: () => run("api")
+  }, "Inspect read/write API"), " ", current.busy ? /*#__PURE__*/React.createElement("button", {
     type: "button",
     onClick: stop
   }, "Stop checks") : null, " ", /*#__PURE__*/React.createElement("button", {
@@ -28332,7 +28404,7 @@ const PatientContextQueryTest = ({
   }, "Download results JSON"), /*#__PURE__*/React.createElement("p", {
     role: "status",
     "aria-live": "polite"
-  }, current.message), current.hasRun && !current.busy ? /*#__PURE__*/React.createElement("details", null, /*#__PURE__*/React.createElement("summary", null, "JSON report (copy or download)"), /*#__PURE__*/React.createElement("p", null, "Includes schema fields, counts, queries and errors. Patient identity, record samples and login credentials are excluded. Nothing is sent automatically."), /*#__PURE__*/React.createElement("textarea", {
+  }, current.message), current.hasRun && !current.busy ? /*#__PURE__*/React.createElement("details", null, /*#__PURE__*/React.createElement("summary", null, "JSON report (copy or download)"), /*#__PURE__*/React.createElement("p", null, "Includes schema fields, counts, queries, errors and the discovered read/write API. Discovered mutations are marked untested. Patient identity, record samples and login credentials are excluded. Nothing is sent automatically."), /*#__PURE__*/React.createElement("textarea", {
     "aria-label": "Live query results JSON",
     readOnly: true,
     value: report,
@@ -28341,7 +28413,9 @@ const PatientContextQueryTest = ({
       width: "100%",
       fontFamily: "monospace"
     }
-  })) : null, /*#__PURE__*/React.createElement("div", {
+  })) : null, current.apiInventory ? /*#__PURE__*/React.createElement("details", null, /*#__PURE__*/React.createElement("summary", null, "Read/write API coverage"), /*#__PURE__*/React.createElement("p", null, current.apiInventory.queries.length, " root queries \\xB7 ", current.apiInventory.mutations.length, " mutations \\xB7 ", current.apiInventory.inputTypes.length, " input/enum types. Discovery does not execute writes."), /*#__PURE__*/React.createElement("ul", null, current.apiInventory.mutations.map(operation => /*#__PURE__*/React.createElement("li", {
+    key: operation.name
+  }, /*#__PURE__*/React.createElement("code", null, operation.name), " \\u2014 ", operation.coverage))), current.apiInventory.error ? /*#__PURE__*/React.createElement("p", null, current.apiInventory.error) : null) : null, /*#__PURE__*/React.createElement("div", {
     style: {
       overflowX: "auto"
     }
@@ -38157,7 +38231,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './PanelEntryGrid/index.jsx': ["DEFAULT_WINDOW_HOURS","PANEL_GRID_CELL_STYLE","PANEL_GRID_TABLE_STYLE","PanelEntryGrid","actor","actorFrom","addHoursIso","answer","answers","authorshipPolicy","buildKey","c","changed","ck","claim","claims","collectedBy","column","commitSave","componentId","computedTotals","container","current","d","data","date","definition","definitions","editableUntil","effectiveFieldId","euDate","existing","expired","fieldData","formatTimestamp","getPanelGridAuth","group","grouped","historyColumns","historyEnabled","isNonEmpty","isOwner","keepStatus","key","kit","label","lockExpired","lockInfo","lockOn","lockedUntil","maxHistory","next","nextStatus","nhAuth","normalizeStore","normalizedOptions","now","nowIso","numbers","observations","ownerId","ownerName","ownerRefresh","pad2","panelGridDateKey","panelGridPayloadsEqual","panelGridRows","panelGridTotals","panelUpdate","pending","policyAppliesToAction","prepareSave","raw","readStore","release","renderCurrentValue","requireComplete","resolveNow","rowDefs","sameActor","scaleLike","sd","section","selected","setPanelGridPayload","setRowValue","shouldWriteDcos","shouldWritePanel","sourceIds","store","stripPanelGridVolatileFields","totalDefs","ts","type","untilSelf","value","values","windowHours"],
   './PastMeasurementField/index.jsx': ["PastMeasurementField","abnormalFlag","abnormalHighValue","abnormalLowValue","canPullLatest","candidate","candidates","codeFilter","coercePositiveInt","commentFilter","componentId","container","createdBy","criticalHighValue","criticalLowValue","current","currentPayload","currentWebformId","currentWebformObservations","day","defaultSpinStep","direct","displayedCurrentValue","documentDate","effectiveFieldId","effectiveHistorySize","effectiveLabelPosition","effectiveMeasurementSize","entryCode","entryComment","entryDate","entryUnits","entryValue","explicitValue","fieldData","flagCode","flagDisplays","formHistoryItems","formatDate","fromPatient","fromQueryResult","handleValueChange","hasAbnormalHigh","hasAbnormalLow","hasExplicitValue","hasMeaningfulValue","hasNumericCurrentValue","hasRangeMetadata","hasStoredValue","historicalFormRowDate","historyItems","historySummary","index","inputSuffix","isAbnormal","isHistoricalFormValue","isNonEmptyString","isNumericInput","key","latestHistoryItem","legacyRangePayload","linkedObservationItem","linkedWebformId","matchingKey","measurementWidthBySize","month","nextGroup","normalizeObservationItems","normalizedDateOnly","normalizedPullTargets","numericCurrentValue","numericExplicitValue","numericTime","observationHistoryItems","observationWebformId","oldId","oldObs","optionalString","parseDateValue","parsed","parsedDate","parsedDateOnly","patientPath","payloadsEqual","pullLatestIntoTargets","raw","rawDate","recentHistoryText","resolveHistoricalFormRows","resolveMeasurementContainerStyle","resolveMoisValue","resolvePathValue","resolvedAbnormalHigh","resolvedAbnormalLow","resolvedCriticalHigh","resolvedCriticalLow","resolvedCurrentValue","resolvedUnits","role","roots","sd","segments","setNestedPayload","shouldReserveHistory","shouldShowHistory","storedValue","stringifyValue","stripVolatilePayloadFields","targetFieldId","text","toObservationList","toPathSegments","updatedValue","value","valueFromHistoricalFormRow","valueIsDate","valueKeys","valuePart","valueText","width","year"],
   './PatientContextDiagnostics/index.jsx': ["PatientContextDiagnostics","availability","capability","cellStyle","collections","compact","direct","isArray","isRecord","labels","limit","patient","queried","registry","sampleText","sd","seen","source","textValue","value","visible"],
-  './PatientContextQueryTest/index.jsx': ["PatientContextQueryTest","active","auth","busy","current","data","depth","detail","downloadReport","epoch","error","field","fieldMap","fields","hostQuery","info","isList","item","link","namedType","notification","patient","patientId","preferred","query","readableError","ready","records","report","request","requiredArgs","resultType","returned","rows","run","runId","scalarFields","schema","schemaFields","schemaQuery","sd","selection","settings","status","stop","targets","typeRef","types","update","url","urlApi","validName"],
+  './PatientContextQueryTest/index.jsx': ["PatientContextQueryTest","active","adapters","apiInventory","auth","busy","current","data","depth","detail","downloadReport","enqueue","epoch","error","field","fieldMap","fields","hostQuery","index","info","isList","item","link","name","named","namedType","notification","ownId","patient","patientId","pending","preferred","query","rank","readableError","ready","records","report","request","requiredArgs","result","resultType","returned","roots","rows","run","runId","scalarFields","schema","schemaFields","schemaQuery","sd","selection","settings","status","stop","targets","typeRef","types","update","url","urlApi","validName"],
   './PatientFileSections/index.jsx': ["PatientFileSections","activeText","addressText","cityLine","compactLines","contactText","countryLine","createdDate","editButtonStyle","encounter","fieldWrapStyle","formatAddress","formatContact","formatDate","getPatientFromData","gridStyle","healthNumber","insuranceBy","insuranceNumber","insuranceText","lines","match","mergeObjects","nextPatient","optionCode","optionDisplay","patient","preferredCode","preferredPhoneOptions","providerName","queryPatient","raw","renderClientDemographics","renderDocumentDetails","renderEncounterDetails","renderTitle","requested","sd","section","sectionTitleStyle","textValue","updateContactText","visibleSections","whiteDropdownStyles","whiteFlexTextFieldStyles","whiteTextFieldStyles","writePatientUpdates"],
   './PatientValueField/index.jsx': ["PatientValueField","age","applyPatientTransform","candidates","coercePatientValue","collectionCandidateValues","collectionItemMatches","computeAgeYears","dob","effectiveFieldId","expected","items","monthDelta","normalizedExpected","now","raw","resolveCollectionItemPath","resolvePatientContextPath","resolved","root","sd","stored","values"],
   './PdfRegenerator/index.jsx': ["PDFLib","PDF_LIB_URL","PdfRegenerator","_base64ToBytes","_buildChoiceComponentIndex","_buildDateComponentIndex","_buildTableReverseIndex","_choiceItemMatches","_choiceItems","_collectCandidates","_decodePdfHex","_downloadBytes","_drawGeometryOverlays","_fillField","_geometryChoiceSelected","_geometryClamp","_geometrySignatureDataUrl","_geometryTextLines","_getCheckboxOnStates","_inferBooleanState","_installPdfLibFromSource","_isNonEmptyString","_loadPdfLib","_loadPdfLibFromCdn","_matchMultipleOptions","_matchSingleOption","_normalizeFieldMap","_normalizeToken","_pdfLibPromise","_printBytes","_resolveChoiceComponentValue","_resolveDateComponentValue","_resolveTableCellValue","_resolveValueByPath","_setCheckboxByState","_splitCanonicalDateParts","_statusColor","_toBooleanLike","_toCandidateList","_toText","acro","baseMap","binary","blob","boldFont","boolValue","booleanStates","box","buttonDisabled","byRow","bytes","candidate","candidateKeys","candidates","choiceComponentIndex","choiceComponentValue","choiceEntry","clean","cleaned","cleanup","component","components","current","dataUrl","dateComponentIndex","dateComponentValue","dateEntry","desiredMaxLength","diagnosticsText","didDraw","didFill","direct","disabled","doc","existing","fieldId","filledFieldCount","font","fontSize","form","formData","formKeys","fromData","fromPath","fuzzy","geometryResult","handleGeneratePdf","hasMatchingState","i","iframe","image","includeSet","index","inferredState","inlineSource","installed","isOn","items","knownOptions","left","leftIsFormId","lib","lineHeight","lines","link","map","mapped","match","matches","maxLength","maxLines","maxWidth","maybe","maybeDate","maybeTime","nextFileName","normalized","normalizedAction","normalizedCandidate","normalizedOption","normalizedOptionMap","normalizedRequested","offState","onText","onValue","optionValue","options","otherItem","outputBytes","page","pages","parts","pathByColumnId","payload","pdfFieldId","pdfFieldName","pdfFields","printWindow","rawValue","renderActionButton","renderButton","requested","resolvePath","resolvedPdfSource","right","rightIsFormId","row","rowIndex","rowMapping","rows","runner","script","sd","segments","selected","selectedCount","set","single","size","skippedFieldCount","sourceFieldId","sourceId","sourceLines","sourceValue","sourceValues","state","states","strategy","tableEntry","tableId","tableIndex","targetAction","targetState","targetStateName","targetWidget","text","trimmed","url","warningCount","warnings","widget","widgets","withoutSlash","words"],

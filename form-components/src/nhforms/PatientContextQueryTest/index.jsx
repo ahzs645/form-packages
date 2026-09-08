@@ -2,7 +2,7 @@
 // (operationName, jwToken, apiServer, query, variables, statusSetter,
 //  resultCallback, errorDispatch, { formParams }) and returns data or null.
 // Use that host transport; never invent an endpoint or expose credentials.
-const PatientContextQueryTest = ({ collections = [] }) => {
+const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
   const sd = useSourceData()
   const patient = sd?.patient ?? sd?.queryResult?.patient?.[0]
   const patientId = Number(patient?.patientId ?? sd?.formParams?.patientId)
@@ -29,18 +29,19 @@ const PatientContextQueryTest = ({ collections = [] }) => {
   const isList = (type) => type?.kind === "LIST" || (type?.kind === "NON_NULL" && type.ofType?.kind === "LIST")
   const requiredArgs = (field) => (field?.args || []).some((arg) => arg.type?.kind === "NON_NULL" && arg.defaultValue == null)
   const typeRef = "kind name ofType { kind name ofType { kind name ofType { kind name ofType { kind name } } } }"
-  const schemaQuery = `query InspectPatientContextType($name: String!) { __type(name: $name) { name fields { name args { name defaultValue type { ${typeRef} } } type { ${typeRef} } } } }`
+  const schemaQuery = `query InspectPatientContextType($name: String!) { __type(name: $name) { name kind fields { name args { name defaultValue type { ${typeRef} } } type { ${typeRef} } } inputFields { name defaultValue type { ${typeRef} } } enumValues { name } } }`
   const readableError = (value) => String(value || "Unknown query error").split(String(auth.jwToken || "\u0000")).join("[redacted]").slice(0, 1200)
 
-  const run = async () => {
+  const run = async (mode = "reads") => {
     if (!ready || busy.current) return
     busy.current = true
     const runId = ++epoch.current
     const active = () => epoch.current === runId
-    let rows = []
-    let schemaFields = []
+    let rows = mode === "api" ? [...current.rows] : []
+    let schemaFields = mode === "api" ? current.schemaFields || [] : []
+    let apiInventory = current.apiInventory || null
     const update = (message, running = true) => {
-      if (active()) setState({ patientId, busy: running, message, rows: [...rows], hasRun: true, schemaFields })
+      if (active()) setState({ patientId, busy: running, message, rows: [...rows], hasRun: true, schemaFields, apiInventory })
     }
     const request = async (operation, query, variables) => {
       if (!active()) throw new Error("Stopped")
@@ -61,8 +62,42 @@ const PatientContextQueryTest = ({ collections = [] }) => {
         return data
       } finally { clearTimeout(timer) }
     }
-    update("Inspecting the live Patient schema…")
+    update(mode === "api" ? "Inspecting root queries, mutations and input types…" : "Inspecting the live Patient schema…")
     try {
+      if (mode === "api") {
+        apiInventory = { queries: [], mutations: [], inputTypes: [], executionStatus: "Discovery only; no mutations executed" }
+        const roots = await request("InspectPatientContextRoots", "query InspectPatientContextRoots { __schema { queryType { name } mutationType { name } } }", {})
+        if (!roots?.__schema?.queryType?.name) throw new Error("Root schema was not returned. API discovery is unavailable to this login.")
+        for (const [kind, key] of [["queryType", "queries"], ["mutationType", "mutations"]]) {
+          const name = roots.__schema[kind]?.name
+          if (!name) continue
+          const result = await request("InspectPatientContextType", schemaQuery, { name })
+          if (!Array.isArray(result?.__type?.fields)) throw new Error(`Fields for ${name} were not returned.`)
+          apiInventory[key] = result.__type.fields.map((field) => {
+            const adapters = key === "mutations" ? (Array.isArray(writeTargets) ? writeTargets : []).filter((target) => (Array.isArray(target.graphqlField) ? target.graphqlField : [target.graphqlField]).includes(field.name)) : []
+            return { name: field.name, type: field.type, args: field.args || [], adapters: adapters.map(({ id, runtimeStatus }) => ({ id, runtimeStatus })), executionStatus: "Not executed", coverage: key === "mutations" ? adapters.some((target) => target.runtimeStatus === "supported") ? "Mapped adapter; live write untested" : "Needs a dedicated write test" : "Discovered root query; not exercised by Patient collection checks" }
+          })
+        }
+        const pending = []
+        const enqueue = (type) => {
+          const named = namedType(type)
+          if (["INPUT_OBJECT", "ENUM"].includes(named?.kind) && validName(named?.name) && !pending.includes(named.name)) pending.push(named.name)
+        }
+        for (const operation of [...apiInventory.queries, ...apiInventory.mutations]) for (const arg of operation.args) enqueue(arg.type)
+        let index = 0
+        while (index < pending.length && index < 100 && active()) {
+          const name = pending[index++]
+          update(`Inspecting input type ${name} (${index})…`)
+          const result = await request("InspectPatientContextType", schemaQuery, { name })
+          if (!result?.__type) throw new Error(`Input type ${name} was not returned.`)
+          const info = { name, kind: result.__type.kind, inputFields: result.__type.inputFields || [], enumValues: result.__type.enumValues || [] }
+          apiInventory.inputTypes.push(info)
+          for (const field of info.inputFields) enqueue(field.type)
+        }
+        apiInventory.uninspectedInputTypes = pending.slice(index)
+        update(`API discovery complete: ${apiInventory.queries.length} root queries, ${apiInventory.mutations.length} mutations, ${apiInventory.inputTypes.length} input/enum types. No writes executed.`, false)
+        return
+      }
       const schema = await request("InspectPatientContextType", schemaQuery, { name: "Patient" })
       const fields = schema?.__type?.fields
       if (!Array.isArray(fields)) throw new Error("Patient schema was not returned. Introspection may be disabled or unavailable to this login. No collection probes were attempted.")
@@ -102,7 +137,9 @@ const PatientContextQueryTest = ({ collections = [] }) => {
               // Request small identifying fields, not document bodies, file
               // payloads, or arbitrary scalar data exposed by introspection.
               const scalarFields = types.get(resultType.name).filter((item) => validName(item.name) && preferred.test(item.name) && !requiredArgs(item) && !isList(item.type) && ["SCALAR", "ENUM"].includes(namedType(item.type)?.kind))
-              scalarFields.sort((a, b) => a.name.localeCompare(b.name))
+              const ownId = resultType.name[0].toLowerCase() + resultType.name.slice(1) + "Id"
+              const rank = (name) => name === ownId ? 0 : ["name", "description", "code", "value", "status"].includes(name) ? 1 : name.endsWith("Date") ? 2 : 3
+              scalarFields.sort((a, b) => rank(a.name) - rank(b.name) || a.name.localeCompare(b.name))
               selection = ` { __typename ${scalarFields.slice(0, 8).map((item) => item.name).join(" ")} }`
             }
           } else if (!["SCALAR", "ENUM"].includes(resultType?.kind)) {
@@ -123,6 +160,7 @@ const PatientContextQueryTest = ({ collections = [] }) => {
       }
       update("Live checks complete. Results are from explicit reads, separate from the initial chart load.", false)
     } catch (error) {
+      if (mode === "api" && apiInventory) apiInventory.error = readableError(error.message)
       update(readableError(error.message), false)
     } finally { if (active()) busy.current = false }
   }
@@ -133,10 +171,11 @@ const PatientContextQueryTest = ({ collections = [] }) => {
   }
   const report = JSON.stringify({
     reportType: "mois-patient-context-live-query",
-    reportVersion: 1,
+    reportVersion: 2,
     generatedAt: new Date().toISOString(),
     status: current.message,
     schemaFields: current.schemaFields || [],
+    apiInventory: current.apiInventory || null,
     results: current.rows.map(({ key, status, count, query, error }) => ({ collection: key, status, count, query, error })),
   }, null, 2)
   const downloadReport = () => {
@@ -157,13 +196,19 @@ const PatientContextQueryTest = ({ collections = [] }) => {
     <p>Patient: {patient?.name?.text || "—"} · Chart {patient?.chartNumber || "—"} · Patient ID {Number.isInteger(patientId) ? patientId : "—"}</p>
     <p>Run explicit reads against this patient's chart using your current MOIS login. The form inspects the live schema, then queries up to 64 collections one at a time. It does not save or modify chart records.</p>
     {!ready ? <p>Live checks require the exported form running inside an authenticated MOIS instance. Builder preview cannot perform these checks.</p> : null}
-    <button type="button" disabled={!ready || current.busy} onClick={run}>Run live chart checks</button>{" "}
+    <button type="button" disabled={!ready || current.busy} onClick={() => run("reads")}>Run live chart checks</button>{" "}
+    <button type="button" disabled={!ready || current.busy} onClick={() => run("api")}>Inspect read/write API</button>{" "}
     {current.busy ? <button type="button" onClick={stop}>Stop checks</button> : null}
     {" "}<button type="button" disabled={!current.hasRun || current.busy} onClick={downloadReport}>Download results JSON</button>
     <p role="status" aria-live="polite">{current.message}</p>
     {current.hasRun && !current.busy ? <details><summary>JSON report (copy or download)</summary>
-      <p>Includes schema fields, counts, queries and errors. Patient identity, record samples and login credentials are excluded. Nothing is sent automatically.</p>
+      <p>Includes schema fields, counts, queries, errors and the discovered read/write API. Discovered mutations are marked untested. Patient identity, record samples and login credentials are excluded. Nothing is sent automatically.</p>
       <textarea aria-label="Live query results JSON" readOnly value={report} rows={12} style={{ width: "100%", fontFamily: "monospace" }} />
+    </details> : null}
+    {current.apiInventory ? <details><summary>Read/write API coverage</summary>
+      <p>{current.apiInventory.queries.length} root queries · {current.apiInventory.mutations.length} mutations · {current.apiInventory.inputTypes.length} input/enum types. Discovery does not execute writes.</p>
+      <ul>{current.apiInventory.mutations.map((operation) => <li key={operation.name}><code>{operation.name}</code> — {operation.coverage}</li>)}</ul>
+      {current.apiInventory.error ? <p>{current.apiInventory.error}</p> : null}
     </details> : null}
     <div style={{ overflowX: "auto" }}><table style={{ width: "100%", textAlign: "left" }}>
       <caption>Explicit live query results</caption>

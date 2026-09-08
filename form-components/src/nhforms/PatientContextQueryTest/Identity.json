@@ -4,8 +4,8 @@
   "description": "User-triggered live schema discovery and read-only patient collection probes using the authenticated MOIS host transport.",
   "version": {
     "major": 1,
-    "minor": 0,
-    "patch": 1
+    "minor": 1,
+    "patch": 0
   },
   "type": "component",
   "owner": "MOIS Styleguide",

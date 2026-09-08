@@ -18,11 +18,11 @@ const fields = [
   { name: 'empty', args: [], type: list },
 ];
 const initial = { patient: { patientId: 42, name: { text: 'Test patient' } }, auth: { jwToken: 'secret-token', apiServer: 'https://example.test/' } };
-function mount(transport?: any) {
+function mount(transport?: any, writeTargets: unknown[] = []) {
   let sd: any = initial;
   const Component = new Function('React', 'useSourceData', 'queryGraphQL', `${compiled}; return PatientContextQueryTest;`)(React, () => sd, transport);
   container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
-  const render = () => act(() => root.render(<Component collections={['observations', 'missing', 'restricted']} />));
+  const render = () => act(() => root.render(<Component collections={['observations', 'missing', 'restricted']} writeTargets={writeTargets} />));
   render();
   return (next: any) => { sd = next; render(); };
 }
@@ -89,4 +89,29 @@ describe('PatientContextQueryTest', () => {
     expect(container.textContent).toContain('No live checks run yet');
     expect(container.textContent).not.toContain('Live checks complete');
   });
+  it('discovers arbitrary root names and nested mutation inputs without executing any mutation', async () => {
+    const input = { kind: 'INPUT_OBJECT', name: 'TestInput' };
+    const enumType = { kind: 'ENUM', name: 'TestKind' };
+    const transport = vi.fn(async (operation, _token, _server, query, variables) => {
+      expect(query.trim()).toMatch(/^query /);
+      if (operation === 'InspectPatientContextRoots') return { __schema: { queryType: { name: 'ReadRoot' }, mutationType: { name: 'WriteRoot' } } };
+      const types: Record<string, any> = {
+        ReadRoot: { fields: [{ name: 'patient', args: [], type: list }] },
+        WriteRoot: { fields: [{ name: 'changeTest', args: [{ name: 'input', type: input }], type: scalar }, { name: 'unknownWrite', args: [], type: scalar }] },
+        TestInput: { kind: 'INPUT_OBJECT', inputFields: [{ name: 'kind', type: enumType }, { name: 'recursive', type: input }] },
+        TestKind: { kind: 'ENUM', enumValues: [{ name: 'TEST' }] },
+      };
+      return { __type: types[variables.name] };
+    });
+    mount(transport, [{ id: 'test.changeTest', graphqlField: 'changeTest', runtimeStatus: 'supported' }]);
+    await act(async () => { Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Inspect read/write API')!.click(); });
+    const report = JSON.parse(container.querySelector('textarea')!.value);
+    expect(report.reportVersion).toBe(2);
+    expect(report.apiInventory.inputTypes).toHaveLength(2);
+    expect(report.apiInventory.mutations[0]).toMatchObject({ coverage: 'Mapped adapter; live write untested', executionStatus: 'Not executed' });
+    expect(report.apiInventory.mutations[1]).toMatchObject({ coverage: 'Needs a dedicated write test', executionStatus: 'Not executed' });
+    expect(report.apiInventory.uninspectedInputTypes).toEqual([]);
+    expect(transport).toHaveBeenCalledTimes(5);
+  });
+
 });

@@ -53,7 +53,7 @@ const PatientContextDiagnostics = ({
       {patient ? (
         <p><strong>{textValue(patient.name)}</strong> · Chart {textValue(patient.chartNumber)} · Patient ID {textValue(patient.patientId)}<br />Source: <code>{source}</code></p>
       ) : <p role="status">No active patient context. Select a patient with Use Active, then open Preview.</p>}
-      <p>API capability snapshot{engineVersion ? ` · MOIS engine ${engineVersion}` : " unavailable"}. Access labels describe engine support, not your current user's permissions. This panel does not write to the chart.</p>
+      <p>API capability snapshot{engineVersion ? ` · MOIS engine ${engineVersion}` : " unavailable"}. Read only means no write adapter is mapped; the live read report did not test mutations. Access labels do not establish your current user's permissions. This panel does not write to the chart.</p>
       <p>Unavailable means no collection was supplied; empty means an array with zero records. Imported records can appear locally even when MOIS does not query them.</p>
       <label style={{ display: "block", marginBottom: 12 }}>Filter collections{" "}
         <input type="search" value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="e.g. observations" style={{ padding: 6, maxWidth: "100%" }} />
@@ -70,7 +70,7 @@ const PatientContextDiagnostics = ({
             const capability = registry.get(key)
             return <tr key={`${textValue(patient?.patientId)}:${key}`} data-collection={key}>
               <th scope="row" style={cellStyle}><code>{key}</code></th>
-              <td style={cellStyle}>{labels[capability?.access] || "Unclassified"}{capability?.note ? <details><summary>Access details</summary><p>{capability.access === "not-queried" ? "Absent from the default chart query. This does not establish whether the live API supports an explicit read; run the live checks to find out." : capability.note}</p></details> : null}</td>
+              <td style={cellStyle}>{labels[capability?.access] || "Unclassified"}{capability?.liveReadVerified ? <div>Live read verified</div> : null}{capability?.note ? <details><summary>Access details</summary><p>{capability.note}</p></details> : null}</td>
               <td style={cellStyle}>{availability}</td>
               <td style={cellStyle}>{isArray ? value.length : "—"}</td>
               <td style={cellStyle}>{isArray && value.length > 0 ? <details><summary>Show samples</summary><pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxWidth: 520, maxHeight: 320, overflow: "auto" }}>{value.slice(0, limit).map(sampleText).join("\n\n")}</pre></details> : "—"}</td>
