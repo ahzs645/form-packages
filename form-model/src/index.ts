@@ -1,3 +1,4 @@
+export type * from "./offline-authoring";
 /**
  * UI-independent authoring model shared by the builder, persistence codecs,
  * previews, and exporters. Keep this package free of app/component imports.
@@ -1516,7 +1517,14 @@ export interface BuilderOscarImportMapping {
   } | null;
 }
 
+export interface BuilderFieldBehavior {
+  validations?: Array<{ id: string; validWhen: FieldConditionGroup; message: string; translations?: Record<string, string> }>;
+  optionRules?: Array<{ value: string; showWhen?: FieldConditionGroup; disableWhen?: FieldConditionGroup }>;
+}
+
 export interface BuilderField {
+  behavior?: BuilderFieldBehavior;
+
   id: string;
   label: string;
   type: BuilderFieldType;
@@ -2186,11 +2194,21 @@ export type FieldLinkConditionType =
   | "empty";            // Field is empty/undefined
 
 export interface FieldLinkCondition {
+  /** Compare against another answer instead of a literal. */
+  valueFieldId?: string;
   type: FieldLinkConditionType;
   /** For choice conditions, which option value(s) to check */
   optionValues?: string[];
   /** For numeric and equality conditions. */
   value?: string | number | boolean | null;
+  /**
+   * Compare against another field's answer instead of `value`. This is what
+   * makes a rule cross-field: "discharge date is before admission date" needs
+   * the right-hand side to be a field, not a constant. Takes precedence over
+   * `value` when set; if the named field is empty the condition is false, so a
+   * half-filled form does not raise errors about answers nobody has given yet.
+   */
+  compareFieldId?: string;
 }
 
 /**
@@ -2203,7 +2221,13 @@ export type FieldLinkAction =
   | "set-required"
   | "clear-required"
   | "set-readonly"
-  | "clear-readonly";
+  | "clear-readonly"
+  /**
+   * The condition describes what is *wrong*: when it holds, the target fields
+   * carry a blocking validation error. Per-field rules cannot express this,
+   * because the fault lies in the relationship between two answers.
+   */
+  | "invalid";
 
 /**
  * A rule that links one field's value to another field's visibility or value
@@ -2211,7 +2235,16 @@ export type FieldLinkAction =
  * Example: "When 'Same as Partner' is checked, hide 'Bio Father Surname'"
  * Example: "When 'ART Specify' has 'IVF' selected, show 'IVF Details'"
  */
+export interface FieldConditionGroup {
+  match: "all" | "any";
+  conditions: Array<FieldConditionGroup | { controllerFieldId: string; condition: FieldLinkCondition }>;
+}
+
 export interface FieldLinkRule {
+  /** Recursive conditions override the legacy flat condition pairs when present. */
+  conditionGroup?: FieldConditionGroup;
+  /** Default preserves user answers; always explicitly opts into overwriting. */
+  copyPolicy?: "when-empty" | "until-edited" | "always";
   id: string;
   /** The field whose value triggers the rule */
   controllerFieldId: string;
@@ -2237,6 +2270,12 @@ export interface FieldLinkRule {
   protectionMode?: "readOnly" | "disabled" | "both";
   /** For copy-value action, the source field to copy from */
   copyFromFieldId?: string;
+  /**
+   * Shown to the person filling the form when an `invalid` rule fires. Say what
+   * is wrong rather than restating the condition -- "Discharge cannot be before
+   * admission" beats "discharge_date is less than admission_date".
+   */
+  validationMessage?: string;
   /** Optional description for UI display */
   description?: string;
 }
@@ -2271,6 +2310,8 @@ export interface MoisSemanticVersion {
  * Per-form metadata written to the exported MOIS Identity.json/manifest.
  * The package name and title continue to follow the builder document name.
  */
+import type { BuilderFormLifecycle } from "./lifecycle";
+
 export interface BuilderMoisIdentityMetadata {
   author?: string;
   owner?: string;
@@ -2352,6 +2393,7 @@ export interface FormDesign {
   headerSpacing?: FormHeaderSpacing;
   rtlLayout: boolean;
   uppercaseLabels: boolean;
+  uiTranslations?: Record<string, Record<string, string>>;
 
   // Typography
   fontFamily?: string; // Google Fonts name
@@ -2429,12 +2471,19 @@ export const defaultFormSettings: FormSettings = {
 
 /** Canonical builder document; UI layers supply their concrete layout-draft type. */
 export interface BuilderDocument<TLayoutDraft = unknown> {
+  authoring?: import("./offline-authoring").OfflineAuthoringState;
   name: string;
   fields: BuilderField[];
   design: FormDesign;
   identityType: MoisFormType;
   identityCode: string;
   identityMetadata?: BuilderMoisIdentityMetadata;
+  /**
+   * Draft / published / retired, with the governance dates and the change log.
+   * Absent means draft: see `resolveBuilderFormStatus`, which fails closed so a
+   * document written before this existed is not treated as approved for use.
+   */
+  lifecycle?: BuilderFormLifecycle;
   formPresentation?: BuilderFormPresentation;
   investigationTabs?: BuilderInvestigationTab[];
   investigationTabAssignments?: Record<string, string | null>;
@@ -2502,7 +2551,12 @@ export {
   compileFieldLinkConditionGroup,
   compileFieldLinkProtectionRule,
   compileFieldLinkVisibilityRule,
+  DEFAULT_CROSS_FIELD_VALIDATION_MESSAGE,
+  evaluateCrossFieldValidation,
   evaluateFieldCondition,
+  getFieldLinkConditionEntries,
+  getFieldLinkConditionGroup,
+  evaluateConditionGroup,
   evaluateFieldLinkRuleCondition,
   isConditionValueEmpty,
   normalizeConditionBoolean,
@@ -2511,6 +2565,7 @@ export {
   type CompiledFieldLinkConditionGroup,
   type CompiledFieldLinkProtectionRule,
   type CompiledFieldLinkVisibilityRule,
+  type CrossFieldValidationError,
   type FieldConditionMetadata,
   type FieldConditionMetadataLookup,
   type SerializedFieldLinkCondition,
@@ -2546,6 +2601,7 @@ export {
   type BuilderInvestigationTab,
 } from "./investigation-tabs";
 export * from "./grouping";
+export * from "./lifecycle";
 export * from "./layout";
 export { backfillOptionScoresFromFormula } from "./score-backfill";
 export {

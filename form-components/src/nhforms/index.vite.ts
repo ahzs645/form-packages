@@ -410,7 +410,7 @@ function loadComponentCode(code: string, componentName: string, additionalCompon
     'CompactBooleanField', 'CompactBooleanGroup', 'CompactBooleanChecklist', 'YesNoButtons',
     'CompactBooleanFieldSchema', 'CompactBooleanChecklistSchema', 'BooleanLabelPresets',
     // ConditionalGroup exports
-    'ConditionalGroup', 'ConditionalField', 'LogicGateProvider', 'useLogicGate', 'useIsVisible', 'useConditionalVisibility',
+    'ConditionalGroup', 'ConditionalReadOnly', 'ConditionalFieldBehavior', 'FormLanguageSelector', 'validateFieldBehaviors', 'FormBehaviorRuntime', 'ConditionalField', 'LogicGateProvider', 'useLogicGate', 'useIsVisible', 'useConditionalVisibility',
     'ConditionalGroupSchema', 'createBranchingRule', 'generateConditionalGroupJSX', 'ControllerLabelPresets',
     'MAX_SUBGROUP_DEPTH',
     // SignaturePad exports
@@ -739,6 +739,11 @@ export const {
   CompactBooleanChecklistSchema,
   BooleanLabelPresets,
   // ConditionalGroup
+  ConditionalReadOnly,
+  ConditionalFieldBehavior,
+  FormLanguageSelector,
+  FormBehaviorRuntime,
+  validateFieldBehaviors,
   ConditionalGroup,
   ConditionalField,
   LogicGateProvider,

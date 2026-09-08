@@ -408,7 +408,7 @@ function loadComponentCode(
     'CompactBooleanFieldSchema', 'CompactBooleanChecklistSchema',
     // CompactChoiceField exports (multi-option button selection)
     'CompactChoiceField', 'OptionButtons', 'CompactChoiceFieldSchema', 'CompactChoiceFieldMultiSchema',
-    'ConditionalGroup', 'ConditionalField', 'LogicGateProvider', 'useConditionalVisibility',
+    'ConditionalGroup', 'ConditionalReadOnly', 'ConditionalFieldBehavior', 'FormLanguageSelector', 'validateFieldBehaviors', 'FormBehaviorRuntime', 'ConditionalField', 'LogicGateProvider', 'useConditionalVisibility',
     // SaveOnClose exports
     'SaveOnClose', 'useSaveOnClose',
     // SignaturePad exports

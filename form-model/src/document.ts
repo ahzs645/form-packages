@@ -287,6 +287,8 @@ export interface ParsedFieldVisibility {
 }
 
 export interface ParsedField {
+  behavior?: import("./index").BuilderFieldBehavior;
+  translations?: import("./index").BuilderField["translations"];
   id: string;
   label: string;
   kind: ComponentKind;

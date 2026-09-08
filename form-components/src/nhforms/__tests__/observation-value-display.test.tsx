@@ -39,7 +39,7 @@ function loadObservationValueDisplay(sourceData: Record<string, unknown>): React
     matchesCode: (entry: any, candidate: any) => String(entry.code) === String(candidate.code),
     parseDate: (value: unknown) => new Date(String(value)),
     dateKey: (value: unknown) => String(value),
-    displayDate: (value: string) => value.slice(0, 10).replaceAll("-", "."),
+    displayDate: (value: string) => value.slice(0, 10).replace(/-/g, "."),
     extractValue: (entry: any) => String(entry.value ?? ""),
     classifyFlag: () => "",
     flagCellStyle: () => ({}),

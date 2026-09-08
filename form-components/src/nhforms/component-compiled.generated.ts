@@ -1601,7 +1601,12 @@ const ChartAttachmentUpload = ({
     const validCodes = new Set(documentTypeOptions.map(option => String(option.key)));
     setSelectedBatchTypeCodes(current => {
       const valid = current.map(String).filter(code => validCodes.has(code));
-      return valid.length > 0 ? valid : [fallbackCode];
+      const next = valid.length > 0 ? valid : [fallbackCode];
+      // Keep the existing array when the selection is unchanged. Hosts are not
+      // required to memoize useCodeList, and a host that returns a fresh array
+      // each render would otherwise make this effect re-render without end.
+      const unchanged = next.length === current.length && next.every((code, index) => code === String(current[index]));
+      return unchanged ? current : next;
     });
   }, [documentTypeCode, documentTypeOptions, selectedDocumentTypeCode]);
   const inputId = \`\${id || resultFieldId || "chart-attachment-upload"}-file\`;
@@ -6267,8 +6272,17 @@ const checkComparisonMatch = (fieldValue, operator, expectedValue) => {
   }
   if (normalized === null || normalized === undefined || normalized === '') return false;
   if (operator && operator.startsWith('number-')) {
-    const left = Number(normalized);
-    const right = Number(expectedValue);
+    // Numbers when both sides are numeric, dates otherwise: cross-field rules
+    // are mostly date order ("discharge before admission"), and Number() of an
+    // ISO date is NaN. Mirrors toOrderedPair in @webforms/form-model.
+    let left = Number(normalized);
+    const expected = normalizeComparableValue(expectedValue);
+    if (expected == null || String(expected).trim() === '') return false;
+    let right = Number(expected);
+    if (!Number.isFinite(left) || !Number.isFinite(right)) {
+      left = Date.parse(String(normalized));
+      right = Date.parse(String(expected));
+    }
     if (!Number.isFinite(left) || !Number.isFinite(right)) return false;
     if (operator === 'number-gt') return left > right;
     if (operator === 'number-gte') return left >= right;
@@ -6277,7 +6291,7 @@ const checkComparisonMatch = (fieldValue, operator, expectedValue) => {
     return left === right;
   }
   const left = String(normalized);
-  const right = String(expectedValue ?? '');
+  const right = String(normalizeComparableValue(expectedValue) ?? '');
   return operator === 'not-equals' ? left !== right : left === right;
 };
 
@@ -6287,6 +6301,7 @@ const checkComparisonMatch = (fieldValue, operator, expectedValue) => {
  * kept module-level (pure) so the node test harness can execute it directly.
  */
 const evaluateConditionEntry = (entry, getFieldValue) => {
+  if (entry && Array.isArray(entry.conditions)) return evaluateConditionEntries(entry.conditions, entry.match, getFieldValue);
   if (!entry || !entry.controllerFieldId || !entry.type) return false;
   const fieldValue = getFieldValue(entry.controllerFieldId);
   const type = entry.type;
@@ -6295,6 +6310,15 @@ const evaluateConditionEntry = (entry, getFieldValue) => {
   if (type === 'boolean-yes') return checkControllerMatch(fieldValue, 'yes');
   if (type === 'boolean-no') return checkControllerMatch(fieldValue, 'no');
   // equals / not-equals / filled / empty / number-* share the comparison matcher.
+  // compareFieldId makes the right-hand side another answer instead of a
+  // constant, which is what a cross-field rule needs. An unanswered compare
+  // field means no match, so a half-filled form raises nothing.
+  const compareFieldId = entry.compareFieldId || entry.valueFieldId;
+  if (compareFieldId) {
+    const compareValue = getFieldValue(compareFieldId);
+    if (!checkComparisonMatch(compareValue, 'filled', null)) return false;
+    return checkComparisonMatch(fieldValue, type, compareValue);
+  }
   return checkComparisonMatch(fieldValue, type, entry.value);
 };
 
@@ -6353,6 +6377,7 @@ const ConditionalReadOnly = ({
   match = 'all',
   action = 'set-readonly',
   protectionMode = 'both',
+  locked = false,
   rules,
   children
 }) => {
@@ -6372,6 +6397,10 @@ const ConditionalReadOnly = ({
     if (mode === 'disabled' || mode === 'both') next.disabled = override;
     return next;
   }, {});
+  if (locked) {
+    overrides.readOnly = true;
+    overrides.disabled = true;
+  }
   if (overrides.readOnly === undefined && overrides.disabled === undefined) return /*#__PURE__*/React.createElement(React.Fragment, null, children);
   const protectedChildren = cloneWithProtection(children, overrides);
   const usesDisabledFallback = overrides.disabled === true;
@@ -6416,6 +6445,7 @@ const ConditionalField = ({
   compareValue,
   conditions,
   match = 'all',
+  visibilityRules,
   invertMatch = false,
   showWhenNull = false,
   hiddenAnswerPolicy = 'preserve',
@@ -6429,7 +6459,11 @@ const ConditionalField = ({
 
   // Determine visibility based on mode
   let isVisible = true;
-  if (mode === 'always') {
+  if (Array.isArray(visibilityRules) && visibilityRules.length) {
+    const matches = rule => evaluateConditionEntries(rule.conditions, rule.match, id => readControllerValue(fd?.field?.data, id));
+    const shows = visibilityRules.filter(rule => rule.action === 'show');
+    isVisible = (!shows.length || shows.some(matches)) && !visibilityRules.some(rule => rule.action === 'hide' && matches(rule));
+  } else if (mode === 'always') {
     // Always visible regardless of parent gates
     isVisible = true;
   } else if (mode === 'controller' && Array.isArray(conditions) && conditions.length > 0) {
@@ -6688,6 +6722,372 @@ const ControllerLabelPresets = {
     on: 'Checked',
     off: 'Not Checked'
   }
+};
+
+/** Field-level extension. Uses MOIS props and narrow state recipes; never patches native controls. */
+const ConditionalFieldBehavior = ({
+  fieldId,
+  rules = [],
+  validations = [],
+  optionRules = [],
+  translations = {},
+  baseText = {},
+  required: baseRequired = false,
+  requiredCapable = true,
+  readOnly = false,
+  locked = false,
+  copyEnabled = true,
+  children
+}) => {
+  const [fd, setFd] = useActiveData();
+  const getValue = id => readControllerValue(fd?.field?.data, id);
+  const matches = group => evaluateConditionEntries(group?.conditions, group?.match, getValue);
+  const locale = fd?.field?.status?.__formLocale || '';
+  const text = translations[locale] || {};
+  let required = baseRequired;
+  rules.forEach(rule => {
+    if (matches(rule)) {
+      if (rule.action === 'set-required') required = requiredCapable;
+      if (rule.action === 'clear-required') required = false;
+    }
+  });
+  const value = getValue(fieldId);
+  const isEmpty = candidate => !checkMeaningfulAnswer(candidate);
+  const copyRule = [...rules].reverse().find(rule => rule.action === 'copy-value' && rule.copyFromFieldId !== fieldId && matches(rule));
+  const source = copyRule ? getValue(copyRule.copyFromFieldId) : undefined;
+  const copyState = fd?.field?.data?.__fieldCopyState?.[fieldId];
+  const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  useEffect(() => {
+    if (!copyEnabled || !copyRule || readOnly || locked || source === undefined || equal(value, source)) return;
+    const policy = copyRule.copyPolicy || 'when-empty';
+    const userEdited = copyState?.edited || copyState && !equal(value, copyState.value);
+    const mayCopy = policy === 'always' || (policy === 'until-edited' ? !userEdited && (copyState || isEmpty(value)) : isEmpty(value));
+    const setter = fd?.setFormData || setFd;
+    if (typeof setter !== 'function') return;
+    if (!mayCopy && !(policy === 'until-edited' && userEdited && !copyState?.edited)) return;
+    setter(produce(draft => {
+      if (!draft.field) draft.field = {
+        data: {},
+        status: {}
+      };
+      if (!draft.field.data) draft.field.data = {};
+      const latestValue = readControllerValue(draft.field.data, fieldId);
+      const latestSource = readControllerValue(draft.field.data, copyRule.copyFromFieldId);
+      if (!equal(latestValue, value) || !equal(latestSource, source)) return;
+      if (!draft.field.data.__fieldCopyState) draft.field.data.__fieldCopyState = {};
+      if (mayCopy) {
+        draft.field.data[fieldId] = JSON.parse(JSON.stringify(source));
+        draft.field.data.__fieldCopyState[fieldId] = {
+          value: source,
+          edited: false
+        };
+      } else draft.field.data.__fieldCopyState[fieldId] = {
+        ...copyState,
+        edited: true
+      };
+    }));
+  }, [fd, setFd, fieldId, copyRule, source, value, readOnly, locked, copyEnabled]);
+  const errors = isEmpty(value) ? [] : validations.filter(rule => !matches(rule.validWhen)).map(rule => rule.translations?.[locale] || rule.message);
+  const translateString = value => {
+    if (typeof value !== 'string') return value;
+    for (const key of ['label', 'helpText', 'placeholder']) if (baseText[key] && value === baseText[key] && text[key]) return text[key];
+    return value;
+  };
+  const adapt = nodes => React.Children.map(nodes, child => {
+    if (typeof child === 'string') return translateString(child);
+    if (!React.isValidElement(child)) return child;
+    const props = {};
+    if (typeof child.type === 'string' || child.type === React.Fragment) {
+      if (child.props.children) props.children = adapt(child.props.children);
+      if (['input', 'select', 'textarea'].includes(child.type)) {
+        props.required = required;
+        if (locked || readOnly) {
+          props.disabled = true;
+          if (child.type !== 'select') props.readOnly = true;
+        }
+      }
+    } else {
+      props.required = required;
+      if (locked || readOnly) {
+        props.readOnly = true;
+        props.disabled = true;
+      }
+      if (child.props.onValidate || validations.length) props.onValidate = candidate => {
+        const prior = child.props.onValidate?.(candidate);
+        if (prior) return prior;
+        if (isEmpty(candidate)) return undefined;
+        return validations.find(rule => !evaluateConditionEntries(rule.validWhen.conditions, rule.validWhen.match, id => id === fieldId ? candidate : getValue(id)))?.translations?.[locale] || validations.find(rule => !evaluateConditionEntries(rule.validWhen.conditions, rule.validWhen.match, id => id === fieldId ? candidate : getValue(id)))?.message;
+      };
+      for (const key of ['label', 'placeholder', 'note']) if (typeof child.props[key] === 'string') props[key] = translateString(child.props[key]);
+      for (const key of ['options', 'codes', 'codeList', 'optionList']) {
+        const rawOptions = child.props[key];
+        if (!rawOptions || typeof rawOptions !== 'object') continue;
+        const options = Array.isArray(rawOptions) ? rawOptions : Object.entries(rawOptions).map(([key, text]) => ({
+          key,
+          text
+        }));
+        props[key] = options.flatMap(option => {
+          const stored = typeof option === 'string' ? option : option.code ?? option.key ?? option.value ?? option.text;
+          const rule = optionRules.find(rule => rule.value === String(stored));
+          if (rule?.showWhen && !matches(rule.showWhen)) return [];
+          const translated = text.options?.[stored] || text.options?.[typeof option === "string" ? option : option.text ?? option.display ?? option.label];
+          if (typeof option === 'string') return [{
+            key: option,
+            text: translated || option,
+            code: option,
+            display: translated || option,
+            disabled: rule?.disableWhen ? matches(rule.disableWhen) : false
+          }];
+          return [{
+            ...option,
+            ...(translated ? {
+              ...(option.text !== undefined ? {
+                text: translated
+              } : {}),
+              ...(option.display !== undefined ? {
+                display: translated
+              } : {}),
+              ...(option.label !== undefined ? {
+                label: translated
+              } : {})
+            } : {}),
+            ...(rule?.disableWhen ? {
+              disabled: matches(rule.disableWhen)
+            } : {})
+          }];
+        });
+      }
+      if (child.props.children) props.children = adapt(child.props.children);
+      if (optionRules.length && Array.isArray(props.optionList) && child.props.fieldId === fieldId) return /*#__PURE__*/React.createElement(ConditionalChoiceOptions, _extends({}, child.props, props));
+    }
+    return React.cloneElement(child, props);
+  });
+  return /*#__PURE__*/React.createElement(React.Fragment, null, adapt(children), errors.length > 0 && /*#__PURE__*/React.createElement("div", {
+    role: "alert",
+    style: {
+      color: '#a4262c',
+      fontSize: 12
+    }
+  }, errors.join(' ')));
+};
+const FormLanguageSelector = ({
+  languages = []
+}) => {
+  const [fd, setFd] = useActiveData();
+  return /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'block',
+      margin: '8px 0'
+    }
+  }, "Language ", /*#__PURE__*/React.createElement("select", {
+    "aria-label": "Form language",
+    value: fd?.field?.status?.__formLocale || '',
+    onChange: event => {
+      const locale = event.target.value;
+      const setter = fd?.setFormData || setFd;
+      setter(produce(draft => {
+        if (!draft.field) draft.field = {
+          data: {},
+          status: {}
+        };
+        if (!draft.field.status) draft.field.status = {};
+        draft.field.status.__formLocale = locale;
+      }));
+    }
+  }, /*#__PURE__*/React.createElement("option", {
+    value: ""
+  }, "Default"), languages.map(locale => /*#__PURE__*/React.createElement("option", {
+    key: locale,
+    value: locale
+  }, locale))));
+};
+
+/** Submit validation reads current answers directly, including fields on unmounted pages. */
+const validateFieldBehaviors = (configs, values, locale = '', uiTranslations = {}) => {
+  const copyResult = resolveFieldCopies(configs, values);
+  if (copyResult.error) return [{
+    id: '_form',
+    message: copyResult.error
+  }];
+  const getValue = id => readControllerValue(values, id);
+  const matches = group => evaluateConditionEntries(group?.conditions, group?.match, getValue);
+  const empty = value => !checkMeaningfulAnswer(value);
+  const translate = source => uiTranslations[locale]?.[source] || source;
+  return configs.flatMap(config => {
+    const showRules = config.rules.filter(rule => rule.action === 'show');
+    const hidden = config.hidden || (config.gates || []).some(gate => !matches(gate)) || showRules.length > 0 && !showRules.some(matches) || config.rules.some(rule => rule.action === 'hide' && matches(rule));
+    if (hidden) return [];
+    let required = config.required;
+    config.rules.forEach(rule => {
+      if (matches(rule)) {
+        if (rule.action === 'set-required') required = config.requiredCapable !== false;
+        if (rule.action === 'clear-required') required = false;
+      }
+    });
+    const value = getValue(config.fieldId);
+    if (empty(value)) return required ? [{
+      id: config.fieldId,
+      message: translate(config.label + ' is required')
+    }] : [];
+    const errors = config.validations.filter(rule => !matches(rule.validWhen)).map(rule => ({
+      id: config.fieldId,
+      message: rule.translations?.[locale] || rule.message
+    }));
+    const selected = Array.isArray(value) ? value : [value];
+    if (config.optionRules.some(rule => selected.some(option => String(normalizeComparableValue(option)) === rule.value) && (rule.showWhen && !matches(rule.showWhen) || rule.disableWhen && matches(rule.disableWhen)))) {
+      errors.push({
+        id: config.fieldId,
+        message: translate(config.label + ': choose an available option')
+      });
+    }
+    return errors;
+  });
+};
+
+// Choice extension owns per-option disabling, which the faithful MOIS controls
+// do not implement uniformly. Values retain their original codes when translated.
+const checkMeaningfulAnswer = value => {
+  if (Array.isArray(value)) return value.some(checkMeaningfulAnswer);
+  const normalized = normalizeComparableValue(value);
+  return normalized !== undefined && normalized !== null && String(normalized).trim() !== '';
+};
+const ConditionalChoiceOptions = ({
+  fieldId,
+  label,
+  optionList,
+  selectionType,
+  required,
+  readOnly,
+  disabled,
+  codeSystem,
+  placeholder
+}) => {
+  const [fd, setFd] = useActiveData();
+  const current = readControllerValue(fd?.field?.data, fieldId);
+  const multiple = selectionType === 'multiple';
+  const selected = (Array.isArray(current) ? current : [current]).filter(v => v != null).map(v => String(normalizeComparableValue(v)));
+  const options = optionList.map(option => ({
+    ...option,
+    code: String(option.code ?? option.key ?? option.value),
+    display: option.display ?? option.text ?? option.label
+  }));
+  return /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'block',
+      margin: '8px 0'
+    }
+  }, label, required ? ' *' : '', /*#__PURE__*/React.createElement("select", {
+    "aria-label": label || fieldId,
+    required: required,
+    disabled: readOnly || disabled,
+    multiple: multiple,
+    value: multiple ? selected : selected[0] || '',
+    style: {
+      display: 'block',
+      padding: 6,
+      minWidth: 180
+    },
+    onChange: event => {
+      const values = Array.from(event.target.selectedOptions).filter(option => !option.disabled && option.value !== '').map(option => {
+        const source = options.find(item => item.code === option.value);
+        return {
+          code: source.code,
+          display: source.display,
+          ...(codeSystem ? {
+            system: codeSystem
+          } : {})
+        };
+      });
+      const setter = fd?.setFormData || setFd;
+      setter(produce(draft => {
+        if (!draft.field) draft.field = {
+          data: {},
+          status: {}
+        };
+        if (!draft.field.data) draft.field.data = {};
+        draft.field.data[fieldId] = multiple ? values : values[0] || null;
+      }));
+    }
+  }, !multiple && /*#__PURE__*/React.createElement("option", {
+    value: ""
+  }, placeholder || 'Select…'), options.map(option => /*#__PURE__*/React.createElement("option", {
+    key: option.code,
+    value: option.code,
+    disabled: option.disabled
+  }, option.display))));
+};
+
+/** Resolve all copy rules together, including targets on pages that are unmounted. */
+const resolveFieldCopies = (configs, original, locks = {}) => {
+  const next = JSON.parse(JSON.stringify(original || {}));
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  for (let pass = 0; pass < Math.min(configs.length + 2, 100); pass++) {
+    const before = JSON.stringify(next);
+    for (const config of configs) {
+      if (locks[config.fieldId]) continue;
+      const matches = rule => evaluateConditionEntries(rule.conditions, rule.match, id => readControllerValue(next, id));
+      let protectedField = false;
+      config.rules.forEach(rule => {
+        if (matches(rule) && ['set-readonly', 'clear-readonly'].includes(rule.action)) protectedField = rule.action === 'set-readonly';
+      });
+      if (protectedField) continue;
+      const rule = [...config.rules].reverse().find(rule => rule.action === 'copy-value' && rule.copyFromFieldId !== config.fieldId && matches(rule));
+      if (!rule) continue;
+      const source = readControllerValue(next, rule.copyFromFieldId);
+      const value = readControllerValue(next, config.fieldId);
+      if (source === undefined || same(source, value)) continue;
+      const state = next.__fieldCopyState?.[config.fieldId];
+      const edited = state?.edited || state && !same(value, state.value);
+      const policy = rule.copyPolicy || 'when-empty';
+      const mayCopy = policy === 'always' || (policy === 'until-edited' ? !edited && (state || !checkMeaningfulAnswer(value)) : !checkMeaningfulAnswer(value));
+      if (mayCopy) {
+        next[config.fieldId] = JSON.parse(JSON.stringify(source));
+        next.__fieldCopyState = {
+          ...next.__fieldCopyState,
+          [config.fieldId]: {
+            value: source,
+            edited: false
+          }
+        };
+      } else if (policy === 'until-edited' && edited && !state?.edited) next.__fieldCopyState = {
+        ...next.__fieldCopyState,
+        [config.fieldId]: {
+          ...state,
+          edited: true
+        }
+      };
+    }
+    if (before === JSON.stringify(next)) return {
+      values: next,
+      error: ''
+    };
+  }
+  return {
+    values: original,
+    error: 'Copy rules did not settle. Check the dependency map for a cycle.'
+  };
+};
+const FormBehaviorRuntime = ({
+  configs,
+  locks = {}
+}) => {
+  const [fd, setFd] = useActiveData();
+  const result = resolveFieldCopies(configs, fd?.field?.data, locks);
+  const changed = JSON.stringify(result.values) !== JSON.stringify(fd?.field?.data || {});
+  useEffect(() => {
+    if (!changed || result.error) return;
+    const setter = fd?.setFormData || setFd;
+    if (typeof setter !== 'function') return;
+    setter(produce(draft => {
+      const fresh = resolveFieldCopies(configs, draft?.field?.data, locks);
+      if (fresh.error || !draft?.field?.data) return;
+      for (const config of configs) if (JSON.stringify(draft.field.data[config.fieldId]) !== JSON.stringify(fresh.values[config.fieldId])) draft.field.data[config.fieldId] = fresh.values[config.fieldId];
+      if (fresh.values.__fieldCopyState) draft.field.data.__fieldCopyState = fresh.values.__fieldCopyState;
+    }));
+  }, [fd, setFd, configs, locks, changed, result.error]);
+  return result.error ? /*#__PURE__*/React.createElement("div", {
+    role: "alert"
+  }, result.error) : null;
 };`,
   './Conditions/index.jsx': `function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 // Handle 2.25.12 case where Allergies is a predefined component
@@ -37269,7 +37669,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './AttestationSignOff/index.jsx': ["AttestationSignOff","cleaned","current","deriveInitials","flatTargets","getCurrentActorName","initials","key","name","nestedTargets","next","normalizeInitialsName","normalizeRoleOptions","normalizeTargets","parts","roleOptions","row","sd","signatureFieldId","signatureValue","signedAt","source","table","text","updateValue","value"],
   './AuthorshipField/index.jsx': ["AuthorshipField","DEFAULT_WINDOW_HOURS","_defaultPolicy","_nhAuth","_normalizeFieldOptions","actor","actorFrom","addHoursIso","base","buildKey","c","changed","ck","claim","claims","commitSave","commitValue","componentId","current","d","data","editableUntil","effectiveFieldId","euDate","existing","expired","fieldData","formatTimestamp","isNonEmpty","isOwner","keepStatus","key","label","lockExpired","lockInfo","lockOn","lockedUntil","nextStatus","nhAuth","normalizeStore","now","nowIso","numeric","optionList","ownerId","ownerName","ownerRefresh","pad2","pending","policy","policyAppliesToAction","prepareSave","query","raw","readOnly","readStore","release","renderInput","resolveNow","sameActor","sd","section","store","text","trimmed","ts","untilSelf","value","windowHours"],
   './BulkSetField/index.jsx': ["BulkSetField","ButtonComponent","apply","comparableAnswer","contradictedFieldIds","current","effectiveControlFieldId","fieldData","fieldId","isApplied","isBlankAnswer","isDisabled","normalizeBulkTargets","normalizedTargets","previous","raw","shouldClearControl","showWarning","unapply","writeControl"],
-  './ChartAttachmentUpload/index.jsx': ["BlobClass","ChartAttachmentUpload","FormDataClass","allBatchDocumentTypes","apiServer","appSettings","auth","availableDocumentTypes","batchLimit","body","bytes","canRunAllBatch","canRunSelectedBatch","canUpload","cancelBatchRef","cancelled","clearSelection","code","configuredOption","content","document","documentTypeOptions","documentTypes","downloadBatchResults","encounterId","endpoint","entries","entry","escapeAttachmentCsvCell","fallbackCode","fetchAttachment","fileInputRef","fileTooLarge","firstPositiveId","formatChartAttachmentBytes","hasUploadRuntime","index","inputId","isBatchResult","isCsv","limitedTypes","link","liveEntry","missingRuntime","nextResult","normalizedDocumentTypes","parsed","patientId","persistChartAttachmentResult","rawApiServer","readChartAttachmentResponse","recordResult","response","responseBody","results","rows","runAttachmentBatch","runtime","sd","seen","selected","selectedBatchDocumentTypes","selectedDocumentType","startedAt","statusColor","statusLabel","storedResult","succeeded","targetType","text","toggleBatchDocumentType","uploadAttachment","uploadAttachmentForType","url","urlApi","userProfile","userProfileId","valid","validCodes","waitForAttachmentBatchDelay"],
+  './ChartAttachmentUpload/index.jsx': ["BlobClass","ChartAttachmentUpload","FormDataClass","allBatchDocumentTypes","apiServer","appSettings","auth","availableDocumentTypes","batchLimit","body","bytes","canRunAllBatch","canRunSelectedBatch","canUpload","cancelBatchRef","cancelled","clearSelection","code","configuredOption","content","document","documentTypeOptions","documentTypes","downloadBatchResults","encounterId","endpoint","entries","entry","escapeAttachmentCsvCell","fallbackCode","fetchAttachment","fileInputRef","fileTooLarge","firstPositiveId","formatChartAttachmentBytes","hasUploadRuntime","index","inputId","isBatchResult","isCsv","limitedTypes","link","liveEntry","missingRuntime","next","nextResult","normalizedDocumentTypes","parsed","patientId","persistChartAttachmentResult","rawApiServer","readChartAttachmentResponse","recordResult","response","responseBody","results","rows","runAttachmentBatch","runtime","sd","seen","selected","selectedBatchDocumentTypes","selectedDocumentType","startedAt","statusColor","statusLabel","storedResult","succeeded","targetType","text","toggleBatchDocumentType","unchanged","uploadAttachment","uploadAttachmentForType","url","urlApi","userProfile","userProfileId","valid","validCodes","waitForAttachmentBatchDelay"],
   './ChartRecordManager/index.jsx': ["CHART_RECORD_MANAGER_TARGETS","ChartRecordCreateButton","ChartRecordEditor","ChartRecordList","ChartRecordManager","__chartRecordEditorChannels","_chartRecordEditorRegister","_chartRecordManagerApplyCascades","_chartRecordManagerDefaultCascades","_chartRecordManagerDefaultFieldPresets","_chartRecordManagerDefaultFields","_chartRecordManagerEditHiddenFields","_chartRecordManagerFieldTransforms","_chartRecordManagerStripKeys","baseFields","chartRefresh","classification","cleaned","code","codeSystem","columns","contextId","createButtons","dataEntryConfig","fallback","fallbackManagerId","fieldPreset","handleClick","handleConfirmDelete","handler","hasWriteTarget","hidden","identity","layered","managerId","mapped","merged","next","openChartRecordEditor","openForCreate","openForEdit","preset","record","recordId","request","resolvedAllowDelete","resolvedCascades","resolvedEditHiddenFieldIds","resolvedFields","resolvedManagerId","resolvedPayloadMap","resolvedRecordIdKey","resolvedStripKeys","resolvedWriteTarget","result","sd","seeded","spec","stripRecord","subject","targetInfo","transform","variables","writeDefinition"],
   './ChartRecordTable/index.jsx': ["ChartRecordTable","_chartRecordTableActiveConnections","_chartRecordTableActivePlannedActions","_chartRecordTableGenericColumns","_chartRecordTableGenericEntryColumns","_chartRecordTablePresets","_chartRecordTableSorts","_chartRecordTableStartDateDesc","baseChartColumns","byType","preset","resolvedChartColumns","resolvedEntryColumns","resolvedFieldId","resolvedFilterPred","resolvedId","resolvedLabel","resolvedListCompare","resolvedMoisModule","resolvedSelectionType","resolvedSourceId","resolvedSourceMap"],
   './ChartReviewSummary/index.jsx': ["ChartReviewSummary","K","REVIEW_BLUE","REVIEW_GRAY","REVIEW_INK","REVIEW_RED","ReviewSectionHeading","age","best","bestTime","codeList","current","doseText","latestByCode","medications","monthDelta","now","observations","parsed","patient","problems","reviewAgeYears","reviewArray","reviewDateKey","reviewGetObject","reviewHeadingStyle","reviewLineStyle","rows","sd","sex","steps","stopRaw","stopTime","time","units","value"],
@@ -37277,7 +37677,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './CommonSchemaDefn/index.jsx': ["NameBlockFields","active","commonSchemaDefn","formHistorySchema","makeCodedObsUpdates","makeObsUpdatesFromVs","makeTextObsUpdates","makeValueSetOptions","nameBlockSchema","newDco","oldObs","oldObsId","options","selectAll","startDateDesc","valueSet","vso","ynuaOptions"],
   './CompactBooleanField/index.jsx': ["BooleanLabelPresets","CompactBooleanChecklist","CompactBooleanChecklistSchema","CompactBooleanField","CompactBooleanFieldSchema","CompactBooleanGroup","CompactChoiceField","CompactChoiceFieldMultiSchema","CompactChoiceFieldSchema","OptionButtons","YesNoButtons","baseContainerStyle","buttonStyle","checkboxWrapperRef","choiceContent","commitValue","containerStyle","currentData","currentValue","data","decodePDFHex","decoded","fieldContent","getBooleanLabels","getButtonStyles","getCardContainerStyles","getFieldContainerStyles","getWidthStyle","handleChange","handleCheckboxChange","handleClick","handleNoClick","handleYesClick","input","isDarkMode","isDisabled","isHorizontal","isLast","isLeftLabel","isMultiple","isSelected","labelStyle","lastRowStyle","newValues","noButtonStyle","normalizeValue","normalized","normalizedValue","noteStyle","prevDecoded","rowStyle","selected","selectedValues","setFormData","sizeStyles","theme","themeLabelMaxWidth","themeLabelMinWidth","titleStyle","values","widthMap","yesButtonStyle"],
   './ComputedField/index.jsx': ["ComputedField","ComputedValuePresentation","_COMPUTED_NON_FIELD_IDENTIFIERS","_COMPUTED_REF_PATTERN","_DATE_ONLY_FORMATS","_DURATION_UNIT_ALIASES","_MS_PER_DAY","_addCalendarDays","_addMonthsClamped","_calendarDayNumber","_coalesce","_computedFieldIsOverridden","_computedFieldState","_contains","_countTrue","_daysSince","_durationBetween","_durationText","_escapeRegExp","_evaluateComputedExpression","_exactDaysBetween","_exp","_extractComputedReferences","_floor","_getInterpretationRange","_hasAllReferencedValues","_hasValue","_iif","_isDateOnlyValue","_isSafeComputedExpression","_ln","_max","_min","_mod","_monthsSince","_normalizeCalculationPolicy","_normalizeComputedDisplayStyle","_normalizeDurationUnit","_numericExtrema","_parseDateOnlyString","_power","_replaceBareReferencesOutsideQuotes","_resolveDurationEndpoints","_round","_roundComputedValue","_score","_shouldApplyComputedValue","_stripQuotedStrings","_text","_toComparableValue","_toDateValue","_toDisplayValue","_toEditableComputedValue","_toNumericValue","_today","_wholeMonthsBetween","amount","anchor","bareRefs","bracketedRefs","canEdit","canShowInterpretation","candidate","computedValue","containerStyle","currentValue","cursor","date","dateOnly","days","digits","direct","displayValue","end","endpoints","enteredDisplayValue","externallyReadOnly","factor","from","interpretationRange","interpretationValue","isIncomplete","isOverridden","isProminent","labelColumnWidth","lastDay","markOverridden","match","max","min","monthIndex","monthLength","months","next","nextSegment","nonZero","normalizedStyle","normalizedUnit","now","numeric","numericDivisor","numericExponent","numericPrecision","numericValues","orderedUnits","pad","parsed","parts","passesMax","passesMin","policy","prepared","previousState","project","readOnly","reference","refs","renderedValue","replaceInSegment","replaced","result","rounded","roundedValue","shown","start","state","stateContainer","stateMatches","storedValue","stringPattern","strippedExpression","supplementalInset","tail","theme","to","trimmed","uniqueBareRefs","uniqueBracketedRefs","unwrappedExpression","useCalculatedValue","valid","valueMatches","valuesByFieldId","whole","wholeMonths"],
-  './ConditionalGroup/index.jsx': ["ConditionalField","ConditionalGroup","ConditionalGroupSchema","ConditionalReadOnly","ControllerLabelPresets","DISABLED_NATIVE_ELEMENTS","LogicGateContext","LogicGateProvider","MAX_SUBGROUP_DEPTH","READ_ONLY_NATIVE_ELEMENTS","activeFieldData","activePayloads","allParentsVisible","baseContainerStyle","baseContentStyle","becameHidden","checkChoiceMatch","checkComparisonMatch","checkControllerMatch","childContext","clippedField","cloneWithProtection","conditionMet","containerStyle","contentNode","contentRef","contentStyle","context","contextValue","controllerFieldId","controllerValue","controllerWrapperStyle","createBranchingRule","currentDepth","defaultPadding","depthIndicatorStyle","effectiveValue","evaluateConditionEntries","evaluateConditionEntry","fieldValue","fieldValues","frame","generateConditionalGroupJSX","generateGroup","getControllerValue","groupRect","handleControllerChange","hasMatch","hasStagedDco","hasStagedWebformUpdate","hiddenIndicatorStyle","indent","isDarkMode","isGroupVisible","isVisible","jsx","left","matches","mergeStyles","mode","nestedValue","nextProps","normalizeComparableValue","normalizeComparableValues","normalizeValue","normalized","normalizedOptionValues","orderedRules","override","overrides","parentChain","parentContext","payloads","props","protectedChildren","readControllerValue","rect","reportOverflow","result","right","rule","rules","shouldClearAnswer","theme","titleStyle","type","useConditionalVisibility","useIsVisible","useLogicGate","usesDisabledFallback","wasVisibleRef"],
+  './ConditionalGroup/index.jsx': ["ConditionalChoiceOptions","ConditionalField","ConditionalFieldBehavior","ConditionalGroup","ConditionalGroupSchema","ConditionalReadOnly","ControllerLabelPresets","DISABLED_NATIVE_ELEMENTS","FormBehaviorRuntime","FormLanguageSelector","LogicGateContext","LogicGateProvider","MAX_SUBGROUP_DEPTH","READ_ONLY_NATIVE_ELEMENTS","activeFieldData","activePayloads","adapt","allParentsVisible","baseContainerStyle","baseContentStyle","becameHidden","before","changed","checkChoiceMatch","checkComparisonMatch","checkControllerMatch","checkMeaningfulAnswer","childContext","clippedField","cloneWithProtection","compareFieldId","compareValue","conditionMet","containerStyle","contentNode","contentRef","contentStyle","context","contextValue","controllerFieldId","controllerValue","controllerWrapperStyle","copyResult","copyRule","copyState","createBranchingRule","current","currentDepth","defaultPadding","depthIndicatorStyle","edited","effectiveValue","empty","equal","errors","evaluateConditionEntries","evaluateConditionEntry","expected","fieldValue","fieldValues","frame","fresh","generateConditionalGroupJSX","generateGroup","getControllerValue","getValue","groupRect","handleControllerChange","hasMatch","hasStagedDco","hasStagedWebformUpdate","hidden","hiddenIndicatorStyle","indent","isDarkMode","isEmpty","isGroupVisible","isVisible","jsx","latestSource","latestValue","left","locale","matches","mayCopy","mergeStyles","mode","multiple","nestedValue","next","nextProps","normalizeComparableValue","normalizeComparableValues","normalizeValue","normalized","normalizedOptionValues","options","orderedRules","override","overrides","parentChain","parentContext","pass","payloads","policy","prior","props","protectedChildren","protectedField","rawOptions","readControllerValue","rect","reportOverflow","required","resolveFieldCopies","result","right","rule","rules","same","selected","setter","shouldClearAnswer","showRules","shows","source","state","stored","text","theme","titleStyle","translate","translateString","translated","type","useConditionalVisibility","useIsVisible","useLogicGate","userEdited","usesDisabledFallback","validateFieldBehaviors","value","values","wasVisibleRef"],
   './Conditions/index.jsx': ["Conditions","ConditionsFields","selectAllConditions"],
   './Connections/index.jsx': ["CONNECTIONS_SORTS","Connections","ConnectionsFields","SelectActiveConnections","byType","prop","resolvedCompare"],
   './ConversionField/index.jsx': ["ConversionField","ConversionFieldSchema","_asPositiveNumber","_asPrecision","_conversionPathSegments","_normalizeConversionRows","_readConversionPath","_readConversionValue","_sanitizeConversionNumber","activeFrom","activeTo","canUseFrom","canUseTo","char","clearValues","convertRow","current","fromValue","hasAnyValue","hasDecimal","index","lastEdited","lastEditedRef","next","nextValue","normalizedFromFieldId","normalizedToFieldId","parsed","parsedFrom","parsedTo","pathValue","rows","segments","setConversionValues","source","sourceFieldId","text","toValue","updateValue","updates"],

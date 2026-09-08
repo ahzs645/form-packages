@@ -1628,7 +1628,13 @@ const ChartAttachmentUpload = ({
     const validCodes = new Set(documentTypeOptions.map((option) => String(option.key)))
     setSelectedBatchTypeCodes((current) => {
       const valid = current.map(String).filter((code) => validCodes.has(code))
-      return valid.length > 0 ? valid : [fallbackCode]
+      const next = valid.length > 0 ? valid : [fallbackCode]
+      // Keep the existing array when the selection is unchanged. Hosts are not
+      // required to memoize useCodeList, and a host that returns a fresh array
+      // each render would otherwise make this effect re-render without end.
+      const unchanged = next.length === current.length
+        && next.every((code, index) => code === String(current[index]))
+      return unchanged ? current : next
     })
   }, [documentTypeCode, documentTypeOptions, selectedDocumentTypeCode])
 
@@ -6145,8 +6151,17 @@ const checkComparisonMatch = (fieldValue, operator, expectedValue) => {
   if (normalized === null || normalized === undefined || normalized === '') return false
 
   if (operator && operator.startsWith('number-')) {
-    const left = Number(normalized)
-    const right = Number(expectedValue)
+    // Numbers when both sides are numeric, dates otherwise: cross-field rules
+    // are mostly date order ("discharge before admission"), and Number() of an
+    // ISO date is NaN. Mirrors toOrderedPair in @webforms/form-model.
+    let left = Number(normalized)
+    const expected = normalizeComparableValue(expectedValue)
+    if (expected == null || String(expected).trim() === '') return false
+    let right = Number(expected)
+    if (!Number.isFinite(left) || !Number.isFinite(right)) {
+      left = Date.parse(String(normalized))
+      right = Date.parse(String(expected))
+    }
     if (!Number.isFinite(left) || !Number.isFinite(right)) return false
     if (operator === 'number-gt') return left > right
     if (operator === 'number-gte') return left >= right
@@ -6156,7 +6171,7 @@ const checkComparisonMatch = (fieldValue, operator, expectedValue) => {
   }
 
   const left = String(normalized)
-  const right = String(expectedValue ?? '')
+  const right = String(normalizeComparableValue(expectedValue) ?? '')
   return operator === 'not-equals' ? left !== right : left === right
 }
 
@@ -6166,6 +6181,7 @@ const checkComparisonMatch = (fieldValue, operator, expectedValue) => {
  * kept module-level (pure) so the node test harness can execute it directly.
  */
 const evaluateConditionEntry = (entry, getFieldValue) => {
+  if (entry && Array.isArray(entry.conditions)) return evaluateConditionEntries(entry.conditions, entry.match, getFieldValue)
   if (!entry || !entry.controllerFieldId || !entry.type) return false
   const fieldValue = getFieldValue(entry.controllerFieldId)
   const type = entry.type
@@ -6174,6 +6190,15 @@ const evaluateConditionEntry = (entry, getFieldValue) => {
   if (type === 'boolean-yes') return checkControllerMatch(fieldValue, 'yes')
   if (type === 'boolean-no') return checkControllerMatch(fieldValue, 'no')
   // equals / not-equals / filled / empty / number-* share the comparison matcher.
+  // compareFieldId makes the right-hand side another answer instead of a
+  // constant, which is what a cross-field rule needs. An unanswered compare
+  // field means no match, so a half-filled form raises nothing.
+  const compareFieldId = entry.compareFieldId || entry.valueFieldId
+  if (compareFieldId) {
+    const compareValue = getFieldValue(compareFieldId)
+    if (!checkComparisonMatch(compareValue, 'filled', null)) return false
+    return checkComparisonMatch(fieldValue, type, compareValue)
+  }
   return checkComparisonMatch(fieldValue, type, entry.value)
 }
 
@@ -6235,6 +6260,7 @@ const ConditionalReadOnly = ({
   match = 'all',
   action = 'set-readonly',
   protectionMode = 'both',
+  locked = false,
   rules,
   children,
 }) => {
@@ -6257,6 +6283,7 @@ const ConditionalReadOnly = ({
     return next
   }, {})
 
+  if (locked) { overrides.readOnly = true; overrides.disabled = true }
   if (overrides.readOnly === undefined && overrides.disabled === undefined) return <>{children}</>
 
   const protectedChildren = cloneWithProtection(children, overrides)
@@ -6308,6 +6335,7 @@ const ConditionalField = ({
   compareValue,
   conditions,
   match = 'all',
+  visibilityRules,
   invertMatch = false,
   showWhenNull = false,
   hiddenAnswerPolicy = 'preserve',
@@ -6322,7 +6350,11 @@ const ConditionalField = ({
   // Determine visibility based on mode
   let isVisible = true
 
-  if (mode === 'always') {
+  if (Array.isArray(visibilityRules) && visibilityRules.length) {
+    const matches = rule => evaluateConditionEntries(rule.conditions, rule.match, id => readControllerValue(fd?.field?.data, id))
+    const shows = visibilityRules.filter(rule => rule.action === 'show')
+    isVisible = (!shows.length || shows.some(matches)) && !visibilityRules.some(rule => rule.action === 'hide' && matches(rule))
+  } else if (mode === 'always') {
     // Always visible regardless of parent gates
     isVisible = true
   } else if (mode === 'controller' && Array.isArray(conditions) && conditions.length > 0) {
@@ -6574,6 +6606,209 @@ const ControllerLabelPresets = {
   completed: { on: 'Done', off: 'Pending' },
   /** Checked/Unchecked */
   checked: { on: 'Checked', off: 'Not Checked' },
+}
+
+/** Field-level extension. Uses MOIS props and narrow state recipes; never patches native controls. */
+const ConditionalFieldBehavior = ({ fieldId, rules = [], validations = [], optionRules = [], translations = {}, baseText = {}, required: baseRequired = false, requiredCapable = true, readOnly = false, locked = false, copyEnabled = true, children }) => {
+  const [fd, setFd] = useActiveData()
+  const getValue = (id) => readControllerValue(fd?.field?.data, id)
+  const matches = (group) => evaluateConditionEntries(group?.conditions, group?.match, getValue)
+  const locale = fd?.field?.status?.__formLocale || ''
+  const text = translations[locale] || {}
+  let required = baseRequired
+  rules.forEach(rule => {
+    if (matches(rule)) {
+      if (rule.action === 'set-required') required = requiredCapable
+      if (rule.action === 'clear-required') required = false
+    }
+  })
+  const value = getValue(fieldId)
+  const isEmpty = candidate => !checkMeaningfulAnswer(candidate)
+  const copyRule = [...rules].reverse().find(rule => rule.action === 'copy-value' && rule.copyFromFieldId !== fieldId && matches(rule))
+  const source = copyRule ? getValue(copyRule.copyFromFieldId) : undefined
+  const copyState = fd?.field?.data?.__fieldCopyState?.[fieldId]
+  const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b)
+  useEffect(() => {
+    if (!copyEnabled || !copyRule || readOnly || locked || source === undefined || equal(value, source)) return
+    const policy = copyRule.copyPolicy || 'when-empty'
+    const userEdited = copyState?.edited || (copyState && !equal(value, copyState.value))
+    const mayCopy = policy === 'always' || (policy === 'until-edited' ? !userEdited && (copyState || isEmpty(value)) : isEmpty(value))
+    const setter = fd?.setFormData || setFd
+    if (typeof setter !== 'function') return
+    if (!mayCopy && !(policy === 'until-edited' && userEdited && !copyState?.edited)) return
+    setter(produce(draft => {
+      if (!draft.field) draft.field = { data: {}, status: {} }
+      if (!draft.field.data) draft.field.data = {}
+      const latestValue = readControllerValue(draft.field.data, fieldId)
+      const latestSource = readControllerValue(draft.field.data, copyRule.copyFromFieldId)
+      if (!equal(latestValue, value) || !equal(latestSource, source)) return
+      if (!draft.field.data.__fieldCopyState) draft.field.data.__fieldCopyState = {}
+      if (mayCopy) {
+        draft.field.data[fieldId] = JSON.parse(JSON.stringify(source))
+        draft.field.data.__fieldCopyState[fieldId] = { value: source, edited: false }
+      } else draft.field.data.__fieldCopyState[fieldId] = { ...copyState, edited: true }
+    }))
+  }, [fd, setFd, fieldId, copyRule, source, value, readOnly, locked, copyEnabled])
+  const errors = isEmpty(value) ? [] : validations.filter(rule => !matches(rule.validWhen)).map(rule => rule.translations?.[locale] || rule.message)
+  const translateString = (value) => {
+    if (typeof value !== 'string') return value
+    for (const key of ['label', 'helpText', 'placeholder']) if (baseText[key] && value === baseText[key] && text[key]) return text[key]
+    return value
+  }
+  const adapt = nodes => React.Children.map(nodes, child => {
+    if (typeof child === 'string') return translateString(child)
+    if (!React.isValidElement(child)) return child
+    const props = {}
+    if (typeof child.type === 'string' || child.type === React.Fragment) {
+      if (child.props.children) props.children = adapt(child.props.children)
+      if (['input', 'select', 'textarea'].includes(child.type)) { props.required = required; if (locked || readOnly) { props.disabled = true; if (child.type !== 'select') props.readOnly = true } }
+    } else {
+      props.required = required
+      if (locked || readOnly) { props.readOnly = true; props.disabled = true }
+      if (child.props.onValidate || validations.length) props.onValidate = candidate => {
+        const prior = child.props.onValidate?.(candidate)
+        if (prior) return prior
+        if (isEmpty(candidate)) return undefined
+        return validations.find(rule => !evaluateConditionEntries(rule.validWhen.conditions, rule.validWhen.match, id => id === fieldId ? candidate : getValue(id)))?.translations?.[locale] || validations.find(rule => !evaluateConditionEntries(rule.validWhen.conditions, rule.validWhen.match, id => id === fieldId ? candidate : getValue(id)))?.message
+      }
+      for (const key of ['label', 'placeholder', 'note']) if (typeof child.props[key] === 'string') props[key] = translateString(child.props[key])
+      for (const key of ['options', 'codes', 'codeList', 'optionList']) {
+        const rawOptions = child.props[key]
+        if (!rawOptions || typeof rawOptions !== 'object') continue
+        const options = Array.isArray(rawOptions) ? rawOptions : Object.entries(rawOptions).map(([key, text]) => ({ key, text }))
+        props[key] = options.flatMap(option => {
+          const stored = typeof option === 'string' ? option : option.code ?? option.key ?? option.value ?? option.text
+          const rule = optionRules.find(rule => rule.value === String(stored))
+          if (rule?.showWhen && !matches(rule.showWhen)) return []
+          const translated = text.options?.[stored] || text.options?.[typeof option === "string" ? option : option.text ?? option.display ?? option.label]
+          if (typeof option === 'string') return [{ key: option, text: translated || option, code: option, display: translated || option, disabled: rule?.disableWhen ? matches(rule.disableWhen) : false }]
+          return [{ ...option, ...(translated ? { ...(option.text !== undefined ? { text: translated } : {}), ...(option.display !== undefined ? { display: translated } : {}), ...(option.label !== undefined ? { label: translated } : {}) } : {}), ...(rule?.disableWhen ? { disabled: matches(rule.disableWhen) } : {}) }]
+        })
+      }
+      if (child.props.children) props.children = adapt(child.props.children)
+      if (optionRules.length && Array.isArray(props.optionList) && child.props.fieldId === fieldId) return <ConditionalChoiceOptions {...child.props} {...props} />
+    }
+    return React.cloneElement(child, props)
+  })
+  return <>{adapt(children)}{errors.length > 0 && <div role='alert' style={{ color: '#a4262c', fontSize: 12 }}>{errors.join(' ')}</div>}</>
+}
+
+const FormLanguageSelector = ({ languages = [] }) => {
+  const [fd, setFd] = useActiveData()
+  return <label style={{ display: 'block', margin: '8px 0' }}>Language <select aria-label='Form language' value={fd?.field?.status?.__formLocale || ''} onChange={event => {
+    const locale = event.target.value
+    const setter = fd?.setFormData || setFd
+    setter(produce(draft => {
+      if (!draft.field) draft.field = { data: {}, status: {} }
+      if (!draft.field.status) draft.field.status = {}
+      draft.field.status.__formLocale = locale
+    }))
+  }}><option value=''>Default</option>{languages.map(locale => <option key={locale} value={locale}>{locale}</option>)}</select></label>
+}
+
+/** Submit validation reads current answers directly, including fields on unmounted pages. */
+const validateFieldBehaviors = (configs, values, locale = '', uiTranslations = {}) => {
+  const copyResult = resolveFieldCopies(configs, values)
+  if (copyResult.error) return [{ id: '_form', message: copyResult.error }]
+  const getValue = id => readControllerValue(values, id)
+  const matches = group => evaluateConditionEntries(group?.conditions, group?.match, getValue)
+  const empty = value => !checkMeaningfulAnswer(value)
+  const translate = source => uiTranslations[locale]?.[source] || source
+  return configs.flatMap(config => {
+    const showRules = config.rules.filter(rule => rule.action === 'show')
+    const hidden = config.hidden || (config.gates || []).some(gate => !matches(gate)) || (showRules.length > 0 && !showRules.some(matches)) || config.rules.some(rule => rule.action === 'hide' && matches(rule))
+    if (hidden) return []
+    let required = config.required
+    config.rules.forEach(rule => {
+      if (matches(rule)) {
+        if (rule.action === 'set-required') required = config.requiredCapable !== false
+        if (rule.action === 'clear-required') required = false
+      }
+    })
+    const value = getValue(config.fieldId)
+    if (empty(value)) return required ? [{ id: config.fieldId, message: translate(config.label + ' is required') }] : []
+    const errors = config.validations.filter(rule => !matches(rule.validWhen)).map(rule => ({ id: config.fieldId, message: rule.translations?.[locale] || rule.message }))
+    const selected = Array.isArray(value) ? value : [value]
+    if (config.optionRules.some(rule => selected.some(option => String(normalizeComparableValue(option)) === rule.value) && ((rule.showWhen && !matches(rule.showWhen)) || (rule.disableWhen && matches(rule.disableWhen))))) {
+      errors.push({ id: config.fieldId, message: translate(config.label + ': choose an available option') })
+    }
+    return errors
+  })
+}
+
+// Choice extension owns per-option disabling, which the faithful MOIS controls
+// do not implement uniformly. Values retain their original codes when translated.
+const checkMeaningfulAnswer = value => {
+  if (Array.isArray(value)) return value.some(checkMeaningfulAnswer)
+  const normalized = normalizeComparableValue(value)
+  return normalized !== undefined && normalized !== null && String(normalized).trim() !== ''
+}
+const ConditionalChoiceOptions = ({ fieldId, label, optionList, selectionType, required, readOnly, disabled, codeSystem, placeholder }) => {
+  const [fd, setFd] = useActiveData()
+  const current = readControllerValue(fd?.field?.data, fieldId)
+  const multiple = selectionType === 'multiple'
+  const selected = (Array.isArray(current) ? current : [current]).filter(v => v != null).map(v => String(normalizeComparableValue(v)))
+  const options = optionList.map(option => ({ ...option, code: String(option.code ?? option.key ?? option.value), display: option.display ?? option.text ?? option.label }))
+  return <label style={{ display: 'block', margin: '8px 0' }}>{label}{required ? ' *' : ''}<select aria-label={label || fieldId} required={required} disabled={readOnly || disabled} multiple={multiple} value={multiple ? selected : selected[0] || ''} style={{ display: 'block', padding: 6, minWidth: 180 }} onChange={event => {
+    const values = Array.from(event.target.selectedOptions).filter(option => !option.disabled && option.value !== '').map(option => {
+      const source = options.find(item => item.code === option.value)
+      return { code: source.code, display: source.display, ...(codeSystem ? { system: codeSystem } : {}) }
+    })
+    const setter = fd?.setFormData || setFd
+    setter(produce(draft => {
+      if (!draft.field) draft.field = { data: {}, status: {} }
+      if (!draft.field.data) draft.field.data = {}
+      draft.field.data[fieldId] = multiple ? values : values[0] || null
+    }))
+  }}>{!multiple && <option value=''>{placeholder || 'Select…'}</option>}{options.map(option => <option key={option.code} value={option.code} disabled={option.disabled}>{option.display}</option>)}</select></label>
+}
+
+/** Resolve all copy rules together, including targets on pages that are unmounted. */
+const resolveFieldCopies = (configs, original, locks = {}) => {
+  const next = JSON.parse(JSON.stringify(original || {}))
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b)
+  for (let pass = 0; pass < Math.min(configs.length + 2, 100); pass++) {
+    const before = JSON.stringify(next)
+    for (const config of configs) {
+      if (locks[config.fieldId]) continue
+      const matches = rule => evaluateConditionEntries(rule.conditions, rule.match, id => readControllerValue(next, id))
+      let protectedField = false
+      config.rules.forEach(rule => { if (matches(rule) && ['set-readonly', 'clear-readonly'].includes(rule.action)) protectedField = rule.action === 'set-readonly' })
+      if (protectedField) continue
+      const rule = [...config.rules].reverse().find(rule => rule.action === 'copy-value' && rule.copyFromFieldId !== config.fieldId && matches(rule))
+      if (!rule) continue
+      const source = readControllerValue(next, rule.copyFromFieldId)
+      const value = readControllerValue(next, config.fieldId)
+      if (source === undefined || same(source, value)) continue
+      const state = next.__fieldCopyState?.[config.fieldId]
+      const edited = state?.edited || (state && !same(value, state.value))
+      const policy = rule.copyPolicy || 'when-empty'
+      const mayCopy = policy === 'always' || (policy === 'until-edited' ? !edited && (state || !checkMeaningfulAnswer(value)) : !checkMeaningfulAnswer(value))
+      if (mayCopy) {
+        next[config.fieldId] = JSON.parse(JSON.stringify(source))
+        next.__fieldCopyState = { ...next.__fieldCopyState, [config.fieldId]: { value: source, edited: false } }
+      } else if (policy === 'until-edited' && edited && !state?.edited) next.__fieldCopyState = { ...next.__fieldCopyState, [config.fieldId]: { ...state, edited: true } }
+    }
+    if (before === JSON.stringify(next)) return { values: next, error: '' }
+  }
+  return { values: original, error: 'Copy rules did not settle. Check the dependency map for a cycle.' }
+}
+const FormBehaviorRuntime = ({ configs, locks = {} }) => {
+  const [fd, setFd] = useActiveData()
+  const result = resolveFieldCopies(configs, fd?.field?.data, locks)
+  const changed = JSON.stringify(result.values) !== JSON.stringify(fd?.field?.data || {})
+  useEffect(() => {
+    if (!changed || result.error) return
+    const setter = fd?.setFormData || setFd
+    if (typeof setter !== 'function') return
+    setter(produce(draft => {
+      const fresh = resolveFieldCopies(configs, draft?.field?.data, locks)
+      if (fresh.error || !draft?.field?.data) return
+      for (const config of configs) if (JSON.stringify(draft.field.data[config.fieldId]) !== JSON.stringify(fresh.values[config.fieldId])) draft.field.data[config.fieldId] = fresh.values[config.fieldId]
+      if (fresh.values.__fieldCopyState) draft.field.data.__fieldCopyState = fresh.values.__fieldCopyState
+    }))
+  }, [fd, setFd, configs, locks, changed, result.error])
+  return result.error ? <div role='alert'>{result.error}</div> : null
 }
 `,
   './Conditions/index.jsx': `
