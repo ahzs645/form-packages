@@ -26134,7 +26134,7 @@ const PatientContextDiagnostics = ({
       {patient ? (
         <p><strong>{textValue(patient.name)}</strong> · Chart {textValue(patient.chartNumber)} · Patient ID {textValue(patient.patientId)}<br />Source: <code>{source}</code></p>
       ) : <p role="status">No active patient context. Select a patient with Use Active, then open Preview.</p>}
-      <p>API capability snapshot{engineVersion ? \` · MOIS engine \${engineVersion}\` : " unavailable"}. Read only means no write adapter is mapped; the live read report did not test mutations. Access labels do not establish your current user's permissions. This panel does not write to the chart.</p>
+      <p>API capability snapshot{engineVersion ? \` · MOIS engine \${engineVersion}\` : " unavailable"}. Read only means no write adapter is mapped. Live write evidence applies only to the named operations and tested payloads. Access labels do not establish your current user's permissions. This panel does not write to the chart.</p>
       <p>Unavailable means no collection was supplied; empty means an array with zero records. Imported records can appear locally even when MOIS does not query them.</p>
       <label style={{ display: "block", marginBottom: 12 }}>Filter collections{" "}
         <input type="search" value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="e.g. observations" style={{ padding: 6, maxWidth: "100%" }} />
@@ -26151,7 +26151,7 @@ const PatientContextDiagnostics = ({
             const capability = registry.get(key)
             return <tr key={\`\${textValue(patient?.patientId)}:\${key}\`} data-collection={key}>
               <th scope="row" style={cellStyle}><code>{key}</code></th>
-              <td style={cellStyle}>{labels[capability?.access] || "Unclassified"}{capability?.liveReadVerified ? <div>Live read verified</div> : null}{capability?.discoveredMutationFields?.length ? <div>Write API discovered · execution unverified</div> : null}{capability?.note ? <details><summary>Access details</summary><p>{capability.note}</p></details> : null}</td>
+              <td style={cellStyle}>{labels[capability?.access] || "Unclassified"}{capability?.liveReadVerified ? <div>Live read verified</div> : null}{capability?.liveVerifiedWriteFields?.length ? <div>Live write/read-back reported: {capability.liveVerifiedWriteFields.join(", ")}</div> : capability?.discoveredMutationFields?.length ? <div>Write API discovered · execution unverified</div> : null}{capability?.note ? <details><summary>Access details</summary><p>{capability.note}</p></details> : null}</td>
               <td style={cellStyle}>{availability}</td>
               <td style={cellStyle}>{isArray ? value.length : "—"}</td>
               <td style={cellStyle}>{isArray && value.length > 0 ? <details><summary>Show samples</summary><pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxWidth: 520, maxHeight: 320, overflow: "auto" }}>{value.slice(0, limit).map(sampleText).join("\\n\\n")}</pre></details> : "—"}</td>
@@ -26179,6 +26179,7 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
   const [state, setState] = React.useState({ patientId, busy: false, message: "No live checks run yet.", rows: [], hasRun: false, schemaFields: [] })
   const [customQuery, setCustomQuery] = React.useState("query CustomPatientProbe($patientId: Int) { patient(id: $patientId) { patientId } }")
   const [customVariables, setCustomVariables] = React.useState('{"patientId":"$patientId"}')
+  const [testContext, setTestContext] = React.useState("{}")
   const [writeSelection, setWriteSelection] = React.useState("all")
   const [writeOverrides, setWriteOverrides] = React.useState("{}")
   const uncertainWrite = React.useRef(false)
@@ -26187,6 +26188,7 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
   const busy = React.useRef(false)
   React.useEffect(() => {
     if (pendingWrites.current) uncertainWrite.current = true
+    setTestContext("{}")
     setWriteOverrides("{}")
     setWriteSelection("all")
     epoch.current += 1
@@ -26286,12 +26288,12 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
           drugCode: { cdic: "WEBFORMS_TEST" },
           encounter: { patientId, first: 1 },
           findByName: { name: "WEBFORMS TEST", first: 1 },
-          findMatchingPatients: { ident: { patientId }, first: 1 },
+          findMatchingPatients: { ident: { firstName: patient?.name?.first, familyName: patient?.name?.family, birthDate: patient?.birthDate }, first: 1 },
           observation: { id: firstId("observations", "observationId") },
           patient: { id: patientId },
           task: { patientId, first: 1 },
           quickEntry: { recordType: "Observation" },
-          webform: { id: createdIds.webformId || sd?.webform?.webformId },
+          webform: { id: createdIds.webformId || sd?.webform?.webformId || sd?.formParams?.webformId },
           webformDefinition: { ...(definitionId ? { id: definitionId } : {}), first: 1 },
           webformResource: { webformDefinitionId: definitionId, first: 1 },
         }
@@ -26305,6 +26307,7 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
           rootResults.push(row)
           try {
             const supplied = configured?.["query:" + op.name]
+            if (op.name === "findMatchingPatients" && !supplied && (!patient?.name?.first || !patient?.name?.family || !patient?.birthDate)) throw new Error("Identity matching needs firstName, familyName and birthDate; patientId alone was rejected by the live server. Provide query:findMatchingPatients variables.")
             const defaults = varsByRoot[op.name] || (op.args.some((arg) => arg.name === "first") ? { first: 1 } : {})
             const vars = Object.fromEntries(Object.entries(supplied || defaults).filter(([, value]) => value !== undefined))
             for (const arg of op.args) if (arg.type.kind === "NON_NULL" && arg.defaultValue == null && vars[arg.name] == null) throw new Error(\`Needs \${arg.name}; provide query:\${op.name} variables in test inputs\`)
@@ -26339,7 +26342,13 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
         try { overrides = JSON.parse(writeOverrides || "{}") } catch (_) { throw new Error("Write inputs must be a JSON object keyed by mutation name.") }
         if (!overrides || Array.isArray(overrides) || typeof overrides !== "object") throw new Error("Write inputs must be a JSON object.")
         apiInventory = { ...apiInventory, executionStatus: "Write tests requested; see writeResults for actual outcomes" }
-        const marker = \`WEBFORMS TEST \${new Date().toISOString()} \${Math.random().toString(36).slice(2, 8)}\`
+        const context = JSON.parse(testContext || "{}")
+        if (!context || typeof context !== "object" || Array.isArray(context)) throw new Error("Test context must be a JSON object")
+        const contextId = (key) => { const value = Number(context[key]); if (!Number.isSafeInteger(value) || value <= 0) throw new Error(\`Set a valid \${key} in Test context, or provide explicit operation variables\`); return value }
+        const assignee = () => context.assignedTeamId ? { assignedTeamId: contextId("assignedTeamId") } : { assignedUserId: contextId("assignedUserId") }
+        // Keep markers below common clinical text limits; previous ISO markers
+        // were long enough to be truncated and could defeat ID recovery.
+        const marker = \`WEBFORMS TEST \${Date.now().toString(36)} \${Math.random().toString(36).slice(2, 6)}\`
         const date = new Date().toISOString().slice(0, 10)
         const now = new Date().toISOString()
         const ids = createdIds
@@ -26384,28 +26393,32 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
           changeDocument: () => ({ patientId, document: { documentId: 0, patientId, templateName: marker, note: marker, comment: marker, documentDate: date } }),
           changeHouseholdOccupant: () => ({ patientId, householdOccupant: { householdOccupantId: 0, patientId, quantity: 1, note: marker, startDate: date } }),
           changeLongTermMedication: () => ({ patientId, longTermMedication: { longTermMedicationId: 0, patientId, medication: marker, comment: "Synthetic test only", startDate: date } }),
-          changeObservations: () => ({ patientId, observationChanges: [{ ...observation, observationId: need("observationId"), value: marker + " UPDATED" }], panelChanges: [{ observationPanelId: 0, patientId, notes: marker, status: "F", interfaceType: "WEBFORM" }] }),
+          changeObservations: () => ({ patientId, observationChanges: [{ ...observation, observationId: need("observationId"), value: marker + " UPDATED" }] }),
+          changeObservationPanels: () => ({ patientId, panelChanges: [{ observationPanelId: 0, patientId, panelName: context.panelName || { code: "4548-4", display: marker, system: "pCLOCD" }, notes: marker, status: "F", interfaceType: "WEBFORM" }] }),
           changePatient: () => ({ patientId, newPatient: { shortNote: marker } }),
           changePatientAddress: () => ({ patientId, newAddress: { line2: marker } }),
-          changePatientContact: () => ({ patientId, newContact: { homeMessage: marker } }),
-          changePatientInsurance: () => ({ patientId, newInsurance: { insuranceNumber: "WEBFORMS-TEST", billingDepartment: marker } }),
-          changePatientName: () => ({ patientId, newNickName: { first: "WEBFORMS", family: "TEST", text: marker } }),
+          changePatientContact: () => ({ patientId, newContact: { homeMessage: patient?.telecom?.homeMessage === "Y" ? "N" : "Y" } }),
+          changePatientInsurance: () => ({ patientId, newInsurance: { insuranceNumber: "WF" + Date.now().toString(36).slice(-6) } }),
+          changePatientName: () => ({ patientId, newUsualName: { first: patient?.name?.first || "WEBFORMS", family: patient?.name?.family || "TEST" }, newNickName: { first: "WEBFORMS", family: "TEST", text: marker } }),
           changePrescription: () => ({ patientId, prescription: { prescriptionId: 0, patientId, medication: marker, comment: "Synthetic test only", orderDate: date } }),
           changeFavouriteMedication: () => ({ favouriteMedication: { favouriteMedicationId: 0, medication: marker, comment: "Synthetic test only" } }),
           changePrescriptionLog: () => ({ patientId, prescriptionLog: { prescriptionLogId: 0, createdDate: now, method: marker, logItems: [{ prescriptionId: need("prescriptionId"), medication: marker }] } }),
-          changeTask: () => ({ patientId, task: { taskId: 0, description: marker, note: marker, createdDate: date } }),
-          changeServiceEpisode: () => ({ patientId, serviceEpisode: { serviceEpisodeId: 0, patientId, note: marker, startDate: date } }),
+          changeTask: () => ({ patientId, task: { taskId: 0, ...assignee(), description: marker, note: marker, createdDate: date } }),
+          changeServiceEpisode: () => {
+            if (!context.service?.code || !context.service?.system) throw new Error("Set service coding in Test context; the previous empty service payload failed with a server null-reference error")
+            return { patientId, serviceEpisode: { serviceEpisodeId: 0, patientId, service: context.service, note: marker, startDate: date } }
+          },
           changeServiceEvent: () => ({ serviceEpisodeId: need("serviceEpisodeId"), serviceEvent: { serviceEventId: 0, serviceEpisodeId: need("serviceEpisodeId") } }),
-          createAppointment: () => ({ patientId, encounter: { encounterId: 0, patientId, appointmentDateTime: now, officeNote: marker } }),
+          createAppointment: () => ({ patientId, encounter: { encounterId: 0, patientId, providerId: contextId("providerId"), appointmentDateTime: now, officeNote: marker } }),
           changeEncounterNote: () => ({ patientId, encounterNote: { encounterNoteId: 0, encounterId: need("encounterId"), note: marker, noteCreationDate: date } }),
-          createDocumentTask: () => ({ documentId: need("documentId"), newTask: { taskId: 0, description: marker, note: marker } }),
-          createEncounterTask: () => ({ encounterId: need("encounterId"), newTask: { taskId: 0, description: marker, note: marker } }),
+          createDocumentTask: () => ({ documentId: need("documentId"), newTask: { taskId: 0, ...assignee(), description: marker, note: marker } }),
+          createEncounterTask: () => ({ encounterId: need("encounterId"), newTask: { taskId: 0, ...assignee(), description: marker, note: marker } }),
           createEncounterCorrespondence: () => ({ encounterId: need("encounterId"), correspondence: { correspondenceId: 0, when: now, person: "WEBFORMS TEST", note: marker } }),
           updateEncounter: () => ({ patientId, encounter: { encounterId: need("encounterId"), officeNote: marker + " UPDATED" } }),
           // SMOIS main.a75cc6b1 uses D / MOIS-ENCOUNTERSTATUS and SIGNED below.
           updateEncounterStatus: () => ({ patientId, encounterId: need("encounterId"), appointmentStatus: { code: "D", system: "MOIS-ENCOUNTERSTATUS" }, statusChangeDateTime: now }),
           registerNewPatient: () => ({ newPatient: { name: { first: "WEBFORMS", family: "TEST " + marker.slice(-6) }, note: marker } }),
-          addWebformDefinition: () => ({ webform: { webformDefinitionId: 0, name: marker, title: marker, owner: "WEBFORMS TEST", active: "N", formVersion: { major: 1, minor: 0, patch: 0 }, formdataSchema: "{}" } }),
+          addWebformDefinition: () => ({ webform: { webformDefinitionId: 0, name: "webforms_test_" + Date.now().toString(36) + "_" + marker.slice(-4), title: marker, owner: "WEBFORMS TEST", active: "N", buildVersion: date.replace(/-/g, ""), type: "ATTACHMENT", formVersion: { major: 1, minor: 0, patch: 0 }, formdataSchema: "{}" } }),
           addWebformResource: () => ({ resource: { webformDefinitionId: need("webformDefinitionId"), pathname: "diagnostic-test.txt", type: "file", mediaType: "text/plain", encoding: "utf-8", contents: marker } }),
           addWebform: () => ({ webform: { webformId: 0, webformDefinitionId: need("webformDefinitionId"), patientId, isDraft: "Y", formdata: JSON.stringify({ diagnostic: marker }), note: marker } }),
           updateWebform: () => ({ webform: { webformId: need("webformId"), patientId, note: marker + " UPDATED", formdata: JSON.stringify({ diagnostic: marker, updated: true }) } }),
@@ -26425,22 +26438,22 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
           deleteWebform: () => ({ webformId: need("webformId"), leaveOrphanDocument: false }),
           deleteWebformDefinition: () => ({ id: need("webformDefinitionId") }),
         }
-        const collectionByType = { Correspondence: "correspondences", FavouriteMedication: "favouriteMedications", Observation: "observations", AssociatedParty: "contacts", ChartPreference: "preferences", Connection: "connections", Document: "documents", HouseholdOccupant: "householdOccupants", LongTermMedication: "longTermMedications", Prescription: "prescriptions", PrescriptionLog: "prescriptionLogs", ServiceEpisode: "serviceEpisodes", Encounter: "encounters" }
-        const targetTypes = { changeFavouriteMedication: "FavouriteMedication", createEncounterCorrespondence: "Correspondence", addObservation: "Observation", changeAssociatedParty: "AssociatedParty", changeChartPreference: "ChartPreference", changeConnection: "Connection", changeDocument: "Document", changeHouseholdOccupant: "HouseholdOccupant", changeLongTermMedication: "LongTermMedication", changeObservations: "Observation", changePrescription: "Prescription", changePrescriptionLog: "PrescriptionLog", changeServiceEpisode: "ServiceEpisode", createAppointment: "Encounter" }
-        const ownKeys = { Correspondence: "correspondenceId", Observation: "observationId", AssociatedParty: "associatedPartyId", ChartPreference: "chartPreferenceId", Connection: "connectionId", Document: "documentId", HouseholdOccupant: "householdOccupantId", LongTermMedication: "longTermMedicationId", Prescription: "prescriptionId", PrescriptionLog: "prescriptionLogId", ServiceEpisode: "serviceEpisodeId", ServiceEvent: "serviceEventId", Encounter: "encounterId", MoisTask: "taskId", FavouriteMedication: "favouriteMedicationId", Webform: "webformId", WebformDefinition: "webformDefinitionId" }
+        const collectionByType = { ObservationPanel: "observationPanels", Correspondence: "correspondences", FavouriteMedication: "favouriteMedications", Observation: "observations", AssociatedParty: "contacts", ChartPreference: "preferences", Connection: "connections", Document: "documents", HouseholdOccupant: "householdOccupants", LongTermMedication: "longTermMedications", Prescription: "prescriptions", PrescriptionLog: "prescriptionLogs", ServiceEpisode: "serviceEpisodes", Encounter: "encounters" }
+        const targetTypes = { changeObservationPanels: "ObservationPanel", changeFavouriteMedication: "FavouriteMedication", createEncounterCorrespondence: "Correspondence", addObservation: "Observation", changeAssociatedParty: "AssociatedParty", changeChartPreference: "ChartPreference", changeConnection: "Connection", changeDocument: "Document", changeHouseholdOccupant: "HouseholdOccupant", changeLongTermMedication: "LongTermMedication", changeObservations: "Observation", changePrescription: "Prescription", changePrescriptionLog: "PrescriptionLog", changeServiceEpisode: "ServiceEpisode", createAppointment: "Encounter" }
+        const ownKeys = { ObservationPanel: "observationPanelId", Correspondence: "correspondenceId", Observation: "observationId", AssociatedParty: "associatedPartyId", ChartPreference: "chartPreferenceId", Connection: "connectionId", Document: "documentId", HouseholdOccupant: "householdOccupantId", LongTermMedication: "longTermMedicationId", Prescription: "prescriptionId", PrescriptionLog: "prescriptionLogId", ServiceEpisode: "serviceEpisodeId", ServiceEvent: "serviceEventId", Encounter: "encounterId", MoisTask: "taskId", FavouriteMedication: "favouriteMedicationId", Webform: "webformId", WebformDefinition: "webformDefinitionId" }
         const scalarSelection = async (typeName, recordIdKey = ownKeys[typeName]) => {
           const info = await inspect(typeName)
-          const allowed = new Set([recordIdKey, ...(typeName === "Webform" ? ["documentId"] : []), "patientId", "name", "title", "description", "value", "note", "comment", "medication", "preference", "subjectDetail", "method", "officeNote", "shortNote", "formdata"])
+          const allowed = new Set([recordIdKey, ...(typeName === "Webform" ? ["documentId"] : []), "patientId", "name", "title", "description", "value", "note", "notes", "comment", "medication", "preference", "subjectDetail", "method", "officeNote", "shortNote", "formdata"])
           return ["__typename", ...(info.fields || []).filter((f) => allowed.has(f.name) && !requiredArgs(f) && !isList(f.type) && ["SCALAR", "ENUM"].includes(namedType(f.type)?.kind)).map((f) => f.name)].join(" ")
         }
         const ordered = [...Object.keys(recipes), ...apiInventory.mutations.map((op) => op.name).filter((name) => !Object.prototype.hasOwnProperty.call(recipes, name))]
         const discovered = new Map(apiInventory.mutations.map((op) => [op.name, op]))
         for (const name of ordered) {
           if (!active()) break
-          const op = discovered.get(name)
+          const op = discovered.get(name === "changeObservationPanels" ? "changeObservations" : name)
           if (!op || (writeSelection !== "all" && writeSelection !== name)) continue
           if (writeSelection === "all" && writeResults.some((result) => result.operation === name && result.sent)) continue
-          const row = { operation: name, status: "Preparing", marker, verification: "Not performed", cleanup: "Test data is retained unless a dedicated delete probe succeeds" }
+          const row = { operation: name, graphqlField: op.name, status: "Preparing", marker, verification: "Not performed", cleanup: "Test data is retained unless a dedicated delete probe succeeds" }
           writeResults.push(row)
           update(\`Preparing \${name}…\`)
           let sent = false
@@ -26470,7 +26483,7 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
             const args = op.args.filter((arg) => vars[arg.name] !== undefined)
             const declarations = args.map((arg) => \`$\${arg.name}: \${typeText(arg.type)}\`).join(", ")
             const bindings = args.map((arg) => \`\${arg.name}: $\${arg.name}\`).join(", ")
-            row.query = \`mutation ProbeMoisWrite\${declarations ? "(" + declarations + ")" : ""} { \${name}\${bindings ? "(" + bindings + ")" : ""}\${selection} }\`
+            row.query = \`mutation ProbeMoisWrite\${declarations ? "(" + declarations + ")" : ""} { \${op.name}\${bindings ? "(" + bindings + ")" : ""}\${selection} }\`
             // Payloads stay on screen only; reports include field names, not values.
             row.inputFields = Object.keys(vars)
             row.variables = vars
@@ -26493,7 +26506,7 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
             sent = true
             row.sent = true
             const data = await request("ProbeMoisWrite", row.query, vars, true)
-            const result = data[name]
+            const result = data[op.name]
             const deletion = { deleteWebform: ["webform", "webformId", vars.webformId], deleteWebformDefinition: ["webformDefinition", "webformDefinitionId", vars.id], deleteEncounterCorrespondence: ["encounter", "correspondenceId", vars.correspondenceId] }[name]
             if (deletion) {
               const [rootName, key, deletedId] = deletion
@@ -26516,22 +26529,37 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
                 continue
               }
             }
-            if (result == null || (Array.isArray(result) && result.length === 0)) { row.status = "No result; persistence unverified"; continue }
-            row.status = "Mutation accepted; persistence unverified"
-            const returned = Array.isArray(result) ? result : [result]
+            row.status = result == null || (Array.isArray(result) && result.length === 0) ? "No result; persistence unverified" : "Mutation accepted; persistence unverified"
+            const returned = Array.isArray(result) ? result : result == null ? [] : [result]
             if (returned.some((r) => r?.patientId != null && name !== "registerNewPatient" && Number(r.patientId) !== patientId)) throw new Error("Returned patient differs from the active chart")
+            if (name === "registerNewPatient") {
+              const returnedId = returned.length === 1 ? Number(returned[0]?.patientId) : 0
+              const byId = Number.isSafeInteger(returnedId) && returnedId > 0
+              const rootName = byId ? "patient" : "findByName"
+              row.verificationQuery = byId ? \`query VerifyMoisWrite($id: Int) { patient(id: $id) { patientId note } }\` : \`query VerifyMoisWrite($name: String, $first: Int) { findByName(name: $name, first: $first) { patientId note } }\`
+              const nameText = [vars.newPatient?.name?.first, vars.newPatient?.name?.family].filter(Boolean).join(" ")
+              const check = await request("VerifyMoisWrite", row.verificationQuery, byId ? { id: returnedId } : { name: nameText, first: 10 })
+              const matches = (check[rootName] || []).filter((record) => record.note === marker && Number(record.patientId) > 0)
+              if (matches.length === 1) { row.recordId = Number(matches[0].patientId); ids.registeredPatientId = row.recordId; row.verification = "Verified: new patient note read back"; row.status = "Write verified" }
+              else row.verification = "New patient not uniquely verified on independent read"
+              update("Checked patient registration")
+              continue
+            }
             const records = nested ? returned.flatMap((record) => record[collection] || []) : returned
             const idKey = ownKeys[targetType]
             const marked = records.filter((record) => Object.values(record || {}).some((value) => typeof value === "string" && value.includes(marker)))
             const candidate = marked.length === 1 ? marked[0] : !nested && records.length === 1 && !name.startsWith("delete") ? records[0] : null
             if (name === "addWebform" && Number(candidate?.documentId) > 0) ids.webformDocumentId = Number(candidate.documentId)
             if (idKey && Number(candidate?.[idKey]) > 0) { ids[idKey] = Number(candidate[idKey]); row.recordId = ids[idKey] }
-            if (collection && !["correspondences", "favouriteMedications"].includes(collection) && idKey && row.recordId && !name.startsWith("delete")) {
+            if (collection && !["correspondences", "favouriteMedications"].includes(collection) && idKey && !name.startsWith("delete")) {
               const readQuery = \`query VerifyMoisWrite($patientId: Int) { patient(id: $patientId) { patientId \${collection} { \${await scalarSelection(recordType, ownKeys[targetType])} } } }\`
               row.verificationQuery = readQuery
               const readData = await request("VerifyMoisWrite", readQuery, { patientId })
               const chart = readData.patient?.find((p) => Number(p.patientId) === patientId)
-              const record = chart?.[collection]?.find((r) => Number(r[idKey]) === row.recordId)
+              const readRecords = chart?.[collection] || []
+              const matches = readRecords.filter((r) => Object.values(r).some((value) => typeof value === "string" && value.includes(marker)))
+              if (!row.recordId && matches.length === 1 && Number(matches[0][idKey]) > 0) { row.recordId = Number(matches[0][idKey]); ids[idKey] = row.recordId; row.idRecovery = "Unique marker found on independent read" }
+              const record = row.recordId ? readRecords.find((r) => Number(r[idKey]) === row.recordId) : null
               const expected = name === "changeObservations" ? marker + " UPDATED" : marker
               row.verification = record && Object.values(record).some((value) => typeof value === "string" && value.includes(expected)) ? "Verified: test marker read back" : record ? "Record ID read back; test value not verified" : "Not found on independent read"
               if (row.verification === "Verified: test marker read back") row.status = "Write verified"
@@ -26539,16 +26567,18 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
               const rootForType = { Webform: "webform", WebformDefinition: "webformDefinition", MoisTask: "task", FavouriteMedication: "favouriteMedication", Correspondence: "encounter" }
               const rootName = rootForType[targetType]
               const rootOp = apiInventory.queries.find((q) => q.name === rootName)
-              if (rootOp && row.recordId && !name.startsWith("delete")) {
+              if (rootOp && (row.recordId || ["MoisTask", "FavouriteMedication"].includes(targetType)) && !name.startsWith("delete")) {
                 const argName = targetType === "FavouriteMedication" ? "favouriteMedicationId" : "id"
                 const arg = rootOp.args.find((a) => a.name === argName)
                 if (arg) {
                   const readId = targetType === "Correspondence" ? need("encounterId") : row.recordId
                   const readSelection = targetType === "Correspondence" ? \`encounterId correspondences { \${await scalarSelection(recordType, ownKeys[targetType])} }\` : await scalarSelection(recordType, ownKeys[targetType])
-                  row.verificationQuery = \`query VerifyMoisWrite($id: \${typeText(arg.type)}) { \${rootName}(\${argName}: $id) { \${readSelection} } }\`
-                  const readData = await request("VerifyMoisWrite", row.verificationQuery, { id: readId })
+                  row.verificationQuery = row.recordId ? \`query VerifyMoisWrite($id: \${typeText(arg.type)}) { \${rootName}(\${argName}: $id) { \${readSelection} } }\` : targetType === "MoisTask" ? \`query VerifyMoisWrite($patientId: Int) { task(patientId: $patientId) { \${readSelection} } }\` : \`query VerifyMoisWrite { favouriteMedication { \${readSelection} } }\`
+                  const readData = await request("VerifyMoisWrite", row.verificationQuery, row.recordId ? { id: readId } : targetType === "MoisTask" ? { patientId } : {})
                   const readRecords = targetType === "Correspondence" ? (readData[rootName] || []).flatMap((r) => r.correspondences || []) : readData[rootName] || []
-                  const record = readRecords.find((r) => Number(r[idKey]) === row.recordId)
+                  const matches = readRecords.filter((r) => Object.values(r).some((value) => typeof value === "string" && value.includes(marker)))
+                  if (!row.recordId && matches.length === 1 && Number(matches[0][idKey]) > 0) { row.recordId = Number(matches[0][idKey]); ids[idKey] = row.recordId; row.idRecovery = "Unique marker found on independent read" }
+                  const record = row.recordId ? readRecords.find((r) => Number(r[idKey]) === row.recordId) : null
                   row.verification = record && Object.values(record).some((value) => typeof value === "string" && value.includes(marker)) ? "Verified: test marker read back" : record ? "Record ID read back; test value not verified" : "Not found on independent read"
                   if (row.verification === "Verified: test marker read back") row.status = "Write verified"
                 }
@@ -26563,7 +26593,7 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
                 row.verification = value === expected ? "Verified: submitted field read back" : "Submitted field did not match independent read"
                 if (value === expected) row.status = "Write verified"
               }
-              if (row.verification === "Not performed") row.verification = "No independent read-back adapter for this operation"
+              if (row.verification === "Not performed") row.verification = rootOp ? "Read-back requires a usable record ID or supported marker search" : "No independent read-back adapter for this operation"
             }
           } catch (error) {
             row.status = sent ? "Write or verification error; inspect outcome" : "Not attempted"
@@ -26688,7 +26718,7 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
   }
   const report = JSON.stringify({
     reportType: "mois-patient-context-live-query",
-    reportVersion: 3,
+    reportVersion: 4,
     writeResults: (current.writeResults || []).map(({ variables, ...result }) => result),
     rootQueryResults: current.rootResults || [],
     customOperations: (current.customResults || []).map(({ response, ...result }) => result),
@@ -26727,7 +26757,10 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
       <button type="button" disabled={!ready || current.busy} onClick={() => run("custom")}>Run custom operation</button>
       {(current.customResults || []).map((row, index) => <details key={index}><summary>{row.operation} — {row.status}</summary>{row.error ? <p>{row.error}</p> : null}{row.response ? <textarea aria-label={\`Custom response \${index + 1}\`} readOnly value={row.response} rows={10} style={{ width: "100%", fontFamily: "monospace" }} /> : null}</details>)}
     </details>
-    <label>Write operation <select aria-label="Write operation" value={writeSelection} disabled={current.busy} onChange={(event) => setWriteSelection(event.target.value)}><option value="all">All unattempted operations</option>{(current.apiInventory?.mutations || []).map((operation) => <option key={operation.name} value={operation.name}>{operation.name}</option>)}</select></label>
+    <label>Write operation <select aria-label="Write operation" value={writeSelection} disabled={current.busy} onChange={(event) => setWriteSelection(event.target.value)}><option value="all">All unattempted operations</option><option value="changeObservationPanels">changeObservations — separate panel probe</option>{(current.apiInventory?.mutations || []).map((operation) => <option key={operation.name} value={operation.name}>{operation.name}</option>)}</select></label>
+    <details><summary>Test context</summary><p>Provide real test-instance IDs and codes once: providerId for appointments; assignedUserId or assignedTeamId for tasks; service with code/system/display for service episodes. Optional panelName overrides the vendor test panel coding. Missing context is reported before sending a write.</p>
+      <textarea aria-label="Test context JSON" value={testContext} disabled={current.busy} onChange={(event) => setTestContext(event.target.value)} rows={5} style={{ width: "100%", fontFamily: "monospace" }} />
+    </details>
     <details><summary>Write test inputs</summary>
       <button type="button" disabled={current.busy || writeSelection === "all" || !(current.writeResults || []).some((row) => row.operation === writeSelection && row.variables)} onClick={() => { const row = [...current.writeResults].reverse().find((entry) => entry.operation === writeSelection && entry.variables); setWriteOverrides(JSON.stringify({ [writeSelection]: row.variables }, null, 2)) }}>Load last inputs for selected operation</button><p>Default probes use a unique WEBFORMS TEST marker. For operations requiring local codes or IDs, provide complete GraphQL variables keyed by mutation name (or query:name for root reads). Overrides replace that operation's defaults. Use "$created.encounterId" (or another created ID key) to reference a record from this session and "$patientId" for the active chart. All unattempted skips previously sent mutations; choose one operation explicitly to retry it. Created IDs survive retries until the chart changes or the form closes. Fax delivery requires selecting sendFax individually and providing an account and explicit test recipients. Update and delete defaults target records created during this run.</p>
       <textarea aria-label="Write variable overrides JSON" value={writeOverrides} disabled={current.busy} onChange={(event) => setWriteOverrides(event.target.value)} rows={6} style={{ width: "100%", fontFamily: "monospace" }} />
@@ -37846,7 +37879,7 @@ export const componentIdentities: Record<string, any> = {
     "description": "Inspect active patient collections, availability, sample records, and the packaged MOIS API capability snapshot without chart writes.",
     "version": {
       "major": 1,
-      "minor": 2,
+      "minor": 3,
       "patch": 0
     },
     "type": "component",
@@ -37859,7 +37892,7 @@ export const componentIdentities: Record<string, any> = {
     "description": "Live MOIS API laboratory: schema discovery, patient and root reads, explicit synthetic mutation probes, read-back verification and JSON reports.",
     "version": {
       "major": 1,
-      "minor": 2,
+      "minor": 3,
       "patch": 0
     },
     "type": "component",

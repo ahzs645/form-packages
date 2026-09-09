@@ -28003,7 +28003,7 @@ const PatientContextDiagnostics = ({
     }
   }, title), patient ? /*#__PURE__*/React.createElement("p", null, /*#__PURE__*/React.createElement("strong", null, textValue(patient.name)), " \\xB7 Chart ", textValue(patient.chartNumber), " \\xB7 Patient ID ", textValue(patient.patientId), /*#__PURE__*/React.createElement("br", null), "Source: ", /*#__PURE__*/React.createElement("code", null, source)) : /*#__PURE__*/React.createElement("p", {
     role: "status"
-  }, "No active patient context. Select a patient with Use Active, then open Preview."), /*#__PURE__*/React.createElement("p", null, "API capability snapshot", engineVersion ? \` · MOIS engine \${engineVersion}\` : " unavailable", ". Read only means no write adapter is mapped; the live read report did not test mutations. Access labels do not establish your current user's permissions. This panel does not write to the chart."), /*#__PURE__*/React.createElement("p", null, "Unavailable means no collection was supplied; empty means an array with zero records. Imported records can appear locally even when MOIS does not query them."), /*#__PURE__*/React.createElement("label", {
+  }, "No active patient context. Select a patient with Use Active, then open Preview."), /*#__PURE__*/React.createElement("p", null, "API capability snapshot", engineVersion ? \` · MOIS engine \${engineVersion}\` : " unavailable", ". Read only means no write adapter is mapped. Live write evidence applies only to the named operations and tested payloads. Access labels do not establish your current user's permissions. This panel does not write to the chart."), /*#__PURE__*/React.createElement("p", null, "Unavailable means no collection was supplied; empty means an array with zero records. Imported records can appear locally even when MOIS does not query them."), /*#__PURE__*/React.createElement("label", {
     style: {
       display: "block",
       marginBottom: 12
@@ -28050,7 +28050,7 @@ const PatientContextDiagnostics = ({
       style: cellStyle
     }, /*#__PURE__*/React.createElement("code", null, key)), /*#__PURE__*/React.createElement("td", {
       style: cellStyle
-    }, labels[capability?.access] || "Unclassified", capability?.liveReadVerified ? /*#__PURE__*/React.createElement("div", null, "Live read verified") : null, capability?.discoveredMutationFields?.length ? /*#__PURE__*/React.createElement("div", null, "Write API discovered \\xB7 execution unverified") : null, capability?.note ? /*#__PURE__*/React.createElement("details", null, /*#__PURE__*/React.createElement("summary", null, "Access details"), /*#__PURE__*/React.createElement("p", null, capability.note)) : null), /*#__PURE__*/React.createElement("td", {
+    }, labels[capability?.access] || "Unclassified", capability?.liveReadVerified ? /*#__PURE__*/React.createElement("div", null, "Live read verified") : null, capability?.liveVerifiedWriteFields?.length ? /*#__PURE__*/React.createElement("div", null, "Live write/read-back reported: ", capability.liveVerifiedWriteFields.join(", ")) : capability?.discoveredMutationFields?.length ? /*#__PURE__*/React.createElement("div", null, "Write API discovered \\xB7 execution unverified") : null, capability?.note ? /*#__PURE__*/React.createElement("details", null, /*#__PURE__*/React.createElement("summary", null, "Access details"), /*#__PURE__*/React.createElement("p", null, capability.note)) : null), /*#__PURE__*/React.createElement("td", {
       style: cellStyle
     }, availability), /*#__PURE__*/React.createElement("td", {
       style: cellStyle
@@ -28094,6 +28094,7 @@ const PatientContextQueryTest = ({
   });
   const [customQuery, setCustomQuery] = React.useState("query CustomPatientProbe($patientId: Int) { patient(id: $patientId) { patientId } }");
   const [customVariables, setCustomVariables] = React.useState('{"patientId":"$patientId"}');
+  const [testContext, setTestContext] = React.useState("{}");
   const [writeSelection, setWriteSelection] = React.useState("all");
   const [writeOverrides, setWriteOverrides] = React.useState("{}");
   const uncertainWrite = React.useRef(false);
@@ -28102,6 +28103,7 @@ const PatientContextQueryTest = ({
   const busy = React.useRef(false);
   React.useEffect(() => {
     if (pendingWrites.current) uncertainWrite.current = true;
+    setTestContext("{}");
     setWriteOverrides("{}");
     setWriteSelection("all");
     epoch.current += 1;
@@ -28262,7 +28264,9 @@ const PatientContextQueryTest = ({
           },
           findMatchingPatients: {
             ident: {
-              patientId
+              firstName: patient?.name?.first,
+              familyName: patient?.name?.family,
+              birthDate: patient?.birthDate
             },
             first: 1
           },
@@ -28280,7 +28284,7 @@ const PatientContextQueryTest = ({
             recordType: "Observation"
           },
           webform: {
-            id: createdIds.webformId || sd?.webform?.webformId
+            id: createdIds.webformId || sd?.webform?.webformId || sd?.formParams?.webformId
           },
           webformDefinition: {
             ...(definitionId ? {
@@ -28310,6 +28314,7 @@ const PatientContextQueryTest = ({
           rootResults.push(row);
           try {
             const supplied = configured?.["query:" + op.name];
+            if (op.name === "findMatchingPatients" && !supplied && (!patient?.name?.first || !patient?.name?.family || !patient?.birthDate)) throw new Error("Identity matching needs firstName, familyName and birthDate; patientId alone was rejected by the live server. Provide query:findMatchingPatients variables.");
             const defaults = varsByRoot[op.name] || (op.args.some(arg => arg.name === "first") ? {
               first: 1
             } : {});
@@ -28358,7 +28363,21 @@ const PatientContextQueryTest = ({
           ...apiInventory,
           executionStatus: "Write tests requested; see writeResults for actual outcomes"
         };
-        const marker = \`WEBFORMS TEST \${new Date().toISOString()} \${Math.random().toString(36).slice(2, 8)}\`;
+        const context = JSON.parse(testContext || "{}");
+        if (!context || typeof context !== "object" || Array.isArray(context)) throw new Error("Test context must be a JSON object");
+        const contextId = key => {
+          const value = Number(context[key]);
+          if (!Number.isSafeInteger(value) || value <= 0) throw new Error(\`Set a valid \${key} in Test context, or provide explicit operation variables\`);
+          return value;
+        };
+        const assignee = () => context.assignedTeamId ? {
+          assignedTeamId: contextId("assignedTeamId")
+        } : {
+          assignedUserId: contextId("assignedUserId")
+        };
+        // Keep markers below common clinical text limits; previous ISO markers
+        // were long enough to be truncated and could defeat ID recovery.
+        const marker = \`WEBFORMS TEST \${Date.now().toString(36)} \${Math.random().toString(36).slice(2, 6)}\`;
         const date = new Date().toISOString().slice(0, 10);
         const now = new Date().toISOString();
         const ids = createdIds;
@@ -28486,10 +28505,18 @@ const PatientContextQueryTest = ({
               ...observation,
               observationId: need("observationId"),
               value: marker + " UPDATED"
-            }],
+            }]
+          }),
+          changeObservationPanels: () => ({
+            patientId,
             panelChanges: [{
               observationPanelId: 0,
               patientId,
+              panelName: context.panelName || {
+                code: "4548-4",
+                display: marker,
+                system: "pCLOCD"
+              },
               notes: marker,
               status: "F",
               interfaceType: "WEBFORM"
@@ -28510,18 +28537,21 @@ const PatientContextQueryTest = ({
           changePatientContact: () => ({
             patientId,
             newContact: {
-              homeMessage: marker
+              homeMessage: patient?.telecom?.homeMessage === "Y" ? "N" : "Y"
             }
           }),
           changePatientInsurance: () => ({
             patientId,
             newInsurance: {
-              insuranceNumber: "WEBFORMS-TEST",
-              billingDepartment: marker
+              insuranceNumber: "WF" + Date.now().toString(36).slice(-6)
             }
           }),
           changePatientName: () => ({
             patientId,
+            newUsualName: {
+              first: patient?.name?.first || "WEBFORMS",
+              family: patient?.name?.family || "TEST"
+            },
             newNickName: {
               first: "WEBFORMS",
               family: "TEST",
@@ -28561,20 +28591,25 @@ const PatientContextQueryTest = ({
             patientId,
             task: {
               taskId: 0,
+              ...assignee(),
               description: marker,
               note: marker,
               createdDate: date
             }
           }),
-          changeServiceEpisode: () => ({
-            patientId,
-            serviceEpisode: {
-              serviceEpisodeId: 0,
+          changeServiceEpisode: () => {
+            if (!context.service?.code || !context.service?.system) throw new Error("Set service coding in Test context; the previous empty service payload failed with a server null-reference error");
+            return {
               patientId,
-              note: marker,
-              startDate: date
-            }
-          }),
+              serviceEpisode: {
+                serviceEpisodeId: 0,
+                patientId,
+                service: context.service,
+                note: marker,
+                startDate: date
+              }
+            };
+          },
           changeServiceEvent: () => ({
             serviceEpisodeId: need("serviceEpisodeId"),
             serviceEvent: {
@@ -28587,6 +28622,7 @@ const PatientContextQueryTest = ({
             encounter: {
               encounterId: 0,
               patientId,
+              providerId: contextId("providerId"),
               appointmentDateTime: now,
               officeNote: marker
             }
@@ -28604,6 +28640,7 @@ const PatientContextQueryTest = ({
             documentId: need("documentId"),
             newTask: {
               taskId: 0,
+              ...assignee(),
               description: marker,
               note: marker
             }
@@ -28612,6 +28649,7 @@ const PatientContextQueryTest = ({
             encounterId: need("encounterId"),
             newTask: {
               taskId: 0,
+              ...assignee(),
               description: marker,
               note: marker
             }
@@ -28654,10 +28692,12 @@ const PatientContextQueryTest = ({
           addWebformDefinition: () => ({
             webform: {
               webformDefinitionId: 0,
-              name: marker,
+              name: "webforms_test_" + Date.now().toString(36) + "_" + marker.slice(-4),
               title: marker,
               owner: "WEBFORMS TEST",
               active: "N",
+              buildVersion: date.replace(/-/g, ""),
+              type: "ATTACHMENT",
               formVersion: {
                 major: 1,
                 minor: 0,
@@ -28743,6 +28783,7 @@ const PatientContextQueryTest = ({
           })
         };
         const collectionByType = {
+          ObservationPanel: "observationPanels",
           Correspondence: "correspondences",
           FavouriteMedication: "favouriteMedications",
           Observation: "observations",
@@ -28758,6 +28799,7 @@ const PatientContextQueryTest = ({
           Encounter: "encounters"
         };
         const targetTypes = {
+          changeObservationPanels: "ObservationPanel",
           changeFavouriteMedication: "FavouriteMedication",
           createEncounterCorrespondence: "Correspondence",
           addObservation: "Observation",
@@ -28774,6 +28816,7 @@ const PatientContextQueryTest = ({
           createAppointment: "Encounter"
         };
         const ownKeys = {
+          ObservationPanel: "observationPanelId",
           Correspondence: "correspondenceId",
           Observation: "observationId",
           AssociatedParty: "associatedPartyId",
@@ -28794,18 +28837,19 @@ const PatientContextQueryTest = ({
         };
         const scalarSelection = async (typeName, recordIdKey = ownKeys[typeName]) => {
           const info = await inspect(typeName);
-          const allowed = new Set([recordIdKey, ...(typeName === "Webform" ? ["documentId"] : []), "patientId", "name", "title", "description", "value", "note", "comment", "medication", "preference", "subjectDetail", "method", "officeNote", "shortNote", "formdata"]);
+          const allowed = new Set([recordIdKey, ...(typeName === "Webform" ? ["documentId"] : []), "patientId", "name", "title", "description", "value", "note", "notes", "comment", "medication", "preference", "subjectDetail", "method", "officeNote", "shortNote", "formdata"]);
           return ["__typename", ...(info.fields || []).filter(f => allowed.has(f.name) && !requiredArgs(f) && !isList(f.type) && ["SCALAR", "ENUM"].includes(namedType(f.type)?.kind)).map(f => f.name)].join(" ");
         };
         const ordered = [...Object.keys(recipes), ...apiInventory.mutations.map(op => op.name).filter(name => !Object.prototype.hasOwnProperty.call(recipes, name))];
         const discovered = new Map(apiInventory.mutations.map(op => [op.name, op]));
         for (const name of ordered) {
           if (!active()) break;
-          const op = discovered.get(name);
+          const op = discovered.get(name === "changeObservationPanels" ? "changeObservations" : name);
           if (!op || writeSelection !== "all" && writeSelection !== name) continue;
           if (writeSelection === "all" && writeResults.some(result => result.operation === name && result.sent)) continue;
           const row = {
             operation: name,
+            graphqlField: op.name,
             status: "Preparing",
             marker,
             verification: "Not performed",
@@ -28844,7 +28888,7 @@ const PatientContextQueryTest = ({
             const args = op.args.filter(arg => vars[arg.name] !== undefined);
             const declarations = args.map(arg => \`$\${arg.name}: \${typeText(arg.type)}\`).join(", ");
             const bindings = args.map(arg => \`\${arg.name}: $\${arg.name}\`).join(", ");
-            row.query = \`mutation ProbeMoisWrite\${declarations ? "(" + declarations + ")" : ""} { \${name}\${bindings ? "(" + bindings + ")" : ""}\${selection} }\`;
+            row.query = \`mutation ProbeMoisWrite\${declarations ? "(" + declarations + ")" : ""} { \${op.name}\${bindings ? "(" + bindings + ")" : ""}\${selection} }\`;
             // Payloads stay on screen only; reports include field names, not values.
             row.inputFields = Object.keys(vars);
             row.variables = vars;
@@ -28873,7 +28917,7 @@ const PatientContextQueryTest = ({
             sent = true;
             row.sent = true;
             const data = await request("ProbeMoisWrite", row.query, vars, true);
-            const result = data[name];
+            const result = data[op.name];
             const deletion = {
               deleteWebform: ["webform", "webformId", vars.webformId],
               deleteWebformDefinition: ["webformDefinition", "webformDefinitionId", vars.id],
@@ -28902,13 +28946,31 @@ const PatientContextQueryTest = ({
                 continue;
               }
             }
-            if (result == null || Array.isArray(result) && result.length === 0) {
-              row.status = "No result; persistence unverified";
+            row.status = result == null || Array.isArray(result) && result.length === 0 ? "No result; persistence unverified" : "Mutation accepted; persistence unverified";
+            const returned = Array.isArray(result) ? result : result == null ? [] : [result];
+            if (returned.some(r => r?.patientId != null && name !== "registerNewPatient" && Number(r.patientId) !== patientId)) throw new Error("Returned patient differs from the active chart");
+            if (name === "registerNewPatient") {
+              const returnedId = returned.length === 1 ? Number(returned[0]?.patientId) : 0;
+              const byId = Number.isSafeInteger(returnedId) && returnedId > 0;
+              const rootName = byId ? "patient" : "findByName";
+              row.verificationQuery = byId ? \`query VerifyMoisWrite($id: Int) { patient(id: $id) { patientId note } }\` : \`query VerifyMoisWrite($name: String, $first: Int) { findByName(name: $name, first: $first) { patientId note } }\`;
+              const nameText = [vars.newPatient?.name?.first, vars.newPatient?.name?.family].filter(Boolean).join(" ");
+              const check = await request("VerifyMoisWrite", row.verificationQuery, byId ? {
+                id: returnedId
+              } : {
+                name: nameText,
+                first: 10
+              });
+              const matches = (check[rootName] || []).filter(record => record.note === marker && Number(record.patientId) > 0);
+              if (matches.length === 1) {
+                row.recordId = Number(matches[0].patientId);
+                ids.registeredPatientId = row.recordId;
+                row.verification = "Verified: new patient note read back";
+                row.status = "Write verified";
+              } else row.verification = "New patient not uniquely verified on independent read";
+              update("Checked patient registration");
               continue;
             }
-            row.status = "Mutation accepted; persistence unverified";
-            const returned = Array.isArray(result) ? result : [result];
-            if (returned.some(r => r?.patientId != null && name !== "registerNewPatient" && Number(r.patientId) !== patientId)) throw new Error("Returned patient differs from the active chart");
             const records = nested ? returned.flatMap(record => record[collection] || []) : returned;
             const idKey = ownKeys[targetType];
             const marked = records.filter(record => Object.values(record || {}).some(value => typeof value === "string" && value.includes(marker)));
@@ -28918,14 +28980,21 @@ const PatientContextQueryTest = ({
               ids[idKey] = Number(candidate[idKey]);
               row.recordId = ids[idKey];
             }
-            if (collection && !["correspondences", "favouriteMedications"].includes(collection) && idKey && row.recordId && !name.startsWith("delete")) {
+            if (collection && !["correspondences", "favouriteMedications"].includes(collection) && idKey && !name.startsWith("delete")) {
               const readQuery = \`query VerifyMoisWrite($patientId: Int) { patient(id: $patientId) { patientId \${collection} { \${await scalarSelection(recordType, ownKeys[targetType])} } } }\`;
               row.verificationQuery = readQuery;
               const readData = await request("VerifyMoisWrite", readQuery, {
                 patientId
               });
               const chart = readData.patient?.find(p => Number(p.patientId) === patientId);
-              const record = chart?.[collection]?.find(r => Number(r[idKey]) === row.recordId);
+              const readRecords = chart?.[collection] || [];
+              const matches = readRecords.filter(r => Object.values(r).some(value => typeof value === "string" && value.includes(marker)));
+              if (!row.recordId && matches.length === 1 && Number(matches[0][idKey]) > 0) {
+                row.recordId = Number(matches[0][idKey]);
+                ids[idKey] = row.recordId;
+                row.idRecovery = "Unique marker found on independent read";
+              }
+              const record = row.recordId ? readRecords.find(r => Number(r[idKey]) === row.recordId) : null;
               const expected = name === "changeObservations" ? marker + " UPDATED" : marker;
               row.verification = record && Object.values(record).some(value => typeof value === "string" && value.includes(expected)) ? "Verified: test marker read back" : record ? "Record ID read back; test value not verified" : "Not found on independent read";
               if (row.verification === "Verified: test marker read back") row.status = "Write verified";
@@ -28939,18 +29008,26 @@ const PatientContextQueryTest = ({
               };
               const rootName = rootForType[targetType];
               const rootOp = apiInventory.queries.find(q => q.name === rootName);
-              if (rootOp && row.recordId && !name.startsWith("delete")) {
+              if (rootOp && (row.recordId || ["MoisTask", "FavouriteMedication"].includes(targetType)) && !name.startsWith("delete")) {
                 const argName = targetType === "FavouriteMedication" ? "favouriteMedicationId" : "id";
                 const arg = rootOp.args.find(a => a.name === argName);
                 if (arg) {
                   const readId = targetType === "Correspondence" ? need("encounterId") : row.recordId;
                   const readSelection = targetType === "Correspondence" ? \`encounterId correspondences { \${await scalarSelection(recordType, ownKeys[targetType])} }\` : await scalarSelection(recordType, ownKeys[targetType]);
-                  row.verificationQuery = \`query VerifyMoisWrite($id: \${typeText(arg.type)}) { \${rootName}(\${argName}: $id) { \${readSelection} } }\`;
-                  const readData = await request("VerifyMoisWrite", row.verificationQuery, {
+                  row.verificationQuery = row.recordId ? \`query VerifyMoisWrite($id: \${typeText(arg.type)}) { \${rootName}(\${argName}: $id) { \${readSelection} } }\` : targetType === "MoisTask" ? \`query VerifyMoisWrite($patientId: Int) { task(patientId: $patientId) { \${readSelection} } }\` : \`query VerifyMoisWrite { favouriteMedication { \${readSelection} } }\`;
+                  const readData = await request("VerifyMoisWrite", row.verificationQuery, row.recordId ? {
                     id: readId
-                  });
+                  } : targetType === "MoisTask" ? {
+                    patientId
+                  } : {});
                   const readRecords = targetType === "Correspondence" ? (readData[rootName] || []).flatMap(r => r.correspondences || []) : readData[rootName] || [];
-                  const record = readRecords.find(r => Number(r[idKey]) === row.recordId);
+                  const matches = readRecords.filter(r => Object.values(r).some(value => typeof value === "string" && value.includes(marker)));
+                  if (!row.recordId && matches.length === 1 && Number(matches[0][idKey]) > 0) {
+                    row.recordId = Number(matches[0][idKey]);
+                    ids[idKey] = row.recordId;
+                    row.idRecovery = "Unique marker found on independent read";
+                  }
+                  const record = row.recordId ? readRecords.find(r => Number(r[idKey]) === row.recordId) : null;
                   row.verification = record && Object.values(record).some(value => typeof value === "string" && value.includes(marker)) ? "Verified: test marker read back" : record ? "Record ID read back; test value not verified" : "Not found on independent read";
                   if (row.verification === "Verified: test marker read back") row.status = "Write verified";
                 }
@@ -28973,7 +29050,7 @@ const PatientContextQueryTest = ({
                 row.verification = value === expected ? "Verified: submitted field read back" : "Submitted field did not match independent read";
                 if (value === expected) row.status = "Write verified";
               }
-              if (row.verification === "Not performed") row.verification = "No independent read-back adapter for this operation";
+              if (row.verification === "Not performed") row.verification = rootOp ? "Read-back requires a usable record ID or supported marker search" : "No independent read-back adapter for this operation";
             }
           } catch (error) {
             row.status = sent ? "Write or verification error; inspect outcome" : "Not attempted";
@@ -29169,7 +29246,7 @@ const PatientContextQueryTest = ({
   };
   const report = JSON.stringify({
     reportType: "mois-patient-context-live-query",
-    reportVersion: 3,
+    reportVersion: 4,
     writeResults: (current.writeResults || []).map(({
       variables,
       ...result
@@ -29279,10 +29356,22 @@ const PatientContextQueryTest = ({
     onChange: event => setWriteSelection(event.target.value)
   }, /*#__PURE__*/React.createElement("option", {
     value: "all"
-  }, "All unattempted operations"), (current.apiInventory?.mutations || []).map(operation => /*#__PURE__*/React.createElement("option", {
+  }, "All unattempted operations"), /*#__PURE__*/React.createElement("option", {
+    value: "changeObservationPanels"
+  }, "changeObservations \\u2014 separate panel probe"), (current.apiInventory?.mutations || []).map(operation => /*#__PURE__*/React.createElement("option", {
     key: operation.name,
     value: operation.name
-  }, operation.name)))), /*#__PURE__*/React.createElement("details", null, /*#__PURE__*/React.createElement("summary", null, "Write test inputs"), /*#__PURE__*/React.createElement("button", {
+  }, operation.name)))), /*#__PURE__*/React.createElement("details", null, /*#__PURE__*/React.createElement("summary", null, "Test context"), /*#__PURE__*/React.createElement("p", null, "Provide real test-instance IDs and codes once: providerId for appointments; assignedUserId or assignedTeamId for tasks; service with code/system/display for service episodes. Optional panelName overrides the vendor test panel coding. Missing context is reported before sending a write."), /*#__PURE__*/React.createElement("textarea", {
+    "aria-label": "Test context JSON",
+    value: testContext,
+    disabled: current.busy,
+    onChange: event => setTestContext(event.target.value),
+    rows: 5,
+    style: {
+      width: "100%",
+      fontFamily: "monospace"
+    }
+  })), /*#__PURE__*/React.createElement("details", null, /*#__PURE__*/React.createElement("summary", null, "Write test inputs"), /*#__PURE__*/React.createElement("button", {
     type: "button",
     disabled: current.busy || writeSelection === "all" || !(current.writeResults || []).some(row => row.operation === writeSelection && row.variables),
     onClick: () => {
@@ -39161,7 +39250,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './PanelEntryGrid/index.jsx': ["DEFAULT_WINDOW_HOURS","PANEL_GRID_CELL_STYLE","PANEL_GRID_TABLE_STYLE","PanelEntryGrid","actor","actorFrom","addHoursIso","answer","answers","authorshipPolicy","buildKey","c","changed","ck","claim","claims","collectedBy","column","commitSave","componentId","computedTotals","container","current","d","data","date","definition","definitions","editableUntil","effectiveFieldId","euDate","existing","expired","fieldData","formatTimestamp","getPanelGridAuth","group","grouped","historyColumns","historyEnabled","isNonEmpty","isOwner","keepStatus","key","kit","label","lockExpired","lockInfo","lockOn","lockedUntil","maxHistory","next","nextStatus","nhAuth","normalizeStore","normalizedOptions","now","nowIso","numbers","observations","ownerId","ownerName","ownerRefresh","pad2","panelGridDateKey","panelGridPayloadsEqual","panelGridRows","panelGridTotals","panelUpdate","pending","policyAppliesToAction","prepareSave","raw","readStore","release","renderCurrentValue","requireComplete","resolveNow","rowDefs","sameActor","scaleLike","sd","section","selected","setPanelGridPayload","setRowValue","shouldWriteDcos","shouldWritePanel","sourceIds","store","stripPanelGridVolatileFields","totalDefs","ts","type","untilSelf","value","values","windowHours"],
   './PastMeasurementField/index.jsx': ["PastMeasurementField","abnormalFlag","abnormalHighValue","abnormalLowValue","canPullLatest","candidate","candidates","codeFilter","coercePositiveInt","commentFilter","componentId","container","createdBy","criticalHighValue","criticalLowValue","current","currentPayload","currentWebformId","currentWebformObservations","day","defaultSpinStep","direct","displayedCurrentValue","documentDate","effectiveFieldId","effectiveHistorySize","effectiveLabelPosition","effectiveMeasurementSize","entryCode","entryComment","entryDate","entryUnits","entryValue","explicitValue","fieldData","flagCode","flagDisplays","formHistoryItems","formatDate","fromPatient","fromQueryResult","handleValueChange","hasAbnormalHigh","hasAbnormalLow","hasExplicitValue","hasMeaningfulValue","hasNumericCurrentValue","hasRangeMetadata","hasStoredValue","historicalFormRowDate","historyItems","historySummary","index","inputSuffix","isAbnormal","isHistoricalFormValue","isNonEmptyString","isNumericInput","key","latestHistoryItem","legacyRangePayload","linkedObservationItem","linkedWebformId","matchingKey","measurementWidthBySize","month","nextGroup","normalizeObservationItems","normalizedDateOnly","normalizedPullTargets","numericCurrentValue","numericExplicitValue","numericTime","observationHistoryItems","observationWebformId","oldId","oldObs","optionalString","parseDateValue","parsed","parsedDate","parsedDateOnly","patientPath","payloadsEqual","pullLatestIntoTargets","raw","rawDate","recentHistoryText","resolveHistoricalFormRows","resolveMeasurementContainerStyle","resolveMoisValue","resolvePathValue","resolvedAbnormalHigh","resolvedAbnormalLow","resolvedCriticalHigh","resolvedCriticalLow","resolvedCurrentValue","resolvedUnits","role","roots","sd","segments","setNestedPayload","shouldReserveHistory","shouldShowHistory","storedValue","stringifyValue","stripVolatilePayloadFields","targetFieldId","text","toObservationList","toPathSegments","updatedValue","value","valueFromHistoricalFormRow","valueIsDate","valueKeys","valuePart","valueText","width","year"],
   './PatientContextDiagnostics/index.jsx': ["PatientContextDiagnostics","availability","capability","cellStyle","collections","compact","direct","isArray","isRecord","labels","limit","patient","queried","registry","sampleText","sd","seen","source","textValue","value","visible"],
-  './PatientContextQueryTest/index.jsx': ["PatientContextQueryTest","absent","active","adapters","allowed","apiInventory","arg","argName","args","auth","before","bindings","busy","candidate","chart","check","collection","collectionByType","createdIds","current","customResults","data","date","declarations","defaults","definitionId","deleteSpec","deletion","demographic","depth","detail","discovered","downloadReport","enqueue","epoch","error","expected","field","fieldMap","fields","firstId","hostQuery","id","idKey","ids","index","info","inputMap","inspect","isCorrespondence","isList","item","key","link","marked","marker","match","mutation","name","named","namedType","need","nested","nestedDelete","notification","now","observation","op","ordered","ownId","ownKeys","patient","patientId","pending","pendingWrites","preferred","query","rank","readData","readId","readQuery","readRecords","readSelection","readableError","ready","recipes","record","recordType","records","report","request","requiredArgs","resolve","result","resultType","results","returned","root","rootForType","rootName","rootOp","rootResults","roots","row","rows","run","runId","scalarFields","scalarSelection","schema","schemaFields","schemaQuery","sd","selection","sent","settings","spec","status","stop","supplied","targetType","targetTypes","targets","templateId","transport","typeCache","typeRef","typeText","types","uncertainWrite","update","url","urlApi","validName","validResponse","validate","value","variables","vars","varsByRoot","writeResults"],
+  './PatientContextQueryTest/index.jsx': ["PatientContextQueryTest","absent","active","adapters","allowed","apiInventory","arg","argName","args","assignee","auth","before","bindings","busy","byId","candidate","chart","check","collection","collectionByType","context","contextId","createdIds","current","customResults","data","date","declarations","defaults","definitionId","deleteSpec","deletion","demographic","depth","detail","discovered","downloadReport","enqueue","epoch","error","expected","field","fieldMap","fields","firstId","hostQuery","id","idKey","ids","index","info","inputMap","inspect","isCorrespondence","isList","item","key","link","marked","marker","match","matches","mutation","name","nameText","named","namedType","need","nested","nestedDelete","notification","now","observation","op","ordered","ownId","ownKeys","patient","patientId","pending","pendingWrites","preferred","query","rank","readData","readId","readQuery","readRecords","readSelection","readableError","ready","recipes","record","recordType","records","report","request","requiredArgs","resolve","result","resultType","results","returned","returnedId","root","rootForType","rootName","rootOp","rootResults","roots","row","rows","run","runId","scalarFields","scalarSelection","schema","schemaFields","schemaQuery","sd","selection","sent","settings","spec","status","stop","supplied","targetType","targetTypes","targets","templateId","transport","typeCache","typeRef","typeText","types","uncertainWrite","update","url","urlApi","validName","validResponse","validate","value","variables","vars","varsByRoot","writeResults"],
   './PatientFileSections/index.jsx': ["PatientFileSections","activeText","addressText","cityLine","compactLines","contactText","countryLine","createdDate","editButtonStyle","encounter","fieldWrapStyle","formatAddress","formatContact","formatDate","getPatientFromData","gridStyle","healthNumber","insuranceBy","insuranceNumber","insuranceText","lines","match","mergeObjects","nextPatient","optionCode","optionDisplay","patient","preferredCode","preferredPhoneOptions","providerName","queryPatient","raw","renderClientDemographics","renderDocumentDetails","renderEncounterDetails","renderTitle","requested","sd","section","sectionTitleStyle","textValue","updateContactText","visibleSections","whiteDropdownStyles","whiteFlexTextFieldStyles","whiteTextFieldStyles","writePatientUpdates"],
   './PatientValueField/index.jsx': ["PatientValueField","age","applyPatientTransform","candidates","coercePatientValue","collectionCandidateValues","collectionItemMatches","computeAgeYears","dob","effectiveFieldId","expected","items","monthDelta","normalizedExpected","now","raw","resolveCollectionItemPath","resolvePatientContextPath","resolved","root","sd","stored","values"],
   './PdfRegenerator/index.jsx': ["PDFLib","PDF_LIB_URL","PdfRegenerator","_base64ToBytes","_buildChoiceComponentIndex","_buildDateComponentIndex","_buildTableReverseIndex","_choiceItemMatches","_choiceItems","_collectCandidates","_decodePdfHex","_downloadBytes","_drawGeometryOverlays","_fillField","_geometryChoiceSelected","_geometryClamp","_geometrySignatureDataUrl","_geometryTextLines","_getCheckboxOnStates","_inferBooleanState","_installPdfLibFromSource","_isNonEmptyString","_loadPdfLib","_loadPdfLibFromCdn","_matchMultipleOptions","_matchSingleOption","_normalizeFieldMap","_normalizeToken","_pdfLibPromise","_printBytes","_resolveChoiceComponentValue","_resolveDateComponentValue","_resolveTableCellValue","_resolveValueByPath","_setCheckboxByState","_splitCanonicalDateParts","_statusColor","_toBooleanLike","_toCandidateList","_toText","acro","baseMap","binary","blob","boldFont","boolValue","booleanStates","box","buttonDisabled","byRow","bytes","candidate","candidateKeys","candidates","choiceComponentIndex","choiceComponentValue","choiceEntry","clean","cleaned","cleanup","component","components","current","dataUrl","dateComponentIndex","dateComponentValue","dateEntry","desiredMaxLength","diagnosticsText","didDraw","didFill","direct","disabled","doc","existing","fieldId","filledFieldCount","font","fontSize","form","formData","formKeys","fromData","fromPath","fuzzy","geometryResult","handleGeneratePdf","hasMatchingState","i","iframe","image","includeSet","index","inferredState","inlineSource","installed","isOn","items","knownOptions","left","leftIsFormId","lib","lineHeight","lines","link","map","mapped","match","matches","maxLength","maxLines","maxWidth","maybe","maybeDate","maybeTime","nextFileName","normalized","normalizedAction","normalizedCandidate","normalizedOption","normalizedOptionMap","normalizedRequested","offState","onText","onValue","optionValue","options","otherItem","outputBytes","page","pages","parts","pathByColumnId","payload","pdfFieldId","pdfFieldName","pdfFields","printWindow","rawValue","renderActionButton","renderButton","requested","resolvePath","resolvedPdfSource","right","rightIsFormId","row","rowIndex","rowMapping","rows","runner","script","sd","segments","selected","selectedCount","set","single","size","skippedFieldCount","sourceFieldId","sourceId","sourceLines","sourceValue","sourceValues","state","states","strategy","tableEntry","tableId","tableIndex","targetAction","targetState","targetStateName","targetWidget","text","trimmed","url","warningCount","warnings","widget","widgets","withoutSlash","words"],

@@ -106,7 +106,7 @@ describe('PatientContextQueryTest', () => {
     mount(transport, [{ id: 'test.changeTest', graphqlField: 'changeTest', runtimeStatus: 'supported' }]);
     await act(async () => { Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Inspect read/write API')!.click(); });
     const report = JSON.parse(container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Live query results JSON"]')!.value);
-    expect(report.reportVersion).toBe(3);
+    expect(report.reportVersion).toBe(4);
     expect(report.apiInventory.inputTypes).toHaveLength(2);
     expect(report.apiInventory.mutations[0]).toMatchObject({ coverage: 'Mapped adapter; live write untested', executionStatus: 'Not executed' });
     expect(report.apiInventory.mutations[1]).toMatchObject({ coverage: 'Needs a dedicated write test', executionStatus: 'Not executed' });
@@ -119,6 +119,13 @@ describe('PatientContextQueryTest', () => {
 const liveSchema = JSON.parse(fs.readFileSync('data/mois-live-api-schema.json', 'utf8'));
 const reportValue = () => JSON.parse(container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Live query results JSON"]')!.value);
 const clickButton = async (name: string) => { await act(async () => { Array.from(container.querySelectorAll('button')).find((b) => b.textContent === name)!.click(); }); };
+async function setContext(value: unknown) {
+  await act(async () => {
+    const textarea = container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Test context JSON"]')!;
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, JSON.stringify(value));
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
 function testHost(write?: (name: string, variables: any) => any) {
   const records: any[] = [];
   return vi.fn(async (operation, _token, _server, query, vars) => {
@@ -128,14 +135,14 @@ function testHost(write?: (name: string, variables: any) => any) {
       if (vars.name === 'Mutation') return { __type: { fields: liveSchema.mutations } };
       const input = liveSchema.inputTypes.find((t: any) => t.name === vars.name);
       if (input) return { __type: input };
-      const fieldNames = ['patientId', 'observationId', 'description', 'value', 'documentId', 'note', 'webformId', 'webformDefinitionId', 'templateId', 'shortNote', 'associatedPartyId', 'chartPreferenceId', 'connectionId', 'householdOccupantId', 'longTermMedicationId', 'prescriptionId', 'prescriptionLogId', 'serviceEpisodeId', 'serviceEventId', 'encounterId', 'taskId', 'favouriteMedicationId', 'correspondenceId', 'comment', 'medication', 'preference', 'method', 'officeNote', 'title'];
-      return { __type: { fields: [...fieldNames.map((name) => ({ name, type: name.endsWith('Id') ? scalar : { kind: 'SCALAR', name: 'String' }, args: [] })), ...['observations', 'contacts', 'preferences', 'connections', 'documents', 'householdOccupants', 'longTermMedications', 'prescriptions', 'prescriptionLogs', 'serviceEpisodes', 'encounters', 'favouriteMedications', 'correspondences'].map((name) => ({ name, type: list, args: [] }))] } };
+      const fieldNames = ['patientId', 'observationId', 'observationPanelId', 'description', 'value', 'documentId', 'note', 'webformId', 'webformDefinitionId', 'templateId', 'shortNote', 'associatedPartyId', 'chartPreferenceId', 'connectionId', 'householdOccupantId', 'longTermMedicationId', 'prescriptionId', 'prescriptionLogId', 'serviceEpisodeId', 'serviceEventId', 'encounterId', 'taskId', 'favouriteMedicationId', 'correspondenceId', 'comment', 'medication', 'preference', 'method', 'officeNote', 'title'];
+      return { __type: { fields: [...fieldNames.map((name) => ({ name, type: name.endsWith('Id') ? scalar : { kind: 'SCALAR', name: 'String' }, args: [] })), ...['observationPanels', 'observations', 'contacts', 'preferences', 'connections', 'documents', 'householdOccupants', 'longTermMedications', 'prescriptions', 'prescriptionLogs', 'serviceEpisodes', 'encounters', 'favouriteMedications', 'correspondences'].map((name) => ({ name, type: list, args: [] }))] } };
     }
     if (operation === 'ProbeMoisWrite') {
       const name = query.match(/\{\s*(\w+)/)[1];
       if (write) return write(name, vars);
       if (name === 'addObservation') { const record = { ...vars.observation, observationId: 501 }; records.push(record); return { addObservation: [record] }; }
-      if (name === 'changeObservations') { Object.assign(records[0], vars.observationChanges[0]); return { changeObservations: [{ patientId: 42, observations: records }] }; }
+      if (name === 'changeObservations') { if (vars.observationChanges) Object.assign(records[0], vars.observationChanges[0]); return { changeObservations: [{ patientId: 42, observations: records }] }; }
       return { [name]: null };
     }
     if (operation === 'VerifyMoisWrite') return { patient: [{ patientId: 42, observations: records }] };
@@ -152,7 +159,7 @@ describe('live write laboratory', () => {
     expect(transport.mock.calls.every((call) => call[3].startsWith('query '))).toBe(true);
     await clickButton('Run test writes');
     const report = reportValue();
-    expect(report.writeResults).toHaveLength(40);
+    expect(report.writeResults).toHaveLength(41);
     expect(report.writeResults.find((r: any) => r.operation === 'addObservation')).toMatchObject({ status: 'Write verified', recordId: 501 });
     expect(report.writeResults.find((r: any) => r.operation === 'changeObservations')).toMatchObject({ status: 'Write verified', recordId: 501 });
     expect(report.writeResults.find((r: any) => r.operation === 'sendFax')).toMatchObject({ status: 'Not attempted' });
@@ -196,14 +203,14 @@ describe('live write laboratory', () => {
   it('can reach all 39 concrete mutation fields with valid dependencies and explicit fax inputs', async () => {
     const transport = testHost((name, vars) => {
       const payload: any = Object.values(vars).find((v) => v && typeof v === 'object' && !Array.isArray(v)) || {};
-      const record = { ...payload, patientId: 42, observationId: 501, associatedPartyId: 502, chartPreferenceId: 503, connectionId: 504, documentId: 505, householdOccupantId: 506, longTermMedicationId: 507, prescriptionId: 508, prescriptionLogId: 509, serviceEpisodeId: 510, serviceEventId: 511, encounterId: 512, taskId: 513, favouriteMedicationId: 514, correspondenceId: 515, webformId: 516, webformDefinitionId: 517 };
-      const patientResult = Object.fromEntries(['observations', 'contacts', 'preferences', 'connections', 'documents', 'householdOccupants', 'longTermMedications', 'prescriptions', 'prescriptionLogs', 'serviceEpisodes', 'encounters', 'favouriteMedications', 'correspondences'].map((key) => [key, [record]]));
+      const record = { ...payload, patientId: 42, observationId: 501, observationPanelId: 518, associatedPartyId: 502, chartPreferenceId: 503, connectionId: 504, documentId: 505, householdOccupantId: 506, longTermMedicationId: 507, prescriptionId: 508, prescriptionLogId: 509, serviceEpisodeId: 510, serviceEventId: 511, encounterId: 512, taskId: 513, favouriteMedicationId: 514, correspondenceId: 515, webformId: 516, webformDefinitionId: 517 };
+      const patientResult = Object.fromEntries(['observationPanels', 'observations', 'contacts', 'preferences', 'connections', 'documents', 'householdOccupants', 'longTermMedications', 'prescriptions', 'prescriptionLogs', 'serviceEpisodes', 'encounters', 'favouriteMedications', 'correspondences'].map((key) => [key, [record]]));
       return { [name]: [{ ...record, ...patientResult }] };
     });
-    mount(transport); await clickButton('Inspect read/write API'); await clickButton('Run test writes');
+    mount(transport); await clickButton('Inspect read/write API'); await setContext({ providerId: 12, assignedUserId: 7, service: { code: 'TEST', system: 'TEST' } }); await clickButton('Run test writes');
     const attempted = transport.mock.calls.filter((call) => call[0] === 'ProbeMoisWrite').map((call) => call[3].match(/\{\s*(\w+)/)[1]);
     const expected = liveSchema.mutations.map((m: any) => m.name).filter((name: string) => !['sendFax', 'query'].includes(name));
-    expect(attempted.sort()).toEqual(expected.sort());
+    expect(attempted.sort()).toEqual([...expected, "changeObservations"].sort());
     // Fax is available only with an explicit destination and individually selected operation.
     await act(async () => {
       const select = container.querySelector<HTMLSelectElement>('select[aria-label="Write operation"]')!;
@@ -214,6 +221,42 @@ describe('live write laboratory', () => {
     await clickButton('Run test writes');
     expect(transport.mock.calls.filter((call) => call[0] === 'ProbeMoisWrite' && call[3].includes('sendFax('))).toHaveLength(1);
   });
+  it('uses constrained demographic values, valid definition metadata and a separate named panel probe', async () => {
+    const transport = testHost(); mount(transport); await clickButton('Inspect read/write API'); await clickButton('Run test writes');
+    const calls = transport.mock.calls.filter((call) => call[0] === 'ProbeMoisWrite');
+    const variablesFor = (name: string) => calls.find((call) => call[3].includes(`{ ${name}(`))![4];
+    expect(variablesFor('changePatientContact').newContact.homeMessage).toMatch(/^[YN]$/);
+    expect(variablesFor('changePatientInsurance').newInsurance.insuranceNumber.length).toBeLessThanOrEqual(8);
+    expect(variablesFor('changePatientInsurance').newInsurance.billingDepartment).toBeUndefined();
+    expect(variablesFor('changePatientName').newUsualName).toMatchObject({ first: 'WEBFORMS', family: 'TEST' });
+    const definition = variablesFor('addWebformDefinition').webform;
+    expect(definition.name).toMatch(/^webforms_test_[a-z0-9_]+$/);
+    expect(definition.buildVersion).toMatch(/^\d{8}$/);
+    expect(definition.type).toBe('ATTACHMENT');
+    const observationCalls = calls.filter((call) => call[3].includes('{ changeObservations('));
+    expect(observationCalls).toHaveLength(2);
+    expect(observationCalls[0][4].panelChanges).toBeUndefined();
+    expect(observationCalls[1][4].observationChanges).toBeUndefined();
+    expect(observationCalls[1][4].panelChanges[0].panelName.code).toBe('4548-4');
+    expect(calls.some((call) => call[3].includes('{ createAppointment('))).toBe(false);
+    expect(reportValue().writeResults.find((r: any) => r.operation === 'createAppointment').error).toContain('providerId');
+  });
+
+  it('recovers missing medication IDs through a unique marker read, without repeating the write', async () => {
+    let medication: any;
+    const base = testHost((name, vars) => {
+      if (name === 'changeLongTermMedication') medication = vars.longTermMedication;
+      return { [name]: [{ patientId: 42 }] };
+    });
+    const transport = vi.fn(async (...args: any[]) => {
+      if (args[0] === 'VerifyMoisWrite' && args[1] && args[3].includes('longTermMedications')) return { patient: [{ patientId: 42, longTermMedications: [{ ...medication, longTermMedicationId: 987 }] }] };
+      return (base as any)(...args);
+    });
+    mount(transport); await clickButton('Inspect read/write API'); await clickButton('Run test writes');
+    expect(reportValue().writeResults.find((r: any) => r.operation === 'changeLongTermMedication')).toMatchObject({ status: 'Write verified', recordId: 987, idRecovery: 'Unique marker found on independent read' });
+    expect(transport.mock.calls.filter((call) => call[0] === 'ProbeMoisWrite' && call[3].includes('{ changeLongTermMedication('))).toHaveLength(1);
+  });
+
   it('stops after an uncertain mutation timeout and prevents duplicate retries', async () => {
     vi.useFakeTimers();
     try {

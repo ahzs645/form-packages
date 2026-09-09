@@ -4,7 +4,7 @@
   "description": "Live MOIS API laboratory: schema discovery, patient and root reads, explicit synthetic mutation probes, read-back verification and JSON reports.",
   "version": {
     "major": 1,
-    "minor": 2,
+    "minor": 3,
     "patch": 0
   },
   "type": "component",
