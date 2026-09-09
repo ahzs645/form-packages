@@ -106,7 +106,7 @@ describe('PatientContextQueryTest', () => {
     mount(transport, [{ id: 'test.changeTest', graphqlField: 'changeTest', runtimeStatus: 'supported' }]);
     await act(async () => { Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Inspect read/write API')!.click(); });
     const report = JSON.parse(container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Live query results JSON"]')!.value);
-    expect(report.reportVersion).toBe(4);
+    expect(report.reportVersion).toBe(5);
     expect(report.apiInventory.inputTypes).toHaveLength(2);
     expect(report.apiInventory.mutations[0]).toMatchObject({ coverage: 'Mapped adapter; live write untested', executionStatus: 'Not executed' });
     expect(report.apiInventory.mutations[1]).toMatchObject({ coverage: 'Needs a dedicated write test', executionStatus: 'Not executed' });
@@ -270,5 +270,126 @@ describe('live write laboratory', () => {
       const button = Array.from(container.querySelectorAll('button')).find((b) => b.textContent === 'Run test writes')!;
       expect(button.disabled).toBe(true);
     } finally { vi.useRealTimers(); }
+  });
+});
+
+const missingType = (name: string) => ({ kind: 'OBJECT', name });
+const missingList = (name: string) => ({ kind: 'LIST', ofType: missingType(name) });
+const missingField = (name: string, type: any, args: any[] = []) => ({ name, type, args });
+const missingArg = (name: string, required = false) => ({ name, defaultValue: null, type: required ? { kind: 'NON_NULL', ofType: scalar } : scalar });
+const missingSchema = (extra: any[] = []) => ({ __schema: { queryType: { name: 'ReadRoot' }, types: [
+  { name: 'ReadRoot', kind: 'OBJECT', fields: [missingField('patient', missingList('Patient'), [missingArg('id')]), missingField('webform', missingList('Webform'), [missingArg('id', true)]), missingField('webformDefinition', missingList('WebformDefinition'), [missingArg('first')])] },
+  { name: 'Patient', kind: 'OBJECT', fields: [missingField('patientId', scalar), missingField('serviceEpisodes', missingList('ServiceEpisode'))] },
+  { name: 'ServiceEpisode', kind: 'OBJECT', fields: [missingField('serviceEvents', missingList('ServiceEvent')), missingField('patient', missingType('Patient'))] },
+  { name: 'ServiceEvent', kind: 'OBJECT', fields: [missingField('serviceEventId', scalar)] },
+  { name: 'Webform', kind: 'OBJECT', fields: [missingField('webformId', scalar)] },
+  { name: 'WebformDefinition', kind: 'OBJECT', fields: [missingField('webformDefinitionId', scalar)] },
+  ...extra,
+] } });
+const exploration = () => reportValue().missingCollectionExploration;
+
+describe('missing collection exploration', () => {
+  it('runs independently, verifies a nested path, and keeps related form catalogs distinct', async () => {
+    const transport = vi.fn(async (operation, _token, _server, query, vars) => {
+      expect(query).toMatch(/^query /);
+      if (operation === 'ExploreMissingSchema') return missingSchema();
+      if (query.includes('webformDefinition')) return { webformDefinition: [] };
+      expect(query).toContain('patientId serviceEpisodes { __typename serviceEvents');
+      expect(vars).toEqual({ p0_id: 42 });
+      return { patient: [{ patientId: 42, serviceEpisodes: [{ serviceEvents: [{ serviceEventId: 8, privateSample: 'SECRET RECORD' }] }] }] };
+    });
+    mount(transport); await clickButton('Explore missing collections');
+    const result = exploration();
+    expect(result.collections).toHaveLength(11);
+    const events = result.collections.find((r: any) => r.collection === 'serviceEvents');
+    expect(events.status).toBe('Candidate path read verified; equivalence unverified');
+    expect(events.paths[0]).toMatchObject({ path: 'patient.serviceEpisodes.serviceEvents', status: 'Read succeeded', count: 1 });
+    const forms = result.collections.find((r: any) => r.collection === 'dynamicForms');
+    expect(forms.status).toBe('Related API explored; equivalence unverified');
+    expect(forms.paths.find((p: any) => p.path === 'webform')).toMatchObject({ status: 'Exposed path; needs arguments or scope' });
+    expect(result.collections.find((r: any) => r.collection === 'familyHistory').status).toBe('No candidate path found within search bounds');
+    expect(result.coverage).toMatchObject({ completed: true, probesSent: 2 });
+    expect(JSON.stringify(result)).not.toContain('SECRET RECORD');
+    expect(JSON.stringify(result)).not.toContain('secret-token');
+    expect(result.collections.find((r: any) => r.collection === 'standardForms').paths.find((p: any) => p.path === 'webformDefinition').reusedProbe).toBe(true);
+  });
+
+  it('distinguishes an empty ancestor from an empty target, and rejects the wrong patient', async () => {
+    let chart: any = { patientId: 42, serviceEpisodes: [] };
+    mount(vi.fn(async (op) => op === 'ExploreMissingSchema' ? missingSchema() : { patient: [chart], webformDefinition: [] }));
+    await clickButton('Explore missing collections');
+    let events = exploration().collections.find((r: any) => r.collection === 'serviceEvents');
+    expect(events.paths[0].status).toBe('Query succeeded; no parent records reached target');
+    chart = { patientId: 42, serviceEpisodes: [{ serviceEvents: [] }] };
+    await clickButton('Explore missing collections');
+    events = exploration().collections.find((r: any) => r.collection === 'serviceEvents');
+    expect(events.paths[0].status).toBe('Read succeeded: empty');
+    chart = { patientId: 43, serviceEpisodes: [{ serviceEvents: [] }] };
+    await clickButton('Explore missing collections');
+    expect(exploration().collections.find((r: any) => r.collection === 'serviceEvents').paths[0].status).toBe('Read failed');
+  });
+
+  it('reports required nested arguments without inventing values, while other paths continue', async () => {
+    const schema = missingSchema();
+    schema.__schema.types.find((t: any) => t.name === 'ServiceEpisode')!.fields![0].args = [missingArg('serviceEventId', true)];
+    const transport = vi.fn(async (op, _token, _server, query) => {
+      if (op === 'ExploreMissingSchema') return schema;
+      expect(query).not.toContain('serviceEvents');
+      return { webformDefinition: [] };
+    });
+    mount(transport); await clickButton('Explore missing collections');
+    expect(exploration().collections.find((r: any) => r.collection === 'serviceEvents').paths[0].error).toContain('serviceEvents.serviceEventId');
+  });
+
+  it('reports denied introspection as incomplete rather than declaring collections unavailable', async () => {
+    mount(vi.fn(async () => { throw new Error('Introspection denied'); }));
+    await clickButton('Explore missing collections');
+    expect(exploration().status).toBe('Exploration incomplete');
+    expect(exploration().coverage.completed).toBe(false);
+    expect(exploration().collections.every((r: any) => r.status === 'Not completed')).toBe(true);
+  });
+
+  it('explores concrete types through inline fragments and does not loop on cyclic output graphs', async () => {
+    const schema: any = missingSchema([
+      { name: 'Node', kind: 'UNION', fields: null, possibleTypes: [{ name: 'FamilyHistory', kind: 'OBJECT' }] },
+      { name: 'FamilyHistory', kind: 'OBJECT', fields: [missingField('familyHistoryId', scalar)] },
+    ]);
+    schema.__schema.types.find((t: any) => t.name === 'Patient').fields.push(missingField('records', { kind: 'LIST', ofType: { kind: 'UNION', name: 'Node' } }));
+    mount(vi.fn(async (op, _token, _server, query) => {
+      if (op === 'ExploreMissingSchema') return schema;
+      if (query.includes('FamilyHistory')) {
+        expect(query).toContain('records { __typename ... on FamilyHistory { __typename familyHistoryId } }');
+        return { patient: [{ patientId: 42, records: [{ __typename: 'FamilyHistory', familyHistoryId: 5 }] }] };
+      }
+      return { patient: [{ patientId: 42, serviceEpisodes: [] }], webformDefinition: [] };
+    }));
+    await clickButton('Explore missing collections');
+    expect(exploration().collections.find((r: any) => r.collection === 'familyHistory').paths[0].status).toBe('Read succeeded');
+    expect(exploration().coverage.visitedStates).toBeLessThan(30);
+  });
+});
+
+describe('missing exploration boundaries', () => {
+  it('reports depth bounds and exports schema metadata for investigating unrecognized names', async () => {
+    const schema: any = missingSchema();
+    schema.__schema.types.find((t: any) => t.name === 'Patient').fields.push(missingField('deep', missingType('Deep1')));
+    for (let i = 1; i <= 7; i++) schema.__schema.types.push({ name: 'Deep' + i, kind: 'OBJECT', fields: [missingField(i === 7 ? 'socialHistory' : 'next', missingType(i === 7 ? 'SocialHistory' : 'Deep' + (i + 1)))] });
+    schema.__schema.types.push({ name: 'SocialHistory', kind: 'OBJECT', fields: [missingField('socialHistoryId', scalar)] });
+    mount(vi.fn(async (op) => op === 'ExploreMissingSchema' ? schema : { patient: [{ patientId: 42, serviceEpisodes: [] }], webformDefinition: [] }));
+    await clickButton('Explore missing collections');
+    expect(exploration().coverage.truncated).toBe(true);
+    expect(exploration().collections.find((r: any) => r.collection === 'socialHistory')).toMatchObject({ matchedOutputTypes: ['SocialHistory'], status: 'No candidate path found within search bounds' });
+    expect(exploration().schemaTypes.find((t: any) => t.name === 'Deep7').fields[0].name).toBe('socialHistory');
+  });
+
+  it('stops read exploration without dispatching further probes or losing the incomplete result', async () => {
+    let finish!: (value: unknown) => void;
+    const transport = vi.fn(async (op) => op === 'ExploreMissingSchema' ? missingSchema() : new Promise((resolve) => { finish = resolve; }));
+    mount(transport); await clickButton('Explore missing collections');
+    await clickButton('Stop checks');
+    await act(async () => { finish({ patient: [{ patientId: 42, serviceEpisodes: [] }] }); });
+    expect(exploration().status).toBe('Stopped; exploration incomplete');
+    expect(exploration().coverage.completed).toBe(false);
+    expect(transport).toHaveBeenCalledTimes(2);
   });
 });

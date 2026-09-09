@@ -26220,9 +26220,10 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
     let customResults = [...(current.customResults || [])]
     let rootResults = [...(current.rootResults || [])]
     let writeResults = [...(current.writeResults || [])]
+    let missingExploration = current.missingExploration || null
     let apiInventory = current.apiInventory || null
     const update = (message, running = true) => {
-      if (active()) setState({ patientId, busy: running, message, rows: [...rows], hasRun: true, schemaFields, apiInventory, writeResults: [...writeResults], createdIds: { ...createdIds }, rootResults: [...rootResults], customResults: [...customResults] })
+      if (active()) setState({ patientId, busy: running, message, rows: [...rows], hasRun: true, schemaFields, apiInventory, writeResults: [...writeResults], createdIds: { ...createdIds }, rootResults: [...rootResults], customResults: [...customResults], missingExploration })
     }
     const request = async (operation, query, variables, mutation = false) => {
       if (!active()) throw new Error("Stopped")
@@ -26247,6 +26248,194 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
     }
     update(mode === "api" ? "Inspecting root queries, mutations and input types…" : "Inspecting the live Patient schema…")
     try {
+      if (mode === "missing") {
+        const targets = {
+          addressHistory: { names: ["AddressHistory", "HistoricalAddress", "PreviousAddress"], related: [] },
+          administrationInstructions: { names: ["AdministrationInstruction"], related: ["DosageInstruction"] },
+          adverseEvents: { names: ["AdverseEvent"], related: ["AdverseReaction"] },
+          alerts: { names: ["Alert", "PatientAlert"], related: [] },
+          dynamicForms: { names: ["DynamicForm"], related: ["Webform", "WebformDefinition", "WebformResource"] },
+          familyHistory: { names: ["FamilyHistory", "FamilyHistoryRecord"], related: ["FamilyMemberHistory"] },
+          imagingReports: { names: ["ImagingReport", "DiagnosticImagingReport"], related: ["DiagnosticReport"] },
+          medicationAdministrations: { names: ["MedicationAdministration"], related: [] },
+          serviceEvents: { names: ["ServiceEvent"], related: [] },
+          socialHistory: { names: ["SocialHistory", "SocialHistoryRecord"], related: [] },
+          standardForms: { names: ["StandardForm"], related: ["PaperFormTemplate", "Webform", "WebformDefinition"] },
+        }
+        const limits = { maxDepth: 6, maxStates: 10000, pathsPerCollection: 12, maxProbes: 60 }
+        missingExploration = {
+          status: "Inspecting output schema", limits, matchRules: targets,
+          scope: "Read-only candidate-path exploration. Name/type matches are not proof of semantic equivalence. No matching path within these bounds is not proof the API lacks the data.",
+          coverage: { completed: false, truncated: false, visitedStates: 0, probesSent: 0 },
+          collections: Object.keys(targets).map((collection) => ({ collection, status: "Not completed", matchedOutputTypes: [], paths: [] })),
+        }
+        update("Inspecting the live output schema for the 11 missing collections…")
+        // One schema snapshot makes the search reproducible and includes abstract
+        // output types. Only the Query root is traversed; never the Mutation root.
+        const query = \`query ExploreMissingSchema { __schema { queryType { name } types { name kind fields { name args { name defaultValue type { \${typeRef} } } type { \${typeRef} } } possibleTypes { name kind } inputFields { name defaultValue type { \${typeRef} } } enumValues { name } } } }\`
+        const discovery = await request("ExploreMissingSchema", query, {})
+        const schema = discovery?.__schema
+        if (!schema?.queryType?.name || !Array.isArray(schema.types)) throw new Error("Output schema discovery unavailable. No alternate paths were tested.")
+        const types = new Map(schema.types.filter((type) => validName(type.name)).map((type) => [type.name, type]))
+        const root = types.get(schema.queryType.name)
+        if (!Array.isArray(root?.fields)) throw new Error("Query root fields were not returned. Exploration is incomplete.")
+        missingExploration.queryRoot = root.name
+        missingExploration.schemaTypes = schema.types
+        missingExploration.coverage.outputTypes = schema.types.filter((type) => ["OBJECT", "INTERFACE", "UNION"].includes(type.kind)).length
+        const normalize = (name) => String(name).replace(/[^A-Za-z0-9]/g, "").toLowerCase().replace(/ies$/, "y").replace(/([^s])s$/, "$1")
+        const matches = (value, names) => names.some((name) => normalize(value) === normalize(name))
+        for (const row of missingExploration.collections) {
+          row.matchedOutputTypes = schema.types.filter((type) => ["OBJECT", "INTERFACE", "UNION"].includes(type.kind) && matches(type.name, [row.collection, ...targets[row.collection].names, ...targets[row.collection].related])).map((type) => type.name)
+        }
+        const pathsByCollection = new Map(Object.keys(targets).map((key) => [key, []]))
+        const queue = [{ type: root, path: [], ancestors: [root.name] }]
+        let cursor = 0
+        while (cursor < queue.length && cursor < limits.maxStates) {
+          const item = queue[cursor++]
+          missingExploration.coverage.visitedStates = cursor
+          if (item.path.length >= limits.maxDepth) { if (item.type.fields?.length || item.type.possibleTypes?.length) missingExploration.coverage.truncated = true; continue }
+          for (const field of item.type.fields || []) {
+            if (!validName(field.name) || field.name.startsWith("__")) continue
+            const targetType = namedType(field.type)
+            const path = [...item.path, { kind: "field", name: field.name, type: field.type, args: field.args || [] }]
+            for (const row of missingExploration.collections) {
+              const spec = targets[row.collection]
+              const exact = matches(field.name, [row.collection, ...spec.names]) || matches(targetType?.name, [row.collection, ...spec.names])
+              const related = matches(field.name, spec.related) || matches(targetType?.name, spec.related)
+              if (exact || related) pathsByCollection.get(row.collection).push({ path, relation: exact ? "Name/type match; equivalence unverified" : "Related API; equivalence unverified" })
+            }
+            if (["OBJECT", "INTERFACE", "UNION"].includes(targetType?.kind) && !item.ancestors.includes(targetType.name)) {
+              const next = types.get(targetType.name)
+              if (next) queue.push({ type: next, path, ancestors: [...item.ancestors, next.name] })
+              else missingExploration.coverage.truncated = true
+            }
+          }
+          for (const possible of item.type.possibleTypes || []) {
+            const next = types.get(possible.name)
+            if (next && !item.ancestors.includes(next.name)) {
+              const path = [...item.path, { kind: "fragment", name: next.name }]
+              for (const row of missingExploration.collections) {
+                const spec = targets[row.collection]
+                const exact = matches(next.name, [row.collection, ...spec.names])
+                if (exact || matches(next.name, spec.related)) pathsByCollection.get(row.collection).push({ path, relation: exact ? "Name/type match; equivalence unverified" : "Related API; equivalence unverified" })
+              }
+              queue.push({ type: next, path, ancestors: [...item.ancestors, next.name] })
+            }
+          }
+          // Bound both work and memory on a cyclic or unusually broad schema.
+          if (queue.length > limits.maxStates * 2) { queue.length = limits.maxStates * 2; missingExploration.coverage.truncated = true }
+        }
+        if (cursor < queue.length) missingExploration.coverage.truncated = true
+        const typeText = (type) => type.kind === "NON_NULL" ? typeText(type.ofType) + "!" : type.kind === "LIST" ? "[" + typeText(type.ofType) + "]" : type.name
+        const recordIds = {
+          webform: sd?.webform?.webformId || sd?.formParams?.webformId,
+          document: patient?.documents?.[0]?.documentId,
+          observation: patient?.observations?.[0]?.observationId,
+          encounter: sd?.formParams?.encounterId || patient?.encounters?.[0]?.encounterId,
+        }
+        const catalogs = ["webformDefinition", "webformResource", "paperFormTemplate"]
+        const rootRank = (entry) => entry.path[0].name === "patient" ? 0 : entry.path[0].args.some((arg) => arg.name === "patientId") ? 1 : catalogs.includes(entry.path[0].name) ? 2 : 3
+        const cache = new Map()
+        for (const row of missingExploration.collections) {
+          if (!active()) return
+          const candidates = pathsByCollection.get(row.collection).sort((a, b) => rootRank(a) - rootRank(b) || Number(a.relation.startsWith("Related")) - Number(b.relation.startsWith("Related")) || a.path.length - b.path.length)
+          row.candidatePathsFound = candidates.length
+          if (candidates.length > limits.pathsPerCollection) missingExploration.coverage.truncated = true
+          for (const candidate of candidates.slice(0, limits.pathsPerCollection)) {
+            if (!active()) return
+            const { path } = candidate
+            const entry = { path: path.map((hop) => hop.kind === "fragment" ? \`... on \${hop.name}\` : hop.name).join("."), relation: candidate.relation, status: "Not tested", arguments: path.filter((hop) => hop.kind === "field").map((hop) => ({ field: hop.name, args: hop.args })), scope: "Unresolved" }
+            row.paths.push(entry)
+            try {
+              const top = path[0]
+              const scopedByPatient = top.name === "patient" || top.args.some((arg) => arg.name === "patientId")
+              const currentRecordId = Number(recordIds[top.name])
+              const scopedByRecord = Number.isSafeInteger(currentRecordId) && currentRecordId > 0 && top.args.some((arg) => arg.name === "id")
+              const catalog = catalogs.includes(top.name)
+              entry.scope = scopedByPatient ? "Active patient" : scopedByRecord ? "One record from active context" : catalog ? "Form catalog; not a patient collection" : "Unresolved root scope"
+              if (!scopedByPatient && !scopedByRecord && !catalog) throw new Error("Automatic read needs a patient filter or a known active-context record ID")
+              const variables = {}
+              const declarations = []
+              const bindings = new Map()
+              path.forEach((hop, index) => {
+                if (hop.kind !== "field") return
+                const args = []
+                for (const arg of hop.args) {
+                  let value
+                  const scalar = namedType(arg.type)?.name
+                  if (arg.name === "patientId" && ["Int", "Long", "ID"].includes(scalar)) value = patientId
+                  else if (index === 0 && top.name === "patient" && arg.name === "id") value = patientId
+                  else if (index === 0 && arg.name === "id" && scopedByRecord) value = currentRecordId
+                  else if (index === 0 && arg.name === "webformDefinitionId") value = Number(sd?.webform?.webformDefinitionId || sd?.formParams?.webformDefinitionId) || undefined
+                  else if (arg.name === "first" && scalar === "Int") value = 3
+                  if (value === undefined) { if (arg.type.kind === "NON_NULL" && arg.defaultValue == null) throw new Error(\`Needs argument \${hop.name}.\${arg.name}\`); continue }
+                  const key = \`p\${index}_\${arg.name}\`
+                  variables[key] = scalar === "ID" ? String(value) : value
+                  declarations.push(\`$\${key}: \${typeText(arg.type)}\`)
+                  args.push(\`\${arg.name}: $\${key}\`)
+                }
+                bindings.set(index, args.length ? "(" + args.join(", ") + ")" : "")
+              })
+              const leaf = path[path.length - 1]
+              const leafType = leaf.kind === "fragment" ? { kind: "OBJECT", name: leaf.name } : namedType(leaf.type)
+              let selection = ""
+              if (["OBJECT", "INTERFACE", "UNION"].includes(leafType?.kind)) {
+                const small = (types.get(leafType.name)?.fields || []).filter((field) => /Id$|^code$|^status$/.test(field.name) && validName(field.name) && !requiredArgs(field) && !isList(field.type) && ["SCALAR", "ENUM"].includes(namedType(field.type)?.kind)).slice(0, 6)
+                selection = leaf.kind === "fragment" ? small.map((field) => field.name).join(" ") : " { __typename " + small.map((field) => field.name).join(" ") + " }"
+              }
+              for (let index = path.length - 1; index >= 0; index -= 1) {
+                const hop = path[index]
+                if (hop.kind === "fragment") selection = \`... on \${hop.name} { __typename \${selection} }\`
+                else selection = \`\${hop.name}\${bindings.get(index) || ""}\${selection}\`
+                if (index > 0 && path[index - 1].kind !== "fragment") {
+                  const parentType = namedType(path[index - 1].type)
+                  const patientCheck = parentType?.name === "Patient" && types.get("Patient")?.fields?.some((field) => field.name === "patientId") ? "patientId " : ""
+                  selection = \` { __typename \${patientCheck}\${selection} }\`
+                }
+              }
+              entry.query = \`query ProbeMissingCollection\${declarations.length ? "(" + declarations.join(", ") + ")" : ""} { \${selection} }\`
+              const key = JSON.stringify([entry.query, variables])
+              let outcome = cache.get(key)
+              if (!outcome) {
+                if (missingExploration.coverage.probesSent >= limits.maxProbes) { missingExploration.coverage.truncated = true; entry.status = "Not tested: probe limit reached"; continue }
+                missingExploration.coverage.probesSent += 1
+                update(\`Exploring \${row.collection}: \${entry.path}…\`)
+                try {
+                  const data = await request("ProbeMissingCollection", entry.query, variables)
+                  if (top.name === "patient") {
+                    const charts = data.patient
+                    if (!Array.isArray(charts) || !charts.length || charts.some((chart) => Number(chart.patientId) !== patientId)) throw new Error("Root did not return the active patient")
+                  }
+                  let values = [data]
+                  let inaccessibleParent = false
+                  let leafNull = false
+                  for (let i = 0; i < path.length; i += 1) {
+                    const hop = path[i]
+                    if (hop.kind === "fragment") { values = values.filter((value) => value?.__typename === hop.name); if (!values.length) inaccessibleParent = true; continue }
+                    const next = []
+                    for (const value of values) {
+                      const found = value?.[hop.name]
+                      if (found == null) { if (i === path.length - 1) leafNull = true; else inaccessibleParent = true }
+                      else if (Array.isArray(found)) { next.push(...found); if (!found.length && i < path.length - 1) inaccessibleParent = true }
+                      else next.push(found)
+                    }
+                    values = next
+                  }
+                  outcome = { status: values.length ? "Read succeeded" : leafNull ? "Query succeeded; target null or omitted" : inaccessibleParent ? "Query succeeded; no parent records reached target" : "Read succeeded: empty", count: values.length, partialParentCoverage: inaccessibleParent || leafNull }
+                } catch (error) { if (!active()) return; outcome = { status: "Read failed", error: readableError(error.message) } }
+                cache.set(key, outcome)
+              } else entry.reusedProbe = true
+              Object.assign(entry, outcome)
+            } catch (error) { if (!active()) return; entry.status = "Exposed path; needs arguments or scope"; entry.error = readableError(error.message) }
+          }
+          row.status = row.paths.some((entry) => entry.status.startsWith("Read succeeded") && !entry.relation.startsWith("Related")) ? "Candidate path read verified; equivalence unverified" : row.paths.some((entry) => entry.status.startsWith("Read succeeded")) ? "Related API explored; equivalence unverified" : candidates.length ? "Candidate paths explored; target read unresolved" : "No candidate path found within search bounds"
+          update(\`Explored \${row.collection}\`)
+        }
+        missingExploration.coverage.completed = true
+        missingExploration.status = "Exploration complete" + (missingExploration.coverage.truncated ? "; bounded search or probe limits reached" : "")
+        update("Missing-collection exploration complete. Download results JSON; no writes were executed by this test.", false)
+        return
+      }
       if (mode === "custom") {
         const match = customQuery.trim().match(/^(query|mutation)\\s+([_A-Za-z][_0-9A-Za-z]*)\\b/)
         if (!match) throw new Error("Use a named query or mutation, for example query MyProbe { ... }")
@@ -26706,6 +26895,7 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
       }
       update("Live checks complete. Results are from explicit reads, separate from the initial chart load.", false)
     } catch (error) {
+      if (mode === "missing" && missingExploration && active()) { missingExploration.error = readableError(error.message); missingExploration.status = "Exploration incomplete" }
       if (mode === "api" && apiInventory) apiInventory.error = readableError(error.message)
       update(readableError(error.message), false)
     } finally { if (active()) busy.current = false }
@@ -26714,11 +26904,12 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
     if (pendingWrites.current) uncertainWrite.current = true
     epoch.current += 1
     busy.current = false
-    setState((previous) => ({ ...previous, customResults: (previous.customResults || []).map((row) => row.status === "Sent; outcome pending" ? { ...row, status: "Stopped; request may finish" } : row), writeResults: (previous.writeResults || []).map((row) => row.status === "Sent; outcome pending" ? { ...row, status: "Outcome unknown; request may finish" } : row), busy: false, message: "Stopped. Any request already sent may finish; its result will be ignored." }))
+    setState((previous) => ({ ...previous, missingExploration: previous.missingExploration && !previous.missingExploration.coverage.completed ? { ...previous.missingExploration, status: "Stopped; exploration incomplete" } : previous.missingExploration, customResults: (previous.customResults || []).map((row) => row.status === "Sent; outcome pending" ? { ...row, status: "Stopped; request may finish" } : row), writeResults: (previous.writeResults || []).map((row) => row.status === "Sent; outcome pending" ? { ...row, status: "Outcome unknown; request may finish" } : row), busy: false, message: "Stopped. Any request already sent may finish; its result will be ignored." }))
   }
   const report = JSON.stringify({
     reportType: "mois-patient-context-live-query",
-    reportVersion: 4,
+    reportVersion: 5,
+    missingCollectionExploration: current.missingExploration || null,
     writeResults: (current.writeResults || []).map(({ variables, ...result }) => result),
     rootQueryResults: current.rootResults || [],
     customOperations: (current.customResults || []).map(({ response, ...result }) => result),
@@ -26748,6 +26939,7 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
     <p>Run explicit reads against this patient's chart using your current MOIS login. The form inspects the live schema, then queries up to 64 collections one at a time. Read checks do not modify records. Run test writes explicitly sends synthetic mutations to this test chart, including demographic changes. Test records can remain after the run.</p>
     {!ready ? <p>Live checks require the exported form running inside an authenticated MOIS instance. Builder preview cannot perform these checks.</p> : null}
     <button type="button" disabled={!ready || current.busy} onClick={() => run("reads")}>Run live chart checks</button>{" "}
+    <button type="button" disabled={!ready || current.busy} onClick={() => run("missing")}>Explore missing collections</button>{" "}
     <button type="button" disabled={!ready || current.busy} onClick={() => run("api")}>Inspect read/write API</button>{" "}
     <button type="button" disabled={!ready || current.busy || !current.apiInventory} onClick={() => run("roots")}>Test root queries</button>{" "}
     <button type="button" disabled={!ready || current.busy || !current.apiInventory || uncertainWrite.current || pendingWrites.current > 0} onClick={() => run("writes")}>Run test writes</button>{" "}
@@ -26765,6 +26957,14 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
       <button type="button" disabled={current.busy || writeSelection === "all" || !(current.writeResults || []).some((row) => row.operation === writeSelection && row.variables)} onClick={() => { const row = [...current.writeResults].reverse().find((entry) => entry.operation === writeSelection && entry.variables); setWriteOverrides(JSON.stringify({ [writeSelection]: row.variables }, null, 2)) }}>Load last inputs for selected operation</button><p>Default probes use a unique WEBFORMS TEST marker. For operations requiring local codes or IDs, provide complete GraphQL variables keyed by mutation name (or query:name for root reads). Overrides replace that operation's defaults. Use "$created.encounterId" (or another created ID key) to reference a record from this session and "$patientId" for the active chart. All unattempted skips previously sent mutations; choose one operation explicitly to retry it. Created IDs survive retries until the chart changes or the form closes. Fax delivery requires selecting sendFax individually and providing an account and explicit test recipients. Update and delete defaults target records created during this run.</p>
       <textarea aria-label="Write variable overrides JSON" value={writeOverrides} disabled={current.busy} onChange={(event) => setWriteOverrides(event.target.value)} rows={6} style={{ width: "100%", fontFamily: "monospace" }} />
     </details>
+    {current.missingExploration ? <details open><summary>Missing collection exploration</summary>
+      <p>{current.missingExploration.status}. This test reads schema metadata and candidate paths only. Related APIs are not assumed to contain equivalent records.</p>
+      <p>Search bounds: depth {current.missingExploration.limits.maxDepth}, {current.missingExploration.limits.pathsPerCollection} paths per collection, {current.missingExploration.limits.maxProbes} reads. {current.missingExploration.coverage.probesSent} reads sent. {current.missingExploration.coverage.truncated ? "Limits reached; search is not exhaustive." : ""}</p>
+      {current.missingExploration.error ? <p>{current.missingExploration.error}</p> : null}
+      <ul>{current.missingExploration.collections.map((row) => <li key={row.collection}><strong>{row.collection}</strong> — {row.status}
+        {row.paths.length ? <details><summary>Explored paths ({row.paths.length})</summary><ul>{row.paths.map((entry, index) => <li key={index}><code>{entry.path}</code> — {entry.status}{entry.count !== undefined ? \` · \${entry.count} returned\` : ""}<p>{entry.scope}. {entry.relation}.</p>{entry.error ? <p>{entry.error}</p> : null}</li>)}</ul></details> : null}
+      </li>)}</ul>
+    </details> : null}
     {current.rootResults?.length ? <details open><summary>Root query results</summary><ul>{current.rootResults.map((row) => <li key={row.operation}><code>{row.operation}</code> — {row.status}{row.error ? <p>{row.error}</p> : null}</li>)}</ul></details> : null}
     {current.writeResults?.length ? <details open><summary>Write test results</summary><ul>{current.writeResults.map((row, index) => <li key={index}><code>{row.operation}</code> — {row.status}. {row.verification}{row.recordId ? \` · Test record \${row.recordId}\` : ""}{row.error ? <p>{row.error}</p> : null}{row.variables ? <details><summary>Inputs sent (kept out of report)</summary><pre>{JSON.stringify(row.variables, null, 2)}</pre></details> : null}</li>)}</ul></details> : null}
     {current.busy ? <button type="button" onClick={stop}>Stop checks</button> : null}
@@ -37892,7 +38092,7 @@ export const componentIdentities: Record<string, any> = {
     "description": "Live MOIS API laboratory: schema discovery, patient and root reads, explicit synthetic mutation probes, read-back verification and JSON reports.",
     "version": {
       "major": 1,
-      "minor": 3,
+      "minor": 4,
       "patch": 0
     },
     "type": "component",

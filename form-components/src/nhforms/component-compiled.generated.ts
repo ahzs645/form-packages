@@ -28150,6 +28150,7 @@ const PatientContextQueryTest = ({
     let customResults = [...(current.customResults || [])];
     let rootResults = [...(current.rootResults || [])];
     let writeResults = [...(current.writeResults || [])];
+    let missingExploration = current.missingExploration || null;
     let apiInventory = current.apiInventory || null;
     const update = (message, running = true) => {
       if (active()) setState({
@@ -28165,7 +28166,8 @@ const PatientContextQueryTest = ({
           ...createdIds
         },
         rootResults: [...rootResults],
-        customResults: [...customResults]
+        customResults: [...customResults],
+        missingExploration
       });
     };
     const request = async (operation, query, variables, mutation = false) => {
@@ -28201,6 +28203,312 @@ const PatientContextQueryTest = ({
     };
     update(mode === "api" ? "Inspecting root queries, mutations and input types…" : "Inspecting the live Patient schema…");
     try {
+      if (mode === "missing") {
+        const targets = {
+          addressHistory: {
+            names: ["AddressHistory", "HistoricalAddress", "PreviousAddress"],
+            related: []
+          },
+          administrationInstructions: {
+            names: ["AdministrationInstruction"],
+            related: ["DosageInstruction"]
+          },
+          adverseEvents: {
+            names: ["AdverseEvent"],
+            related: ["AdverseReaction"]
+          },
+          alerts: {
+            names: ["Alert", "PatientAlert"],
+            related: []
+          },
+          dynamicForms: {
+            names: ["DynamicForm"],
+            related: ["Webform", "WebformDefinition", "WebformResource"]
+          },
+          familyHistory: {
+            names: ["FamilyHistory", "FamilyHistoryRecord"],
+            related: ["FamilyMemberHistory"]
+          },
+          imagingReports: {
+            names: ["ImagingReport", "DiagnosticImagingReport"],
+            related: ["DiagnosticReport"]
+          },
+          medicationAdministrations: {
+            names: ["MedicationAdministration"],
+            related: []
+          },
+          serviceEvents: {
+            names: ["ServiceEvent"],
+            related: []
+          },
+          socialHistory: {
+            names: ["SocialHistory", "SocialHistoryRecord"],
+            related: []
+          },
+          standardForms: {
+            names: ["StandardForm"],
+            related: ["PaperFormTemplate", "Webform", "WebformDefinition"]
+          }
+        };
+        const limits = {
+          maxDepth: 6,
+          maxStates: 10000,
+          pathsPerCollection: 12,
+          maxProbes: 60
+        };
+        missingExploration = {
+          status: "Inspecting output schema",
+          limits,
+          matchRules: targets,
+          scope: "Read-only candidate-path exploration. Name/type matches are not proof of semantic equivalence. No matching path within these bounds is not proof the API lacks the data.",
+          coverage: {
+            completed: false,
+            truncated: false,
+            visitedStates: 0,
+            probesSent: 0
+          },
+          collections: Object.keys(targets).map(collection => ({
+            collection,
+            status: "Not completed",
+            matchedOutputTypes: [],
+            paths: []
+          }))
+        };
+        update("Inspecting the live output schema for the 11 missing collections…");
+        // One schema snapshot makes the search reproducible and includes abstract
+        // output types. Only the Query root is traversed; never the Mutation root.
+        const query = \`query ExploreMissingSchema { __schema { queryType { name } types { name kind fields { name args { name defaultValue type { \${typeRef} } } type { \${typeRef} } } possibleTypes { name kind } inputFields { name defaultValue type { \${typeRef} } } enumValues { name } } } }\`;
+        const discovery = await request("ExploreMissingSchema", query, {});
+        const schema = discovery?.__schema;
+        if (!schema?.queryType?.name || !Array.isArray(schema.types)) throw new Error("Output schema discovery unavailable. No alternate paths were tested.");
+        const types = new Map(schema.types.filter(type => validName(type.name)).map(type => [type.name, type]));
+        const root = types.get(schema.queryType.name);
+        if (!Array.isArray(root?.fields)) throw new Error("Query root fields were not returned. Exploration is incomplete.");
+        missingExploration.queryRoot = root.name;
+        missingExploration.schemaTypes = schema.types;
+        missingExploration.coverage.outputTypes = schema.types.filter(type => ["OBJECT", "INTERFACE", "UNION"].includes(type.kind)).length;
+        const normalize = name => String(name).replace(/[^A-Za-z0-9]/g, "").toLowerCase().replace(/ies$/, "y").replace(/([^s])s$/, "$1");
+        const matches = (value, names) => names.some(name => normalize(value) === normalize(name));
+        for (const row of missingExploration.collections) {
+          row.matchedOutputTypes = schema.types.filter(type => ["OBJECT", "INTERFACE", "UNION"].includes(type.kind) && matches(type.name, [row.collection, ...targets[row.collection].names, ...targets[row.collection].related])).map(type => type.name);
+        }
+        const pathsByCollection = new Map(Object.keys(targets).map(key => [key, []]));
+        const queue = [{
+          type: root,
+          path: [],
+          ancestors: [root.name]
+        }];
+        let cursor = 0;
+        while (cursor < queue.length && cursor < limits.maxStates) {
+          const item = queue[cursor++];
+          missingExploration.coverage.visitedStates = cursor;
+          if (item.path.length >= limits.maxDepth) {
+            if (item.type.fields?.length || item.type.possibleTypes?.length) missingExploration.coverage.truncated = true;
+            continue;
+          }
+          for (const field of item.type.fields || []) {
+            if (!validName(field.name) || field.name.startsWith("__")) continue;
+            const targetType = namedType(field.type);
+            const path = [...item.path, {
+              kind: "field",
+              name: field.name,
+              type: field.type,
+              args: field.args || []
+            }];
+            for (const row of missingExploration.collections) {
+              const spec = targets[row.collection];
+              const exact = matches(field.name, [row.collection, ...spec.names]) || matches(targetType?.name, [row.collection, ...spec.names]);
+              const related = matches(field.name, spec.related) || matches(targetType?.name, spec.related);
+              if (exact || related) pathsByCollection.get(row.collection).push({
+                path,
+                relation: exact ? "Name/type match; equivalence unverified" : "Related API; equivalence unverified"
+              });
+            }
+            if (["OBJECT", "INTERFACE", "UNION"].includes(targetType?.kind) && !item.ancestors.includes(targetType.name)) {
+              const next = types.get(targetType.name);
+              if (next) queue.push({
+                type: next,
+                path,
+                ancestors: [...item.ancestors, next.name]
+              });else missingExploration.coverage.truncated = true;
+            }
+          }
+          for (const possible of item.type.possibleTypes || []) {
+            const next = types.get(possible.name);
+            if (next && !item.ancestors.includes(next.name)) {
+              const path = [...item.path, {
+                kind: "fragment",
+                name: next.name
+              }];
+              for (const row of missingExploration.collections) {
+                const spec = targets[row.collection];
+                const exact = matches(next.name, [row.collection, ...spec.names]);
+                if (exact || matches(next.name, spec.related)) pathsByCollection.get(row.collection).push({
+                  path,
+                  relation: exact ? "Name/type match; equivalence unverified" : "Related API; equivalence unverified"
+                });
+              }
+              queue.push({
+                type: next,
+                path,
+                ancestors: [...item.ancestors, next.name]
+              });
+            }
+          }
+          // Bound both work and memory on a cyclic or unusually broad schema.
+          if (queue.length > limits.maxStates * 2) {
+            queue.length = limits.maxStates * 2;
+            missingExploration.coverage.truncated = true;
+          }
+        }
+        if (cursor < queue.length) missingExploration.coverage.truncated = true;
+        const typeText = type => type.kind === "NON_NULL" ? typeText(type.ofType) + "!" : type.kind === "LIST" ? "[" + typeText(type.ofType) + "]" : type.name;
+        const recordIds = {
+          webform: sd?.webform?.webformId || sd?.formParams?.webformId,
+          document: patient?.documents?.[0]?.documentId,
+          observation: patient?.observations?.[0]?.observationId,
+          encounter: sd?.formParams?.encounterId || patient?.encounters?.[0]?.encounterId
+        };
+        const catalogs = ["webformDefinition", "webformResource", "paperFormTemplate"];
+        const rootRank = entry => entry.path[0].name === "patient" ? 0 : entry.path[0].args.some(arg => arg.name === "patientId") ? 1 : catalogs.includes(entry.path[0].name) ? 2 : 3;
+        const cache = new Map();
+        for (const row of missingExploration.collections) {
+          if (!active()) return;
+          const candidates = pathsByCollection.get(row.collection).sort((a, b) => rootRank(a) - rootRank(b) || Number(a.relation.startsWith("Related")) - Number(b.relation.startsWith("Related")) || a.path.length - b.path.length);
+          row.candidatePathsFound = candidates.length;
+          if (candidates.length > limits.pathsPerCollection) missingExploration.coverage.truncated = true;
+          for (const candidate of candidates.slice(0, limits.pathsPerCollection)) {
+            if (!active()) return;
+            const {
+              path
+            } = candidate;
+            const entry = {
+              path: path.map(hop => hop.kind === "fragment" ? \`... on \${hop.name}\` : hop.name).join("."),
+              relation: candidate.relation,
+              status: "Not tested",
+              arguments: path.filter(hop => hop.kind === "field").map(hop => ({
+                field: hop.name,
+                args: hop.args
+              })),
+              scope: "Unresolved"
+            };
+            row.paths.push(entry);
+            try {
+              const top = path[0];
+              const scopedByPatient = top.name === "patient" || top.args.some(arg => arg.name === "patientId");
+              const currentRecordId = Number(recordIds[top.name]);
+              const scopedByRecord = Number.isSafeInteger(currentRecordId) && currentRecordId > 0 && top.args.some(arg => arg.name === "id");
+              const catalog = catalogs.includes(top.name);
+              entry.scope = scopedByPatient ? "Active patient" : scopedByRecord ? "One record from active context" : catalog ? "Form catalog; not a patient collection" : "Unresolved root scope";
+              if (!scopedByPatient && !scopedByRecord && !catalog) throw new Error("Automatic read needs a patient filter or a known active-context record ID");
+              const variables = {};
+              const declarations = [];
+              const bindings = new Map();
+              path.forEach((hop, index) => {
+                if (hop.kind !== "field") return;
+                const args = [];
+                for (const arg of hop.args) {
+                  let value;
+                  const scalar = namedType(arg.type)?.name;
+                  if (arg.name === "patientId" && ["Int", "Long", "ID"].includes(scalar)) value = patientId;else if (index === 0 && top.name === "patient" && arg.name === "id") value = patientId;else if (index === 0 && arg.name === "id" && scopedByRecord) value = currentRecordId;else if (index === 0 && arg.name === "webformDefinitionId") value = Number(sd?.webform?.webformDefinitionId || sd?.formParams?.webformDefinitionId) || undefined;else if (arg.name === "first" && scalar === "Int") value = 3;
+                  if (value === undefined) {
+                    if (arg.type.kind === "NON_NULL" && arg.defaultValue == null) throw new Error(\`Needs argument \${hop.name}.\${arg.name}\`);
+                    continue;
+                  }
+                  const key = \`p\${index}_\${arg.name}\`;
+                  variables[key] = scalar === "ID" ? String(value) : value;
+                  declarations.push(\`$\${key}: \${typeText(arg.type)}\`);
+                  args.push(\`\${arg.name}: $\${key}\`);
+                }
+                bindings.set(index, args.length ? "(" + args.join(", ") + ")" : "");
+              });
+              const leaf = path[path.length - 1];
+              const leafType = leaf.kind === "fragment" ? {
+                kind: "OBJECT",
+                name: leaf.name
+              } : namedType(leaf.type);
+              let selection = "";
+              if (["OBJECT", "INTERFACE", "UNION"].includes(leafType?.kind)) {
+                const small = (types.get(leafType.name)?.fields || []).filter(field => /Id$|^code$|^status$/.test(field.name) && validName(field.name) && !requiredArgs(field) && !isList(field.type) && ["SCALAR", "ENUM"].includes(namedType(field.type)?.kind)).slice(0, 6);
+                selection = leaf.kind === "fragment" ? small.map(field => field.name).join(" ") : " { __typename " + small.map(field => field.name).join(" ") + " }";
+              }
+              for (let index = path.length - 1; index >= 0; index -= 1) {
+                const hop = path[index];
+                if (hop.kind === "fragment") selection = \`... on \${hop.name} { __typename \${selection} }\`;else selection = \`\${hop.name}\${bindings.get(index) || ""}\${selection}\`;
+                if (index > 0 && path[index - 1].kind !== "fragment") {
+                  const parentType = namedType(path[index - 1].type);
+                  const patientCheck = parentType?.name === "Patient" && types.get("Patient")?.fields?.some(field => field.name === "patientId") ? "patientId " : "";
+                  selection = \` { __typename \${patientCheck}\${selection} }\`;
+                }
+              }
+              entry.query = \`query ProbeMissingCollection\${declarations.length ? "(" + declarations.join(", ") + ")" : ""} { \${selection} }\`;
+              const key = JSON.stringify([entry.query, variables]);
+              let outcome = cache.get(key);
+              if (!outcome) {
+                if (missingExploration.coverage.probesSent >= limits.maxProbes) {
+                  missingExploration.coverage.truncated = true;
+                  entry.status = "Not tested: probe limit reached";
+                  continue;
+                }
+                missingExploration.coverage.probesSent += 1;
+                update(\`Exploring \${row.collection}: \${entry.path}…\`);
+                try {
+                  const data = await request("ProbeMissingCollection", entry.query, variables);
+                  if (top.name === "patient") {
+                    const charts = data.patient;
+                    if (!Array.isArray(charts) || !charts.length || charts.some(chart => Number(chart.patientId) !== patientId)) throw new Error("Root did not return the active patient");
+                  }
+                  let values = [data];
+                  let inaccessibleParent = false;
+                  let leafNull = false;
+                  for (let i = 0; i < path.length; i += 1) {
+                    const hop = path[i];
+                    if (hop.kind === "fragment") {
+                      values = values.filter(value => value?.__typename === hop.name);
+                      if (!values.length) inaccessibleParent = true;
+                      continue;
+                    }
+                    const next = [];
+                    for (const value of values) {
+                      const found = value?.[hop.name];
+                      if (found == null) {
+                        if (i === path.length - 1) leafNull = true;else inaccessibleParent = true;
+                      } else if (Array.isArray(found)) {
+                        next.push(...found);
+                        if (!found.length && i < path.length - 1) inaccessibleParent = true;
+                      } else next.push(found);
+                    }
+                    values = next;
+                  }
+                  outcome = {
+                    status: values.length ? "Read succeeded" : leafNull ? "Query succeeded; target null or omitted" : inaccessibleParent ? "Query succeeded; no parent records reached target" : "Read succeeded: empty",
+                    count: values.length,
+                    partialParentCoverage: inaccessibleParent || leafNull
+                  };
+                } catch (error) {
+                  if (!active()) return;
+                  outcome = {
+                    status: "Read failed",
+                    error: readableError(error.message)
+                  };
+                }
+                cache.set(key, outcome);
+              } else entry.reusedProbe = true;
+              Object.assign(entry, outcome);
+            } catch (error) {
+              if (!active()) return;
+              entry.status = "Exposed path; needs arguments or scope";
+              entry.error = readableError(error.message);
+            }
+          }
+          row.status = row.paths.some(entry => entry.status.startsWith("Read succeeded") && !entry.relation.startsWith("Related")) ? "Candidate path read verified; equivalence unverified" : row.paths.some(entry => entry.status.startsWith("Read succeeded")) ? "Related API explored; equivalence unverified" : candidates.length ? "Candidate paths explored; target read unresolved" : "No candidate path found within search bounds";
+          update(\`Explored \${row.collection}\`);
+        }
+        missingExploration.coverage.completed = true;
+        missingExploration.status = "Exploration complete" + (missingExploration.coverage.truncated ? "; bounded search or probe limits reached" : "");
+        update("Missing-collection exploration complete. Download results JSON; no writes were executed by this test.", false);
+        return;
+      }
       if (mode === "custom") {
         const match = customQuery.trim().match(/^(query|mutation)\\s+([_A-Za-z][_0-9A-Za-z]*)\\b/);
         if (!match) throw new Error("Use a named query or mutation, for example query MyProbe { ... }");
@@ -29220,6 +29528,10 @@ const PatientContextQueryTest = ({
       }
       update("Live checks complete. Results are from explicit reads, separate from the initial chart load.", false);
     } catch (error) {
+      if (mode === "missing" && missingExploration && active()) {
+        missingExploration.error = readableError(error.message);
+        missingExploration.status = "Exploration incomplete";
+      }
       if (mode === "api" && apiInventory) apiInventory.error = readableError(error.message);
       update(readableError(error.message), false);
     } finally {
@@ -29232,6 +29544,10 @@ const PatientContextQueryTest = ({
     busy.current = false;
     setState(previous => ({
       ...previous,
+      missingExploration: previous.missingExploration && !previous.missingExploration.coverage.completed ? {
+        ...previous.missingExploration,
+        status: "Stopped; exploration incomplete"
+      } : previous.missingExploration,
       customResults: (previous.customResults || []).map(row => row.status === "Sent; outcome pending" ? {
         ...row,
         status: "Stopped; request may finish"
@@ -29246,7 +29562,8 @@ const PatientContextQueryTest = ({
   };
   const report = JSON.stringify({
     reportType: "mois-patient-context-live-query",
-    reportVersion: 4,
+    reportVersion: 5,
+    missingCollectionExploration: current.missingExploration || null,
     writeResults: (current.writeResults || []).map(({
       variables,
       ...result
@@ -29303,6 +29620,10 @@ const PatientContextQueryTest = ({
     disabled: !ready || current.busy,
     onClick: () => run("reads")
   }, "Run live chart checks"), " ", /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    disabled: !ready || current.busy,
+    onClick: () => run("missing")
+  }, "Explore missing collections"), " ", /*#__PURE__*/React.createElement("button", {
     type: "button",
     disabled: !ready || current.busy,
     onClick: () => run("api")
@@ -29390,7 +29711,13 @@ const PatientContextQueryTest = ({
       width: "100%",
       fontFamily: "monospace"
     }
-  })), current.rootResults?.length ? /*#__PURE__*/React.createElement("details", {
+  })), current.missingExploration ? /*#__PURE__*/React.createElement("details", {
+    open: true
+  }, /*#__PURE__*/React.createElement("summary", null, "Missing collection exploration"), /*#__PURE__*/React.createElement("p", null, current.missingExploration.status, ". This test reads schema metadata and candidate paths only. Related APIs are not assumed to contain equivalent records."), /*#__PURE__*/React.createElement("p", null, "Search bounds: depth ", current.missingExploration.limits.maxDepth, ", ", current.missingExploration.limits.pathsPerCollection, " paths per collection, ", current.missingExploration.limits.maxProbes, " reads. ", current.missingExploration.coverage.probesSent, " reads sent. ", current.missingExploration.coverage.truncated ? "Limits reached; search is not exhaustive." : ""), current.missingExploration.error ? /*#__PURE__*/React.createElement("p", null, current.missingExploration.error) : null, /*#__PURE__*/React.createElement("ul", null, current.missingExploration.collections.map(row => /*#__PURE__*/React.createElement("li", {
+    key: row.collection
+  }, /*#__PURE__*/React.createElement("strong", null, row.collection), " \\u2014 ", row.status, row.paths.length ? /*#__PURE__*/React.createElement("details", null, /*#__PURE__*/React.createElement("summary", null, "Explored paths (", row.paths.length, ")"), /*#__PURE__*/React.createElement("ul", null, row.paths.map((entry, index) => /*#__PURE__*/React.createElement("li", {
+    key: index
+  }, /*#__PURE__*/React.createElement("code", null, entry.path), " \\u2014 ", entry.status, entry.count !== undefined ? \` · \${entry.count} returned\` : "", /*#__PURE__*/React.createElement("p", null, entry.scope, ". ", entry.relation, "."), entry.error ? /*#__PURE__*/React.createElement("p", null, entry.error) : null)))) : null)))) : null, current.rootResults?.length ? /*#__PURE__*/React.createElement("details", {
     open: true
   }, /*#__PURE__*/React.createElement("summary", null, "Root query results"), /*#__PURE__*/React.createElement("ul", null, current.rootResults.map(row => /*#__PURE__*/React.createElement("li", {
     key: row.operation
@@ -39250,7 +39577,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './PanelEntryGrid/index.jsx': ["DEFAULT_WINDOW_HOURS","PANEL_GRID_CELL_STYLE","PANEL_GRID_TABLE_STYLE","PanelEntryGrid","actor","actorFrom","addHoursIso","answer","answers","authorshipPolicy","buildKey","c","changed","ck","claim","claims","collectedBy","column","commitSave","componentId","computedTotals","container","current","d","data","date","definition","definitions","editableUntil","effectiveFieldId","euDate","existing","expired","fieldData","formatTimestamp","getPanelGridAuth","group","grouped","historyColumns","historyEnabled","isNonEmpty","isOwner","keepStatus","key","kit","label","lockExpired","lockInfo","lockOn","lockedUntil","maxHistory","next","nextStatus","nhAuth","normalizeStore","normalizedOptions","now","nowIso","numbers","observations","ownerId","ownerName","ownerRefresh","pad2","panelGridDateKey","panelGridPayloadsEqual","panelGridRows","panelGridTotals","panelUpdate","pending","policyAppliesToAction","prepareSave","raw","readStore","release","renderCurrentValue","requireComplete","resolveNow","rowDefs","sameActor","scaleLike","sd","section","selected","setPanelGridPayload","setRowValue","shouldWriteDcos","shouldWritePanel","sourceIds","store","stripPanelGridVolatileFields","totalDefs","ts","type","untilSelf","value","values","windowHours"],
   './PastMeasurementField/index.jsx': ["PastMeasurementField","abnormalFlag","abnormalHighValue","abnormalLowValue","canPullLatest","candidate","candidates","codeFilter","coercePositiveInt","commentFilter","componentId","container","createdBy","criticalHighValue","criticalLowValue","current","currentPayload","currentWebformId","currentWebformObservations","day","defaultSpinStep","direct","displayedCurrentValue","documentDate","effectiveFieldId","effectiveHistorySize","effectiveLabelPosition","effectiveMeasurementSize","entryCode","entryComment","entryDate","entryUnits","entryValue","explicitValue","fieldData","flagCode","flagDisplays","formHistoryItems","formatDate","fromPatient","fromQueryResult","handleValueChange","hasAbnormalHigh","hasAbnormalLow","hasExplicitValue","hasMeaningfulValue","hasNumericCurrentValue","hasRangeMetadata","hasStoredValue","historicalFormRowDate","historyItems","historySummary","index","inputSuffix","isAbnormal","isHistoricalFormValue","isNonEmptyString","isNumericInput","key","latestHistoryItem","legacyRangePayload","linkedObservationItem","linkedWebformId","matchingKey","measurementWidthBySize","month","nextGroup","normalizeObservationItems","normalizedDateOnly","normalizedPullTargets","numericCurrentValue","numericExplicitValue","numericTime","observationHistoryItems","observationWebformId","oldId","oldObs","optionalString","parseDateValue","parsed","parsedDate","parsedDateOnly","patientPath","payloadsEqual","pullLatestIntoTargets","raw","rawDate","recentHistoryText","resolveHistoricalFormRows","resolveMeasurementContainerStyle","resolveMoisValue","resolvePathValue","resolvedAbnormalHigh","resolvedAbnormalLow","resolvedCriticalHigh","resolvedCriticalLow","resolvedCurrentValue","resolvedUnits","role","roots","sd","segments","setNestedPayload","shouldReserveHistory","shouldShowHistory","storedValue","stringifyValue","stripVolatilePayloadFields","targetFieldId","text","toObservationList","toPathSegments","updatedValue","value","valueFromHistoricalFormRow","valueIsDate","valueKeys","valuePart","valueText","width","year"],
   './PatientContextDiagnostics/index.jsx': ["PatientContextDiagnostics","availability","capability","cellStyle","collections","compact","direct","isArray","isRecord","labels","limit","patient","queried","registry","sampleText","sd","seen","source","textValue","value","visible"],
-  './PatientContextQueryTest/index.jsx': ["PatientContextQueryTest","absent","active","adapters","allowed","apiInventory","arg","argName","args","assignee","auth","before","bindings","busy","byId","candidate","chart","check","collection","collectionByType","context","contextId","createdIds","current","customResults","data","date","declarations","defaults","definitionId","deleteSpec","deletion","demographic","depth","detail","discovered","downloadReport","enqueue","epoch","error","expected","field","fieldMap","fields","firstId","hostQuery","id","idKey","ids","index","info","inputMap","inspect","isCorrespondence","isList","item","key","link","marked","marker","match","matches","mutation","name","nameText","named","namedType","need","nested","nestedDelete","notification","now","observation","op","ordered","ownId","ownKeys","patient","patientId","pending","pendingWrites","preferred","query","rank","readData","readId","readQuery","readRecords","readSelection","readableError","ready","recipes","record","recordType","records","report","request","requiredArgs","resolve","result","resultType","results","returned","returnedId","root","rootForType","rootName","rootOp","rootResults","roots","row","rows","run","runId","scalarFields","scalarSelection","schema","schemaFields","schemaQuery","sd","selection","sent","settings","spec","status","stop","supplied","targetType","targetTypes","targets","templateId","transport","typeCache","typeRef","typeText","types","uncertainWrite","update","url","urlApi","validName","validResponse","validate","value","variables","vars","varsByRoot","writeResults"],
+  './PatientContextQueryTest/index.jsx': ["PatientContextQueryTest","absent","active","adapters","allowed","apiInventory","arg","argName","args","assignee","auth","before","bindings","busy","byId","cache","candidate","candidates","catalog","catalogs","chart","charts","check","collection","collectionByType","context","contextId","createdIds","current","currentRecordId","cursor","customResults","data","date","declarations","defaults","definitionId","deleteSpec","deletion","demographic","depth","detail","discovered","discovery","downloadReport","enqueue","entry","epoch","error","exact","expected","field","fieldMap","fields","firstId","found","hop","hostQuery","i","id","idKey","ids","inaccessibleParent","index","info","inputMap","inspect","isCorrespondence","isList","item","key","leaf","leafNull","leafType","limits","link","marked","marker","match","matches","missingExploration","mutation","name","nameText","named","namedType","need","nested","nestedDelete","next","normalize","notification","now","observation","op","ordered","outcome","ownId","ownKeys","parentType","path","pathsByCollection","patient","patientCheck","patientId","pending","pendingWrites","preferred","query","queue","rank","readData","readId","readQuery","readRecords","readSelection","readableError","ready","recipes","record","recordIds","recordType","records","related","report","request","requiredArgs","resolve","result","resultType","results","returned","returnedId","root","rootForType","rootName","rootOp","rootRank","rootResults","roots","row","rows","run","runId","scalar","scalarFields","scalarSelection","schema","schemaFields","schemaQuery","scopedByPatient","scopedByRecord","sd","selection","sent","settings","small","spec","status","stop","supplied","targetType","targetTypes","targets","templateId","top","transport","typeCache","typeRef","typeText","types","uncertainWrite","update","url","urlApi","validName","validResponse","validate","value","values","variables","vars","varsByRoot","writeResults"],
   './PatientFileSections/index.jsx': ["PatientFileSections","activeText","addressText","cityLine","compactLines","contactText","countryLine","createdDate","editButtonStyle","encounter","fieldWrapStyle","formatAddress","formatContact","formatDate","getPatientFromData","gridStyle","healthNumber","insuranceBy","insuranceNumber","insuranceText","lines","match","mergeObjects","nextPatient","optionCode","optionDisplay","patient","preferredCode","preferredPhoneOptions","providerName","queryPatient","raw","renderClientDemographics","renderDocumentDetails","renderEncounterDetails","renderTitle","requested","sd","section","sectionTitleStyle","textValue","updateContactText","visibleSections","whiteDropdownStyles","whiteFlexTextFieldStyles","whiteTextFieldStyles","writePatientUpdates"],
   './PatientValueField/index.jsx': ["PatientValueField","age","applyPatientTransform","candidates","coercePatientValue","collectionCandidateValues","collectionItemMatches","computeAgeYears","dob","effectiveFieldId","expected","items","monthDelta","normalizedExpected","now","raw","resolveCollectionItemPath","resolvePatientContextPath","resolved","root","sd","stored","values"],
   './PdfRegenerator/index.jsx': ["PDFLib","PDF_LIB_URL","PdfRegenerator","_base64ToBytes","_buildChoiceComponentIndex","_buildDateComponentIndex","_buildTableReverseIndex","_choiceItemMatches","_choiceItems","_collectCandidates","_decodePdfHex","_downloadBytes","_drawGeometryOverlays","_fillField","_geometryChoiceSelected","_geometryClamp","_geometrySignatureDataUrl","_geometryTextLines","_getCheckboxOnStates","_inferBooleanState","_installPdfLibFromSource","_isNonEmptyString","_loadPdfLib","_loadPdfLibFromCdn","_matchMultipleOptions","_matchSingleOption","_normalizeFieldMap","_normalizeToken","_pdfLibPromise","_printBytes","_resolveChoiceComponentValue","_resolveDateComponentValue","_resolveTableCellValue","_resolveValueByPath","_setCheckboxByState","_splitCanonicalDateParts","_statusColor","_toBooleanLike","_toCandidateList","_toText","acro","baseMap","binary","blob","boldFont","boolValue","booleanStates","box","buttonDisabled","byRow","bytes","candidate","candidateKeys","candidates","choiceComponentIndex","choiceComponentValue","choiceEntry","clean","cleaned","cleanup","component","components","current","dataUrl","dateComponentIndex","dateComponentValue","dateEntry","desiredMaxLength","diagnosticsText","didDraw","didFill","direct","disabled","doc","existing","fieldId","filledFieldCount","font","fontSize","form","formData","formKeys","fromData","fromPath","fuzzy","geometryResult","handleGeneratePdf","hasMatchingState","i","iframe","image","includeSet","index","inferredState","inlineSource","installed","isOn","items","knownOptions","left","leftIsFormId","lib","lineHeight","lines","link","map","mapped","match","matches","maxLength","maxLines","maxWidth","maybe","maybeDate","maybeTime","nextFileName","normalized","normalizedAction","normalizedCandidate","normalizedOption","normalizedOptionMap","normalizedRequested","offState","onText","onValue","optionValue","options","otherItem","outputBytes","page","pages","parts","pathByColumnId","payload","pdfFieldId","pdfFieldName","pdfFields","printWindow","rawValue","renderActionButton","renderButton","requested","resolvePath","resolvedPdfSource","right","rightIsFormId","row","rowIndex","rowMapping","rows","runner","script","sd","segments","selected","selectedCount","set","single","size","skippedFieldCount","sourceFieldId","sourceId","sourceLines","sourceValue","sourceValues","state","states","strategy","tableEntry","tableId","tableIndex","targetAction","targetState","targetStateName","targetWidget","text","trimmed","url","warningCount","warnings","widget","widgets","withoutSlash","words"],
