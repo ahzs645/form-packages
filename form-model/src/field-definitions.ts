@@ -15,7 +15,9 @@ export interface BuilderFieldDefinition {
 export const BUILDER_FIELD_DEFINITIONS: readonly BuilderFieldDefinition[] = [
   { type: "text", label: "Text", defaultLabel: "Text field", description: "Short free-text input", category: "input", palette: "primary" },
   { type: "textarea", label: "Long Text", defaultLabel: "Long text", description: "Multi-line text area", category: "input", palette: "primary" },
-  { type: "richText", label: "Rich Text", defaultLabel: "Rich text", description: "Formatted markdown content", category: "input", palette: "primary" },
+  // A rich-text block is its own content, so it starts without a caption
+  // above it; the builder names it "Rich text N" until one is typed.
+  { type: "richText", label: "Rich Text", defaultLabel: "", description: "Formatted markdown content", category: "input", palette: "primary" },
   { type: "number", label: "Number", defaultLabel: "Number", description: "Numeric input", category: "input", palette: "primary" },
   { type: "computed", label: "Computed", defaultLabel: "Computed", description: "Formula-derived value with configurable override behavior", category: "advanced", palette: "primary" },
   { type: "email", label: "Email", defaultLabel: "Email address", description: "Email address with validation", category: "input", palette: "primary" },
