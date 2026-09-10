@@ -42568,6 +42568,9 @@ const WordRegenerator = ({
   fileName = "filled-form.docx",
   disabled = false
 }) => {
+  const {
+    DefaultButton
+  } = Fluent;
   const [fd] = useActiveData();
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState("");
@@ -42603,7 +42606,7 @@ const WordRegenerator = ({
       setBusy(false);
     }
   };
-  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(Fluent.DefaultButton, {
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(DefaultButton, {
     disabled: disabled || busy || !sourceDocxBase64,
     onClick: download
   }, busy ? "Preparing document…" : "Save Filled Word Document"), error && /*#__PURE__*/React.createElement("div", {

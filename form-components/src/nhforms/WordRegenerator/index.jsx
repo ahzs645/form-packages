@@ -2912,6 +2912,7 @@ jszip/dist/jszip.min.js:
 */
 
 const WordRegenerator = ({ sourceDocxBase64, bindings = [], fileName = "filled-form.docx", disabled = false }) => {
+  const { DefaultButton } = Fluent;
   const [fd] = useActiveData();
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState("");
@@ -2938,5 +2939,5 @@ const WordRegenerator = ({ sourceDocxBase64, bindings = [], fileName = "filled-f
     } catch (e) { setError(e.message || "Unable to fill the Word document."); }
     finally { setBusy(false); }
   };
-  return <div><Fluent.DefaultButton disabled={disabled || busy || !sourceDocxBase64} onClick={download}>{busy ? "Preparing document…" : "Save Filled Word Document"}</Fluent.DefaultButton>{error && <div role="alert">{error}</div>}</div>;
+  return <div><DefaultButton disabled={disabled || busy || !sourceDocxBase64} onClick={download}>{busy ? "Preparing document…" : "Save Filled Word Document"}</DefaultButton>{error && <div role="alert">{error}</div>}</div>;
 };
