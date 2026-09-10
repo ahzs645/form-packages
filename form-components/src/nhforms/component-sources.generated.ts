@@ -26598,7 +26598,16 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
           changeObservationPanels: () => ({ patientId, panelChanges: [{ observationPanelId: 0, patientId, panelName: context.panelName || { code: "4548-4", display: marker, system: "pCLOCD" }, notes: marker, status: "F", interfaceType: "WEBFORM" }] }),
           changePatient: () => ({ patientId, newPatient: { shortNote: marker } }),
           changePatientAddress: () => ({ patientId, newAddress: { line2: marker } }),
-          changePatientContact: () => ({ patientId, newContact: { homeMessage: patient?.telecom?.homeMessage === "Y" ? "N" : "Y" } }),
+          changePatientContact: async () => {
+            // MOIS rejected a partial contact object (str_phone1 NOT NULL).
+            // Read fresh values and copy only fields in this instance's input type.
+            const keys = (inputMap.get("ContactPointInput")?.inputFields || []).map((field) => field.name)
+            if (!keys.includes("homePhone") || !keys.includes("homeMessage")) throw new Error("Contact input fields unavailable; supply complete variable overrides")
+            const baseline = await request("ReadContactBeforeProbe", \`query ReadContactBeforeProbe($patientId: Int!) { patient(id: $patientId) { patientId telecom { \${keys.join(" ")} } } }\`, { patientId })
+            const contact = baseline.patient?.find((record) => Number(record.patientId) === patientId)?.telecom
+            if (!contact || contact.homePhone == null) throw new Error("Fresh homePhone is unavailable; provide a complete test contact payload")
+            return { patientId, newContact: { ...Object.fromEntries(keys.filter((key) => Object.prototype.hasOwnProperty.call(contact, key)).map((key) => [key, contact[key]])), homeMessage: contact.homeMessage === "Y" ? "N" : "Y" } }
+          },
           changePatientInsurance: () => ({ patientId, newInsurance: { insuranceNumber: "WF" + Date.now().toString(36).slice(-6) } }),
           changePatientName: () => ({ patientId, newUsualName: { first: patient?.name?.first || "WEBFORMS", family: patient?.name?.family || "TEST" }, newNickName: { first: "WEBFORMS", family: "TEST", text: marker } }),
           changePrescription: () => ({ patientId, prescription: { prescriptionId: 0, patientId, medication: marker, comment: "Synthetic test only", orderDate: date } }),
@@ -26644,7 +26653,7 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
         const ownKeys = { ObservationPanel: "observationPanelId", Correspondence: "correspondenceId", Observation: "observationId", AssociatedParty: "associatedPartyId", ChartPreference: "chartPreferenceId", Connection: "connectionId", Document: "documentId", HouseholdOccupant: "householdOccupantId", LongTermMedication: "longTermMedicationId", Prescription: "prescriptionId", PrescriptionLog: "prescriptionLogId", ServiceEpisode: "serviceEpisodeId", ServiceEvent: "serviceEventId", Encounter: "encounterId", MoisTask: "taskId", FavouriteMedication: "favouriteMedicationId", Webform: "webformId", WebformDefinition: "webformDefinitionId" }
         const scalarSelection = async (typeName, recordIdKey = ownKeys[typeName]) => {
           const info = await inspect(typeName)
-          const allowed = new Set([recordIdKey, ...(typeName === "Webform" ? ["documentId"] : []), "patientId", "name", "title", "description", "value", "note", "notes", "comment", "medication", "preference", "subjectDetail", "method", "officeNote", "shortNote", "formdata"])
+          const allowed = new Set([recordIdKey, ...(typeName === "Webform" ? ["documentId", "isDraft", "recordState"] : []), "patientId", "name", "title", "description", "value", "note", "notes", "comment", "medication", "preference", "subjectDetail", "method", "officeNote", "shortNote", "formdata"])
           return ["__typename", ...(info.fields || []).filter((f) => allowed.has(f.name) && !requiredArgs(f) && !isList(f.type) && ["SCALAR", "ENUM"].includes(namedType(f.type)?.kind)).map((f) => f.name)].join(" ")
         }
         const ordered = [...Object.keys(recipes), ...apiInventory.mutations.map((op) => op.name).filter((name) => !Object.prototype.hasOwnProperty.call(recipes, name))]
@@ -26746,6 +26755,16 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
               update("Checked patient registration")
               continue
             }
+            if (name === "addWebformResource") {
+              row.verificationQuery = "query VerifyMoisResource($id: Int!) { webformResource(webformDefinitionId: $id) { webformResourceId webformDefinitionId pathname contents } }"
+              const check = await request("VerifyMoisResource", row.verificationQuery, { id: vars.resource.webformDefinitionId })
+              const matches = (check.webformResource || []).filter((record) => Number(record.webformDefinitionId) === Number(vars.resource.webformDefinitionId) && Number(record.webformResourceId) > 0 && record.pathname === vars.resource.pathname && record.contents === vars.resource.contents)
+              const matched = matches.length === 1 && typeof vars.resource.pathname === "string" && typeof vars.resource.contents === "string"
+              row.verification = matched ? "Verified: resource pathname and contents read back" : "Resource pathname and contents not uniquely verified on independent read"
+              if (matched) { row.status = "Write verified"; row.recordId = Number(matches[0].webformResourceId); ids.webformResourceId = row.recordId }
+              update("Checked webform resource")
+              continue
+            }
             const records = nested ? returned.flatMap((record) => record[collection] || []) : returned
             const idKey = ownKeys[targetType]
             const marked = records.filter((record) => Object.values(record || {}).some((value) => typeof value === "string" && value.includes(marker)))
@@ -26782,9 +26801,36 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
                   const record = row.recordId ? readRecords.find((r) => Number(r[idKey]) === row.recordId) : null
                   row.verification = record && Object.values(record).some((value) => typeof value === "string" && value.includes(marker)) ? "Verified: test marker read back" : record ? "Record ID read back; test value not verified" : "Not found on independent read"
                   if (row.verification === "Verified: test marker read back") row.status = "Write verified"
+                  if (["updateWebform", "updateWebformDefinition", "signWebform"].includes(name)) {
+                    const submitted = name === "updateWebform" ? vars.webform : name === "signWebform" ? vars.signatureRecord : vars.webformDefinition
+                    const candidates = name === "updateWebform" ? ["formdata", "note", "isDraft"] : name === "signWebform" ? ["recordState"] : ["title", "name", "comment"]
+                    const fields = candidates.filter((field) => submitted?.[field] !== undefined)
+                    const canonical = (value) => Array.isArray(value) ? value.map(canonical) : value && typeof value === "object" ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])])) : value
+                    const matchesValue = (field) => {
+                      if (!record) return false
+                      if (field !== "formdata") return record[field] === submitted[field]
+                      try { return JSON.stringify(canonical(JSON.parse(record[field]))) === JSON.stringify(canonical(JSON.parse(submitted[field]))) } catch (_) { return false }
+                    }
+                    row.verificationChecks = fields.map((field) => ({ field, matched: matchesValue(field) }))
+                    const matched = fields.length > 0 && row.verificationChecks.every((check) => check.matched)
+                    row.status = matched ? "Write verified" : "Mutation accepted; persistence unverified"
+                    row.verification = matched ? "Verified: submitted update fields read back" : "Submitted update fields not independently verified; an unchanged marker is insufficient"
+                  }
                 }
               }
-              const demographic = { changePatient: ["shortNote", null, vars.newPatient?.shortNote], changePatientAddress: ["address", "line2", vars.newAddress?.line2], changePatientContact: ["telecom", "homeMessage", vars.newContact?.homeMessage], changePatientName: ["nickName", "text", vars.newNickName?.text], changePatientInsurance: ["insuranceNumber", null, vars.newInsurance?.insuranceNumber] }[name]
+              if (name === "changePatientName" && vars.newNickName) {
+                const fields = ["first", "family"].filter((key) => vars.newNickName[key] !== undefined)
+                if (fields.length) {
+                  row.verificationQuery = \`query VerifyMoisWrite($patientId: Int!) { patient(id: $patientId) { patientId nickName { \${fields.join(" ")} text } } }\`
+                  const check = await request("VerifyMoisWrite", row.verificationQuery, { patientId })
+                  const nickName = check.patient?.find((record) => Number(record.patientId) === patientId)?.nickName
+                  row.verificationChecks = fields.map((field) => ({ field: \`nickName.\${field}\`, matched: Boolean(nickName && nickName[field] === vars.newNickName[field]) }))
+                  const matched = row.verificationChecks.every((check) => check.matched)
+                  row.verification = matched ? "Verified: submitted nickname fields read back; formatted text and usual name not verified" : "Submitted nickname fields did not match independent read"
+                  if (matched) row.status = "Write verified"
+                }
+              }
+              const demographic = { changePatient: ["shortNote", null, vars.newPatient?.shortNote], changePatientAddress: ["address", "line2", vars.newAddress?.line2], changePatientContact: ["telecom", "homeMessage", vars.newContact?.homeMessage], changePatientInsurance: ["insuranceNumber", null, vars.newInsurance?.insuranceNumber] }[name]
               if (demographic && demographic[2] !== undefined) {
                 const [field, child, expected] = demographic
                 row.verificationQuery = \`query VerifyMoisWrite($patientId: Int) { patient(id: $patientId) { patientId \${field}\${child ? " { " + child + " }" : ""} } }\`
@@ -26921,6 +26967,7 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
   const report = JSON.stringify({
     reportType: "mois-patient-context-live-query",
     reportVersion: 5,
+    diagnosticsRevision: "2026-09-10.2",
     missingCollectionExploration: current.missingExploration || null,
     writeResults: (current.writeResults || []).map(({ variables, ...result }) => result),
     rootQueryResults: current.rootResults || [],

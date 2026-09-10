@@ -135,7 +135,7 @@ function testHost(write?: (name: string, variables: any) => any) {
       if (vars.name === 'Mutation') return { __type: { fields: liveSchema.mutations } };
       const input = liveSchema.inputTypes.find((t: any) => t.name === vars.name);
       if (input) return { __type: input };
-      const fieldNames = ['patientId', 'observationId', 'observationPanelId', 'description', 'value', 'documentId', 'note', 'webformId', 'webformDefinitionId', 'templateId', 'shortNote', 'associatedPartyId', 'chartPreferenceId', 'connectionId', 'householdOccupantId', 'longTermMedicationId', 'prescriptionId', 'prescriptionLogId', 'serviceEpisodeId', 'serviceEventId', 'encounterId', 'taskId', 'favouriteMedicationId', 'correspondenceId', 'comment', 'medication', 'preference', 'method', 'officeNote', 'title'];
+      const fieldNames = ['patientId', 'observationId', 'observationPanelId', 'description', 'value', 'documentId', 'note', 'webformId', 'webformDefinitionId', 'templateId', 'shortNote', 'associatedPartyId', 'chartPreferenceId', 'connectionId', 'householdOccupantId', 'longTermMedicationId', 'prescriptionId', 'prescriptionLogId', 'serviceEpisodeId', 'serviceEventId', 'encounterId', 'taskId', 'favouriteMedicationId', 'correspondenceId', 'comment', 'medication', 'preference', 'method', 'officeNote', 'title', 'formdata', 'isDraft', 'recordState'];
       return { __type: { fields: [...fieldNames.map((name) => ({ name, type: name.endsWith('Id') ? scalar : { kind: 'SCALAR', name: 'String' }, args: [] })), ...['observationPanels', 'observations', 'contacts', 'preferences', 'connections', 'documents', 'householdOccupants', 'longTermMedications', 'prescriptions', 'prescriptionLogs', 'serviceEpisodes', 'encounters', 'favouriteMedications', 'correspondences'].map((name) => ({ name, type: list, args: [] }))] } };
     }
     if (operation === 'ProbeMoisWrite') {
@@ -145,6 +145,7 @@ function testHost(write?: (name: string, variables: any) => any) {
       if (name === 'changeObservations') { if (vars.observationChanges) Object.assign(records[0], vars.observationChanges[0]); return { changeObservations: [{ patientId: 42, observations: records }] }; }
       return { [name]: null };
     }
+    if (operation === 'ReadContactBeforeProbe') return { patient: [{ patientId: 42, telecom: { homePhone: '5550001', homeMessage: 'Y', workPhone: '5550002', homeEmail: 'test@example.invalid' } }] };
     if (operation === 'VerifyMoisWrite') return { patient: [{ patientId: 42, observations: records }] };
     if (operation === 'ProbePaperTemplates') return { paperFormTemplate: [{ templateId: 3 }] };
     if (operation === 'ProbeMoisRoot') { const name = query.match(/\{\s*(\w+)/)[1]; return { [name]: [] }; }
@@ -225,7 +226,7 @@ describe('live write laboratory', () => {
     const transport = testHost(); mount(transport); await clickButton('Inspect read/write API'); await clickButton('Run test writes');
     const calls = transport.mock.calls.filter((call) => call[0] === 'ProbeMoisWrite');
     const variablesFor = (name: string) => calls.find((call) => call[3].includes(`{ ${name}(`))![4];
-    expect(variablesFor('changePatientContact').newContact.homeMessage).toMatch(/^[YN]$/);
+    expect(variablesFor('changePatientContact').newContact).toEqual({ homePhone: '5550001', homeMessage: 'N', workPhone: '5550002', homeEmail: 'test@example.invalid' });
     expect(variablesFor('changePatientInsurance').newInsurance.insuranceNumber.length).toBeLessThanOrEqual(8);
     expect(variablesFor('changePatientInsurance').newInsurance.billingDepartment).toBeUndefined();
     expect(variablesFor('changePatientName').newUsualName).toMatchObject({ first: 'WEBFORMS', family: 'TEST' });
@@ -255,6 +256,52 @@ describe('live write laboratory', () => {
     mount(transport); await clickButton('Inspect read/write API'); await clickButton('Run test writes');
     expect(reportValue().writeResults.find((r: any) => r.operation === 'changeLongTermMedication')).toMatchObject({ status: 'Write verified', recordId: 987, idRecovery: 'Unique marker found on independent read' });
     expect(transport.mock.calls.filter((call) => call[0] === 'ProbeMoisWrite' && call[3].includes('{ changeLongTermMedication('))).toHaveLength(1);
+  });
+
+  it.each([false, true])('verifies changed form fields, definition titles, signing and resource content (apply changes: %s)', async (applyChanges) => {
+    let form: any;
+    let definition: any;
+    let resource: any;
+    const base = testHost((name, vars) => {
+      if (name === 'addWebformDefinition') { definition = { ...vars.webform, webformDefinitionId: 901 }; return { [name]: [definition] }; }
+      if (name === 'addWebformResource') { resource = { ...vars.resource, webformResourceId: 902 }; return { [name]: [resource] }; }
+      if (name === 'addWebform') { form = { ...vars.webform, webformId: 903, documentId: 904, recordState: 'UNSIGNED' }; return { [name]: [form] }; }
+      if (name === 'updateWebform') { if (applyChanges) form = { ...form, ...vars.webform }; return { [name]: [form] }; }
+      if (name === 'updateWebformDefinition') { if (applyChanges) definition = { ...definition, ...vars.webformDefinition }; return { [name]: [definition] }; }
+      if (name === 'signWebform') { if (applyChanges) form = { ...form, recordState: 'SIGNED' }; return { [name]: [form] }; }
+      return { [name]: null };
+    });
+    const transport = vi.fn(async (...args: any[]) => {
+      if (args[0] === 'VerifyMoisResource') return { webformResource: resource ? [{ ...resource, contents: applyChanges ? resource.contents : 'OLD CONTENT' }] : [] };
+      if (args[0] === 'VerifyMoisWrite') {
+        if (args[3].includes('webformDefinition(')) return { webformDefinition: definition ? [definition] : [] };
+        if (args[3].includes('webform(')) return { webform: form ? [form] : [] };
+      }
+      return (base as any)(...args);
+    });
+    mount(transport); await clickButton('Inspect read/write API'); await clickButton('Run test writes');
+    for (const operation of ['updateWebform', 'updateWebformDefinition', 'signWebform', 'addWebformResource']) {
+      const result = reportValue().writeResults.find((row: any) => row.operation === operation);
+      expect(result.status, operation).toBe(applyChanges ? 'Write verified' : 'Mutation accepted; persistence unverified');
+      if (operation !== 'addWebformResource') expect(result.verificationChecks.every((check: any) => check.matched)).toBe(applyChanges);
+    }
+    expect(JSON.stringify(reportValue())).not.toContain('test@example.invalid');
+  });
+
+  it('does not send contact changes when the fresh phone baseline is unavailable', async () => {
+    const base = testHost();
+    const transport = vi.fn(async (...args: any[]) => args[0] === 'ReadContactBeforeProbe' ? { patient: [{ patientId: 42, telecom: { homePhone: null } }] } : (base as any)(...args));
+    mount(transport); await clickButton('Inspect read/write API'); await clickButton('Run test writes');
+    expect(transport.mock.calls.some((call: any) => call[0] === 'ProbeMoisWrite' && call[3].includes('{ changePatientContact('))).toBe(false);
+    expect(reportValue().writeResults.find((row: any) => row.operation === 'changePatientContact')).toMatchObject({ status: 'Not attempted' });
+  });
+
+  it('checks nickname primitives even when MOIS formats the text differently', async () => {
+    let nickname: any;
+    const base = testHost((name, vars) => { if (name === 'changePatientName') nickname = vars.newNickName; return { [name]: [{ patientId: 42 }] }; });
+    const transport = vi.fn(async (...args: any[]) => args[0] === 'VerifyMoisWrite' && args[3].includes('nickName') ? { patient: [{ patientId: 42, nickName: { first: nickname.first, family: nickname.family, text: 'TEST, WEBFORMS' } }] } : (base as any)(...args));
+    mount(transport); await clickButton('Inspect read/write API'); await clickButton('Run test writes');
+    expect(reportValue().writeResults.find((row: any) => row.operation === 'changePatientName')).toMatchObject({ status: 'Write verified', verificationChecks: [{ field: 'nickName.first', matched: true }, { field: 'nickName.family', matched: true }] });
   });
 
   it('stops after an uncertain mutation timeout and prevents duplicate retries', async () => {
