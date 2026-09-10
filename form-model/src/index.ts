@@ -713,6 +713,10 @@ export interface BuilderLayoutTableCellField {
   visibility?: BuilderVisibilityRule | null;
   validation?: BuilderValidationConfig | null;
   numberConfig?: BuilderField["numberConfig"];
+  dateConfig?: BuilderField["dateConfig"];
+  textConfig?: BuilderField["textConfig"];
+  textareaConfig?: BuilderField["textareaConfig"];
+  pdfFieldAliases?: string[];
 }
 
 export interface BuilderLayoutTableCell {
@@ -767,6 +771,10 @@ export interface BuilderLayoutTableCell {
   visibility?: BuilderVisibilityRule | null;
   validation?: BuilderValidationConfig | null;
   numberConfig?: BuilderField["numberConfig"];
+  dateConfig?: BuilderField["dateConfig"];
+  textConfig?: BuilderField["textConfig"];
+  textareaConfig?: BuilderField["textareaConfig"];
+  pdfFieldAliases?: string[];
   resources?: Array<{ label: string; url: string }>;
   resourceListStyle?: "disc" | "none";
   targets?: BuilderLayoutTableStampTarget[];
@@ -1670,6 +1678,8 @@ export interface BuilderField {
       prefill?: FieldPrefillValue;
       /** Date columns only: pair the date picker with a time input (DateTimeSelect). */
       withTime?: boolean;
+      dateConfig?: BuilderField["dateConfig"];
+      textareaConfig?: BuilderField["textareaConfig"];
       useToggleSwitch?: boolean;
       numberConfig?: {
         typeNumber: "number" | "decimal" | "year";
@@ -1731,6 +1741,8 @@ export interface BuilderField {
     uniqueBy?: string[];
     sourceFieldIds?: Record<string, string>;
     sourceFieldIdsByRow?: Record<number, Record<string, string>>;
+    /** Original answer definitions used by document export for mapped repeating rows. */
+    documentFields?: BuilderField[];
     /** Optional nested ActiveData path holding the rows array (defaults to the field id). */
     rowsPath?: string;
     /** Optional nested ActiveData path mirrored to the current row count. */
@@ -1871,6 +1883,8 @@ export interface BuilderField {
     withTime?: boolean;
     dateRange?: boolean;
     dateFormat?: "yyyy.MM.dd" | "dd/MM/yyyy" | "MM-dd-yyyy" | "yyyy-MM-dd";
+    /** Format used when writing the answer into the original PDF or Word document. */
+    documentOutputFormat?: "stored" | "yyyy-MM-dd" | "dd/MMM/yyyy" | "ddMMMyyyy";
     disablePastDates?: boolean;
     disableFutureDates?: boolean;
     prefillToday?: boolean;

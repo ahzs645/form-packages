@@ -13,6 +13,9 @@ import type { GroupLayoutDraft } from "./layout";
 export interface SessionFooterButtonConfig {
   showPrint?: boolean;
   showPdfRegenerator?: boolean;
+  showWordRegenerator?: boolean;
+  wordTemplate?: { sourceDocxBase64: string; fileName: string; bindings: Array<{ targetId: string; sourceId: string; kind: string; dateFormat?: string }> } | null;
+  documentDateFormats?: Record<string, string>;
   showRefresh?: boolean;
   showSubmit?: boolean;
   showSave?: boolean;
@@ -36,6 +39,7 @@ export interface SessionFooterButtonConfig {
   closeText?: string;
   pdfLibStrategy?: "inline" | "cdn" | "host";
   pdfRegeneratorAction?: "print" | "save";
+  pdfRecalculate?: boolean;
 }
 
 export interface SessionPreviewSettings {

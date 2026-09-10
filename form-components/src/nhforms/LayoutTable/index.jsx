@@ -280,9 +280,9 @@ const renderLayoutTableField = (cell, readOnly, data, setFieldValue) => {
         />
       )
     case "number":
-      return <Numeric {...sharedProps} {...labelProp} spinButtonProps={cell.numberConfig?.spinButtonProps || { min: cell.min, max: cell.max, step: cell.step }} />
+      return <Numeric {...sharedProps} {...labelProp} typeNumber={cell.numberConfig?.typeNumber} storeAsNumber={cell.numberConfig?.storeAsNumber} suffix={cell.numberConfig?.suffix} spinButtonProps={cell.numberConfig?.spinButtonProps || { min: cell.min, max: cell.max, step: cell.step }} />
     case "date":
-      return <DateSelect {...sharedProps} {...labelProp} />
+      return <DateSelect {...sharedProps} {...labelProp} dateFormat={cell.dateConfig?.dateFormat} />
     case "time":
       return <TimeSelect {...sharedProps} {...labelProp} />
     case "booleanYesNo":
@@ -299,7 +299,7 @@ const renderLayoutTableField = (cell, readOnly, data, setFieldValue) => {
         : <SimpleCodeChecklist {...sharedProps} {...labelProp} selectionType="multiple" codeSystem={cell.codeSystem} multiline={multiline} />
     }
     case "textarea":
-      return <TextArea {...sharedProps} {...labelProp} multiline textFieldProps={{ autoAdjustHeight: true, resizable: false }} />
+      return <TextArea {...sharedProps} {...labelProp} multiline textFieldProps={{ autoAdjustHeight: true, resizable: cell.textareaConfig?.resizable ?? false, rows: cell.textareaConfig?.rows }} />
     case "text":
     default:
       return <TextArea {...sharedProps} {...labelProp} />

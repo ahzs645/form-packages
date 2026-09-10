@@ -1,0 +1,9 @@
+{
+  "name": "WordRegenerator",
+  "title": "Save Filled Word Document",
+  "description": "Insert mapped MOIS answers into a copy of an embedded original DOCX, entirely in the browser.",
+  "version": { "major": 1, "minor": 0, "patch": 0 },
+  "type": "component",
+  "owner": "NHForms",
+  "components": []
+}

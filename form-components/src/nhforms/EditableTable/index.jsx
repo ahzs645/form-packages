@@ -35,6 +35,15 @@ const _formatLocalDate = (date) => {
   return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`
 }
 
+// SMOIS DateSelect calls onChange with a Date; preview supplies a date string.
+// Store the local calendar day, avoiding an implicit UTC conversion.
+const _normalizeDateCellValue = (value) => {
+  if (value && typeof value.getFullYear === "function") {
+    return Number.isNaN(value.getTime()) ? "" : _formatLocalDate(value)
+  }
+  return typeof value === "string" ? value : ""
+}
+
 const _todayDateValue = () => _formatLocalDate(new Date())
 
 const _addDaysToDateValue = (value, days = 1) => {
@@ -1440,7 +1449,7 @@ EditableTable = ({
             typeNumber={numberConfig.typeNumber}
             buttonControls={numberConfig.buttonControls}
             value={value?.toString() || ""}
-            onChange={(newValue) => onValueChange(rowIndex, column.id, _coerceNumberCellValue(newValue, column))}
+            onChange={(valueOrEvent, nextValue) => onValueChange(rowIndex, column.id, _coerceNumberCellValue(nextValue === undefined ? valueOrEvent : nextValue, column))}
             spinButtonProps={spinButtonProps}
             textFieldProps={numberConfig.suffix ? { suffix: numberConfig.suffix } : undefined}
             storeAsNumber={numberConfig.storeAsNumber !== false}
@@ -1466,9 +1475,10 @@ EditableTable = ({
         }
         return (
           <DateSelect
+            dateFormat={column.dateConfig?.dateFormat}
             inline={inline}
             value={value || ""}
-            onChange={(newValue) => onValueChange(rowIndex, column.id, newValue || "")}
+            onChange={(newValue) => onValueChange(rowIndex, column.id, _normalizeDateCellValue(newValue))}
             placeholder={column.placeholder || "Select date"}
             readOnly={effectiveReadOnly}
             disabled={effectiveReadOnly}
@@ -1573,6 +1583,8 @@ EditableTable = ({
       default:
         return (
           <TextArea
+            multiline={column.textareaConfig?.multiline}
+            textFieldProps={column.textareaConfig ? { rows: column.textareaConfig.rows, resizable: column.textareaConfig.resizable } : undefined}
             inline={inline}
             value={value || ""}
             onChange={(event, newValue) => onValueChange(rowIndex, column.id, newValue || "")}

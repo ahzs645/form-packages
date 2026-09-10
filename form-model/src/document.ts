@@ -84,6 +84,8 @@ export interface TableColumn {
   prefill?: FieldPrefillValue;
   /** Date columns only: pair the date picker with a time input (DateTimeSelect). */
   withTime?: boolean;
+  dateConfig?: BuilderField["dateConfig"];
+  textareaConfig?: BuilderField["textareaConfig"];
   useToggleSwitch?: boolean;
   numberConfig?: {
     typeNumber: "number" | "decimal" | "year";
@@ -384,6 +386,8 @@ export interface ParsedField {
     uniqueBy?: string[];
     sourceFieldIds?: Record<string, string>;
     sourceFieldIdsByRow?: Record<number, Record<string, string>>;
+    /** Original answer definitions used by document export for mapped repeating rows. */
+    documentFields?: BuilderField[];
     rowsPath?: string;
     countPath?: string;
     modalEditorPresetId?: string;
@@ -523,6 +527,7 @@ export interface ParsedField {
   dateWithTime?: boolean;
   dateRange?: boolean;
   dateFormat?: "yyyy.MM.dd" | "dd/MM/yyyy" | "MM-dd-yyyy" | "yyyy-MM-dd";
+  documentOutputFormat?: "stored" | "yyyy-MM-dd" | "dd/MMM/yyyy" | "ddMMMyyyy";
   disablePastDates?: boolean;
   disableFutureDates?: boolean;
   prefillToday?: boolean;

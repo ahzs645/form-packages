@@ -3,13 +3,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as Babel from "@babel/standalone";
-import * as PDFLib from "pdf-lib";
+import * as PDFLib from "@cantoo/pdf-lib";
 
 const NHFORMS = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const source = fs.readFileSync(path.join(NHFORMS, "PdfRegenerator", "index.jsx"), "utf8");
 
+let compiledSource: string | undefined;
 function loadHelpers() {
-  const compiled = Babel.transform(source, { presets: ["react"], filename: "PdfRegenerator/index.jsx" }).code ?? "";
+  const compiled = compiledSource ??= Babel.transform(source, { presets: ["react"], filename: "PdfRegenerator/index.jsx" }).code ?? "";
   // Same bare-global contract as the MOIS runtime. The component itself is not
   // rendered here; this exposes the self-contained mapping helpers for a
   // focused PDF round-trip regression test.
@@ -17,12 +18,15 @@ function loadHelpers() {
   const factory = new Function(
     "React",
     "Fluent",
-    `${compiled};\nreturn { _resolveChoiceComponentValue, _drawGeometryOverlays };`,
+    `${compiled};\nreturn { _resolveChoiceComponentValue, _drawGeometryOverlays, _applyPdfCalculations, _pdfCalculation, _fillField };`,
   );
   return factory(
     { useMemo: () => undefined, useState: () => undefined, useCallback: () => undefined },
     {},
   ) as {
+    _applyPdfCalculations: (doc: PDFLib.PDFDocument, lib: typeof PDFLib) => number;
+    _pdfCalculation: (script: string, target: string, read: (key: string) => unknown) => unknown;
+    _fillField: (field: PDFLib.PDFField, value: unknown, id: string, warnings: string[], lib: typeof PDFLib) => boolean;
     _resolveChoiceComponentValue: (
       formData: Record<string, unknown>,
       entry: Record<string, unknown>,
@@ -35,7 +39,30 @@ function loadHelpers() {
   };
 }
 
-describe("PdfRegenerator checklist component mapping", () => {
+describe("PdfRegenerator checklist component mapping", { timeout: 30000 }, () => {
+  it("interprets supplier arithmetic and copies without executing document JavaScript", () => {
+    const { _pdfCalculation } = loadHelpers();
+    const values: Record<string, unknown> = { quantity: "2", cost: "12.50", tax: "5%", claim: "00123" };
+    const read = (key: string) => values[key];
+    expect(_pdfCalculation('event.value=this.getField("quantity").value * this.getField("cost").value;', "total", read)).toBe(25);
+    expect(_pdfCalculation('this.getField("footer").value = this.getField("claim").value;', "footer", read)).toBe("00123");
+    expect(_pdfCalculation('AFSimple_Calculate("SUM", new Array ("quantity", "cost"));', "total", read)).toBe(14.5);
+    expect(() => _pdfCalculation('event.value = fetch("https://example.com")', "total", read)).toThrow("Unsupported");
+  });
+  it("recalculates dependencies and permits clearing a text answer", async () => {
+    const { _applyPdfCalculations, _fillField } = loadHelpers();
+    const doc = await PDFLib.PDFDocument.create();
+    const form = doc.getForm();
+    const total = form.createTextField("total");
+    total.acroField.dict.set(PDFLib.PDFName.of("AA"), doc.context.obj({ C: { S: "JavaScript", JS: PDFLib.PDFString.of('event.value = this.getField("subtotal").value * 2;') } }));
+    const sub = form.createTextField("subtotal");
+    sub.acroField.dict.set(PDFLib.PDFName.of("AA"), doc.context.obj({ C: { S: "JavaScript", JS: PDFLib.PDFString.of('event.value = this.getField("input").value + 3;') } }));
+    const input = form.createTextField("input"); input.setText("4");
+    expect(_applyPdfCalculations(doc, PDFLib)).toBe(2);
+    expect(total.getText()).toBe("14");
+    expect(_fillField(input, "", "input", [], PDFLib)).toBe(true);
+    expect(input.getText() ?? "").toBe("");
+  });
   it("maps selected options plus custom Other text back to independent PDF widgets", () => {
     const { _resolveChoiceComponentValue } = loadHelpers();
     const knownOptions = [
