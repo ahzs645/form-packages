@@ -202,13 +202,16 @@ describe('live write laboratory', () => {
   });
 
   it('can reach all 39 concrete mutation fields with valid dependencies and explicit fax inputs', async () => {
-    const transport = testHost((name, vars) => {
+    let episode: any;
+    const base = testHost((name, vars) => {
       const payload: any = Object.values(vars).find((v) => v && typeof v === 'object' && !Array.isArray(v)) || {};
       const record = { ...payload, patientId: 42, observationId: 501, observationPanelId: 518, associatedPartyId: 502, chartPreferenceId: 503, connectionId: 504, documentId: 505, householdOccupantId: 506, longTermMedicationId: 507, prescriptionId: 508, prescriptionLogId: 509, serviceEpisodeId: 510, serviceEventId: 511, encounterId: 512, taskId: 513, favouriteMedicationId: 514, correspondenceId: 515, webformId: 516, webformDefinitionId: 517 };
+      if (name === 'changeServiceEpisode') episode = { ...vars.serviceEpisode, serviceEpisodeId: 510 };
       const patientResult = Object.fromEntries(['observationPanels', 'observations', 'contacts', 'preferences', 'connections', 'documents', 'householdOccupants', 'longTermMedications', 'prescriptions', 'prescriptionLogs', 'serviceEpisodes', 'encounters', 'favouriteMedications', 'correspondences'].map((key) => [key, [record]]));
       return { [name]: [{ ...record, ...patientResult }] };
     });
-    mount(transport); await clickButton('Inspect read/write API'); await setContext({ providerId: 12, assignedUserId: 7, service: { code: 'TEST', system: 'TEST' } }); await clickButton('Run test writes');
+    const transport = vi.fn(async (...args: any[]) => args[0] === 'VerifyServiceEpisode' ? { patient: [{ patientId: 42, serviceEpisodes: [episode] }] } : (base as any)(...args));
+    mount(transport); await clickButton('Inspect read/write API'); await setContext({ providerId: 12, assignedUserId: 7, service: { code: 'TEST', system: 'TEST' }, serviceMrpId: 7, serviceMrp: { code: '7', display: 'Test MRP', system: 'MOIS.USER' } }); await clickButton('Run test writes');
     const attempted = transport.mock.calls.filter((call) => call[0] === 'ProbeMoisWrite').map((call) => call[3].match(/\{\s*(\w+)/)[1]);
     const expected = liveSchema.mutations.map((m: any) => m.name).filter((name: string) => !['sendFax', 'query'].includes(name));
     expect(attempted.sort()).toEqual([...expected, "changeObservations"].sort());
@@ -294,6 +297,57 @@ describe('live write laboratory', () => {
     mount(transport); await clickButton('Inspect read/write API'); await clickButton('Run test writes');
     expect(transport.mock.calls.some((call: any) => call[0] === 'ProbeMoisWrite' && call[3].includes('{ changePatientContact('))).toBe(false);
     expect(reportValue().writeResults.find((row: any) => row.operation === 'changePatientContact')).toMatchObject({ status: 'Not attempted' });
+  });
+
+  it.each(['matched', 'missing', 'changedMrp', 'changedNote'])('requires an independent episode field match before exposing its ID to events: %s', async (outcome) => {
+    let episode: any;
+    const base = testHost((name, vars) => {
+      if (name === 'changeServiceEpisode') {
+        episode = { ...vars.serviceEpisode, serviceEpisodeId: 810 };
+        return { [name]: [{ patientId: 42, serviceEpisodes: [episode] }] };
+      }
+      return { [name]: null };
+    });
+    const transport = vi.fn(async (...args: any[]) => {
+      if (args[0] === 'VerifyServiceEpisode') {
+        expect(args[3]).toContain('asMemberOfs { asMemberOfId providerId }');
+        const record = { ...episode, ...(outcome === 'changedMrp' ? { serviceMrp: { ...episode.serviceMrp, code: '8' } } : outcome === 'changedNote' ? { note: 'OLD NOTE' } : {}) };
+        return { patient: [{ patientId: 42, serviceEpisodes: outcome === 'missing' ? [] : [record] }] };
+      }
+      return (base as any)(...args);
+    });
+    mount(transport); await clickButton('Inspect read/write API');
+    await setContext({ service: { code: 'TEST', display: 'Test service', system: 'NH.SERVICE' }, serviceMrpId: 7, serviceMrp: { code: '7', display: 'Test MRP', system: 'MOIS.USER' } });
+    await clickButton('Run test writes');
+    const result = reportValue().writeResults.find((row: any) => row.operation === 'changeServiceEpisode');
+    expect(result.status).toBe(outcome === 'matched' ? 'Write verified' : 'Mutation accepted; persistence unverified');
+    expect(result.verificationChecks).toHaveLength(13);
+    expect(reportValue().createdTestRecordIds.serviceEpisodeId).toBe(outcome === 'matched' ? 810 : undefined);
+    expect(transport.mock.calls.some((call: any) => call[0] === 'ProbeMoisWrite' && call[3].includes('{ changeServiceEvent('))).toBe(outcome === 'matched');
+    expect(episode).toMatchObject({ encounterId: null, endDate: null, stopReason: { code: null, display: null, system: null }, stopNote: null, includeOnDemographics: { code: 'N', display: 'No', system: 'MOIS-YESNO' }, includeOnCarePlan: { code: 'N', display: 'No', system: 'MOIS-YESNO' }, asMemberOfs: [] });
+    expect(JSON.stringify(reportValue())).not.toContain('Test MRP');
+    if (outcome === 'matched') {
+      await act(async () => {
+        const select = container.querySelector<HTMLSelectElement>('select[aria-label="Write operation"]')!;
+        Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(select, 'changeServiceEpisode'); select.dispatchEvent(new Event('change', { bubbles: true }));
+        const textarea = container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Write variable overrides JSON"]')!;
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, JSON.stringify({ changeServiceEpisode: { patientId: '$patientId', serviceEpisode: { ...episode, serviceEpisodeId: '$created.serviceEpisodeId', note: 'EXPLICIT UPDATED NOTE' } } })); textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      await clickButton('Run test writes');
+      const calls = transport.mock.calls.filter((call: any) => call[0] === 'ProbeMoisWrite' && call[3].includes('{ changeServiceEpisode('));
+      expect(calls).toHaveLength(2);
+      expect(calls[1][4].serviceEpisode).toMatchObject({ serviceEpisodeId: 810, note: 'EXPLICIT UPDATED NOTE' });
+      expect(reportValue().writeResults.filter((row: any) => row.operation === 'changeServiceEpisode').at(-1).status).toBe('Write verified');
+      expect(reportValue().createdTestRecordIds.serviceEpisodeId).toBe(810);
+    }
+  });
+
+  it.each([undefined, { code: '8', system: 'MOIS.USER' }])('does not send the episode recipe without a matching MRP pair: %s', async (serviceMrp) => {
+    const transport = testHost(); mount(transport); await clickButton('Inspect read/write API');
+    await setContext({ service: { code: 'TEST', system: 'NH.SERVICE' }, serviceMrpId: 7, serviceMrp });
+    await clickButton('Run test writes');
+    expect(transport.mock.calls.some((call: any) => call[0] === 'ProbeMoisWrite' && call[3].includes('{ changeServiceEpisode('))).toBe(false);
+    expect(reportValue().writeResults.find((row: any) => row.operation === 'changeServiceEpisode')).toMatchObject({ status: 'Not attempted', error: expect.stringContaining('serviceMrp') });
   });
 
   it('checks nickname primitives even when MOIS formats the text differently', async () => {
