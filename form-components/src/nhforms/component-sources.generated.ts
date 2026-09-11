@@ -26703,6 +26703,7 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
             for (const key of Object.keys(vars)) if (!op.args.some((arg) => arg.name === key)) throw new Error(\`Unknown argument \${key}\`)
             for (const arg of op.args) if (arg.defaultValue == null || vars[arg.name] !== undefined) validate(vars[arg.name], arg.type, arg.name)
             let eventBaseline = null
+            let eventChildBaselineIds = new Set()
             if (name === "changeServiceEvent") {
               const event = vars.serviceEvent
               if (!event || !["serviceEventId", "serviceEpisodeId", "objectType", "objectTypeExt", "objectId", "service", "phase", "healthIssues"].every((field) => Object.prototype.hasOwnProperty.call(event, field))) throw new Error("Supply the complete service-event input; copy populated child links before an update")
@@ -26713,6 +26714,7 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
               const parents = charts.length === 1 ? charts[0].serviceEpisodes?.filter((record) => Number(record.serviceEpisodeId) === vars.serviceEpisodeId) || [] : []
               if (parents.length !== 1 || !Array.isArray(parents[0].serviceEvents) || !charts[0].encounters?.some((record) => Number(record.encounterId) === event.objectId)) throw new Error("A fresh patient query must contain the target episode and encounter before sending an event write")
               eventBaseline = parents[0].serviceEvents
+              eventChildBaselineIds = new Set(charts[0].serviceEpisodes.flatMap((episode) => episode.serviceEvents || []).flatMap((record) => record.healthIssues || []).map((child) => Number(child.serviceEventHealthIssueId)))
               if (event.serviceEventId > 0 && eventBaseline.filter((record) => Number(record.serviceEventId) === event.serviceEventId).length !== 1) throw new Error("The event to update must already belong to the target episode")
             }
             const resultType = namedType(op.type)
@@ -26837,15 +26839,33 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
               const events = parents.length === 1 && Array.isArray(parents[0].serviceEvents) ? parents[0].serviceEvents : []
               const beforeIds = new Set(eventBaseline.map((record) => Number(record.serviceEventId)))
               const fields = Object.keys(submitted).filter((field) => field !== "serviceEventId")
-              const candidates = events.filter((record) => Number(record.serviceEventId) > 0 && (submitted.serviceEventId > 0 ? Number(record.serviceEventId) === submitted.serviceEventId : !beforeIds.has(Number(record.serviceEventId)) && fields.every((field) => same(record[field], submitted[field]))))
+              // Live evidence: child ID 0 becomes a positive ID; retained
+              // positive IDs survive certainty updates and mixed-list adds.
+              // Match new children uniquely by submitted fields and parent,
+              // never by an echoed mutation ID or list position alone.
+              const sameChildren = (actual, expected, eventId) => {
+                if (expected == null) return actual === expected
+                if (!Array.isArray(actual) || !Array.isArray(expected) || actual.length !== expected.length) return false
+                const actualIds = actual.map((child) => Number(child.serviceEventHealthIssueId))
+                if (new Set(actualIds).size !== actual.length || !actualIds.every((id) => Number.isSafeInteger(id) && id > 0) || !actual.every((child) => Number(child.serviceEventId) === eventId)) return false
+                const used = new Set()
+                return expected.every((child) => {
+                  const matches = actual.filter((record) => !used.has(Number(record.serviceEventHealthIssueId)) && (child.serviceEventHealthIssueId === 0 ? !eventChildBaselineIds.has(Number(record.serviceEventHealthIssueId)) : child.serviceEventHealthIssueId > 0 && Number(record.serviceEventHealthIssueId) === child.serviceEventHealthIssueId) && Object.keys(child).filter((key) => key !== "serviceEventHealthIssueId").every((key) => same(record[key], child[key])))
+                  if (matches.length !== 1) return false
+                  used.add(Number(matches[0].serviceEventHealthIssueId))
+                  return true
+                })
+              }
+              const matchesField = (record, field) => field === "healthIssues" ? sameChildren(record[field], submitted[field], Number(record.serviceEventId)) : same(record[field], submitted[field])
+              const candidates = events.filter((record) => Number(record.serviceEventId) > 0 && (submitted.serviceEventId > 0 ? Number(record.serviceEventId) === submitted.serviceEventId : !beforeIds.has(Number(record.serviceEventId)) && fields.every((field) => matchesField(record, field))))
               const record = candidates.length === 1 ? candidates[0] : null
               const expectedIds = new Set([...beforeIds, ...(record ? [Number(record.serviceEventId)] : [])])
               const membershipMatches = events.length === expectedIds.size && new Set(events.map((event) => Number(event.serviceEventId))).size === events.length && events.every((event) => expectedIds.has(Number(event.serviceEventId)))
-              row.verificationChecks = fields.map((field) => ({ field: \`serviceEvent.\${field}\`, matched: Boolean(record && same(record[field], submitted[field])) }))
+              row.verificationChecks = fields.map((field) => ({ field: \`serviceEvent.\${field}\`, matched: Boolean(record && matchesField(record, field)) }))
               row.verificationChecks.push({ field: "serviceEvents.membership", matched: Boolean(record && membershipMatches) })
               const matched = row.verificationChecks.every((check) => check.matched)
               row.verification = matched ? "Verified: submitted event fields and collection membership read back" : "Submitted event fields or collection membership not independently verified"
-              if (matched) { row.status = "Write verified"; row.recordId = Number(record.serviceEventId); ids.serviceEventId = row.recordId }
+              if (matched) { row.status = "Write verified"; row.recordId = Number(record.serviceEventId); ids.serviceEventId = row.recordId; row.healthIssueRecordIds = (record.healthIssues || []).map((child) => Number(child.serviceEventHealthIssueId)) }
               update("Checked service event")
               continue
             }
@@ -27051,7 +27071,7 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
   const report = JSON.stringify({
     reportType: "mois-patient-context-live-query",
     reportVersion: 5,
-    diagnosticsRevision: "2026-09-10.4",
+    diagnosticsRevision: "2026-09-10.5",
     missingCollectionExploration: current.missingExploration || null,
     writeResults: (current.writeResults || []).map(({ variables, ...result }) => result),
     rootQueryResults: current.rootResults || [],

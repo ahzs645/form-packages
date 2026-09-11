@@ -405,6 +405,40 @@ describe('live write laboratory', () => {
     expect(transport.mock.calls.some((call) => call[0] === 'ProbeMoisWrite')).toBe(false);
   });
 
+  it.each(['firstChild', 'mixed', 'reordered', 'missingExisting', 'changedExisting', 'reusedId', 'zeroId', 'duplicateId', 'wrongParent', 'ambiguous'])('reconciles generated child IDs only after an exact independent match: %s', async (outcome) => {
+    const existing = { serviceEventHealthIssueId: 71, serviceEventId: 901, healthIssue: { code: 'OLD', display: 'Private existing diagnosis', system: 'ICD-9' }, certainty: { code: 'Confirmed', display: 'CONFIRMED', system: 'MOIS-CONDITIONCERTAINTY' } };
+    const added = { serviceEventHealthIssueId: 0, serviceEventId: 901, healthIssue: { code: 'NEW', display: 'Private new diagnosis', system: 'SNOMED-CT' }, certainty: { code: 'Impression', display: 'IMPRESSION', system: 'MOIS-CONDITIONCERTAINTY' } };
+    const event = { serviceEventId: 901, serviceEpisodeId: 810, objectType: 'tdt_encounter', objectTypeExt: null, objectId: 512, service: { code: 'ACT30', system: 'NH.SERVICE' }, phase: { code: 'FOLLOWUP', system: 'MOIS-SERVICEEVENTPHASE' }, healthIssues: outcome === 'firstChild' ? [] : [existing] };
+    const submitted = { ...event, healthIssues: outcome === 'firstChild' ? [added] : outcome === 'ambiguous' ? [existing, added, added] : [existing, added] };
+    const actualNew = { ...added, serviceEventHealthIssueId: outcome === 'reusedId' ? 99 : outcome === 'zeroId' ? 0 : outcome === 'duplicateId' ? 71 : 72, serviceEventId: outcome === 'wrongParent' ? 999 : 901 };
+    let actualChildren = outcome === 'firstChild' || outcome === 'missingExisting' ? [actualNew] : [{ ...existing, ...(outcome === 'changedExisting' ? { certainty: { code: 'Impression', display: 'IMPRESSION', system: 'MOIS-CONDITIONCERTAINTY' } } : {}) }, actualNew];
+    if (outcome === 'reordered') actualChildren.reverse();
+    if (outcome === 'ambiguous') actualChildren.push({ ...actualNew, serviceEventHealthIssueId: 73 });
+    const base = testHost((name) => ({ [name]: [{ ...submitted, healthIssues: [existing, { ...added, serviceEventHealthIssueId: 72 }] }] }));
+    const transport = vi.fn(async (...args: any[]) => {
+      if (['ReadServiceEventBeforeProbe', 'VerifyServiceEvent'].includes(args[0])) return { patient: [{ patientId: 42, encounters: [{ encounterId: 512 }], serviceEpisodes: [
+        { serviceEpisodeId: 810, serviceEvents: [args[0] === 'ReadServiceEventBeforeProbe' ? event : { ...event, healthIssues: actualChildren }] },
+        { serviceEpisodeId: 811, serviceEvents: [{ serviceEventId: 902, healthIssues: [{ ...added, serviceEventHealthIssueId: 99, serviceEventId: 902 }] }] },
+      ] }] };
+      return (base as any)(...args);
+    });
+    mount(transport); await clickButton('Inspect read/write API');
+    await act(async () => {
+      const select = container.querySelector<HTMLSelectElement>('select[aria-label="Write operation"]')!;
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(select, 'changeServiceEvent'); select.dispatchEvent(new Event('change', { bubbles: true }));
+      const textarea = container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Write variable overrides JSON"]')!;
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, JSON.stringify({ changeServiceEvent: { serviceEpisodeId: 810, serviceEvent: submitted } })); textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await clickButton('Run test writes');
+    const passed = ['firstChild', 'mixed', 'reordered'].includes(outcome);
+    const report = reportValue(); const result = report.writeResults.at(-1);
+    expect(result.status).toBe(passed ? 'Write verified' : 'Mutation accepted; persistence unverified');
+    expect(result.healthIssueRecordIds).toEqual(passed ? actualChildren.map((child) => child.serviceEventHealthIssueId) : undefined);
+    expect(report.createdTestRecordIds.serviceEventId).toBe(passed ? 901 : undefined);
+    expect(JSON.stringify(report)).not.toContain('Private new diagnosis');
+    expect(JSON.stringify(report)).not.toContain('Private existing diagnosis');
+  });
+
   it('checks nickname primitives even when MOIS formats the text differently', async () => {
     let nickname: any;
     const base = testHost((name, vars) => { if (name === 'changePatientName') nickname = vars.newNickName; return { [name]: [{ patientId: 42 }] }; });
