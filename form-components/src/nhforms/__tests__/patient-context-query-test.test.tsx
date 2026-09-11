@@ -439,6 +439,77 @@ describe('live write laboratory', () => {
     expect(JSON.stringify(report)).not.toContain('Private existing diagnosis');
   });
 
+  it.each([
+    { input: 'null', outcome: 'preserved', passed: true },
+    { input: 'omitted', outcome: 'preserved', passed: true },
+    { input: 'null', outcome: 'cleared', passed: false },
+    { input: 'omitted', outcome: 'changedId', passed: false },
+    { input: 'null', outcome: 'changedValue', passed: false },
+    { input: 'omitted', outcome: 'missingBaseline', passed: false },
+    { input: 'null', outcome: 'nullBaseline', passed: false },
+    { input: 'empty', outcome: 'cleared', passed: true },
+    { input: 'empty', outcome: 'preserved', passed: false },
+    { input: 'empty', outcome: 'nullResult', passed: false },
+    { input: 'null', outcome: 'phaseChanged', passed: true },
+    { input: 'omitted', outcome: 'phaseChanged', passed: true },
+    { input: 'null', outcome: 'oldPhase', passed: false },
+  ])('verifies child preservation or clearing against the independent baseline: $input / $outcome', async ({ input, outcome, passed }) => {
+    const child = { serviceEventHealthIssueId: 71, serviceEventId: 901, healthIssue: { code: 'TEST', display: 'Private child coding', system: 'ICD-9' }, certainty: { code: 'Confirmed', system: 'MOIS-CONDITIONCERTAINTY' } };
+    const before: any = { serviceEventId: 901, serviceEpisodeId: 810, objectType: 'tdt_encounter', objectTypeExt: null, objectId: 512, service: { code: 'ACT30', system: 'NH.SERVICE' }, phase: { code: 'FOLLOWUP', system: 'MOIS-SERVICEEVENTPHASE' }, healthIssues: [child] };
+    const submitted: any = { ...before, healthIssues: input === 'empty' ? [] : null };
+    if (input === 'omitted') delete submitted.healthIssues;
+    if (['phaseChanged', 'oldPhase'].includes(outcome)) submitted.phase = { code: 'INITIAL', system: 'MOIS-SERVICEEVENTPHASE' };
+    if (outcome === 'missingBaseline') delete before.healthIssues;
+    if (outcome === 'nullBaseline') before.healthIssues = null;
+    const after = { ...before, phase: outcome === 'oldPhase' ? before.phase : submitted.phase,
+      healthIssues: outcome === 'cleared' ? [] : outcome === 'nullResult' ? null : [{ ...child,
+        ...(outcome === 'changedId' ? { serviceEventHealthIssueId: 72 } : {}),
+        ...(outcome === 'changedValue' ? { certainty: { ...child.certainty, code: 'Impression' } } : {}),
+      }] };
+    // An apparently correct mutation echo must not override a failed reread.
+    const base = testHost((name) => ({ [name]: [{ ...before, ...submitted, healthIssues: input === 'empty' ? [] : [child] }] }));
+    const transport = vi.fn(async (...args: any[]) => {
+      if (['ReadServiceEventBeforeProbe', 'VerifyServiceEvent'].includes(args[0])) return { patient: [{ patientId: 42, encounters: [{ encounterId: 512 }], serviceEpisodes: [{ serviceEpisodeId: 810, serviceEvents: [args[0] === 'ReadServiceEventBeforeProbe' ? before : after] }] }] };
+      return (base as any)(...args);
+    });
+    mount(transport); await clickButton('Inspect read/write API');
+    await act(async () => {
+      const select = container.querySelector<HTMLSelectElement>('select[aria-label="Write operation"]')!;
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(select, 'changeServiceEvent'); select.dispatchEvent(new Event('change', { bubbles: true }));
+      const textarea = container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Write variable overrides JSON"]')!;
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, JSON.stringify({ changeServiceEvent: { serviceEpisodeId: 810, serviceEvent: submitted } })); textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await clickButton('Run test writes');
+    const blocked = ['missingBaseline', 'nullBaseline'].includes(outcome);
+    const result = reportValue().writeResults.at(-1);
+    expect(result.status).toBe(blocked ? 'Not attempted' : passed ? 'Write verified' : 'Mutation accepted; persistence unverified');
+    const sent = transport.mock.calls.filter((call) => call[0] === 'ProbeMoisWrite');
+    expect(sent).toHaveLength(blocked ? 0 : 1);
+    if (!blocked) {
+      expect(Object.prototype.hasOwnProperty.call(sent[0][4].serviceEvent, 'healthIssues')).toBe(input !== 'omitted');
+      expect(result.healthIssueVerificationMode).toBe(input === 'empty' ? 'Match submitted list' : 'Preserve baseline list');
+      expect(result.verificationChecks.some((check: any) => check.field === 'serviceEvent.healthIssues')).toBe(true);
+    }
+    expect(result.healthIssueRecordIds).toEqual(passed ? input === 'empty' ? [] : [71] : undefined);
+    expect(reportValue().createdTestRecordIds.serviceEventId).toBe(passed ? 901 : undefined);
+    expect(JSON.stringify(reportValue())).not.toContain('Private child coding');
+  });
+
+  it.each(['omitted', 'null'])('requires an explicit child array for a new event: %s', async (input) => {
+    const transport = testHost(); mount(transport); await clickButton('Inspect read/write API');
+    const event: any = { serviceEventId: 0, serviceEpisodeId: 810, objectType: 'tdt_encounter', objectTypeExt: null, objectId: 512, service: { code: 'TEST', system: 'NH.SERVICE' }, phase: { code: 'INITIAL', system: 'MOIS-SERVICEEVENTPHASE' } };
+    if (input === 'null') event.healthIssues = null;
+    await act(async () => {
+      const select = container.querySelector<HTMLSelectElement>('select[aria-label="Write operation"]')!;
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(select, 'changeServiceEvent'); select.dispatchEvent(new Event('change', { bubbles: true }));
+      const textarea = container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Write variable overrides JSON"]')!;
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, JSON.stringify({ changeServiceEvent: { serviceEpisodeId: 810, serviceEvent: event } })); textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await clickButton('Run test writes');
+    expect(reportValue().writeResults.at(-1)).toMatchObject({ status: 'Not attempted', error: expect.stringContaining('explicit healthIssues array') });
+    expect(transport.mock.calls.some((call) => call[0] === 'ProbeMoisWrite')).toBe(false);
+  });
+
   it('checks nickname primitives even when MOIS formats the text differently', async () => {
     let nickname: any;
     const base = testHost((name, vars) => { if (name === 'changePatientName') nickname = vars.newNickName; return { [name]: [{ patientId: 42 }] }; });

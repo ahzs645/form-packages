@@ -526,10 +526,12 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
             for (const arg of op.args) if (arg.defaultValue == null || vars[arg.name] !== undefined) validate(vars[arg.name], arg.type, arg.name)
             let eventBaseline = null
             let eventChildBaselineIds = new Set()
+            let eventExpectedChildren
             if (name === "changeServiceEvent") {
               const event = vars.serviceEvent
-              if (!event || !["serviceEventId", "serviceEpisodeId", "objectType", "objectTypeExt", "objectId", "service", "phase", "healthIssues"].every((field) => Object.prototype.hasOwnProperty.call(event, field))) throw new Error("Supply the complete service-event input; copy populated child links before an update")
+              if (!event || !["serviceEventId", "serviceEpisodeId", "objectType", "objectTypeExt", "objectId", "service", "phase"].every((field) => Object.prototype.hasOwnProperty.call(event, field))) throw new Error("Supply all seven service-event identity, object, service and phase fields")
               if (!(vars.serviceEpisodeId > 0) || event.serviceEpisodeId !== vars.serviceEpisodeId || !Number.isSafeInteger(event.serviceEventId) || event.serviceEventId < 0) throw new Error("Use matching positive episode IDs and event ID 0 for create or its positive ID for update")
+              if (event.serviceEventId === 0 && !Array.isArray(event.healthIssues)) throw new Error("Supply an explicit healthIssues array for event creation; omitted/null create semantics need a separate Custom GraphQL probe")
               if (event.objectType !== "tdt_encounter" || !(event.objectId > 0)) throw new Error("This runner verifies tdt_encounter links; use Custom GraphQL probe to explore other object types")
               const before = await request("ReadServiceEventBeforeProbe", eventRead("ReadServiceEventBeforeProbe"), { patientId })
               const charts = before.patient?.filter((record) => Number(record.patientId) === patientId) || []
@@ -538,6 +540,14 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
               eventBaseline = parents[0].serviceEvents
               eventChildBaselineIds = new Set(charts[0].serviceEpisodes.flatMap((episode) => episode.serviceEvents || []).flatMap((record) => record.healthIssues || []).map((child) => Number(child.serviceEventHealthIssueId)))
               if (event.serviceEventId > 0 && eventBaseline.filter((record) => Number(record.serviceEventId) === event.serviceEventId).length !== 1) throw new Error("The event to update must already belong to the target episode")
+              // Live September 10 reads: omitted/null updates preserved the
+              // existing list; [] cleared it. Verify preservation against the
+              // fresh baseline, never against an echoed mutation response.
+              const preserveChildren = event.serviceEventId > 0 && event.healthIssues == null
+              eventExpectedChildren = preserveChildren ? eventBaseline.find((record) => Number(record.serviceEventId) === event.serviceEventId).healthIssues : event.healthIssues
+              if (!Array.isArray(eventExpectedChildren)) throw new Error("A fresh healthIssues array is required to verify preserved child links")
+              eventExpectedChildren = JSON.parse(JSON.stringify(eventExpectedChildren))
+              row.healthIssueVerificationMode = preserveChildren ? "Preserve baseline list" : "Match submitted list"
             }
             const resultType = namedType(op.type)
             const targetType = targetTypes[name] || resultType.name
@@ -660,7 +670,7 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
               const parents = charts.length === 1 ? charts[0].serviceEpisodes?.filter((record) => Number(record.serviceEpisodeId) === vars.serviceEpisodeId) || [] : []
               const events = parents.length === 1 && Array.isArray(parents[0].serviceEvents) ? parents[0].serviceEvents : []
               const beforeIds = new Set(eventBaseline.map((record) => Number(record.serviceEventId)))
-              const fields = Object.keys(submitted).filter((field) => field !== "serviceEventId")
+              const fields = [...new Set([...Object.keys(submitted).filter((field) => field !== "serviceEventId"), "healthIssues"])]
               // Live evidence: child ID 0 becomes a positive ID; retained
               // positive IDs survive certainty updates and mixed-list adds.
               // Match new children uniquely by submitted fields and parent,
@@ -678,7 +688,7 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
                   return true
                 })
               }
-              const matchesField = (record, field) => field === "healthIssues" ? sameChildren(record[field], submitted[field], Number(record.serviceEventId)) : same(record[field], submitted[field])
+              const matchesField = (record, field) => field === "healthIssues" ? sameChildren(record[field], eventExpectedChildren, Number(record.serviceEventId)) : same(record[field], submitted[field])
               const candidates = events.filter((record) => Number(record.serviceEventId) > 0 && (submitted.serviceEventId > 0 ? Number(record.serviceEventId) === submitted.serviceEventId : !beforeIds.has(Number(record.serviceEventId)) && fields.every((field) => matchesField(record, field))))
               const record = candidates.length === 1 ? candidates[0] : null
               const expectedIds = new Set([...beforeIds, ...(record ? [Number(record.serviceEventId)] : [])])
@@ -686,7 +696,7 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
               row.verificationChecks = fields.map((field) => ({ field: `serviceEvent.${field}`, matched: Boolean(record && matchesField(record, field)) }))
               row.verificationChecks.push({ field: "serviceEvents.membership", matched: Boolean(record && membershipMatches) })
               const matched = row.verificationChecks.every((check) => check.matched)
-              row.verification = matched ? "Verified: submitted event fields and collection membership read back" : "Submitted event fields or collection membership not independently verified"
+              row.verification = matched ? "Verified: submitted event fields and expected child membership read back" : "Submitted event fields or expected child membership not independently verified"
               if (matched) { row.status = "Write verified"; row.recordId = Number(record.serviceEventId); ids.serviceEventId = row.recordId; row.healthIssueRecordIds = (record.healthIssues || []).map((child) => Number(child.serviceEventHealthIssueId)) }
               update("Checked service event")
               continue
@@ -893,7 +903,7 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
   const report = JSON.stringify({
     reportType: "mois-patient-context-live-query",
     reportVersion: 5,
-    diagnosticsRevision: "2026-09-10.5",
+    diagnosticsRevision: "2026-09-10.6",
     missingCollectionExploration: current.missingExploration || null,
     writeResults: (current.writeResults || []).map(({ variables, ...result }) => result),
     rootQueryResults: current.rootResults || [],
