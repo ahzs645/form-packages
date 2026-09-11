@@ -203,15 +203,21 @@ describe('live write laboratory', () => {
 
   it('can reach all 39 concrete mutation fields with valid dependencies and explicit fax inputs', async () => {
     let episode: any;
+    let serviceEvent: any;
     const base = testHost((name, vars) => {
+      if (name === 'changeServiceEvent') { serviceEvent = { ...vars.serviceEvent, serviceEventId: 511 }; return { [name]: [serviceEvent] }; }
       const payload: any = Object.values(vars).find((v) => v && typeof v === 'object' && !Array.isArray(v)) || {};
       const record = { ...payload, patientId: 42, observationId: 501, observationPanelId: 518, associatedPartyId: 502, chartPreferenceId: 503, connectionId: 504, documentId: 505, householdOccupantId: 506, longTermMedicationId: 507, prescriptionId: 508, prescriptionLogId: 509, serviceEpisodeId: 510, serviceEventId: 511, encounterId: 512, taskId: 513, favouriteMedicationId: 514, correspondenceId: 515, webformId: 516, webformDefinitionId: 517 };
       if (name === 'changeServiceEpisode') episode = { ...vars.serviceEpisode, serviceEpisodeId: 510 };
       const patientResult = Object.fromEntries(['observationPanels', 'observations', 'contacts', 'preferences', 'connections', 'documents', 'householdOccupants', 'longTermMedications', 'prescriptions', 'prescriptionLogs', 'serviceEpisodes', 'encounters', 'favouriteMedications', 'correspondences'].map((key) => [key, [record]]));
       return { [name]: [{ ...record, ...patientResult }] };
     });
-    const transport = vi.fn(async (...args: any[]) => args[0] === 'VerifyServiceEpisode' ? { patient: [{ patientId: 42, serviceEpisodes: [episode] }] } : (base as any)(...args));
-    mount(transport); await clickButton('Inspect read/write API'); await setContext({ providerId: 12, assignedUserId: 7, service: { code: 'TEST', system: 'TEST' }, serviceMrpId: 7, serviceMrp: { code: '7', display: 'Test MRP', system: 'MOIS.USER' } }); await clickButton('Run test writes');
+    const transport = vi.fn(async (...args: any[]) => {
+      if (args[0] === 'VerifyServiceEpisode') return { patient: [{ patientId: 42, serviceEpisodes: [episode] }] };
+      if (['ReadServiceEventBeforeProbe', 'VerifyServiceEvent'].includes(args[0])) return { patient: [{ patientId: 42, encounters: [{ encounterId: 512 }], serviceEpisodes: [{ serviceEpisodeId: 510, serviceEvents: serviceEvent ? [serviceEvent] : [] }] }] };
+      return (base as any)(...args);
+    });
+    mount(transport); await clickButton('Inspect read/write API'); await setContext({ serviceEventEncounterId: 512, eventService: { code: 'TEST EVENT', system: 'NH.SERVICE' }, providerId: 12, assignedUserId: 7, service: { code: 'TEST', system: 'TEST' }, serviceMrpId: 7, serviceMrp: { code: '7', display: 'Test MRP', system: 'MOIS.USER' } }); await clickButton('Run test writes');
     const attempted = transport.mock.calls.filter((call) => call[0] === 'ProbeMoisWrite').map((call) => call[3].match(/\{\s*(\w+)/)[1]);
     const expected = liveSchema.mutations.map((m: any) => m.name).filter((name: string) => !['sendFax', 'query'].includes(name));
     expect(attempted.sort()).toEqual([...expected, "changeObservations"].sort());
@@ -309,6 +315,7 @@ describe('live write laboratory', () => {
       return { [name]: null };
     });
     const transport = vi.fn(async (...args: any[]) => {
+      if (args[0] === 'ReadServiceEventBeforeProbe') return { patient: [{ patientId: 42, encounters: [{ encounterId: 512 }], serviceEpisodes: [{ serviceEpisodeId: 810, serviceEvents: [] }] }] };
       if (args[0] === 'VerifyServiceEpisode') {
         expect(args[3]).toContain('asMemberOfs { asMemberOfId providerId }');
         const record = { ...episode, ...(outcome === 'changedMrp' ? { serviceMrp: { ...episode.serviceMrp, code: '8' } } : outcome === 'changedNote' ? { note: 'OLD NOTE' } : {}) };
@@ -317,7 +324,7 @@ describe('live write laboratory', () => {
       return (base as any)(...args);
     });
     mount(transport); await clickButton('Inspect read/write API');
-    await setContext({ service: { code: 'TEST', display: 'Test service', system: 'NH.SERVICE' }, serviceMrpId: 7, serviceMrp: { code: '7', display: 'Test MRP', system: 'MOIS.USER' } });
+    await setContext({ serviceEventEncounterId: 512, eventService: { code: 'TEST EVENT', system: 'NH.SERVICE' }, service: { code: 'TEST', display: 'Test service', system: 'NH.SERVICE' }, serviceMrpId: 7, serviceMrp: { code: '7', display: 'Test MRP', system: 'MOIS.USER' } });
     await clickButton('Run test writes');
     const result = reportValue().writeResults.find((row: any) => row.operation === 'changeServiceEpisode');
     expect(result.status).toBe(outcome === 'matched' ? 'Write verified' : 'Mutation accepted; persistence unverified');
@@ -348,6 +355,54 @@ describe('live write laboratory', () => {
     await clickButton('Run test writes');
     expect(transport.mock.calls.some((call: any) => call[0] === 'ProbeMoisWrite' && call[3].includes('{ changeServiceEpisode('))).toBe(false);
     expect(reportValue().writeResults.find((row: any) => row.operation === 'changeServiceEpisode')).toMatchObject({ status: 'Not attempted', error: expect.stringContaining('serviceMrp') });
+  });
+
+  it.each(['create', 'update', 'missing', 'oldPhase', 'wrongParent', 'extraEvent', 'existingId'])('requires fresh event fields and membership before retaining its ID: %s', async (outcome) => {
+    const event = { serviceEventId: 901, serviceEpisodeId: 810, objectType: 'tdt_encounter', objectTypeExt: null, objectId: 512, service: { code: 'ACT30', display: 'WOUND CARE', system: 'NH.SERVICE' }, phase: { code: 'INITIAL', display: 'Initial', system: 'MOIS-SERVICEEVENTPHASE' }, healthIssues: [] };
+    const updating = ['update', 'oldPhase'].includes(outcome);
+    const beforeEvents = updating || outcome === 'existingId' ? [event] : [];
+    let submitted: any;
+    const base = testHost((name, vars) => { submitted = vars.serviceEvent; return { [name]: [{ ...submitted, serviceEventId: 901 }] }; });
+    const transport = vi.fn(async (...args: any[]) => {
+      if (['ReadServiceEventBeforeProbe', 'VerifyServiceEvent'].includes(args[0])) {
+        expect(args[4]).toEqual({ patientId: 42 });
+        expect(args[3]).toContain('$patientId: Int!');
+        expect(args[3]).toContain('healthIssue { code display system }');
+        const after = { ...submitted, serviceEventId: 901, ...(outcome === 'oldPhase' ? { phase: event.phase } : {}) };
+        const events = args[0] === 'ReadServiceEventBeforeProbe' ? beforeEvents : outcome === 'missing' ? [] : outcome === 'extraEvent' ? [after, { ...after, serviceEventId: 902 }] : [after];
+        return { patient: [{ patientId: 42, encounters: [{ encounterId: 512 }], serviceEpisodes: [{ serviceEpisodeId: args[0] === 'VerifyServiceEvent' && outcome === 'wrongParent' ? 999 : 810, serviceEvents: events }] }] };
+      }
+      return (base as any)(...args);
+    });
+    mount(transport); await clickButton('Inspect read/write API');
+    await act(async () => {
+      const select = container.querySelector<HTMLSelectElement>('select[aria-label="Write operation"]')!;
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(select, 'changeServiceEvent'); select.dispatchEvent(new Event('change', { bubbles: true }));
+      const textarea = container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Write variable overrides JSON"]')!;
+      const input = { ...event, serviceEventId: updating ? 901 : 0, ...(updating ? { phase: { code: 'FOLLOWUP', display: 'Follow Up', system: 'MOIS-SERVICEEVENTPHASE' } } : {}) };
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, JSON.stringify({ changeServiceEvent: { serviceEpisodeId: 810, serviceEvent: input } })); textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await clickButton('Run test writes');
+    const passed = ['create', 'update'].includes(outcome);
+    expect(reportValue().writeResults.at(-1).status).toBe(passed ? 'Write verified' : 'Mutation accepted; persistence unverified');
+    expect(reportValue().createdTestRecordIds.serviceEventId).toBe(passed ? 901 : undefined);
+    expect(transport.mock.calls.filter((call) => call[0] === 'ProbeMoisWrite')).toHaveLength(1);
+    expect(JSON.stringify(reportValue())).not.toContain('WOUND CARE');
+  });
+
+  it.each(['missingParent', 'missingEncounter', 'wrongPatient'])('rejects an event link without fresh same-patient context: %s', async (outcome) => {
+    const base = testHost();
+    const transport = vi.fn(async (...args: any[]) => args[0] === 'ReadServiceEventBeforeProbe' ? { patient: [{ patientId: outcome === 'wrongPatient' ? 99 : 42, encounters: outcome === 'missingEncounter' ? [] : [{ encounterId: 512 }], serviceEpisodes: outcome === 'missingParent' ? [] : [{ serviceEpisodeId: 810, serviceEvents: [] }] }] } : (base as any)(...args));
+    mount(transport); await clickButton('Inspect read/write API');
+    await act(async () => {
+      const select = container.querySelector<HTMLSelectElement>('select[aria-label="Write operation"]')!;
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(select, 'changeServiceEvent'); select.dispatchEvent(new Event('change', { bubbles: true }));
+      const textarea = container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Write variable overrides JSON"]')!;
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, JSON.stringify({ changeServiceEvent: { serviceEpisodeId: 810, serviceEvent: { serviceEventId: 0, serviceEpisodeId: 810, objectType: 'tdt_encounter', objectTypeExt: null, objectId: 512, service: { code: 'TEST', system: 'NH.SERVICE' }, phase: { code: 'INITIAL', system: 'MOIS-SERVICEEVENTPHASE' }, healthIssues: [] } } })); textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await clickButton('Run test writes');
+    expect(reportValue().writeResults.at(-1).status).toBe('Not attempted');
+    expect(transport.mock.calls.some((call) => call[0] === 'ProbeMoisWrite')).toBe(false);
   });
 
   it('checks nickname primitives even when MOIS formats the text differently', async () => {

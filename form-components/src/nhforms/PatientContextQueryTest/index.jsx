@@ -405,6 +405,9 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
           else if (type.name === "String" && typeof value !== "string") throw new Error(`${path} must be text`)
         }
         const need = (name, available = ids) => { if (!available[name]) throw new Error(`Needs a successful ${name} creation earlier in this run, or explicit variable overrides`); return available[name] }
+        const same = (actual, expected) => Array.isArray(expected) ? Array.isArray(actual) && actual.length === expected.length && expected.every((value, index) => same(actual[index], value)) : expected && typeof expected === "object" ? Boolean(actual && typeof actual === "object" && Object.keys(expected).every((key) => Object.prototype.hasOwnProperty.call(actual, key) && same(actual[key], expected[key]))) : actual === expected
+        const eventFields = "serviceEventId serviceEpisodeId objectType objectTypeExt objectId service { code display system } phase { code display system } healthIssues { serviceEventHealthIssueId serviceEventId healthIssue { code display system } certainty { code display system } }"
+        const eventRead = (operation) => `query ${operation}($patientId: Int!) { patient(id: $patientId) { patientId encounters { encounterId } serviceEpisodes { serviceEpisodeId serviceEvents { ${eventFields} } } } }`
         const observation = { observationId: 0, patientId, observationCode: "WEBFORMS_TEST", description: marker, valueType: "text", value: marker, status: "F", reportedDate: date }
         // Each recipe is an isolated API probe, not a production write adapter.
         // IDs for dependent updates/deletes are captured only from this run.
@@ -451,7 +454,17 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
               includeOnCarePlan: { code: "N", display: "No", system: "MOIS-YESNO" }, asMemberOfs: [],
             } }
           },
-          changeServiceEvent: () => ({ serviceEpisodeId: need("serviceEpisodeId"), serviceEvent: { serviceEventId: 0, serviceEpisodeId: need("serviceEpisodeId") } }),
+          changeServiceEvent: () => {
+            const serviceEpisodeId = need("serviceEpisodeId")
+            if (!context.eventService?.code || !context.eventService?.system) throw new Error("Set eventService coding in Test context; event service coding is separate from the parent episode service")
+            // Complete create and INITIAL -> FOLLOWUP update passed live reads
+            // on 2026-09-10. Use explicit encounter context, never a guessed ID.
+            return { serviceEpisodeId, serviceEvent: {
+              serviceEventId: 0, serviceEpisodeId, objectType: "tdt_encounter", objectTypeExt: null,
+              objectId: contextId("serviceEventEncounterId"), service: context.eventService,
+              phase: { code: "INITIAL", display: "Initial", system: "MOIS-SERVICEEVENTPHASE" }, healthIssues: [],
+            } }
+          },
           createAppointment: () => ({ patientId, encounter: { encounterId: 0, patientId, providerId: contextId("providerId"), appointmentDateTime: now, officeNote: marker } }),
           changeEncounterNote: () => ({ patientId, encounterNote: { encounterNoteId: 0, encounterId: need("encounterId"), note: marker, noteCreationDate: date } }),
           createDocumentTask: () => ({ documentId: need("documentId"), newTask: { taskId: 0, ...assignee(), description: marker, note: marker } }),
@@ -503,6 +516,7 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
           try {
             const inputIds = { ...ids }
             if (name === "changeServiceEpisode") delete ids.serviceEpisodeId
+            if (name === "changeServiceEvent") delete ids.serviceEventId
             if (name === "query") throw new Error("Query namespace on mutation root; not a write operation")
             if (name === "sendFax" && (writeSelection !== "sendFax" || !overrides.sendFax?.eFaxAccountId || !overrides.sendFax?.recipients?.some((recipient) => recipient.faxNumber))) throw new Error("Select sendFax individually and supply eFaxAccountId and explicit test recipients in variable overrides")
             const resolve = (value) => value === "$patientId" ? patientId : typeof value === "string" && value.startsWith("$created.") ? need(value.slice(9), inputIds) : Array.isArray(value) ? value.map(resolve) : value && typeof value === "object" ? Object.fromEntries(Object.entries(value).map(([key, item]) => [key, resolve(item)])) : value
@@ -510,6 +524,19 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
             if (!vars || typeof vars !== "object" || Array.isArray(vars)) throw new Error("Needs explicit variable overrides for this operation")
             for (const key of Object.keys(vars)) if (!op.args.some((arg) => arg.name === key)) throw new Error(`Unknown argument ${key}`)
             for (const arg of op.args) if (arg.defaultValue == null || vars[arg.name] !== undefined) validate(vars[arg.name], arg.type, arg.name)
+            let eventBaseline = null
+            if (name === "changeServiceEvent") {
+              const event = vars.serviceEvent
+              if (!event || !["serviceEventId", "serviceEpisodeId", "objectType", "objectTypeExt", "objectId", "service", "phase", "healthIssues"].every((field) => Object.prototype.hasOwnProperty.call(event, field))) throw new Error("Supply the complete service-event input; copy populated child links before an update")
+              if (!(vars.serviceEpisodeId > 0) || event.serviceEpisodeId !== vars.serviceEpisodeId || !Number.isSafeInteger(event.serviceEventId) || event.serviceEventId < 0) throw new Error("Use matching positive episode IDs and event ID 0 for create or its positive ID for update")
+              if (event.objectType !== "tdt_encounter" || !(event.objectId > 0)) throw new Error("This runner verifies tdt_encounter links; use Custom GraphQL probe to explore other object types")
+              const before = await request("ReadServiceEventBeforeProbe", eventRead("ReadServiceEventBeforeProbe"), { patientId })
+              const charts = before.patient?.filter((record) => Number(record.patientId) === patientId) || []
+              const parents = charts.length === 1 ? charts[0].serviceEpisodes?.filter((record) => Number(record.serviceEpisodeId) === vars.serviceEpisodeId) || [] : []
+              if (parents.length !== 1 || !Array.isArray(parents[0].serviceEvents) || !charts[0].encounters?.some((record) => Number(record.encounterId) === event.objectId)) throw new Error("A fresh patient query must contain the target episode and encounter before sending an event write")
+              eventBaseline = parents[0].serviceEvents
+              if (event.serviceEventId > 0 && eventBaseline.filter((record) => Number(record.serviceEventId) === event.serviceEventId).length !== 1) throw new Error("The event to update must already belong to the target episode")
+            }
             const resultType = namedType(op.type)
             const targetType = targetTypes[name] || resultType.name
             const collection = collectionByType[targetType]
@@ -525,6 +552,7 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
               }
               selection = ` { ${selection} }`
             }
+            if (name === "changeServiceEvent") selection = ` { ${eventFields} }`
             const args = op.args.filter((arg) => vars[arg.name] !== undefined)
             const declarations = args.map((arg) => `$${arg.name}: ${typeText(arg.type)}`).join(", ")
             const bindings = args.map((arg) => `${arg.name}: $${arg.name}`).join(", ")
@@ -614,13 +642,33 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
               const matches = episodes.filter((record) => Number(record.serviceEpisodeId) > 0 && (expectedId ? Number(record.serviceEpisodeId) === expectedId : typeof submitted.note === "string" && submitted.note.length > 0 && record.note === submitted.note))
               const record = matches.length === 1 ? matches[0] : null
               const fields = Object.keys(submitted).filter((field) => field !== "serviceEpisodeId")
-              const same = (actual, expected) => Array.isArray(expected) ? Array.isArray(actual) && actual.length === expected.length && expected.every((value, index) => same(actual[index], value)) : expected && typeof expected === "object" ? Boolean(actual && typeof actual === "object" && Object.keys(expected).every((key) => Object.prototype.hasOwnProperty.call(actual, key) && same(actual[key], expected[key]))) : actual === expected
               row.verificationChecks = fields.map((field) => ({ field: `serviceEpisode.${field}`, matched: Boolean(record && same(record[field], submitted[field])) }))
               const matched = fields.length > 0 && Number(record?.patientId) === patientId && row.verificationChecks.every((check) => check.matched)
               row.verification = matched ? "Verified: submitted episode fields read back" : "Submitted episode fields not independently verified"
               if (expectedId) row.recordId = expectedId
               if (matched) { row.status = "Write verified"; row.recordId = Number(record.serviceEpisodeId); ids.serviceEpisodeId = row.recordId }
               update("Checked service episode")
+              continue
+            }
+            if (name === "changeServiceEvent") {
+              const submitted = vars.serviceEvent
+              row.verificationQuery = eventRead("VerifyServiceEvent")
+              const check = await request("VerifyServiceEvent", row.verificationQuery, { patientId })
+              const charts = check.patient?.filter((record) => Number(record.patientId) === patientId) || []
+              const parents = charts.length === 1 ? charts[0].serviceEpisodes?.filter((record) => Number(record.serviceEpisodeId) === vars.serviceEpisodeId) || [] : []
+              const events = parents.length === 1 && Array.isArray(parents[0].serviceEvents) ? parents[0].serviceEvents : []
+              const beforeIds = new Set(eventBaseline.map((record) => Number(record.serviceEventId)))
+              const fields = Object.keys(submitted).filter((field) => field !== "serviceEventId")
+              const candidates = events.filter((record) => Number(record.serviceEventId) > 0 && (submitted.serviceEventId > 0 ? Number(record.serviceEventId) === submitted.serviceEventId : !beforeIds.has(Number(record.serviceEventId)) && fields.every((field) => same(record[field], submitted[field]))))
+              const record = candidates.length === 1 ? candidates[0] : null
+              const expectedIds = new Set([...beforeIds, ...(record ? [Number(record.serviceEventId)] : [])])
+              const membershipMatches = events.length === expectedIds.size && new Set(events.map((event) => Number(event.serviceEventId))).size === events.length && events.every((event) => expectedIds.has(Number(event.serviceEventId)))
+              row.verificationChecks = fields.map((field) => ({ field: `serviceEvent.${field}`, matched: Boolean(record && same(record[field], submitted[field])) }))
+              row.verificationChecks.push({ field: "serviceEvents.membership", matched: Boolean(record && membershipMatches) })
+              const matched = row.verificationChecks.every((check) => check.matched)
+              row.verification = matched ? "Verified: submitted event fields and collection membership read back" : "Submitted event fields or collection membership not independently verified"
+              if (matched) { row.status = "Write verified"; row.recordId = Number(record.serviceEventId); ids.serviceEventId = row.recordId }
+              update("Checked service event")
               continue
             }
             const records = nested ? returned.flatMap((record) => record[collection] || []) : returned
@@ -825,7 +873,7 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
   const report = JSON.stringify({
     reportType: "mois-patient-context-live-query",
     reportVersion: 5,
-    diagnosticsRevision: "2026-09-10.3",
+    diagnosticsRevision: "2026-09-10.4",
     missingCollectionExploration: current.missingExploration || null,
     writeResults: (current.writeResults || []).map(({ variables, ...result }) => result),
     rootQueryResults: current.rootResults || [],
@@ -867,7 +915,7 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
       {(current.customResults || []).map((row, index) => <details key={index}><summary>{row.operation} — {row.status}</summary>{row.error ? <p>{row.error}</p> : null}{row.response ? <textarea aria-label={`Custom response ${index + 1}`} readOnly value={row.response} rows={10} style={{ width: "100%", fontFamily: "monospace" }} /> : null}</details>)}
     </details>
     <label>Write operation <select aria-label="Write operation" value={writeSelection} disabled={current.busy} onChange={(event) => setWriteSelection(event.target.value)}><option value="all">All unattempted operations</option><option value="changeObservationPanels">changeObservations — separate panel probe</option>{(current.apiInventory?.mutations || []).map((operation) => <option key={operation.name} value={operation.name}>{operation.name}</option>)}</select></label>
-    <details><summary>Test context</summary><p>Provide real test-instance IDs and codes once: providerId for appointments; assignedUserId or assignedTeamId for tasks; service coding, serviceMrp coding (MOIS.USER) and its matching serviceMrpId for service episodes. The episode probe uses the complete shape verified on September 10; minimum required fields remain unknown. Optional panelName overrides the vendor test panel coding. Missing context is reported before sending a write.</p>
+    <details><summary>Test context</summary><p>Provide real test-instance IDs and codes once: providerId for appointments; assignedUserId or assignedTeamId for tasks; service coding, serviceMrp coding (MOIS.USER) and its matching serviceMrpId for service episodes. Events also need eventService coding and serviceEventEncounterId; a fresh read checks that the episode and encounter belong to this patient. These recipes use the complete shapes verified on September 10; minimum required fields remain unknown. Optional panelName overrides the vendor test panel coding. Missing context is reported before sending a write.</p>
       <textarea aria-label="Test context JSON" value={testContext} disabled={current.busy} onChange={(event) => setTestContext(event.target.value)} rows={5} style={{ width: "100%", fontFamily: "monospace" }} />
     </details>
     <details><summary>Write test inputs</summary>
