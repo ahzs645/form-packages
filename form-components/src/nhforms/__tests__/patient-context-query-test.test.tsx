@@ -18,11 +18,11 @@ const fields = [
   { name: 'empty', args: [], type: list },
 ];
 const initial = { patient: { patientId: 42, name: { text: 'Test patient' } }, auth: { jwToken: 'secret-token', apiServer: 'https://example.test/' } };
-function mount(transport?: any, writeTargets: unknown[] = []) {
+function mount(transport?: any, writeTargets: unknown[] = [], suitePlan: any = null) {
   let sd: any = initial;
   const Component = new Function('React', 'useSourceData', 'queryGraphQL', `${compiled}; return PatientContextQueryTest;`)(React, () => sd, transport);
   container = document.createElement('div'); document.body.appendChild(container); root = createRoot(container);
-  const render = () => act(() => root.render(<Component collections={['observations', 'missing', 'restricted']} writeTargets={writeTargets} />));
+  const render = () => act(() => root.render(<Component collections={['observations', 'missing', 'restricted']} writeTargets={writeTargets} suitePlan={suitePlan} />));
   render();
   return (next: any) => { sd = next; render(); };
 }
@@ -106,7 +106,7 @@ describe('PatientContextQueryTest', () => {
     mount(transport, [{ id: 'test.changeTest', graphqlField: 'changeTest', runtimeStatus: 'supported' }]);
     await act(async () => { Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Inspect read/write API')!.click(); });
     const report = JSON.parse(container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Live query results JSON"]')!.value);
-    expect(report.reportVersion).toBe(5);
+    expect(report.reportVersion).toBe(6);
     expect(report.apiInventory.inputTypes).toHaveLength(2);
     expect(report.apiInventory.mutations[0]).toMatchObject({ coverage: 'Mapped adapter; live write untested', executionStatus: 'Not executed' });
     expect(report.apiInventory.mutations[1]).toMatchObject({ coverage: 'Needs a dedicated write test', executionStatus: 'Not executed' });
@@ -561,7 +561,7 @@ describe('missing collection exploration', () => {
     });
     mount(transport); await clickButton('Explore missing collections');
     const result = exploration();
-    expect(result.collections).toHaveLength(11);
+    expect(result.collections).toHaveLength(15);
     const events = result.collections.find((r: any) => r.collection === 'serviceEvents');
     expect(events.status).toBe('Candidate path read verified; equivalence unverified');
     expect(events.paths[0]).toMatchObject({ path: 'patient.serviceEpisodes.serviceEvents', status: 'Read succeeded', count: 1 });
@@ -652,5 +652,42 @@ describe('missing exploration boundaries', () => {
     expect(exploration().status).toBe('Stopped; exploration incomplete');
     expect(exploration().coverage.completed).toBe(false);
     expect(transport).toHaveBeenCalledTimes(2);
+  });
+});
+
+
+describe('combined suite UI', () => {
+  it('runs phases from one click, preserves failures, and downloads redacted full evidence', async () => {
+    const schema = JSON.parse(fs.readFileSync('data/mois-second-instance-schema.json','utf8')).schema;
+    const plan = JSON.parse(fs.readFileSync('data/mois-comprehensive-suite.json','utf8'));
+    const tasks: any[] = [];
+    const transport = vi.fn(async (op: string, _token: string, _server: string, _query: string, vars: any) => {
+      if (op === 'SuiteSchema') return {__schema:schema};
+      if (op === 'SuiteContext') return {patient:[{patientId:42,encounters:[{encounterId:5,providerId:6}],serviceEpisodes:[]}]};
+      if (op === 'SuiteProfile') return {userProfile:[{userProfileId:7,identity:{fullName:'TEST USER'}}]};
+      if (op === 'SuiteVerify') return {task:JSON.parse(JSON.stringify(tasks))};
+      if (op === 'SuiteCreate') {const task={...vars.newTask,taskId:123,patientId:42};tasks.push(task);return {createEncounterTask:[task],authorization:'secret-token'};}
+      throw new Error('Discovery fixture denied secret-token');
+    });
+    const update = mount(transport, [], {...plan,attachmentUpload:false,profiles:[{...plan.profiles.find((p:any)=>p.key==='tasks'),fields:[],taskMetadata:false}]});
+    update({...initial,userProfile:{userProfileId:7}});
+    const button = () => [...container.querySelectorAll('button')].find(b => b.textContent === 'Run all remaining tests')!;
+    await act(async () => {button().click();});
+    const report = JSON.parse(container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Live query results JSON"]')!.value);
+    expect(report.phaseResults.map((p:any)=>p.phase)).toEqual(['api','reads','roots','missing','suite']);
+    expect(report.phaseResults.some((p:any)=>p.status==='Failed')).toBe(true);
+    expect(report.comprehensiveSuite.cases.find((c:any)=>c.id==='tasks.create.seed').status).toBe('Create verified');
+    let downloaded: any;
+    const url = vi.spyOn(window.URL,'createObjectURL').mockImplementation((blob: any) => {downloaded=blob;return 'blob:fixture';});
+    const click = vi.spyOn(window.HTMLAnchorElement.prototype,'click').mockImplementation(()=>{});
+    try {
+      await act(async () => {[...container.querySelectorAll('button')].find(b=>b.textContent==='Download full evidence JSON')!.click();});
+      const text = await downloaded.text();
+      expect(text).not.toContain('secret-token'); expect(text).toContain('[redacted]');
+      const full = JSON.parse(text); expect(full.exchanges.some((x:any)=>x.operation==='SuiteCreate' && x.variables.newTask)).toBe(true);
+      expect(full.exchanges.some((x:any)=>x.operation==='SuiteVerify' && x.data.task.length===1)).toBe(true);
+      await act(async () => {button().click();});
+      expect(transport.mock.calls.filter(c=>c[0]==='SuiteCreate')).toHaveLength(1);
+    } finally {url.mockRestore();click.mockRestore();}
   });
 });

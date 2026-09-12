@@ -28090,13 +28090,1092 @@ const PatientContextDiagnostics = ({
     role: "status"
   }, "No matching collections.") : null);
 };`,
-  './PatientContextQueryTest/index.jsx': `// MOIS 2.30.31 evidence: main.a75cc6b1.chunk.js queryGraphQL export accepts
+  './PatientContextQueryTest/index.jsx': `// Portable suite executor: embedded with this component in exported MOIS forms.
+// Uses only the host GraphQL transport and the live schema. No endpoint guessing.
+const runPatientContextVariantSuite = async ({
+  request,
+  patientId,
+  patient,
+  sourceProfile,
+  context,
+  plan,
+  previous,
+  active,
+  emit,
+  uncertain,
+  uploadAttachment
+}) => {
+  const clone = v => v === undefined ? undefined : JSON.parse(JSON.stringify(v));
+  const subset = (actual, expected) => Array.isArray(expected) ? Array.isArray(actual) && actual.length === expected.length && expected.every((x, i) => subset(actual[i], x)) : expected && typeof expected === "object" ? Boolean(actual && Object.keys(expected).every(k => Object.prototype.hasOwnProperty.call(actual, k) && subset(actual[k], expected[k]))) : actual === expected;
+  const same = (a, b) => JSON.stringify(normalize(a)) === JSON.stringify(normalize(b));
+  const normalize = v => Array.isArray(v) ? v.map(normalize) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).filter(k => k !== "__typename").sort().map(k => [k, normalize(v[k])])) : v;
+  const named = t => t?.ofType ? named(t.ofType) : t;
+  const typeText = t => t.kind === "NON_NULL" ? typeText(t.ofType) + "!" : t.kind === "LIST" ? "[" + typeText(t.ofType) + "]" : t.name;
+  if (!plan?.profiles?.length) throw new Error("Re-export the updated diagnostics sample to include the comprehensive test plan");
+  const suite = previous || {
+    revision: plan.revision,
+    status: "Running",
+    cases: [],
+    ids: {},
+    origins: {},
+    created: [],
+    fieldCoverage: [],
+    manualCases: plan.manualCases,
+    startedAt: new Date().toISOString()
+  };
+  const ctx = {
+      ...context
+    },
+    ids = suite.ids;
+  const notify = () => {
+    if (active()) emit({
+      ...suite,
+      cases: [...suite.cases],
+      ids: {
+        ...ids
+      }
+    });
+  };
+  const record = row => {
+    const i = suite.cases.findIndex(x => x.id === row.id);
+    if (i < 0) suite.cases.push(row);else suite.cases[i] = row;
+    notify();
+    return row;
+  };
+  const done = id => suite.cases.some(x => x.id === id && !["Needs context", "Pending", "Running"].includes(x.status));
+  const fail = reason => {
+    throw new Error(reason);
+  };
+  const positive = v => Number.isSafeInteger(Number(v)) && Number(v) > 0;
+  let mutationCount = 0;
+  const refs = "kind name ofType { kind name ofType { kind name ofType { kind name ofType { kind name } } } }";
+  const schema = (await request("SuiteSchema", \`query SuiteSchema { __schema { queryType { name } mutationType { name } types { name kind fields { name args { name defaultValue type { \${refs} } } type { \${refs} } } inputFields { name defaultValue type { \${refs} } } enumValues { name } } } }\`, {})).__schema;
+  if (!schema?.types || !schema.queryType || !schema.mutationType) fail("Complete live schema unavailable");
+  const types = new Map(schema.types.map(t => [t.name, t]));
+  const queries = new Map((types.get(schema.queryType.name)?.fields || []).map(f => [f.name, f]));
+  const mutations = new Map((types.get(schema.mutationType.name)?.fields || []).filter(f => f.name !== "query").map(f => [f.name, f]));
+  const refValue = (v, marker, recordId) => {
+    const values = {
+      patientId,
+      date: new Date().toISOString().slice(0, 10),
+      now: new Date().toISOString(),
+      marker,
+      slug: marker.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
+      buildDate: new Date().toISOString().slice(0, 10).replace(/-/g, ""),
+      resourcePath: marker.replace(/ /g, "-") + ".txt",
+      answers: JSON.stringify({
+        diagnostic: marker,
+        retained: "preserve this answer"
+      }),
+      recordId
+    };
+    if (typeof v === "string" && v.startsWith("$")) {
+      const key = v.slice(1),
+        value = key.startsWith("context.") ? ctx[key.slice(8)] : key.startsWith("ids.") ? ids[key.slice(4)] : values[key];
+      if (value === undefined || value === null) fail(\`Needs \${key}\`);
+      return clone(value);
+    }
+    return Array.isArray(v) ? v.map(x => refValue(x, marker, recordId)) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, refValue(x, marker, recordId)])) : v;
+  };
+  const validate = (v, t, path) => {
+    if (v == null) {
+      if (t.kind === "NON_NULL") fail(\`Missing \${path}\`);
+      return;
+    }
+    if (t.kind === "NON_NULL") return validate(v, t.ofType, path);
+    if (t.kind === "LIST") {
+      if (!Array.isArray(v)) fail(\`\${path} needs an array\`);
+      v.forEach((x, i) => validate(x, t.ofType, \`\${path}[\${i}]\`));
+      return;
+    }
+    if (t.kind === "INPUT_OBJECT") {
+      const fields = types.get(t.name)?.inputFields;
+      if (!fields || typeof v !== "object" || Array.isArray(v)) fail(\`Missing input contract \${path}\`);
+      for (const k of Object.keys(v)) if (!fields.some(f => f.name === k)) fail(\`Unknown input \${path}.\${k}\`);
+      for (const f of fields) if (f.defaultValue == null || v[f.name] !== undefined) validate(v[f.name], f.type, path + "." + f.name);
+    } else if (t.kind === "ENUM" && !types.get(t.name)?.enumValues?.some(x => x.name === v)) fail(\`Invalid enum \${path}\`);else if (["Int", "Long"].includes(t.name) && !Number.isSafeInteger(v)) fail(\`Invalid integer \${path}\`);else if (t.name === "Boolean" && typeof v !== "boolean") fail(\`Invalid boolean \${path}\`);else if (t.name === "String" && typeof v !== "string") fail(\`Invalid text \${path}\`);
+  };
+  const selection = (typeName, depth = 0, ancestors = []) => {
+    const info = types.get(typeName);
+    if (!info || depth > 6 || ancestors.includes(typeName)) return "";
+    return (info.fields || []).filter(f => !f.args?.some(a => a.type.kind === "NON_NULL" && a.defaultValue == null)).flatMap(f => {
+      if (["patient", "encodedFile", "secondaryFile", "photo", "signature", "signatures", "requestor", "assignedUser"].includes(f.name)) return [];
+      const t = named(f.type);
+      if (["SCALAR", "ENUM"].includes(t?.kind)) return [f.name];
+      // Follow input-shaped objects and coded/audit values, not arbitrary chart relationships.
+      const inputFields = types.get(typeName + "Input")?.inputFields || [];
+      if (!["stamp", "version", "formVersion", "codedValue"].includes(f.name) && !inputFields.some(x => x.name === f.name) && !["Coding", "CodingReference"].includes(t?.name)) return [];
+      const sub = selection(t?.name, depth + 1, [...ancestors, typeName]);
+      return sub ? [\`\${f.name} { \${sub} }\`] : [];
+    }).join(" ");
+  };
+  const call = async (field, args, fields, mutation = false, tag = "Read") => {
+    const op = (mutation ? mutations : queries).get(field);
+    if (!op) fail(\`Not exposed in live schema: \${field}\`);
+    for (const k of Object.keys(args)) if (!op.args.some(a => a.name === k)) fail(\`Unknown argument \${field}.\${k}\`);
+    for (const a of op.args) if (a.defaultValue == null || args[a.name] !== undefined) validate(args[a.name], a.type, a.name);
+    const argsUsed = op.args.filter(a => args[a.name] !== undefined),
+      kind = mutation ? "mutation" : "query",
+      name = "Suite" + tag;
+    const decl = argsUsed.map(a => \`$\${a.name}: \${typeText(a.type)}\`).join(", "),
+      binds = argsUsed.map(a => \`\${a.name}: $\${a.name}\`).join(", ");
+    const object = ["OBJECT", "INTERFACE", "UNION"].includes(named(op.type)?.kind);
+    if (mutation) {
+      mutationCount += 1;
+      const pending = [...suite.cases].reverse().find(x => x.status === "Running" && x.operation === field);
+      if (pending) {
+        pending.sent = true;
+        record(pending);
+      }
+    }
+    return request(name, \`\${kind} \${name}\${decl ? "(" + decl + ")" : ""} { \${field}\${binds ? "(" + binds + ")" : ""}\${object ? " { " + (fields || "__typename") + " }" : ""} }\`, args, mutation);
+  };
+  const init = {
+    id: "context",
+    status: "Running",
+    variant: "read context"
+  };
+  record(init);
+  try {
+    const charts = (await call("patient", {
+      id: patientId
+    }, "patientId conditions { condition { code display system } certainty { code display system } } encounters { encounterId providerId } serviceEpisodes { serviceEpisodeId service { code display system } serviceMrp { code display system } serviceMrpId serviceEvents { service { code display system } } }", false, "Context")).patient;
+    if (charts?.length !== 1 || Number(charts[0].patientId) !== patientId) fail("Requested patient not uniquely returned");
+    const chart = charts[0];
+    const requestedEncounter = ctx.encounterId || patient?.encounterId;
+    const encounter = requestedEncounter ? chart.encounters?.find(x => Number(x.encounterId) === Number(requestedEncounter)) : chart.encounters?.find(x => positive(x.encounterId));
+    if (requestedEncounter && !encounter) fail("Configured encounter does not belong to this patient");
+    if (encounter) {
+      ctx.encounterId = Number(encounter.encounterId);
+      ctx.providerId ??= encounter.providerId;
+    }
+    const profileId = ctx.userProfileId || sourceProfile?.userProfileId;
+    if (positive(profileId)) {
+      const profiles = (await call("userProfile", {
+        id: Number(profileId)
+      }, "userProfileId loginName identity { fullName }", false, "Profile")).userProfile;
+      if (profiles?.length !== 1 || Number(profiles[0].userProfileId) !== Number(profileId)) fail("Test profile not uniquely returned");
+      ctx.userProfileId = Number(profileId);
+      ctx.userName = profiles[0].identity?.fullName;
+    }
+    const issue = chart.conditions?.find(x => x.condition?.code && x.condition?.system);
+    if (issue) {
+      ctx.healthIssue ??= issue.condition;
+      ctx.certainty ??= issue.certainty;
+    }
+    const episode = chart.serviceEpisodes?.find(x => x.service?.code && positive(x.serviceMrpId) && x.serviceMrp?.system === "MOIS.USER" && String(x.serviceMrp.code) === String(x.serviceMrpId));
+    if (episode) {
+      ctx.service ??= episode.service;
+      ctx.serviceMrp ??= episode.serviceMrp;
+      ctx.serviceMrpId ??= episode.serviceMrpId;
+    }
+    ctx.eventService ??= chart.serviceEpisodes?.flatMap(x => x.serviceEvents || []).find(x => x.service?.code)?.service;
+    init.status = "Read verified";
+    init.contextFields = Object.keys(ctx);
+    suite.context = clone(ctx);
+  } catch (e) {
+    init.status = "Needs context";
+    init.error = e.message;
+    record(init);
+    fail("Context verification failed; no suite writes sent: " + e.message);
+  }
+  record(init);
+  const copyInput = (value, t, depth = 0) => {
+    if (value == null || depth > 8) return value;
+    if (t.kind === "NON_NULL") return copyInput(value, t.ofType, depth);
+    if (t.kind === "LIST") return Array.isArray(value) ? value.map(x => copyInput(x, t.ofType, depth + 1)) : value;
+    if (t.kind !== "INPUT_OBJECT") return clone(value);
+    return Object.fromEntries((types.get(t.name)?.inputFields || []).filter(f => !["stamp", "patient"].includes(f.name) && Object.prototype.hasOwnProperty.call(value, f.name)).map(f => [f.name, copyInput(value[f.name], f.type, depth + 1)]));
+  };
+  const withoutAudit = v => Array.isArray(v) ? v.map(withoutAudit) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).filter(([k]) => !["stamp", "__typename", "cursor"].includes(k)).map(([k, x]) => [k, withoutAudit(x)])) : v;
+  const diffs = (a, b, prefix = "") => {
+    if (same(a, b)) return [];
+    if (a && b && typeof a === "object" && typeof b === "object" && !Array.isArray(a) && !Array.isArray(b)) return [...new Set([...Object.keys(a), ...Object.keys(b)])].flatMap(k => diffs(a[k], b[k], prefix ? prefix + "." + k : k));
+    return [prefix || "record"];
+  };
+  for (const p of plan.profiles) {
+    if (!active() || uncertain()) break;
+    const marker = suite.origins[p.key]?.marker || \`WEBFORMS TEST \${Date.now().toString(36)} \${p.key}\`;
+    const fields = selection(p.type);
+    const read = async (id = ids[p.key]) => {
+      let wrapped = fields;
+      for (const path of [...p.path].reverse()) wrapped = \`\${path} { \${wrapped} }\`;
+      if (p.readRoot === "patient") wrapped = "patientId " + wrapped;
+      if (p.readRoot === "encounter") wrapped = "patientId encounterId " + wrapped;
+      const args = refValue(p.readArgs, marker, id);
+      const data = await call(p.readRoot, args, wrapped, false, "Verify");
+      let records = data[p.readRoot];
+      if (!Array.isArray(records)) fail("Read did not return a collection");
+      if (["patient", "encounter"].includes(p.readRoot) && (records.length !== 1 || Number(records[0].patientId) !== patientId)) fail("Read returned a different or missing patient");
+      if (p.readRoot === "encounter" && Number(records[0].encounterId) !== Number(ctx.encounterId)) fail("Read returned a different encounter");
+      if (args.first && records.length >= args.first) fail("Read reached its page limit; complete pagination is required before writing");
+      for (const path of p.path) {
+        if (p.objectPath) {
+          if (records.some(r => !r[path] || typeof r[path] !== "object")) fail(\`Missing read object \${path}\`);
+          records = records.map(r => ({
+            ...r[path],
+            patientId
+          }));
+        } else {
+          if (records.some(r => !Array.isArray(r[path]))) fail(\`Missing read collection \${path}\`);
+          records = records.flatMap(r => r[path]);
+        }
+      }
+      if (records.some(r => r.patientId != null && Number(r.patientId) !== patientId)) fail("Record patient differs from the active patient");
+      return records;
+    };
+    const mutArgs = (payload, create = false) => {
+      const field = create ? p.create : p.update,
+        op = mutations.get(field);
+      if (!op) fail(\`Not exposed in live schema: \${field}\`);
+      const arg = create ? p.inputArg : p.updateArg || p.inputArg;
+      return {
+        ...(op.args.some(a => a.name === "patientId") ? {
+          patientId
+        } : {}),
+        ...refValue(create ? p.extraCreateArgs || p.extraArgs || {} : p.extraArgs || {}, marker, ids[p.key]),
+        [arg]: (create ? p.inputList : p.updateList || p.inputList) ? [payload] : payload
+      };
+    };
+    const inputArg = (create = false) => mutations.get(create ? p.create : p.update)?.args.find(a => a.name === (create ? p.inputArg : p.updateArg || p.inputArg));
+    let origin = suite.origins[p.key],
+      rows;
+    try {
+      if (!fields) fail("No readable output fields");
+      if (p.path.length && !queries.has(p.readRoot)) fail("No read route");
+      rows = p.singletonCreate && !ids[p.key] ? [] : await read();
+      for (const mode of p.create ? p.createModes || ["seed"] : []) {
+        const id = \`\${p.key}.create.\${mode}\`;
+        if (done(id)) continue;
+        let row = {
+          id,
+          profile: p.key,
+          operation: p.create,
+          variant: "create " + mode,
+          status: "Running",
+          sent: false
+        };
+        record(row);
+        const before = rows;
+        try {
+          const seed = refValue(p.seed, marker + " " + mode);
+          if (mode === "zero") seed[p.id] = 0;
+          if (mode === "null") seed[p.id] = null;
+          if (mode === "omitted") delete seed[p.id];
+          const args = mutArgs(seed, true);
+          let response, error;
+          row.inputFields = Object.keys(seed);
+          const sentBefore = mutationCount;
+          try {
+            response = await call(p.create, args, fieldsForMutation(p.create, p.type, fields), true, "Create");
+          } catch (e) {
+            error = e.message;
+          }
+          row.sent = mutationCount > sentBefore;
+          if (!row.sent) {
+            row.status = "Needs context";
+            row.error = error;
+            record(row);
+            continue;
+          }
+          if (p.singletonCreate) {
+            const candidates = response?.[p.create] || [];
+            const found = candidates.filter(r => positive(r[p.id]) && Number(r.patientId) === patientId);
+            if (found.length !== 1) fail("Creation outcome uncertain: no unique ID to independently read");
+            ids[p.key] = Number(found[0][p.id]);
+          }
+          rows = await read();
+          if (uncertain()) fail("Write timed out; its eventual outcome is unknown");
+          const beforeIds = new Set(before.map(r => Number(r[p.id])));
+          const scalarMarkers = Object.keys(seed).filter(k => typeof seed[k] === "string" && seed[k].includes(marker));
+          const candidates = rows.filter(r => positive(r[p.id]) && !beforeIds.has(Number(r[p.id])) && (p.key === "events" ? Number(r.serviceEpisodeId) === ids.episodes && Number(r.objectId) === ctx.encounterId && r.objectType === seed.objectType && subset(r.service, seed.service) : scalarMarkers.length && scalarMarkers.every(k => r[k] === seed[k])));
+          const preserved = before.every(r => same(withoutAudit(r), withoutAudit(rows.find(x => Number(x[p.id]) === Number(r[p.id])))));
+          if (candidates.length === 1 && rows.length === before.length + 1 && preserved) {
+            const created = candidates[0];
+            ids[p.key] ||= Number(created[p.id]);
+            row.inputChecks = Object.keys(seed).filter(k => k !== p.id).map(k => ({
+              field: k,
+              matched: subset(created[k], seed[k])
+            }));
+            row.status = row.inputChecks.every(x => x.matched) ? error ? "Create verified after mutation error" : "Create verified" : "Created record identified; supplied fields differ";
+            row.recordId = Number(created[p.id]);
+            row.changedFields = scalarMarkers;
+            suite.created.push({
+              profile: p.key,
+              id: row.recordId,
+              key: p.id,
+              cleanup: p.delete ? "Pending deletion" : "No dedicated delete recipe; retained"
+            });
+            if (!origin) {
+              origin = {
+                marker,
+                record: clone(created),
+                id: ids[p.key]
+              };
+              suite.origins[p.key] = origin;
+            }
+          } else if (same(withoutAudit(rows), withoutAudit(before))) {
+            row.status = error ? "Rejected; selected read unchanged" : "Create not verified";
+          } else {
+            row.status = "Unexpected read changes; profile stopped";
+            row.stopProfile = true;
+          }
+          if (error) row.error = error;
+        } catch (e) {
+          row.status = row.sent ? "Outcome requires inspection" : "Needs context";
+          row.error = e.message;
+          if (row.sent) row.stopProfile = true;
+        }
+        record(row);
+        if (row.stopProfile || uncertain()) break;
+      }
+      if (suite.cases.some(r => r.profile === p.key && r.stopProfile)) continue;
+      if (!origin && p.existingFallback) {
+        const selected = ctx[p.id] ? rows.find(r => Number(r[p.id]) === Number(ctx[p.id])) : rows.find(r => positive(r[p.id]));
+        if (selected) {
+          ids[p.key] = Number(selected[p.id]);
+          origin = {
+            marker,
+            record: clone(selected),
+            id: ids[p.key],
+            existing: true
+          };
+          suite.origins[p.key] = origin;
+        }
+      }
+      if (!origin) {
+        record({
+          id: p.key + ".variants",
+          profile: p.key,
+          status: "Needs context",
+          reason: "No independently verified positive-ID record for field variants",
+          variants: p.fields
+        });
+        continue;
+      }
+      for (const field of p.fields) {
+        if (!active() || uncertain()) break;
+        const arg = inputArg(),
+          inputType = named(arg?.type),
+          spec = types.get(inputType?.name)?.inputFields?.find(f => f.name === field);
+        if (!spec || !(field in origin.record)) {
+          record({
+            id: \`\${p.key}.\${field}\`,
+            profile: p.key,
+            field,
+            status: "Needs context",
+            reason: "Field not exposed in both input and selected output"
+          });
+          continue;
+        }
+        const original = clone(origin.record[field]),
+          t = named(spec.type);
+        let values = p.extraFields?.[field] ? refValue(p.extraFields[field], marker) : null;
+        if (!values) {
+          if (["isComplete", "isAcknowledged", "includeOnDemographics", "includeOnCarePlan"].includes(field)) values = [{
+            code: "Y",
+            display: "Yes",
+            system: "MOIS-YESNO"
+          }, {
+            code: "N",
+            display: "No",
+            system: "MOIS-YESNO"
+          }];else if (["Date", "DateOnly", "DateTime"].includes(t?.name)) values = [t.name === "DateTime" ? new Date().toISOString() : new Date().toISOString().slice(0, 10)];else if (["Int", "Long", "Float", "Decimal"].includes(t?.name)) values = [typeof original === "number" ? original + 1 : 1];else if (t?.name === "Boolean") values = [!original];else if (t?.kind === "ENUM") values = (types.get(t.name)?.enumValues || []).map(x => x.name).slice(0, 2);else if (field === "formdata") {
+            let answers;
+            try {
+              answers = JSON.parse(original || "{}");
+              if (!answers || Array.isArray(answers) || typeof answers !== "object") throw 0;
+            } catch (_) {
+              fail("Existing answers are not a JSON object");
+            }
+            ;
+            values = [JSON.stringify({
+              ...answers,
+              diagnostic: marker + " UPDATED",
+              suiteVariant: true
+            })];
+          } else if (t?.name === "String") values = [marker + " " + field, marker + " " + field + " B"];
+        }
+        if (!values?.length) {
+          record({
+            id: \`\${p.key}.\${field}\`,
+            profile: p.key,
+            field,
+            status: "Needs context",
+            reason: "Needs type-specific fixture/coding; no arbitrary code is generated"
+          });
+          continue;
+        }
+        const cases = [...values.map((value, i) => ({
+          variant: "set" + (i || ""),
+          value
+        })), {
+          variant: "omit"
+        }, ...(spec.type.kind !== "NON_NULL" ? [{
+          variant: "null",
+          value: null
+        }, {
+          variant: "set-again",
+          value: values[0]
+        }] : []), ...(t.name === "String" && field !== "formdata" ? [{
+          variant: "empty",
+          value: ""
+        }] : []), {
+          variant: "restore",
+          value: original
+        }];
+        for (const variant of cases) {
+          const caseId = \`\${p.key}.\${field}.\${variant.variant}\`;
+          if (done(caseId)) continue;
+          if (!active() || uncertain()) break;
+          const result = await change(p, field, variant, caseId, read, mutArgs, origin);
+          if (result.stopProfile) break;
+        }
+        if (suite.cases.some(r => r.profile === p.key && r.stopProfile)) break;
+      }
+      if (suite.cases.some(r => r.profile === p.key && r.stopProfile) || uncertain()) continue;
+      if (p.nestedDosage) await nestedDosage(p, read, mutArgs, origin);
+      if (p.healthIssues) await eventChildren(p, read, mutArgs, origin);
+      if (p.taskMetadata) await taskMetadata(p, read, mutArgs, origin);
+      if (p.encounterStatus) await appointmentStatus(p, read, origin);
+      if (p.lifecycle) await formLifecycle(p, read, mutArgs, origin);
+      if (p.download) await download(p, read);
+      if (p.rejectedUpdateProbe) await correspondenceUpdate(p, read, origin);
+      // Dedicated deletion is performed after all profiles, preserving dependencies.
+    } catch (e) {
+      record({
+        id: p.key + ".setup",
+        profile: p.key,
+        status: "Needs context",
+        error: e.message
+      });
+    }
+  }
+  if (active() && !uncertain() && plan.attachmentUpload) await attachment();
+  // Leave field-level coverage explicit, including inputs that need semantic values.
+  const inputPaths = (t, prefix = "", ancestors = []) => {
+    const type = named(t),
+      info = types.get(type?.name);
+    if (!info?.inputFields || ancestors.includes(type.name)) return [];
+    return info.inputFields.flatMap(f => {
+      const path = prefix ? prefix + "." + f.name : f.name;
+      const listType = f.type.kind === "NON_NULL" ? f.type.ofType : f.type;
+      return [{
+        ...f,
+        path
+      }, ...inputPaths(f.type, path + (listType.kind === "LIST" ? "[]" : ""), [...ancestors, type.name])];
+    });
+  };
+  suite.fieldCoverage = [...mutations.values()].flatMap(op => op.args.flatMap(arg => inputPaths(arg.type).map(f => {
+    const cases = suite.cases.filter(r => r.operation === op.name && (r.field === f.path || r.nestedField === f.path));
+    return {
+      operation: op.name,
+      argument: arg.name,
+      field: f.path,
+      variants: ["set", "change", "omit", ...(f.type.kind !== "NON_NULL" ? ["null"] : []), "restore"],
+      cases: cases.map(r => r.id),
+      status: cases.some(r => r.sent) ? "See individual outcomes" : "Not exercised; needs a fixture or dedicated semantic recipe"
+    };
+  })));
+  for (const p of [...plan.profiles].reverse().filter(p => p.delete)) {
+    if (!active() || uncertain()) break;
+    if (suite.cases.some(r => r.profile === p.key && r.stopProfile)) continue;
+    for (const created of suite.created.filter(x => x.profile === p.key)) {
+      const id = \`\${p.key}.delete.\${created.id}\`;
+      if (done(id)) continue;
+      const row = {
+        id,
+        profile: p.key,
+        operation: p.delete.operation,
+        variant: "delete",
+        recordId: created.id,
+        status: "Needs context",
+        reason: "Dedicated deletion verification is required"
+      };
+      // Specific root reads ensure we observe absence rather than a truncated list.
+      try {
+        let root = p.readRoot,
+          args,
+          sel;
+        if (p.key === "forms") {
+          args = {
+            id: created.id
+          };
+          sel = "webformId patientId documentId";
+        } else if (p.key === "definitions") {
+          args = {
+            id: created.id
+          };
+          sel = "webformDefinitionId";
+        } else if (p.key === "correspondence") {
+          args = {
+            id: ctx.encounterId,
+            patientId
+          };
+          sel = "encounterId patientId correspondences { correspondenceId }";
+        } else fail("No exact-ID deletion read");
+        const collect = data => p.key === "correspondence" ? data[root]?.length === 1 && Number(data[root][0].patientId) === patientId ? data[root][0].correspondences : undefined : data[root];
+        const before = collect(await call(root, args, sel, false, "DeleteBefore"));
+        if (!before?.some(r => Number(r[p.id]) === created.id)) fail("Test record not present before delete");
+        let error;
+        try {
+          row.sent = true;
+          await call(p.delete.operation, refValue(p.delete.args, "", created.id), "__typename", true, "Delete");
+        } catch (e) {
+          error = e.message;
+        }
+        const after = collect(await call(root, args, sel, false, "DeleteAfter"));
+        const absent = Array.isArray(after) && !after.some(r => Number(r[p.id]) === created.id);
+        row.status = absent && !uncertain() ? "Delete verified" : "Delete unverified";
+        if (error) row.error = error;
+        created.cleanup = row.status;
+        row.reason = "Absence on exact-ID independent read; linked files/resources and physical erasure remain separate";
+      } catch (e) {
+        row.error = e.message;
+        if (row.sent) row.status = "Outcome requires inspection";
+      }
+      record(row);
+    }
+  }
+  suite.operationCoverage = [...mutations.keys()].map(operation => ({
+    operation,
+    cases: suite.cases.filter(x => x.operation === operation).map(x => x.id),
+    status: suite.cases.some(x => x.operation === operation && x.sent) ? "See case outcomes" : operation === "sendFax" ? "Separate explicit recipient test" : "No automatic recipe executed; use dedicated inputs or manual follow-up"
+  }));
+  suite.status = !active() ? "Stopped" : uncertain() ? "Stopped: uncertain write; inspect before further mutations" : "Finished; inspect failures and prerequisites";
+  suite.completedAt = new Date().toISOString();
+  notify();
+  return suite;
+  function fieldsForMutation(operation, type, fields) {
+    return named(mutations.get(operation)?.type)?.name === type ? fields : "__typename";
+  }
+  async function change(p, field, variant, caseId, read, mutArgs, origin) {
+    const row = {
+      id: caseId,
+      profile: p.key,
+      operation: p.update,
+      field,
+      nestedField: variant.nestedField,
+      variant: variant.variant,
+      status: "Running",
+      sent: false
+    };
+    record(row);
+    try {
+      const before = await read(),
+        recordBefore = before.find(r => Number(r[p.id]) === origin.id);
+      if (!recordBefore) fail("Target missing from fresh read");
+      const arg = mutations.get(p.update)?.args.find(a => a.name === (p.updateArg || p.inputArg)),
+        payload = copyInput(recordBefore, {
+          ...named(arg?.type)
+        });
+      if (variant.prepare) variant.value = variant.prepare(clone(payload));
+      if (variant.variant === "omit") {
+        if (recordBefore[field] == null) {
+          row.status = "Not applicable: omitted field already null";
+          record(row);
+          return row;
+        }
+        ;
+        delete payload[field];
+      } else {
+        if (same(recordBefore[field], variant.value)) {
+          row.status = "Not applicable: requested value already present";
+          record(row);
+          return row;
+        }
+        ;
+        payload[field] = clone(variant.value);
+      }
+      let error;
+      const sentBefore = mutationCount;
+      try {
+        await call(p.update, mutArgs(payload), fieldsForMutation(p.update, p.type, selection(p.type)), true, "Change");
+      } catch (e) {
+        error = e.message;
+      }
+      row.sent = mutationCount > sentBefore;
+      if (!row.sent) {
+        row.status = "Needs context";
+        row.error = error;
+        record(row);
+        return row;
+      }
+      const after = await read(),
+        recordAfter = after.find(r => Number(r[p.id]) === origin.id);
+      if (!recordAfter) fail("Target missing after write");
+      const changed = diffs(withoutAudit(recordBefore), withoutAudit(recordAfter));
+      row.changedPaths = changed;
+      const otherPreserved = before.length === after.length && before.every(r => {
+        const found = after.find(x => Number(x[p.id]) === Number(r[p.id]));
+        if (!found) return false;
+        if (Number(r[p.id]) !== origin.id) return same(withoutAudit(r), withoutAudit(found));
+        const a = withoutAudit(r),
+          b = withoutAudit(found);
+        delete a[field];
+        delete b[field];
+        return same(a, b);
+      });
+      row.otherSelectedFieldsAndMembershipPreserved = otherPreserved;
+      row.auditChangedPaths = diffs(recordBefore.stamp, recordAfter.stamp, "stamp");
+      if (uncertain()) fail("Write timed out; read cannot settle eventual persistence");
+      if (!otherPreserved) {
+        row.status = "Unexpected changes; profile stopped";
+        row.stopProfile = true;
+      } else if (error && same(withoutAudit(recordBefore), withoutAudit(recordAfter))) row.status = "Rejected; selected read unchanged";else if (variant.variant === "omit") row.status = same(recordBefore[field], recordAfter[field]) ? "Omission preserved value" : recordAfter[field] === null ? "Omission cleared value" : "Omission changed value";else if (variant.expectPreserved ? same(recordAfter[field], recordBefore[field]) : variant.generatedChildren ? matchEventChildren(recordAfter[field], variant.value, recordBefore[field], origin.id) : subset(recordAfter[field], variant.value)) row.status = error ? "Write verified after mutation error" : variant.expectPreserved ? "Null preserved value" : variant.variant === "restore" ? "Restoration verified" : "Write verified";else if (same(recordBefore, recordAfter) || same(withoutAudit(recordBefore), withoutAudit(recordAfter))) row.status = error ? "Rejected; selected read unchanged" : "Write not applied";else {
+        row.status = "Unexpected field value; profile stopped";
+        row.stopProfile = true;
+      }
+      if (variant.variant === "restore" && !same(withoutAudit(recordAfter[field]), withoutAudit(origin.record[field]))) row.stopProfile = true;
+      if (error) row.error = error;
+    } catch (e) {
+      row.status = row.sent ? "Outcome requires inspection" : "Needs context";
+      row.error = e.message;
+      row.stopProfile = Boolean(row.sent);
+    }
+    record(row);
+    return row;
+  }
+  async function nestedDosage(p, read, mutArgs, origin) {
+    const first = origin.record.drugDurations?.find(d => positive(d.drugDurationId) && d.dosages?.some(x => positive(x.dosageId) && typeof x.doseQuantity === "number"));
+    if (!first) {
+      record({
+        id: p.key + ".dosage.fixture",
+        profile: p.key,
+        field: "drugDurations",
+        status: "Needs context",
+        reason: "No existing positive-ID duration/dosage quantity; add a disposable dosing fixture to exercise nested writes"
+      });
+      return;
+    }
+    const dose = first.dosages.find(x => positive(x.dosageId) && typeof x.doseQuantity === "number");
+    for (const [name, quantity] of [["quantity-update", dose.doseQuantity + 1], ["quantity-restore", dose.doseQuantity]]) {
+      const id = p.key + ".dosage." + name;
+      if (done(id)) continue;
+      const variant = {
+        variant: name,
+        nestedField: "drugDurations[].dosages[].doseQuantity",
+        prepare: payload => payload.drugDurations.map(d => d.drugDurationId === first.drugDurationId ? {
+          ...d,
+          dosages: d.dosages.map(x => x.dosageId === dose.dosageId ? {
+            ...x,
+            doseQuantity: quantity
+          } : x)
+        } : d)
+      };
+      const outcome = await change(p, "drugDurations", variant, id, read, mutArgs, origin);
+      if (outcome.stopProfile || uncertain() || !active()) break;
+    }
+  }
+  async function eventChildren(p, read, mutArgs, origin) {
+    if (!ctx.healthIssue?.code || !ctx.healthIssue?.system) {
+      record({
+        id: p.key + ".children.fixture",
+        profile: p.key,
+        status: "Needs context",
+        reason: "Needs a populated condition coding for the disposable event health-issue tests"
+      });
+      return;
+    }
+    const child = () => ({
+      serviceEventHealthIssueId: 0,
+      serviceEventId: origin.id,
+      healthIssue: clone(ctx.healthIssue),
+      certainty: clone(ctx.certainty || {
+        code: "Impression",
+        display: "IMPRESSION",
+        system: "MOIS-CONDITIONCERTAINTY"
+      })
+    });
+    const steps = [{
+      variant: "add",
+      prepare: () => [child()],
+      generatedChildren: true
+    }, {
+      variant: "certainty",
+      prepare: payload => payload.healthIssues.map(x => ({
+        ...x,
+        certainty: {
+          code: "Confirmed",
+          display: "CONFIRMED",
+          system: "MOIS-CONDITIONCERTAINTY"
+        }
+      }))
+    }, {
+      variant: "mixed-add",
+      prepare: payload => [...payload.healthIssues, child()],
+      generatedChildren: true
+    }, {
+      variant: "retain-one",
+      prepare: payload => payload.healthIssues.slice(0, 1)
+    }, {
+      variant: "omit"
+    }, {
+      variant: "null",
+      value: null,
+      expectPreserved: true
+    }, {
+      variant: "empty",
+      value: []
+    }, {
+      variant: "recreate",
+      prepare: () => [child()],
+      generatedChildren: true
+    }, {
+      variant: "restore",
+      value: []
+    }];
+    for (const step of steps) {
+      const id = p.key + ".healthIssues." + step.variant;
+      if (done(id)) continue;
+      if (!active() || uncertain()) break;
+      const outcome = await change(p, "healthIssues", step, id, read, mutArgs, origin);
+      if (outcome.stopProfile) break;
+    }
+  }
+  function matchEventChildren(actual, expected, before, eventId) {
+    if (!Array.isArray(actual) || actual.length !== expected.length || new Set(actual.map(x => x.serviceEventHealthIssueId)).size !== actual.length) return false;
+    const oldIds = new Set((before || []).map(x => x.serviceEventHealthIssueId)),
+      used = new Set();
+    return expected.every(x => {
+      const fields = {
+        ...x
+      };
+      delete fields.serviceEventHealthIssueId;
+      const matches = actual.filter(a => positive(a.serviceEventHealthIssueId) && !used.has(a.serviceEventHealthIssueId) && Number(a.serviceEventId) === eventId && (x.serviceEventHealthIssueId === 0 ? !oldIds.has(a.serviceEventHealthIssueId) : a.serviceEventHealthIssueId === x.serviceEventHealthIssueId) && subset(a, fields));
+      if (matches.length !== 1) return false;
+      used.add(matches[0].serviceEventHealthIssueId);
+      return true;
+    });
+  }
+  async function attachment() {
+    const id = "attachment.upload";
+    if (done(id)) return;
+    const row = {
+      id,
+      profile: "attachment",
+      operation: "POST api/attachment/file",
+      variant: "text file upload and independent metadata/binary read",
+      status: "Running",
+      sent: false
+    };
+    record(row);
+    try {
+      if (!uploadAttachment || !positive(ctx.userProfileId)) fail("Needs host attachment transport and current user-profile ID");
+      const marker = \`WEBFORMS TEST \${Date.now().toString(36)} attachment\`;
+      const read = async () => {
+        const result = await call("patient", {
+          id: patientId
+        }, "patientId documents { documentId patientId note pathname }", false, "AttachmentRead");
+        if (result.patient?.length !== 1 || Number(result.patient[0].patientId) !== patientId || !Array.isArray(result.patient[0].documents)) fail("Attachment patient read missing");
+        return result.patient[0].documents;
+      };
+      const before = await read(),
+        document = {
+          documentId: 0,
+          patientId,
+          note: marker,
+          documentType: {
+            code: "NOTE",
+            display: "Note / General Purpose Document",
+            system: "MOIS-DOCUMENTTYPE"
+          }
+        };
+      const content = marker + "\\nSynthetic attachment test only.\\n";
+      let error;
+      row.sent = true;
+      record(row);
+      try {
+        await uploadAttachment(ctx.userProfileId, document, content);
+      } catch (e) {
+        error = e.message;
+      }
+      const after = await read(),
+        oldIds = new Set(before.map(x => Number(x.documentId)));
+      const added = after.filter(x => !oldIds.has(Number(x.documentId)) && positive(x.documentId) && x.note === marker && Number(x.patientId) === patientId);
+      const preserved = before.every(x => same(x, after.find(y => Number(y.documentId) === Number(x.documentId))));
+      if (uncertain()) fail("Upload timed out; eventual persistence is unknown");
+      if (added.length !== 1 || after.length !== before.length + 1 || !preserved) {
+        row.status = error && same(before, after) ? "Rejected; selected read unchanged" : "Upload outcome requires inspection";
+        row.error = error;
+        record(row);
+        return;
+      }
+      row.status = "Upload metadata verified";
+      row.recordId = Number(added[0].documentId);
+      row.error = error;
+      suite.created.push({
+        profile: "attachment",
+        key: "documentId",
+        id: row.recordId,
+        cleanup: "No dedicated document deletion recipe; retained"
+      });
+      record(row);
+      const binary = {
+        id: "attachment.encodedFile",
+        profile: "attachment",
+        operation: "document",
+        variant: "uploaded content read",
+        status: "Running"
+      };
+      record(binary);
+      try {
+        const result = await call("document", {
+          patientId,
+          id: row.recordId
+        }, "documentId patientId encodedFile", false, "AttachmentFile");
+        const found = result.document?.find(x => Number(x.documentId) === row.recordId && Number(x.patientId) === patientId);
+        if (!found) fail("Uploaded document missing from exact-ID read");
+        binary.status = found.encodedFile === content || typeof btoa === "function" && found.encodedFile === btoa(content) ? "Uploaded bytes verified" : found.encodedFile == null ? "No file value returned; alternate download route remains open" : "File value returned; content/encoding needs inspection";
+      } catch (e) {
+        binary.status = "Read failed";
+        binary.error = e.message;
+      }
+      record(binary);
+    } catch (e) {
+      row.status = row.sent ? "Outcome requires inspection" : "Needs context";
+      row.error = e.message;
+      record(row);
+    }
+  }
+  async function taskMetadata(p, read, mutArgs, origin) {
+    const yes = {
+      code: "Y",
+      display: "Yes",
+      system: "MOIS-YESNO"
+    };
+    const flags = ["isAcknowledged", "isComplete"];
+    const metadata = ["acknowledgedBy", "acknowledgedDate", "completedBy", "completedDate"];
+    const step = async (field, variant, value) => {
+      const id = \`\${p.key}.workflow.\${field}.\${variant}\`;
+      if (done(id)) return true;
+      if (!active() || uncertain()) return false;
+      const result = await change(p, field, {
+        variant,
+        value
+      }, id, read, mutArgs, origin);
+      return !result.stopProfile;
+    };
+    if (!ctx.userName) {
+      record({
+        id: p.key + ".workflow.profile",
+        profile: p.key,
+        status: "Needs context",
+        reason: "Needs current profile display name"
+      });
+      return;
+    }
+    for (const f of flags) if (!(await step(f, "enable", yes))) return;
+    const current = (await read()).find(r => Number(r[p.id]) === origin.id);
+    if (!flags.every(f => current?.[f]?.code === "Y")) {
+      record({
+        id: p.key + ".workflow.prerequisite",
+        profile: p.key,
+        status: "Needs context",
+        reason: "Both flags must independently read Y before metadata-under-completion variants"
+      });
+      return;
+    }
+    if (!ctx.userName) {
+      record({
+        id: p.key + ".workflow.profile",
+        profile: p.key,
+        status: "Needs context",
+        reason: "Needs current profile display name"
+      });
+      return;
+    }
+    for (const f of metadata) {
+      const value = f.endsWith("By") ? ctx.userName : new Date().toISOString().slice(0, 10);
+      for (const [variant, next] of [["set", value], ["omit", undefined], ["null", null], ["set-again", value], ["restore", origin.record[f]]]) if (!(await step(f, variant, next))) return;
+    }
+    for (const f of [...flags].reverse()) if (!(await step(f, "restore", origin.record[f]))) return;
+  }
+  async function appointmentStatus(p, read, origin) {
+    // Codes come from the current instance/context. Do not invent a status or use the active encounter.
+    const coding = ctx.appointmentStatus;
+    if (!coding?.code || !coding?.system) {
+      record({
+        id: p.key + ".status.fixture",
+        profile: p.key,
+        operation: "updateEncounterStatus",
+        status: "Needs context",
+        reason: "Provide appointmentStatus with a valid current-instance coding; test targets only this suite's new appointment"
+      });
+      return;
+    }
+    for (const [variant, value] of [["set", coding], ["restore", origin.record.status]]) {
+      const id = p.key + ".status." + variant;
+      if (done(id)) continue;
+      if (!active() || uncertain()) break;
+      const row = {
+        id,
+        profile: p.key,
+        operation: "updateEncounterStatus",
+        field: "appointmentStatus",
+        variant,
+        status: "Running",
+        sent: false
+      };
+      record(row);
+      try {
+        if (!value || typeof value !== "object") fail("No original status coding to restore");
+        const before = await read(),
+          old = before.find(r => Number(r[p.id]) === origin.id);
+        if (!old || origin.existing) fail("Requires a newly created test appointment");
+        let error;
+        try {
+          await call("updateEncounterStatus", {
+            patientId,
+            encounterId: origin.id,
+            appointmentStatus: value,
+            statusChangeDateTime: new Date().toISOString(),
+            allEncompassed: false
+          }, "__typename", true, "Status");
+        } catch (e) {
+          error = e.message;
+        }
+        const after = await read(),
+          updated = after.find(r => Number(r[p.id]) === origin.id);
+        row.changedPaths = diffs(withoutAudit(old), withoutAudit(updated));
+        row.error = error;
+        row.otherRecordsPreserved = before.length === after.length && before.filter(r => Number(r[p.id]) !== origin.id).every(r => same(withoutAudit(r), withoutAudit(after.find(x => x[p.id] === r[p.id]))));
+        row.status = !uncertain() && updated && subset(updated.status, value) && row.otherRecordsPreserved ? "Status verified; inspect timestamp effects" : "Status not verified";
+        if (uncertain() || !row.otherRecordsPreserved || variant === "restore" && !subset(updated?.status, value)) row.stopProfile = true;
+      } catch (e) {
+        row.status = row.sent ? "Outcome requires inspection" : "Needs context";
+        row.error = e.message;
+        row.stopProfile = row.sent;
+      }
+      record(row);
+      if (row.stopProfile) break;
+    }
+  }
+  async function formLifecycle(p, read, mutArgs, origin) {
+    const id = p.key + ".submit";
+    if (!done(id)) await change(p, "isDraft", {
+      variant: "submit",
+      value: "N"
+    }, id, read, mutArgs, origin);
+    if (suite.cases.some(r => r.profile === p.key && r.stopProfile) || uncertain()) return;
+    for (const state of ["SIGNED", "UNSIGNED"]) {
+      const key = p.key + ".state." + state;
+      if (done(key)) continue;
+      const row = {
+        id: key,
+        profile: p.key,
+        operation: "signWebform",
+        variant: state,
+        status: "Running",
+        sent: false
+      };
+      record(row);
+      try {
+        const before = (await read()).find(r => Number(r[p.id]) === origin.id);
+        if (before?.isDraft !== "N" || !positive(before.documentId)) fail("Requires independently verified non-draft form and linked document");
+        let error;
+        try {
+          row.sent = true;
+          await call("signWebform", {
+            signatureRecord: {
+              documentId: before.documentId,
+              recordState: state,
+              note: "WEBFORMS TEST lifecycle"
+            }
+          }, "__typename", true, "Sign");
+        } catch (e) {
+          error = e.message;
+        }
+        const after = (await read()).find(r => Number(r[p.id]) === origin.id);
+        row.answersPreserved = Boolean(after && before.formdata === after.formdata);
+        row.status = after?.recordState === state && row.answersPreserved && !uncertain() ? "State verified" : "State not verified";
+        if (error) row.error = error;
+      } catch (e) {
+        row.status = row.sent ? "Outcome requires inspection" : "Needs context";
+        row.error = e.message;
+      }
+      record(row);
+    }
+  }
+  async function download(p, read) {
+    const id = p.key + ".encodedFile";
+    if (done(id)) return;
+    const row = {
+      id,
+      profile: p.key,
+      variant: "read encodedFile",
+      operation: "document",
+      status: "Running"
+    };
+    record(row);
+    try {
+      const docs = await read(),
+        chosen = docs.find(x => Number(x[p.id]) === ids[p.key]);
+      if (!chosen) fail("Needs a patient document");
+      const info = types.get("Document")?.fields.find(f => f.name === "encodedFile");
+      if (!info || !["SCALAR", "ENUM"].includes(named(info.type)?.kind)) fail("No scalar encodedFile download route");
+      const result = await call("document", {
+        patientId,
+        id: Number(chosen.documentId)
+      }, "documentId patientId encodedFile", false, "File");
+      const value = result.document?.find(r => Number(r.patientId) === patientId && Number(r.documentId) === Number(chosen.documentId));
+      if (!value) fail("Requested document not returned");
+      row.status = value.encodedFile ? "File value returned; compare content" : "No file value returned";
+      row.characters = typeof value.encodedFile === "string" ? value.encodedFile.length : 0;
+    } catch (e) {
+      row.status = "Needs context";
+      row.error = e.message;
+    }
+    record(row);
+  }
+  async function correspondenceUpdate(p, read, origin) {
+    const id = p.key + ".positive-id-update";
+    if (done(id)) return;
+    const row = {
+      id,
+      profile: p.key,
+      operation: "createEncounterCorrespondence",
+      variant: "positive-ID update candidate",
+      status: "Running",
+      sent: false
+    };
+    record(row);
+    try {
+      const before = await read(),
+        old = before.find(x => Number(x[p.id]) === origin.id);
+      if (!old) fail("Test correspondence missing");
+      let error;
+      try {
+        row.sent = true;
+        await call(p.create, {
+          encounterId: ctx.encounterId,
+          correspondence: {
+            correspondenceId: origin.id,
+            note: origin.marker + " UPDATE"
+          }
+        }, "__typename", true, "CorrespondenceUpdate");
+      } catch (e) {
+        error = e.message;
+      }
+      const after = await read();
+      row.status = error && same(withoutAudit(before), withoutAudit(after)) ? "Rejected; selected read unchanged" : "Inspect candidate update outcome";
+      row.error = error;
+    } catch (e) {
+      row.status = row.sent ? "Outcome requires inspection" : "Needs context";
+      row.error = e.message;
+    }
+    record(row);
+  }
+};
+
+// MOIS 2.30.31 evidence: main.a75cc6b1.chunk.js queryGraphQL export accepts
 // (operationName, jwToken, apiServer, query, variables, statusSetter,
 //  resultCallback, errorDispatch, { formParams }) and returns data or null.
 // Use that host transport; never invent an endpoint or expose credentials.
 const PatientContextQueryTest = ({
   collections = [],
-  writeTargets = []
+  writeTargets = [],
+  suitePlan = null
 }) => {
   const sd = useSourceData();
   const patient = sd?.patient ?? sd?.queryResult?.patient?.[0];
@@ -28113,6 +29192,9 @@ const PatientContextQueryTest = ({
     hasRun: false,
     schemaFields: []
   });
+  const exchanges = React.useRef([]);
+  const evidenceBytes = React.useRef(0);
+  const evidenceTruncated = React.useRef(false);
   const [customQuery, setCustomQuery] = React.useState("query CustomPatientProbe($patientId: Int) { patient(id: $patientId) { patientId } }");
   const [customVariables, setCustomVariables] = React.useState('{"patientId":"$patientId"}');
   const [testContext, setTestContext] = React.useState("{}");
@@ -28124,6 +29206,9 @@ const PatientContextQueryTest = ({
   const busy = React.useRef(false);
   React.useEffect(() => {
     if (pendingWrites.current) uncertainWrite.current = true;
+    exchanges.current = [];
+    evidenceBytes.current = 0;
+    evidenceTruncated.current = false;
     setTestContext("{}");
     setWriteOverrides("{}");
     setWriteSelection("all");
@@ -28159,7 +29244,7 @@ const PatientContextQueryTest = ({
   const schemaQuery = \`query InspectPatientContextType($name: String!) { __type(name: $name) { name kind fields { name args { name defaultValue type { \${typeRef} } } type { \${typeRef} } } inputFields { name defaultValue type { \${typeRef} } } enumValues { name } } }\`;
   const readableError = value => String(value || "Unknown query error").split(String(auth.jwToken || "\\u0000")).join("[redacted]").slice(0, 1200);
   const run = async (mode = "reads") => {
-    if (!ready || busy.current || mode === "writes" && (uncertainWrite.current || pendingWrites.current)) return;
+    if (!ready || busy.current || ["writes", "suite", "all"].includes(mode) && (uncertainWrite.current || pendingWrites.current)) return;
     busy.current = true;
     const runId = ++epoch.current;
     const active = () => epoch.current === runId;
@@ -28171,12 +29256,18 @@ const PatientContextQueryTest = ({
     let customResults = [...(current.customResults || [])];
     let rootResults = [...(current.rootResults || [])];
     let writeResults = [...(current.writeResults || [])];
+    let suiteResults = current.suiteResults || null;
+    let suitePhase = null;
+    let phaseResults = [...(current.phaseResults || [])];
     let missingExploration = current.missingExploration || null;
     let apiInventory = current.apiInventory || null;
     const update = (message, running = true) => {
       if (active()) setState({
         patientId,
-        busy: running,
+        suiteResults,
+        suitePhase,
+        phaseResults,
+        busy: mode === "all" ? true : running,
         message,
         rows: [...rows],
         hasRun: true,
@@ -28191,8 +29282,24 @@ const PatientContextQueryTest = ({
         missingExploration
       });
     };
+    const redact = value => {
+      const text = JSON.stringify(value, (key, item) => /jwToken|authorization|password|secret|accessToken|refreshToken/i.test(key) ? "[redacted]" : item);
+      return text ? JSON.parse(text.split(String(auth.jwToken || "\\u0000")).join("[redacted]")) : value;
+    };
+    const capture = entry => {
+      if (!active() || mode !== "all" && mode !== "suite") return;
+      const safe = redact(entry),
+        size = JSON.stringify(safe).length;
+      if (evidenceBytes.current + size > 25000000) {
+        evidenceTruncated.current = true;
+        return;
+      }
+      exchanges.current.push(safe);
+      evidenceBytes.current += size;
+    };
     const request = async (operation, query, variables, mutation = false) => {
       if (!active()) throw new Error("Stopped");
+      const startedAt = new Date().toISOString();
       let status = {};
       let notification = null;
       let timer;
@@ -28217,13 +29324,107 @@ const PatientContextQueryTest = ({
         const detail = status?.detailErrors || notification?.detailErrors || [];
         const error = detail.map(entry => entry.message).filter(Boolean).join("; ") || status?.error || notification?.message;
         if (!data || error) throw new Error(error || "MOIS returned no data.");
+        capture({
+          operation,
+          query,
+          variables,
+          mutation,
+          startedAt,
+          receivedAt: new Date().toISOString(),
+          data
+        });
         return data;
+      } catch (error) {
+        capture({
+          operation,
+          query,
+          variables,
+          mutation,
+          startedAt,
+          error: readableError(error.message)
+        });
+        if (mutation && /timed out|Stopped/.test(String(error.message))) uncertainWrite.current = true;
+        throw error;
       } finally {
         clearTimeout(timer);
       }
     };
     update(mode === "api" ? "Inspecting root queries, mutations and input types…" : "Inspecting the live Patient schema…");
-    try {
+    const uploadAttachment = async (profileId, document, content) => {
+      if (!active() || uncertainWrite.current || pendingWrites.current) throw new Error("Stopped or unresolved write");
+      const endpoint = String(auth.apiServer).replace(/\\/?$/, "/") + \`api/attachment/file/\${profileId}/\${patientId}/\`;
+      const body = new window.FormData();
+      body.append("file", new window.Blob([content], {
+        type: "text/plain"
+      }), "webforms-suite-test.txt");
+      body.set("document", JSON.stringify(document));
+      const startedAt = new Date().toISOString();
+      let timer;
+      try {
+        pendingWrites.current += 1;
+        const transport = window.fetch(endpoint, {
+          method: "POST",
+          headers: {
+            Authorization: \`Bearer \${auth.jwToken}\`
+          },
+          body
+        }).then(async response => {
+          const responseText = await response.text();
+          capture({
+            operation: "AttachmentUpload",
+            method: "POST",
+            path: "api/attachment/file",
+            document,
+            filename: "webforms-suite-test.txt",
+            content,
+            startedAt,
+            status: response.status,
+            responseText
+          });
+          if (!response.ok) throw new Error("Attachment upload returned HTTP " + response.status);
+          return responseText;
+        }).finally(() => {
+          pendingWrites.current -= 1;
+        });
+        return await Promise.race([transport, new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error("Attachment upload timed out after 30 seconds.")), 30000);
+        })]);
+      } catch (e) {
+        if (/timed out|Stopped/.test(e.message)) uncertainWrite.current = true;
+        capture({
+          operation: "AttachmentUpload",
+          document,
+          content,
+          startedAt,
+          error: readableError(e.message)
+        });
+        throw e;
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+    const executePhase = async mode => {
+      if (mode === "reads") rows = [];
+      if (mode === "suite") {
+        suiteResults = await runPatientContextVariantSuite({
+          request,
+          patientId,
+          patient,
+          sourceProfile: sd?.userProfile || settings?.userProfile,
+          context: JSON.parse(testContext || "{}"),
+          plan: suitePlan,
+          previous: suiteResults,
+          active,
+          uploadAttachment,
+          uncertain: () => uncertainWrite.current || pendingWrites.current > 0,
+          emit: value => {
+            suiteResults = value;
+            update("Comprehensive variants: " + value.cases.length + " cases recorded");
+          }
+        });
+        update(suiteResults.status, false);
+        return;
+      }
       if (mode === "missing") {
         const targets = {
           addressHistory: {
@@ -28269,6 +29470,22 @@ const PatientContextQueryTest = ({
           standardForms: {
             names: ["StandardForm"],
             related: ["PaperFormTemplate", "Webform", "WebformDefinition"]
+          },
+          goals: {
+            names: ["Goal"],
+            related: []
+          },
+          goalLinks: {
+            names: ["GoalLink"],
+            related: ["attachedGoalId"]
+          },
+          needs: {
+            names: ["Need"],
+            related: []
+          },
+          risks: {
+            names: ["Risk", "ReactionRisk"],
+            related: ["attachedReactionRiskId"]
           }
         };
         const limits = {
@@ -28295,7 +29512,7 @@ const PatientContextQueryTest = ({
             paths: []
           }))
         };
-        update("Inspecting the live output schema for the 11 missing collections…");
+        update("Inspecting the live output schema for the missing collections…");
         // One schema snapshot makes the search reproducible and includes abstract
         // output types. Only the Query root is traversed; never the Mutation root.
         const query = \`query ExploreMissingSchema { __schema { queryType { name } types { name kind fields { name args { name defaultValue type { \${typeRef} } } type { \${typeRef} } } possibleTypes { name kind } inputFields { name defaultValue type { \${typeRef} } } enumValues { name } } } }\`;
@@ -29775,15 +30992,45 @@ const PatientContextQueryTest = ({
         update(\`Checked \${rows.length} of \${targets.length} collections\`);
       }
       update("Live checks complete. Results are from explicit reads, separate from the initial chart load.", false);
-    } catch (error) {
-      if (mode === "missing" && missingExploration && active()) {
-        missingExploration.error = readableError(error.message);
-        missingExploration.status = "Exploration incomplete";
+    };
+    try {
+      const phases = mode === "all" ? ["api", "reads", "roots", "missing", "suite"] : [mode];
+      for (const phase of phases) {
+        if (!active()) break;
+        suitePhase = phase;
+        const phaseResult = {
+          phase,
+          status: "Running",
+          startedAt: new Date().toISOString()
+        };
+        phaseResults.push(phaseResult);
+        try {
+          await executePhase(phase);
+          phaseResult.status = "Finished; inspect case outcomes";
+        } catch (error) {
+          phaseResult.status = "Failed";
+          phaseResult.error = readableError(error.message);
+          if (phase === "missing" && missingExploration) {
+            missingExploration.error = readableError(error.message);
+            missingExploration.status = "Exploration incomplete";
+          }
+          if (phase === "api" && apiInventory) apiInventory.error = readableError(error.message);
+          update(readableError(error.message), false);
+          if (mode !== "all") break;
+        } finally {
+          phaseResult.completedAt = new Date().toISOString();
+          if (mode === "all") update("Completed phase: " + phase, false);
+        }
       }
-      if (mode === "api" && apiInventory) apiInventory.error = readableError(error.message);
-      update(readableError(error.message), false);
     } finally {
-      if (active()) busy.current = false;
+      if (active()) {
+        busy.current = false;
+        setState(previous => ({
+          ...previous,
+          busy: false,
+          message: mode === "all" ? "Comprehensive run finished. Download full evidence JSON; review case outcomes and prerequisites." : previous.message
+        }));
+      }
     }
   };
   const stop = () => {
@@ -29792,6 +31039,14 @@ const PatientContextQueryTest = ({
     busy.current = false;
     setState(previous => ({
       ...previous,
+      suiteResults: previous.suiteResults ? {
+        ...previous.suiteResults,
+        status: "Stopped; inspect any pending write",
+        cases: previous.suiteResults.cases.map(r => r.status === "Running" ? {
+          ...r,
+          status: r.sent ? "Outcome unknown; request may finish" : "Stopped before result"
+        } : r)
+      } : null,
       missingExploration: previous.missingExploration && !previous.missingExploration.coverage.completed ? {
         ...previous.missingExploration,
         status: "Stopped; exploration incomplete"
@@ -29810,8 +31065,19 @@ const PatientContextQueryTest = ({
   };
   const report = JSON.stringify({
     reportType: "mois-patient-context-live-query",
-    reportVersion: 5,
-    diagnosticsRevision: "2026-09-10.6",
+    reportVersion: 6,
+    diagnosticsRevision: "2026-09-11.suite-1",
+    phaseResults: current.phaseResults || [],
+    comprehensiveSuite: current.suiteResults ? (({
+      context,
+      origins,
+      ...summary
+    }) => summary)(current.suiteResults) : null,
+    evidenceCapture: {
+      exchanges: exchanges.current.length,
+      truncated: evidenceTruncated.current,
+      limitCharacters: 25000000
+    },
     missingCollectionExploration: current.missingExploration || null,
     writeResults: (current.writeResults || []).map(({
       variables,
@@ -29841,16 +31107,22 @@ const PatientContextQueryTest = ({
       error
     }))
   }, null, 2);
-  const downloadReport = () => {
-    if (!current.hasRun || current.busy) return;
+  const downloadReport = (full = false) => {
+    if (!current.hasRun) return;
     const urlApi = window.URL;
     if (!window.Blob || !urlApi?.createObjectURL) return;
-    const url = urlApi.createObjectURL(new window.Blob([report], {
+    const url = urlApi.createObjectURL(new window.Blob([full ? JSON.stringify({
+      ...JSON.parse(report),
+      evidenceKind: "Full test-patient evidence: inputs, baseline/mutation/read responses",
+      context: current.suiteResults?.context,
+      origins: current.suiteResults?.origins,
+      exchanges: exchanges.current
+    }, (key, value) => /jwToken|authorization|password|secret|accessToken|refreshToken/i.test(key) ? "[redacted]" : value, 2).split(String(auth.jwToken || "\\u0000")).join("[redacted]") : report], {
       type: "application/json;charset=utf-8"
     }));
     const link = window.document.createElement("a");
     link.href = url;
-    link.download = \`mois-live-query-results-\${Date.now()}.json\`;
+    link.download = \`mois-live-query-\${full ? "full-evidence" : "results"}-\${Date.now()}.json\`;
     window.document.body.appendChild(link);
     link.click();
     link.remove();
@@ -29884,7 +31156,32 @@ const PatientContextQueryTest = ({
     type: "button",
     disabled: !ready || current.busy || !current.apiInventory || uncertainWrite.current || pendingWrites.current > 0,
     onClick: () => run("writes")
-  }, "Run test writes"), " ", /*#__PURE__*/React.createElement("details", null, /*#__PURE__*/React.createElement("summary", null, "Custom GraphQL probe"), /*#__PURE__*/React.createElement("p", null, "Run a named query or mutation through this MOIS login. This supports additional fields and operations without rebuilding the form. Mutations execute immediately when Run custom operation is clicked. Responses appear here, but response values are excluded from the diagnostic report. Query text is included, so use variables for patient values."), /*#__PURE__*/React.createElement("textarea", {
+  }, "Run test writes"), " ", /*#__PURE__*/React.createElement("div", {
+    style: {
+      margin: "16px 0",
+      padding: 12,
+      background: "#f1f5f9",
+      color: "#0f172a"
+    }
+  }, /*#__PURE__*/React.createElement("h3", null, "Comprehensive test suite"), /*#__PURE__*/React.createElement("p", null, "Run discovery, patient/root reads, missing-path exploration and all configured field variants in sequence. Writes create synthetic records, test patient demographics/contact fields and use existing positive-ID medication rows if needed, then attempt field restoration. Set, change, omission, null, empty and restoration outcomes are recorded separately. Unsupported cases remain visible. Test records can remain."), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    disabled: !ready || current.busy || !suitePlan || uncertainWrite.current || pendingWrites.current > 0,
+    onClick: () => run("all")
+  }, "Run all remaining tests"), " ", /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    disabled: !current.hasRun,
+    onClick: () => downloadReport(true)
+  }, "Download full evidence JSON"), /*#__PURE__*/React.createElement("p", null, "The full report contains test-patient values and exact request/response snapshots, with credentials removed. Download a checkpoint while running if needed. Repeated runs skip cases already attempted; missing context can be supplied below."), (current.phaseResults || []).filter(p => p.status === "Failed").map((p, i) => /*#__PURE__*/React.createElement("p", {
+    key: i
+  }, p.phase, ": ", p.error)), current.suiteResults ? /*#__PURE__*/React.createElement("details", {
+    open: true
+  }, /*#__PURE__*/React.createElement("summary", null, current.suiteResults.cases.length, " variant results \\xB7 ", current.suiteResults.status), /*#__PURE__*/React.createElement("ul", null, current.suiteResults.cases.map(row => /*#__PURE__*/React.createElement("li", {
+    key: row.id
+  }, /*#__PURE__*/React.createElement("code", null, row.id), " \\u2014 ", row.status, row.error || row.reason ? /*#__PURE__*/React.createElement("p", null, row.error || row.reason) : null))), /*#__PURE__*/React.createElement("details", null, /*#__PURE__*/React.createElement("summary", null, "Operations still unexercised"), /*#__PURE__*/React.createElement("ul", null, (current.suiteResults.operationCoverage || []).filter(op => !op.cases.length).map(op => /*#__PURE__*/React.createElement("li", {
+    key: op.operation
+  }, /*#__PURE__*/React.createElement("code", null, op.operation), ": ", op.status)))), /*#__PURE__*/React.createElement("details", null, /*#__PURE__*/React.createElement("summary", null, "Requires a separate check"), /*#__PURE__*/React.createElement("ul", null, (suitePlan?.manualCases || []).map(item => /*#__PURE__*/React.createElement("li", {
+    key: item.id
+  }, item.area, ": ", item.reason))))) : null), /*#__PURE__*/React.createElement("details", null, /*#__PURE__*/React.createElement("summary", null, "Custom GraphQL probe"), /*#__PURE__*/React.createElement("p", null, "Run a named query or mutation through this MOIS login. This supports additional fields and operations without rebuilding the form. Mutations execute immediately when Run custom operation is clicked. Responses appear here, but response values are excluded from the diagnostic report. Query text is included, so use variables for patient values."), /*#__PURE__*/React.createElement("textarea", {
     "aria-label": "Custom GraphQL query",
     value: customQuery,
     disabled: current.busy,
@@ -29931,7 +31228,7 @@ const PatientContextQueryTest = ({
   }, "changeObservations \\u2014 separate panel probe"), (current.apiInventory?.mutations || []).map(operation => /*#__PURE__*/React.createElement("option", {
     key: operation.name,
     value: operation.name
-  }, operation.name)))), /*#__PURE__*/React.createElement("details", null, /*#__PURE__*/React.createElement("summary", null, "Test context"), /*#__PURE__*/React.createElement("p", null, "Provide real test-instance IDs and codes once: providerId for appointments; assignedUserId or assignedTeamId for tasks; service coding, serviceMrp coding (MOIS.USER) and its matching serviceMrpId for service episodes. Events also need eventService coding and serviceEventEncounterId; a fresh read checks that the episode and encounter belong to this patient. These recipes use the complete shapes verified on September 10; minimum required fields remain unknown. Optional panelName overrides the vendor test panel coding. Missing context is reported before sending a write."), /*#__PURE__*/React.createElement("textarea", {
+  }, operation.name)))), /*#__PURE__*/React.createElement("details", null, /*#__PURE__*/React.createElement("summary", null, "Test context"), /*#__PURE__*/React.createElement("p", null, "The combined suite discovers patient-owned encounters, the current user profile and existing service/MRP codings. Set userProfileId if the host does not expose it; set appointmentStatus to a valid status coding to enable new-appointment status variants. Individual probes can also use real test-instance IDs and codes: providerId for appointments; assignedUserId or assignedTeamId for tasks; service coding, serviceMrp coding (MOIS.USER) and its matching serviceMrpId for service episodes. Events also need eventService coding and serviceEventEncounterId; a fresh read checks that the episode and encounter belong to this patient. These recipes use the complete shapes verified on September 10; minimum required fields remain unknown. Optional panelName overrides the vendor test panel coding. Missing context is reported before sending a write."), /*#__PURE__*/React.createElement("textarea", {
     "aria-label": "Test context JSON",
     value: testContext,
     disabled: current.busy,
@@ -29980,7 +31277,7 @@ const PatientContextQueryTest = ({
   }, "Stop checks") : null, " ", /*#__PURE__*/React.createElement("button", {
     type: "button",
     disabled: !current.hasRun || current.busy,
-    onClick: downloadReport
+    onClick: () => downloadReport(false)
   }, "Download results JSON"), /*#__PURE__*/React.createElement("p", {
     role: "status",
     "aria-live": "polite"
@@ -42912,7 +44209,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './PanelEntryGrid/index.jsx': ["DEFAULT_WINDOW_HOURS","PANEL_GRID_CELL_STYLE","PANEL_GRID_TABLE_STYLE","PanelEntryGrid","actor","actorFrom","addHoursIso","answer","answers","authorshipPolicy","buildKey","c","changed","ck","claim","claims","collectedBy","column","commitSave","componentId","computedTotals","container","current","d","data","date","definition","definitions","editableUntil","effectiveFieldId","euDate","existing","expired","fieldData","formatTimestamp","getPanelGridAuth","group","grouped","historyColumns","historyEnabled","isNonEmpty","isOwner","keepStatus","key","kit","label","lockExpired","lockInfo","lockOn","lockedUntil","maxHistory","next","nextStatus","nhAuth","normalizeStore","normalizedOptions","now","nowIso","numbers","observations","ownerId","ownerName","ownerRefresh","pad2","panelGridDateKey","panelGridPayloadsEqual","panelGridRows","panelGridTotals","panelUpdate","pending","policyAppliesToAction","prepareSave","raw","readStore","release","renderCurrentValue","requireComplete","resolveNow","rowDefs","sameActor","scaleLike","sd","section","selected","setPanelGridPayload","setRowValue","shouldWriteDcos","shouldWritePanel","sourceIds","store","stripPanelGridVolatileFields","totalDefs","ts","type","untilSelf","value","values","windowHours"],
   './PastMeasurementField/index.jsx': ["PastMeasurementField","abnormalFlag","abnormalHighValue","abnormalLowValue","canPullLatest","candidate","candidates","codeFilter","coercePositiveInt","commentFilter","componentId","container","createdBy","criticalHighValue","criticalLowValue","current","currentPayload","currentWebformId","currentWebformObservations","day","defaultSpinStep","direct","displayedCurrentValue","documentDate","effectiveFieldId","effectiveHistorySize","effectiveLabelPosition","effectiveMeasurementSize","entryCode","entryComment","entryDate","entryUnits","entryValue","explicitValue","fieldData","flagCode","flagDisplays","formHistoryItems","formatDate","fromPatient","fromQueryResult","handleValueChange","hasAbnormalHigh","hasAbnormalLow","hasExplicitValue","hasMeaningfulValue","hasNumericCurrentValue","hasRangeMetadata","hasStoredValue","historicalFormRowDate","historyItems","historySummary","index","inputSuffix","isAbnormal","isHistoricalFormValue","isNonEmptyString","isNumericInput","key","latestHistoryItem","legacyRangePayload","linkedObservationItem","linkedWebformId","matchingKey","measurementWidthBySize","month","nextGroup","normalizeObservationItems","normalizedDateOnly","normalizedPullTargets","numericCurrentValue","numericExplicitValue","numericTime","observationHistoryItems","observationWebformId","oldId","oldObs","optionalString","parseDateValue","parsed","parsedDate","parsedDateOnly","patientPath","payloadsEqual","pullLatestIntoTargets","raw","rawDate","recentHistoryText","resolveHistoricalFormRows","resolveMeasurementContainerStyle","resolveMoisValue","resolvePathValue","resolvedAbnormalHigh","resolvedAbnormalLow","resolvedCriticalHigh","resolvedCriticalLow","resolvedCurrentValue","resolvedUnits","role","roots","sd","segments","setNestedPayload","shouldReserveHistory","shouldShowHistory","storedValue","stringifyValue","stripVolatilePayloadFields","targetFieldId","text","toObservationList","toPathSegments","updatedValue","value","valueFromHistoricalFormRow","valueIsDate","valueKeys","valuePart","valueText","width","year"],
   './PatientContextDiagnostics/index.jsx': ["PatientContextDiagnostics","availability","capability","cellStyle","collections","compact","direct","isArray","isRecord","labels","limit","patient","queried","registry","sampleText","sd","seen","source","textValue","value","visible"],
-  './PatientContextQueryTest/index.jsx': ["PatientContextQueryTest","absent","active","actualIds","adapters","allowed","apiInventory","arg","argName","args","assignee","auth","baseline","before","beforeIds","bindings","busy","byId","cache","candidate","candidates","canonical","catalog","catalogs","chart","charts","check","collection","collectionByType","contact","context","contextId","createdIds","current","currentRecordId","cursor","customResults","data","date","declarations","defaults","definitionId","deleteSpec","deletion","demographic","depth","detail","discovered","discovery","downloadReport","enqueue","entry","episodeFields","episodes","epoch","error","event","eventBaseline","eventChildBaselineIds","eventFields","eventRead","events","exact","expected","expectedId","expectedIds","field","fieldMap","fields","firstId","found","hop","hostQuery","i","id","idKey","ids","inaccessibleParent","index","info","inputIds","inputMap","inspect","isCorrespondence","isList","item","key","keys","leaf","leafNull","leafType","limits","link","marked","marker","match","matched","matches","matchesField","matchesValue","membershipMatches","missingExploration","mutation","name","nameText","named","namedType","need","nested","nestedDelete","next","nickName","normalize","notification","now","observation","op","ordered","outcome","ownId","ownKeys","parentType","parents","path","pathsByCollection","patient","patientCheck","patientId","pending","pendingWrites","preferred","preserveChildren","query","queue","rank","readData","readId","readQuery","readRecords","readSelection","readableError","ready","recipes","record","recordIds","recordType","records","related","report","request","requiredArgs","resolve","result","resultType","results","returned","returnedEpisodes","returnedId","returnedMatches","root","rootForType","rootName","rootOp","rootRank","rootResults","roots","row","rows","run","runId","same","sameChildren","scalar","scalarFields","scalarSelection","schema","schemaFields","schemaQuery","scopedByPatient","scopedByRecord","sd","selection","sent","serviceEpisodeId","serviceMrpId","settings","small","spec","status","stop","submitted","supplied","targetType","targetTypes","targets","templateId","top","transport","typeCache","typeRef","typeText","types","uncertainWrite","update","url","urlApi","used","validName","validResponse","validate","value","values","variables","vars","varsByRoot","writeResults"],
+  './PatientContextQueryTest/index.jsx': ["PatientContextQueryTest","a","absent","active","actualIds","adapters","added","after","allowed","apiInventory","appointmentStatus","arg","argName","args","argsUsed","assignee","attachment","auth","baseline","before","beforeIds","binary","bindings","body","busy","byId","cache","call","candidate","candidates","canonical","capture","caseId","cases","catalog","catalogs","change","changed","chart","charts","check","child","clone","coding","collect","collection","collectionByType","contact","content","context","contextId","copyInput","correspondenceUpdate","created","createdIds","ctx","current","currentRecordId","cursor","customResults","data","date","decl","declarations","defaults","definitionId","deleteSpec","deletion","demographic","depth","detail","diffs","discovered","discovery","docs","done","dose","download","downloadReport","encounter","endpoint","enqueue","entry","episode","episodeFields","episodes","epoch","error","event","eventBaseline","eventChildBaselineIds","eventChildren","eventFields","eventRead","events","evidenceBytes","evidenceTruncated","exact","exchanges","executePhase","expected","expectedId","expectedIds","fail","field","fieldMap","fields","fieldsForMutation","first","firstId","flags","formLifecycle","found","hop","hostQuery","i","id","idKey","ids","inaccessibleParent","index","info","init","inputArg","inputFields","inputIds","inputMap","inputPaths","inspect","isCorrespondence","isList","issue","item","key","keys","leaf","leafNull","leafType","limits","link","listType","marked","marker","match","matchEventChildren","matched","matches","matchesField","matchesValue","membershipMatches","metadata","missingExploration","mutArgs","mutation","mutationCount","mutations","name","nameText","named","namedType","need","nested","nestedDelete","nestedDosage","next","nickName","normalize","notification","notify","now","object","observation","oldIds","op","ordered","origin","original","otherPreserved","outcome","ownId","ownKeys","parentType","parents","path","pathsByCollection","patient","patientCheck","patientId","pending","pendingWrites","phaseResult","phaseResults","phases","positive","preferred","preserveChildren","preserved","profileId","profiles","queries","query","queue","rank","read","readData","readId","readQuery","readRecords","readSelection","readableError","ready","recipes","record","recordIds","recordType","records","redact","refValue","refs","related","report","request","requestedEncounter","requiredArgs","resolve","responseText","result","resultType","results","returned","returnedEpisodes","returnedId","returnedMatches","root","rootForType","rootName","rootOp","rootRank","rootResults","roots","row","rows","run","runId","runPatientContextVariantSuite","safe","same","sameChildren","scalar","scalarFields","scalarMarkers","scalarSelection","schema","schemaFields","schemaQuery","scopedByPatient","scopedByRecord","sd","seed","selected","selection","sent","sentBefore","serviceEpisodeId","serviceMrpId","settings","small","spec","startedAt","status","step","steps","stop","sub","submitted","subset","suite","suitePhase","suiteResults","supplied","t","targetType","targetTypes","targets","taskMetadata","templateId","text","top","transport","type","typeCache","typeRef","typeText","types","uncertainWrite","update","uploadAttachment","url","urlApi","used","validName","validResponse","validate","value","values","variables","variant","vars","varsByRoot","withoutAudit","wrapped","writeResults","yes"],
   './PatientFileSections/index.jsx': ["PatientFileSections","activeText","addressText","cityLine","compactLines","contactText","countryLine","createdDate","editButtonStyle","encounter","fieldWrapStyle","formatAddress","formatContact","formatDate","getPatientFromData","gridStyle","healthNumber","insuranceBy","insuranceNumber","insuranceText","lines","match","mergeObjects","nextPatient","optionCode","optionDisplay","patient","preferredCode","preferredPhoneOptions","providerName","queryPatient","raw","renderClientDemographics","renderDocumentDetails","renderEncounterDetails","renderTitle","requested","sd","section","sectionTitleStyle","textValue","updateContactText","visibleSections","whiteDropdownStyles","whiteFlexTextFieldStyles","whiteTextFieldStyles","writePatientUpdates"],
   './PatientValueField/index.jsx': ["PatientValueField","age","applyPatientTransform","candidates","coercePatientValue","collectionCandidateValues","collectionItemMatches","computeAgeYears","dob","effectiveFieldId","expected","items","monthDelta","normalizedExpected","now","raw","resolveCollectionItemPath","resolvePatientContextPath","resolved","root","sd","stored","values"],
   './PdfRegenerator/index.jsx': ["$n","A","ACCESS_DESCRIPTIONS","ACCESS_LOCATION","ACCESS_METHOD","ACCURACY","ACINFO","ACINFO$1","AES128Handler","AES256Handler","ALGORITHM","ALGORITHM$1","ALGORITHM$2","ALGORITHM_ID","ALGORITHM_PARAMS","ALT_NAMES","ANONYMOUS","ARRAY_BUFFER_NAME","ASCII85Filter","ASCIIHexFilter","ASCII_MARKER","ATTRIBUTES","ATTRIBUTES$1","ATTRIBUTES$2","ATTRIBUTES$3","ATTRIBUTES$4","ATTRIBUTES$5","ATTR_CERT_VALIDITY_PERIOD","ATTR_CERT_VALIDITY_PERIOD$1","AUTHORITY_CERT_ISSUER","AUTHORITY_CERT_SERIAL_NUMBER","AUTH_SAFE","AbortException","AbstractCryptoEngine","AbstractSecurityHandler","AccessDescription","Accuracy","AcroForm","Ag","Ah","Al","AlgorithmIdentifier","All","AltName","AltText","AnnotationBorderStyleType","AnnotationEditor","AnnotationEditorLayer","AnnotationEditorParamsType","AnnotationEditorPrefix","AnnotationEditorType","AnnotationEditorUIManager","AnnotationElement","AnnotationElementFactory","AnnotationFlattener","AnnotationLayer","AnnotationMode","AnnotationPrefix","AnnotationStorage","AnnotationType","Any","AppearanceGenerator","ArgumentError","AsnError","AttCertValidityPeriod","Attribute","AttributeCertificateInfoV1","AttributeCertificateInfoV2","AttributeCertificateV1","AttributeCertificateV2","AttributeTypeAndValue","AuthenticatedSafe","AuthorityKeyIdentifier","B","BACKGROUND_ENLIGHT","BAD","BAD$1","BAG_ATTRIBUTES","BAG_ID","BAG_VALUE","BASE","BASE64URL_REGEX","BASE64_REGEX","BASELINE_FACTOR","BASE_CERTIFICATE_ID","BASE_CERTIFICATE_ID$1","BASE_CERTIFICATE_ID$2","BASIC_OCSP_RESPONSE","BASIC_OCSP_RESPONSE_CERTS","BASIC_OCSP_RESPONSE_SIGNATURE","BASIC_OCSP_RESPONSE_SIGNATURE_ALGORITHM","BASIC_OCSP_RESPONSE_TBS_RESPONSE_DATA","BINARY_MARKER","BIT_STRING_NAME","BLOCK_SIZE","BL_CODES","BL_CODES$1","BORDER_SIZE","BORDER_STYLE_MAP","BORDER_STYLE_REVERSE_MAP","BS_BLOCK_DONE","BS_FINISH_DONE","BS_FINISH_STARTED","BS_NEED_MORE","BUSY_STATE","BYTE_RANGE_VALUE_PLACEHOLDER","BaseBlock","BaseCMapReaderFactory","BaseCanvasFactory","BaseException","BaseException2","BaseExceptionClosure","BaseFilterFactory","BaseSVGFactory","BaseShadingPattern","BaseStandardFontDataFactory","BaseStringBlock","BasicConstraints","BasicOCSPResponse","BinaryScanner","BinaryWriter","BitString","BmpString","Boolean","BruteForceParser","Bs","Buf_size","BufferSourceConverter4","BuiltInEncoding","ButtonField","ByteStream","ByteWriter","C","C1","C1_LOW","CA","CAVersion","CAdESDetachedBuilder","CCITTFaxFilter","CD","CERTIFICATES","CERTIFICATES$1","CERTIFICATE_INDEX","CERTIFICATE_POLICIES","CERTS","CERTS$1","CERTS$2","CERTS$3","CERT_ID","CERT_ID$1","CERT_REQ","CERT_STATUS","CERT_VALUE","CFFCIDFontProgram","CFFCharsetCID","CFFCharsetType1","CFFEncodingBase","CFFParser","CFFSubsetter","CFFType1FontProgram","CFF_CHECKSUM_OFFSET","CHARSTRING_KEY","CHAR_TO_GLYPH","CHAR_f","CHAR_n","CHECK","CHECK_DATE","CHIh","CHIl","CIDFont","CIDWidthMap","CLEAR_PROPS","CLEAR_PROPS$$","CLEAR_PROPS$1","CLEAR_PROPS$10","CLEAR_PROPS$11","CLEAR_PROPS$12","CLEAR_PROPS$13","CLEAR_PROPS$14","CLEAR_PROPS$15","CLEAR_PROPS$16","CLEAR_PROPS$17","CLEAR_PROPS$18","CLEAR_PROPS$19","CLEAR_PROPS$1a","CLEAR_PROPS$1b","CLEAR_PROPS$1c","CLEAR_PROPS$1d","CLEAR_PROPS$1e","CLEAR_PROPS$1f","CLEAR_PROPS$1g","CLEAR_PROPS$1h","CLEAR_PROPS$1i","CLEAR_PROPS$1j","CLEAR_PROPS$1k","CLEAR_PROPS$1l","CLEAR_PROPS$1m","CLEAR_PROPS$1n","CLEAR_PROPS$1o","CLEAR_PROPS$1p","CLEAR_PROPS$1q","CLEAR_PROPS$1r","CLEAR_PROPS$1s","CLEAR_PROPS$1t","CLEAR_PROPS$1u","CLEAR_PROPS$1v","CLEAR_PROPS$2","CLEAR_PROPS$3","CLEAR_PROPS$4","CLEAR_PROPS$5","CLEAR_PROPS$6","CLEAR_PROPS$7","CLEAR_PROPS$8","CLEAR_PROPS$9","CLEAR_PROPS$A","CLEAR_PROPS$B","CLEAR_PROPS$C","CLEAR_PROPS$D","CLEAR_PROPS$E","CLEAR_PROPS$F","CLEAR_PROPS$G","CLEAR_PROPS$H","CLEAR_PROPS$I","CLEAR_PROPS$J","CLEAR_PROPS$K","CLEAR_PROPS$L","CLEAR_PROPS$M","CLEAR_PROPS$N","CLEAR_PROPS$O","CLEAR_PROPS$P","CLEAR_PROPS$Q","CLEAR_PROPS$R","CLEAR_PROPS$S","CLEAR_PROPS$T","CLEAR_PROPS$U","CLEAR_PROPS$V","CLEAR_PROPS$W","CLEAR_PROPS$X","CLEAR_PROPS$Y","CLEAR_PROPS$Z","CLEAR_PROPS$_","CLEAR_PROPS$a","CLEAR_PROPS$b","CLEAR_PROPS$c","CLEAR_PROPS$d","CLEAR_PROPS$e","CLEAR_PROPS$f","CLEAR_PROPS$g","CLEAR_PROPS$h","CLEAR_PROPS$i","CLEAR_PROPS$j","CLEAR_PROPS$k","CLEAR_PROPS$l","CLEAR_PROPS$m","CLEAR_PROPS$n","CLEAR_PROPS$o","CLEAR_PROPS$p","CLEAR_PROPS$q","CLEAR_PROPS$r","CLEAR_PROPS$s","CLEAR_PROPS$t","CLEAR_PROPS$u","CLEAR_PROPS$v","CLEAR_PROPS$w","CLEAR_PROPS$x","CLEAR_PROPS$y","CLEAR_PROPS$z","CLERA_PROPS","CMap","CMapReaderFactory","CODELENS","CODES","CODES$1","COEFFICIENT","COEFFICIENT$1","COMMAND_PARAMS","COMMENT","COMMENT_OFFSET","COMMENT_STATE","CONTENT","CONTENT_ENCRYPTION_ALGORITHM","CONTENT_INFOS","CONTENT_TYPE","CONTENT_TYPE$1","COPY","COPY_","CRITICAL","CRLBag","CRLDistributionPoints","CRLS","CRLS$1","CRLS$2","CRLS$3","CRL_ENTRY_EXTENSIONS","CRL_EXTENSIONS","CRL_ID","CRL_ISSUER","CRL_ISSUER_NAMES","CRL_VALUE","CSR_INFO","CSR_INFO_ATTRS","CSR_INFO_SPKI","CSR_INFO_SUBJECT","CSR_INFO_VERSION","CachedCanvases","CallbackKind","CanvasExtraState","CanvasFactory","CanvasGraphics","CaretAnnotationElement","CertBag","CertID","Certificate","CertificateChainError","CertificateChainValidationEngine","CertificatePolicies","CertificateRevocationList","CertificateSet","CertificateTemplate","CertificationRequest","CertificationRequestInfo","ChainValidationError","CharacterString","CheckboxField","CheckboxWidgetAnnotationElement","Chi","Chi2","Choice","ChoiceWidgetAnnotationElement","ChunkedStreamSubstream","CircleAnnotationElement","ColorConverters","ColorManager","ColorPicker","ColorSpace","CommandManager","CompositeFont","Config","Constructed","ContentInfo","ContentStreamBuilder","ContentStreamParser","ContentStreamSerializer","ContentTokenizer","Convert3","CryptoEngine","CryptoEngine2","Ct","D","DATE","DATE$1","DATE2","DCTFilter","DEFAULT_COMPRESSION_THRESHOLD","DEFAULT_FONT_ASCENT","DEFAULT_FONT_SIZE","DEFAULT_HIGHLIGHT_COLOR","DEFAULT_MAX_CONTENT_LENGTH","DEFAULT_MAX_DEPTH","DEFAULT_MAX_NODES","DEFAULT_PERMISSIONS","DEFAULT_PLACEHOLDER_SIZE","DEFAULT_RANGE_CHUNK_SIZE","DEFAULT_REF_CACHE_SIZE","DEFAULT_TAB_INDEX","DEFAULT_VERSION","DEF_MEM_LEVEL","DEF_WBITS","DELAYED_CLEANUP_TIMEOUT","DELAY_TO_SHOW_TOOLTIP","DELIMITERS","DICT","DICTID","DIGEST","DIGESTED_OBJECT_TYPE","DIGEST_ALGORITHM","DIGEST_ALGORITHM$1","DIGEST_ALGORITHM$2","DIGEST_ALGORITHMS","DIST","DISTEXT","DISTRIBUTION_POINT","DISTRIBUTION_POINT$1","DISTRIBUTION_POINTS","DISTRIBUTION_POINT_NAMES","DISTRIBUTION_POINT_NAMES$1","DISTS","DISTS$1","DIST_CODE_LEN","DOMCMapReaderFactory","DOMCanvasFactory","DOMFilterFactory","DOMSVGFactory","DOMStandardFontDataFactory","DONE","DSA","DSSBuilder","DYN_TREES","D_CODES","D_CODES$1","DamagedFontError","DateTime","DefaultCMapReaderFactory","DefaultCanvasFactory","DefaultFilterFactory","DefaultRevocationProvider","DefaultStandardFontDataFactory","Deflate$1","DeflateState","Deflate_1","Deflate_1$1","DifferencesEncoding","DigestInfo","DistributionPoint","DocumentDateRuntime","DocumentParser","DrawLayer","DrawingEditor","DrawingOptions","DropdownField","Dt","DummyShadingPattern","Duration","E","E$1","ECCCMSSharedInfo","ECDSA","ECNamedCurves","ECPrivateKey","ECPublicKey","EEXEC_KEY","EMPTY_BUFFER","EMPTY_BUFFER2","EMPTY_STRING","EMPTY_STRING2","EMPTY_VIEW","ENCAP_CONTENT_INFO","ENCODED_VALUE","ENCODING_MAP","ENCRYPTED_CONTENT","ENCRYPTED_CONTENT_INFO","ENCRYPTED_CONTENT_INFO$1","ENCRYPTED_DATA","ENCRYPTED_KEY","ENCRYPTED_KEY$1","ENCRYPTED_KEY$2","ENCRYPTED_KEY$3","ENCRYPTED_KEYS","ENCRYPTION_ALGORITHM","ENCRYPTION_SCHEME","END_BLOCK","END_OF_CONTENT_NAME","ENOUGH_DISTS","ENOUGH_DISTS$1","ENOUGH_LENS","ENOUGH_LENS$1","ENTITY_NAME","ENTITY_U_INFO","EOF_MARKER","EOL_PATTERN","EO_CLIP","EPSILON","EXCLUDED_SUBTREES","EXECUTION_STEPS","EXECUTION_TIME","EXLEN","EXPECTED_SCALE","EXPONENT","EXPONENT1","EXPONENT2","EXTENSIONS","EXTENSIONS$1","EXTENSIONS$2","EXTENSIONS$3","EXTENSIONS$4","EXTENSIONS$5","EXTENSIONS$6","EXTN_ID","EXTN_VALUE","EXTRA","EXTRA_STATE","E_CONTENT","E_CONTENT_TYPE","Ea","EditorToolbar","Ei","EmbeddedFont","EncapsulatedContentInfo","EncryptedContentInfo","EncryptedData","EncryptionDictError","EndOfContent","Enumerated","EnvelopedData","ExistingFont","ExpertCharset","ExpertEncoding","ExpertSubsetCharset","ExtKeyUsage","Extension","ExtensionValueFactory","Extensions","F","FAIL_INFO","FIND_ISSUER","FIND_ORIGIN","FINISH_STATE","FLAGS","FONT_BASIC_METRICS","FONT_GLYPH_WIDTHS","FONT_IDENTITY_MATRIX","FROM_BER","FULL_CHUNK_HEIGHT","FULL_EMBED_UNICODE_RANGES","FakeEditor","Fi","FieldFlags","FieldTree","FileAttachmentAnnotationElement","FilterFactory","FilterPipeline","FlateFilter","FontDescriptor","FontFaceObject","FontFlags","FontLoader","FormField","FormFlattener","FormatError","FreeDrawOutline","FreeDrawOutliner","FreeHighlightOutline","FreeHighlightOutliner","FreeTextAnnotationElement","FreeTextEditor","G","G2","GENERAL_NAMES","GENERAL_TIME_NAME","GEN_TIME","GLYPH_TO_UNICODE","GT","GZIP_STATE","GZheader","GeneralName","GeneralNames","GeneralString","GeneralSubtree","GeneralizedTime","GetElementsByNameSet","GlobalWorkerOptions","GraphicString","H","HASH","HASHED_MESSAGE","HASH_ALGORITHM","HASH_ALGORITHM$1","HASH_ALGORITHM$2","HASH_ALGORITHM$3","HASH_ALGORITHM$4","HCRC","HCRC_STATE","HEAD","HEADER_SEARCH_LIMIT","HEAP_SIZE","HEAP_SIZE$1","HEX_REGEX","HEX_TABLE","HOLDER","HORIZONTAL_SPACE_AFTER_ANNOTATION","Hash","HashMD","HashMD2","HexBlock","HighlightAnnotationElement","HighlightEditor","HighlightOutline","HighlightOutliner","HighlightToolbar","Hn","Holder","I","I2","I3","IA5String","ID","IDAT","IDENTITY_MATRIX","ID_BLOCK","IEND","IHDR","INDIRECT_CRL","INHERITABLE_PAGE_ATTRS","INHIBIT_POLICY_MAPPING","INITIAL_DATA","INIT_STATE","INSERT_STRING","INTERNAL","IP","IP_INV","ISOAdobeCharset","ISSUER","ISSUER$1","ISSUER$2","ISSUER$3","ISSUER$4","ISSUER$5","ISSUER_DOMAIN_POLICY","ISSUER_KEY_HASH","ISSUER_NAME","ISSUER_NAME_HASH","ISSUER_UID","ISSUER_UNIQUE_ID","ISSUER_UNIQUE_ID$1","ISSUER_UNIQUE_ID$2","IS_CONSTRUCTED","IS_HEX_ONLY","ITERATIONS","ITERATION_COUNT","Ia","IdManager","IdentityHandler","ImageManager","IndirectObjectParser","Inflate$1","InflateState","Inflate_1","Inflate_1$1","InfoAccess","InkAnnotationElement","InkDrawOutline","InkDrawOutliner","InkDrawingOptions","InkEditor","Integer","InternalRenderTask","InvalidPDFException","IssuerAndSerialNumber","IssuerSerial","IssuingDistributionPoint","It","J","JBIG2Filter","JPXFilter","Ji","Jn","Jt","K","K2","K512","KAPPA","KEKIdentifier","KEKRecipientInfo","KEK_ID","KEY_ATTR","KEY_ATTR_ID","KEY_DERIVATION_ALGORITHM","KEY_DERIVATION_FUNC","KEY_ENCRYPTION_ALGORITHM","KEY_ENCRYPTION_ALGORITHM$1","KEY_ENCRYPTION_ALGORITHM$2","KEY_ENCRYPTION_ALGORITHM$3","KEY_IDENTIFIER","KEY_IDENTIFIER$1","KEY_INDEX","KEY_INFO","KEY_LENGTH","KEY_PURPOSES","KNOWN_OPERATORS","KeyAgreeRecipientIdentifier","KeyAgreeRecipientInfo","KeyTransRecipientInfo","KeyboardManager","Kn","L","L2","LANGUAGE_WINDOWS_EN_US","LEGACY_PBE_OIDS","LEN","LENEXT","LENGTH","LENGTH_CODES","LENGTH_CODES$1","LENLENS","LENS","LENS$1","LEN_","LINE_CAP_STYLES","LINE_DESCENT_FACTOR","LINE_FACTOR","LINE_JOIN_STYLES","LIT","LITERALS","LITERALS$1","LOCAL","LOG_ID","LONG_OFFSETS","LZWFilter","L_CODES","L_CODES$1","LineAnnotationElement","LinkAnnotationElement","ListBoxField","Ln","LocalBaseBlock","LocalBitStringValueBlock","LocalBmpStringValueBlock","LocalBooleanValueBlock","LocalConstructedValueBlock","LocalEndOfContentValueBlock","LocalIdentificationBlock","LocalIntegerValueBlock","LocalLengthBlock","LocalObjectIdentifierValueBlock","LocalOctetStringValueBlock","LocalPrimitiveValueBlock","LocalRelativeObjectIdentifierValueBlock","LocalRelativeSidValueBlock","LocalSidValueBlock","LocalSimpleStringBlock","LocalSimpleStringValueBlock","LocalStringValueBlock","LocalUniversalStringValueBlock","LocalUtf8StringValueBlock","LoopbackPort","LtvDataGatherer","M","MAC","MAC_DATA","MAC_GLYPH_NAMES","MAC_GLYPH_NAME_TO_INDEX","MAC_ROMAN_TO_UNICODE","MAC_SALT","MAJh","MAJl","MAPPINGS","MARKER_SOF0","MARKER_SOF1","MARKER_SOF10","MARKER_SOF11","MARKER_SOF13","MARKER_SOF14","MARKER_SOF15","MARKER_SOF2","MARKER_SOF3","MARKER_SOF5","MARKER_SOF6","MARKER_SOF7","MARKER_SOF9","MARKER_SOI","MASK_GEN_ALGORITHM","MASK_GEN_ALGORITHM$1","MASK_HIGH","MASK_LOW","MATCH","MAXBITS","MAXIMUM","MAX_ARGUMENT_COUNT","MAX_BITS","MAX_BITS$1","MAX_BL_BITS","MAX_CONTENT_LENGTH_EXCEEDED_ERROR","MAX_DEPTH","MAX_DEPTH_EXCEEDED_ERROR","MAX_FIELD_WIDTH","MAX_FONT_SIZE","MAX_GEN_NUM","MAX_IMAGE_SIZE_TO_CACHE","MAX_MATCH","MAX_MATCH$1","MAX_MEM_LEVEL","MAX_NODES_EXCEEDED_ERROR","MAX_OBJ_NUM","MAX_PATTERN_SIZE","MAX_PIXELS","MAX_RATIO","MAX_SIZE_TO_COMPILE","MAX_TEXT_DIVS_TO_RENDER","MAX_WBITS","MAX_WBITS$1","MD5","MD5_IV","MD5_SHIFTS","MD5_W","MEM","MESSAGE_IMPRINT","MESSAGE_IMPRINT$1","MICROS","MILLIS","MIME_TYPES","MINIMUM","MIN_FONT_SIZE","MIN_LOOKAHEAD","MIN_MATCH","MIN_MATCH$1","MODULUS","MODULUS$1","MacData","MacRomanEncoding","Maj","Maj2","Matrix","MeshShadingPattern","MessageHandler","MessageImprint","Metadata","MissingPDFException","Mt","MurmurHash3_64","N","NAME","NAME2","NAMED_CURVE","NAMED_CURVE$1","NAMES","NAME_NEEDS_ESCAPE","NAME_STATE","NEWLINE","NEWLINE$1","NEXT_UPDATE","NEXT_UPDATE$1","NONCE","NONCE$1","NONE","NON_FLATTENABLE_TYPES","NORMAL_CLIP","NOT_AFTER","NOT_AFTER$1","NOT_AFTER_TIME","NOT_BEFORE","NOT_BEFORE$1","NOT_BEFORE_TIME","NUMBER_OF_DIGITS","NameConstraints","NameTree","NetworkManager","Nk","Nn","NodeCMapReaderFactory","NodeCanvasFactory","NodeFilterFactory","NodeStandardFontDataFactory","NonTerminalField","NormalizationMap","NormalizeRegex","Null","NumericString","O","OBJECT_DIGEST","OBJECT_DIGEST_INFO","OBJECT_DIGEST_INFO$1","OCSPRequest","OCSPResponse","OCSPS","OCSPS$1","OCTET_STRING_NAME","OID_AUTHORITY_INFO_ACCESS","OID_CMS_ALGORITHM_PROTECTION","OID_CONTENT_TYPE","OID_CRL_DISTRIBUTION_POINTS","OID_DATA","OID_ECDSA_WITH_SHA256","OID_ECDSA_WITH_SHA384","OID_ECDSA_WITH_SHA512","OID_MESSAGE_DIGEST","OID_SHA1","OID_SHA256","OID_SHA256_WITH_RSA","OID_SHA384","OID_SHA384_WITH_RSA","OID_SHA512","OID_SHA512_WITH_RSA","OID_SIGNED_DATA","OID_SIGNING_CERTIFICATE_V2","OID_SIGNING_TIME","OID_TIMESTAMP_TOKEN","OK_RESPONSE","ONLY_CONTAINS_ATTRIBUTE_CERTS","ONLY_CONTAINS_CA_CERTS","ONLY_CONTAINS_USER_CERTS","ONLY_SOME_REASON","OPS","OPTIONAL_SIGNATURE","ORDERING","ORIGINATOR","ORIGINATOR_INFO","ORI_TYPE","ORI_VALUE","OS","OS_CODE","OTF_MAGIC","OTHER","OTHER$1","OTHER_CERT","OTHER_CERT_FORMAT","OTHER_OBJECT_TYPE_ID","OTHER_PRIME_INFOS","OTHER_REVOCATION_INFOS","OTHER_REV_INFO","OTHER_REV_INFO_FORMAT","ObjectCopier","ObjectDigestInfo","ObjectIdentifier","ObjectParseError","ObjectParser","ObjectRegistry","ObjectStreamParser","OctetString","On","Op","Operator","OptionalContentConfig","OptionalContentGroup","OriginatorIdentifierOrKey","OriginatorInfo","OriginatorPublicKey","Ot","OtherCertificateFormat","OtherKeyAttribute","OtherPrimeInfo","OtherRecipientInfo","OtherRevocationInfoFormat","Outline","OutputScale","P","P12Signer","P2","P3","PAD_BUF","PAGE_SIZES","PARAMS","PARSED_KEY","PARSED_VALUE","PARSED_VALUE$1","PARSED_VALUE$2","PARSED_VALUE$3","PARSED_VALUE$4","PARSED_VALUE$5","PARTIAL_CONTENT_RESPONSE","PASSWORD","PASSWORD_PADDING","PATH_LENGTH_CONSTRAINT","PBES2Params","PBKDF2Params","PC1","PC2","PDF","PDFAnnotation","PDFAttachments","PDFCaretAnnotation","PDFCatalog","PDFCircleAnnotation","PDFContext","PDFDataRangeTransport","PDFDataTransportStream","PDFDataTransportStreamRangeReader","PDFDataTransportStreamReader","PDFDateString","PDFDocumentLoadingTask","PDFDocumentProxy","PDFEmbeddedPage","PDFExtGState","PDFFetchStream","PDFFetchStreamRangeReader","PDFFetchStreamReader","PDFFileAttachmentAnnotation","PDFFonts","PDFForm","PDFFormXObject","PDFFreeTextAnnotation","PDFHighlightAnnotation","PDFImage","PDFInkAnnotation","PDFLib","PDFLineAnnotation","PDFLinkAnnotation","PDFMarkupAnnotation","PDFNetworkStream","PDFNetworkStreamFullRequestReader","PDFNetworkStreamRangeRequestReader","PDFNodeStream","PDFNodeStreamFsFullReader","PDFNodeStreamFsRangeReader","PDFObjects","PDFPage","PDFPageProxy","PDFPageTree","PDFPolyAnnotation","PDFPolygonAnnotation","PDFPolylineAnnotation","PDFPopupAnnotation","PDFShading","PDFShadingPattern","PDFShapeAnnotation","PDFSignature","PDFSquareAnnotation","PDFSquigglyAnnotation","PDFStampAnnotation","PDFStrikeOutAnnotation","PDFTextAnnotation","PDFTextMarkupAnnotation","PDFTilingPattern","PDFUnderlineAnnotation","PDFUnknownAnnotation","PDFWorker","PDF_DOC_HIGH","PDF_DOC_LOW","PDF_HEADER","PDF_LIB_URL","PERMITTED_SUBTREES","PER_DEFINED_KEK","PFB_HEADER_LENGTH","PFX","PIECE_SIZE","PITABLE","PKCS12KDF","PKCS7DetachedBuilder","PKCS8ShroudedKeyBag","PKIStatusInfo","PLTE","PNG_SIGNATURE","POINT_TO_PROCESS_LIMIT","POINT_TYPES","POLICY","POLICY_IDENTIFIER","POLICY_QUALIFIERS","POLICY_QUALIFIER_ID","POLY","PRESET_DICT","PRF","PRIME","PRIME1","PRIME2","PRIVATE_EXPONENT","PRIVATE_KEY","PRIVATE_KEY$1","PRIVATE_KEY_ALGORITHM","PRODUCED_AT","PUBLIC_EXPONENT","PUBLIC_EXPONENT$1","PUBLIC_KEY","PUBLIC_KEY$1","P_SOURCE_ALGORITHM","PageViewport","PaintType","ParameterError","PasswordException","PasswordRecipientinfo","PasswordResponses","PathBuilder","PathTokenizer","PathType","PdfArray","PdfBool","PdfDict","PdfFont","PdfName","PdfNull","PdfNumber","PdfRaw","PdfRef","PdfRegenerator","PdfSigningRuntime","PdfStream","PdfString","PermissionBits","PermissionDeniedError","PermissionFlag","PfbParser","PixelsPerInch","PkiObject","PlaceholderError","PolicyConstraints","PolicyInformation","PolicyMapping","PolicyMappings","PolicyQualifierInfo","PolygonAnnotationElement","PolylineAnnotationElement","PopupAnnotationElement","PopupElement","Primitive","PrintAnnotationStorage","PrintableString","PrivateKeyInfo","PrivateKeyUsagePeriod","Pt","PublicKeyInfo","PushButtonWidgetAnnotationElement","Q","QCStatement","QCStatements","QC_STATEMENTS_CLEAR_PROPS","QC_STATEMENT_CLEAR_PROPS","QStream","QUALIFIER","Qa","Qg","Qt","R","R2","RC2","RC4Cipher","RC4Handler","RDN","REASONS","RECIPIENT_CERTIFICATE","RECIPIENT_CERTIFICATE$1","RECIPIENT_ENCRYPTED_KEY","RECIPIENT_ENCRYPTED_KEYS","RECIPIENT_INFOS","RECIPIENT_PUBLIC_KEY","RENDERING_CANCELLED_TIMEOUT","REPZ_11_138","REPZ_3_10","REP_3_6","REQUESTOR_NAME","REQUEST_EXTENSIONS","REQUEST_LIST","REQUIRE_EXPLICIT_POLICY","REQ_CERT","REQ_POLICY","RESPONDER_ID","RESPONSE","RESPONSES","RESPONSE_BYTES","RESPONSE_DATA","RESPONSE_DATA_PRODUCED_AT","RESPONSE_DATA_RESPONDER_ID","RESPONSE_DATA_RESPONSES","RESPONSE_DATA_RESPONSE_EXTENSIONS","RESPONSE_DATA_VERSION","RESPONSE_EXTENSIONS","RESPONSE_STATUS","RESPONSE_TYPE","REVOCATION_DATE","REVOKED_CERTIFICATES","RID","RID$1","RL","RSA","RSAESOAEPParams","RSAPrivateKey","RSAPublicKey","RSASSAPSSParams","RTL_PLACED_THRESHOLD","RadialAxialShadingPattern","RadioButtonWidgetAnnotationElement","RadioField","RangeMappedCharset","RawData","RecipientEncryptedKey","RecipientEncryptedKeys","RecipientIdentifier","RecipientInfo","RecipientKeyIdentifier","RecoverableParseError","RecoveredXRef","RelativeDistinguishedNames","RelativeObjectIdentifier","RenderTask","RenderingCancelledException","RenderingIntentFlag","Repeated","Request","ResponseBytes","ResponseData","RevocationError","RevocationInfoChoices","RevokedCertificate","Ri","Rn","Rs","RunLengthFilter","S","S2","SAFE_BUGS","SAFE_CONTENTS","SALT","SALT_LENGTH","SBOXES","SECONDS","SECRET_TYPE_ID","SECRET_VALUE","SEED","SERIAL_NUMBER","SERIAL_NUMBER$1","SERIAL_NUMBER$2","SERIAL_NUMBER$3","SERIAL_NUMBER$4","SERIAL_NUMBER$5","SERIAL_NUMBER$6","SHA1","SHA12","SHA1_IV","SHA1_IV2","SHA1_W","SHA1_W2","SHA224","SHA256","SHA2562","SHA256_IV","SHA256_IV2","SHA256_K","SHA256_K2","SHA256_W","SHA256_W2","SHA2_32B","SHA2_64B","SHA384","SHA3842","SHA384_IV","SHA512","SHA5122","SHA512_IV","SHA512_Kh","SHA512_Kl","SHA512_W_H","SHA512_W_H2","SHA512_W_L","SHA512_W_L2","SHIFTS","SHORT_OFFSETS","SID","SIGNATURE","SIGNATURE$1","SIGNATURE$2","SIGNATURE$3","SIGNATURE$4","SIGNATURE$5","SIGNATURE$6","SIGNATURE$7","SIGNATURE_ALGORITHM","SIGNATURE_ALGORITHM$1","SIGNATURE_ALGORITHM$2","SIGNATURE_ALGORITHM$3","SIGNATURE_ALGORITHM$4","SIGNATURE_ALGORITHM$5","SIGNATURE_ALGORITHM$6","SIGNATURE_ALGORITHM$7","SIGNATURE_ALGORITHM$8","SIGNATURE_VALUE","SIGNATURE_VALUE$1","SIGNATURE_VALUE$2","SIGNATURE_VALUE$3","SIGNATURE_VALUE$4","SIGNED_ATTRS","SIGNED_DATA","SIGNED_DATA_CERTIFICATES","SIGNED_DATA_CRLS","SIGNED_DATA_DIGEST_ALGORITHMS","SIGNED_DATA_ENCAP_CONTENT_INFO","SIGNED_DATA_SIGNER_INFOS","SIGNED_DATA_VERSION","SIGNER_INFO","SIGNER_INFOS","SIGNER_INFO_DIGEST_ALGORITHM","SIGNER_INFO_SID","SIGNER_INFO_SIGNATURE","SIGNER_INFO_SIGNATURE_ALGORITHM","SIGNER_INFO_SIGNED_ATTRS","SIGNER_INFO_UNSIGNED_ATTRS","SIGNER_INFO_VERSION","SINGLE_EXTENSIONS","SINGLE_REQUEST_EXTENSIONS","SPACE","SPACE$1","SPKI","STANDARD_14_FONTS","STANDARD_ENCODING","STANDARD_STAMPS","STANDARD_STRINGS","STANDARD_TO_UNICODE","START_MARKER","STATIC_TREES","STATUS","STATUS$1","STATUS_STRINGS","STORED","STORED_BLOCK","STRING_TYPE","STR_APPLY_UIA_OK","SUBJECT","SUBJECT$1","SUBJECT_DOMAIN_POLICY","SUBJECT_KEY_IDENTIFIER","SUBJECT_NAME","SUBJECT_PUBLIC_KEY","SUBJECT_PUBLIC_KEY_INFO","SUBJECT_UNIQUE_ID","SUMh","SUMl","SUPP_PUB_INFO","SVG_NS","SYMBOL_TO_UNICODE","SYNC","SafeBag","SafeBagValueFactory","SafeContents","Scanner","SecretBag","SecurityError","SeqStream","Sequence","SerializableEmpty","Set2","Si","Signature","SignatureError","SignatureField","SignatureWidgetAnnotationElement","SignedAndUnsignedAttributes","SignedCertificateTimestamp","SignedCertificateTimestampList","SignedData","SignedDataVerifyError","SignerError","SignerInfo","SimpleEncoding","SimpleFont","SingleResponse","Sn","SquareAnnotationElement","SquigglyAnnotationElement","StampAnnotationElement","StampEditor","StandardEncoding","StandardEncoding$1","StandardEncoding$2","StandardFontDataFactory","StandardSecurityHandler","StatTimer","StaticTreeDesc","StreamKind","StrikeOutAnnotationElement","StructureError","SubKEKRecipientInfo","SubKeyAgreeRecipientInfo","SubKeyTransRecipientInfo","SubPasswordRecipientinfo","SubjectDirectoryAttributes","SymbolEncoding","T","T0","T01","T1","T1h","T1l","T1ll","T2","T23","T3","T8","TABLE","TAG_CLASS","TAG_NUMBER","TBS","TBS$1","TBS$2","TBS$3","TBS$4","TBSRequest","TBS_CERTIFICATE","TBS_CERTIFICATE_EXTENSIONS","TBS_CERTIFICATE_ISSUER","TBS_CERTIFICATE_ISSUER_UNIQUE_ID","TBS_CERTIFICATE_NOT_AFTER","TBS_CERTIFICATE_NOT_BEFORE","TBS_CERTIFICATE_SERIAL_NUMBER","TBS_CERTIFICATE_SIGNATURE","TBS_CERTIFICATE_SUBJECT","TBS_CERTIFICATE_SUBJECT_PUBLIC_KEY","TBS_CERTIFICATE_SUBJECT_UNIQUE_ID","TBS_CERTIFICATE_VERSION","TBS_CERT_LIST","TBS_CERT_LIST_EXTENSIONS","TBS_CERT_LIST_ISSUER","TBS_CERT_LIST_NEXT_UPDATE","TBS_CERT_LIST_REVOKED_CERTIFICATES","TBS_CERT_LIST_SIGNATURE","TBS_CERT_LIST_THIS_UPDATE","TBS_CERT_LIST_VERSION","TBS_REQUEST","TBS_REQUEST$1","TBS_REQUEST_REQUESTOR_NAME","TBS_REQUEST_REQUESTS","TBS_REQUEST_REQUEST_EXTENSIONS","TBS_REQUEST_VERSION","TBS_RESPONSE_DATA","TEMPLATE_ID","TEMPLATE_MAJOR_VERSION","TEMPLATE_MINOR_VERSION","TEXT_ALIGNMENT","TEXT_CONTENT_CHUNK_SIZE","THIS_UPDATE","THIS_UPDATE$1","TILDE","TIME","TIME2","TIMESTAMP","TIMESTAMPS","TIME_STAMP_REQ","TIME_STAMP_REQ_CERT_REQ","TIME_STAMP_REQ_EXTENSIONS","TIME_STAMP_REQ_MESSAGE_IMPRINT","TIME_STAMP_REQ_NONCE","TIME_STAMP_REQ_POLICY","TIME_STAMP_REQ_VERSION","TIME_STAMP_RESP","TIME_STAMP_RESP_STATUS","TIME_STAMP_RESP_TOKEN","TIME_STAMP_TOKEN","TIME_TO_WAIT","TM","TO_BER","TRAILER_FIELD","TRAILING_ZERO_REGEX","TRUSTED_CERTS","TSA","TSTInfo","TST_INFO","TST_INFO_ACCURACY","TST_INFO_EXTENSIONS","TST_INFO_GEN_TIME","TST_INFO_MESSAGE_IMPRINT","TST_INFO_NONCE","TST_INFO_ORDERING","TST_INFO_POLICY","TST_INFO_SERIAL_NUMBER","TST_INFO_TSA","TST_INFO_VERSION","TTC_MAGIC","TTFSubsetter","TTF_MAGIC","TTF_TRUE_MAGIC","TYPE","TYPE$1","TYPE$12","TYPE$2","TYPE$3","TYPE$4","TYPE$5","TYPE2","TYPEDO","TYPE_AND_VALUES","TeletexString","TerminalField","TextAnnotationElement","TextExtractor","TextField","TextLayer","TextRenderingMode","TextState","TextWidgetAnnotationElement","TilingPattern","Time","TimeOfDay","TimeStampReq","TimeStampResp","Tn","ToUnicodeMap","Token","TokenReader","TouchManager","TreeDesc","TripleDES","TrueTypeFont","TrueTypeFontProgram","Type1Font","Type1FontProgram","Type1Lexer","Type1Parser","U","U32_MASK64","U32_MASK642","UKM","UNICODE_TO_GLYPH","UNICODE_TO_PDF_DOC","UNPROTECTED_ATTRS","UNPROTECTED_ATTRS$1","UNSIGNED_ATTRS","USER_CERTIFICATE","UTCTime","UTC_TIME_NAME","UnderlineAnnotationElement","UnexpectedResponseException","UniversalString","UnknownErrorException","UnknownField","UnrecoverableParseError","UnsupportedEncryptionError","Utf16Converter","Utf8Converter","Utf8String","Util","V2Form","VALUE","VALUE$1","VALUE$2","VALUE$3","VALUE$4","VALUE$5","VALUE$6","VALUES","VALUES$1","VALUE_BEFORE_DECODE","VALUE_HEX_VIEW","VARIANT","VARIANT$1","VARIANT$2","VARIANT$3","VERSION","VERSION$1","VERSION$2","VERSION$3","VERSION$4","VERSION$5","VERSION$6","VERSION$7","VERSION$8","VERSION$9","VERSION$a","VERSION$b","VERSION$c","VERSION$d","VERSION$e","VERSION$f","VERSION$g","VERSION$h","VERSION$i","VERSION$j","VERSION$k","VERSION$l","VERSION_PATTERN","ValueBlock","VerbosityLevel","VideotexString","ViewWriter","VisibleString","W","W15","W15h","W15l","W2","W2h","W2l","WELL_KNOWN_EXTENSIONS","WHITESPACE","WIN_ANSI_TO_UNICODE","WidgetAnnotation","WidgetAnnotationElement","WinAnsiEncoding","WorkerTransport","Wt","X","XRefParseError","XRefParser","XXXX_VALUE","XfaLayer","XfaText","Y","Yn","Yt","ZAPF_CHECKMARK","ZAPF_CIRCLE","ZAPF_DINGBATS_TO_UNICODE","ZStream","Z_BINARY","Z_FIXED$1","Z_TEXT","Z_UNKNOWN$1","ZapfDingbatsEncoding","Zi","_","_32n","_32n2","_32n3","_MD5","_SHA1","_SHA256","_SHA384","_SHA512","__commonJS","__copyProps","__create","__defProp","__export","__getOwnPropDesc","__getOwnPropNames","__getProtoOf","__hasOwnProp","__require","__toCommonJS","__toESM","__webpack_exports__","__webpack_exports__AbortException","__webpack_exports__AnnotationEditorLayer","__webpack_exports__AnnotationEditorParamsType","__webpack_exports__AnnotationEditorType","__webpack_exports__AnnotationEditorUIManager","__webpack_exports__AnnotationLayer","__webpack_exports__AnnotationMode","__webpack_exports__ColorPicker","__webpack_exports__DOMSVGFactory","__webpack_exports__DrawLayer","__webpack_exports__FeatureTest","__webpack_exports__GlobalWorkerOptions","__webpack_exports__ImageKind","__webpack_exports__InvalidPDFException","__webpack_exports__MissingPDFException","__webpack_exports__OPS","__webpack_exports__OutputScale","__webpack_exports__PDFDataRangeTransport","__webpack_exports__PDFDateString","__webpack_exports__PDFWorker","__webpack_exports__PasswordResponses","__webpack_exports__PermissionFlag","__webpack_exports__PixelsPerInch","__webpack_exports__RenderingCancelledException","__webpack_exports__TextLayer","__webpack_exports__TouchManager","__webpack_exports__UnexpectedResponseException","__webpack_exports__Util","__webpack_exports__VerbosityLevel","__webpack_exports__XfaLayer","__webpack_exports__build","__webpack_exports__createValidAbsoluteUrl","__webpack_exports__fetchData","__webpack_exports__getDocument","__webpack_exports__getFilenameFromUrl","__webpack_exports__getPdfFilenameFromUrl","__webpack_exports__getXfaPageViewport","__webpack_exports__isDataScheme","__webpack_exports__isPdfFile","__webpack_exports__noContextMenu","__webpack_exports__normalizeUnicode","__webpack_exports__setLayerDimensions","__webpack_exports__shadow","__webpack_exports__stopEvent","__webpack_exports__version","__webpack_require__","_applyPdfCalculations","_array","_base64ToBytes","_blurListener","_buildChoiceComponentIndex","_buildDateComponentIndex","_buildTableReverseIndex","_choiceItemMatches","_choiceItems","_collectCandidates","_collectJS","_copy_pixels_1","_copy_pixels_3","_copy_pixels_4","_decodePdfHex","_dist_code","_downloadBytes","_drawGeometryOverlays","_engine","_fd_seek","_fieldHasValue","_fillField","_flattenForm","_geometryChoiceSelected","_geometryClamp","_geometrySignatureDataUrl","_geometryTextLines","_getCheckboxOnStates","_getPdfSigningRuntime","_gray_to_rgba","_graya_to_rgba","_has","_inferBooleanState","_installPdfLibFromSource","_isNonEmptyString","_isValidProtocol","_iv","_jsPrintWarning","_length_code","_loadPdfLib","_loadPdfLibFromCdn","_m2","_matchMultipleOptions","_matchSingleOption","_n","_n2","_normalizeFieldMap","_normalizeToken","_object","_optional","_pdfCalculation","_pdfLibPromise","_pdfNumber","_pdfSigningSource","_printBytes","_resolveChoiceComponentValue","_resolveDateComponentValue","_resolveTableCellValue","_resolveValueByPath","_result","_rgb_to_rgba","_schema","_setCheckboxByState","_setValue","_splitCanonicalDateParts","_status","_statusColor","_storeErrorMessage","_toBooleanLike","_toCandidateList","_toText","_tr_align$1","_tr_align_1","_tr_flush_block$1","_tr_flush_block_1","_tr_init$1","_tr_init_1","_tr_stored_block$1","_tr_stored_block_1","_tr_tally$1","_tr_tally_1","_u32_max","_utf8len","_view","_w_size","_widgetHasAppearance","_win","_writer","a","a0","a2","aView","aa","aadStart","abort","abortEx","absDet","absScaleX","absoluteUrl","abytes","abytes2","ac","accent","achVendId","acro","acroForm","acroFormDict","acroFormRef","action","actionType","actions","activeLayer","actualScale","actualWaveLength","add","add2","add3H","add3H2","add3L","add3L2","add4H","add4H2","add4L","add4L2","add5H","add5H2","add5L","add5L2","addAnEmptyEntry","addChildren","addFakeSpaces","addGlyphMapping","addHTML","addHex","addLocallyCachedImageOps","addOnInit","addPageDict","addPageError","addRunDependency","addState","addVisibleSignature","additionalCerts","adjustMapping","adjustTrueTypeToUnicode","adjustType1ToUnicode","adjustWidths","adjusted","adjustedFdArrayIndex","adjustedFontDict","adjustedFontDictData","adjustedTopDict","adjustedTopDictData","adjustedTopDictIndex","adler32","adler32_1","admission","adobeSid","advanceWidth","advanceWidthMax","advanceWidths","aesDecrypt","aesDecryptWithIv","aesEcbDecrypt","aesEcbEncrypt","aesEncrypt","aesEncryptWithIv","aesKW","aesKWAlgorithm","aesKWoid","aesKwKey","aesKwKey2","aescbc","aesecb","aexists2","after","agree","agreeCheckbox","ah","ai","aiaAsn1","aiaExtension","alg","algOid","algorithm","algorithmId","algorithmId2","algorithmObject","algorithmOid","algorithmParameters","algorithmParams","algorithmParamsChecked","aliases","aligned","alignment","alignmentToQuadding","allCerts","allChars","allEdges","allFields","allIds","allPolicies","allSame","allText","alpha","altText","amendFallbackToUnicode","anchorElement","angle","angleBetween","annot","annotDict","annotRef","annotation","annotationElementIds","annotationId","annotationOptions","annotationStorage","annotationStorageSerializable","annotation_layer_DEFAULT_FONT_SIZE","annotations","annots","annotsArray","annotsEntry","anumber","anumber2","anyPolicyArray","anyPolicyFound","aobject","aopts","aoutput","ap","appearance","appearanceRef","appearances","appendEOL","appendIfJavaScriptDict","apply0123","applyAssist","applyBoundingBox","applyGrayTransparency","applyInverseRotation","applyKDF","applyPredictor","applyRgbTransparency","applySbox","applyStandardFontGlyphMap","arcSegmentToBezier","arcToBezier","area","argsArray","argsArrayLen","ariaAttributes","ariaLabel","arr","array","arrayBuffer","arrayBufferToString","arrayBuffersToBytes","arrayMatch","arrayRoot","arrowChecker","as","ascender","ascent","asciiLength","asn","asn1","asn1Basic","asn1View","asnValue","aspectRatio","assert","assertBigInt","assign","assign2","atitle","atitle2","atom","attachments","attrs","authConstrPolicies","authEvent","authSafeContent","authenticate","authenticatedAs","authenticatedSafe","authorityCertIssuer","authorityCertSerialNumber","authorityCertSerialNumberEqual","avail","availableOptions","averageCharWidth","avgBaseline","awsKW","axes","axesArrayOffset","axisCount","axisIndex","axisNameId","axisOrdering","axisSegmentMaps","axisSize","axisStart","axisValue","axisValueCount","axisValueMaps","axisValues","b","b0","b1","b2","b3","bView","backdropRGB","badge","bagType","base","base64Template","base64UrlTemplate","baseArea","baseArray","baseBlock","baseCID","baseCode","baseColor","baseEncoding","baseEncodingName","baseFont","baseFontName","baseFormat","baseMap","baseName","baseState","baseTransform","base_dist","base_length","baseline","baselinePoint","baselineTolerance","basicAsn1","basicCheck","basicResp","basicResponse","basis","bbox","bbox2","bboxArray","bboxHeight","bboxWidth","bc","before","beforeLength","beg","beginMarkedContent","beginText","ber1","ber2","best_len","bezierCurveTo","bg","bgBorderOps","bgColor","bgGray","bgRGB","bi_flush","bi_reverse","bi_windup","bidi","big","bigInt","bigIntBuffer","bigIntValue","bigIntView","biggest","binary","binaryLength","bindEvents","bit","bitDepth","bitIdx","bitIndex","bitNumber","bitOffset","bitPos","bitShift","bitmap","bits","bitsAvailable","bitsNeeded","bitsPerComponent","bitsStr","bitsToRead","blX","blY","bl_count","bl_order","black","black2","blackIs1","blackMakeup","blackTerminating","blob","block","blockCounts","blockLength","blockName","blockSequence","block_mask","blocker","blue","blurListener","bold","boldFont","boolValue","booleanStates","borderColor","borderWidth","bottom","bottomRight","bottomY1","bottomY2","boundResizerBlur","boundResizerKeydown","bounds","boundsHeight","boundsWidth","box","boxDim","boxDimHeight","boxDimWidth","boxes","bpc","br","brX","brY","browserFontSize","bs","bstate","bt","buf","buf2","buf2binstring","buf2string","buffer","buffer8","bufferAfter","bufferB","bufferBefore","bufferG","bufferR","bufferToHexCodes","build","buildAddOperation","buildB","buildCMSAlgorithmProtection","buildCertificateChain","buildCidToGidMapStream","buildComponentData","buildFontResources","buildFormXObject","buildFullToUnicodeCMap","buildFullWidthsArray","buildHuffmanTable","buildIndexArray","buildMatch","buildMinOperation","buildMulOperation","buildNameTree","buildPath","buildPathResult","buildReverseMap","buildSpan","buildSubOperation","buildTextContentItem","buildTextToCharMap","buildToFontChar","buildToUnicodeCMapFromGids","buildTrailerDict","buildWidthsArrayFromGids","buildZapfDingbatsResources","build_bl_tree","build_tree","builder","builtInDomainDefinedAttributes","builtInStandardAttributes","button","buttonDisabled","buttons","bw","by","byRow","byte","byteIdx","byteIndex","byteNumber","byteOffset","byteRange","byteRangeEnd","byteRangeKey","byteRangeKeyPos","byteRangeLength","byteRangeStart","byteSwap","byteSwap32","bytes","bytes2","bytes3","bytesPerPixel","bytesPerRow","bytesRead","bytesToHex","bytesToLatin1","bytesToLatin1$1","bytesToString","c","c1","c1r","c2","c2r","c3r","cMapPacked","cMapUrl","cRLSign","c_len","caCert","caIssuersUrl","cache","cacheId","cacheKey","cacheKeyBuf","cached","cachedAscent","cachedImage","cachedName","cachedPort","cachedPromise","calculateAppearanceMatrix","calculateAutoFontSize","calculateAverageBaseline","calculateByteRange","calculateFieldWidths","calculateMD5Closure","calculateSHA256Closure","calculateSHA512Closure","calculateXPosition","callback","callbackId","called","canEncodePdfDoc","cancelCapability","cancelDrag","candidate","candidateKeys","candidates","canvas","canvasBounds","canvasEntry","canvasGraphicsFactory","canvasHeight","canvasMaxAreaInBytes","canvasWidth","capability","caption","caretOffset","caretSlopeRise","caretSlopeRun","carry","catalog","catalogDict","catalogRef","cbc","cellWidth","centerX","centerY","cert","certArray","certBag","certChain","certDer","certExcludedSubtrees","certHash","certHashes","certID","certIDs","certIndex","certIssuerDer","certObj","certPermittedSubtrees","certPolicies","certRefs","certRefsForVri","certSerialDer","certValueHex","certificate","certificateIndexBuffer","certificateIndexView","certificateIndexView16","certificateIndexView8","certificatePath","certificateSet","certificateSetSchema","certificates","certs","cfDict","cff","cffData","cffFonts","cfm","ch","chain","chainCertsDer","chainEngine","chainParams","chain_length","change","changed","changedAnnotations","changedBuffer","changedView","changes","char","charBoxes","charCode","charIndex","charMappings","charSpacing","charStrings","charStringsIndex","charStringsOffset","charToGlyph","charWidth","charX","character","characterScaleX","chars","charset","charsetEntry","charsetId","charsetOffset","charstring","checkBufferParams","checkCA","checkCertificate","checkContentLengthLimit","checkDimensions","checkFollowingBytesAreAscii","checkForCA","checkIncrementalSaveBlocker","checkInvalidFunctions","checkIsTerminalField","checkLen","checkNodesLimit","checkOpts","checkOutput","checkStyle","checkUnique","checked","checksum","checksumAdjustment","child","childDepth","childHtml","childKids","children","choiceComponentIndex","choiceComponentValue","choiceEntry","chooseAppearanceFont","chr1","chr2","chr3","chunk","chunk1","chunk2","chunkEnd","chunkImgData","chunkOperations","chunkSize","chunks","cid","cidCount","cidFont","cidFontDict","cidFontObj","cidFontRef","cidSystemInfo","cidToGidMap","cidToGidValue","cipher","cipherTransformDecryptStream","ciphertext","circle","clamped","classes","clean","clean2","clean3","cleanName","cleaned","cleanup","cleanupSuccessful","clearAllDirtyFlags","clearDirtyFlags","clearGlobalCaches","clearPatternCaches","clearPrimitiveCaches","clearProps","clearUnicodeCaches","cleartomarkSegment","clip","clip2","clip3","clipEvenOdd","clipHeight","clipPath","clipPathId","clipPathUse","clipWidth","clipX","clipY","clipboardData","clone","cloned","clonedDict","closePath","closePendingRestoreOPS","cmap","cmapName","cmd","cmp","cmsAlgProtection","cmsEncrypted","cmsEnveloped","cmsSigned","cmyk","cmykMatch","cn","code","codeBuf","codeLength","codePoint","codePoints","codeToName","codeUnits","codeView","codes","codespaceRanges","coef","col","collect","collectActions","collectChanges","collectReachableRefs","color","colorArray","colorComponents","colorListbox","colorRGB","colorSpace","colorToArray","colorType","colors","cols","columns","combWidth","combine","combinedBuffer","combinedScaleX","combinedScaleY","combinedView","combinedXRef","command","commands","commitKey","common","commonActions","commonObjs","compareDNSName","compareDirectoryName","compareIPAddress","compareKeys","compareLength","compareRFC822Name","compareSchema","compareUniformResourceIdentifier","compareWithLastPosition","comparisonResult","compileCharString","compileGlyf","compileType3Glyph","complete","completeRequest","complexOverlapBytes","component","componentGid","componentGlyph","components","compress","compress_block","compressed","compressedAlpha","compressedEntries","compressedPixels","compressedStream","compressionMethod","computeBbox","computeEncryptionKeyR2R4","computeFlags","computeHash2A","computeHash2B","computeHashForRevision","computeIDs","computeMD5","computeSha1Hex","computeUserHash","computeVriKey","computedColor","computedU","concat","concatBytes2","concatMatrix","concatenateChunks","condition1","condition2","configuration_table","consoleError","constantTimeCompare","constantTimeCompare$1","constants","constants$1","constants$2","constants_1","constrGroups","constrLen","constrString","constraintPrepared","constraintSplitted","constraintView","constructInterpolatedFn","constructPostScriptFn","constructSampledFn","constructStichedFn","constructStichedFromIRClip","container","content","contentBuffer","contentBytes","contentData","contentDisposition","contentElement","contentEncoding","contentEncryptionAlgorithm","contentEncryptionAlgorithm2","contentEncryptionOID","contentHeight","contentInfo","contentLength","contentLengthError","contentPadding","contentStr","contentToEncrypt","contentView","contentWidth","contentWithGS","contentWithNewline","contentX","contents","contentsEnd","contentsKey","contentsKeyPos","contentsLength","contentsObj","contentsSize","contentsStart","context","contourCount","controller","convertBlackAndWhiteToRGBA","convertBuffer","convertBufferView","convertCidString","convertRGBToRGBA","convertToRGBA","coordinateLength","coordinates","coords","copied","copiedArr","copiedDict","copiedPage","copiedPageRef","copiedPages","copiedRefs","copiedStream","copier","copy","copyBuffer","copyBytes","copyCtxState","copyRgbaImage","corners","correctedFirstObjNum","cos","cos1","cos2","cosPhi","count","countObj","counter","counterBuffer","counterView","counters","countryDropdown","cp","cp1x","cp1y","cp2x","cp2y","cr","crc32","crc32_1","crcTable","createAnnotation","createBidiText","createBuiltInCMap","createByteRangePlaceholderObject","createCIDFontDict","createCMSECDSASignature","createCharCode","createCmapTable","createCommand","createContentsPlaceholder","createContentsPlaceholderObject","createDataNode","createDefaultAppearance","createDefaultCIDFont","createECDSASignatureFromCMS","createEmbeddedFileStream","createEmptyDescription","createErrorResult","createExponentialFunction","createFetchOptions","createFileSpec","createFontDescriptor","createFontObjects","createFontObjectsFull","createFormField","createFromBerContext","createGradientFunction","createHandlerForAlgorithm","createHandlerForFilter","createHandlers","createHasher","createHeaders","createLine","createNameTable","createOS2Table","createPostTable","createPostscriptName","createResponseStatusError","createSpaceChar","createStitchingFunction","createText","createTextMarkupDict","createType0Dict","createValidAbsoluteUrl","createView2","createView3","createWasm","createWrapper","created","createdAt","creationDate","credential","crl","crlAsn1","crlDPs","crlExtension","crlHashes","crlRefs","crlRefsForVri","crlResult","crlSchema","crlUrls","crls","crlsAndCertificates","cropBox","crypto2","cryptoArg","cryptoObj","cs","css","cssColor","ct","ctmScale","ctx","ctxResetTransform","ctxRestore","ctxRotate","ctxSave","ctxScale","ctxSetTransform","ctxTransform","ctxTranslate","curChecked","curMatrixScale","curRow","curToken","curView","curr","currGapX","currGapY","current","currentActive","currentAngle","currentBlockName","currentCert","currentCharIndex","currentCode","currentCommand","currentCounter","currentCtx","currentDict","currentFontName","currentFontSize","currentKey","currentLength","currentLine","currentMtx","currentOffset","currentParameters","currentPos","currentPosition","currentPositionLeft","currentRow","currentSid","currentSpan","currentTextIndex","currentTransform","currentValue","currentVersion","currentWidth","currentY","curve","curveLengthByName","curveOID","curveObject","curveOid","curveTo","curves","customIndex","customNames","cutResult","cx","cxp","cy","cyp","d","d1","d22","d3","dTheta","d_code","da","daFont","daInfo","dashArr","dashes","data","dataBuffer","dataEnd","dataLength","dataOffset","dataReason","dataSize","dataUint32","dataUrl","dataView","date","dateComponentIndex","dateComponentValue","dateEntry","dateStr","dateTimeString","day","days","dbase","decodeACFirst","decodeACSuccessive","decodeASCII","decodeAndClamp","decodeAverageRow","decodeBaseline","decodeBitmap","decodeBitmapTemplate0","decodeBlock","decodeDCFirst","decodeDCSuccessive","decodeFilename","decodeHalftoneRegion","decodeHuffman","decodeIAID","decodeInteger","decodeLatin1","decodeMMRBitmap","decodeMcu","decodePaethRow","decodePatternDictionary","decodePdfDocEncoding","decodePngPredictor","decodeRefinement","decodeRunLength","decodeScan","decodeString","decodeSubRow","decodeSymbolDictionary","decodeTablesSegment","decodeTextRegion","decodeTextString","decodeTiffPredictor","decodeUTF16BE","decodeUpRow","decodeUtf16BE","decodedData","decodedOffset","decodedPassword","decodedString","decoder","decompressed","decreasingCount","decrypt","decryptAscii","decryptBlock","decryptEncryptionKey","decryptLegacyPbe","decryptObject","decryptParams","decrypted","decryptedData","decryptedDict","decryptedItems","decryptedValue","decryptionParameters","defaultConfig","defaultEncryptionParams","defaultFont","defaultOptions","defaultOptions$1","defaultOrigin","defaultVMetrics","defaultValue","defaultWidth","deflate$1","deflate$2","deflateEnd","deflateEnd_1","deflateInfo","deflateInit","deflateInit2","deflateInit2_1","deflateInit_1","deflateRaw$1","deflateRaw_1","deflateRaw_1$1","deflateReset","deflateResetKeep","deflateResetKeep_1","deflateReset_1","deflateSetDictionary","deflateSetDictionary_1","deflateSetHeader","deflateSetHeader_1","deflateStateCheck","deflate_1","deflate_1$1","deflate_1$2","deflate_2","deflate_2$1","deflate_fast","deflate_huff","deflate_rle","deflate_slow","deflate_stored","deflator","defs","delay","delta","depth","derivationKey","deriveObjectKey","derivedBits","derivedKey","derivedKeyRaw","desBlock","desc","descendants","descendantsArray","descender","descenderScaled","descent","descriptor","descriptorDict","descriptorRef","deserializedEditor","designAxes","designAxesOffset","designAxisCount","designAxisSize","desiredGid","desiredMaxLength","dest","dest32","dest32DataLength","destArray","destPos","destRef","destRef2","destination","destinationPage","destinationPageRef","destinationPageToRef","destinations","detect_data_type","determineAlgorithm","dext","diagnosticsText","dialog","dict","dictEntries","dictLength","dictionary","didDraw","didFill","dif","diffCode","diffD","diffMarginX","diffMarginY","diffUnicode","diffX","diffY","differencePosition","differenceString","differences","differencesArray","digest","digestAlgIdentifier","digestAlgorithm","digit","digits","digitsStart","digitsString","dims","dimx","dimx2","dimy","dimy2","direct","dirtyBox","disableAutoFetch","disableFontFace","disableRange","disableStream","disabled","displayText","displayVal","distance","div","divStyle","divider","doRun","doc","docBaseUrl","docParams","docTsLtvData","documentHash","document_date_format_exports","domElement","domMatrix","done","dots","dr","drDict","draw","drawCircle","drawCircleOps","drawDiv","drawEllipseOps","drawFigure","drawId","drawImageAtIntegerCoords","drawLineOps","drawOutline","drawOutlines","drawRectangleOps","drawTriangle","drawXObject","drawingEditor","drawnHeight","drawnWidth","drop","dropdown","ds","dss","dssBuilder","dssRef","dstHex","dstPos","dstUnicode","dt","dummyTopDict","dummyTopDictData","dv","dx","dy","e","eContent","earlyChange","ecb","eccInfo","ecdhAlgorithm","ecdhKeys","ecdhOID","ecdhPublicKey","ed","edge","edge1","edge2","edges","editToolbar","editToolbarDiv","editables","editor","editorId","editorStats","editorType","editorTypes","editors","ef","effectiveEnd","effectiveOptions","effectiveQuery","effectiveSweepFlag","elem","elem2","element","elementData","elementIds","elementParams","elementSequence","elements","elems","ellipsePathOps","embedded","embeddedFileStream","embeddedFiles","embeddedProgram","embeddedTimestamps","empty","emptyGlyph","en","enableHWA","enableXfa","enabled","enc","enc1","enc2","enc3","enc4","encInfo","encKey","encode","encodeNumber","encodePdfDocEncoding","encodePermissions","encodeSignedAttributesForSigning","encodeTextForFont","encodeTextString","encodeToXmlString","encodeUtf16BE","encodeXRefStreamData","encoded","encodedBuf","encodedByteAlign","encodedData","encodedId","encodedInfo","encodedMime","encodedPassword","encodedString","encodedStrings","encodedText","encodedView","encoder","encoder2","encoding","encodingEntry","encodingId","encodingRecords","encodingValue","encodingend","encrypt","encryptDict","encryptDictObj","encryptMetadata","encryptObject","encryptParams","encryptRef","encryptStreamDict","encrypted","encryptedContent","encryptedData","encryptedKey","encryptedStream","encryptedValue","encryption","encryptionAlgorithm","encryptionDict","encryptionParameters","end","endCID","endCid","endCode","endCodes","endGID","endLength","endMarkedContent","endObjToken","endOfBlock","endPath","endPtsOfContours","endText","endTime","endX","endY","engine","engine2","engineName","enqueueChunk","ensureNotTerminated","ensureTextContentItem","entries","entry","entryCount","entryDict","entrySelector","entrySize","entryType","entryVal","envelopedData","epoch1904","eq","equal","equalStart","err","error","errorFont","errorTarget","escapeCount","escapeLiteralString","escapeName","escapeName$1","escapePDFName","escapePdfString","escapeString","escaped","essCertIdV2Parts","estimatedSize","estimatedTopDictIndexSize","evenOdd","event","eventProxy","excluded","excludedSubtrees","executeArc","executeClose","executeCommand","executeCubicCurve","executeHorizontalLine","executeLineTo","executeMoveTo","executeQuadratic","executeSmoothCubic","executeSmoothQuadratic","executeSvgPath","executeSvgPathString","executeVerticalLine","executeonly","executorOptions","existed","existing","existingAppearance","existingAttachments","existingContents","existingFont","existingNames","existingStyle","exists","expandIndexed","expandKey","expandKeyDecLE","expandKeyLE","expanded","expectInt","expectString","expectedDelta","explicitPolicyIndicator","explicitPolicyPending","explicitPolicyStart","explicitWidth","exportVal","exportValue","exportedECDHPublicKey","exportedError","exportedKey","exportedSessionKey","expr","extGState","extend","extendCMap","extension","extensionAttributes","extensionFound","extensionsLength","extra","extraBytes","extraThickness","extra_blbits","extra_dbits","extra_lbits","extractAppearanceStyle","extractFilenameFromHeader","extractInlineImageData","extractKey","extractOcspResponderCerts","extractSignedBytes","f","factor","fakeEditor","familyClass","fdArrayIndex","fdArrayOffset","fdIndex","fdSelect","fdSelectOffset","fds","feColorMatrix","feComponentTransfer","feFunc","feistel","fetchCertificate","fetchData","fetchDest","fetchFn","fetchRemoteDest","ff","fgGray","fgRGB","field","field1","field2","field3","fieldDict","fieldFont","fieldFormattedValues","fieldId","fieldIds","fieldObj","fieldRef","fieldType","fieldWidth","fields","fieldsArray","fieldsToFlatten","fieldsToProcess","file","fileEncryptionKey","fileId","fileReader","fileSpec","fileSpecRef","filename","fill","fillAndStroke","fillAndStrokeEvenOdd","fillCanvas","fillColor","fillCtx","fillEvenOdd","fillPatternName","fillRun","fillStrokeMode","fill_window","filled","filledFieldCount","filter","filterByte","filterDict","filterEntry","filterList","filterMethod","filterName","filterSpecs","filterType","filteredRecords","filters","finalValue","find","findASCII85DecodeEnd","findASCIIHexDecodeEnd","findBlock","findBytes","findBytesReverse","findCRL","findDCTDecodeEnd","findDefaultInlineStreamEnd","findIssuerResult","findNextFileMarker","findOCSP","findPlaceholders","findRegexMatches","findStringMatches","findUnequal","finish","finishWorkerTask","first","first3","firstBad","firstBit","firstByte","firstCh","firstChar","firstCharIndex","firstCode","firstCodePoint","firstDescendant","firstId","firstIn","firstInt","firstKid","firstKidDict","firstLineTop","firstNotIn","firstNum","firstObj","firstObjNum","firstOctet","firstPageRef","firstPosition","firstTrailer","firstView","firstViewCopy","firstViewCopyLength","firstWidth","firstX","firstY","fixDimensions","fixTextIndent","fixURL","fixed","fixedtables","fixupEncoding","flag","flag1","flag2","flagIndex","flags","flat","flatQuadPoints","flattenChars","flattenChunks","flattenLayers","flattenedCount","flattener","floor","flush","flushHTML","flushTextContentItem","flush_block_only","flush_pending","fnArray","foldTTTable","font","fontAscent","fontBBox","fontBytes","fontCache","fontChanged","fontChar","fontDescriptor","fontDict","fontDictData","fontDictDataTemp","fontDictTemp","fontDicts","fontDirection","fontExtraProperties","fontFace","fontFamily","fontFieldsHmtx","fontFile","fontFile2","fontFile2Result","fontFile3","fontFile3Result","fontFileResult","fontGetRangesSort","fontHeight","fontItemDecode","fontItemDecodeLong","fontItemEncode","fontItemEncodeLong","fontMatch","fontMatrix","fontName","fontObj","fontProgram","fontRef","fontSize","fontSizeScale","fontStream","fontStreamDict","fontStreamRef","fontSubfamily","fontTypeResult","fonts","fontsDict","fonts_getMetrics","forceRegen","form","formData","formFields","formFound","formKeys","formXObject","format","formatDocumentDate","formatNumber","formatNumber$1","formatNumber$2","formatNumber$3","formatNumber2","formatPdfDate","formatPdfNumber","formatType","formatXRefTableEntry","formatted","found","foundContentType","foundEOI","foundGroup","foundImageMaskGroup","foundIndex","foundInlineImageGroup","foundMessageDigest","fraction","fractionPart","fractionPartCheck","fractionPointPosition","fractionResult","fromBER","fromBase64","fromBase64Util","fromBig","fromBig2","fromData","fromNumH","fromNumL","fromPath","fromRaw","fs","fsSelection","fsType","ft","fullChain","fullChunks","fullName","fullRequestXhr","fullRequestXhrId","fullSrcDiff","functionDict","functions","fuzzy","g","gatherer","genNum","genNumToken","genTtable","gen_bitlen","gen_codes","generalName","generalNames","generateBackgroundAndBorder","generateButtonAppearance","generateCheckboxAppearance","generateCombAppearance","generateDropdownAppearance","generateEncryption","generateFont","generateHighlightAppearance","generateListBoxAppearance","generateMultilineAppearance","generateOwnerEntries","generatePermsEntry","generateRadioAppearance","generateRandomPassword","generateSingleLineAppearance","generateSquigglyAppearance","generateStrikeOutAppearance","generateSubkeys","generateSubsetTag","generateTextAppearance","generateUnderlineAppearance","generateUniqueName","generateUserEntries","generation","generationWidth","generator","geometryResult","getArrayBuffer","getAvailableSpace","getB","getBBox","getBaseFontName","getBinarySync","getBit","getBlockBufferOffset","getBorderDims","getCaIssuersUrl","getCatalog","getCharCodes","getCharUnicodeCategory","getColor","getColorOperators","getColorValues","getCompositeGlyphIds","getCrypto","getCrypto2","getCryptoEngine","getCurrentPara","getCurrentTextTransform","getCurrentTransform","getCurrentTransformInverse","getCustomHuffmanTable","getDataProp","getDigestAlgorithmOid$1","getDocument","getEexecBlock","getEmbeddedFileStream","getEncoding","getEncodingByName","getEncodingForStandard14","getEngine","getEnglishName","getFamilyName","getFilename","getFilenameFromContentDispositionHeader","getFilenameFromUrl","getFloat","getFloat214","getFontFileType","getFontMetrics","getFontResourceName","getFontSubstitution","getGlyph","getGlyphName","getHeaderBlock","getHints","getImageSmoothingEnabled","getIndexes","getInheritableFieldName","getInheritableFieldNumber","getInheritableProperty","getInlineImageCacheKey","getInt","getInt16","getInt8","getInteger","getItems","getKeyLengthBytes","getKeyword","getLayers","getLookupTableFactory","getMacGlyphIndex","getMeasurement","getMimeType","getModificationDate","getName","getNewAnnotationsMap","getObject","getOperator","getOperator2","getOutput","getPageCount","getPageDict","getPages","getPaintOp","getPaintOpWithWinding","getParametersValue","getParentToUpdate","getPdfColor","getPdfColorArray","getPdfFilenameFromUrl","getPdfManager","getPlainText","getPredefinedCharset","getPredefinedEncoding","getQuadPoints","getRGB","getRGB2","getRanges","getRatio","getRectDims","getRelevant","getResponseOrigin","getRgbColor","getRotationMatrix","getSerialKey","getShadingPattern","getSignatureAlgorithmOid","getSizeInBytes","getStandard14BasicMetrics","getStandard14DefaultWidth","getStandard14GlyphWidth","getStandardFontName","getStandardString","getStandardTable","getSteps","getStreamSubtype","getStringOption","getStyleToAppend","getSubroutineBias","getSymbolDictionaryHuffmanTables","getTextRegionHuffmanTables","getTilingPatternIR","getTrailerDict","getTransformMatrix","getTransformedBBox","getUint16","getUint32","getUnicodeForGlyph","getUnicodeRangeFor","getUrlProp","getUuid","getValue","getVerbosityLevel","getWasmImports","getXRefStreamTable","getXRefTable","getXfaFontDict","getXfaFontName","getXfaFontWidths","getXfaPageViewport","gid","gidHex","gidToCodePoint","gidWidths","gids","globalSubrIndex","glyf","glyfData","glyph","glyphCache","glyphData","glyphHeightScaled","glyphId","glyphIndex","glyphName","glyphNameIndex","glyphNames","glyphOffset","glyphToChars","glyphToUnicode","glyphWidthScaled","glyphsLength","gn","got","gradient","gradientPattern","graphics","grayMatch","grayToRGBA","grayscale","green","group","groupByBaseline","groupCharsIntoLines","groupCtx","groupEnd","groupIntoSpans","groupIntoSubsections","groupLength","groupPermitted","groupStart","groups","gs","gsName","gt","gzhead_extra","gzheader","gzip$1","gzip_1","gzip_1$1","h","h1","hView","hadChanges","halfLen","handleBreak","handleGeneratePdf","handleOverflow","handleSetFont","handler","hasAlpha","hasAltTextStats","hasBit","hasBitmap","hasCFF","hasChanged","hasChanges","hasDecimal","hasDescendantFonts","hasDigit","hasDigits","hasDirtyDescendant","hasDraggingStarted","hasEscape","hasExponent","hasFill","hasFonts","hasGlyph","hasLayers","hasMargin","hasMatchingState","hasMk","hasPostScriptNameId","hasSecurityChanges","hasSeenTextShowOp","hasStroke","hasSupplement","hasUtf16BOM","hasVisibleWidgets","has_stree","hash","hashAlgo","hashAlgorithm","hashAlgorithmOID","hashC","hashData","hashInput","hashIssuerKey","hashIssuerName","hashLength","hashOID","hash_head","hashedMessage","hashes","hashesObject","hbuf","hcmFilterId","hdrSize","head","headRecord","header","headerPos","headerSize","headers","height","heightPercent","heightScale","helveticaDict","here","hex","hex1","hex2","hexBytes","hexChars","hexLength","hexMap","hexMatches","hexNumbers","hexSignature","hexToBytes","hexToCodeUnits","hexToInt","hexToStr","hexToUnicode","hexValue","hhea","hi","hi2","hidden","high","highlight","highlightDiv","highlightY","highlights","hmacAlgorithm","hmacHashAlgorithm","hmacKey","hmacOID","hmetrics","hmtx","horizontalRadius","hour","hourDifference","html","httpHeaders","huff","i","i2","iRound","icComponents","id","id1","id2","idArray","idBlockBuf","idDeltas","idRangeOffsetPos","idRangeOffsets","id_AnyPolicy","id_AuthorityInfoAccess","id_AuthorityKeyIdentifier","id_BaseCRLNumber","id_BasicConstraints","id_CRLBag_X509CRL","id_CRLDistributionPoints","id_CRLNumber","id_CRLReason","id_CertBag_AttributeCertificate","id_CertBag_SDSICertificate","id_CertBag_X509Certificate","id_CertificateIssuer","id_CertificatePolicies","id_ContentType_Data","id_ContentType_EncryptedData","id_ContentType_EnvelopedData","id_ContentType_SignedData","id_ExtKeyUsage","id_FreshestCRL","id_InhibitAnyPolicy","id_InvalidityDate","id_IssuerAltName","id_IssuingDistributionPoint","id_KeyUsage","id_MicrosoftAppPolicies","id_MicrosoftCaVersion","id_MicrosoftCertTemplateV2","id_NameConstraints","id_PKIX_OCSP_Basic","id_PolicyConstraints","id_PolicyMappings","id_PrivateKeyUsagePeriod","id_QCStatements","id_SignedCertificateTimestampList","id_SubjectAltName","id_SubjectDirectoryAttributes","id_SubjectInfoAccess","id_SubjectKeyIdentifier","id_ad","id_ad_caIssuers","id_ad_ocsp","id_eContentType_TSTInfo","id_pkix","idatChunks","identitySid","ids","idx","iframe","ig","ignoreErrors","ii","image","imageData","imageElement","imageName","imagePromise","img","imgData","importAesKwKey","import_meta","import_pvtsutils","importedKey","inSMaskMode","inTextBlock","incHex","includeSet","incomingOffset","incomingResult","incrementCodeUnits","incrementalUpdate","index","indexArray","indexOf","indices","indicesBuf","indicesToRemove","indicesView","indirectObj","individual","inf","inferredState","inffast","inflate$1","inflate$2","inflateEnd","inflateEnd_1","inflateGetHeader","inflateGetHeader_1","inflateInfo","inflateInit","inflateInit2","inflateInit2_1","inflateInit_1","inflateRaw$1","inflateRaw_1","inflateRaw_1$1","inflateReset","inflateReset2","inflateReset2_1","inflateResetKeep","inflateResetKeep_1","inflateReset_1","inflateSetDictionary","inflateSetDictionary_1","inflateStateCheck","inflate_1","inflate_1$1","inflate_1$2","inflate_2","inflate_2$1","inflate_fast","inflate_table","inflator","info","info2","infoAccess","infoDict","infoRef","inftrees","inherited","inhibitAnyPolicyIndicator","inhibitAnyPolicyPending","initCryptoEngine","initRuntime","init_block","initialData","initialExcludedSubtreesSet","initialExplicitPolicy","initialInhibitPolicy","initialInput","initialOutputX","initialOutputY","initialPermittedSubtreesSet","initialPolicyMappingInhibit","initialPolicySet","initialRequiredNameForms","initialSize","initialTagNumber","inkList","inlineImage","inlineSource","input","input2","inputLength","inputOffset","inputRowSize","inputView","insertIndex","inset","inspectFont","installed","instance","instance2","instanceCount","instanceSize","instanceStart","instances","instantiateSync","instructionLength","instructions","int1","int16","int2","int32","intArrayFromBase64","intBuffer","intMicros","intMillis","intTagNumberBuffer","integer","intent","intentArgs","intentObj","intentPrint","intentState","interlaceMethod","internalRenderTask","internalReserved","internalValue","interpolate","intersect","inv","invRotationMatrix","invSbox","invTransf","inverse","ip","irt","isAddToPathSet","isAligned32","isAnnotationSubtype","isArc","isArrayEqual","isAscii","isAuthEvent","isBooleanArray","isBound","isBytes","isBytes2","isBytes3","isCA","isCFFCIDFontProgram","isCFFFile","isCFFType1FontProgram","isCIDFont","isCIDFontSubtype","isCertificateCA","isCertificateRevoked","isChecked","isCmd","isCommandLetter","isCryptFilterMethod","isCryptoEngine","isDataScheme","isDelimiter","isDestinationType","isDiagonal","isDict","isDigit","isDigit$1","isEmbedded","isEmbeddedFont","isEmpty","isEncrypted","isEncryptedTrailer","isEncryptionRevision","isEncryptionVersion","isEqual","isEqualBuffer","isEvalSupported","isEvalSupported2","isEven","isExistingFont","isFileAttachmentIcon","isFirstInSequence","isFixedPitch","isFontReady","isHTMLAnchorElement","isHexDigit","isHexOnly","isHorizontal","isIdentity","isImageDecoderSupported","isInlineImageOperation","isJpeg","isKnownFontName","isLE","isLE2","isLegacyPbeOid","isLinearizationDict","isLinearized","isLittleEndian","isMacKey","isMacNameRecord","isName","isNegative","isNodeJS","isNoneMode","isNotForRichText","isNumberArray","isNumberStart","isNumberStart$1","isOdd","isOffscreenCanvasSupported","isOn","isOpenType","isOpenTypeFile","isPDFFunction","isParsedOperation","isPasswordCredential","isPatternFill","isPdfFile","isPng","isPopupAnnotation","isPopupAnnotation2","isPostScript","isPrintOnly","isRefProxy","isRefsEqual","isRegularChar","isRemovedObjr","isRenderable","isRequired","isRtlPlaced","isSOFMarker","isSameAltText","isSamePageIndex","isScalingMatrix","isSelfSigned","isSimpleAsciiName","isSimpleFontSubtype","isSpace","isSpecial","isStandard14Font","isString","isStringPair","isStructElement","isTextAnnotationIcon","isTextAnnotationState","isTextAnnotationStateModel","isTextInvisible","isTooBig","isTrueTypeCollectionFile","isTrueTypeFile","isTrueTypeFontProgram","isTrusted","isTwoByteOperator","isType1File","isUTC","isValid","isValidExplicitDest","isValidFetchUrl","isValidJP2","isVersion1","isWhite","isWhiteSpace","isWhitespace","isWhitespace$1","isWhitespaceString","isWidgetAnnotation","isWinAnsiStandard14","isWinNameRecord","isWordBoundary","issuer","issuerCertificate","issuerCertificates","issuerDer","issuerDomainPolicyIndex","issuerKey","issuerKeyBuffer","issuerKeyHash","issuerNameHash","issuerObj","issuerSerial","issuerView","italic","italicAngle","item","itemResolved","items","iter","iterKey","iterValue","iterateImageGroup","iterateImageMaskGroup","iterateInlineImageGroup","iterateShowTextGroup","iterationCount","iterations","iv","ivBuffer","ivView","j","j2","ji","jj","js","jsName","jwk","k","k1","k2","k3","k32","kEnd","kEndUnrolled","kResolved","kdf","kdf2","kdfResult","kdfResult2","kdfWithCounter","kekAlgorithm","kekKey","kekOID","key","key2","keyBag","keyCrypto","keyId","keyIdentifier","keyIdentifierBuffer","keyIdentifierView","keyIndex","keyIndexBuffer","keyIndexView","keyIndexView16","keyIndexView8","keyInfo","keyInfoAlgorithm","keyLength","keyLengthBits","keyObj","keySalt","keyToken","keyUsagePresent","keys","keystreamByte","keyword","keywordsStr","kid","kidKeys","kidRef","kids","kn","knownOptions","kwAlgorithm","kwLength","kwLengthBuffer","kwLengthView","kx","ky","l","label","lambda","langvalue","last","lastBottom","lastByte","lastCertInChain","lastChar","lastCharIndex","lastDesiredSize","lastDot","lastEdge","lastElement","lastEndPt","lastLineBottom","lastMetricGid","lastPoint","lastPointX","lastPointY","lastSlash","lastTop","lastX","lastY","layer","layerCount","layerHeight","layerOffsetX","layerOffsetY","layerResult","layerWidth","layers","layoutClass","layoutJustifiedLine","layoutNode","layoutText","lbase","le","leafCert","left","leftIsFormId","leftPatterns","leftSideBearings","legacy","len","len1","len2","lenBlockBuf","lenIV","lenOffset","length","length1","lengthBufferView","lengthByte","lengthObj","lengthResolver","lenient","level_flags","lext","lib","limit","limits","line","lineAttributes","lineBbox","lineCapToNumber","lineGap","lineGroups","lineHeight","lineIdx","lineJoinToNumber","lineLength","lineSize","lineSpan","lineText","lineTo","lineWidth","lineX","lineY","linearized","lines","link","linkElement","linkService","literalLength","literalStart","littleSigma","littleSigmaPrime","lm_init","lo","lo2","loadDocument","loadTestFontId","loadedPages","loader","loading","loca","localCerts","localChangeType","localFromBER","localFromBERWithChildContext","localNotAfter","localNotBefore","localResult","location","locked","lockedArray","log2","logId","logo","longTermValidation","longest","longest_match","lookahead","lookupCmap","lookupMap","lookupMatrix","lookupNormalRect","lookupRect","low","lsb","lt","ltrCallback","ltvData","m","macIndex","macSeconds","mainKey","maj","major","majorVersion","makeColorComp","makePKCS12B2Key","makeTable","makeupTable","map","mapBfRange","mapData","mapR2","mapSpecialUnicodeValues","mapStyle","mapToStandardFont","mapped","mappedGid","margin","marker","markerLength","mashInverse","mask","maskCanvas","maskCtx","maskToCanvas","maskX","maskY","match","matchText","matches","matches2","matches3","matrix","matrixArray","matrixScale","max","max2","maxChainLength","maxComponentDepth","maxComponentElements","maxCompositeContours","maxCompositePoints","maxContours","maxCounter","maxFunctionDefs","maxGeneration","maxImageSize","maxIndex","maxInstructionDefs","maxKey","maxLen","maxLength","maxLines","maxMemType1","maxMemType42","maxObjNum","maxObjectNumber","maxOffset","maxOldGid","maxPoints","maxSize","maxSizeOfInstructions","maxStackElements","maxStorage","maxTwilightPoints","maxValue","maxWidth","maxX","maxY","maxZones","max_blindex","max_code","max_count","max_length","maxp","maybe","maybeDate","maybeEIPos","maybeTime","md5","mdpWarning","measureStandard14Text","measureText","measureToString","measuredWidth","mediaBox","mergeBboxes","merged","message","messageDigest","messageDigestValue","messageHandler","messages","metadata","metrics","mi","mid","midX","midY","midY1","midY2","middle","mimeType","min","min2","minHeight","minKey","minLeftSideBearing","minMaxForBezier","minMemType1","minMemType42","minRightSideBearing","minValue","minWidth","minX","minY","min_block","min_count","minor","minorVersion","minute","minuteDifference","mirrorContextOperations","mixInverse","mk","modDate","modValue","model","modificationDate","modified","modifiedAt","mon","month","move","moveText","moveTo","mt","mul","mul2","multiplier","multiply","mustBeAddedInUndoStack","mustBeCA","mustBeSelected","mustRemoveAspectRatioPromise","n","n32","nCodes","nEntry","nLeft","nRanges","nSups","nX","nY","name","nameBuf","nameField","nameIndex","nameLen","nameMatch","nameObj","namePrepared","nameSplitted","nameStart","nameStr","nameValue","nameView","namedCurve","names","namesArray","nativeFontFace","nearestPowerOf2","needLastWidth","needRestore","needle","needsEncodingFixup","needsSpace","negative","network_getArrayBuffer","newASN1Type","newArray","newBuffer","newBytes","newComponentGid","newContent","newEditors","newEntry","newGID","newGid","newHeight","newId","newLines","newLoca","newMatrix","newNameTree","newNum","newObject","newObjectNumber","newOffset","newPath","newR","newRange","newRef","newSize","newStart","newStep","newStream","newText","newToOld","newTransfCenterPoint","newValue","newView","newWidth","newX","newY","next","nextAngle","nextChar","nextCode","nextFileName","nextFirstPosition","nextIteration","nextNum","nextPeek","nextRunLength","next_code","next_out_utf8","nextlen","ni","nibble","nibbles","nice_match","noContextMenu","node","nodeCrypto","nodeToSerializable","node_utils_fetchData","nodesLimitError","nonHorizontalLeftSideBearings","nonSerializableClosure","nonTerminal","nonZeroPosition","nonZeroStart","nonce","noneOptionElement","normX","normY","normalizeBlendMode","normalizeCredential","normalizeFontName","normalizeName","normalizeUnicode","normalized","normalizedAction","normalizedAlgorithm","normalizedCandidate","normalizedOption","normalizedOptionMap","normalizedOwnerHash","normalizedRect","normalizedRequested","normalizedUserHash","now","ns","nsPort","nullRef","num","num2","numArgs","numBytes","numComponents","numCustomNames","numEntries","numGlyphs","numGlyphsBuf","numGroups","numHMetrics","numInstr","numLengthBytes","numLongs","numNonHorizontal","numPairs","numRecords","numSegments","numStr","numTables","numWaves","number","numberOfContours","numberOfLines","numberToString","numbers","numericText","nums","o","obj","obj2","objId","objKeyword","objNum","objNumToken","objStreamParser","object","objectFromMap","objectParser","objectSize","objectStreamCache","objectStreamParser","objs","objsPool","ocPropsDict","ocg","ocgsArray","ocsp","ocspHashes","ocspRefs","ocspRefsForVri","ocspRequest","ocspResp","ocspResponderCerts","ocspResponse","ocspResponses","ocspResult","ocspUrl","oddPages","ofLen","offArray","offContent","offSize","offState","offs","offscreen","offscreenCtx","offset","offset1","offset2","offsetArrayStart","offsetHour","offsetMinute","offsetToAxisValueOffsets","offsetToken","offsetWidth","offsetX","offsetX2","offsetY","offsetY2","offsets","oidNist","ok","ok_response_on_range_request","old","oldDiag","oldRotation","oldToNew","oldToNewGidMap","old_flush","onAbort","onArray","onClick","onContent","onFailure","onFn","onSuccess","onText","onValue","op","opInfo","opacity","openArray","openProc","operands","operations","operator","operatorList","operatorListChanged","operatorMap","oppositePoint","oppositeX","oppositeY","ops","opt","optArray","optIdx","optValues","optimizeWidthsArray","option","optionElement","optionValue","options","opts","order","orderLineChars","orderedEntries","ordering","organization","origin","originalPassword","originator","os","os2","ot","other","otherClickAction","otherItem","otherRaw","otherRequest","outBitIdx","outBuf","outByteIdx","outCpX","outCpY","outLen","outRow","outX","outX1","outX2","outY","outY1","outY2","outline","outlineVerticalEdges","outliner","outlinerForOutline","outlines","output","output2","outputArray","outputBytes","outputLength","outputOffset","outputRow","outputScale","overallLength","overflow","overlapBytes","oview","ownerBBox","ownerDocument","ownerHash","ownerPassword","ownerResult","p","p0","p0x","p0y","p1","p1Keys","p1x","p1y","p2","p3","p32","p4","pDistance","pa","pad","padCount","padLen","padNumber","padPCKS","padPassword","padded","paddedHeight","paddedHex","paddedPassword","paddedTimestampBytes","paddedWidth","padding","paddingByte","paddingEdge","paddingString","paethPredictor","paethPredictor$1","page","pageCount","pageDict","pageEntry","pageIndex","pageNum","pageProxy","pageRef","pageRefs","pageText","pageWidgets","pages","pagesBeforeRef","pagesDict","pagesRef","pagesToSearch","paintWidth","paintXObject","pako","palette","panose","paragraphs","paramCount","parameters","params","paramsAsn1","paramsEntries","paramsObject","paramsSeq","parenDepth","parent","parentRef","parentTree","parentWidth","parmsEntry","parse","parseAppearanceStream","parseAvarTable","parseAxisValue","parseBfChar","parseBfCharContent","parseBfCharSections","parseBfRange","parseBfRangeContent","parseBfRangeSections","parseCFF","parseCIDFont","parseCIDFontFromDescendants","parseCIDWidths","parseCMap","parseCMapFromEncoding","parseCMapName","parseCertificate","parseCertificate$1","parseCff","parseChoiceOptions","parseCidChar","parseCidCharContent","parseCidCharSections","parseCidRange","parseCidRangeContent","parseCidRangeSections","parseCmap","parseCmapTable","parseCodespaceContent","parseCodespaceRange","parseCodespaceRanges","parseColorArray","parseCompositeFont","parseCompositeGlyph","parseContext","parseCryptFilter","parseDAString","parseDefaultAppearance","parseDefaultConfig","parseDocBaseUrl","parseEmbeddedProgram","parseEncoding","parseEncodingDict","parseEncryptionDict","parseExistingFont","parseExpression","parseFileSpec","parseFloatOperand","parseFont","parseFontProgram","parseFormat0","parseFormat12","parseFormat4","parseFormat6","parseFvarTable","parseGlyfTable","parseGlyphData","parseHeadTable","parseHheaTable","parseHmtxTable","parseIHDR","parseJbig2Chunks","parseJpegHeader","parseLocaTable","parseMaxpTable","parseNameTable","parseNestedOrder","parseOS2Table","parseOnOff","parseOperand","parseOrder","parsePdfDate","parsePermissions","parsePfb","parsePng","parsePostTable","parseRBGroups","parseRevision","parseSimpleFont","parseSimpleGlyph","parseStatTable","parseSubtable","parseSvgPath","parseTTF","parseToUnicode","parseToUnicodeMap","parseType1","parseUrlOrPath","parseVersion","parseVersion2","parseWMode","parseXFAPath","parsed","parsedEntries","parsedKey","parsedSID","parsedValue","parser","parserArray","partialChunkHeight","partialName","parts","passedWhenNotRevValues","password","passwordBuffer","passwordBytes","passwordString","passwordTransformed","passwordUtf8","passwordView","paste","patchByteRange","patchContents","path","pathArr","pathByColumnId","pathDepth","pathElement","pathEntry","pathId","paths","pattern","patternArray","patternCtx","patternDifference","patternFill","patternFound","patternLength","patternName","patternStroke","payload","paymentRadio","pb","pbeParams","pbes2Parameters","pbkdf2Key","pbkdf2OID","pbkdf2Params","pbkdfKey","pc","pc1","pdf","pdfBug","pdfButtonValue","pdfBytes","pdfCatalog","pdfDoc","pdfFieldId","pdfFieldName","pdfFields","pdfFont","pdfManagerReady","pdfSigningInfo","pdfString","pdf_signing_dialog_exports","pdf_signing_worker_generated_default","peekBits","peekToken","pendingAction","pendingConstraints","pendingNibble","pendingRequest","permanent","permissions","permissionsRaw","permittedSubtrees","perms","permute","pfbdata","pfx","phi","pi","pickPlatformItem","pieceView","pixelRatio","pixels","pkcs5","pkcs8Asn1","pkcsKey","pki","placeholders","plain","plainBytes","plus","point","pointCount","pointerUpCallback","pointerup","points","policiesAndCerts","policyId","policyIndex","policyMappingInhibitIndicator","policyMappingInhibitPending","policyMappings","policyResult","polyline","popGraphicsState","popup","popupContent","popupDict","popupLeft","popupLines","popupRef","popupToElements","popupTop","popups","port","pos","pos1","pos2","position","positionMapCount","positioned","positiveOnly","post","postRun","postScriptName","potentialR","pow2_24","power2","powers2","pp","pqdownheap","preRun","predefined","predictor","prefixBytes","prefixRef","prefixStream","prefs","prepareAlgorithm","prepareBlockEncrypt","prepareComponents","prepareIndefiniteForm","prepareObjectForWrite","prepared","preset","prev","prevBlock","prevChar","prevChild","prevData","prevEntry","prevGapX","prevGapY","prevHeight","prevLength","prevRow","prevWidth","prevX","preview","previewButton","previousFocus","previousWorker","prevlen","prfAlgorithm","printWindow","privateDict","privateDictData","privateDictOffset","privateDicts","privateEntry","privateKey","privateKeyASN1","privateKeyInfo","privateKeyJSON","privateOffset","privateSize","processSegment","processSegments","processed","program","promise","promiseBody","promises","properties","propertyName","proto","provider","pruneNumberTree","pruneObjrKids","ps","ps0","pssParameters","publicKey","publicKeyASN1","publicKeyAlgorithm","publicKeyAlgorithmParams","publicKeyBase64","publicKeyData","publicKeyInfo","publicKeyInfoBuffer","publicKeyJSON","publicKeyJWK","pullCapability","pump","pushGraphicsState","pushWhitespace","putBinaryImageData","putBinaryImageMask","putShortMSB","put_byte","put_short","pvtsutils","pvtsutils2","px","py","q","qStream","qn","qp","quadPoints","quaddingToAlignment","quadraticCurveTo","quads","quantizeAndInverse","queue","queuedChunks","quoted","quotient","quotindex","r","rBuffer","rHeight","rInteger","rTlX","rTlY","rValueView","rView","rWidth","ra","rad","radial","radians","radius","radix","random","randomBytes","range","rangeChunkSize","rangeEnd","rangeHeader","rangeMappings","rangeMatch","rangeOffset","rangeReader","rangeShift","rangeStart","rangeTransport","ranges","rank","ratio","ratio2","ratioX","ratioY","raw","rawResponseHeaders","rawValue","rc4","rc4Key","rd","reFilename","reURI","reachableKeys","read","readBit","readBits","readChunk","readCmapTable","readCode","readDataBlock","readInt8","readNameTable","readOpenTypeHeader","readPostScriptTable","readRegionSegmentInformation","readSegmentHeader","readSegments","readSupplement","readTableEntry","readTables","readToken","readTrueTypeCollectionData","readTrueTypeCollectionHeader","readUint16","readUint32","readUint32BE","readUncompressedBitmap","read_buf","readableStream","reader","receive","receiveAndExtend","receiveInstance","recipientCertificate","recipientCurveLength","recipientIdentifier","recipientInfo","recipientInfoParams","recipientKey","reconstructEncryptDict","reconstructedDict","record","recordType","records","recordsData","recoverGlyphName","recoverJsURL","recoveryOptions","rect","rectHeight","rectPathOps","rectToArray","rectToQuadPoints","rectWidth","rectangle","rectsToQuadPoints","red","ref","refKey","refKey2","refRow","refStr","refs","refsToRemove","regex","region","registerFontObjects","registry","regular","remainder","remaining","remainingAttachments","remainingKeys","removeAnnotationsFromStructTree","removeEmptyEntry","removeMatchingEntry","removeRunDependency","removed","removedKeys","removedWidgetRefs","renderActionButton","renderButton","renderSigningPreview","renderTask","rendered","renderingIntent","renumberMap","renumberRef","renumberRefs","renumbered","renumberedEncrypt","renumberedInfo","renumberedRoot","repeatCount","replacePreview","request","requestCapability","requested","requestsCapability","require2","require_build","requiredNameForms","requiredSize","res","resetAnnotations","resetCtxToDefault","resetLastChars","resize","resizeImageMask","resizeRgbImage","resizeRgbaImage","resolve","resolveAppearanceFont","resolvePageSize","resolvePath","resolveRotationOrigin","resolved","resolvedPdfSource","resolver","resources","resourcesDict","responderCerts","response","responseHeaders","responseOrigin","restoreNeeded","result","result2","resultBuffer","resultOffset","resultString","resultView","results","ret","retBuf","retBuf2","retBuffers","retView","retView2","returnObject","returnValues","reverseValues","reviewAndSignPdf","revision","rfc2047decode","rfc2231getparam","rfc2616unquote","rfc5987decode","rg","rgb","rgb2","rgbMatch","rhs","richText","right","rightIsFormId","rightPatterns","rmAbort","root","rootDiv","rootHtml","rootRef","rosOperands","rotate","rotateDegrees","rotateLeft28","rotateOriginX","rotateOriginY","rotation","rotationMatrix","rotl","rotl2","rotl32_8","rotlBH","rotlBL","rotlSH","rotlSL","rotr","rotr2","rotr32H","rotr32L","rotr32_8","rotrBH","rotrBH2","rotrBL","rotrBL2","rotrSH","rotrSH2","rotrSL","rotrSL2","round","roundToOneDecimal","roundWithTwoDigits","rounded","roundedRectPathOps","rounds","row","rowBytes","rowCount","rowData","rowIndex","rowMapping","rowStart","rows","rsaOAEPParams","rsaPssPublicKeyJSON","rsaPublicKeyJSON","rule","run","run1","run2","runBidiTransform","runCaller","runLength","runValue","runner","rx2","ry2","s","s0","s0h","s0l","s1","s1h","s1l","s1x","s1y","s2x","s2y","sBuffer","sInteger","sValueView","sView","safeContent","safeContents","safeContentsCount","safeContentsParams","safeString16","salt","saltBuffer","saltLength","saltValue","saltView","sanitizeGlyph","sanitizeGlyphLocations","sanitizeHead","sanitizeMetrics","sanitizeTTProgram","sanitizeTTPrograms","save","saveLastChar","saved","savedColor","savedCursor","savedDisplay","savedDraggable","savedFillStyle","savedFilter","savedFontsize","savedHeight","savedOpacity","savedParentCursor","savedPos","savedPosition","savedText","savedThickness","savedValue","savedVisibility","savedWidth","savedX","savedY","sb","sbox","sbox22","sboxOut","sboxVal","scale","scale01","scale10","scaleAndClamp","scaleFactorStr","scaleX","scaleY","scaled","scaledAccentX","scaledAccentY","scaledHeight","scaledLineWidth","scaledRx","scaledRy","scaledWidth","scaledXLineWidth","scaledYLineWidth","scan","scan_end","scan_end1","scan_tree","scanner","schema","schemaView","scratchCanvas","script","scripts","sd","searchAnyPolicy","searchLimit","searchNode","searchPage","searchRange","searchStart","searchText","second","secondInt","secondNum","secondView","secondViewCopy","secondViewCopyLength","secondX","secondY","seconds","security","securityHandler","seen","seenSerials","seg","segCount","segDelta","segEnd","segStart","segmentAngle","segmentLength","segmentRangeOffset","segments","selStart","selectChild","selectElement","selectFont","selected","selectedContent","selectedCount","selectedIndices","selectedValue","selectedValues","selection","self2","sendTest","send_all_trees","send_bits","send_code","send_tree","sentinel","separateGrayAlpha","separateRgbAlpha","seq","seqStream","sequenceLengthBlock","sequenceUnit","sequenceValue","serial","serialDer","serializeOperators","serialized","serializedLines","serializedPoints","sessionKey","set","setAccess","setBigUint64","setColor","setColorAndOpacity","setDash","setDashPattern","setEngine","setFillColor","setFillColor$1","setFirstUnsplittable","setFont","setFontFamily","setFontsize","setGraphicsState","setLayerDimensions","setLeading","setLineCap","setLineJoin","setLineWidth","setMinMaxDimensions","setMiterLimit","setNonStrokingCMYK","setNonStrokingColorN","setNonStrokingColorSpace","setNonStrokingGray","setNonStrokingRGB","setPara","setStrokeColor","setStrokeColor$1","setStrokingCMYK","setStrokingColorN","setStrokingColorSpace","setStrokingGray","setStrokingRGB","setTabIndex","setText","setTextMatrix","setThickness","setU64FromNum","setValues","setVerbosityLevel","setter","setupDoc","sha1","sha12","sha256","sha2562","sha384","sha3842","sha512","sha5122","shaAlgorithm","shadingName","shadow","sharedSecret","sharedTextDecoder","shift","shiftX","shiftY","shiftedMinX","shiftedMinY","shortestIndex","shortestLength","shouldAddWhitepsace","shouldCheck","shouldScaleText","showText","shownFontName","shownFontSize","shownTextColor","shrSH","shrSH2","shrSL","shrSL2","si","sid","sidBlock","sidStr","sidValue","sig","sigAlgOid","sigDict","sigField","sigFields","sigLen","sigRefs","sigma","sigma0","sigma0h","sigma0l","sigma1","sigma1h","sigma1l","sigmaPrime","sign","signChar","signPdfWithCertificate","signal","signature","signatureAlgorithm","signatureCount","signatureDict","signatureFields","signatureHash","signatureLength","signatureParameters","signatureParams","signatureRef","signatureValue","signed","signedAttr","signedAttrs","signedAttrsForSigning","signedData","signedFields","signedInt16","signer","signerCert","signerInfo","signerInfoHashAlgorithm","signingCert","signingCertDer","signingCertV2","simpleFillText","simpleFont","sin","sin1","sin2","sinPhi","single","size","sizeDiff","skipData","skipSignatures","skipToEI","skipUntil","skipWs","skipped","skippedFieldCount","slide_hash","slowDownFactor","small","smallInt","smallIntBuffer","smallIntView","smaller","smask","smaskStream","sorted","sortedCids","sortedGids","sortedStops","sortedTables","source","sourceFieldId","sourceId","sourceLines","sourceName","sourceValue","sourceValues","sourceWasEncrypted","sources","spacePerGap","spaceThreshold","spaceWidth","spacing","spacingDir","span","spans","spliceString","split","split2","splitURI","sq","sqrtDelta","sqrtLambda","square","squiggly","src","srcByte","srcCode","srcDiff","srcLength","srcObj","srcPage","srcPos","srcResources","ss","stack","stamp","standardFontDataUrl","start","startCapability","startCell","startCharIndex","startCid","startCode","startCodes","startGlyph","startIndex","startPos","startWorkerTask","startX","startXRef","startY","startxrefPos","state","stateEntry","stateKey","stateStack","states","static_dtree","static_init_done","static_ltree","stats","status","statusElement","step","steps","stmData","stopEvent","storage","storedData","storedHash","str","strBuf","strLen","strLength","strToInt","strategy","stream","streamController","streamEntries","streamEntry","streamId","streamKeywordPosition","streamObj","streamOrder","streamParser","streamRef","streamResult","streamSink","streamType","streamViewLength","stree","strend","stride","strikeout","strikeoutPosition","strikeoutSize","string","string16","string2buf","string32","stringBlockNames","stringBytes","stringDataSize","stringIndex","stringLength","stringOffset","stringPrep","stringStorageStart","stringToArrayBuffer","stringToAsciiOrUTF16BE","stringToBytes","stringToPDFString","stringToUTF16HexString","stringToUTF16String","stringToUTF8String","stringToken","strings","stripQuotes","stripe","strippedCms","strm","stroke","strokeColor","strokePatternName","structParent","structTreeRoot","style","styleElement","styleSheet","subByte","subFilter","subarrayView","subdict","subfamilyNameId","subject","subjectAltNames","subjectDomainPolicyIndex","subjectView","subkeys","submit","subrsOffset","subscriptXOffset","subscriptXSize","subscriptYOffset","subscriptYSize","subsections","subsetFont","subsetResult","subsetTag","subsetter","subtable","subtableLength","subtables","subtleArg","subtype","subtypeName","success","suffixBytes","suffixRef","suffixStream","suggestedFilename","sum","superscriptXOffset","superscriptXSize","superscriptYOffset","superscriptYSize","supplement","supported","suspendedCtx","svg","swap32IfBE","swatch","sx","sy","sym","sysInfoDict","t","t0","t02","t0x","t0y","t1","t12","t1x","t1y","t2","t22","t3","t32","tRNS","table","tableChecksums","tableData","tableDecoding","tableEncoding","tableEnd","tableEntry","tableId","tableIndex","tableLength","tableRecords","tableStart","tableTag","tables","tag","tagByteIndex","tagBytes","tagClassMask","tagNumberMask","tagl","tail","tailLength","take","target","targetAction","targetColor","targetState","targetStateName","targetWidget","task","tbs","tbsCertList","tbsCertificate","temp","tempBuf","tempDate","tempValue","tempValueView","tempView","template","temporaryPatternCanvas","termTable","terminateEarly","terminated","test","testFont","testLine","testObj","testWidth","text","textBlockFillColor","textBlockFontName","textBlockFontSize","textColor","textContent","textDiv","textDivProperties","textDivs","textEncoder","textHScale","textIndex","textInputChecker","textLayer","textMatch","textRenderingMode","textToCharMap","textWidth","textX","textY","textdecode","texture","tg","thX","thY","theta1","third","thisChunkHeight","thisName","thisRaw","threshold","tildePos","tileHeight","tileWidth","timeBuffer","timeString","timeView","timeout","timeoutId","timestamp","timestampCerts","timestampDict","timestampRef","timestampSerial","timestampStream","timestampToken","timestampsData","title","tlX","tlY","tmRotated","tmScale","tmp","tmp32","tmpCanvas","tmpCanvas2","tmpCanvasId","tmpCtx","tmpCtx2","tmpDict","toAdd","toArrayBuffer","toBase64","toBase64Util","toBeSigned","toBig","toBytes","toClean","toCopy","toHex4","toHexDigit","toHexUtil","toMultiArray","toNumberArray","toParamRegExp","toRaw","toRemove","toRomanNumerals","toStr","toString","toString$1","toStyle","toUnicode","toUnicodeData","toUnicodeHex","toUnicodeMap","toUnicodeRef","toUnicodeStream","token","tokenStart","tokenizer","tokens","toolbar","tooltip","top","topDict","topDictData","topDictIndex","topIndex","topLeft","topY1","topY2","total","totalByteLength","totalChunks","totalFlattened","totalLen","totalLength","totalLength2","totalOut","totalPairs","totalPixels","totalSize","totalWidth","totalWordWidth","touchInfo","trX","trY","tr_static_init","trailer","trailerLength","trans","transf","transfCenterPoint","transfOppositePoint","transform","transformX","transformY","transformed","transformedBBox","transformedCorners","translateX","translateY","transparency","transparentCanvas","transport","transportFactory","transportParams","transpose","trapped","tree","treeRef","trees","triggers","trimmed","tripleDesBlock","truncatePassword","truncatedPassword","trustedCerts","tryAutoDetectFontFile3","tryEmptyPassword","tryParseAsDataURI","tryParseFontFile","tryParseFontFile2","tryParseFontFile3","tsToken","tsVriKey","tsa","tsaCerts","tsaSignerCert","tt","ttf","ttt","tuVal","tx","tx2","ty","ty2","type","type1FontGlyphMapping","typeByte","typeEntry","typeName","typeNames","typeStore","typeToEditor","typeWidth","typeface","types","typoAscender","typoDescender","typoLineGap","tzChar","tzHour","tzMin","tzOffset","u","u32","u64","u64_default","uf","uintArray","ukmBuffer","ukmView","underline","underlinePosition","underlineThickness","undo","unencodable","unfilterAndExtract","unfilterRow","unfiltered","ungzip$1","ungzip_1","unicode","unicodeHex","unicodeRange1","unicodeRange2","unicodeRange3","unicodeRange4","unicodeToCharCodeMap","unicodeToGlyphName","unicodes","unique","unitsHeight","universalTimeRelation","unixSeconds","unprotectedBytes","unreachable","unsetFirstUnsplittable","unwrapSessionKey","up","upLeft","update","updateAcroform","updateAdvanceScale","updateMemoryViews","updatePassword","updateXFA","updatedView","updatewindow","uri","url","urlRegex","urls","us","use","use1","use2","useIncremental","useParentRect","useRound","useSystemFonts","useWorkerFetch","useXRefStream","used","userConstrPolicies","userHash","userKey","userKeyData","userPassword","userResult","usesXRefStreams","utcDate","utf16buf","utf8StringToString","utf8ToBytes","utf8border","utf8str","utilConcatBuf","utilConcatView","utilDecodeTC","utilEncodeTC","utilFromBase","utilToBase","util_FeatureTest","util_ImageKind","ux","uy","v","val","valid","validDefaults","validate","validateAesKey","validateBlockDecrypt","validateBlockEncrypt","validateCSSFont","validateFollowingOperator","validateFontName","validateKeyLength","validateOS2Table","validatePKCS","validateRangeRequestCapabilities","validateResponseStatus","validateTables","validateVersionRevision","validation","validationSalt","value","value1","value2","valueBER","valueBlock","valueBlockBuf","valueBuf","valueExists","valueHex","valueHexView","valueIndex","valueLength","valueMaximum","valueMinimum","valueNameId","valueResult","valueToHtml","valueToken","valueView","values","vendorBytes","verbosity","verbosity2","verificationResult","verifyOwnerPassword","verifyOwnerPasswordR56","verifyPermsEntry","verifyResult","verifyUserPassword","verifyUserPasswordR56","version","version2","versionStart","vertical","verticalRadius","verticesPerRow","verts","view","view1","view2","view32","viewAdd","viewBox","viewHex","viewSub","viewport","virgin","visible","visibleRow","visited","vmetric","vn","vri","vriEntry","vriKey","vx","vy","w","w0","w1","w1Val","w2","w2Val","w3","wArray","waitOn","walk","walkNode","wantsIncremental","warn","warningCount","warnings","wasIndirect","watermark","waveHeight","waveLength","weight","weightClass","wh","white","white2","whiteMakeup","whiteTerminating","wi","widget","widgetDict","widgetRef","widgetRefKeys","widgetRefs","widgets","width","width1","width2","widthAdvanceScale","widthArray","widthClass","widthEntriesToPdfArray","widthInSource","widthItem","widthPercent","widthRemainder","widthScale","widthStr","widths","widthsArray","winAscent","winDescent","winName","withCredentials","withoutSlash","wl","wmask","wmodeMatch","word","wordBytes","wordSpacing","wordStart","wordWidth","words","worker","workerHandler","workerIdPromise","workerParams","workerUrl","wrCipher","wrap","wrapCipher","wrapConstructor","wrapPathOps","wrapReason","wrapText","wrappedCipher","wrappedKey","wrapper","writeArray","writeChanges","writeComplete","writeData","writeDict","writeIncremental","writeIndirectObject","writeInt","writeInt16","writeInt32","writeObject","writeOperand","writeSignedInt16","writeStream","writeString","writeUint32","writeValue","writeXFADataForAcroform","writeXRefStream","writeXRefTable","writer","writer2","wsize","wt","x","x0","x1","x1_","x1p","x1p2","x2","x22","x2_","x3","x4","xConvertBuffer","xCoordinates","xHigh","xLow","xMax","xMaxExtent","xMin","xObjectIndex","xObjectName","xObjects","xPowers","xScale","xScaledStep","xScaledWidth","xSize","xStrokePad","xTranslate","xhr","xhrId","xhrStatus","xk","xobjectName","xobjects","xref","xrefData","xrefObjNum","xrefOffset","xrefParser","xrefStmOffset","xs","xt","xw","y","y0","y1","y1p","y1p2","y2","y3","y4","yConvertBuffer","yCoordinates","yFlip","yHigh","yLow","yMax","yMin","yScale","yScaledHeight","yScaledStep","ySize","yStrokePad","yTranslate","year","yh","yi","ys","yt","z","zapfDingbatsDict","zero","zero$1","zn","zoom","zstream","zswap32"],

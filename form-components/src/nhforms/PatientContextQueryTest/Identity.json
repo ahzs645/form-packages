@@ -1,10 +1,10 @@
 {
   "name": "PatientContextQueryTest",
   "title": "Live MOIS Query Test",
-  "description": "Live MOIS API laboratory: schema discovery, patient and root reads, explicit synthetic mutation probes, read-back verification and JSON reports.",
+  "description": "Combined MOIS test-instance API suite: discovery, missing routes, create/update/omit/null/empty/restore variants, independent verification and full evidence JSON.",
   "version": {
-    "major": 1,
-    "minor": 4,
+    "major": 2,
+    "minor": 0,
     "patch": 0
   },
   "type": "component",

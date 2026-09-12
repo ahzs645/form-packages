@@ -26176,11 +26176,482 @@ const PatientContextDiagnostics = ({
   )
 }
 `,
-  './PatientContextQueryTest/index.jsx': `// MOIS 2.30.31 evidence: main.a75cc6b1.chunk.js queryGraphQL export accepts
+  './PatientContextQueryTest/index.jsx': `// Portable suite executor: embedded with this component in exported MOIS forms.
+// Uses only the host GraphQL transport and the live schema. No endpoint guessing.
+const runPatientContextVariantSuite = async ({ request, patientId, patient, sourceProfile, context, plan, previous, active, emit, uncertain, uploadAttachment }) => {
+  const clone = (v) => v === undefined ? undefined : JSON.parse(JSON.stringify(v))
+  const subset = (actual, expected) => Array.isArray(expected) ? Array.isArray(actual) && actual.length === expected.length && expected.every((x, i) => subset(actual[i], x)) : expected && typeof expected === "object" ? Boolean(actual && Object.keys(expected).every((k) => Object.prototype.hasOwnProperty.call(actual, k) && subset(actual[k], expected[k]))) : actual === expected
+  const same = (a, b) => JSON.stringify(normalize(a)) === JSON.stringify(normalize(b))
+  const normalize = (v) => Array.isArray(v) ? v.map(normalize) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).filter((k) => k !== "__typename").sort().map((k) => [k, normalize(v[k])])) : v
+  const named = (t) => t?.ofType ? named(t.ofType) : t
+  const typeText = (t) => t.kind === "NON_NULL" ? typeText(t.ofType) + "!" : t.kind === "LIST" ? "[" + typeText(t.ofType) + "]" : t.name
+  if (!plan?.profiles?.length) throw new Error("Re-export the updated diagnostics sample to include the comprehensive test plan")
+  const suite = previous || { revision: plan.revision, status: "Running", cases: [], ids: {}, origins: {}, created: [], fieldCoverage: [], manualCases: plan.manualCases, startedAt: new Date().toISOString() }
+  const ctx = { ...context }, ids = suite.ids
+  const notify = () => { if (active()) emit({ ...suite, cases: [...suite.cases], ids: { ...ids } }) }
+  const record = (row) => { const i = suite.cases.findIndex((x) => x.id === row.id); if (i < 0) suite.cases.push(row); else suite.cases[i] = row; notify(); return row }
+  const done = (id) => suite.cases.some((x) => x.id === id && !["Needs context", "Pending", "Running"].includes(x.status))
+  const fail = (reason) => { throw new Error(reason) }
+  const positive = (v) => Number.isSafeInteger(Number(v)) && Number(v) > 0
+  let mutationCount = 0
+  const refs = "kind name ofType { kind name ofType { kind name ofType { kind name ofType { kind name } } } }"
+  const schema = (await request("SuiteSchema", \`query SuiteSchema { __schema { queryType { name } mutationType { name } types { name kind fields { name args { name defaultValue type { \${refs} } } type { \${refs} } } inputFields { name defaultValue type { \${refs} } } enumValues { name } } } }\`, {})).__schema
+  if (!schema?.types || !schema.queryType || !schema.mutationType) fail("Complete live schema unavailable")
+  const types = new Map(schema.types.map((t) => [t.name, t]))
+  const queries = new Map((types.get(schema.queryType.name)?.fields || []).map((f) => [f.name, f]))
+  const mutations = new Map((types.get(schema.mutationType.name)?.fields || []).filter((f) => f.name !== "query").map((f) => [f.name, f]))
+  const refValue = (v, marker, recordId) => {
+    const values = { patientId, date: new Date().toISOString().slice(0, 10), now: new Date().toISOString(), marker, slug: marker.toLowerCase().replace(/[^a-z0-9]+/g, "-"), buildDate: new Date().toISOString().slice(0, 10).replace(/-/g, ""), resourcePath: marker.replace(/ /g, "-") + ".txt", answers: JSON.stringify({ diagnostic: marker, retained: "preserve this answer" }), recordId }
+    if (typeof v === "string" && v.startsWith("$")) {
+      const key = v.slice(1), value = key.startsWith("context.") ? ctx[key.slice(8)] : key.startsWith("ids.") ? ids[key.slice(4)] : values[key]
+      if (value === undefined || value === null) fail(\`Needs \${key}\`)
+      return clone(value)
+    }
+    return Array.isArray(v) ? v.map((x) => refValue(x, marker, recordId)) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, refValue(x, marker, recordId)])) : v
+  }
+  const validate = (v, t, path) => {
+    if (v == null) { if (t.kind === "NON_NULL") fail(\`Missing \${path}\`); return }
+    if (t.kind === "NON_NULL") return validate(v, t.ofType, path)
+    if (t.kind === "LIST") { if (!Array.isArray(v)) fail(\`\${path} needs an array\`); v.forEach((x, i) => validate(x, t.ofType, \`\${path}[\${i}]\`)); return }
+    if (t.kind === "INPUT_OBJECT") {
+      const fields = types.get(t.name)?.inputFields
+      if (!fields || typeof v !== "object" || Array.isArray(v)) fail(\`Missing input contract \${path}\`)
+      for (const k of Object.keys(v)) if (!fields.some((f) => f.name === k)) fail(\`Unknown input \${path}.\${k}\`)
+      for (const f of fields) if (f.defaultValue == null || v[f.name] !== undefined) validate(v[f.name], f.type, path + "." + f.name)
+    } else if (t.kind === "ENUM" && !types.get(t.name)?.enumValues?.some((x) => x.name === v)) fail(\`Invalid enum \${path}\`)
+    else if (["Int", "Long"].includes(t.name) && !Number.isSafeInteger(v)) fail(\`Invalid integer \${path}\`)
+    else if (t.name === "Boolean" && typeof v !== "boolean") fail(\`Invalid boolean \${path}\`)
+    else if (t.name === "String" && typeof v !== "string") fail(\`Invalid text \${path}\`)
+  }
+  const selection = (typeName, depth = 0, ancestors = []) => {
+    const info = types.get(typeName)
+    if (!info || depth > 6 || ancestors.includes(typeName)) return ""
+    return (info.fields || []).filter((f) => !f.args?.some((a) => a.type.kind === "NON_NULL" && a.defaultValue == null)).flatMap((f) => {
+      if (["patient", "encodedFile", "secondaryFile", "photo", "signature", "signatures", "requestor", "assignedUser"].includes(f.name)) return []
+      const t = named(f.type)
+      if (["SCALAR", "ENUM"].includes(t?.kind)) return [f.name]
+      // Follow input-shaped objects and coded/audit values, not arbitrary chart relationships.
+      const inputFields = types.get(typeName + "Input")?.inputFields || []
+      if (!["stamp", "version", "formVersion", "codedValue"].includes(f.name) && !inputFields.some((x) => x.name === f.name) && !["Coding", "CodingReference"].includes(t?.name)) return []
+      const sub = selection(t?.name, depth + 1, [...ancestors, typeName])
+      return sub ? [\`\${f.name} { \${sub} }\`] : []
+    }).join(" ")
+  }
+  const call = async (field, args, fields, mutation = false, tag = "Read") => {
+    const op = (mutation ? mutations : queries).get(field)
+    if (!op) fail(\`Not exposed in live schema: \${field}\`)
+    for (const k of Object.keys(args)) if (!op.args.some((a) => a.name === k)) fail(\`Unknown argument \${field}.\${k}\`)
+    for (const a of op.args) if (a.defaultValue == null || args[a.name] !== undefined) validate(args[a.name], a.type, a.name)
+    const argsUsed = op.args.filter((a) => args[a.name] !== undefined), kind = mutation ? "mutation" : "query", name = "Suite" + tag
+    const decl = argsUsed.map((a) => \`$\${a.name}: \${typeText(a.type)}\`).join(", "), binds = argsUsed.map((a) => \`\${a.name}: $\${a.name}\`).join(", ")
+    const object = ["OBJECT", "INTERFACE", "UNION"].includes(named(op.type)?.kind)
+    if (mutation) { mutationCount += 1; const pending = [...suite.cases].reverse().find((x) => x.status === "Running" && x.operation === field); if (pending) { pending.sent = true; record(pending) } }
+    return request(name, \`\${kind} \${name}\${decl ? "(" + decl + ")" : ""} { \${field}\${binds ? "(" + binds + ")" : ""}\${object ? " { " + (fields || "__typename") + " }" : ""} }\`, args, mutation)
+  }
+  const init = { id: "context", status: "Running", variant: "read context" }; record(init)
+  try {
+    const charts = (await call("patient", { id: patientId }, "patientId conditions { condition { code display system } certainty { code display system } } encounters { encounterId providerId } serviceEpisodes { serviceEpisodeId service { code display system } serviceMrp { code display system } serviceMrpId serviceEvents { service { code display system } } }", false, "Context")).patient
+    if (charts?.length !== 1 || Number(charts[0].patientId) !== patientId) fail("Requested patient not uniquely returned")
+    const chart = charts[0]
+    const requestedEncounter = ctx.encounterId || patient?.encounterId
+    const encounter = requestedEncounter ? chart.encounters?.find((x) => Number(x.encounterId) === Number(requestedEncounter)) : chart.encounters?.find((x) => positive(x.encounterId))
+    if (requestedEncounter && !encounter) fail("Configured encounter does not belong to this patient")
+    if (encounter) { ctx.encounterId = Number(encounter.encounterId); ctx.providerId ??= encounter.providerId }
+    const profileId = ctx.userProfileId || sourceProfile?.userProfileId
+    if (positive(profileId)) {
+      const profiles = (await call("userProfile", { id: Number(profileId) }, "userProfileId loginName identity { fullName }", false, "Profile")).userProfile
+      if (profiles?.length !== 1 || Number(profiles[0].userProfileId) !== Number(profileId)) fail("Test profile not uniquely returned")
+      ctx.userProfileId = Number(profileId); ctx.userName = profiles[0].identity?.fullName
+    }
+    const issue = chart.conditions?.find((x) => x.condition?.code && x.condition?.system)
+    if (issue) { ctx.healthIssue ??= issue.condition; ctx.certainty ??= issue.certainty }
+    const episode = chart.serviceEpisodes?.find((x) => x.service?.code && positive(x.serviceMrpId) && x.serviceMrp?.system === "MOIS.USER" && String(x.serviceMrp.code) === String(x.serviceMrpId))
+    if (episode) { ctx.service ??= episode.service; ctx.serviceMrp ??= episode.serviceMrp; ctx.serviceMrpId ??= episode.serviceMrpId }
+    ctx.eventService ??= chart.serviceEpisodes?.flatMap((x) => x.serviceEvents || []).find((x) => x.service?.code)?.service
+    init.status = "Read verified"; init.contextFields = Object.keys(ctx); suite.context = clone(ctx)
+  } catch (e) { init.status = "Needs context"; init.error = e.message; record(init); fail("Context verification failed; no suite writes sent: " + e.message) }
+  record(init)
+  const copyInput = (value, t, depth = 0) => {
+    if (value == null || depth > 8) return value
+    if (t.kind === "NON_NULL") return copyInput(value, t.ofType, depth)
+    if (t.kind === "LIST") return Array.isArray(value) ? value.map((x) => copyInput(x, t.ofType, depth + 1)) : value
+    if (t.kind !== "INPUT_OBJECT") return clone(value)
+    return Object.fromEntries((types.get(t.name)?.inputFields || []).filter((f) => !["stamp", "patient"].includes(f.name) && Object.prototype.hasOwnProperty.call(value, f.name)).map((f) => [f.name, copyInput(value[f.name], f.type, depth + 1)]))
+  }
+  const withoutAudit = (v) => Array.isArray(v) ? v.map(withoutAudit) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).filter(([k]) => !["stamp", "__typename", "cursor"].includes(k)).map(([k, x]) => [k, withoutAudit(x)])) : v
+  const diffs = (a, b, prefix = "") => {
+    if (same(a, b)) return []
+    if (a && b && typeof a === "object" && typeof b === "object" && !Array.isArray(a) && !Array.isArray(b)) return [...new Set([...Object.keys(a), ...Object.keys(b)])].flatMap((k) => diffs(a[k], b[k], prefix ? prefix + "." + k : k))
+    return [prefix || "record"]
+  }
+  for (const p of plan.profiles) {
+    if (!active() || uncertain()) break
+    const marker = suite.origins[p.key]?.marker || \`WEBFORMS TEST \${Date.now().toString(36)} \${p.key}\`
+    const fields = selection(p.type)
+    const read = async (id = ids[p.key]) => {
+      let wrapped = fields
+      for (const path of [...p.path].reverse()) wrapped = \`\${path} { \${wrapped} }\`
+      if (p.readRoot === "patient") wrapped = "patientId " + wrapped
+      if (p.readRoot === "encounter") wrapped = "patientId encounterId " + wrapped
+      const args = refValue(p.readArgs, marker, id)
+      const data = await call(p.readRoot, args, wrapped, false, "Verify")
+      let records = data[p.readRoot]
+      if (!Array.isArray(records)) fail("Read did not return a collection")
+      if (["patient", "encounter"].includes(p.readRoot) && (records.length !== 1 || Number(records[0].patientId) !== patientId)) fail("Read returned a different or missing patient")
+      if (p.readRoot === "encounter" && Number(records[0].encounterId) !== Number(ctx.encounterId)) fail("Read returned a different encounter")
+      if (args.first && records.length >= args.first) fail("Read reached its page limit; complete pagination is required before writing")
+      for (const path of p.path) {
+        if (p.objectPath) { if (records.some((r) => !r[path] || typeof r[path] !== "object")) fail(\`Missing read object \${path}\`); records = records.map((r) => ({ ...r[path], patientId })) }
+        else { if (records.some((r) => !Array.isArray(r[path]))) fail(\`Missing read collection \${path}\`); records = records.flatMap((r) => r[path]) }
+      }
+      if (records.some((r) => r.patientId != null && Number(r.patientId) !== patientId)) fail("Record patient differs from the active patient")
+      return records
+    }
+    const mutArgs = (payload, create = false) => {
+      const field = create ? p.create : p.update, op = mutations.get(field)
+      if (!op) fail(\`Not exposed in live schema: \${field}\`)
+      const arg = create ? p.inputArg : p.updateArg || p.inputArg
+      return { ...(op.args.some((a) => a.name === "patientId") ? { patientId } : {}), ...refValue(create ? p.extraCreateArgs || p.extraArgs || {} : p.extraArgs || {}, marker, ids[p.key]), [arg]: (create ? p.inputList : p.updateList || p.inputList) ? [payload] : payload }
+    }
+    const inputArg = (create = false) => mutations.get(create ? p.create : p.update)?.args.find((a) => a.name === (create ? p.inputArg : p.updateArg || p.inputArg))
+    let origin = suite.origins[p.key], rows
+    try {
+      if (!fields) fail("No readable output fields")
+      if (p.path.length && !queries.has(p.readRoot)) fail("No read route")
+      rows = p.singletonCreate && !ids[p.key] ? [] : await read()
+      for (const mode of p.create ? p.createModes || ["seed"] : []) {
+        const id = \`\${p.key}.create.\${mode}\`
+        if (done(id)) continue
+        let row = { id, profile: p.key, operation: p.create, variant: "create " + mode, status: "Running", sent: false }; record(row)
+        const before = rows
+        try {
+          const seed = refValue(p.seed, marker + " " + mode)
+          if (mode === "zero") seed[p.id] = 0
+          if (mode === "null") seed[p.id] = null
+          if (mode === "omitted") delete seed[p.id]
+          const args = mutArgs(seed, true); let response, error
+          row.inputFields = Object.keys(seed)
+          const sentBefore = mutationCount
+          try { response = await call(p.create, args, fieldsForMutation(p.create, p.type, fields), true, "Create") } catch (e) { error = e.message }
+          row.sent = mutationCount > sentBefore
+          if (!row.sent) { row.status = "Needs context"; row.error = error; record(row); continue }
+          if (p.singletonCreate) {
+            const candidates = response?.[p.create] || []
+            const found = candidates.filter((r) => positive(r[p.id]) && Number(r.patientId) === patientId)
+            if (found.length !== 1) fail("Creation outcome uncertain: no unique ID to independently read")
+            ids[p.key] = Number(found[0][p.id])
+          }
+          rows = await read()
+          if (uncertain()) fail("Write timed out; its eventual outcome is unknown")
+          const beforeIds = new Set(before.map((r) => Number(r[p.id])))
+          const scalarMarkers = Object.keys(seed).filter((k) => typeof seed[k] === "string" && seed[k].includes(marker))
+          const candidates = rows.filter((r) => positive(r[p.id]) && !beforeIds.has(Number(r[p.id])) && (p.key === "events" ? Number(r.serviceEpisodeId) === ids.episodes && Number(r.objectId) === ctx.encounterId && r.objectType === seed.objectType && subset(r.service, seed.service) : scalarMarkers.length && scalarMarkers.every((k) => r[k] === seed[k])))
+          const preserved = before.every((r) => same(withoutAudit(r), withoutAudit(rows.find((x) => Number(x[p.id]) === Number(r[p.id])))))
+          if (candidates.length === 1 && rows.length === before.length + 1 && preserved) {
+            const created = candidates[0]; ids[p.key] ||= Number(created[p.id]); row.inputChecks = Object.keys(seed).filter((k) => k !== p.id).map((k) => ({ field: k, matched: subset(created[k], seed[k]) })); row.status = row.inputChecks.every((x) => x.matched) ? error ? "Create verified after mutation error" : "Create verified" : "Created record identified; supplied fields differ"; row.recordId = Number(created[p.id]); row.changedFields = scalarMarkers
+            suite.created.push({ profile: p.key, id: row.recordId, key: p.id, cleanup: p.delete ? "Pending deletion" : "No dedicated delete recipe; retained" })
+            if (!origin) { origin = { marker, record: clone(created), id: ids[p.key] }; suite.origins[p.key] = origin }
+          } else if (same(withoutAudit(rows), withoutAudit(before))) { row.status = error ? "Rejected; selected read unchanged" : "Create not verified" }
+          else { row.status = "Unexpected read changes; profile stopped"; row.stopProfile = true }
+          if (error) row.error = error
+        } catch (e) { row.status = row.sent ? "Outcome requires inspection" : "Needs context"; row.error = e.message; if (row.sent) row.stopProfile = true }
+        record(row)
+        if (row.stopProfile || uncertain()) break
+      }
+      if (suite.cases.some((r) => r.profile === p.key && r.stopProfile)) continue
+      if (!origin && p.existingFallback) {
+        const selected = ctx[p.id] ? rows.find((r) => Number(r[p.id]) === Number(ctx[p.id])) : rows.find((r) => positive(r[p.id]))
+        if (selected) { ids[p.key] = Number(selected[p.id]); origin = { marker, record: clone(selected), id: ids[p.key], existing: true }; suite.origins[p.key] = origin }
+      }
+      if (!origin) { record({ id: p.key + ".variants", profile: p.key, status: "Needs context", reason: "No independently verified positive-ID record for field variants", variants: p.fields }); continue }
+      for (const field of p.fields) {
+        if (!active() || uncertain()) break
+        const arg = inputArg(), inputType = named(arg?.type), spec = types.get(inputType?.name)?.inputFields?.find((f) => f.name === field)
+        if (!spec || !(field in origin.record)) { record({ id: \`\${p.key}.\${field}\`, profile: p.key, field, status: "Needs context", reason: "Field not exposed in both input and selected output" }); continue }
+        const original = clone(origin.record[field]), t = named(spec.type)
+        let values = p.extraFields?.[field] ? refValue(p.extraFields[field], marker) : null
+        if (!values) {
+          if (["isComplete", "isAcknowledged", "includeOnDemographics", "includeOnCarePlan"].includes(field)) values = [{ code: "Y", display: "Yes", system: "MOIS-YESNO" }, { code: "N", display: "No", system: "MOIS-YESNO" }]
+          else if (["Date", "DateOnly", "DateTime"].includes(t?.name)) values = [t.name === "DateTime" ? new Date().toISOString() : new Date().toISOString().slice(0, 10)]
+          else if (["Int", "Long", "Float", "Decimal"].includes(t?.name)) values = [typeof original === "number" ? original + 1 : 1]
+          else if (t?.name === "Boolean") values = [!original]
+          else if (t?.kind === "ENUM") values = (types.get(t.name)?.enumValues || []).map((x) => x.name).slice(0, 2)
+          else if (field === "formdata") { let answers; try { answers = JSON.parse(original || "{}"); if (!answers || Array.isArray(answers) || typeof answers !== "object") throw 0 } catch (_) { fail("Existing answers are not a JSON object") }; values = [JSON.stringify({ ...answers, diagnostic: marker + " UPDATED", suiteVariant: true })] }
+          else if (t?.name === "String") values = [marker + " " + field, marker + " " + field + " B"]
+        }
+        if (!values?.length) { record({ id: \`\${p.key}.\${field}\`, profile: p.key, field, status: "Needs context", reason: "Needs type-specific fixture/coding; no arbitrary code is generated" }); continue }
+        const cases = [...values.map((value, i) => ({ variant: "set" + (i || ""), value })), { variant: "omit" }, ...(spec.type.kind !== "NON_NULL" ? [{ variant: "null", value: null }, { variant: "set-again", value: values[0] }] : []), ...(t.name === "String" && field !== "formdata" ? [{ variant: "empty", value: "" }] : []), { variant: "restore", value: original }]
+        for (const variant of cases) {
+          const caseId = \`\${p.key}.\${field}.\${variant.variant}\`
+          if (done(caseId)) continue
+          if (!active() || uncertain()) break
+          const result = await change(p, field, variant, caseId, read, mutArgs, origin)
+          if (result.stopProfile) break
+        }
+        if (suite.cases.some((r) => r.profile === p.key && r.stopProfile)) break
+      }
+      if (suite.cases.some((r) => r.profile === p.key && r.stopProfile) || uncertain()) continue
+      if (p.nestedDosage) await nestedDosage(p, read, mutArgs, origin)
+      if (p.healthIssues) await eventChildren(p, read, mutArgs, origin)
+      if (p.taskMetadata) await taskMetadata(p, read, mutArgs, origin)
+      if (p.encounterStatus) await appointmentStatus(p, read, origin)
+      if (p.lifecycle) await formLifecycle(p, read, mutArgs, origin)
+      if (p.download) await download(p, read)
+      if (p.rejectedUpdateProbe) await correspondenceUpdate(p, read, origin)
+      // Dedicated deletion is performed after all profiles, preserving dependencies.
+    } catch (e) { record({ id: p.key + ".setup", profile: p.key, status: "Needs context", error: e.message }) }
+  }
+  if (active() && !uncertain() && plan.attachmentUpload) await attachment()
+  // Leave field-level coverage explicit, including inputs that need semantic values.
+  const inputPaths = (t, prefix = "", ancestors = []) => {
+    const type = named(t), info = types.get(type?.name)
+    if (!info?.inputFields || ancestors.includes(type.name)) return []
+    return info.inputFields.flatMap((f) => {
+      const path = prefix ? prefix + "." + f.name : f.name
+      const listType = f.type.kind === "NON_NULL" ? f.type.ofType : f.type
+      return [{ ...f, path }, ...inputPaths(f.type, path + (listType.kind === "LIST" ? "[]" : ""), [...ancestors, type.name])]
+    })
+  }
+  suite.fieldCoverage = [...mutations.values()].flatMap((op) => op.args.flatMap((arg) => inputPaths(arg.type).map((f) => {
+    const cases = suite.cases.filter((r) => r.operation === op.name && (r.field === f.path || r.nestedField === f.path))
+    return { operation: op.name, argument: arg.name, field: f.path, variants: ["set", "change", "omit", ...(f.type.kind !== "NON_NULL" ? ["null"] : []), "restore"], cases: cases.map((r) => r.id), status: cases.some((r) => r.sent) ? "See individual outcomes" : "Not exercised; needs a fixture or dedicated semantic recipe" }
+  })))
+  for (const p of [...plan.profiles].reverse().filter((p) => p.delete)) {
+    if (!active() || uncertain()) break
+    if (suite.cases.some((r) => r.profile === p.key && r.stopProfile)) continue
+    for (const created of suite.created.filter((x) => x.profile === p.key)) {
+      const id = \`\${p.key}.delete.\${created.id}\`
+      if (done(id)) continue
+      const row = { id, profile: p.key, operation: p.delete.operation, variant: "delete", recordId: created.id, status: "Needs context", reason: "Dedicated deletion verification is required" }
+      // Specific root reads ensure we observe absence rather than a truncated list.
+      try {
+        let root = p.readRoot, args, sel
+        if (p.key === "forms") { args = { id: created.id }; sel = "webformId patientId documentId" }
+        else if (p.key === "definitions") { args = { id: created.id }; sel = "webformDefinitionId" }
+        else if (p.key === "correspondence") { args = { id: ctx.encounterId, patientId }; sel = "encounterId patientId correspondences { correspondenceId }" }
+        else fail("No exact-ID deletion read")
+        const collect = (data) => p.key === "correspondence" ? data[root]?.length === 1 && Number(data[root][0].patientId) === patientId ? data[root][0].correspondences : undefined : data[root]
+        const before = collect(await call(root, args, sel, false, "DeleteBefore"))
+        if (!before?.some((r) => Number(r[p.id]) === created.id)) fail("Test record not present before delete")
+        let error
+        try { row.sent = true; await call(p.delete.operation, refValue(p.delete.args, "", created.id), "__typename", true, "Delete") } catch (e) { error = e.message }
+        const after = collect(await call(root, args, sel, false, "DeleteAfter"))
+        const absent = Array.isArray(after) && !after.some((r) => Number(r[p.id]) === created.id)
+        row.status = absent && !uncertain() ? "Delete verified" : "Delete unverified"; if (error) row.error = error
+        created.cleanup = row.status; row.reason = "Absence on exact-ID independent read; linked files/resources and physical erasure remain separate"
+      } catch (e) { row.error = e.message; if (row.sent) row.status = "Outcome requires inspection" }
+      record(row)
+    }
+  }
+  suite.operationCoverage = [...mutations.keys()].map((operation) => ({ operation, cases: suite.cases.filter((x) => x.operation === operation).map((x) => x.id), status: suite.cases.some((x) => x.operation === operation && x.sent) ? "See case outcomes" : operation === "sendFax" ? "Separate explicit recipient test" : "No automatic recipe executed; use dedicated inputs or manual follow-up" }))
+  suite.status = !active() ? "Stopped" : uncertain() ? "Stopped: uncertain write; inspect before further mutations" : "Finished; inspect failures and prerequisites"
+  suite.completedAt = new Date().toISOString(); notify(); return suite
+
+  function fieldsForMutation(operation, type, fields) { return named(mutations.get(operation)?.type)?.name === type ? fields : "__typename" }
+  async function change(p, field, variant, caseId, read, mutArgs, origin) {
+    const row = { id: caseId, profile: p.key, operation: p.update, field, nestedField: variant.nestedField, variant: variant.variant, status: "Running", sent: false }; record(row)
+    try {
+      const before = await read(), recordBefore = before.find((r) => Number(r[p.id]) === origin.id)
+      if (!recordBefore) fail("Target missing from fresh read")
+      const arg = mutations.get(p.update)?.args.find((a) => a.name === (p.updateArg || p.inputArg)), payload = copyInput(recordBefore, { ...named(arg?.type) })
+      if (variant.prepare) variant.value = variant.prepare(clone(payload))
+      if (variant.variant === "omit") { if (recordBefore[field] == null) { row.status = "Not applicable: omitted field already null"; record(row); return row }; delete payload[field] }
+      else { if (same(recordBefore[field], variant.value)) { row.status = "Not applicable: requested value already present"; record(row); return row }; payload[field] = clone(variant.value) }
+      let error
+      const sentBefore = mutationCount
+      try { await call(p.update, mutArgs(payload), fieldsForMutation(p.update, p.type, selection(p.type)), true, "Change") } catch (e) { error = e.message }
+      row.sent = mutationCount > sentBefore
+      if (!row.sent) { row.status = "Needs context"; row.error = error; record(row); return row }
+      const after = await read(), recordAfter = after.find((r) => Number(r[p.id]) === origin.id)
+      if (!recordAfter) fail("Target missing after write")
+      const changed = diffs(withoutAudit(recordBefore), withoutAudit(recordAfter)); row.changedPaths = changed
+      const otherPreserved = before.length === after.length && before.every((r) => {
+        const found = after.find((x) => Number(x[p.id]) === Number(r[p.id])); if (!found) return false
+        if (Number(r[p.id]) !== origin.id) return same(withoutAudit(r), withoutAudit(found))
+        const a = withoutAudit(r), b = withoutAudit(found); delete a[field]; delete b[field]; return same(a, b)
+      })
+      row.otherSelectedFieldsAndMembershipPreserved = otherPreserved
+      row.auditChangedPaths = diffs(recordBefore.stamp, recordAfter.stamp, "stamp")
+      if (uncertain()) fail("Write timed out; read cannot settle eventual persistence")
+      if (!otherPreserved) { row.status = "Unexpected changes; profile stopped"; row.stopProfile = true }
+      else if (error && same(withoutAudit(recordBefore), withoutAudit(recordAfter))) row.status = "Rejected; selected read unchanged"
+      else if (variant.variant === "omit") row.status = same(recordBefore[field], recordAfter[field]) ? "Omission preserved value" : recordAfter[field] === null ? "Omission cleared value" : "Omission changed value"
+      else if (variant.expectPreserved ? same(recordAfter[field], recordBefore[field]) : variant.generatedChildren ? matchEventChildren(recordAfter[field], variant.value, recordBefore[field], origin.id) : subset(recordAfter[field], variant.value)) row.status = error ? "Write verified after mutation error" : variant.expectPreserved ? "Null preserved value" : variant.variant === "restore" ? "Restoration verified" : "Write verified"
+      else if (same(recordBefore, recordAfter) || same(withoutAudit(recordBefore), withoutAudit(recordAfter))) row.status = error ? "Rejected; selected read unchanged" : "Write not applied"
+      else { row.status = "Unexpected field value; profile stopped"; row.stopProfile = true }
+      if (variant.variant === "restore" && !same(withoutAudit(recordAfter[field]), withoutAudit(origin.record[field]))) row.stopProfile = true
+      if (error) row.error = error
+    } catch (e) { row.status = row.sent ? "Outcome requires inspection" : "Needs context"; row.error = e.message; row.stopProfile = Boolean(row.sent) }
+    record(row); return row
+  }
+  async function nestedDosage(p, read, mutArgs, origin) {
+    const first = origin.record.drugDurations?.find((d) => positive(d.drugDurationId) && d.dosages?.some((x) => positive(x.dosageId) && typeof x.doseQuantity === "number"))
+    if (!first) { record({ id: p.key + ".dosage.fixture", profile: p.key, field: "drugDurations", status: "Needs context", reason: "No existing positive-ID duration/dosage quantity; add a disposable dosing fixture to exercise nested writes" }); return }
+    const dose = first.dosages.find((x) => positive(x.dosageId) && typeof x.doseQuantity === "number")
+    for (const [name, quantity] of [["quantity-update", dose.doseQuantity + 1], ["quantity-restore", dose.doseQuantity]]) {
+      const id = p.key + ".dosage." + name; if (done(id)) continue
+      const variant = { variant: name, nestedField: "drugDurations[].dosages[].doseQuantity", prepare: (payload) => payload.drugDurations.map((d) => d.drugDurationId === first.drugDurationId ? { ...d, dosages: d.dosages.map((x) => x.dosageId === dose.dosageId ? { ...x, doseQuantity: quantity } : x) } : d) }
+      const outcome = await change(p, "drugDurations", variant, id, read, mutArgs, origin)
+      if (outcome.stopProfile || uncertain() || !active()) break
+    }
+  }
+  async function eventChildren(p, read, mutArgs, origin) {
+    if (!ctx.healthIssue?.code || !ctx.healthIssue?.system) { record({ id: p.key + ".children.fixture", profile: p.key, status: "Needs context", reason: "Needs a populated condition coding for the disposable event health-issue tests" }); return }
+    const child = () => ({ serviceEventHealthIssueId: 0, serviceEventId: origin.id, healthIssue: clone(ctx.healthIssue), certainty: clone(ctx.certainty || { code: "Impression", display: "IMPRESSION", system: "MOIS-CONDITIONCERTAINTY" }) })
+    const steps = [
+      { variant: "add", prepare: () => [child()], generatedChildren: true },
+      { variant: "certainty", prepare: (payload) => payload.healthIssues.map((x) => ({ ...x, certainty: { code: "Confirmed", display: "CONFIRMED", system: "MOIS-CONDITIONCERTAINTY" } })) },
+      { variant: "mixed-add", prepare: (payload) => [...payload.healthIssues, child()], generatedChildren: true },
+      { variant: "retain-one", prepare: (payload) => payload.healthIssues.slice(0, 1) },
+      { variant: "omit" }, { variant: "null", value: null, expectPreserved: true },
+      { variant: "empty", value: [] }, { variant: "recreate", prepare: () => [child()], generatedChildren: true },
+      { variant: "restore", value: [] },
+    ]
+    for (const step of steps) {
+      const id = p.key + ".healthIssues." + step.variant; if (done(id)) continue
+      if (!active() || uncertain()) break
+      const outcome = await change(p, "healthIssues", step, id, read, mutArgs, origin)
+      if (outcome.stopProfile) break
+    }
+  }
+
+  function matchEventChildren(actual, expected, before, eventId) {
+    if (!Array.isArray(actual) || actual.length !== expected.length || new Set(actual.map((x) => x.serviceEventHealthIssueId)).size !== actual.length) return false
+    const oldIds = new Set((before || []).map((x) => x.serviceEventHealthIssueId)), used = new Set()
+    return expected.every((x) => {
+      const fields = { ...x }; delete fields.serviceEventHealthIssueId
+      const matches = actual.filter((a) => positive(a.serviceEventHealthIssueId) && !used.has(a.serviceEventHealthIssueId) && Number(a.serviceEventId) === eventId && (x.serviceEventHealthIssueId === 0 ? !oldIds.has(a.serviceEventHealthIssueId) : a.serviceEventHealthIssueId === x.serviceEventHealthIssueId) && subset(a, fields))
+      if (matches.length !== 1) return false; used.add(matches[0].serviceEventHealthIssueId); return true
+    })
+  }
+  async function attachment() {
+    const id = "attachment.upload"; if (done(id)) return
+    const row = { id, profile: "attachment", operation: "POST api/attachment/file", variant: "text file upload and independent metadata/binary read", status: "Running", sent: false }; record(row)
+    try {
+      if (!uploadAttachment || !positive(ctx.userProfileId)) fail("Needs host attachment transport and current user-profile ID")
+      const marker = \`WEBFORMS TEST \${Date.now().toString(36)} attachment\`
+      const read = async () => {
+        const result = await call("patient", {id:patientId}, "patientId documents { documentId patientId note pathname }", false, "AttachmentRead")
+        if (result.patient?.length !== 1 || Number(result.patient[0].patientId) !== patientId || !Array.isArray(result.patient[0].documents)) fail("Attachment patient read missing")
+        return result.patient[0].documents
+      }
+      const before = await read(), document = {documentId:0,patientId,note:marker,documentType:{code:"NOTE",display:"Note / General Purpose Document",system:"MOIS-DOCUMENTTYPE"}}
+      const content = marker + "\\nSynthetic attachment test only.\\n"
+      let error; row.sent = true; record(row)
+      try { await uploadAttachment(ctx.userProfileId, document, content) } catch (e) { error = e.message }
+      const after = await read(), oldIds = new Set(before.map((x) => Number(x.documentId)))
+      const added = after.filter((x) => !oldIds.has(Number(x.documentId)) && positive(x.documentId) && x.note === marker && Number(x.patientId) === patientId)
+      const preserved = before.every((x) => same(x, after.find((y) => Number(y.documentId) === Number(x.documentId))))
+      if (uncertain()) fail("Upload timed out; eventual persistence is unknown")
+      if (added.length !== 1 || after.length !== before.length + 1 || !preserved) { row.status = error && same(before,after) ? "Rejected; selected read unchanged" : "Upload outcome requires inspection"; row.error = error; record(row); return }
+      row.status = "Upload metadata verified"; row.recordId = Number(added[0].documentId); row.error = error
+      suite.created.push({profile:"attachment",key:"documentId",id:row.recordId,cleanup:"No dedicated document deletion recipe; retained"}); record(row)
+      const binary = {id:"attachment.encodedFile",profile:"attachment",operation:"document",variant:"uploaded content read",status:"Running"}; record(binary)
+      try {
+        const result = await call("document", {patientId,id:row.recordId}, "documentId patientId encodedFile", false, "AttachmentFile")
+        const found = result.document?.find((x) => Number(x.documentId) === row.recordId && Number(x.patientId) === patientId)
+        if (!found) fail("Uploaded document missing from exact-ID read")
+        binary.status = found.encodedFile === content || typeof btoa === "function" && found.encodedFile === btoa(content) ? "Uploaded bytes verified" : found.encodedFile == null ? "No file value returned; alternate download route remains open" : "File value returned; content/encoding needs inspection"
+      } catch (e) { binary.status = "Read failed"; binary.error = e.message } record(binary)
+    } catch (e) { row.status = row.sent ? "Outcome requires inspection" : "Needs context"; row.error = e.message; record(row) }
+  }
+  async function taskMetadata(p, read, mutArgs, origin) {
+    const yes = { code: "Y", display: "Yes", system: "MOIS-YESNO" }
+    const flags = ["isAcknowledged", "isComplete"]
+    const metadata = ["acknowledgedBy", "acknowledgedDate", "completedBy", "completedDate"]
+    const step = async (field, variant, value) => {
+      const id = \`\${p.key}.workflow.\${field}.\${variant}\`
+      if (done(id)) return true
+      if (!active() || uncertain()) return false
+      const result = await change(p, field, { variant, value }, id, read, mutArgs, origin)
+      return !result.stopProfile
+    }
+    if (!ctx.userName) { record({ id: p.key + ".workflow.profile", profile: p.key, status: "Needs context", reason: "Needs current profile display name" }); return }
+    for (const f of flags) if (!await step(f, "enable", yes)) return
+    const current = (await read()).find((r) => Number(r[p.id]) === origin.id)
+    if (!flags.every((f) => current?.[f]?.code === "Y")) { record({ id: p.key + ".workflow.prerequisite", profile: p.key, status: "Needs context", reason: "Both flags must independently read Y before metadata-under-completion variants" }); return }
+    if (!ctx.userName) { record({ id: p.key + ".workflow.profile", profile: p.key, status: "Needs context", reason: "Needs current profile display name" }); return }
+    for (const f of metadata) {
+      const value = f.endsWith("By") ? ctx.userName : new Date().toISOString().slice(0, 10)
+      for (const [variant, next] of [["set", value], ["omit", undefined], ["null", null], ["set-again", value], ["restore", origin.record[f]]]) if (!await step(f, variant, next)) return
+    }
+    for (const f of [...flags].reverse()) if (!await step(f, "restore", origin.record[f])) return
+  }
+  async function appointmentStatus(p, read, origin) {
+    // Codes come from the current instance/context. Do not invent a status or use the active encounter.
+    const coding = ctx.appointmentStatus
+    if (!coding?.code || !coding?.system) { record({ id: p.key + ".status.fixture", profile: p.key, operation: "updateEncounterStatus", status: "Needs context", reason: "Provide appointmentStatus with a valid current-instance coding; test targets only this suite's new appointment" }); return }
+    for (const [variant, value] of [["set", coding], ["restore", origin.record.status]]) {
+      const id = p.key + ".status." + variant; if (done(id)) continue
+      if (!active() || uncertain()) break
+      const row = { id, profile: p.key, operation: "updateEncounterStatus", field: "appointmentStatus", variant, status: "Running", sent: false }; record(row)
+      try {
+        if (!value || typeof value !== "object") fail("No original status coding to restore")
+        const before = await read(), old = before.find((r) => Number(r[p.id]) === origin.id)
+        if (!old || origin.existing) fail("Requires a newly created test appointment")
+        let error
+        try { await call("updateEncounterStatus", { patientId, encounterId: origin.id, appointmentStatus: value, statusChangeDateTime: new Date().toISOString(), allEncompassed: false }, "__typename", true, "Status") } catch (e) { error = e.message }
+        const after = await read(), updated = after.find((r) => Number(r[p.id]) === origin.id)
+        row.changedPaths = diffs(withoutAudit(old), withoutAudit(updated)); row.error = error
+        row.otherRecordsPreserved = before.length === after.length && before.filter((r) => Number(r[p.id]) !== origin.id).every((r) => same(withoutAudit(r), withoutAudit(after.find((x) => x[p.id] === r[p.id]))))
+        row.status = !uncertain() && updated && subset(updated.status, value) && row.otherRecordsPreserved ? "Status verified; inspect timestamp effects" : "Status not verified"
+        if (uncertain() || !row.otherRecordsPreserved || variant === "restore" && !subset(updated?.status, value)) row.stopProfile = true
+      } catch (e) { row.status = row.sent ? "Outcome requires inspection" : "Needs context"; row.error = e.message; row.stopProfile = row.sent }
+      record(row); if (row.stopProfile) break
+    }
+  }
+  async function formLifecycle(p, read, mutArgs, origin) {
+    const id = p.key + ".submit"
+    if (!done(id)) await change(p, "isDraft", { variant: "submit", value: "N" }, id, read, mutArgs, origin)
+    if (suite.cases.some((r) => r.profile === p.key && r.stopProfile) || uncertain()) return
+    for (const state of ["SIGNED", "UNSIGNED"]) {
+      const key = p.key + ".state." + state
+      if (done(key)) continue
+      const row = { id: key, profile: p.key, operation: "signWebform", variant: state, status: "Running", sent: false }; record(row)
+      try {
+        const before = (await read()).find((r) => Number(r[p.id]) === origin.id)
+        if (before?.isDraft !== "N" || !positive(before.documentId)) fail("Requires independently verified non-draft form and linked document")
+        let error
+        try { row.sent = true; await call("signWebform", { signatureRecord: { documentId: before.documentId, recordState: state, note: "WEBFORMS TEST lifecycle" } }, "__typename", true, "Sign") } catch (e) { error = e.message }
+        const after = (await read()).find((r) => Number(r[p.id]) === origin.id)
+        row.answersPreserved = Boolean(after && before.formdata === after.formdata)
+        row.status = after?.recordState === state && row.answersPreserved && !uncertain() ? "State verified" : "State not verified"; if (error) row.error = error
+      } catch (e) { row.status = row.sent ? "Outcome requires inspection" : "Needs context"; row.error = e.message }
+      record(row)
+    }
+  }
+  async function download(p, read) {
+    const id = p.key + ".encodedFile"; if (done(id)) return
+    const row = { id, profile: p.key, variant: "read encodedFile", operation: "document", status: "Running" }; record(row)
+    try {
+      const docs = await read(), chosen = docs.find((x) => Number(x[p.id]) === ids[p.key])
+      if (!chosen) fail("Needs a patient document")
+      const info = types.get("Document")?.fields.find((f) => f.name === "encodedFile")
+      if (!info || !["SCALAR", "ENUM"].includes(named(info.type)?.kind)) fail("No scalar encodedFile download route")
+      const result = await call("document", { patientId, id: Number(chosen.documentId) }, "documentId patientId encodedFile", false, "File")
+      const value = result.document?.find((r) => Number(r.patientId) === patientId && Number(r.documentId) === Number(chosen.documentId))
+      if (!value) fail("Requested document not returned")
+      row.status = value.encodedFile ? "File value returned; compare content" : "No file value returned"; row.characters = typeof value.encodedFile === "string" ? value.encodedFile.length : 0
+    } catch (e) { row.status = "Needs context"; row.error = e.message } record(row)
+  }
+  async function correspondenceUpdate(p, read, origin) {
+    const id = p.key + ".positive-id-update"; if (done(id)) return
+    const row = { id, profile: p.key, operation: "createEncounterCorrespondence", variant: "positive-ID update candidate", status: "Running", sent: false }; record(row)
+    try {
+      const before = await read(), old = before.find((x) => Number(x[p.id]) === origin.id)
+      if (!old) fail("Test correspondence missing")
+      let error
+      try { row.sent = true; await call(p.create, { encounterId: ctx.encounterId, correspondence: { correspondenceId: origin.id, note: origin.marker + " UPDATE" } }, "__typename", true, "CorrespondenceUpdate") } catch (e) { error = e.message }
+      const after = await read(); row.status = error && same(withoutAudit(before), withoutAudit(after)) ? "Rejected; selected read unchanged" : "Inspect candidate update outcome"; row.error = error
+    } catch (e) { row.status = row.sent ? "Outcome requires inspection" : "Needs context"; row.error = e.message } record(row)
+  }
+}
+
+// MOIS 2.30.31 evidence: main.a75cc6b1.chunk.js queryGraphQL export accepts
 // (operationName, jwToken, apiServer, query, variables, statusSetter,
 //  resultCallback, errorDispatch, { formParams }) and returns data or null.
 // Use that host transport; never invent an endpoint or expose credentials.
-const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
+const PatientContextQueryTest = ({ collections = [], writeTargets = [], suitePlan = null }) => {
   const sd = useSourceData()
   const patient = sd?.patient ?? sd?.queryResult?.patient?.[0]
   const patientId = Number(patient?.patientId ?? sd?.formParams?.patientId)
@@ -26189,6 +26660,9 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
   const hostQuery = typeof queryGraphQL === "function" ? queryGraphQL : null
   const ready = Boolean(hostQuery && auth.jwToken && auth.apiServer && Number.isInteger(patientId) && patientId > 0)
   const [state, setState] = React.useState({ patientId, busy: false, message: "No live checks run yet.", rows: [], hasRun: false, schemaFields: [] })
+  const exchanges = React.useRef([])
+  const evidenceBytes = React.useRef(0)
+  const evidenceTruncated = React.useRef(false)
   const [customQuery, setCustomQuery] = React.useState("query CustomPatientProbe($patientId: Int) { patient(id: $patientId) { patientId } }")
   const [customVariables, setCustomVariables] = React.useState('{"patientId":"$patientId"}')
   const [testContext, setTestContext] = React.useState("{}")
@@ -26200,6 +26674,7 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
   const busy = React.useRef(false)
   React.useEffect(() => {
     if (pendingWrites.current) uncertainWrite.current = true
+    exchanges.current = []; evidenceBytes.current = 0; evidenceTruncated.current = false
     setTestContext("{}")
     setWriteOverrides("{}")
     setWriteSelection("all")
@@ -26222,7 +26697,7 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
   const readableError = (value) => String(value || "Unknown query error").split(String(auth.jwToken || "\\u0000")).join("[redacted]").slice(0, 1200)
 
   const run = async (mode = "reads") => {
-    if (!ready || busy.current || (mode === "writes" && (uncertainWrite.current || pendingWrites.current))) return
+    if (!ready || busy.current || (["writes", "suite", "all"].includes(mode) && (uncertainWrite.current || pendingWrites.current))) return
     busy.current = true
     const runId = ++epoch.current
     const active = () => epoch.current === runId
@@ -26232,13 +26707,27 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
     let customResults = [...(current.customResults || [])]
     let rootResults = [...(current.rootResults || [])]
     let writeResults = [...(current.writeResults || [])]
+    let suiteResults = current.suiteResults || null
+    let suitePhase = null
+    let phaseResults = [...(current.phaseResults || [])]
     let missingExploration = current.missingExploration || null
     let apiInventory = current.apiInventory || null
     const update = (message, running = true) => {
-      if (active()) setState({ patientId, busy: running, message, rows: [...rows], hasRun: true, schemaFields, apiInventory, writeResults: [...writeResults], createdIds: { ...createdIds }, rootResults: [...rootResults], customResults: [...customResults], missingExploration })
+      if (active()) setState({ patientId, suiteResults, suitePhase, phaseResults, busy: mode === "all" ? true : running, message, rows: [...rows], hasRun: true, schemaFields, apiInventory, writeResults: [...writeResults], createdIds: { ...createdIds }, rootResults: [...rootResults], customResults: [...customResults], missingExploration })
+    }
+    const redact = (value) => {
+      const text = JSON.stringify(value, (key, item) => /jwToken|authorization|password|secret|accessToken|refreshToken/i.test(key) ? "[redacted]" : item)
+      return text ? JSON.parse(text.split(String(auth.jwToken || "\\u0000")).join("[redacted]")) : value
+    }
+    const capture = (entry) => {
+      if (!active() || mode !== "all" && mode !== "suite") return
+      const safe = redact(entry), size = JSON.stringify(safe).length
+      if (evidenceBytes.current + size > 25000000) { evidenceTruncated.current = true; return }
+      exchanges.current.push(safe); evidenceBytes.current += size
     }
     const request = async (operation, query, variables, mutation = false) => {
       if (!active()) throw new Error("Stopped")
+      const startedAt = new Date().toISOString()
       let status = {}
       let notification = null
       let timer
@@ -26255,11 +26744,42 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
         const detail = status?.detailErrors || notification?.detailErrors || []
         const error = detail.map((entry) => entry.message).filter(Boolean).join("; ") || status?.error || notification?.message
         if (!data || error) throw new Error(error || "MOIS returned no data.")
+        capture({ operation, query, variables, mutation, startedAt, receivedAt: new Date().toISOString(), data })
         return data
+      } catch (error) {
+        capture({ operation, query, variables, mutation, startedAt, error: readableError(error.message) })
+        if (mutation && /timed out|Stopped/.test(String(error.message))) uncertainWrite.current = true
+        throw error
       } finally { clearTimeout(timer) }
     }
     update(mode === "api" ? "Inspecting root queries, mutations and input types…" : "Inspecting the live Patient schema…")
-    try {
+    const uploadAttachment = async (profileId, document, content) => {
+      if (!active() || uncertainWrite.current || pendingWrites.current) throw new Error("Stopped or unresolved write")
+      const endpoint = String(auth.apiServer).replace(/\\/?$/, "/") + \`api/attachment/file/\${profileId}/\${patientId}/\`
+      const body = new window.FormData(); body.append("file", new window.Blob([content], {type:"text/plain"}), "webforms-suite-test.txt"); body.set("document", JSON.stringify(document))
+      const startedAt = new Date().toISOString(); let timer
+      try {
+        pendingWrites.current += 1
+        const transport = window.fetch(endpoint, {method:"POST",headers:{Authorization:\`Bearer \${auth.jwToken}\`},body}).then(async (response) => {
+          const responseText = await response.text()
+          capture({operation:"AttachmentUpload",method:"POST",path:"api/attachment/file",document,filename:"webforms-suite-test.txt",content,startedAt,status:response.status,responseText})
+          if (!response.ok) throw new Error("Attachment upload returned HTTP " + response.status)
+          return responseText
+        }).finally(() => {pendingWrites.current -= 1})
+        return await Promise.race([transport,new Promise((_,reject) => {timer=setTimeout(() => reject(new Error("Attachment upload timed out after 30 seconds.")),30000)})])
+      } catch (e) {
+        if (/timed out|Stopped/.test(e.message)) uncertainWrite.current = true
+        capture({operation:"AttachmentUpload",document,content,startedAt,error:readableError(e.message)})
+        throw e
+      } finally { clearTimeout(timer) }
+    }
+    const executePhase = async (mode) => {
+      if (mode === "reads") rows = []
+      if (mode === "suite") {
+        suiteResults = await runPatientContextVariantSuite({ request, patientId, patient, sourceProfile: sd?.userProfile || settings?.userProfile, context: JSON.parse(testContext || "{}"), plan: suitePlan, previous: suiteResults, active, uploadAttachment, uncertain: () => uncertainWrite.current || pendingWrites.current > 0, emit: (value) => { suiteResults = value; update("Comprehensive variants: " + value.cases.length + " cases recorded") } })
+        update(suiteResults.status, false)
+        return
+      }
       if (mode === "missing") {
         const targets = {
           addressHistory: { names: ["AddressHistory", "HistoricalAddress", "PreviousAddress"], related: [] },
@@ -26273,6 +26793,10 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
           serviceEvents: { names: ["ServiceEvent"], related: [] },
           socialHistory: { names: ["SocialHistory", "SocialHistoryRecord"], related: [] },
           standardForms: { names: ["StandardForm"], related: ["PaperFormTemplate", "Webform", "WebformDefinition"] },
+          goals: { names: ["Goal"], related: [] },
+          goalLinks: { names: ["GoalLink"], related: ["attachedGoalId"] },
+          needs: { names: ["Need"], related: [] },
+          risks: { names: ["Risk", "ReactionRisk"], related: ["attachedReactionRiskId"] },
         }
         const limits = { maxDepth: 6, maxStates: 10000, pathsPerCollection: 12, maxProbes: 60 }
         missingExploration = {
@@ -26281,7 +26805,7 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
           coverage: { completed: false, truncated: false, visitedStates: 0, probesSent: 0 },
           collections: Object.keys(targets).map((collection) => ({ collection, status: "Not completed", matchedOutputTypes: [], paths: [] })),
         }
-        update("Inspecting the live output schema for the 11 missing collections…")
+        update("Inspecting the live output schema for the missing collections…")
         // One schema snapshot makes the search reproducible and includes abstract
         // output types. Only the Query root is traversed; never the Mutation root.
         const query = \`query ExploreMissingSchema { __schema { queryType { name } types { name kind fields { name args { name defaultValue type { \${typeRef} } } type { \${typeRef} } } possibleTypes { name kind } inputFields { name defaultValue type { \${typeRef} } } enumValues { name } } } }\`
@@ -27066,22 +27590,38 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
         update(\`Checked \${rows.length} of \${targets.length} collections\`)
       }
       update("Live checks complete. Results are from explicit reads, separate from the initial chart load.", false)
-    } catch (error) {
-      if (mode === "missing" && missingExploration && active()) { missingExploration.error = readableError(error.message); missingExploration.status = "Exploration incomplete" }
-      if (mode === "api" && apiInventory) apiInventory.error = readableError(error.message)
-      update(readableError(error.message), false)
-    } finally { if (active()) busy.current = false }
+    }
+    try {
+      const phases = mode === "all" ? ["api", "reads", "roots", "missing", "suite"] : [mode]
+      for (const phase of phases) {
+        if (!active()) break
+        suitePhase = phase
+        const phaseResult = { phase, status: "Running", startedAt: new Date().toISOString() }; phaseResults.push(phaseResult)
+        try { await executePhase(phase); phaseResult.status = "Finished; inspect case outcomes" } catch (error) {
+          phaseResult.status = "Failed"; phaseResult.error = readableError(error.message)
+          if (phase === "missing" && missingExploration) { missingExploration.error = readableError(error.message); missingExploration.status = "Exploration incomplete" }
+          if (phase === "api" && apiInventory) apiInventory.error = readableError(error.message)
+          update(readableError(error.message), false)
+          if (mode !== "all") break
+        } finally { phaseResult.completedAt = new Date().toISOString(); if (mode === "all") update("Completed phase: " + phase, false) }
+      }
+    } finally {
+      if (active()) { busy.current = false; setState((previous) => ({ ...previous, busy: false, message: mode === "all" ? "Comprehensive run finished. Download full evidence JSON; review case outcomes and prerequisites." : previous.message })) }
+    }
   }
   const stop = () => {
     if (pendingWrites.current) uncertainWrite.current = true
     epoch.current += 1
     busy.current = false
-    setState((previous) => ({ ...previous, missingExploration: previous.missingExploration && !previous.missingExploration.coverage.completed ? { ...previous.missingExploration, status: "Stopped; exploration incomplete" } : previous.missingExploration, customResults: (previous.customResults || []).map((row) => row.status === "Sent; outcome pending" ? { ...row, status: "Stopped; request may finish" } : row), writeResults: (previous.writeResults || []).map((row) => row.status === "Sent; outcome pending" ? { ...row, status: "Outcome unknown; request may finish" } : row), busy: false, message: "Stopped. Any request already sent may finish; its result will be ignored." }))
+    setState((previous) => ({ ...previous, suiteResults: previous.suiteResults ? { ...previous.suiteResults, status: "Stopped; inspect any pending write", cases: previous.suiteResults.cases.map((r) => r.status === "Running" ? { ...r, status: r.sent ? "Outcome unknown; request may finish" : "Stopped before result" } : r) } : null, missingExploration: previous.missingExploration && !previous.missingExploration.coverage.completed ? { ...previous.missingExploration, status: "Stopped; exploration incomplete" } : previous.missingExploration, customResults: (previous.customResults || []).map((row) => row.status === "Sent; outcome pending" ? { ...row, status: "Stopped; request may finish" } : row), writeResults: (previous.writeResults || []).map((row) => row.status === "Sent; outcome pending" ? { ...row, status: "Outcome unknown; request may finish" } : row), busy: false, message: "Stopped. Any request already sent may finish; its result will be ignored." }))
   }
   const report = JSON.stringify({
     reportType: "mois-patient-context-live-query",
-    reportVersion: 5,
-    diagnosticsRevision: "2026-09-10.6",
+    reportVersion: 6,
+    diagnosticsRevision: "2026-09-11.suite-1",
+    phaseResults: current.phaseResults || [],
+    comprehensiveSuite: current.suiteResults ? (({ context, origins, ...summary }) => summary)(current.suiteResults) : null,
+    evidenceCapture: { exchanges: exchanges.current.length, truncated: evidenceTruncated.current, limitCharacters: 25000000 },
     missingCollectionExploration: current.missingExploration || null,
     writeResults: (current.writeResults || []).map(({ variables, ...result }) => result),
     rootQueryResults: current.rootResults || [],
@@ -27093,14 +27633,14 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
     apiInventory: current.apiInventory || null,
     results: current.rows.map(({ key, status, count, query, error }) => ({ collection: key, status, count, query, error })),
   }, null, 2)
-  const downloadReport = () => {
-    if (!current.hasRun || current.busy) return
+  const downloadReport = (full = false) => {
+    if (!current.hasRun) return
     const urlApi = window.URL
     if (!window.Blob || !urlApi?.createObjectURL) return
-    const url = urlApi.createObjectURL(new window.Blob([report], { type: "application/json;charset=utf-8" }))
+    const url = urlApi.createObjectURL(new window.Blob([full ? JSON.stringify({ ...JSON.parse(report), evidenceKind: "Full test-patient evidence: inputs, baseline/mutation/read responses", context: current.suiteResults?.context, origins: current.suiteResults?.origins, exchanges: exchanges.current }, (key, value) => /jwToken|authorization|password|secret|accessToken|refreshToken/i.test(key) ? "[redacted]" : value, 2).split(String(auth.jwToken || "\\u0000")).join("[redacted]") : report], { type: "application/json;charset=utf-8" }))
     const link = window.document.createElement("a")
     link.href = url
-    link.download = \`mois-live-query-results-\${Date.now()}.json\`
+    link.download = \`mois-live-query-\${full ? "full-evidence" : "results"}-\${Date.now()}.json\`
     window.document.body.appendChild(link)
     link.click()
     link.remove()
@@ -27116,6 +27656,19 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
     <button type="button" disabled={!ready || current.busy} onClick={() => run("api")}>Inspect read/write API</button>{" "}
     <button type="button" disabled={!ready || current.busy || !current.apiInventory} onClick={() => run("roots")}>Test root queries</button>{" "}
     <button type="button" disabled={!ready || current.busy || !current.apiInventory || uncertainWrite.current || pendingWrites.current > 0} onClick={() => run("writes")}>Run test writes</button>{" "}
+    <div style={{ margin: "16px 0", padding: 12, background: "#f1f5f9", color: "#0f172a" }}>
+      <h3>Comprehensive test suite</h3>
+      <p>Run discovery, patient/root reads, missing-path exploration and all configured field variants in sequence. Writes create synthetic records, test patient demographics/contact fields and use existing positive-ID medication rows if needed, then attempt field restoration. Set, change, omission, null, empty and restoration outcomes are recorded separately. Unsupported cases remain visible. Test records can remain.</p>
+      <button type="button" disabled={!ready || current.busy || !suitePlan || uncertainWrite.current || pendingWrites.current > 0} onClick={() => run("all")}>Run all remaining tests</button>{" "}
+      <button type="button" disabled={!current.hasRun} onClick={() => downloadReport(true)}>Download full evidence JSON</button>
+      <p>The full report contains test-patient values and exact request/response snapshots, with credentials removed. Download a checkpoint while running if needed. Repeated runs skip cases already attempted; missing context can be supplied below.</p>
+      {(current.phaseResults || []).filter((p) => p.status === "Failed").map((p, i) => <p key={i}>{p.phase}: {p.error}</p>)}
+      {current.suiteResults ? <details open><summary>{current.suiteResults.cases.length} variant results · {current.suiteResults.status}</summary>
+        <ul>{current.suiteResults.cases.map((row) => <li key={row.id}><code>{row.id}</code> — {row.status}{row.error || row.reason ? <p>{row.error || row.reason}</p> : null}</li>)}</ul>
+        <details><summary>Operations still unexercised</summary><ul>{(current.suiteResults.operationCoverage || []).filter((op) => !op.cases.length).map((op) => <li key={op.operation}><code>{op.operation}</code>: {op.status}</li>)}</ul></details>
+        <details><summary>Requires a separate check</summary><ul>{(suitePlan?.manualCases || []).map((item) => <li key={item.id}>{item.area}: {item.reason}</li>)}</ul></details>
+      </details> : null}
+    </div>
     <details><summary>Custom GraphQL probe</summary><p>Run a named query or mutation through this MOIS login. This supports additional fields and operations without rebuilding the form. Mutations execute immediately when Run custom operation is clicked. Responses appear here, but response values are excluded from the diagnostic report. Query text is included, so use variables for patient values.</p>
       <textarea aria-label="Custom GraphQL query" value={customQuery} disabled={current.busy} onChange={(event) => setCustomQuery(event.target.value)} rows={6} style={{ width: "100%", fontFamily: "monospace" }} />
       <textarea aria-label="Custom GraphQL variables" value={customVariables} disabled={current.busy} onChange={(event) => setCustomVariables(event.target.value)} rows={4} style={{ width: "100%", fontFamily: "monospace" }} />
@@ -27123,7 +27676,7 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
       {(current.customResults || []).map((row, index) => <details key={index}><summary>{row.operation} — {row.status}</summary>{row.error ? <p>{row.error}</p> : null}{row.response ? <textarea aria-label={\`Custom response \${index + 1}\`} readOnly value={row.response} rows={10} style={{ width: "100%", fontFamily: "monospace" }} /> : null}</details>)}
     </details>
     <label>Write operation <select aria-label="Write operation" value={writeSelection} disabled={current.busy} onChange={(event) => setWriteSelection(event.target.value)}><option value="all">All unattempted operations</option><option value="changeObservationPanels">changeObservations — separate panel probe</option>{(current.apiInventory?.mutations || []).map((operation) => <option key={operation.name} value={operation.name}>{operation.name}</option>)}</select></label>
-    <details><summary>Test context</summary><p>Provide real test-instance IDs and codes once: providerId for appointments; assignedUserId or assignedTeamId for tasks; service coding, serviceMrp coding (MOIS.USER) and its matching serviceMrpId for service episodes. Events also need eventService coding and serviceEventEncounterId; a fresh read checks that the episode and encounter belong to this patient. These recipes use the complete shapes verified on September 10; minimum required fields remain unknown. Optional panelName overrides the vendor test panel coding. Missing context is reported before sending a write.</p>
+    <details><summary>Test context</summary><p>The combined suite discovers patient-owned encounters, the current user profile and existing service/MRP codings. Set userProfileId if the host does not expose it; set appointmentStatus to a valid status coding to enable new-appointment status variants. Individual probes can also use real test-instance IDs and codes: providerId for appointments; assignedUserId or assignedTeamId for tasks; service coding, serviceMrp coding (MOIS.USER) and its matching serviceMrpId for service episodes. Events also need eventService coding and serviceEventEncounterId; a fresh read checks that the episode and encounter belong to this patient. These recipes use the complete shapes verified on September 10; minimum required fields remain unknown. Optional panelName overrides the vendor test panel coding. Missing context is reported before sending a write.</p>
       <textarea aria-label="Test context JSON" value={testContext} disabled={current.busy} onChange={(event) => setTestContext(event.target.value)} rows={5} style={{ width: "100%", fontFamily: "monospace" }} />
     </details>
     <details><summary>Write test inputs</summary>
@@ -27141,7 +27694,7 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [] }) => {
     {current.rootResults?.length ? <details open><summary>Root query results</summary><ul>{current.rootResults.map((row) => <li key={row.operation}><code>{row.operation}</code> — {row.status}{row.error ? <p>{row.error}</p> : null}</li>)}</ul></details> : null}
     {current.writeResults?.length ? <details open><summary>Write test results</summary><ul>{current.writeResults.map((row, index) => <li key={index}><code>{row.operation}</code> — {row.status}. {row.verification}{row.recordId ? \` · Test record \${row.recordId}\` : ""}{row.error ? <p>{row.error}</p> : null}{row.variables ? <details><summary>Inputs sent (kept out of report)</summary><pre>{JSON.stringify(row.variables, null, 2)}</pre></details> : null}</li>)}</ul></details> : null}
     {current.busy ? <button type="button" onClick={stop}>Stop checks</button> : null}
-    {" "}<button type="button" disabled={!current.hasRun || current.busy} onClick={downloadReport}>Download results JSON</button>
+    {" "}<button type="button" disabled={!current.hasRun || current.busy} onClick={() => downloadReport(false)}>Download results JSON</button>
     <p role="status" aria-live="polite">{current.message}</p>
     {current.hasRun && !current.busy ? <details><summary>JSON report (copy or download)</summary>
       <p>Includes schema fields, counts, queries, errors, write outcomes, test markers and created record IDs. Input values and record samples are excluded. Server error messages may contain submitted values; review the JSON before sharing. Nothing is sent automatically.</p>
@@ -41415,10 +41968,10 @@ export const componentIdentities: Record<string, any> = {
   'PatientContextQueryTest': {
     "name": "PatientContextQueryTest",
     "title": "Live MOIS Query Test",
-    "description": "Live MOIS API laboratory: schema discovery, patient and root reads, explicit synthetic mutation probes, read-back verification and JSON reports.",
+    "description": "Combined MOIS test-instance API suite: discovery, missing routes, create/update/omit/null/empty/restore variants, independent verification and full evidence JSON.",
     "version": {
-      "major": 1,
-      "minor": 4,
+      "major": 2,
+      "minor": 0,
       "patch": 0
     },
     "type": "component",
