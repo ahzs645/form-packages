@@ -1113,6 +1113,28 @@ export interface BuilderCernerInterp {
  * Everything here is provenance for round-tripping and analyst review; the
  * runtime never reads it.
  */
+export interface BuilderCernerInputModule {
+  name: string;
+  value: string;
+  sequence: number;
+  mergeName?: string;
+  mergeId?: string;
+  dtaMnemonic?: string;
+  dtaDescription?: string;
+  taskAssayGuid?: string;
+  activityType?: string;
+  eventCodeDisplay?: string;
+  eventCodeUid?: string;
+  codeSet?: number;
+  codeValueDisplay?: string;
+  codeValueMeaning?: string;
+  condSectionDescription?: string;
+  condSectionDefinition?: string;
+  condSectionGuid?: string;
+  /** Any other non-empty MODULE leaf, by tag, for verbatim replay. */
+  leaves?: Record<string, string>;
+}
+
 export interface BuilderCernerConfig {
   version: 1;
   /**
@@ -1121,7 +1143,7 @@ export interface BuilderCernerConfig {
    * `authored` — bound in the builder's Data Binding panel; only the DTA
    * identity is meaningful and the export lays the input out itself.
    */
-  sourceKind: "powerform" | "authored";
+  sourceKind: "powerform" | "iview" | "authored";
   /** FORM_DESCRIPTION of the PowerForm this field came from. */
   formName: string;
   /** SECTION_DESCRIPTION of the containing section. */
@@ -1129,12 +1151,21 @@ export interface BuilderCernerConfig {
   /** Raw INPUT_TYPE (1 label, 4 alpha, 6 freetext, 9 alpha list, 18 provider, …). */
   inputType: number;
   inputRefSeq: number;
+  /** Position in the section's INPUT_LIST, which is not INPUT_REF_SEQ order; the export keeps both. */
+  inputIndex?: number;
   /** INPUT_DESCRIPTION — the input's own name, independent of its DTA's. */
   inputDescription?: string;
   /** PowerForm designer coordinates, `x1,y1,x2,y2` in form pixels. */
   position?: { x1: number; y1: number; x2: number; y2: number } | null;
   /** Every PVC_NAME → PVC_VALUE preference on the input, verbatim. */
   preferences: Record<string, string>;
+  /**
+   * Every MODULE of the input in document order, with the merge it carries
+   * (a DTA, a code value such as a unit, an event code, a conditional
+   * section) and every other non-empty leaf, so the export can replay the
+   * input exactly. Absent on fields authored here.
+   */
+  modules?: BuilderCernerInputModule[];
   /** The discrete task assay the input writes, when it has one. */
   dta?: {
     mnemonic: string;
@@ -1168,6 +1199,8 @@ export interface BuilderCernerConfig {
    */
   absorbedInputs?: Array<{
     seq: number;
+    /** Position in the section's INPUT_LIST. */
+    index?: number;
     description: string;
     type: number;
     prefs: Record<string, string>;
