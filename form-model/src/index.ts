@@ -1199,7 +1199,7 @@ export interface BuilderCernerDtaDefinition {
   /** Further bands by sex, gestation or age, written after the default one. */
   bands?: BuilderCernerReferenceBand[] | null;
   witnessRequired?: boolean;
-  /** Intake and Output: 0 neither, 1 intake, 2 output — whether the result feeds the I&O flowsheet. */
+  /** Intake and Output: 0 neither, 1 intake, 2 output; documented option 3 requires workflow review. */
   ioFlag?: 0 | 1 | 2 | 3;
   /**
    * `new`: DTA Wizard's "Build a New Event Code" — an event code named like
