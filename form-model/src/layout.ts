@@ -3,6 +3,9 @@ import type { GroupSummary } from "./grouping";
 import type { ReportItemFormat } from "./report-formats";
 import type {
   BuilderField,
+  BuilderFieldMoisConfig,
+  BuilderFieldSourceConfig,
+  BuilderMoisOutputMapping,
   CalculatedValueConfig,
   CalculatedValueRange,
   MoisNavigationTarget,
@@ -711,6 +714,167 @@ export function resolveCompositeMoisContract(
     persistedOutput,
     defaultTargetId,
   });
+}
+
+/**
+ * The slice of a builder or parsed field that carries field-level MOIS
+ * binding. `sourceConfig` reads, `moisConfig` saves/writes/links, and
+ * `moisOutput` (observation) is handled by the export's own output pipeline.
+ */
+export interface MoisFieldBindingSource {
+  id: string;
+  sourceConfig?: BuilderFieldSourceConfig | null;
+  moisConfig?: BuilderFieldMoisConfig | null;
+}
+
+function sourceConfigPaths(config: BuilderFieldSourceConfig | null | undefined): string[] {
+  return (config?.paths ?? [])
+    .map((path) => normalizeTrimmedString(path))
+    .filter((path): path is string => Boolean(path));
+}
+
+/** True when the field itself declares any MOIS read, save-key, write or link. */
+export function fieldHasMoisBindingConfig(field: MoisFieldBindingSource): boolean {
+  if (sourceConfigPaths(field.sourceConfig).length > 0) return true;
+  const config = field.moisConfig;
+  if (!config) return false;
+  const explicitLocalWrite = normalizeTrimmedString(config.localWrite?.targetId);
+  return Boolean(
+    (explicitLocalWrite && explicitLocalWrite !== field.id) ||
+      normalizeMoisWriteBinding(config.writeBinding) ||
+      normalizeMoisNavigationTarget(config.navigation)
+  );
+}
+
+/**
+ * Derive the layout-draft contract from the field's own MOIS config. The first
+ * source path becomes the read binding (extra paths and the fallback stay on
+ * the field's auto-fill entry, which wins at runtime). A field-level read
+ * shows on the form unless it is explicitly "backing".
+ */
+export function projectFieldMoisContract(field: MoisFieldBindingSource): MoisFieldContract | null {
+  const paths = sourceConfigPaths(field.sourceConfig);
+  const readBinding = paths.length > 0
+    ? normalizeMoisReadBinding(
+        {
+          sourcePath: paths[0],
+          presentation: field.sourceConfig?.presentation === "backing" ? "backing" : "editable",
+          valueTransform: field.sourceConfig?.valueTransform,
+        },
+        null,
+        "editable"
+      )
+    : null;
+  const config = field.moisConfig;
+  // A save key equal to the field id is the runtime default, not a binding.
+  const localWriteTarget = normalizeTrimmedString(config?.localWrite?.targetId);
+  return buildResolvedMoisContract({
+    readBinding,
+    localWrite: localWriteTarget && localWriteTarget !== field.id ? { targetId: localWriteTarget } : null,
+    writeBinding: config?.writeBinding ?? null,
+    navigation: normalizeMoisNavigationTarget(config?.navigation),
+    persistedOutput: null,
+    defaultTargetId: field.id,
+  });
+}
+
+/**
+ * Whether a resolved contract says anything an author chose — a save key that
+ * merely equals the field id is the sanitizer's default, not a decision.
+ */
+export function contractHasAuthoredMoisSemantics(
+  contract: MoisFieldContract | null | undefined,
+  fieldId: string
+): boolean {
+  if (!contract) return false;
+  const localWriteTarget = normalizeTrimmedString(contract.localWrite?.targetId);
+  return Boolean(
+    contract.readBinding?.sourcePath ||
+      (localWriteTarget && localWriteTarget !== fieldId) ||
+      contract.writeBinding ||
+      contract.navigation ||
+      (contract.persistedOutput?.kind === "observation" && contract.persistedOutput.observationCode)
+  );
+}
+
+export function areMoisFieldContractsEqual(
+  left: MoisFieldContract | null | undefined,
+  right: MoisFieldContract | null | undefined
+): boolean {
+  return JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
+}
+
+export interface MoisContractLiftTarget extends MoisFieldBindingSource {
+  moisOutput?: BuilderMoisOutputMapping | null;
+}
+
+export interface MoisContractLiftPatch {
+  sourceConfig?: BuilderFieldSourceConfig;
+  moisConfig?: BuilderFieldMoisConfig;
+  moisOutput?: BuilderMoisOutputMapping;
+}
+
+/**
+ * Move a layout-draft contract onto the field it describes. Runs once per
+ * legacy document so older drafts (readBinding / navigation / persistedOutput
+ * authored on the layout) show up in the field-level MOIS editor. An explicit
+ * `null` on the field means the author cleared that part; it is not re-lifted.
+ */
+export function liftMoisContractIntoFieldPatch(
+  field: MoisContractLiftTarget,
+  contract: MoisFieldContract | null | undefined
+): MoisContractLiftPatch | null {
+  if (!contract) return null;
+  const patch: MoisContractLiftPatch = {};
+
+  const readBinding = contract.readBinding;
+  if (
+    readBinding?.sourcePath &&
+    field.sourceConfig !== null &&
+    sourceConfigPaths(field.sourceConfig).length === 0
+  ) {
+    patch.sourceConfig = {
+      ...(field.sourceConfig ?? {}),
+      paths: [readBinding.sourcePath],
+      presentation: readBinding.presentation === "editable" ? "editable" : "backing",
+      ...(readBinding.valueTransform ? { valueTransform: readBinding.valueTransform } : {}),
+    };
+  }
+
+  if (field.moisConfig !== null && !field.moisConfig) {
+    const localWriteTarget = normalizeTrimmedString(contract.localWrite?.targetId);
+    const writeBinding = normalizeMoisWriteBinding(contract.writeBinding);
+    const navigation = normalizeMoisNavigationTarget(contract.navigation);
+    const moisConfig: BuilderFieldMoisConfig = {};
+    if (localWriteTarget && localWriteTarget !== field.id) moisConfig.localWrite = { targetId: localWriteTarget };
+    if (writeBinding) moisConfig.writeBinding = writeBinding;
+    if (navigation) moisConfig.navigation = navigation;
+    if (Object.keys(moisConfig).length > 0) patch.moisConfig = moisConfig;
+  }
+
+  const persisted = contract.persistedOutput;
+  if (
+    persisted?.kind === "observation" &&
+    normalizeTrimmedString(persisted.observationCode) &&
+    field.moisOutput !== null &&
+    !normalizeTrimmedString(field.moisOutput?.observationCode)
+  ) {
+    patch.moisOutput = {
+      ...(field.moisOutput ?? {}),
+      enabled: true,
+      kind: "observation",
+      observationCode: persisted.observationCode!.trim(),
+      ...(persisted.description ? { description: persisted.description } : {}),
+      valueType: persisted.valueType === "NUMERIC" ? "NUMERIC" : "TEXT",
+      ...(persisted.reportFieldId ? { reportFieldId: persisted.reportFieldId } : {}),
+      ...(persisted.units ? { units: persisted.units } : {}),
+      ...(persisted.unitsFieldId ? { unitsFieldId: persisted.unitsFieldId } : {}),
+      ...(persisted.unitsInline ? { unitsInline: true } : {}),
+      ...(persisted.conditionalFieldId ? { conditionalFieldId: persisted.conditionalFieldId } : {}),
+    };
+  }
+
+  return Object.keys(patch).length > 0 ? patch : null;
 }
 
 export function resolveHeadingMoisNavigationTarget(config?: {

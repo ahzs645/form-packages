@@ -1,5 +1,6 @@
 import type {
   BuilderField,
+  BuilderFieldMoisConfig,
   BuilderFieldSourceConfig,
   BuilderFieldTranslation,
   BuilderFhirConfig,
@@ -370,6 +371,8 @@ export interface ParsedField {
   measurementConfig?: MeasurementFieldConfig | null;
   /** Field-level MOIS source binding, carried verbatim from BuilderField. */
   sourceConfig?: BuilderFieldSourceConfig | null;
+  /** Field-level MOIS save key / mutation / module link, carried verbatim. */
+  moisConfig?: BuilderFieldMoisConfig | null;
   /** OSCAR import provenance and the user's mapping-review decision. */
   oscarImport?: BuilderOscarImportMapping | null;
   tableConfig?: {

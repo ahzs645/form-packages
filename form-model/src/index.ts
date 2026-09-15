@@ -1135,6 +1135,61 @@ export interface BuilderCernerInputModule {
   leaves?: Record<string, string>;
 }
 
+/**
+ * What DTA Wizard asks for when a discrete task assay is built, for a DTA
+ * authored in the builder (mirrors the C3I Cerner build guide, DTA Wizard
+ * steps 4–14). Everything but `eventSetPlacement` is written into the
+ * exported DTA_OBJ; the placement is a Core Event Manager step no DCP file
+ * carries, so it goes into RESOLUTION.md as a build instruction.
+ */
+export type BuilderCernerAgeUnit = "MINUTES" | "HOURS" | "DAYS" | "WEEKS" | "MONTHS" | "YEARS";
+
+/** The limits one reference band sets (DTA Wizard's Numeric Details). */
+export interface BuilderCernerRangeLimits {
+  units?: string;
+  normalLow?: number;
+  normalHigh?: number;
+  criticalLow?: number;
+  criticalHigh?: number;
+  feasibleLow?: number;
+  feasibleHigh?: number;
+}
+
+/**
+ * One row of DTA Wizard's Reference Ranges spreadsheet beyond the default
+ * band: who it applies to (sex, gestation, an age span) and the limits for
+ * them. `minsBack` is the delta-check window to the previous result.
+ */
+export interface BuilderCernerReferenceBand extends BuilderCernerRangeLimits {
+  sex?: "FEMALE" | "MALE" | "";
+  gestational?: boolean;
+  ageFrom?: number;
+  ageFromUnits?: BuilderCernerAgeUnit;
+  ageTo?: number;
+  ageToUnits?: BuilderCernerAgeUnit;
+  minsBack?: number;
+}
+
+export interface BuilderCernerDtaDefinition {
+  /** Numeric Map: digits and decimals a NUMERIC result may have. */
+  numericMap?: { minDigits?: number; maxDigits?: number; decimalPlaces?: number } | null;
+  /** The default reference-range band (0 minutes to 150 years, both sexes). */
+  range?: BuilderCernerRangeLimits | null;
+  /** Further bands by sex, gestation or age, written after the default one. */
+  bands?: BuilderCernerReferenceBand[] | null;
+  witnessRequired?: boolean;
+  /** Intake and Output: 0 neither, 1 intake, 2 output — whether the result feeds the I&O flowsheet. */
+  ioFlag?: 0 | 1 | 2;
+  /**
+   * `new`: DTA Wizard's "Build a New Event Code" — an event code named like
+   * the mnemonic (the default). `existing`: `eventCodeDisplay` names an event
+   * code the domain already has.
+   */
+  eventCodeMode?: "new" | "existing";
+  /** Where the event code should sit in Core Event Manager: a working-view section and, optionally, the parent event set under it. */
+  eventSetPlacement?: { section: string; parent?: string; note?: string } | null;
+}
+
 export interface BuilderCernerConfig {
   version: 1;
   /**
@@ -1181,6 +1236,8 @@ export interface BuilderCernerConfig {
     conceptCki?: string;
     /** REF_TEXT_FILES — the chart-guide reference text attached to the DTA. */
     refTextFiles?: string;
+    /** DTA Wizard values for a task assay defined here rather than picked from the domain. */
+    definition?: BuilderCernerDtaDefinition | null;
   } | null;
   /** Alpha responses with the nomenclature ids the domain expects back. */
   alphaResponses?: Array<{
@@ -1512,6 +1569,50 @@ export interface BuilderFieldSourceConfig {
   mode?: BuilderFieldSourceMode;
   /** Static value used when no path resolves (e.g. preview environments). */
   fallback?: string | number | boolean | null;
+  /** Portable chart query; native host compilation is a separate capability. */
+  chartQuery?: BuilderChartQuery;
+  /**
+   * How the filled field appears: "editable" (default) renders it on the form,
+   * "backing" keeps the value in runtime data, save payloads and PDF fills but
+   * hides the input. Mirrors the layout contract's read-binding presentation.
+   */
+  presentation?: BuilderFieldSourcePresentation;
+  /** Engine-side reshaping of the raw source value before formatting. */
+  valueTransform?: BuilderFieldSourceValueTransform;
+}
+
+export type BuilderFieldSourcePresentation = "editable" | "backing";
+export type BuilderFieldSourceValueTransform = "exists" | "address" | "insurance" | "telecom";
+
+/**
+ * Field-level MOIS chart interactions beyond reading a value: the saved-data
+ * key, an explicit chart mutation on submit, and a chart-module link. With
+ * `sourceConfig` (read) and `moisOutput` (observation) this is the field's
+ * whole MOIS story; the layout draft's `moisContract` is derived from it.
+ */
+export interface BuilderFieldMoisConfig {
+  /** Saved-data key when it must differ from the field id (legacy slots). */
+  localWrite?: { targetId: string } | null;
+  /** Engine-verified chart mutation run on submit. */
+  writeBinding?: {
+    targetId: string;
+    payloadField: string;
+    contextIdPath?: string | null;
+  } | null;
+  /** Chart-module link rendered beside the field. */
+  navigation?: MoisNavigationTarget | null;
+}
+
+export interface BuilderChartQuery {
+  kind: "Observation";
+  system: string;
+  code: string;
+  unit: string;
+  unitSystem?: string;
+  encounter: "any" | "selected";
+  lookBackDays?: number;
+  statuses?: ("final" | "amended" | "corrected")[];
+  specimen?: { system: string; code: string };
 }
 
 export type BuilderOscarImportMappingStatus =
@@ -1622,6 +1723,12 @@ export interface BuilderField {
    * a filled answer, matching the legacy FormCreationHistory contract).
    */
   sourceConfig?: BuilderFieldSourceConfig | null;
+  /**
+   * Field-level MOIS save key, chart mutation and module link. Together with
+   * sourceConfig and moisOutput this is the single authoring model; layout
+   * drafts mirror it (lib/editor-sdk/mois-binding-reconciliation.ts).
+   */
+  moisConfig?: BuilderFieldMoisConfig | null;
   /** OSCAR import provenance and the user's mapping-review decision. */
   oscarImport?: BuilderOscarImportMapping | null;
   pdfFieldAliases?: string[];
