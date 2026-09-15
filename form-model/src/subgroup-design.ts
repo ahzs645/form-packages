@@ -10,7 +10,11 @@ export interface SubgroupDesign {
   breakBefore?: boolean;
   gap?: number;
   padding?: number;
-  align?: "start" | "center" | "end";
+  align?: "start" | "center" | "end" | "stretch";
+  /** Extra space in a stretched vertical stack: keep at top, spread apart, or grow its last child. */
+  verticalFill?: "start" | "space-between" | "last";
+  /** Compact captions to their text height and set the gap above the answer. Omitted preserves original spacing. */
+  labelGap?: number;
   /** Override direct children's labels without changing their saved field settings. */
   labelPosition?: "inherit" | "top" | "left";
 }
@@ -27,7 +31,9 @@ export function normalizeSubgroupDesign(design?: SubgroupDesign) {
     breakBefore: design?.breakBefore === true,
     gap: clamp(design?.gap, 12, 0, 100),
     padding: clamp(design?.padding, 0, 0, 100),
-    align: design && ["start", "center", "end"].includes(design.align ?? "") ? design.align! : "start" as NonNullable<SubgroupDesign["align"]>,
+    align: design && ["start", "center", "end", "stretch"].includes(design.align ?? "") ? design.align! : "start" as NonNullable<SubgroupDesign["align"]>,
+    verticalFill: design && ["space-between", "last"].includes(design.verticalFill ?? "") ? design.verticalFill! : "start" as NonNullable<SubgroupDesign["verticalFill"]>,
+    labelGap: typeof design?.labelGap === "number" && Number.isFinite(design.labelGap) ? clamp(design.labelGap, 4, 0, 100) : undefined,
     labelPosition: design && ["top", "left"].includes(design.labelPosition ?? "") ? design.labelPosition! : "inherit" as NonNullable<SubgroupDesign["labelPosition"]>,
   };
 }

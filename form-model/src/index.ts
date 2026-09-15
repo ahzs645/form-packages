@@ -1177,7 +1177,7 @@ export interface BuilderCernerReferenceBand extends BuilderCernerRangeLimits {
 }
 
 export interface BuilderCernerConditionalEquation {
-  components: Array<{ name: string; mnemonic: string; activityType: string; resultType: string; taskAssayId?: string; taskAssayGuid?: string; units?: string }>;
+  components: Array<{ name: string; fieldId?: string; mnemonic: string; activityType: string; resultType: string; taskAssayId?: string; taskAssayGuid?: string; units?: string }>;
   /** Used when none of the ordered conditions match; blank means no result. */
   expression: string;
   conditions: Array<{ condition: string; expression: string }>;
