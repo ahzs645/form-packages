@@ -1,4 +1,7 @@
 export type * from "./offline-authoring";
+export * from "./subgroup-design";
+export { resolveRichTextContent, resolveRichTextField } from "./rich-text-targets";
+export type { RichTextTarget, RichTextContent, RichTextOverrides } from "./rich-text-targets";
 /**
  * UI-independent authoring model shared by the builder, persistence codecs,
  * previews, and exporters. Keep this package free of app/component imports.
@@ -1146,6 +1149,7 @@ export type BuilderCernerAgeUnit = "MINUTES" | "HOURS" | "DAYS" | "WEEKS" | "MON
 
 /** The limits one reference band sets (DTA Wizard's Numeric Details). */
 export interface BuilderCernerRangeLimits {
+  defaultResult?: number;
   units?: string;
   normalLow?: number;
   normalHigh?: number;
@@ -1168,9 +1172,26 @@ export interface BuilderCernerReferenceBand extends BuilderCernerRangeLimits {
   ageTo?: number;
   ageToUnits?: BuilderCernerAgeUnit;
   minsBack?: number;
+  /** Answers selected specifically for this range; empty means no responses. */
+  answers?: Array<{ display: string; nomenclatureId?: string; resultValue?: string; isDefault?: boolean; gridDisplay?: 0 | 1 | 2 }>;
+}
+
+export interface BuilderCernerConditionalEquation {
+  components: Array<{ name: string; mnemonic: string; activityType: string; resultType: string; taskAssayId?: string; taskAssayGuid?: string; units?: string }>;
+  /** Used when none of the ordered conditions match; blank means no result. */
+  expression: string;
+  conditions: Array<{ condition: string; expression: string }>;
 }
 
 export interface BuilderCernerDtaDefinition {
+  equation?: BuilderCernerConditionalEquation;
+  defaultType?: 0 | 1 | 2 | 3;
+  defaultTemplate?: string;
+  relatedResultLookBackMinutes?: number;
+  bmdiLookBackMinutes?: number;
+  bmdiLookForwardMinutes?: number;
+  eventDescription?: string;
+  eventDefinition?: string;
   /** Numeric Map: digits and decimals a NUMERIC result may have. */
   numericMap?: { minDigits?: number; maxDigits?: number; decimalPlaces?: number } | null;
   /** The default reference-range band (0 minutes to 150 years, both sexes). */
@@ -1179,7 +1200,7 @@ export interface BuilderCernerDtaDefinition {
   bands?: BuilderCernerReferenceBand[] | null;
   witnessRequired?: boolean;
   /** Intake and Output: 0 neither, 1 intake, 2 output — whether the result feeds the I&O flowsheet. */
-  ioFlag?: 0 | 1 | 2;
+  ioFlag?: 0 | 1 | 2 | 3;
   /**
    * `new`: DTA Wizard's "Build a New Event Code" — an event code named like
    * the mnemonic (the default). `existing`: `eventCodeDisplay` names an event
@@ -1192,6 +1213,31 @@ export interface BuilderCernerDtaDefinition {
 
 export interface BuilderCernerConfig {
   version: 1;
+  /** Semantic authoring options; unknown native encodings stay in the authoring companion. */
+  defaultPolicy?: {
+    source: "none" | "reference" | "encounter" | "any-encounter" | "template";
+    lookBackMinutes?: number;
+    /** Display the previous-data indicator outside the input's top-right edge. */
+    showImportIcon?: boolean;
+  };
+  resultOptions?: { allowComments?: boolean; suppress?: boolean; commentFieldId?: string };
+  grid?: {
+    family: "power" | "discrete" | "ultra";
+    /** Source GRIDITEMLIST leaves, retained verbatim for imported grids. */
+    nativeItems?: Array<Record<string, string>>;
+    /** Authored UltraGrid intersection destinations, keyed by stable axis ids. */
+    intersections?: Array<{ rowId: string; columnId: string; eventDisplay: string; eventCode?: string; eventUid?: string; eventCki?: string }>;
+    view: "grid" | "row" | "detail";
+    rowComments?: boolean;
+    /** Native source units, deliberately independent of preview pixels. */
+    nativeRowHeight?: number;
+    nativeCommentWidth?: number;
+    autoSizeRows?: boolean;
+    gridEvent?: { display: string; uid?: string };
+    rowEvent?: { display: string; uid?: string };
+    columns?: Record<string, { mnemonic?: string; taskAssayId?: string; taskAssayGuid?: string; eventCodeDisplay?: string; eventCodeUid?: string; required?: boolean; width?: number; dta?: BuilderCernerConfig["dta"]; alphaResponses?: BuilderCernerConfig["alphaResponses"] }>;
+    rows?: Array<{ id: string; label: string; mnemonic?: string; taskAssayId?: string; taskAssayGuid?: string; dta?: BuilderCernerConfig["dta"]; alphaResponses?: BuilderCernerConfig["alphaResponses"] }>;
+  };
   /**
    * `powerform` — imported from a DCP export, so the coordinates, preferences
    * and absorbed labels here are Cerner's own and are replayed verbatim.
@@ -1238,6 +1284,12 @@ export interface BuilderCernerConfig {
     refTextFiles?: string;
     /** DTA Wizard values for a task assay defined here rather than picked from the domain. */
     definition?: BuilderCernerDtaDefinition | null;
+    /** Explicit provenance: missing domain IDs never imply local authorship. */
+    /** Compiled catalog snapshot retained for review; not a native DCP record. */
+    catalogDefinition?: unknown;
+    /** Complete native DTA_OBJ retained from the catalog export. */
+    nativeRecord?: unknown;
+    provenance?: { kind: "catalog" | "draft"; domain?: string; generatedAt?: string; revision?: number };
   } | null;
   /** Alpha responses with the nomenclature ids the domain expects back. */
   alphaResponses?: Array<{
@@ -1246,6 +1298,10 @@ export interface BuilderCernerConfig {
     resultValue?: string;
     sequence?: number;
     isDefault?: boolean;
+    mnemonic?: string;
+    vocabulary?: string;
+    shortString?: string;
+    sourceIdentifier?: string;
   }>;
   /** A Cerner interpretation (decision table) that computes this field's value. */
   interp?: BuilderCernerInterp | null;
@@ -2107,6 +2163,8 @@ export interface BuilderField {
    */
   labelStyle?: BuilderLabelStyle | null;
 
+  /** Shared text remains in richTextConfig/componentProps; omitted targets inherit it. */
+  richTextOverrides?: import("./rich-text-targets").RichTextOverrides;
   richTextConfig?: {
     source?: string | null;
     /** Managed images referenced as `#mois-rich-image:<id>` from source. */
@@ -2133,6 +2191,7 @@ export interface BuilderLabelStyle {
 /** Subgroup within a section (simplified for form builder) */
 export interface SectionSubgroup {
   id: string;
+  design?: import("./subgroup-design").SubgroupDesign;
   name: string;
   showHeading?: boolean;
   /** Omit to inherit the form design's label position. */
@@ -2395,6 +2454,9 @@ export interface FieldConditionGroup {
 }
 
 export interface FieldLinkRule {
+  /** PowerForm page navigation while a Show/Hide rule makes the page inactive.
+   * Native Cerner conditional sections default to disable; hide is preview-only. */
+  cernerInactivePageBehavior?: "disable" | "hide";
   /** Recursive conditions override the legacy flat condition pairs when present. */
   conditionGroup?: FieldConditionGroup;
   /** Default preserves user answers; always explicitly opts into overwriting. */

@@ -85,6 +85,7 @@ function conditionGroupSchema(depth: number): z.ZodType<FieldConditionGroup> {
 export const FieldConditionGroupSchema = conditionGroupSchema(0);
 
 export const FieldLinkRuleSchema = z.object({
+  cernerInactivePageBehavior: z.enum(["disable", "hide"]).optional(),
   conditionGroup: FieldConditionGroupSchema.optional(),
   copyPolicy: z.enum(["when-empty", "until-edited", "always"]).optional(),
   id: z.string(),

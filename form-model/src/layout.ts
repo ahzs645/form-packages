@@ -266,6 +266,7 @@ export function resolveSubgroupHeadingPosition(
 
 export interface SubgroupNode {
   id: string;
+  design?: import("./subgroup-design").SubgroupDesign;
   name: string;
   layoutType: LayoutType;
   parentId: string | null;
