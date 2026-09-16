@@ -1,3 +1,6 @@
+import type { SmartTemplateDefinition, SmartTemplateLink } from "./smart-template";
+export type { SmartTemplateLink } from "./smart-template";
+export type { SmartTemplateDefinition, SmartTemplateComponent, SmartTemplateSelection, SmartTemplateLayout, SmartTemplateKind } from "./smart-template";
 export type * from "./offline-authoring";
 export * from "./subgroup-design";
 export { resolveRichTextContent, resolveRichTextField } from "./rich-text-targets";
@@ -1165,7 +1168,7 @@ export interface BuilderCernerRangeLimits {
  * them. `minsBack` is the delta-check window to the previous result.
  */
 export interface BuilderCernerReferenceBand extends BuilderCernerRangeLimits {
-  sex?: "FEMALE" | "MALE" | "";
+  sex?: "FEMALE" | "MALE" | "UNDIFFERENTIATED" | "";
   gestational?: boolean;
   ageFrom?: number;
   ageFromUnits?: BuilderCernerAgeUnit;
@@ -1212,7 +1215,15 @@ export interface BuilderCernerDtaDefinition {
 }
 
 export interface BuilderCernerConfig {
+  /** Authored Smart Template content; native references remain separate. */
+  smartTemplate?: SmartTemplateDefinition;
+  smartTemplateLink?: SmartTemplateLink;
+  /** References only: never executed as clinical rules. */
+  discernRuleIds?: string[];
   version: 1;
+  /** Oracle build-report provenance. Geometry is reconstructed, not native XML. */
+  workbookSource?: { name: string; sheet: string; row: number; sourcePosition?: string; sourceFont?: string; sourceValues?: Record<string, string>; layout?: { basis: "neighbouring-labels" | "fallback" | "reference-template"; standard?: string; profile?: string; answerRows?: number; answerColumnWidth?: number; answerDisplay?: "short-string"; labelOverride?: { sourceLabel: string; caption: string }; note: string } };
+  firstResponseExclusive?: boolean;
   /** Semantic authoring options; unknown native encodings stay in the authoring companion. */
   defaultPolicy?: {
     source: "none" | "reference" | "encounter" | "any-encounter" | "template";
@@ -1220,7 +1231,9 @@ export interface BuilderCernerConfig {
     /** Display the previous-data indicator outside the input's top-right edge. */
     showImportIcon?: boolean;
   };
-  resultOptions?: { allowComments?: boolean; suppress?: boolean; commentFieldId?: string };
+  resultOptions?: { allowComments?: boolean; suppress?: boolean; suppressChart?: boolean; suppressText?: boolean; commentFieldId?: string; commentForFieldId?: string };
+  /** Explicit date/time calculation mode; never inferred from field captions. */
+  dateCalculation?: { startFieldId: string; endFieldId?: string; units: "minutes" | "hours" | "days" | "weeks" };
   grid?: {
     family: "power" | "discrete" | "ultra";
     /** Source GRIDITEMLIST leaves, retained verbatim for imported grids. */
@@ -1229,10 +1242,22 @@ export interface BuilderCernerConfig {
     intersections?: Array<{ rowId: string; columnId: string; eventDisplay: string; eventCode?: string; eventUid?: string; eventCki?: string }>;
     view: "grid" | "row" | "detail";
     rowComments?: boolean;
+    otherColumnLabel?: string;
+    /** Full column definitions for workbook demographic projection and details. */
+    columnFields?: Record<string, BuilderField>;
     /** Native source units, deliberately independent of preview pixels. */
     nativeRowHeight?: number;
     nativeCommentWidth?: number;
     autoSizeRows?: boolean;
+    /** Preview pixels only; native grid units must not be guessed from images. */
+    previewLayout?: {
+      fitWidth: boolean;
+      rowHeight: number;
+      rowLabelWidth: number;
+      commentWidth: number;
+      /** Display-only discrete-grid headings, keyed by the original answer. */
+      responseColumns?: Record<string, { label: string; width: number }>;
+    };
     gridEvent?: { display: string; uid?: string };
     rowEvent?: { display: string; uid?: string };
     columns?: Record<string, { mnemonic?: string; taskAssayId?: string; taskAssayGuid?: string; eventCodeDisplay?: string; eventCodeUid?: string; required?: boolean; width?: number; dta?: BuilderCernerConfig["dta"]; alphaResponses?: BuilderCernerConfig["alphaResponses"] }>;

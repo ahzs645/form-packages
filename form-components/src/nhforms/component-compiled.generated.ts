@@ -11042,15 +11042,21 @@ const flowNormalizeRows = rows => {
       } : null;
     }
     if (!entry || typeof entry !== "object") return null;
-    const code = ObservationKit.toText(entry.code).trim();
+    const binding = entry.previewBinding;
+    const code = ObservationKit.toText(binding?.kind === "observation" ? binding.code : entry.code).trim();
     if (!code) return null;
+    const nativeType = entry.nativeElement?.type || entry.moisType;
+    const nativeSource = entry.nativeElement?.source || entry.moisSource;
+    // Unsupported native sources cannot accidentally match an observation ID.
+    const queryable = binding ? binding.kind === "observation" : entry.bound !== false && (!nativeType || nativeType === "CHART" && nativeSource === "MEASURE");
     const label = ObservationKit.toText(entry.label).trim() || code;
     const units = ObservationKit.toText(entry.units).trim();
     return {
       kind: "observation",
+      queryable,
       code,
       label: units ? label + " (" + units + ")" : label,
-      loincCode: ObservationKit.toText(entry.loincCode).trim(),
+      loincCode: ObservationKit.toText(binding?.kind === "observation" ? binding.loincCode : entry.loincCode).trim(),
       units
     };
   }).filter(Boolean);
@@ -11074,6 +11080,7 @@ const flowRunQuery = (sd, {
     if (!parsedDate) return;
     if (cutoff && parsedDate.getTime() < cutoff.getTime()) return;
     observationRows.forEach((row, rowIndex) => {
+      if (row.queryable === false) return;
       if (!ObservationKit.matchesCode(entry, row)) return;
       const dateKey = ObservationKit.dateKey(entry[datePath]);
       if (!dateKey) return;
@@ -11389,12 +11396,9 @@ const FlowSheet = ({
   }
   const rangeLabel = columns.length > 0 ? "DATE RANGE: " + ObservationKit.displayDate(columns[0]) + " TO " + ObservationKit.displayDate(columns[columns.length - 1]) : "";
   const renderSheet = maxHeight => {
-    if (columns.length === 0) {
-      return /*#__PURE__*/React.createElement(Text, {
-        variant: "small"
-      }, "No chart observations matched this flow sheet.");
-    }
-    return /*#__PURE__*/React.createElement(FlowSheetGrid, {
+    return /*#__PURE__*/React.createElement(React.Fragment, null, columns.length === 0 ? /*#__PURE__*/React.createElement(Text, {
+      variant: "small"
+    }, "No chart observations matched this flow sheet.") : null, /*#__PURE__*/React.createElement(FlowSheetGrid, {
       rows: rowList,
       cellsByRow: cellsByRow,
       medRowCourses: medRowCourses,
@@ -11404,7 +11408,7 @@ const FlowSheet = ({
       showFlags: showFlags !== false,
       showDose: showMedicationDose === true,
       maxHeight: maxHeight
-    });
+    }));
   };
   const header = /*#__PURE__*/React.createElement(Stack, {
     horizontal: true,
@@ -44175,7 +44179,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './FieldStampButton/index.jsx': ["ButtonComponent","FieldStampButton","buildContext","clearStamp","context","effectiveStampFieldId","fallback","fieldData","fieldId","isDisabled","isSigned","normalizeStampTargets","normalizeStampValue","normalizedTargets","raw","resolveLiteralValue","resolvePathValue","sd","signedAt","signedAtText","sourcePath","stamp","stampRecord","statusText","value","written"],
   './FindCodeSelect/index.jsx': ["CONTROL_KEY_TOKENS","FindCodeSelect","FindCodeSelectBase","FindCodeSelectWithCodeList","FindCodeSelectWithFieldBinding","FindCodeSelectWithSourceLookup","aliasSets","aliases","boundValue","candidateKeys","candidates","clearTargets","code","codeListFromContext","combinedStyles","comboSelectedKey","currentValues","customSources","defaultComboStyles","defaultGetCandidates","defaultMapCandidateSavedValue","defaultRenderSelected","directKeys","effectiveFieldId","effectiveLabelPosition","entries","fallback","fallbackItems","filteringActive","fluentLabel","freeText","freeTextItem","getItemKey","getSizeStyles","handleChange","handleInputValueChange","handleKeyDown","handlePendingValueChanged","hasExplicitOptionList","hasSearchText","hasSelectionValue","hasSourceLookup","hidden","i","idx","isDeleteKey","isEmpty","isKeyboardToken","isMultiSelect","item","itemForStoredValue","items","key","keys","leftKey","mapped","match","matchingKey","nextValues","normalizeLookupName","normalizeOption","normalizeSelectedValues","normalized","normalizedLabel","optionList","optionLists","options","presentationDepth","rawDepth","rawKey","renderCandidateOption","rendered","requiredBackground","requiresHighlight","resolveItems","resolveLookupPath","rightKey","sameSelectedItem","sd","sectionLayout","seen","segments","selected","selectedCode","selectedItem","selectedItems","selectedKey","selectedKeySet","selectedKeys","shouldSelect","shouldSuppressLayoutItemLabel","showChildren","sizeMap","sizeStyles","sourceEntries","sourceItems","sourceLookupItems","storableSelection","storedSelectionToValue","storedValue","targets","text","theme","valueForLookupTarget","withoutItem","wrapperStyle"],
   './FirstNationsStatus/index.jsx': ["FirstNationsStatus","connections","ethnicity","firstNationsStatusPatientFields","firstNationsStatusSchema","hasReserveName","races","reserveConnection","reserveName","selfId"],
-  './FlowSheet/index.jsx': ["FLOW_CELL_STYLE","FLOW_LABEL_CELL_STYLE","FlowMedicationBarCells","FlowSheet","FlowSheetGrid","active","allMedications","cell","cellStyle","cells","cellsByRow","code","columnTime","columns","courses","cutoff","dateKey","dateKeys","doseFrequency","existing","flowIsSeparatorEntry","flowMedicationMatches","flowMedicationRowLabel","flowNormalizeMedications","flowNormalizeRows","flowRunQuery","hasObservationRows","header","headerStyle","keys","label","limit","match","matched","matches","medKeys","meds","name","needle","observationIndex","observationRows","parsedDate","rangeLabel","remaining","renderSheet","resolvedMedicationsMode","resolvedMinWidth","rowList","sd","source","startTime","stopRaw","stopTime","units","value"],
+  './FlowSheet/index.jsx': ["FLOW_CELL_STYLE","FLOW_LABEL_CELL_STYLE","FlowMedicationBarCells","FlowSheet","FlowSheetGrid","active","allMedications","binding","cell","cellStyle","cells","cellsByRow","code","columnTime","columns","courses","cutoff","dateKey","dateKeys","doseFrequency","existing","flowIsSeparatorEntry","flowMedicationMatches","flowMedicationRowLabel","flowNormalizeMedications","flowNormalizeRows","flowRunQuery","hasObservationRows","header","headerStyle","keys","label","limit","match","matched","matches","medKeys","meds","name","nativeSource","nativeType","needle","observationIndex","observationRows","parsedDate","queryable","rangeLabel","remaining","renderSheet","resolvedMedicationsMode","resolvedMinWidth","rowList","sd","source","startTime","stopRaw","stopTime","units","value"],
   './FocusedObservationHistory/index.jsx': ["FocusedObservationHistory","activeWatchField","candidate","current","date","day","direct","effectiveObservationCode","effectiveObservationComment","effectiveTitle","formatDate","getFocusedFieldId","handleBlur","handleFocus","hasFocusTarget","host","isTrackedFieldFocused","isVisible","items","month","normalizeItems","normalizedWatchFields","parseDate","parsed","parsedDate","pathSegments","patientPath","resolveMoisValue","resolvePath","rows","sd","textValue","year"],
   './FormContextHeader/index.jsx': ["FormContextHeader","FormContextHeaderSchema","appointmentDateTime","code","date","display","encounter","legacyContextDate","legacyContextDateTime","legacyContextText","legacyContextVisitCode","legacyFieldWrap","legacySmallFieldWrap","legacyTextStyles","match","providerName","raw","renderReadOnlyField","sd","section","values"],
   './FormSessionRuntime/index.jsx': ["FormSessionContext","FormSessionProvider","__cloneSessionValue","__getSessionContext","applySessionUpdate","cloneFormSessionState","contextValue","formData","mergeFormSessionState","normalizeSessionState","normalized","normalizedSessionData","result","root","selectedSessionData","selectedSessionDataWithSetter","sessionContext","sessionDataWithSetter","sessionScopedSetter","sessionSetFormData","setFormData","target","useFormSessionData"],

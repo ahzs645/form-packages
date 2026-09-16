@@ -90,6 +90,35 @@ const BASE_ROWS = [
   { code: "HGBA1C", label: "HGBA1C", loincCode: "4548-4" },
 ];
 
+describe("native source and observation binding isolation", () => {
+  it("keeps unsupported/unbound rows visible without matching same-code observations", () => {
+    const rows = [
+      { code: "1950", label: "Legacy form", moisType: "EFORM", moisSource: "HTN", bound: false },
+      { code: "951", label: "Legacy consult", moisType: "CHART", moisSource: "CONSULT", bound: true },
+      { code: "128", label: "Unresolved measure", moisType: "CHART", moisSource: "MEASURE", bound: false },
+      { code: "1950", label: "Explicitly unbound", previewBinding: { kind: "none" } },
+    ];
+    const harness = renderFlowSheet({ rows, medicationsMode: "none" });
+    for (const row of rows) expect(harness.container.textContent).toContain(row.label);
+    expect(harness.container.textContent).not.toMatch(/120\/80|129\/85|185\.2|6\.9/);
+    expect(harness.container.textContent).not.toContain("2024.08.12");
+    act(() => harness.root.unmount());
+  });
+
+  it("uses an explicit preview binding without reading the original ID or stale alias", () => {
+    const harness = renderFlowSheet({
+      medicationsMode: "none",
+      rows: [{
+        code: "128", label: "Mapped form row", loincCode: "4548-4", moisType: "EFORM", moisSource: "HTN",
+        previewBinding: { kind: "observation", code: "1950" },
+      }],
+    });
+    expect(harness.container.textContent).toContain("120/80");
+    expect(harness.container.textContent).not.toContain("6.9");
+    act(() => harness.root.unmount());
+  });
+});
+
 describe("FlowSheet", () => {
   it("transposes observations into element rows and date columns", () => {
     const harness = renderFlowSheet({ rows: BASE_ROWS });

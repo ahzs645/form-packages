@@ -30,15 +30,23 @@ const flowNormalizeRows = (rows) => {
         return code ? { kind: "observation", code, label: code, loincCode: "", units: "" } : null
       }
       if (!entry || typeof entry !== "object") return null
-      const code = ObservationKit.toText(entry.code).trim()
+      const binding = entry.previewBinding
+      const code = ObservationKit.toText(binding?.kind === "observation" ? binding.code : entry.code).trim()
       if (!code) return null
+      const nativeType = entry.nativeElement?.type || entry.moisType
+      const nativeSource = entry.nativeElement?.source || entry.moisSource
+      // Unsupported native sources cannot accidentally match an observation ID.
+      const queryable = binding
+        ? binding.kind === "observation"
+        : entry.bound !== false && (!nativeType || (nativeType === "CHART" && nativeSource === "MEASURE"))
       const label = ObservationKit.toText(entry.label).trim() || code
       const units = ObservationKit.toText(entry.units).trim()
       return {
         kind: "observation",
+        queryable,
         code,
         label: units ? label + " (" + units + ")" : label,
-        loincCode: ObservationKit.toText(entry.loincCode).trim(),
+        loincCode: ObservationKit.toText(binding?.kind === "observation" ? binding.loincCode : entry.loincCode).trim(),
         units,
       }
     })
@@ -58,6 +66,7 @@ const flowRunQuery = (sd, { sourcePath, datePath, rows, lookback }) => {
     if (!parsedDate) return
     if (cutoff && parsedDate.getTime() < cutoff.getTime()) return
     observationRows.forEach((row, rowIndex) => {
+      if (row.queryable === false) return
       if (!ObservationKit.matchesCode(entry, row)) return
       const dateKey = ObservationKit.dateKey(entry[datePath])
       if (!dateKey) return
@@ -392,10 +401,9 @@ const FlowSheet = ({
       : ""
 
   const renderSheet = (maxHeight) => {
-    if (columns.length === 0) {
-      return <Text variant="small">No chart observations matched this flow sheet.</Text>
-    }
     return (
+      <>
+      {columns.length === 0 ? <Text variant="small">No chart observations matched this flow sheet.</Text> : null}
       <FlowSheetGrid
         rows={rowList}
         cellsByRow={cellsByRow}
@@ -407,6 +415,7 @@ const FlowSheet = ({
         showDose={showMedicationDose === true}
         maxHeight={maxHeight}
       />
+      </>
     )
   }
 
