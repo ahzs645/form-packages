@@ -1214,6 +1214,48 @@ export interface BuilderCernerDtaDefinition {
   eventSetPlacement?: { section: string; parent?: string; note?: string } | null;
 }
 
+/**
+ * The domain build steps that no DCP file carries: the package the form came
+ * from, the note type used for textual rendition, the Order Task Tool task and
+ * its form/task link, ad hoc folders, MPage quick links, the rules or pages
+ * that launch the form, and the task servers to cycle. Mirrors the analyst
+ * "New PowerForm Build Instructions" documents; the export writes it into
+ * DEPLOYMENT.md as a per-form checklist.
+ */
+export interface CernerPowerFormBuildRecord {
+  /** Content package the form was added from, e.g. "680767 - Oracle Health EHR: Perioperative Services Content (January 2026)". */
+  package?: string;
+  /** Event set names added to the ESH beyond the DTA event codes. */
+  eventSets?: { form?: string; textRendition?: string };
+  /** Note type selected under Form › Customize for textual rendition. */
+  noteType?: string;
+  /** Order Task Tool › Tasks definition. Timeframes are kept as written ("7 Days", "72 Hours"). */
+  task?: {
+    description?: string;
+    indicators?: string[];
+    taskType?: string;
+    taskActivity?: string;
+    overdueTime?: string;
+    retentionTimeframe?: string;
+    rescheduleTimeframe?: string;
+    gracePeriod?: string;
+    positionsToChart?: string[];
+  };
+  /** Order Task Tool › Form/Task Link. */
+  formTaskLink?: { chartingAgent?: string; taskName?: string };
+  /** Alternate Task Selection Tool folders the task was copied into. */
+  adHocFolders?: string[];
+  /** Bedrock MPage Setup quick links: the component (and filter) the form was added to, per MPage. */
+  mpageQuickLinks?: { component?: string; filter?: string; mpages: string[] }[];
+  /** Rules, alert templates or pages that launch this form, by the alias they expect. */
+  launchReferences?: { kind: "rule" | "alert" | "mpage" | "other"; name: string; alias?: string; note?: string }[];
+  /** Task servers cycled after the build, e.g. ["80", "120", "121"]. */
+  taskServers?: string[];
+  notes?: string;
+  /** Where the values came from when prefilled from a build-instructions document. */
+  source?: { fileName?: string; formName?: string; paragraphCount?: number; unparsed?: string[] };
+}
+
 export interface BuilderCernerConfig {
   /** Authored Smart Template content; native references remain separate. */
   smartTemplate?: SmartTemplateDefinition;
