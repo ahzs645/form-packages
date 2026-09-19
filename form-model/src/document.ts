@@ -159,6 +159,7 @@ export interface LayoutTableCellField {
   placeholder?: string;
   helpText?: string;
   helpPosition?: "above_input" | "below_input";
+  pendingConversion?: { source: string; reason: string } | null;
   prefill?: FieldPrefillValue;
   choiceStyle?: BuilderField["choiceStyle"];
   choiceAnswerLayout?: BuilderField["choiceAnswerLayout"];
@@ -211,6 +212,7 @@ export interface LayoutTableCell {
   placeholder?: string;
   helpText?: string;
   helpPosition?: "above_input" | "below_input";
+  pendingConversion?: { source: string; reason: string } | null;
   prefill?: FieldPrefillValue;
   choiceStyle?: BuilderField["choiceStyle"];
   choiceAnswerLayout?: BuilderField["choiceAnswerLayout"];
@@ -559,6 +561,7 @@ export interface ParsedField {
   placeholder?: string;
   helpText?: string;
   helpPosition?: "above_input" | "below_input";
+  pendingConversion?: { source: string; reason: string } | null;
   hidden?: boolean;
   disabled?: boolean;
   width?: "auto" | "full" | "1/2" | "1/3" | "2/3" | "1/4" | "3/4";

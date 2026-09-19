@@ -704,6 +704,13 @@ export interface BuilderLayoutTableCellField {
   placeholder?: string;
   helpText?: string;
   helpPosition?: HelpPosition;
+  /**
+   * The field came from another product's control whose rendering here is
+   * not decided yet (a PowerForm grid, a chart template PowerChart fills
+   * from the chart). Targets that cannot draw the source control show a
+   * placeholder in its place; the source target keeps drawing it natively.
+   */
+  pendingConversion?: { source: string; reason: string } | null;
   prefill?: FieldPrefillValue;
   choiceStyle?: BuilderField["choiceStyle"];
   choiceAnswerLayout?: BuilderField["choiceAnswerLayout"];
@@ -762,6 +769,13 @@ export interface BuilderLayoutTableCell {
   placeholder?: string;
   helpText?: string;
   helpPosition?: HelpPosition;
+  /**
+   * The field came from another product's control whose rendering here is
+   * not decided yet (a PowerForm grid, a chart template PowerChart fills
+   * from the chart). Targets that cannot draw the source control show a
+   * placeholder in its place; the source target keeps drawing it natively.
+   */
+  pendingConversion?: { source: string; reason: string } | null;
   prefill?: FieldPrefillValue;
   choiceStyle?: BuilderField["choiceStyle"];
   choiceAnswerLayout?: BuilderField["choiceAnswerLayout"];
@@ -1837,6 +1851,13 @@ export interface BuilderField {
   placeholder?: string;
   helpText?: string;
   helpPosition?: HelpPosition;
+  /**
+   * The field came from another product's control whose rendering here is
+   * not decided yet (a PowerForm grid, a chart template PowerChart fills
+   * from the chart). Targets that cannot draw the source control show a
+   * placeholder in its place; the source target keeps drawing it natively.
+   */
+  pendingConversion?: { source: string; reason: string } | null;
   prefill?: FieldPrefillValue;
   /**
    * MOIS source-data binding for this field's value — the field-level
