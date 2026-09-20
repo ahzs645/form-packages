@@ -45,12 +45,28 @@ export {
   type RunStats,
 } from "./envelope";
 export {
+  parseSearch,
   resolveChartContext,
   EMPTY_CHART_CONTEXT,
   type AttributeReader,
   type ChartContext,
   type ResolveChartContextInput,
 } from "./context";
+export {
+  resolveSmartLaunchContext,
+  DEFAULT_SMART_LAUNCH_CONTEXT,
+  type ResolveSmartLaunchContextInput,
+  type SmartClientLike,
+  type SmartClientStateLike,
+  type SmartLaunchContext,
+  type SmartTokenResponseLike,
+} from "./launch";
+export {
+  fetchSmartStyle,
+  parseSmartStyle,
+  SMART_STYLE_CUSTOM_PROPERTIES,
+  type SmartStyleFetchOptions,
+} from "./smart-style";
 export {
   CclClient,
   CclTransportError,

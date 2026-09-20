@@ -4,6 +4,7 @@ import {
   CclClient,
   detectHostEnvironment,
   resolveChartContext,
+  resolveSmartLaunchContext,
   type ChartId,
 } from "@webforms/cerner-core";
 import React, { useEffect, useMemo, useState } from "react";
@@ -33,6 +34,20 @@ interface PersonAlias {
   alias?: string;
   aliasType?: string;
 }
+
+/**
+ * Spelled-out titles for the abbreviated alias types the banner prints, keyed
+ * by the uppercased type because `alias_type` is a site-configured code
+ * display (nh_wf_entry.prg reads it through uar_get_code_display). Terra takes
+ * these as `identifiersLongForm` and announces them in place of the
+ * abbreviation; a type with no entry — or one that is already a word, like our
+ * own "Encounter" — keeps its label as-is, which is Terra's own fallback.
+ */
+const IDENTIFIER_LONG_FORMS: Record<string, string> = {
+  "FIN NBR": "Financial Number",
+  MRN: "Medical Record Number",
+  PHN: "Personal Health Number",
+};
 
 interface PersonRecord {
   age?: string;
@@ -142,6 +157,27 @@ export const App: React.FC<{ host?: PlayerHost }> = ({ host = null }) => {
       }),
     [host],
   );
+  /**
+   * SMART's `need_patient_banner`, read from the same launch URL and host
+   * element the chart ids come from. This page has no token response — it is
+   * the MPage/component target, not the SMART one — but it is embedded in
+   * exactly the situation the flag describes: a Workflow page or a chart tab
+   * that already draws PowerChart's banner bar above us. A registration that
+   * says `need-patient-banner="false"` (or `?needPatientBanner=0`) gets one
+   * banner instead of two; saying nothing keeps ours, as it always has.
+   *
+   * `smart_style_url` is not read here on purpose: it names a document we go
+   * and fetch, so it is only trusted from the authenticated token response,
+   * which reaches the SMART page (src/smart/app.tsx) and not this one.
+   */
+  const launch = useMemo(
+    () =>
+      resolveSmartLaunchContext({
+        search: window.location.search,
+        element: host ?? undefined,
+      }),
+    [host],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -235,12 +271,17 @@ export const App: React.FC<{ host?: PlayerHost }> = ({ host = null }) => {
   // Terra's own DemographicsBanner in the Terra target; the Fluent-era
   // reproduction stays on the MOIS path, which has no terra-base to size it.
   const BannerComponent = terraTarget ? DemographicsBanner : TerraDemographicsBanner;
-  const bannerIdentifiers = useMemo(() => {
+  const banner = useMemo(() => {
     const entries: Array<[string, string]> = (person?.aliases ?? [])
       .filter((alias) => alias.alias)
       .map((alias) => [alias.aliasType ?? "ID", String(alias.alias)]);
     if (chart?.encntrId) entries.push(["Encounter", String(chart.encntrId)]);
-    return Object.fromEntries(entries);
+    const longForm: Record<string, string> = {};
+    for (const [label] of entries) {
+      const spelled = IDENTIFIER_LONG_FORMS[label.toUpperCase()];
+      if (spelled) longForm[label] = spelled;
+    }
+    return { identifiers: Object.fromEntries(entries), identifiersLongForm: longForm };
   }, [person?.aliases, chart?.encntrId]);
 
   const shell = (
@@ -262,16 +303,21 @@ export const App: React.FC<{ host?: PlayerHost }> = ({ host = null }) => {
         }
       >
         {cernerLook ? (
-          <div style={{ margin: "-12px -16px 12px" }}>
-            <BannerComponent
-              personName={chart?.nameFullFormatted ?? "No patient in context"}
-              age={person?.age}
-              gender={person?.gender}
-              dateOfBirth={person?.birthDtTm ? person.birthDtTm.substring(0, 10) : undefined}
-              identifiers={bannerIdentifiers}
-            />
-          </div>
+          launch.needPatientBanner ? (
+            <div style={{ margin: "-12px -16px 12px" }}>
+              <BannerComponent
+                personName={chart?.nameFullFormatted ?? "No patient in context"}
+                age={person?.age}
+                gender={person?.gender}
+                dateOfBirth={person?.birthDtTm ? person.birthDtTm.substring(0, 10) : undefined}
+                identifiers={banner.identifiers}
+                identifiersLongForm={banner.identifiersLongForm}
+              />
+            </div>
+          ) : null
         ) : (
+          // Not a patient banner: the dev-mode strip that names which bridge
+          // is live. It renders only outside the Cerner look.
           <StatusBar
             inPowerChart={environment.inPowerChart || mock}
             mock={mock}

@@ -92,7 +92,10 @@ export interface DemographicsBannerProps {
   deceasedDate?: string;
   gender?: string;
   gestationalAge?: string;
+  postMenstrualAge?: string;
   identifiers?: Record<string, string>;
+  /** Spelled-out titles for abbreviated `identifiers` labels, for screen readers. */
+  identifiersLongForm?: Record<string, string>;
   photo?: React.ReactNode;
   applicationContent?: React.ReactNode;
   personNameHeadingLevel?: number;

@@ -39929,6 +39929,7 @@ var WordFormRuntime = (() => {
   __export(word_form_exports, {
     WORD_FORM_MIME: () => WORD_FORM_MIME,
     fillWordForm: () => fillWordForm,
+    fillWordFormDetailed: () => fillWordFormDetailed,
     formatDocumentDate: () => formatDocumentDate,
     inspectWordForm: () => inspectWordForm,
     prepareWordFormPreview: () => prepareWordFormPreview
@@ -39961,6 +39962,16 @@ var WordFormRuntime = (() => {
     }
     for (const n of all(doc, "fldSimple")) found.push({ node: n, code: attr(n, "instr"), result: all(n, "t"), end: n, separated: true });
     return found;
+  }
+  var isLocked = (f) => ["1", "true", "on"].includes(attr(f.node, "fldLock").toLowerCase());
+  function inspectWordCalculations(doc) {
+    const formulas = fields(doc).filter((f) => /^\\s*=/.test(f.code));
+    return { total: formulas.length, locked: formulas.filter(isLocked).length };
+  }
+  function deferWordCalculations(doc) {
+    const formulas = fields(doc).filter((f) => /^\\s*=/.test(f.code) && !isLocked(f));
+    for (const f of formulas) f.node.setAttributeNS(W, "w:dirty", "true");
+    return formulas.length;
   }
   function number(s) {
     const raw = s.trim().replace(/[$,\\s]/g, "").replace(/^\\((.*)\\)$/, "-$1");
@@ -40017,6 +40028,7 @@ var WordFormRuntime = (() => {
     };
     const evaluate = (f) => {
       if (done.has(f)) return done.get(f);
+      if (isLocked(f)) return number(f.result.map((n) => n.textContent).join(""));
       if (active.has(f)) throw new Error("Circular formula reference");
       active.add(f);
       const table = ancestor(f.node, "tbl");
@@ -40126,22 +40138,22 @@ var WordFormRuntime = (() => {
         if (f.node.localName === "fldSimple") f.node.append(run);
         else {
           const endRun = ancestor(f.end, "r");
-          if (!endRun?.parentNode || !f.separated) throw new Error("Formula has no result boundary");
-          endRun.parentNode.insertBefore(run, endRun);
+          if (!endRun || f.end.parentNode !== endRun || !f.separated) throw new Error("Formula has no result boundary");
+          endRun.insertBefore(t, f.end);
         }
       }
       active.delete(f);
       done.set(f, result);
       return result;
     };
-    for (const f of formulas) {
+    for (const f of formulas.filter((f2) => !isLocked(f2))) {
       try {
         evaluate(f);
       } catch (e) {
         throw new Error(\`Cannot recalculate Word field \\u201C\${f.code.trim()}\\u201D: \${e instanceof Error ? e.message : String(e)}. The document was not exported.\`);
       }
     }
-    return formulas.length;
+    return formulas.filter((f) => !isLocked(f)).length;
   }
 
   // lib/document-date-format.ts
@@ -40209,8 +40221,8 @@ var WordFormRuntime = (() => {
     const paragraphs = descendants(doc, "p");
     const targets = [];
     const warnings = [];
-    if (descendants(doc, "instrText").some((n) => /^\\s*=/.test(n.textContent ?? ""))) {
-      warnings.push("Formula results are recalculated on export. Unsupported formulas stop export with an explanation.");
+    if (inspectWordCalculations(doc).total) {
+      warnings.push("Live Word formula fields are preserved. Validate updated totals in Microsoft Word before using this document.");
     }
     const stack = [];
     let index = 0;
@@ -40311,31 +40323,39 @@ var WordFormRuntime = (() => {
     const doc = target.node.ownerDocument;
     const anchor = target.result[0];
     let run = anchor?.parentElement;
+    let before = anchor ?? null;
     if (!run || run.localName !== "r") {
-      run = element(doc, "r");
       if (target.legacy) {
-        const endRun = ancestor2(target.end, "r");
-        if (!endRun?.parentNode) throw new Error("Cannot safely update this Word field.");
-        const style = first(endRun, "rPr");
-        if (style) run.appendChild(style.cloneNode(true));
-        endRun.parentNode.insertBefore(run, endRun);
+        run = ancestor2(target.end, "r");
+        before = target.end ?? null;
+        if (!run || before?.parentNode !== run) throw new Error("Cannot safely update this Word field.");
       } else {
+        run = element(doc, "r");
         const content = first(target.node, "sdtContent");
         (first(content, "p") ?? content).appendChild(run);
+        before = null;
       }
     }
-    for (const node of target.result) node.parentNode?.removeChild(node);
     for (const [i, line] of value.split(/\\r\\n|\\r|\\n/).entries()) {
-      if (i) run.appendChild(element(doc, "br"));
+      if (i) run.insertBefore(element(doc, "br"), before);
       const t = element(doc, "t");
       t.setAttributeNS("http://www.w3.org/XML/1998/namespace", "xml:space", "preserve");
       t.textContent = line;
-      run.appendChild(t);
+      run.insertBefore(t, before);
     }
+    for (const node of target.result) node.parentNode?.removeChild(node);
   }
-  async function fillWordForm(bytes, values, additions = {}) {
+  async function fillWordFormDetailed(bytes, values, additions = {}, options = {}) {
     const { zip, parts } = await open(bytes);
     const remaining = /* @__PURE__ */ new Set([...Object.keys(values), ...Object.keys(additions)]);
+    const documents = [];
+    const result = {
+      bytes,
+      recalculated: 0,
+      pendingRecalculation: 0,
+      lockedCalculations: 0,
+      calculationMode: options.recalculate === false ? "word" : "cached"
+    };
     for (const part of parts) {
       const doc = parseXml(await zip.file(part).async("string"));
       const scanned = scan(doc, part);
@@ -40388,11 +40408,28 @@ var WordFormRuntime = (() => {
         remaining.delete(blank.id);
         changed = true;
       }
-      if (calculateWordFields(doc)) changed = true;
-      if (changed) zip.file(part, new XMLSerializer().serializeToString(doc));
+      documents.push({ part, doc, changed });
     }
     if (remaining.size) throw new Error("Some fields no longer match this document. Import the original document again.");
-    return zip.generateAsync({ type: "uint8array", compression: "DEFLATE" });
+    const answersChanged = documents.some((entry) => entry.changed);
+    for (const entry of documents) {
+      const state = inspectWordCalculations(entry.doc);
+      result.lockedCalculations += state.locked;
+      if (options.recalculate === false) {
+        result.pendingRecalculation += state.total - state.locked;
+        if (answersChanged && deferWordCalculations(entry.doc)) entry.changed = true;
+      } else {
+        const count = calculateWordFields(entry.doc);
+        result.recalculated += count;
+        if (count) entry.changed = true;
+      }
+      if (entry.changed) zip.file(entry.part, new XMLSerializer().serializeToString(entry.doc), { createFolders: false });
+    }
+    if (documents.some((entry) => entry.changed)) result.bytes = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE" });
+    return result;
+  }
+  async function fillWordForm(bytes, values, additions = {}, options = {}) {
+    return (await fillWordFormDetailed(bytes, values, additions, options)).bytes;
   }
   async function prepareWordFormPreview(bytes) {
     const { zip, parts } = await open(bytes);
@@ -40409,7 +40446,7 @@ var WordFormRuntime = (() => {
         writeText(target, target.field.value ? "\\u2612" : "\\u2610");
         changed = true;
       }
-      if (changed) zip.file(part, new XMLSerializer().serializeToString(doc));
+      if (changed) zip.file(part, new XMLSerializer().serializeToString(doc), { createFolders: false });
     }
     return { bytes: await zip.generateAsync({ type: "uint8array" }), omitFirstHeader };
   }

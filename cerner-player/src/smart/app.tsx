@@ -1,8 +1,11 @@
-import { hydrateFhirResource, FHIR_JSON_ACCEPT } from "@webforms/cerner-core";
+import { hydrateFhirResource, resolveSmartLaunchContext, FHIR_JSON_ACCEPT } from "@webforms/cerner-core";
 import FHIR from "fhirclient";
 import type Client from "fhirclient/lib/Client";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
+
+import "./smart-app.css";
+import { useSmartStyle } from "./use-smart-style";
 
 /**
  * SMART app page: the FHIR read/write half of the Cerner target.
@@ -12,6 +15,12 @@ import { createRoot } from "react-dom/client";
  *    the path Cerner Ignite will use.
  *  - ?open=1 — no-auth client against the public SMART R4 sandbox, so the
  *    whole read→hydrate→write pipeline is testable today.
+ *
+ * Both of the launch-context flags the EHR returns with the token are
+ * honoured: `need_patient_banner` decides whether we draw a banner of our own
+ * (an EHR that already shows the patient must not get a second one stacked
+ * under its), and `smart_style_url` re-themes `.smart-root` to whatever the
+ * host published.
  */
 
 const OPEN_SERVER = "https://r4.smarthealthit.org";
@@ -63,6 +72,13 @@ const SmartApp: React.FC = () => {
   const [writeResult, setWriteResult] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // Defaults until the token response lands: our own banner, our own look.
+  const launch = useMemo(
+    () => resolveSmartLaunchContext({ client, search: window.location.search }),
+    [client],
+  );
+  const smartStyle = useSmartStyle(launch.smartStyleUrl);
+
   useEffect(() => {
     connect().then(
       ({ client: connected, patient: read }) => {
@@ -108,39 +124,43 @@ const SmartApp: React.FC = () => {
       .finally(() => setBusy(false));
   }, [client, patient]);
 
-  if (error) return <div style={{ color: "#a4262c" }}>SMART connection failed: {error}</div>;
-  if (!patient) return <div>Connecting to the FHIR server…</div>;
-
-  return (
-    <div>
-      <div
-        style={{
-          background: "#2a5785",
-          color: "#fff",
-          margin: "-16px -16px 16px",
-          padding: "10px 16px",
-        }}
-      >
-        <b>{patientDisplayName(patient)}</b>
-        <span style={{ fontSize: 12, marginLeft: 16 }}>
-          Patient/{patient.id} · {patient.gender ?? "?"} · born {patient.birthDate ?? "?"}
-        </span>
-      </div>
-      <p style={{ fontSize: 13 }}>
+  const body = error ? (
+    <div className="smart-error">SMART connection failed: {error}</div>
+  ) : !patient ? (
+    <div>Connecting to the FHIR server…</div>
+  ) : (
+    <>
+      {/* need_patient_banner=false means the EHR frame around us already
+          shows this patient; drawing ours would stack a second banner. */}
+      {launch.needPatientBanner ? (
+        <div className="smart-banner">
+          <b>{patientDisplayName(patient)}</b>
+          <span className="smart-banner__detail">
+            Patient/{patient.id} · {patient.gender ?? "?"} · born {patient.birthDate ?? "?"}
+          </span>
+        </div>
+      ) : null}
+      <p className="smart-note">
         Connected via {new URLSearchParams(window.location.search).get("open") === "1"
           ? "open sandbox (" + OPEN_SERVER + ")"
           : "SMART OAuth launch"}
         . The write below runs the same hydration the Cerner Ignite path will use
         (subject/encounter auto-filled).
       </p>
-      <button disabled={busy} onClick={writeQuestionnaireResponse} style={{ padding: "6px 16px" }}>
+      <button className="smart-action" disabled={busy} onClick={writeQuestionnaireResponse}>
         Write QuestionnaireResponse
       </button>
       {writeResult ? (
-        <p style={{ color: writeResult.startsWith("Created") ? "#1e6b1e" : "#a4262c" }}>
+        <p className={writeResult.startsWith("Created") ? "smart-success" : "smart-error"}>
           {writeResult}
         </p>
       ) : null}
+    </>
+  );
+
+  return (
+    <div className="smart-root" style={smartStyle}>
+      {body}
     </div>
   );
 };

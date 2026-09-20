@@ -132,5 +132,7 @@ export const DatePickerField =
 export * from "./types";
 export { TerraBase } from "./runtime/terra-base";
 export { TerraIntlProvider, type TerraIntl } from "./runtime/intl";
+/** Terra's own DEFAULT_LOCALE strings; the reproductions label rows from these. */
+export { TERRA_MESSAGES } from "./runtime/terra-messages";
 export { default as ThemeContext, type TerraTheme } from "./runtime/theme-context";
 export { withDefaults } from "./runtime/with-defaults";

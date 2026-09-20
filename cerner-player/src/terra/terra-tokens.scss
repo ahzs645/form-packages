@@ -101,9 +101,20 @@ $terra-banner-name-size:    18px;    // Terra 1.286rem
   .terra-demographics-banner {
     background-color: $terra-banner-bg;
     color: #fff;
+    // Terra's large banner is a flex row of photo + content; with no photo the
+    // single content child lays out exactly as the previous block did.
+    display: flex;
+    flex-direction: row;
     padding: $terra-banner-padding;
 
-    &.is-deceased { background-color: $terra-banner-deceased-bg; }
+    &.is-deceased {
+      background-color: $terra-banner-deceased-bg;
+
+      .profile-photo { opacity: 0.7; }
+    }
+
+    .profile-photo { flex: 0 0 auto; margin-right: $terra-banner-padding; }
+    .content { flex: 1 1 auto; min-width: 0; }
 
     .person-name {
       color: inherit;   // the banner sets its own colour; do not inherit the heading colour
@@ -122,6 +133,22 @@ $terra-banner-name-size:    18px;    // Terra 1.286rem
     dl { display: flex; flex-wrap: wrap; gap: 0 12px; margin: 0; }
     dt { display: inline; font-weight: normal; opacity: 0.85; }
     dd { display: inline; font-weight: bold; margin: 0 5px 0 4px; }
+
+    // An abbreviated label (DOB, GA, PMA, FIN NBR) carries its spelled-out
+    // title twice, as Terra's own banner does: on the <abbr> for a pointer
+    // hover, and as visually hidden text for screen readers.
+    .abbreviation { text-decoration: none; }
+    .visually-hidden-text {
+      border: 0;
+      clip: rect(0 0 0 0);
+      height: 1px;
+      margin: -1px;
+      overflow: hidden;
+      padding: 0;
+      position: absolute;
+      white-space: nowrap;   // so the title is not read one word at a time
+      width: 1px;
+    }
   }
 
   // ---- action footer (terra-action-footer) ----

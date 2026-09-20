@@ -1,0 +1,50 @@
+/*
+ * SMART app page chrome.
+ *
+ * Every rule reads the EHR's suggested value first and our own second:
+ * `var(--smart-…, <default>)`. useSmartStyle sets the `--smart-*` properties
+ * on `.smart-root` when the launch carried a style document, so a host that
+ * publishes one is matched and a launch without one — or with one we would
+ * not load — renders on the defaults written here.
+ */
+
+.smart-root {
+  background: var(--smart-color-background, #fff);
+  color: var(--smart-color-text, #323130);
+  font-family: var(--smart-font-family-body, "Segoe UI", Arial, sans-serif);
+  font-size: var(--smart-dim-font-size, 14px);
+  min-height: 100vh;
+  padding: var(--smart-dim-spacing-size, 16px);
+}
+
+/* The app's own patient banner. Drawn only when the launch context says the
+   host is not already drawing one — see need_patient_banner in app.tsx. */
+.smart-banner {
+  background: var(--smart-color-highlight, #2a5785);
+  border-radius: var(--smart-dim-border-radius, 0);
+  color: #fff;
+  margin-bottom: var(--smart-dim-spacing-size, 16px);
+  padding: 10px 16px;
+}
+
+.smart-banner__detail {
+  font-size: 12px;
+  margin-left: 16px;
+}
+
+.smart-note {
+  font-size: 13px;
+}
+
+.smart-action {
+  border-radius: var(--smart-dim-border-radius, 2px);
+  padding: 6px 16px;
+}
+
+.smart-error {
+  color: var(--smart-color-error, #a4262c);
+}
+
+.smart-success {
+  color: var(--smart-color-success, #1e6b1e);
+}

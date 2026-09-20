@@ -65,7 +65,12 @@ function parseId(raw: string | null | undefined): number | undefined {
   return value;
 }
 
-function parseQuery(search: string): Record<string, string> {
+/**
+ * Query string to a plain map, first occurrence winning. Not URLSearchParams:
+ * this runs in the legacy tier too. Shared with launch.ts, which reads the
+ * same launch URL for the SMART presentation flags.
+ */
+export function parseSearch(search: string): Record<string, string> {
   const out: Record<string, string> = {};
   const trimmed = search.charAt(0) === "?" ? search.substring(1) : search;
   if (!trimmed) return out;
@@ -101,7 +106,7 @@ export function resolveChartContext(input: ResolveChartContextInput): ChartConte
   }
 
   if (input.search) {
-    const query = parseQuery(input.search);
+    const query = parseSearch(input.search);
     for (let i = 0; i < QUERY_KEYS.length; i++) {
       const [field, names] = QUERY_KEYS[i];
       for (let n = 0; n < names.length; n++) {

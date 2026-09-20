@@ -35,6 +35,13 @@ default export, component is opt-in.
 `resolveChartContext` covers all three (element attributes → our query names →
 Cerner's short names), which is why the same build works in every mode.
 
+**Both spellings are live.** Cerner's own host page uses the short names
+above, but the Clinical Office component template reads `personId` /
+`encounterId` / `userId` from the same query string, so a component dropped
+into a vendor-built page may see either. `resolveChartContext` should accept
+the long spellings as well as the short ones rather than assuming one house
+style.
+
 ## Reusing a component outside the Workflow framework
 
 The platform exposes an "embedded workflow" wrapper: look a component up by
@@ -88,6 +95,21 @@ provides. Ours come from Fluent + the MOIS form runtime instead, so this is
 - **Cross-origin hosting needs CORS** for both the component module script
   and any runtime asset fetches (our `forms/*/index.jsx`), and the component
   path must be reachable from the workstation.
+- **Initialise one macrotask late.** The Clinical Office template defers all
+  of its component start-up inside `setTimeout(…, 0)` and carries an in-code
+  warning not to move initialisation outside it — the custom element is
+  upgraded before the host's bridge is ready. Our element's
+  `connectedCallback` should not touch the Discern bridge synchronously.
+- **Overlay panes render transparent in a component placement.** The same
+  template force-sets an opaque background on `.cdk-overlay-pane`, commented
+  as fixing transparent drop-downs "in Cerner components". This is distinct
+  from the clipping problem we solve with `appendTo="body"`: a portal can be
+  positioned correctly and still paint see-through. Any Fluent callout,
+  dropdown or dialog we render in a component placement needs an explicit
+  opaque background.
+- **Do not fetch fonts from a CDN.** That template links Roboto and Material
+  Icons from `fonts.googleapis.com` at runtime, which fails on a hospital
+  network without egress. It is wrong; our self-hosting rule above stands.
 - **Component isolation cuts both ways.** The framework's convention is a
   shadow root with `all: initial`; we deliberately use light DOM so Fluent's
   `document.head` styles apply, accepting that the host page's CSS can reach
@@ -105,3 +127,17 @@ For the `DiscernActionsBar` buttons, ids come from these tables:
 | DynDoc note type | `noteTypeCd` | code set 72 (0 ⇒ by-template call, non-zero ⇒ by-template-and-note-type) |
 | Open chart tab | tab name | PowerChart tab caption, e.g. "Provider View" |
 | View result/event | `eventId` | one id or an array |
+
+## Domain naming and content root
+
+The vendor template's runtime config points at
+`http://<host>/discern/<domain>/mpages/reports`, with domains named
+`b1234` / `c1234` / `p1234` — **b**uild, **c**ert, **p**rod on one numeric
+site id. Worth matching when we write our own per-domain config, and worth
+recognising in a customer's config file.
+
+Two smaller facts from the same source: PowerChart's WebView2 is evergreen
+Chromium (that template targets ES2022 with `zone.js` as its only polyfill,
+no differential loading), so our player can target modern output without
+hedging; and its date adapter formats `dd-MMM-yyyy`, which is what PowerChart
+shows and what the `hosts/powerchart` emulator now uses throughout.

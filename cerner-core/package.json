@@ -12,6 +12,8 @@
     "./envelope": "./src/envelope.ts",
     "./environment": "./src/environment.ts",
     "./hex": "./src/hex.ts",
+    "./launch": "./src/launch.ts",
+    "./smart-style": "./src/smart-style.ts",
     "./transport": "./src/transport.ts"
   },
   "scripts": {
