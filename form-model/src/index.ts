@@ -1271,6 +1271,8 @@ export interface CernerPowerFormBuildRecord {
 }
 
 export interface BuilderCernerConfig {
+  /** One authoring component, two independently bound native BP results. */
+  bloodPressure?: { systolic: BuilderField; diastolic: BuilderField };
   /** Authored Smart Template content; native references remain separate. */
   smartTemplate?: SmartTemplateDefinition;
   smartTemplateLink?: SmartTemplateLink;
@@ -1604,6 +1606,21 @@ export interface BuilderChoiceOptionObject {
 
 export type BuilderChoiceOption = string | BuilderChoiceOptionObject;
 
+/** Reviewed, portable answer-set equivalence. Each form carries a snapshot;
+ * updates to the reusable library never silently change an existing form. */
+export interface BuilderAnswerSetEquivalence {
+  version: 1;
+  id: string;
+  name: string;
+  revision: number;
+  cerner: {
+    dta: NonNullable<BuilderCernerConfig["dta"]>;
+    alphaResponses: NonNullable<BuilderCernerConfig["alphaResponses"]>;
+  };
+  mois: { codeSystem: string; options: Array<{ code: string; display: string }> };
+  answers: Array<{ cernerDisplay: string; moisCode: string }>;
+}
+
 export interface BuilderLegacySourceIdentity {
   formId: string;
   subformId?: string;
@@ -1916,6 +1933,9 @@ export interface BuilderField {
   /** MOIS per-answer density for radio/checklist controls. */
   moisOptionSize?: string;
   codeSystem?: string | null; // MOIS code system (e.g., "MOIS-MARITALSTATUS")
+  answerSetEquivalence?: BuilderAnswerSetEquivalence | null;
+  /** Explicit fixed list for targets that do not implement native DTA ranges. */
+  answerSetPortableRange?: { name: string; answerLabels: string[] } | null;
   showOtherOption?: boolean; // Allow "Other" option with custom input
   /** MOIS keyboard shortcuts (autoHotKey) on coded selects/checklists. */
   autoHotKey?: boolean;
@@ -2339,6 +2359,8 @@ export interface AuthorshipPolicyConfig {
 /** Section configuration for grouping fields */
 export interface SectionConfig {
   title?: string;
+  /** Heading appearance only; sections remain siblings on their page. */
+  headingStyle?: "main" | "subheading" | "none";
   description?: string;
   /** Optional CSS background for the section subtitle bar. Supports colors and gradients. */
   subtitleBackground?: string;

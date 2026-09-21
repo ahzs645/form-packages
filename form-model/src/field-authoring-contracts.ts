@@ -283,11 +283,14 @@ const SPECIALIZED_CONTRACTS: Partial<Record<BuilderFieldType, Omit<BuilderFieldA
     guidance: "Exact printable table layout is complex; preserve existing layoutTableConfig unless the request is explicit.",
   },
   section: {
+    defaultConfig: { sectionConfig: { childFieldIds: [], headingStyle: "subheading" } },
     properties: {
       sectionConfig: {
         type: ["object", "null"],
         properties: {
           title: { type: "string" },
+          headingStyle: { type: "string", enum: ["main", "subheading", "none"] },
+          hideTitle: { type: "boolean" },
           description: { type: "string" },
           collapsible: { type: "boolean" },
           defaultCollapsed: { type: "boolean" },

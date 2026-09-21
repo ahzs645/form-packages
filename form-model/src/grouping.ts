@@ -45,6 +45,7 @@ export interface GroupSummary {
   defaultCollapsed?: boolean;
   /** Draw no subtitle bar for this section. */
   sectionHideTitle?: boolean;
+  sectionHeadingStyle?: "main" | "subheading" | "none";
   /** Optional CSS background for the section subtitle bar. Supports colors and gradients. */
   sectionSubtitleBackground?: string;
   /** Optional CSS border for the section subtitle bar. */

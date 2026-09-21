@@ -292,6 +292,9 @@ export interface ParsedFieldVisibility {
 }
 
 export interface ParsedField {
+  /** Canonical answer values to target MOIS codes, used for rule projection. */
+  answerValueAliases?: Record<string, string>;
+  answerSetIssue?: string;
   behavior?: import("./index").BuilderFieldBehavior;
   translations?: import("./index").BuilderField["translations"];
   id: string;
@@ -666,6 +669,7 @@ export interface ParsedField {
   sectionSubtitleBorder?: string;
   sectionSubtitlePadding?: string;
   sectionHideTitle?: boolean;
+  sectionHeadingStyle?: "main" | "subheading" | "none";
   sectionCollapsible?: boolean;
   sectionDefaultCollapsed?: boolean;
   sectionLayoutType?: "grid" | "stacked";
