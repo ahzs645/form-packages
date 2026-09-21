@@ -1215,6 +1215,8 @@ export interface BuilderCernerDtaDefinition {
   range?: BuilderCernerRangeLimits | null;
   /** Further bands by sex, gestation or age, written after the default one. */
   bands?: BuilderCernerReferenceBand[] | null;
+  /** The listed bands are the complete range table; do not add an all-patient default. */
+  bandsOnly?: boolean;
   witnessRequired?: boolean;
   /** Intake and Output: 0 neither, 1 intake, 2 output; documented option 3 requires workflow review. */
   ioFlag?: 0 | 1 | 2 | 3;
@@ -1273,6 +1275,8 @@ export interface CernerPowerFormBuildRecord {
 export interface BuilderCernerConfig {
   /** One authoring component, two independently bound native BP results. */
   bloodPressure?: { systolic: BuilderField; diastolic: BuilderField };
+  /** One measurement result with a native read-only unit-conversion display. */
+  unitConversion?: { input: BuilderField; display: BuilderField; displayFirst?: boolean; displayFirstInSection?: boolean };
   /** Authored Smart Template content; native references remain separate. */
   smartTemplate?: SmartTemplateDefinition;
   smartTemplateLink?: SmartTemplateLink;
@@ -1374,6 +1378,13 @@ export interface BuilderCernerConfig {
     catalogDefinition?: unknown;
     /** Complete native DTA_OBJ retained from the catalog export. */
     nativeRecord?: unknown;
+    /** Library definitions are pinned snapshots. Form copies own a new identity. */
+    authoring?: {
+      mode: "library" | "form";
+      revision?: number;
+      derivedFrom?: { mnemonic: string; taskAssayId?: string; taskAssayGuid?: string; domain?: string; revision?: number };
+      mappingReviewRequired?: boolean;
+    };
     provenance?: { kind: "catalog" | "draft"; domain?: string; generatedAt?: string; revision?: number };
   } | null;
   /** Alpha responses with the nomenclature ids the domain expects back. */
@@ -1403,8 +1414,14 @@ export interface BuilderCernerConfig {
     type: number;
     prefs: Record<string, string>;
     /** What this input became: the field's label, its help text, or section chrome. */
-    role?: "label" | "chip";
+    role?: "label" | "chip" | "help";
+    /** Preserve complete native modules when a reference note becomes help text. */
+    modules?: BuilderCernerInputModule[];
   }>;
+  /** Native help-note placement; omitted keeps imported coordinates unchanged. */
+  helpTextPosition?: "source" | "left" | "right" | "above" | "below";
+  /** Omitted preserves each imported help note's native font weight. */
+  helpTextBold?: boolean;
   importStatus: BuilderCernerImportStatus;
   importNotes?: string[];
   /**
@@ -1820,7 +1837,33 @@ export interface BuilderFieldBehavior {
   optionRules?: Array<{ value: string; showWhen?: FieldConditionGroup; disableWhen?: FieldConditionGroup }>;
 }
 
+/** A pinned library definition travels with the form; edits never mutate its source. */
+export interface BuilderLibraryDefinition {
+  version: 1;
+  mode: "library" | "local";
+  source: {
+    kind: "loinc" | "cerner-dta";
+    id: string;
+    display: string;
+    library: string;
+    revision?: string;
+    /** LOINC's published properties, retained for offline inspection. */
+    loinc?: { scale: string; units: string; property?: string; system?: string; method?: string };
+  };
+  numeric: {
+    type: "number" | "decimal" | "year";
+    suffix: string;
+    storeAsNumber: boolean;
+    min?: number;
+    max?: number;
+    step?: number;
+    /** Native numeric semantics that have no equivalent in a plain number control. */
+    dta?: Pick<BuilderCernerDtaDefinition, "numericMap" | "range" | "bands" | "bandsOnly"> & { description?: string; activityType?: string };
+  };
+}
+
 export interface BuilderField {
+  fieldDefinition?: BuilderLibraryDefinition | null;
   behavior?: BuilderFieldBehavior;
 
   id: string;
@@ -2678,6 +2721,7 @@ export const defaultBuilderFields: BuilderField[] = [
     type: "section",
     sectionConfig: {
       title: "Form Details",
+      headingStyle: "main",
       description: "Default section for fields added to a new blank form.",
       collapsible: true,
       defaultCollapsed: false,

@@ -108,10 +108,9 @@ export type MPagesEventName = keyof typeof MPAGES_EVENTS;
  */
 export const DISCERN_OBJECTS: Readonly<Record<string, readonly string[]>> = {
   POWERORDERS: [
-    "CreateMOEW", "DestroyMOEW", "DisplayMOEW", "DoModal",
+    "CreateMOEW", "DestroyMOEW", "DisplayMOEW",
     "AddNewOrdersToScratchpad", "AddPowerPlanWithDetails", "GetXMLOrdersMOEW",
-    "SignOrders", "SetDefaultTab", "SetPatient", "ShowView", "ShowHistoryView",
-    "GetValidEncounters",
+    "SignOrders",
   ],
   DYNDOC: [
     "OpenNewDocumentByReferenceTemplateId",
@@ -120,9 +119,10 @@ export const DISCERN_OBJECTS: Readonly<Record<string, readonly string[]>> = {
     "ModifyExistingDocumentByEventId",
   ],
   PVCONTXTMPAGE: ["SetPatient", "GetValidEncounters"],
-  PATIENTEDUCATION: ["SetPatient"],
-  DISCHARGEPROCESS: ["SetPatient"],
-  APPOINTMENT: ["CheckInAppointment", "CheckOutAppointment", "CancelAppointment", "NoShowAppointment"],
+  POWERFORM: ["OpenForm"],
+  PATIENTEDUCATION: ["SetPatient", "SetDefaultTab", "DoModal"],
+  DISCHARGEPROCESS: ["LaunchDischargeDialog"],
+  PEXSCHEDULINGACTIONS: ["CheckInAppointment", "CheckOutAppointment", "CancelAppointment", "HoldAppointment", "NoShowAppointment", "ShowView", "ShowHistoryView"],
 } as const;
 
 export type DiscernObjectName = keyof typeof DISCERN_OBJECTS;
