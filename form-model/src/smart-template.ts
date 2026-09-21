@@ -52,6 +52,14 @@ export interface SmartTemplateDefinition {
   scope: "PERSON" | "VISIT";
   mode: "display" | "documentation";
   components: SmartTemplateComponent[];
+  /** Source evidence only; retained when a draft is edited, never executed. */
+  provenance?: {
+    kind: "workbook" | "bedrock";
+    sourceName: string;
+    sheet?: string;
+    notes: string[];
+    settings?: { component: string; filter: string; value: string; row?: number }[];
+  };
   native: {
     wizardIdentifier?: string;
     cki?: string;

@@ -1290,6 +1290,8 @@ export interface BuilderCernerConfig {
   resultOptions?: { allowComments?: boolean; suppress?: boolean; suppressChart?: boolean; suppressText?: boolean; commentFieldId?: string; commentForFieldId?: string };
   /** Explicit date/time calculation mode; never inferred from field captions. */
   dateCalculation?: { startFieldId: string; endFieldId?: string; units: "minutes" | "hours" | "days" | "weeks" };
+  /** Authoring date offset. Native DTA calculation configuration requires verification. */
+  dateOffset?: { sourceFieldId: string; amount: number; units: "minutes" | "hours" | "days" | "weeks" };
   grid?: {
     family: "power" | "discrete" | "ultra";
     /** Source GRIDITEMLIST leaves, retained verbatim for imported grids. */

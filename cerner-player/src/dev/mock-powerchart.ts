@@ -1,4 +1,4 @@
-import type { CclRequestLike } from "@webforms/cerner-core";
+import { DISCERN_OBJECTS, MPAGES_EVENTS, type CclRequestLike } from "@webforms/cerner-core";
 
 /**
  * Dev-only PowerChart simulator: installs a fake window.external.XMLCclRequest
@@ -155,15 +155,61 @@ function formatArgs(args: unknown[]): string {
     .join(", ");
 }
 
-function makeDiscernObject(name: string): object {
+/**
+ * Decode a pipe-delimited MPAGES_EVENT payload into its named fields.
+ *
+ * CLINICALNOTE is the reason this is not a plain `split("|")`: its third field
+ * is a BRACKETED, itself-pipe-delimited list of event ids, so a naive split
+ * shreds it and every field after it lands one place left.
+ */
+export function decodeMPagesEvent(type: string, eventString: string): Record<string, string> | null {
+  const spec = MPAGES_EVENTS[type as keyof typeof MPAGES_EVENTS];
+  if (!spec) return null;
+  const fields: string[] = [];
+  let depth = 0;
+  let current = "";
+  for (const ch of eventString) {
+    if (ch === "[") depth += 1;
+    if (ch === "]") depth -= 1;
+    if (ch === "|" && depth === 0) {
+      fields.push(current);
+      current = "";
+    } else {
+      current += ch;
+    }
+  }
+  fields.push(current);
+  const out: Record<string, string> = {};
+  spec.params.forEach((name, i) => { out[name] = fields[i] ?? ""; });
+  if (fields.length !== spec.params.length) {
+    out["!arity"] = `${fields.length} fields, expected ${spec.params.length}`;
+  }
+  return out;
+}
+
+/**
+ * A permissive proxy that nevertheless CHECKS. It used to answer any method on
+ * any object with `1`, so an MPage calling a method that does not exist in
+ * Millennium got a silent success here and a hard failure in the real client —
+ * the worst possible order to find out. It still answers, because refusing
+ * would make the mock useless for pages that legitimately go beyond the
+ * catalogue, but it records the discrepancy so a developer sees it.
+ */
+function makeDiscernObject(name: string, warn: (line: string) => void): object {
+  const known = DISCERN_OBJECTS[name as keyof typeof DISCERN_OBJECTS];
+  if (!known) warn(`DiscernObjectFactory("${name}") is not a Millennium object this catalogue knows.`);
   return new Proxy(
     {},
     {
       get(_target, property) {
         if (property === "then") return undefined;
+        const method = String(property);
+        if (known && !known.includes(method)) {
+          warn(`${name}.${method}() is not in the catalogue for ${name}. Known: ${known.join(", ")}.`);
+        }
         return (...args: unknown[]) => {
           recordDiscernActivity(
-            "DiscernObjectFactory(" + name + ")." + String(property),
+            "DiscernObjectFactory(" + name + ")." + method,
             formatArgs(args),
           );
           return Promise.resolve(1);
@@ -179,12 +225,29 @@ export function installMockPowerChart(
 ): void {
   const external = ((window as { external?: unknown }).external ?? {}) as Record<string, unknown>;
   external.XMLCclRequest = () => new MockCclRequest(chart, log);
+  const warn = (line: string) => {
+    log("WARNING " + line);
+    recordDiscernActivity("bridge warning", line);
+  };
   external.DiscernObjectFactory = (name: string) => {
     recordDiscernActivity("DiscernObjectFactory", name + " requested");
-    return Promise.resolve(makeDiscernObject(name));
+    return Promise.resolve(makeDiscernObject(name, warn));
   };
   external.MPAGES_EVENT = (type: string, eventString: string) => {
-    recordDiscernActivity("MPAGES_EVENT " + type, eventString);
+    const decoded = decodeMPagesEvent(type, eventString);
+    if (!decoded) {
+      warn(`MPAGES_EVENT("${type}", …) is not an event this catalogue knows.`);
+      recordDiscernActivity("MPAGES_EVENT " + type, eventString);
+    } else {
+      if (decoded["!arity"]) warn(`MPAGES_EVENT("${type}") arity: ${decoded["!arity"]}.`);
+      /* the decoded form is what a developer actually needs: which field was
+         meant to be the CKI, and whether it landed where they think */
+      recordDiscernActivity(
+        "MPAGES_EVENT " + type,
+        Object.entries(decoded).filter(([k]) => !k.startsWith("!"))
+          .map(([k, v]) => `${k}=${v || "\u2014"}`).join("  "),
+      );
+    }
     return Promise.resolve();
   };
   external.APPLINK = (...args: unknown[]) => {

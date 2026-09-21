@@ -202,3 +202,60 @@ up as an id of `0`, not a rejection).
   failure.
 - Error handling that consists of `go to end_program`, which returns nothing
   and looks identical to "no data".
+
+## The bridge catalogue (added 2026-09-20)
+
+The sections above describe the transport. This one names the **calls**, which
+the survey previously left implicit — so the player's mock had to guess and
+nothing could check it. Source: `geekmdtravis/fluent-cerner-js` (MIT,
+© 2022 geekmdtravis), a wrapper over the native objects an embedded MPage
+talks to. Adapted as a description, not copied as code; it now lives as data in
+`@webforms/cerner-core` (`MPAGES_EVENTS`, `DISCERN_OBJECTS`) so the mock, the
+stage host and any future player share one definition.
+
+### Two facts that shape everything
+
+**Every `MPAGES_EVENT` payload is one pipe-delimited positional string.** There
+are no named arguments, so an omitted middle field is `0` or empty — never
+absent. Getting a field one place left still "works", it just opens nothing,
+which is why both hosts now check arity and report it.
+
+**A bridge call outside PowerChart throws rather than returning.** That is how
+a page detects it is not hosted; `outsideOfPowerChartError()` is that test.
+
+### Events
+
+| Event | Payload |
+| --- | --- |
+| `POWERFORM` | `personId\|encntrId\|formId\|activityId\|permanentFlag` — a new form carries `formId` with `activityId` 0; an existing one the reverse; **`0\|0` is the ad-hoc search**. `permanentFlag` is 1 only to view a completed form read-only. |
+| `POWERNOTE` | `personId\|encntrId\|CKI\|noteId` — a new note carries a **CKI** and `noteId` 0; an existing one an empty CKI and a numeric id. |
+| `CLINICALNOTE` | `personId\|encntrId\|[eventId\|eventId…]\|windowTitle\|viewOptionFlags\|viewName\|viewSeq\|compName\|compSeq` |
+| `ORDERS` | `personId\|encntrId\|order payload` — superseded by the `POWERORDERS` object for anything beyond a launch. |
+
+**`CLINICALNOTE`'s third field is bracketed and itself pipe-delimited**, so a
+plain `split("|")` shreds it and shifts every field after it. Both hosts use a
+depth-aware split; `mock-powerchart.test.ts` pins that case specifically.
+
+### The CKI is the interesting one
+
+`POWERNOTE`'s third field is a **Clinical Knowledge Identifier** — it names a
+note *template*, not a note. That is the handle a Smart Template demo needs,
+and no public Cerner document we found spells it out. It is already a
+first-class field in our own Smart Template schema
+(`SmartTemplateDefinition.native.cki`), so the two line up.
+
+### Objects, via `window.external.DiscernObjectFactory`
+
+`POWERORDERS` is the large one and drives the Modal Order Entry Window: it is
+created, configured, shown modally, read back, then **destroyed — and it must
+be destroyed, or PowerChart leaks the window**. The full method lists are in
+`DISCERN_OBJECTS`; both hosts warn on a method that is not in them, because an
+unknown method otherwise answers here and fails only in the real client.
+
+### What it does NOT contain
+
+No Smart Template content whatsoever. The library is overwhelmingly order
+entry — 28 of its calls are `POWERORDERS`, 2 are `DYNDOC`, and one each of
+`PVCONTXTMPAGE`, `PATIENTEDUCATION` and `DISCHARGEPROCESS`. Anyone sent here
+expecting Smart Template definitions should stop and read
+`lib/cerner-powerforms/smart-template-*.ts` instead, which is where ours live.

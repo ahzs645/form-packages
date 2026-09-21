@@ -5,7 +5,13 @@ export {
   NO_CACHE_META_HTML,
   PAT_PERSON_ID_TOKEN,
   VIS_ENCNTR_ID_TOKEN,
+  DISCERN_OBJECTS,
+  MPAGES_EVENTS,
+  outsideOfPowerChartError,
   type DiscernCapability,
+  type DiscernEventSpec,
+  type DiscernObjectName,
+  type MPagesEventName,
 } from "./discern";
 export {
   detectHostEnvironment,
