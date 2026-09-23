@@ -543,6 +543,7 @@ export interface ParsedField {
   dateMaxDate?: string;
   dateBorderless?: boolean;
   dateButtonControls?: boolean;
+  dateFillTodayOnCalendarOpen?: boolean;
   dateShowAge?: boolean;
   dateVertical?: boolean;
 

@@ -1434,6 +1434,29 @@ function BulkSetField({
   )
 }
 `,
+  './CalendarTodayDate/index.jsx': `/** Set an empty date to today when its calendar icon is opened. */
+const CalendarTodayDate = ({ fieldId, ...dateSelectProps }) => {
+  const section = useSection(dateSelectProps.section)
+  const [fieldData, setFieldData] = useActiveData(section?.activeSelector)
+
+  const onClickCapture = (event) => {
+    if (!fieldId || dateSelectProps.readOnly || dateSelectProps.disabled) return
+    const icon = event.target?.closest?.('[role="button"][aria-expanded]')
+    if (!icon || fieldData?.[fieldId]) return
+    const now = new Date()
+    const year = now.getFullYear()
+    const month = String(now.getMonth() + 1).padStart(2, "0")
+    const day = String(now.getDate()).padStart(2, "0")
+    setFieldData({ [fieldId]: \`\${year}.\${month}.\${day}\` })
+  }
+
+  return (
+    <div onClickCapture={onClickCapture}>
+      <DateSelect fieldId={fieldId} {...dateSelectProps} />
+    </div>
+  )
+}
+`,
   './ChartAttachmentUpload/index.jsx': `const { useEffect, useMemo, useRef, useState } = React
 
 const firstPositiveId = (...values) => {
@@ -29074,6 +29097,45 @@ const _geometrySignatureDataUrl = (value) => {
   return null
 }
 
+const _stampSignatureField = async (doc, form, field, rawValue, PDFLib, warnings) => {
+  const dataUrl = _geometrySignatureDataUrl(rawValue)
+  if (!dataUrl) return false
+  if (field.acroField.dict.has(PDFLib.PDFName.of("V"))) {
+    warnings.push(\`Field "\${field.getName()}" already contains a digital signature\`)
+    return false
+  }
+  const placements = field.acroField.getWidgets().map((widget) => {
+    const ref = doc.context.getObjectRef(widget.dict)
+    return { page: ref ? doc.findPageForAnnotationRef(ref) : null, rectangle: widget.getRectangle() }
+  })
+  if (!placements.length || placements.some(({ page }) => !page)) {
+    warnings.push(\`Could not locate the page for signature field "\${field.getName()}"\`)
+    return false
+  }
+  try {
+    const bytes = _base64ToBytes(dataUrl)
+    const image = /^data:image\\/png/i.test(dataUrl) ? await doc.embedPng(bytes) : await doc.embedJpg(bytes)
+    form.removeField(field)
+    placements.forEach(({ page, rectangle }) => {
+      const width = Math.max(1, rectangle.width - 2)
+      const height = Math.max(1, rectangle.height - 2)
+      const scale = Math.min(width / image.width, height / image.height)
+      const drawnWidth = image.width * scale
+      const drawnHeight = image.height * scale
+      page.drawImage(image, {
+        x: rectangle.x + (rectangle.width - drawnWidth) / 2,
+        y: rectangle.y + (rectangle.height - drawnHeight) / 2,
+        width: drawnWidth,
+        height: drawnHeight,
+      })
+    })
+    return true
+  } catch (error) {
+    warnings.push(\`Field "\${field.getName()}": \${error?.message || "signature failed"}\`)
+    return false
+  }
+}
+
 const _geometryChoiceSelected = (rawValue, optionValue) => {
   if (!_isNonEmptyString(optionValue)) return false
   const requested = _normalizeToken(optionValue)
@@ -29338,13 +29400,13 @@ const PdfRegenerator = ({
         const r = widget.getRectangle()
         if (r.width < 0 || r.height < 0) widget.setRectangle({ x: Math.min(r.x, r.x + r.width), y: Math.min(r.y, r.y + r.height), width: Math.abs(r.width), height: Math.abs(r.height) })
       }))
-      pdfFields.forEach((field) => {
+      for (const field of pdfFields) {
         const pdfFieldName = field.getName()
         const sourceFieldId = map.get(pdfFieldName) || pdfFieldName
 
         if (includeSet && !includeSet.has(sourceFieldId) && !includeSet.has(pdfFieldName)) {
           skippedFieldCount += 1
-          return
+          continue
         }
 
         let rawValue = formData[sourceFieldId]
@@ -29372,7 +29434,14 @@ const PdfRegenerator = ({
         }
         if (rawValue === undefined || rawValue === null) {
           skippedFieldCount += 1
-          return
+          continue
+        }
+
+        if (field instanceof PDFLib.PDFSignature && _geometrySignatureDataUrl(rawValue)) {
+          const didFill = await _stampSignatureField(doc, form, field, rawValue, PDFLib, warnings)
+          if (didFill) filledFieldCount += 1
+          else skippedFieldCount += 1
+          continue
         }
 
         if (documentDateFormats?.[sourceFieldId]) rawValue = DocumentDateRuntime.formatDocumentDate(rawValue, documentDateFormats[sourceFieldId])
@@ -29385,7 +29454,7 @@ const PdfRegenerator = ({
         const didFill = _fillField(field, rawValue, sourceFieldId, warnings, PDFLib, booleanStates, desiredMaxLength)
         if (didFill) filledFieldCount += 1
         else skippedFieldCount += 1
-      })
+      }
 
       if (pdfFields.length === 0 && Array.isArray(geometryOverlayFields) && geometryOverlayFields.length > 0) {
         const geometryResult = await _drawGeometryOverlays({
@@ -40692,6 +40761,19 @@ export const componentIdentities: Record<string, any> = {
       "minor": 28,
       "patch": 10
     },
+    "components": []
+  },
+  'CalendarTodayDate': {
+    "name": "CalendarTodayDate",
+    "title": "Calendar date with today on open",
+    "description": "DateSelect wrapper that fills an empty date with today when the calendar icon opens; the calendar remains available for another date.",
+    "version": {
+      "major": 1,
+      "minor": 0,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "Webforms",
     "components": []
   },
   'ChartAttachmentUpload': {

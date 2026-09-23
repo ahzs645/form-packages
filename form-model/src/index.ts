@@ -2237,6 +2237,8 @@ export interface BuilderField {
     disablePastDates?: boolean;
     disableFutureDates?: boolean;
     prefillToday?: boolean;
+    /** Set an empty date to today when its calendar icon opens the picker. */
+    fillTodayOnCalendarOpen?: boolean;
     minDate?: string;
     maxDate?: string;
     /** Earliest allowed date expressed relative to today (FHIRPath minValue). */

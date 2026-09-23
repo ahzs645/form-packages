@@ -1,0 +1,9 @@
+{
+  "name": "CalendarTodayDate",
+  "title": "Calendar date with today on open",
+  "description": "DateSelect wrapper that fills an empty date with today when the calendar icon opens; the calendar remains available for another date.",
+  "version": { "major": 1, "minor": 0, "patch": 0 },
+  "type": "component",
+  "owner": "Webforms",
+  "components": []
+}
