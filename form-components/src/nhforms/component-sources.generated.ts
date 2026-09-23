@@ -28359,12 +28359,49 @@ const _fieldHasValue = (field, PDFLib) => {
   return true
 }
 
+// The default pdf-lib appearance providers ignore AcroForm /BS /S /U and
+// redraw an underline as a full box. Generate the text with no box, then put
+// the supplier's underline back into that widget's appearance stream.
+const _updateTextAppearancePreservingUnderline = (field, font, PDFLib) => {
+  const provider = field instanceof PDFLib.PDFTextField
+    ? PDFLib.defaultTextFieldAppearanceProvider
+    : field instanceof PDFLib.PDFDropdown
+      ? PDFLib.defaultDropdownAppearanceProvider
+      : field instanceof PDFLib.PDFOptionList
+        ? PDFLib.defaultOptionListAppearanceProvider
+        : null
+  if (!provider) { field.defaultUpdateAppearances(font); return }
+  field.updateAppearances(font, (item, widget, face) => {
+    const border = widget.getBorderStyle()
+    if (border?.dict.get(PDFLib.PDFName.of("S"))?.toString() !== "/U") return provider(item, widget, face)
+    const thickness = border.getWidth()
+    if (thickness <= 0) return provider(item, widget, face)
+    border.setWidth(0)
+    let operators
+    try {
+      operators = provider(item, widget, face)
+    } finally {
+      border.setWidth(thickness)
+    }
+    const { width, height } = widget.getRectangle()
+    const rotation = widget.getAppearanceCharacteristics()?.getRotation() || 0
+    const lineWidth = rotation % 180 === 0 ? width : height
+    const color = PDFLib.componentsToColor(widget.getAppearanceCharacteristics()?.getBorderColor()) || PDFLib.rgb(0, 0, 0)
+    return [...operators, ...PDFLib.drawLine({
+      start: { x: 0, y: thickness / 2 },
+      end: { x: lineWidth, y: thickness / 2 },
+      thickness,
+      color,
+    })]
+  })
+}
+
 const _flattenForm = (form, PDFLib, font, warnings) => {
   form.getFields().forEach((field) => {
     if (field instanceof PDFLib.PDFSignature || !_fieldHasValue(field, PDFLib)) return
     if (field.acroField.getWidgets().every((widget) => _widgetHasAppearance(field, widget, PDFLib))) return
     try {
-      field.defaultUpdateAppearances(font)
+      _updateTextAppearancePreservingUnderline(field, font, PDFLib)
     } catch (error) {
       warnings.push(\`Field "\${field.getName()}": could not be painted for flattening (\${error?.message || "unknown error"}); it is left blank.\`)
     }
@@ -29476,7 +29513,7 @@ const PdfRegenerator = ({
       const font = await doc.embedFont(PDFLib.StandardFonts.Helvetica)
       pdfFields.forEach((field) => {
         if (!(field instanceof PDFLib.PDFSignature) && form.fieldIsDirty(field.ref)) {
-          field.defaultUpdateAppearances(font)
+          _updateTextAppearancePreservingUnderline(field, font, PDFLib)
           form.markFieldAsClean(field.ref)
         }
       })
