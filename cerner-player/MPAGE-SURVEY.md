@@ -227,10 +227,11 @@ a page detects it is not hosted; `outsideOfPowerChartError()` is that test.
 
 | Event | Payload |
 | --- | --- |
-| `POWERFORM` | `personId\|encntrId\|formId\|activityId\|permanentFlag` — a new form carries `formId` with `activityId` 0; an existing one the reverse; **`0\|0` is the ad-hoc search**. `permanentFlag` is 1 only to view a completed form read-only. |
-| `POWERNOTE` | `personId\|encntrId\|CKI\|noteId` — a new note carries a **CKI** and `noteId` 0; an existing one an empty CKI and a numeric id. |
+| `ALLERGY` | `personId\|encntrId\|allergyId\|nomenId\|substanceDisp\|conceptId\|substanceTypeCd\|substanceTypeDisplay\|viewSeq\|compSeq` — missing from the first catalogue; see the wiki check below. |
+| `POWERFORM` | `personId\|encntrId\|formId\|activityId\|chartMode` — a new form carries `formId` with `activityId` 0; a non-zero `activityId` opens that charted form and wins over `formId`; **`0\|0` is the ad-hoc search**. `chartMode` 0 views or modifies, 1 is view-only. |
+| `POWERNOTE` | `personId\|encntrId\|CKI\|eventId` — a new note carries an encounter-pathway **CKI** and `eventId` 0; an existing one an empty CKI and the note's CLINICAL_EVENT event id. |
 | `CLINICALNOTE` | `personId\|encntrId\|[eventId\|eventId…]\|windowTitle\|viewOptionFlags\|viewName\|viewSeq\|compName\|compSeq` |
-| `ORDERS` | `personId\|encntrId\|order payload` — superseded by the `POWERORDERS` object for anything beyond a launch. |
+| `ORDERS` | `personId\|encntrId\|{order}{order}…\|customizeFlags\|{tab\|display}{…}\|defaultDisplay[\|silentSignFlag]` — six or seven fields. |
 
 **`CLINICALNOTE`'s third field is bracketed and itself pipe-delimited**, so a
 plain `split("|")` shreds it and shifts every field after it. Both hosts use a
@@ -238,11 +239,12 @@ depth-aware split; `mock-powerchart.test.ts` pins that case specifically.
 
 ### The CKI is the interesting one
 
-`POWERNOTE`'s third field is a **Clinical Knowledge Identifier** — it names a
-note *template*, not a note. That is the handle a Smart Template demo needs,
-and no public Cerner document we found spells it out. It is already a
-first-class field in our own Smart Template schema
-(`SmartTemplateDefinition.native.cki`), so the two line up.
+`POWERNOTE`'s third field is a **Clinical Knowledge Identifier**. *Corrected
+2026-09-23:* the MPages Development Wiki spells it out — it is
+`CKI_SOURCE!CKI_IDENTIFIER` from `SCR_PATTERN` and names an **encounter
+pathway** (`CKI!EPS HAIR LOSS`), not a note template, and certainly not a
+Smart Template (those belong to Dynamic Documentation). The stage's
+`SMART_TEMPLATE_TRAINING_CKI` is an emulator-only alias in that shape.
 
 ### Objects, via `window.external.DiscernObjectFactory`
 
@@ -280,3 +282,58 @@ entry — 28 of its calls are `POWERORDERS`, 2 are `DYNDOC`, and one each of
 `PVCONTXTMPAGE`, `PATIENTEDUCATION` and `DISCHARGEPROCESS`. Anyone sent here
 expecting Smart Template definitions should stop and read
 `lib/cerner-powerforms/smart-template-*.ts` instead, which is where ours live.
+
+## Checked against Oracle's MPages Development Wiki (2026-09-23)
+
+Everything above that came from fluent-cerner-js has now been read against
+the wiki itself (Confluence space MPDEVWIKI, plus the Discern Explorer help).
+The catalogue lives in `@webforms/cerner-core`'s `discern-catalog.ts`, with a
+wiki page id and an evidence label (`wiki`, `wiki-example`,
+`reverse-engineered`) on every object method. What changed:
+
+- **Field names are the wiki's.** POWERFORM's fifth field is `chartMode`,
+  POWERNOTE's fourth is `eventId`, ORDERS' fields are `orderLst`,
+  `customizeFlags`, `tabLst`, `defaultDisplay`, `silentSignFlag`.
+- **ALLERGY is a fifth MPAGES_EVENT** (ten fields) the first catalogue missed.
+- **ORDERS may have six fields.** Every MPDEVWIKI example omits
+  `silentSignFlag`, and `tabLst` can carry several `{tab|display}` sets
+  (`{2|127}{3|127}`). `customizeFlags` 24 is CreateMOEW's 8|16; the wiki
+  never ties it to a PowerPlan tab, and it always uses display mask 127 —
+  fluent-cerner-js' `{2|0}` is a mask with no search or scratchpad pane, which
+  the wiki says cannot add orders.
+- **Silent signing only covers new orders.** The wiki: orders sign without
+  the window only when no other orderActions are present, so a silent
+  `CANCEL DC` shows the MOEW (the stage now does; its test was changed).
+- **POWERORDERS has 22 documented methods, not 7** — InvokeCancelDCAction,
+  InvokeCompleteAction, InvokeRenewAction(+WithRouting), InvokeResolveActionMOEW,
+  GetAvailableOrderActions (a 31-bit mask), AddNewOrderToScratchpad,
+  RemoveOrderFromScratchPad, GetScratchPadOrders, IsScratchPadEmptyMOEW (TRUE
+  when there IS uncommitted data), AddDiagnosesToOrder, AddPowerPlanMOEW, the
+  routing calls — plus CustomizeTabMOEW, which appears only in examples.
+  CreateMOEW's bits 2 and 64 exist but are documented as not implemented;
+  display bits 128 (plan entry only) and 256 (formulary details) were missing.
+- **Twenty objects, not seven**: POWERNOTE, PVFRAMEWORKLINK, PVVIEWERMPAGE,
+  TASKDOC, INDEXEDDOUBLECOLLECTION, PREGNANCY, KIACROSSMAPPING, INFOBUTTONLINK,
+  ORDERS, PVPATIENTFOCUS, PVPATIENTSEARCHMPAGE, PMLISTMAINTENANCE,
+  PEXAPPLICATIONSTATUS, CONMANAPPNOTIFIER were added. PVCONTXTMPAGE.SetPatient
+  is not on the wiki and is now labelled reverse-engineered.
+- **APPLINK modes**: 0 starts a solution by executable name (the documented
+  chart-navigation mode), 1 by application object, 100 shell-executes.
+  fluent-cerner-js navigates chart tabs with 100 — undocumented, flagged.
+- **Context variables** (`$PAT_PersonId$` → `…​.00`, `*PAT_PersonId*` bare
+  and URL-encoded) are documented for CCLLINK / APPLINK arguments and the
+  Discern Report preferences only — never inside MPAGES_EVENT, and the wiki
+  says nothing about XMLCclRequest parameters, so our envelope's reliance on
+  that substitution is reverse-engineered.
+- **The meta tag** is `content='A,B'` with no spaces and no `http-equiv` (the
+  `http-equiv=Content-Type` in the production copy above is folklore, and
+  `CCLNEWWINDOW` / `CCLEKSREPLYOBJECT` are not documented names); under Edge
+  it is unnecessary, and page-defined shims of the native functions break.
+- **Still reverse-engineered only**: `InvokeActivateAction` (seen in the
+  production code above, on no wiki page, so not catalogued), the MPAGES_EVENT
+  / DYNDOC return values fluent-cerner-js reads (the wiki documents none),
+  the signed-orders reply record, `outsideOfPowerChartError`, and the `%PDF`
+  missing-program sentinel.
+- **XMLCclRequest**: async defaults to true; synchronous calls throw in Edge;
+  send() parameters must be under 65535 characters (else status 500); the only
+  statuses are 200/405/409/492/493/500; `setBlobIn` and `cleanup` exist.

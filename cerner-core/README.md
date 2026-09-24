@@ -12,8 +12,18 @@ dependency on, Clinical Office: MPage Developer or any other vendor SDK.
 ## Modules
 
 - `discern` — hosting constants: the `<meta name="discern">` capability tag
-  PowerChart requires before it injects native bridges, no-cache meta tags,
-  and the `$PAT_PersonId$` / `$VIS_EncntrId$` macro tokens.
+  PowerChart requires (under Internet Explorer) before it injects native
+  bridges, no-cache meta tags, the `$PAT_PersonId$` / `$VIS_EncntrId$` macro
+  tokens, and the MPAGES_EVENT payload specs.
+- `discern-catalog` — the Discern surface as Oracle's MPages Development Wiki
+  documents it: every DiscernObjectFactory object and method (parameters,
+  return, wiki page id, and whether it is wiki / wiki-example /
+  reverse-engineered), the native functions with their Edge support, the
+  documented meta names, and context-variable substitution.
+- `discern-codes` / `orders-xml` — codecs for the values inside those calls
+  (ORDERS order strings and tab lists, MOEW bitmasks, action availability,
+  CLINICALNOTE / POWERFORM / POWERNOTE / ALLERGY payloads, the order XML
+  documents).
 - `environment` — host detection: `isInPowerChart` (the
   `"XMLCclRequest" in window.external` probe), `isLegacyInternetExplorer`
   (`document.documentMode`), and the render-tier decision.

@@ -1,4 +1,4 @@
-import { DISCERN_OBJECTS, MPAGES_EVENTS, describeMPagesEvent, splitDiscernPayload, type CclRequestLike } from "@webforms/cerner-core";
+import { DISCERN_OBJECTS, MPAGES_EVENTS, describeMPagesEvent, mpagesEventArityOk, splitDiscernPayload, type CclRequestLike } from "@webforms/cerner-core";
 
 /**
  * Dev-only PowerChart simulator: installs a fake window.external.XMLCclRequest
@@ -172,8 +172,10 @@ export function decodeMPagesEvent(type: string, eventString: string): Record<str
   }
   const out: Record<string, string> = {};
   spec.params.forEach((name, i) => { out[name] = fields[i] ?? ""; });
-  if (fields.length !== spec.params.length) {
-    out["!arity"] = `${fields.length} fields, expected ${spec.params.length}`;
+  /* ORDERS' trailing silentSignFlag is optional (the wiki's own examples send six fields). */
+  if (!mpagesEventArityOk(spec, fields.length)) {
+    const min = spec.params.length - (spec.optional ?? 0);
+    out["!arity"] = `${fields.length} fields, expected ${min === spec.params.length ? min : `${min} or ${spec.params.length}`}`;
   }
   return out;
 }

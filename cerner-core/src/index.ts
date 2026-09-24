@@ -7,12 +7,14 @@ export {
   VIS_ENCNTR_ID_TOKEN,
   DISCERN_OBJECTS,
   MPAGES_EVENTS,
+  mpagesEventArityOk,
   outsideOfPowerChartError,
   type DiscernCapability,
   type DiscernEventSpec,
   type DiscernObjectName,
   type MPagesEventName,
 } from "./discern";
+export * from "./discern-catalog";
 export * from "./discern-codes";
 export * from "./orders-xml";
 export {
@@ -79,6 +81,7 @@ export {
   CclClient,
   CclTransportError,
   CCL_STATUS_TEXT,
+  XMLCCLREQUEST_MAX_PARAMETER_LENGTH,
   type CclClientOptions,
   type CclRequestLike,
   type ExecuteOptions,

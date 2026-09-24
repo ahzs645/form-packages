@@ -68,7 +68,8 @@ describe("the ORDERS event", () => {
     expect(describeMPagesEvent("ORDERS", "1|2|{CANCEL DC|9}|24|{3|127}|16|1"))
       .toBe("cancel/discontinue · order 9 · Medications tab with PowerPlans · opens on Profile · sign silently");
     expect(describeMPagesEvent("POWERFORM", "1|2|0|0|0")).toBe("open the PowerForm search (Ad Hoc)");
-    expect(describeMPagesEvent("POWERNOTE", "1|2|CKI!X|0")).toBe("new note from template CKI!X");
+    /* the wiki: a POWERNOTE CKI names an encounter pathway, not a note template */
+    expect(describeMPagesEvent("POWERNOTE", "1|2|CKI!X|0")).toBe("new note from encounter pathway CKI!X");
     expect(describeMPagesEvent("ORDERS", "1|2|{nope}|0|{2|0}|32|0")).toBeNull();
   });
 });

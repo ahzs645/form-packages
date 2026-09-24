@@ -9,6 +9,7 @@
     ".": "./src/index.ts",
     "./context": "./src/context.ts",
     "./discern": "./src/discern.ts",
+    "./discern-catalog": "./src/discern-catalog.ts",
     "./discern-codes": "./src/discern-codes.ts",
     "./orders-xml": "./src/orders-xml.ts",
     "./envelope": "./src/envelope.ts",

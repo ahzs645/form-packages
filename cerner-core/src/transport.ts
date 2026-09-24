@@ -64,9 +64,10 @@ export interface ExecuteOptions {
 }
 
 /**
- * Status codes the XMLCclRequest bridge reports. 492 (non-fatal error) still
- * carries a usable reply and is treated as success; everything else non-200
- * is a failure.
+ * Status codes the XMLCclRequest bridge reports — exactly the six the MPages
+ * Development Wiki lists (XMLCCLREQUEST). Treating 492 (non-fatal error) as a
+ * usable reply is THIS client's policy, not something the wiki says;
+ * everything else non-200 is a failure.
  */
 export const CCL_STATUS_TEXT: Record<number, string> = {
   200: "Success",
@@ -76,6 +77,15 @@ export const CCL_STATUS_TEXT: Record<number, string> = {
   493: "Memory Error",
   500: "Internal Server Exception",
 };
+
+/**
+ * The wiki: the string passed to XMLCclRequest.send() must be shorter than
+ * 65535 characters — longer calls are aborted with status 500 (earlier
+ * releases truncated or crashed) — and anything bigger goes through
+ * setBlobIn(). Our envelope sends its payload as the blob already; this guards
+ * the parameter string itself.
+ */
+export const XMLCCLREQUEST_MAX_PARAMETER_LENGTH = 65535;
 
 export class CclTransportError extends Error {
   readonly status: number;
@@ -281,6 +291,7 @@ export class CclClient {
             );
             return;
           }
+          // REVERSE-ENGINEERED (not on the wiki, whose status list has no 404):
           // A missing CCL program does not 404 — the Discern layer answers
           // with a PDF error document, so this is the reliable sentinel.
           if (request.responseText.substring(0, 4) === "%PDF") {
@@ -316,6 +327,18 @@ export class CclClient {
           if (typeof request.setBlobIn !== "function") {
             throw new Error("XMLCclRequest is missing setBlobIn");
           }
+          if (parameterString.length >= XMLCCLREQUEST_MAX_PARAMETER_LENGTH) {
+            throw new CclTransportError(
+              "XMLCclRequest parameter string is " + parameterString.length + " characters; the limit is " + (XMLCCLREQUEST_MAX_PARAMETER_LENGTH - 1),
+              500,
+              "",
+            );
+          }
+          // Always asynchronous: synchronous XMLCclRequest throws in Edge and
+          // is deprecated in Internet Explorer (wiki: "Synchronous
+          // XMLCclRequest Performance Issues and Microsoft Edge Deprecation").
+          // The rewritten native object cleans itself up after the final
+          // readystatechange, so the handler above copies what it needs.
           request.open("GET", this.options.scriptName, true);
           request.setBlobIn(blob);
           request.send(parameterString);

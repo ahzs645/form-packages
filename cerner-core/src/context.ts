@@ -45,6 +45,11 @@ export interface ResolveChartContextInput {
  * tokens; Summary/Workflow views substitute {person_id}-style ones — the
  * dialects differ but registrations conventionally name the parameters this
  * way, so accept them too.
+ *
+ * Per the wiki's Context Variables page, `$PAT_PersonId$` arrives with `.00`
+ * appended ("12345.00" — parseInt drops it) and `*PAT_PersonId*` arrives bare
+ * and URL-encoded; the `{person_id}` dialect and the pId/eId/uId names are
+ * not on the wiki (reverse-engineered from prefmaint registrations).
  */
 const QUERY_KEYS: Array<[keyof ChartContext, string[]]> = [
   ["personId", ["personId", "pId", "PAT_PersonId"]],

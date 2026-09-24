@@ -13,7 +13,12 @@ import { XMLBuilder, XMLParser } from "fast-xml-parser";
  * Into PowerChart: `AddNewOrdersToScratchpad` and `AddPowerPlanWithDetails`
  * take small XML documents; the parsers here read them the way fluent-cerner-js
  * writes them (whitespace stripped, and — for diagnoses — with the stray commas
- * its array-in-template-literal leaves between `<DiagnosisId>` elements).
+ * its array-in-template-literal leaves between `<DiagnosisId>` elements). Both
+ * input schemas match the MPages Development Wiki's AddNewOrdersToScratchpad
+ * and AddPowerPlanWithDetails pages, and the parsers enforce the wiki's value
+ * rules (origination flag 0 or 1, personalized plan id ≥ 0). The reply record
+ * above is NOT on the wiki — it is fluent-cerner-js' typing, i.e.
+ * reverse-engineered.
  */
 
 export interface MillenniumOrderDetail {
@@ -297,7 +302,7 @@ export function buildOrdersXml(orders: readonly SignedOrderInput[]): string {
   return builder.build(document);
 }
 
-const ARRAYS = new Set(["Orders.Order", "Plans.Plan", "Plans.Plan.Diagnoses.DiagnosisId"]);
+const ARRAYS = new Set(["Orders.Order", "Plans.Plan", "Plans.Plan.Diagnoses.DiagnosisId", "Orders.Order.Diagnoses.DiagnosesId"]);
 const parser = new XMLParser({
   parseTagValue: true,
   trimValues: true,
@@ -337,9 +342,12 @@ export function parseScratchpadXml(xml: string): ScratchpadOrderInput[] {
     const synonymId = Number(order.SynonymId);
     if (!(synonymId > 0)) throw new Error(`"${order.SynonymId ?? ""}" is not a synonym id.`);
     const sentence = Number(order.OrderSentenceId);
+    /* The wiki's schema: InPatient Order = 0 / Prescription Order = 1, nothing else. */
+    const flag = String(order.EOrderOriginationFlag ?? "").trim();
+    if (flag !== "0" && flag !== "1") throw new Error(`"${flag}" is not an EOrderOriginationFlag (0 inpatient, 1 prescription).`);
     return {
       synonymId,
-      origination: Number(order.EOrderOriginationFlag) === 0 ? "inpatient order" : "prescription order",
+      origination: flag === "0" ? "inpatient order" : "prescription order",
       ...(sentence > 0 ? { sentenceId: sentence } : {}),
     };
   });
@@ -368,6 +376,8 @@ export function parsePowerPlansXml(xml: string): PowerPlanInput[] {
     const pathwayCatalogId = Number(plan.PathwayCatalogId);
     if (!(pathwayCatalogId > 0)) throw new Error(`"${plan.PathwayCatalogId ?? ""}" is not a pathway catalog id.`);
     const personalized = Number(plan.PersonalizedPlanId);
+    /* The wiki: PersonalizedPlanId "can't be less than zero". */
+    if (personalized < 0) throw new Error(`"${plan.PersonalizedPlanId}" is not a personalized plan id; it can't be less than zero.`);
     const diagnoses = typeof plan.Diagnoses === "object" ? plan.Diagnoses.DiagnosisId ?? [] : [];
     return {
       pathwayCatalogId,
@@ -375,4 +385,54 @@ export function parsePowerPlansXml(xml: string): PowerPlanInput[] {
       diagnosisIds: diagnoses.map(Number).filter((n) => n > 0),
     };
   });
+}
+
+/* --- AddDiagnosesToOrder / GetScratchPadOrders (wiki pages of those names) --- */
+
+export interface OrderDiagnosesInput {
+  orderId: number;
+  diagnosisIds: number[];
+}
+
+/**
+ * AddDiagnosesToOrder's input. The wiki spells the child element
+ * `DiagnosesId` here (and `DiagnosisId` in the status reply and in
+ * AddPowerPlanWithDetails) — both spellings are the wiki's.
+ */
+export function buildOrderDiagnosesXml(orders: readonly OrderDiagnosesInput[]): string {
+  return `<Orders>${orders.map((order) =>
+    `<Order><OrderId>${order.orderId}</OrderId><Diagnoses>${order.diagnosisIds.map((id) => `<DiagnosesId>${id}</DiagnosesId>`).join("")}</Diagnoses></Order>`,
+  ).join("")}</Orders>`;
+}
+
+export function parseOrderDiagnosesXml(xml: string): OrderDiagnosesInput[] {
+  const parsed = parser.parse(xml) as {
+    Orders?: { Order?: { OrderId?: number | string; Diagnoses?: { DiagnosesId?: (number | string)[] } | string }[] };
+  };
+  if (!parsed.Orders) throw new Error("Not an <Orders> document.");
+  const orders = parsed.Orders.Order ?? [];
+  if (!orders.length) throw new Error("The document has no <Order>.");
+  return orders.map((order) => {
+    const orderId = Number(order.OrderId);
+    if (!(orderId > 0)) throw new Error(`"${order.OrderId ?? ""}" is not an order id.`);
+    const ids = typeof order.Diagnoses === "object" ? order.Diagnoses.DiagnosesId ?? [] : [];
+    const diagnosisIds = ids.map(Number);
+    if (!diagnosisIds.length || diagnosisIds.some((id) => !(id > 0))) throw new Error(`Order ${orderId} needs one or more <DiagnosesId> values.`);
+    return { orderId, diagnosisIds };
+  });
+}
+
+/** AddDiagnosesToOrder's reply: True for each diagnosis added, False for each that was not. */
+export function buildOrderDiagnosesStatusXml(results: readonly { orderId: number; diagnoses: readonly { id: number; added: boolean }[] }[]): string {
+  return `<?xml version = "1.0"?><Orders>${results.map((result) =>
+    `<Order Id="${result.orderId}">${result.diagnoses.map((d) => `<DiagnosisId Value="${d.id}">${d.added ? "True" : "False"}</DiagnosisId>`).join("")}</Order>`,
+  ).join("")}</Orders>`;
+}
+
+/** GetScratchPadOrders' reply; `""` when the scratchpad is empty, as the wiki says. */
+export function buildScratchpadOrdersXml(orders: readonly { orderId: number; synonymId: number; orderSentenceId?: number }[]): string {
+  if (!orders.length) return "";
+  return `<?xml version="1.0"?><Orders>${orders.map((order) =>
+    `<Order Id="${order.orderId}"><SynonymId type="double">${order.synonymId}</SynonymId><OrderSentenceId type="double">${order.orderSentenceId ?? 0}</OrderSentenceId></Order>`,
+  ).join("")}</Orders>`;
 }

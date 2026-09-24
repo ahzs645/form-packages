@@ -8,6 +8,12 @@ import { PAT_PERSON_ID_TOKEN, VIS_ENCNTR_ID_TOKEN } from "./discern";
  * <instanceIndex>,^<configJson>^` carries chart context and per-call
  * bookkeeping. Chart-level calls that don't yet know their context send the
  * PowerChart macro tokens instead of ids and let the host substitute them.
+ *
+ * This is OUR entry script's contract, not a Cerner one: the wiki documents
+ * only `open(method, program[, async])`, `send(params)` and `setBlobIn(blob)`,
+ * where params is the program's comma-separated prompt values. That context
+ * variables are substituted inside send() is reverse-engineered — the wiki
+ * lists them for CCLLINK, APPLINK and the Discern Report preferences only.
  */
 
 export type MPageMode = "CHART" | "ORGANIZER";
