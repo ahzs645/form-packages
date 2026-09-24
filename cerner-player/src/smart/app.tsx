@@ -1,6 +1,6 @@
 import { hydrateFhirResource, resolveSmartLaunchContext, FHIR_JSON_ACCEPT } from "@webforms/cerner-core";
-import FHIR from "fhirclient";
-import type Client from "fhirclient/lib/Client";
+import FHIR from "fhirclient/browser";
+import type Client from "fhirclient/Client";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 

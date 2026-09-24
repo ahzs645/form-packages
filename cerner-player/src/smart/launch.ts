@@ -1,4 +1,4 @@
-import FHIR from "fhirclient";
+import FHIR from "fhirclient/browser";
 
 /**
  * SMART on FHIR EHR-launch endpoint. The EHR (Cerner Ignite once NH's
