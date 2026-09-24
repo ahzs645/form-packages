@@ -1106,6 +1106,14 @@ export interface BuilderCernerInterpRow {
   resultValue?: string;
   inputDtaCd?: string;
   inputTaskAssayUid?: string;
+  /**
+   * A numeric contributor's range (STATE FLAGS=1, NUMERIC_LOW..NUMERIC_HIGH,
+   * both inclusive); `value` is then empty. 23 of the T1978A domain's states
+   * are ranges, e.g. PHQ-9 Score 0–4, 5–9, … 20–27.
+   */
+  numeric?: { low: number; high: number };
+  /** RESULT_PRINCIPLE_TYPE_CD / _MEAN when not ALPHA RESPON (one BERG outcome is OTHER, 1262). */
+  resultPrincipleType?: { cd: string; mean: string };
 }
 
 /**
@@ -1119,7 +1127,23 @@ export interface BuilderCernerInterp {
   dcpInterpUid?: string;
   taskAssayUid?: string;
   ageToMinutes?: string;
-  components?: Array<{ mnemonic: string; description?: string; taskAssayUid?: string; dtaCd?: string }>;
+  /** AGE_FROM_MINUTES; the table applies from this age (0 when absent). */
+  ageFromMinutes?: string;
+  /** Unit the author reads the age range in; INTERP XML stores minutes only. */
+  ageUnit?: "years" | "months" | "weeks" | "days";
+  /** SEX_CD / SEX_DISP / SEX_MEAN: a sex-specific table (2 in T1978A, AUDIT-C male and female). */
+  sex?: { cd?: string; display: string; meaning: string; cduid?: string };
+  /** SERVICE_RESOURCE: the performing department the table is limited to. */
+  serviceResource?: { cd?: string; display: string; cduid?: string };
+  /**
+   * Bedrock Interpretations wizard settings that the INTERP XML does not
+   * carry (MX25.3 guide step 7). Listed in DEPLOYMENT.md for the analyst.
+   */
+  bedrock?: { lookBackMinutes?: number; lookForwardMinutes?: number; initialLookDirection?: "back" | "forward" };
+  /** Positions this table held in the source INTERP_OBJ_LIST, so a rebuilt one is written back in place. */
+  listingIndexes?: number[];
+  /** COMPONENT FLAGS=1 marks a numeric contributor ("Numeric" in the Component Selection dialog). */
+  components?: Array<{ mnemonic: string; description?: string; taskAssayUid?: string; dtaCd?: string; numeric?: boolean }>;
   componentMnemonics: string[];
   /** Distinct outcome strings the table can produce. */
   outcomes: string[];
@@ -1189,15 +1213,78 @@ export interface BuilderCernerReferenceBand extends BuilderCernerRangeLimits {
   ageTo?: number;
   ageToUnits?: BuilderCernerAgeUnit;
   minsBack?: number;
-  /** Answers selected specifically for this range; empty means no responses. */
-  answers?: Array<{ display: string; nomenclatureId?: string; resultValue?: string; isDefault?: boolean; gridDisplay?: 0 | 1 | 2 }>;
+  /**
+   * Answers selected specifically for this range; empty means no responses.
+   * `truthState` is the TRUTH_STATE_MEAN ("UNK", or "" for none), `category`
+   * the ALPHA_CATEGORY it is listed under, `conceptCki` DTA Wizard's per-answer
+   * Concept CKI (no DCP leaf; reported for the analyst).
+   */
+  answers?: Array<{ display: string; nomenclatureId?: string; resultValue?: string; isDefault?: boolean; gridDisplay?: 0 | 1 | 2; truthState?: string; category?: string; conceptCki?: string }>;
+  /** DTA Wizard's Alpha Categorization for this range (ALPHA_CATEGORY_LIST). */
+  categories?: Array<{ name: string; displaySeq?: number; expand?: boolean; categoryId?: string }>;
+}
+
+/**
+ * One Equation Tool component (Define Components tab). A DTA component reads
+ * a result; for an ALPHA/MULTI DTA that is the chosen responses' result
+ * values (summed for multi-select). `constant` makes it the Constant radio.
+ */
+export interface BuilderCernerEquationComponent {
+  name: string;
+  fieldId?: string;
+  mnemonic: string;
+  activityType: string;
+  resultType: string;
+  taskAssayId?: string;
+  taskAssayGuid?: string;
+  /** Value Unit (UNITS_CD_DISPLAY). */
+  units?: string;
+  /** Constant instead of a DTA (COMPONENT_FLAG 3, CONSTANT_VALUE). */
+  constant?: number;
+  /** Required Value › Optional (RESULT_REQ_FLAG 0). */
+  optional?: boolean;
+  /** The Optional box: used when no result is found. No DCP tag carries it; preview only. */
+  defaultValue?: number;
+  /** Result › Look Ahead First; Look Back First when absent. No DCP tag carries it. */
+  lookAheadFirst?: boolean;
+  /** Look Ahead Minutes (TIME_WINDOW_MINUTES) and Look Back Minutes (TIME_WINDOW_BACK_MINUTES). */
+  lookAheadMinutes?: number;
+  lookBackMinutes?: number;
+  /** RESULT_STATUS_DISPLAY the component reads (Performed when absent; "" for none). */
+  resultStatus?: string;
+}
+
+/**
+ * Define Equation tab: who an equation applies to. Ages are kept in minutes
+ * (AGE_FROM_MINUTES / AGE_TO_MINUTES) with the unit the tool displays them
+ * in, as the EQUATION export writes them. Absent: 0 minutes to 150 years,
+ * all genders and species, a default equation, active.
+ */
+export interface BuilderCernerEquationApplicability {
+  ageFromMinutes?: number;
+  ageFromUnits?: string;
+  ageToMinutes?: number;
+  ageToUnits?: string;
+  /** Gender (SEX_CODE_DISPLAY), e.g. "Female"; empty for all. */
+  sex?: string;
+  species?: string;
+  serviceResource?: string;
+  unknownAge?: boolean;
+  isDefault?: boolean;
+  /** Status › Inactive. No DCP tag carries it; an inactive variant is not exported. */
+  inactive?: boolean;
 }
 
 export interface BuilderCernerConditionalEquation {
-  components: Array<{ name: string; fieldId?: string; mnemonic: string; activityType: string; resultType: string; taskAssayId?: string; taskAssayGuid?: string; units?: string }>;
+  components: BuilderCernerEquationComponent[];
   /** Used when none of the ordered conditions match; blank means no result. */
   expression: string;
   conditions: Array<{ condition: string; expression: string }>;
+  applicability?: BuilderCernerEquationApplicability;
+  /** Further equations on the same Calculation DTA, chosen by patient ("1 of n" in Equation Tool). */
+  variants?: BuilderCernerConditionalEquation[];
+  /** Native EQUATION_ID this equation was imported from, reused on export. */
+  equationId?: string;
 }
 
 export interface BuilderCernerDtaDefinition {
@@ -1218,6 +1305,12 @@ export interface BuilderCernerDtaDefinition {
   /** The listed bands are the complete range table; do not add an all-patient default. */
   bandsOnly?: boolean;
   witnessRequired?: boolean;
+  /**
+   * DTA Wizard "First Alpha Single Select" (`SINGLE_SELECT_IND`). A DTA-level
+   * flag, independent of a PowerForm control's `exclude_first_ar`
+   * (`firstResponseExclusive`): the domain has each without the other.
+   */
+  singleSelect?: boolean;
   /** Intake and Output: 0 neither, 1 intake, 2 output; documented option 3 requires workflow review. */
   ioFlag?: 0 | 1 | 2 | 3;
   /**
@@ -1285,19 +1378,34 @@ export interface BuilderCernerConfig {
   version: 1;
   /** Oracle build-report provenance. Geometry is reconstructed, not native XML. */
   workbookSource?: { name: string; sheet: string; row: number; sourcePosition?: string; sourceFont?: string; sourceValues?: Record<string, string>; layout?: { basis: "neighbouring-labels" | "fallback" | "reference-template"; standard?: string; profile?: string; answerRows?: number; answerColumnWidth?: number; answerDisplay?: "short-string"; labelOverride?: { sourceLabel: string; caption: string }; note: string } };
+  /** Native `exclude_first_ar`: choosing the first answer clears the others, and vice versa. Multi-select lists only. */
   firstResponseExclusive?: boolean;
-  /** Semantic authoring options; unknown native encodings stay in the authoring companion. */
+  /** Native `sort_alphabetic`: answers are shown A→Z; the DTA's stored response order is unchanged. */
+  sortAlphabetic?: boolean;
+  /**
+   * The control's Default Type tab. Native `default`: absent = none, 1 =
+   * reference, 2 = any-encounter, 3 = interpretation, 4 = encounter
+   * (lib/cerner-powerforms/default-policy.ts has the evidence). `template` is
+   * the builder's chart-template source, not a Default Type radio.
+   */
   defaultPolicy?: {
-    source: "none" | "reference" | "encounter" | "any-encounter" | "template";
+    source: "none" | "reference" | "encounter" | "any-encounter" | "interpretation" | "template";
+    /** Preview only: PowerForms has no control-level look-back (only the DTA's "Look Back Minutes for Related Results"). */
     lookBackMinutes?: number;
     /** Display the previous-data indicator outside the input's top-right edge. */
     showImportIcon?: boolean;
   };
   resultOptions?: { allowComments?: boolean; suppress?: boolean; suppressChart?: boolean; suppressText?: boolean; commentFieldId?: string; commentForFieldId?: string };
-  /** Explicit date/time calculation mode; never inferred from field captions. */
-  dateCalculation?: { startFieldId: string; endFieldId?: string; units: "minutes" | "hours" | "days" | "weeks" };
-  /** Authoring date offset. Native DTA calculation configuration requires verification. */
-  dateOffset?: { sourceFieldId: string; amount: number; units: "minutes" | "hours" | "days" | "weeks" };
+  /**
+   * Calculated control's Date/Time Calculation (`date_calc="1"`): the absolute
+   * time between two date fields (equation A1-B1), or between one and the
+   * form's Performed on date/time (equation A1), rounded down to `units`.
+   */
+  dateCalculation?: { startFieldId: string; endFieldId?: string; units: "minutes" | "hours" | "days" | "weeks" | "months" | "years" };
+  /** Date/Time control Type tab › Date/Time/Time Zone (a DATETIMETIMEZONE DTA). */
+  withTimeZone?: boolean;
+  /** Date offset from another date field. Native `datecalc_cntrl` encodes days, weeks and months; minutes and hours are preview-only. */
+  dateOffset?: { sourceFieldId: string; amount: number; units: "minutes" | "hours" | "days" | "weeks" | "months" };
   grid?: {
     family: "power" | "discrete" | "ultra";
     /** Source GRIDITEMLIST leaves, retained verbatim for imported grids. */
@@ -1306,7 +1414,10 @@ export interface BuilderCernerConfig {
     intersections?: Array<{ rowId: string; columnId: string; eventDisplay: string; eventCode?: string; eventUid?: string; eventCki?: string }>;
     view: "grid" | "row" | "detail";
     rowComments?: boolean;
+    /** Discrete-grid "Other" column heading (native `other_title`); an empty string is a column without a heading. */
     otherColumnLabel?: string;
+    /** Native `show_other_column`: the Other column's width in grid units; 0 hides the column. */
+    nativeOtherWidth?: number;
     /** Full column definitions for workbook demographic projection and details. */
     columnFields?: Record<string, BuilderField>;
     /** Native source units, deliberately independent of preview pixels. */
@@ -1347,6 +1458,11 @@ export interface BuilderCernerConfig {
   inputDescription?: string;
   /** PowerForm designer coordinates, `x1,y1,x2,y2` in form pixels. */
   position?: { x1: number; y1: number; x2: number; y2: number } | null;
+  /**
+   * An authored Image control (INPUT_TYPE 12) with no position yet: its size
+   * in form pixels. The export places it below the controls before it.
+   */
+  imageSize?: { width: number; height: number } | null;
   /** Every PVC_NAME → PVC_VALUE preference on the input, verbatim. */
   preferences: Record<string, string>;
   /**
@@ -1398,9 +1514,17 @@ export interface BuilderCernerConfig {
     vocabulary?: string;
     shortString?: string;
     sourceIdentifier?: string;
+    /** DTA Wizard's per-answer Concept CKI; kept and reported, not written (no DCP leaf). */
+    conceptCki?: string;
   }>;
   /** A Cerner interpretation (decision table) that computes this field's value. */
   interp?: BuilderCernerInterp | null;
+  /**
+   * Interpretation tables authored (or rebuilt) here that set this alpha
+   * list / combo box when its Default Type is "Use interpretation". Imported
+   * tables the author has not touched stay verbatim in the DCP provenance.
+   */
+  defaultInterps?: BuilderCernerInterp[];
   /**
    * Label inputs absorbed into this field (its question label, the chips
    * beside it) or into a section (its title bar and marker), kept verbatim
@@ -1619,6 +1743,8 @@ export interface BuilderChoiceOptionObject {
    * "Yes" is one id). Unset exports as 0 and lands in RESOLUTION.md.
    */
   cernerNomenclatureId?: string;
+  /** Cerner concept CKI for this answer (DTA Wizard Alpha Details); reported for the analyst. */
+  cernerConceptCki?: string;
 }
 
 export type BuilderChoiceOption = string | BuilderChoiceOptionObject;

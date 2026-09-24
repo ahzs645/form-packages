@@ -1,6 +1,6 @@
 /** Portable authoring contract; native Bedrock serialization is a separate adapter. */
 export type SmartTemplateLayout = "bordered" | "borderless" | "horizontal" | "vertical" | "table-list";
-export type SmartTemplateKind = "clinical-events" | "allergies" | "problems" | "reports" | "orders" | "io";
+export type SmartTemplateKind = "clinical-events" | "allergies" | "problems" | "reports" | "orders" | "io" | "care-pathways";
 export interface SmartTemplateSelection {
   id: string;
   label: string;
@@ -35,6 +35,12 @@ export interface SmartTemplateComponent {
   report: { currentUserOnly: boolean; signer: boolean; preliminary: boolean; start: string; end: string; caseSensitive: boolean; dateFormat: "short" | "medium" | "long" };
   order: { statuses: string[] };
   io: { countCodes: string[] };
+  /**
+   * A View Builder component whose Wizard filter keys no export in hand
+   * shows (every one but Clinical Events): named, with the source's raw
+   * settings, and handed to the analyst in BEDROCK-REVIEW.csv.
+   */
+  nativeSetup?: { status: "unconfigured"; component: string; reportMean?: string; settings: { filter: string; value: string }[] };
 }
 /** A form-local reference. The source owns the only copy of the definition. */
 export interface SmartTemplateLink {

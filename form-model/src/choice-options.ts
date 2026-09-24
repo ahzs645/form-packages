@@ -109,6 +109,8 @@ export function compactChoiceOption(option: BuilderChoiceOption): BuilderChoiceO
     typeof option.presentationParentValue === "string" && option.presentationParentValue !== "";
   const hasCernerNomenclatureId =
     typeof option.cernerNomenclatureId === "string" && option.cernerNomenclatureId !== "";
+  const hasCernerConceptCki =
+    typeof option.cernerConceptCki === "string" && option.cernerConceptCki !== "";
   if (
     !hasValue &&
     !hasScore &&
@@ -117,7 +119,8 @@ export function compactChoiceOption(option: BuilderChoiceOption): BuilderChoiceO
     !hasOrder &&
     !hasPresentationDepth &&
     !hasPresentationParentValue &&
-    !hasCernerNomenclatureId
+    !hasCernerNomenclatureId &&
+    !hasCernerConceptCki
   ) return label;
   const next: ExtendedChoiceOptionObject = { label };
   if (hasValue) next.value = option.value;
@@ -128,6 +131,7 @@ export function compactChoiceOption(option: BuilderChoiceOption): BuilderChoiceO
   if (hasPresentationDepth) next.presentationDepth = option.presentationDepth;
   if (hasPresentationParentValue) next.presentationParentValue = option.presentationParentValue;
   if (hasCernerNomenclatureId) next.cernerNomenclatureId = option.cernerNomenclatureId;
+  if (hasCernerConceptCki) next.cernerConceptCki = option.cernerConceptCki;
   return next;
 }
 
@@ -176,6 +180,11 @@ export function withOptionPatch(
     const id = (patch.cernerNomenclatureId ?? "").trim();
     if (!id) delete base.cernerNomenclatureId;
     else base.cernerNomenclatureId = id;
+  }
+  if ("cernerConceptCki" in patch) {
+    const cki = (patch.cernerConceptCki ?? "").trim();
+    if (!cki) delete base.cernerConceptCki;
+    else base.cernerConceptCki = cki;
   }
   return compactChoiceOption(base);
 }
