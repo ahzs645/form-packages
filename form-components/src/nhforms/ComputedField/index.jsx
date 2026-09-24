@@ -555,12 +555,55 @@ const ComputedValuePresentation = ({
   size,
   onChange,
   isDarkMode = false,
+  numeric = false,
+  resetAction = null,
 }) => {
   const normalizedStyle = _normalizeComputedDisplayStyle(displayStyle)
 
   // Editable calculations retain the regular field control regardless of the
   // chosen summary style, so override and suggestion policies remain usable.
   if (normalizedStyle === "field" || readOnly === false) {
+    const { IconButton, TooltipHost } = Fluent
+    // The reset sits inside the box at the far right. Fluent paints the suffix
+    // slot grey with 10px padding; the wrapper covers that so the icon reads
+    // as part of the input rather than an add-on button.
+    const renderSuffix = resetAction
+      ? () => (
+          <div style={{ display: "flex", alignItems: "center", alignSelf: "stretch", margin: "0 -10px", padding: "0 2px", background: isDarkMode ? "#1f1f1f" : "#ffffff" }}>
+            {displaySuffix ? <span style={{ marginRight: 4 }}>{displaySuffix}</span> : null}
+            <TooltipHost content={resetAction.tooltip}>
+              <IconButton
+                iconProps={{ iconName: "Refresh" }}
+                ariaLabel={resetAction.tooltip}
+                onClick={resetAction.onReset}
+                styles={{ root: { width: 26, height: 26 }, icon: { fontSize: 13 } }}
+              />
+            </TooltipHost>
+          </div>
+        )
+      : undefined
+    const textFieldProps = renderSuffix
+      ? { onRenderSuffix: renderSuffix }
+      : displaySuffix ? { suffix: displaySuffix } : undefined
+    if (numeric) {
+      // Stored as text: Numeric's storeAsNumber would turn "7." into 7 while
+      // typing. Formulas read numeric text as numbers.
+      return (
+        <Numeric
+          fieldId={fieldId}
+          label={label}
+          value={value}
+          onChange={onChange}
+          labelPosition={labelPosition}
+          placeholder={placeholder}
+          readOnly={readOnly}
+          required={required}
+          size={size}
+          typeNumber="decimal"
+          textFieldProps={textFieldProps}
+        />
+      )
+    }
     return (
       <TextArea
         fieldId={fieldId}
@@ -572,7 +615,7 @@ const ComputedValuePresentation = ({
         readOnly={readOnly}
         required={required}
         size={size}
-        textFieldProps={displaySuffix ? { suffix: displaySuffix } : undefined}
+        textFieldProps={textFieldProps}
       />
     )
   }
@@ -824,6 +867,15 @@ const ComputedField = ({
         size={size}
         displaySuffix={displaySuffix}
         isDarkMode={isDarkMode}
+        numeric={resultType !== "text" && canEdit}
+        resetAction={policy === "calculated-until-overridden" && isOverridden && canEdit && !presentationOnly
+          ? {
+              onReset: useCalculatedValue,
+              tooltip: displayValue
+                ? `Reset to the calculated value (${displayValue})`
+                : "Reset to the calculation (it has no value until its inputs are filled in)",
+            }
+          : null}
       />
       {showHistory && (historyObservationCode || historyLoincCode) ? (
         <div
@@ -840,20 +892,6 @@ const ComputedField = ({
             graphHref={graphHref}
             presentation="measurement-summary"
           />
-        </div>
-      ) : null}
-      {!presentationOnly && policy === "calculated-until-overridden" ? (
-        <div style={{ marginTop: 4, marginLeft: supplementalInset, display: "flex", gap: 8, alignItems: "center", fontSize: 12, color: isOverridden ? "#9a3412" : "#475569" }}>
-          <span>
-            {isOverridden
-              ? `User override preserved. Current calculation: ${displayValue || "unavailable"}.`
-              : "Updates automatically until a user edits the value."}
-          </span>
-          {isOverridden && canEdit ? (
-            <button type="button" onClick={useCalculatedValue} style={{ border: "1px solid #cbd5e1", borderRadius: 4, background: "#fff", padding: "2px 8px", cursor: "pointer" }}>
-              Reset to calculation
-            </button>
-          ) : null}
         </div>
       ) : null}
       {!presentationOnly && policy === "suggested-calculation" ? (
