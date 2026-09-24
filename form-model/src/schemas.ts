@@ -2,22 +2,22 @@ import { z } from "zod";
 import type { BuilderDocument, BuilderField, WorkspaceDocumentV3, FieldConditionGroup } from "./index";
 import { BUILDER_FIELD_TYPES } from "./field-types";
 
-export const BuilderFieldSchema = z.object({
+export const BuilderFieldSchema = z.looseObject({
   id: z.string().trim().min(1),
   label: z.string(),
   type: z.enum(BUILDER_FIELD_TYPES),
   behavior: z.lazy(() => z.object({
-    validations: z.array(z.object({ id: z.string(), message: z.string(), validWhen: FieldConditionGroupSchema, translations: z.record(z.string()).optional() })).optional(),
+    validations: z.array(z.object({ id: z.string(), message: z.string(), validWhen: FieldConditionGroupSchema, translations: z.record(z.string(), z.string()).optional() })).optional(),
     optionRules: z.array(z.object({ value: z.string(), showWhen: FieldConditionGroupSchema.optional(), disableWhen: FieldConditionGroupSchema.optional() })).optional(),
   })).optional(),
-}).passthrough();
+});
 
 export const BuilderFieldsSchema = z.array(BuilderFieldSchema);
 
-export const BuilderDocumentSchema = z.object({
+export const BuilderDocumentSchema = z.looseObject({
   name: z.string(),
   fields: BuilderFieldsSchema,
-  design: z.record(z.unknown()),
+  design: z.record(z.string(), z.unknown()),
   identityType: z.enum(["ACTIVITY", "ATTACHMENT", "CALCULATOR", "FLOWSHEET", "TESTFORM", "WEBCLIENT", "TEST"]),
   identityCode: z.string(),
   identityMetadata: z.object({
@@ -47,29 +47,29 @@ export const BuilderDocumentSchema = z.object({
     })).optional(),
   }).optional(),
   drafts: z.array(z.unknown()),
-  branchingRules: z.record(z.unknown()),
+  branchingRules: z.record(z.string(), z.unknown()),
   paginationEnabled: z.boolean(),
   pageCount: z.number().int().positive(),
-  pageAssignments: z.record(z.number().int().nullable()),
+  pageAssignments: z.record(z.string(), z.number().int().nullable()),
   // Lenient on purpose: a document must stay loadable while an author is
   // mid-way through defining a condition or a page flow (empty groups etc.).
-  conditions: z.array(z.object({
+  conditions: z.array(z.looseObject({
     id: z.string().min(1),
     name: z.string(),
     description: z.string().optional(),
-    group: z.object({
+    group: z.looseObject({
       match: z.enum(["all", "any"]),
       conditions: z.array(z.unknown()),
       conditionRef: z.string().optional(),
-    }).passthrough(),
-  }).passthrough()).optional(),
-  pageFlow: z.object({
+    }),
+  })).optional(),
+  pageFlow: z.looseObject({
     enabled: z.boolean(),
-    pages: z.array(z.union([z.object({}).passthrough(), z.null()])).optional(),
-  }).passthrough().nullable().optional(),
-}).passthrough();
+    pages: z.array(z.union([z.looseObject({}), z.null()])).optional(),
+  }).nullable().optional(),
+});
 
-const FieldLinkConditionSchema = z.object({
+const FieldLinkConditionSchema = z.looseObject({
   valueFieldId: z.string().optional(),
   compareFieldId: z.string().optional(),
   type: z.enum([
@@ -89,7 +89,7 @@ const FieldLinkConditionSchema = z.object({
   ]),
   optionValues: z.array(z.string()).optional(),
   value: z.union([z.string(), z.number(), z.boolean(), z.null()]).optional(),
-}).passthrough();
+});
 
 function conditionGroupSchema(depth: number): z.ZodType<FieldConditionGroup> {
   const leaf = z.object({ controllerFieldId: z.string().min(1), condition: FieldLinkConditionSchema });
@@ -101,17 +101,17 @@ function conditionGroupSchema(depth: number): z.ZodType<FieldConditionGroup> {
 }
 export const FieldConditionGroupSchema = conditionGroupSchema(0);
 
-export const FieldLinkRuleSchema = z.object({
+export const FieldLinkRuleSchema = z.looseObject({
   cernerInactivePageBehavior: z.enum(["disable", "hide"]).optional(),
   conditionGroup: FieldConditionGroupSchema.optional(),
   copyPolicy: z.enum(["when-empty", "until-edited", "always"]).optional(),
   id: z.string(),
   controllerFieldId: z.string(),
   condition: FieldLinkConditionSchema,
-  additionalConditions: z.array(z.object({
+  additionalConditions: z.array(z.looseObject({
     controllerFieldId: z.string(),
     condition: FieldLinkConditionSchema,
-  }).passthrough()).optional(),
+  })).optional(),
   conditionMatch: z.enum(["all", "any"]).optional(),
   targetFieldIds: z.array(z.string()),
   action: z.enum([
@@ -128,14 +128,14 @@ export const FieldLinkRuleSchema = z.object({
   copyFromFieldId: z.string().optional(),
   validationMessage: z.string().optional(),
   description: z.string().optional(),
-}).passthrough();
+});
 
 export const WorkspaceDocumentV3Schema = z.object({
   version: z.literal(3),
   document: BuilderDocumentSchema,
   fieldLinkRules: z.array(FieldLinkRuleSchema),
   preview: z.unknown().optional(),
-  extensions: z.record(z.unknown()).optional(),
+  extensions: z.record(z.string(), z.unknown()).optional(),
 });
 
 function formatIssues(error: z.ZodError): string {
