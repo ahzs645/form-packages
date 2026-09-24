@@ -135,7 +135,7 @@ export default defineConfig({
   build: {
     outDir: "dist",
     target: "es2020",
-    rollupOptions: {
+    rolldownOptions: {
       input: {
         main: path.resolve(__dirname, "index.html"),
         "smart-launch": path.resolve(__dirname, "smart-launch.html"),

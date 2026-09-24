@@ -12,6 +12,7 @@
     "noEmit": true,
     "skipLibCheck": true,
     "isolatedModules": true,
+    "noUncheckedSideEffectImports": false,
     "allowJs": true,
     "checkJs": false,
     "types": [

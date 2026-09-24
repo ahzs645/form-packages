@@ -15,7 +15,7 @@
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "noFallthroughCasesInSwitch": true,
-    "baseUrl": "."
+    "types": ["node"]
   },
   "include": ["src"],
   "references": [{ "path": "../form-engine-core" }]
