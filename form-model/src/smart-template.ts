@@ -32,13 +32,27 @@ export interface SmartTemplateComponent {
   clinical: { referenceRanges: boolean; numericTag: boolean };
   allergy: { reaction: boolean; severity: boolean; onset: boolean };
   problem: { classifications: string[]; classification: boolean; comments: boolean; onset: boolean };
-  report: { currentUserOnly: boolean; signer: boolean; preliminary: boolean; start: string; end: string; caseSensitive: boolean; dateFormat: "short" | "medium" | "long" };
-  order: { statuses: string[] };
+  /**
+   * Reports filters. `dateFormat` is the Reports "Date Time Format": 1 short
+   * numeric, 2 abbreviated ("medium"), 3 long. `parentTypes` is "Parent
+   * Types" (report groupers by event class, independent of the event set).
+   */
+  report: { currentUserOnly: boolean; signer: boolean; preliminary: boolean; start: string; end: string; caseSensitive: boolean; dateFormat: "short" | "medium" | "long"; parentTypes?: string[] };
+  /** Non-Medication Orders: "Order Status Options" and "Synonym Selection Options" (display names). */
+  order: { statuses: string[]; synonyms?: string[] };
+  /** Intake and Output "Output Count Data": outputs shown as a count of entries rather than volume (names or codes). */
   io: { countCodes: string[] };
   /**
-   * A View Builder component whose Wizard filter keys no export in hand
-   * shows (every one but Clinical Events): named, with the source's raw
-   * settings, and handed to the analyst in BEDROCK-REVIEW.csv.
+   * Source Wizard settings an import could not translate for this component,
+   * kept verbatim so BEDROCK-REVIEW.csv can hand them to the analyst.
+   */
+  unmappedSettings?: { filter: string; value: string }[];
+  /**
+   * A View Builder component with no documented Wizard filters to map
+   * (Care Pathways, or a component name the importer does not recognise):
+   * named, with the source's raw settings, and handed to the analyst in
+   * BEDROCK-REVIEW.csv. Allergies, Problems, Reports, Non-Medication Orders
+   * and Intake and Output are mapped from their documented filter names.
    */
   nativeSetup?: { status: "unconfigured"; component: string; reportMean?: string; settings: { filter: string; value: string }[] };
 }
