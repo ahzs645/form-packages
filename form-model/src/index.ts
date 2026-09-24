@@ -1722,6 +1722,20 @@ export interface BuilderRelativeDateConstraint {
  * the helpers in form-builder/shared/choice-options.ts rather than assuming a
  * string, so the score stays co-located with its label (no parallel drift).
  */
+/** What a source-document field stores; see `BuilderField.documentBinding`. */
+export type BuilderDocumentValueKind = "text" | "number" | "date" | "boolean" | "choice";
+
+export interface BuilderDocumentBinding {
+  source: "xfa";
+  /** Data path in the document, e.g. /form1[1]/Page1[1]/Union[1]. */
+  path: string;
+  valueKind: BuilderDocumentValueKind;
+  /** Choice fields: the document accepts several values. */
+  multiSelect?: boolean;
+  /** Choice fields: the values the document stores, in document order. */
+  optionValues?: string[];
+}
+
 export interface BuilderChoiceOptionObject {
   label: string;
   /** Stored value, when it differs from the label. Defaults to the label. */
@@ -2063,6 +2077,13 @@ export interface BuilderField {
   moisConfig?: BuilderFieldMoisConfig | null;
   /** OSCAR import provenance and the user's mapping-review decision. */
   oscarImport?: BuilderOscarImportMapping | null;
+  /**
+   * Set when an imported source document (an XFA PDF today) stores this
+   * field's answer. Derived from the document on load, never trusted from the
+   * saved workspace: presentation stays editable, but the stored value kind,
+   * choice values and single/multi selection must keep matching the document.
+   */
+  documentBinding?: BuilderDocumentBinding | null;
   pdfFieldAliases?: string[];
   page?: number;
   bbox?: BoundingBox;
