@@ -1,6 +1,9 @@
-import { describe, expect, it } from "vitest";
+// @vitest-environment happy-dom
 
-import { decodeMPagesEvent } from "./mock-powerchart";
+import { describe, expect, it } from "vitest";
+import { openPatientTabAsync } from "fluent-cerner-js";
+
+import { decodeMPagesEvent, installMockPowerChart } from "./mock-powerchart";
 
 /* The bridge payloads are ONE pipe-delimited positional string each, so the
    only way to be wrong is quietly: a field lands one place left and the call
@@ -40,6 +43,13 @@ describe("decodeMPagesEvent", () => {
     expect(decoded?.["!arity"]).toBeUndefined();
   });
 
+  it("keeps ORDERS brace groups intact and names the full seven-field payload", () => {
+    expect(decodeMPagesEvent("ORDERS", "1|2|{ORDER|123|0|0|0|0}|0|{2|0}|32|0")).toEqual({
+      personId: "1", encntrId: "2", orderString: "{ORDER|123|0|0|0|0}",
+      powerPlanFlag: "0", tabSpec: "{2|0}", launchViewFlag: "32", signSilently: "0",
+    });
+  });
+
   it("reports arity rather than silently padding", () => {
     const decoded = decodeMPagesEvent("POWERFORM", "1|2|3");
     expect(decoded?.["!arity"]).toBe("3 fields, expected 5");
@@ -49,4 +59,13 @@ describe("decodeMPagesEvent", () => {
   it("returns null for an event the catalogue does not know", () => {
     expect(decodeMPagesEvent("NOTAREALEVENT", "1|2")).toBeNull();
   });
+});
+
+it("exposes the global APPLINK used by fluent-cerner-js", async () => {
+  installMockPowerChart();
+  expect(typeof window.APPLINK).toBe("function");
+  const result = await openPatientTabAsync(12724066, 97953477, "Orders");
+  expect(result.inPowerChart).toBe(true);
+  expect(result.badInput).toBe(false);
+  expect(result.eventString).toContain("/FIRSTTAB=^Orders^");
 });

@@ -13,6 +13,8 @@ export {
   type DiscernObjectName,
   type MPagesEventName,
 } from "./discern";
+export * from "./discern-codes";
+export * from "./orders-xml";
 export {
   detectHostEnvironment,
   isInPowerChart,

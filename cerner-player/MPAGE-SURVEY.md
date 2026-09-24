@@ -252,6 +252,27 @@ be destroyed, or PowerChart leaks the window**. The full method lists are in
 `DISCERN_OBJECTS`; both hosts warn on a method that is not in them, because an
 unknown method otherwise answers here and fails only in the real client.
 
+### The codecs (added 2026-09-23)
+
+The values *inside* the payloads are now in `@webforms/cerner-core` too:
+`discern-codes.ts` encodes and decodes order strings (the `ORDER` / `CANCEL DC`
+/ `RENEW_RX` … verbs, origination and interaction codes), the whole `ORDERS`
+event (`{tab|display}`, launch view 8/16/32, the PowerPlan flag 24), the three
+`CreateMOEW` bitmasks, the `CLINICALNOTE` view flags and `APPLINK` arguments,
+and describes any of them in words for a call log. `orders-xml.ts` (on
+`fast-xml-parser`) builds and parses the signed-orders reply, with the full
+99-field order record, and reads the scratchpad and PowerPlan documents the
+MOEW methods take. Both are read from fluent-cerner-js 1.1.x, which took them
+from Cerner's MPage developer wiki, so they are its reading of the
+documentation rather than values observed in a live client.
+
+Running the unmodified library against the PowerChart stage
+(`lib/host-emulators/__tests__/powerchart-mpage-bridge.test.tsx`) turned up
+one thing worth knowing: `submitPowerOrdersAsync` calls `DestroyMOEW` only on
+its success path. A cancelled or failed submission leaves the handle open,
+which is the leak this document warns about above. The stage's bridge now
+reports undestroyed handles when the page unloads.
+
 ### What it does NOT contain
 
 No Smart Template content whatsoever. The library is overwhelmingly order

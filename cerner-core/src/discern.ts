@@ -92,8 +92,8 @@ export const MPAGES_EVENTS: Readonly<Record<string, DiscernEventSpec>> = {
       "personId|encntrId|[eventId|eventId…]|windowTitle|viewOptionFlags|viewName|viewSeq|compName|compSeq. eventIds is bracketed and itself pipe-delimited, which is why a naive split on | is wrong.",
   },
   ORDERS: {
-    params: ["personId", "encntrId", "orderString"],
-    description: "personId|encntrId|order payload. Superseded by the POWERORDERS object for anything beyond a simple launch.",
+    params: ["personId", "encntrId", "orderString", "powerPlanFlag", "tabSpec", "launchViewFlag", "signSilently"],
+    description: "personId|encntrId|{order payload}|powerPlanFlag|{tab|display}|launchViewFlag|signSilently. The brace groups contain pipes and must be parsed as one field.",
   },
 } as const;
 

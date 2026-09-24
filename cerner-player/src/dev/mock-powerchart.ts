@@ -1,4 +1,4 @@
-import { DISCERN_OBJECTS, MPAGES_EVENTS, type CclRequestLike } from "@webforms/cerner-core";
+import { DISCERN_OBJECTS, MPAGES_EVENTS, describeMPagesEvent, splitDiscernPayload, type CclRequestLike } from "@webforms/cerner-core";
 
 /**
  * Dev-only PowerChart simulator: installs a fake window.external.XMLCclRequest
@@ -158,27 +158,18 @@ function formatArgs(args: unknown[]): string {
 /**
  * Decode a pipe-delimited MPAGES_EVENT payload into its named fields.
  *
- * CLINICALNOTE is the reason this is not a plain `split("|")`: its third field
- * is a BRACKETED, itself-pipe-delimited list of event ids, so a naive split
- * shreds it and every field after it lands one place left.
+ * CLINICALNOTE embeds a bracketed event list, while ORDERS embeds braced
+ * order details and a tab spec. A plain split shifts later fields.
  */
 export function decodeMPagesEvent(type: string, eventString: string): Record<string, string> | null {
   const spec = MPAGES_EVENTS[type as keyof typeof MPAGES_EVENTS];
   if (!spec) return null;
-  const fields: string[] = [];
-  let depth = 0;
-  let current = "";
-  for (const ch of eventString) {
-    if (ch === "[") depth += 1;
-    if (ch === "]") depth -= 1;
-    if (ch === "|" && depth === 0) {
-      fields.push(current);
-      current = "";
-    } else {
-      current += ch;
-    }
+  let fields: string[];
+  try {
+    fields = splitDiscernPayload(eventString);
+  } catch {
+    return { "!syntax": "unbalanced groups" };
   }
-  fields.push(current);
   const out: Record<string, string> = {};
   spec.params.forEach((name, i) => { out[name] = fields[i] ?? ""; });
   if (fields.length !== spec.params.length) {
@@ -247,6 +238,9 @@ export function installMockPowerChart(
         Object.entries(decoded).filter(([k]) => !k.startsWith("!"))
           .map(([k, v]) => `${k}=${v || "\u2014"}`).join("  "),
       );
+      /* and the same call in words, from the shared codecs the stage uses */
+      const words = describeMPagesEvent(type, eventString);
+      if (words) recordDiscernActivity("MPAGES_EVENT " + type, words);
     }
     return Promise.resolve();
   };
@@ -254,6 +248,9 @@ export function installMockPowerChart(
     recordDiscernActivity("APPLINK", formatArgs(args));
     return Promise.resolve();
   };
+  // fluent-cerner-js calls the global APPLINK, while older MPages may use
+  // window.external.APPLINK. Keep both entry points on the same mock.
+  Object.defineProperty(window, "APPLINK", { value: external.APPLINK, configurable: true });
   try {
     Object.defineProperty(window, "external", { value: external, configurable: true });
   } catch {

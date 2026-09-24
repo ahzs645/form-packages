@@ -9,6 +9,8 @@
     ".": "./src/index.ts",
     "./context": "./src/context.ts",
     "./discern": "./src/discern.ts",
+    "./discern-codes": "./src/discern-codes.ts",
+    "./orders-xml": "./src/orders-xml.ts",
     "./envelope": "./src/envelope.ts",
     "./environment": "./src/environment.ts",
     "./hex": "./src/hex.ts",
@@ -22,5 +24,8 @@
   },
   "devDependencies": {
     "typescript": "^5.4.5"
+  },
+  "dependencies": {
+    "fast-xml-parser": "^5.11.1"
   }
 }
