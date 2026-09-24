@@ -10,7 +10,7 @@ import baseConfig from "./vite.config";
 // Cross-origin hosting therefore needs CORS headers: module scripts are
 // fetched with CORS even when a classic script would not be.
 // Reuses only resolve/plugins from the app config; the app's multi-page
-// rollup inputs must not leak in here (they conflict with inlining).
+// rolldown inputs must not leak in here (they conflict with inlining).
 const base = baseConfig as UserConfig;
 
 export default defineConfig({
@@ -27,9 +27,9 @@ export default defineConfig({
       name: "WebformsPlayer",
       fileName: () => "webforms-player.js",
     },
-    rollupOptions: {
+    rolldownOptions: {
       output: {
-        inlineDynamicImports: true,
+        codeSplitting: false,
         entryFileNames: "webforms-player.js",
         assetFileNames: "[name][extname]",
       },
