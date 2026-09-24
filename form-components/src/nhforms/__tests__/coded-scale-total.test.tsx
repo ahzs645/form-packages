@@ -12,7 +12,12 @@ import { describe, expect, it } from "vitest";
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const NHFORMS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const source = fs.readFileSync(path.join(NHFORMS_DIR, "ComputedField", "index.jsx"), "utf8");
+// ComputedField delegates its formula engine to the FormulaKit helper module,
+// which the runtime loads into the same scope.
+const source = [
+  fs.readFileSync(path.join(NHFORMS_DIR, "FormulaKit", "index.jsx"), "utf8"),
+  fs.readFileSync(path.join(NHFORMS_DIR, "ComputedField", "index.jsx"), "utf8"),
+].join("\n");
 
 type ActiveTuple = [any, (updater: any) => void];
 const ActiveDataContext = React.createContext<ActiveTuple>([{}, () => undefined]);
@@ -28,8 +33,8 @@ function loadComputedField(): React.ComponentType<any> {
   const useActiveData = () => React.useContext(ActiveDataContext);
   const useTheme = () => ({ mois: { defaultCommonControlStyle: { minLabelWidth: 240 } } });
   // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func
-  const factory = new Function("React", "TextArea", "useActiveData", "ObservationValueDisplay", "useTheme", `${compiled};\nreturn { ComputedField };`);
-  return factory(React, TextArea, useActiveData, ObservationValueDisplay, useTheme).ComputedField;
+  const factory = new Function("React", "TextArea", "Numeric", "useActiveData", "ObservationValueDisplay", "useTheme", `${compiled};\nreturn { ComputedField };`);
+  return factory(React, TextArea, TextArea, useActiveData, ObservationValueDisplay, useTheme).ComputedField;
 }
 
 const IDS = ["a1", "a2", "a3", "a4", "a5", "a6"];

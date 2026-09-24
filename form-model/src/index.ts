@@ -400,6 +400,8 @@ export interface BuilderWorkflowOutputCondition {
 /** Fields every output kind shares: identity, enablement, and the submit-time gate. */
 export interface BuilderWorkflowOutputBase extends BuilderWorkflowBaseDefinition {
   condition?: BuilderWorkflowOutputCondition;
+  /** Recursive submit-time gate (may carry a named-condition ref). Emitter support pending. */
+  conditionGroup?: FieldConditionGroup;
 }
 
 /** Chart observation write, keyed by observation code (update-or-create). */
@@ -673,6 +675,22 @@ export type HelpPosition = "above_input" | "below_input";
 
 export type BuilderTableColumnType = "text" | "number" | "date" | "time" | "choice" | "booleanYesNo" | "checkbox" | "stampButton";
 export type BuilderTableMode = "inline" | "modal";
+
+/**
+ * A table column calculated from the same row's cells (EditableTable, via the
+ * FormulaKit engine that ComputedField uses): `[columnId]` reads that row's
+ * cell, e.g. `weekdaysBetween([from], [to]) * [hoursPerShift]`.
+ */
+export interface BuilderTableFormulaColumn {
+  mode: "formula";
+  expression: string;
+  /** Default "calculated-until-overridden": the filler may type over it; a reset icon restores it. */
+  calculationPolicy?: "always-calculated" | "calculated-until-overridden" | "suggested-calculation";
+  /** Decimal places (default 2). */
+  precision?: number;
+  /** Default: blank until every referenced cell has a value. */
+  incompleteBehavior?: "compute-anyway";
+}
 export type BuilderLayoutTableCellKind = "text" | "field" | "fieldList" | "resources" | "computed" | "stampButton";
 export type BuilderLayoutTableCellInputType = "text" | "textarea" | "number" | "date" | "time" | "choice" | "choiceMulti" | "booleanYesNo" | "booleanSingle";
 export type BuilderLayoutTableSourceFormat = "text" | "date" | "dateTime" | "visitCode" | "coding";
@@ -900,6 +918,10 @@ export interface BuilderValidationConfig {
   listMode?: BuilderValidationListMode;
   listValues?: string[];
   listMatch?: BuilderValidationListMatch;
+  /** Structured value format checked on entry and at submit. */
+  format?: BuilderValueFormat | null;
+  /** Overrides the format's default message. */
+  formatMessage?: string;
 }
 
 export interface BuilderLockWhenRule {
@@ -2210,9 +2232,11 @@ export interface BuilderField {
           | { id?: string; kind: "text"; text: string }
           | { id?: string; kind: "answer"; path: string }
         >;
-      } | null;
+      } | BuilderTableFormulaColumn | null;
       visibility?: BuilderVisibilityRule | null;
       moisTargetId?: string | null;
+      /** Row-1 cell of `tableConfig.documentRowPath` (derived on load, never trusted from a package). */
+      documentBinding?: BuilderDocumentBinding | null;
       stampConfig?: {
         sourcePath?: string;
         value?: string | number | boolean | null;
@@ -2234,17 +2258,33 @@ export interface BuilderField {
     initialRows?: number;
     addButtonText?: string;
     modalTitle?: string;
+    /** Modal row dialog width in px (default 640; narrower screens clamp it). */
+    modalWidth?: number;
     uniqueBy?: string[];
     sourceFieldIds?: Record<string, string>;
     sourceFieldIdsByRow?: Record<number, Record<string, string>>;
     /** Original answer definitions used by document export for mapped repeating rows. */
     documentFields?: BuilderField[];
+    /**
+     * XFA repeating row this table fills, without its ordinal (e.g.
+     * `/form1[1]/Page1[1]/Excluded[1]/Table1[1]/ExcludedStandardRepeating`).
+     * Each column's `documentBinding.path` names its cell in row 1
+     * (`…Repeating[1]/From1[1]`); table row n writes to `…Repeating[n]/…`.
+     */
+    documentRowPath?: string;
     /** Optional nested ActiveData path holding the rows array (defaults to the field id). */
     rowsPath?: string;
     /** Optional nested ActiveData path mirrored to the current row count. */
     countPath?: string;
     modalEditorPresetId?: string;
     modalEditorConfig?: Record<string, unknown> | null;
+    /** Seed one row per row of another table (repeat-for-each). */
+    repeatFor?: BuilderTableRepeatFor | null;
+    rowCompletion?: BuilderTableRowCompletion | null;
+    /** Ask before deleting a row. */
+    confirmDelete?: boolean;
+    /** What happens to rows beyond the PDF's printed row capacity. */
+    pdfOverflow?: BuilderTablePdfOverflow | null;
   } | null;
 
   // Static legacy layout table config. This controls exact printable table
@@ -2380,7 +2420,7 @@ export interface BuilderField {
     dateRange?: boolean;
     dateFormat?: "yyyy.MM.dd" | "dd/MM/yyyy" | "MM-dd-yyyy" | "yyyy-MM-dd";
     /** Format used when writing the answer into the original PDF or Word document. */
-    documentOutputFormat?: "stored" | "yyyy-MM-dd" | "dd/MMM/yyyy" | "ddMMMyyyy";
+    documentOutputFormat?: "stored" | "yyyy-MM-dd" | "yyyy.MM.dd" | "dd/MM/yyyy" | "MM/dd/yyyy" | "dd/MMM/yyyy" | "ddMMMyyyy" | "MMMM d, yyyy";
     disablePastDates?: boolean;
     disableFutureDates?: boolean;
     prefillToday?: boolean;
@@ -2752,10 +2792,161 @@ export type FieldLinkAction =
  * Example: "When 'Same as Partner' is checked, hide 'Bio Father Surname'"
  * Example: "When 'ART Specify' has 'IVF' selected, show 'IVF Details'"
  */
+// ---------- Conditions: leaf alias + named references ----------
+export type FieldConditionLeaf = { controllerFieldId: string; condition: FieldLinkCondition };
+
 export interface FieldConditionGroup {
   match: "all" | "any";
-  conditions: Array<FieldConditionGroup | { controllerFieldId: string; condition: FieldLinkCondition }>;
+  conditions: Array<FieldConditionGroup | FieldConditionLeaf>;
+  /**
+   * Reference to BuilderDocument.conditions[].id. When set, `match`/`conditions`
+   * are a MATERIALIZED copy of that named condition (refreshed by
+   * materializeConditionRefs). Every existing consumer (MOIS, FHIR, Cerner,
+   * RuleTestPanel) keeps reading the copy unchanged; only authoring UIs treat
+   * the group as a single named chip.
+   */
+  conditionRef?: string;
 }
+
+/** Document-level reusable condition (Logic tab "Conditions" library). */
+export interface BuilderNamedCondition {
+  /** Stable, never reused (e.g. "cond_k3j9"). */
+  id: string;
+  /** Author-facing, used in pickers and rule sentences. */
+  name: string;
+  description?: string;
+  /** May nest other refs; cycles are reported, never followed. */
+  group: FieldConditionGroup;
+}
+
+// ---------- Page flow ----------
+/** 0-based page index, or the synthetic review page. */
+export type BuilderPageFlowTarget = number | "review";
+export interface BuilderPageFlowBranch {
+  id: string;
+  /** Evaluated on Next, in order; first match wins. */
+  when: FieldConditionGroup;
+  /** An inactive target falls through to the next active page after it. */
+  goTo: BuilderPageFlowTarget;
+  label?: string;
+}
+export interface BuilderPageFlowPage {
+  /** Absent = always active; ignored on page 0. */
+  activeWhen?: FieldConditionGroup | null;
+  /** For answers on the page while it is inactive; default "preserve". */
+  hiddenAnswerPolicy?: HiddenAnswerPolicy;
+  branches?: BuilderPageFlowBranch[];
+  /** Absent = next active page in order. */
+  defaultNext?: BuilderPageFlowTarget | null;
+  /** Overrides BuilderPageFlowConfig.validateOnNext. */
+  validateOnNext?: boolean;
+  /**
+   * `skipWhenNoItems` — "Skip this page when there are no items".
+   * Field id of a repeat-for-each (follow-up) table, normally one on this page.
+   * The page is inactive while that table's SOURCE has no rows passing its
+   * `tableConfig.repeatFor.filter` (counted from the source, because the
+   * follower itself may not be synced yet). ANDed with `activeWhen`; ignored
+   * on page 0 and when the id does not name a repeating table. Answers on the
+   * skipped page follow `hiddenAnswerPolicy` like any inactive page.
+   */
+  skipWhenNoItems?: string | null;
+}
+export interface BuilderPageFlowLandmark {
+  enabled: boolean;
+  title?: string;
+  intro?: string;
+}
+export interface BuilderPageFlowConfig {
+  enabled: boolean;
+  /** Indexed like pageNames (0-based); sparse; entries >= pageCount are ignored. */
+  pages?: Array<BuilderPageFlowPage | null>;
+  /** Default true. */
+  validateOnNext?: boolean;
+  /** Default "all-active". */
+  breadcrumb?: "all-active" | "visited" | "hidden";
+  /** "Step n of m" over active pages; absent = design.showProgressBar. */
+  showProgress?: boolean;
+  review?: BuilderPageFlowLandmark & { requireBeforeSubmit?: boolean; editLinkText?: string };
+  /** Shown after a successful submit while the form stays open. */
+  confirmation?: BuilderPageFlowLandmark & { body?: string };
+}
+
+// ---------- Validators ----------
+export type BuilderValueFormat = "bc-phn" | "ca-postal" | "money";
+
+// ---------- Tables (BuilderField.tableConfig AND ParsedField.tableConfig) ----------
+export type BuilderRepeatOrphanPolicy = "remove-if-unanswered" | "keep-flagged" | "remove";
+export interface BuilderTableRepeatFor {
+  /** Another table field whose rows seed this one (one row each). */
+  sourceFieldId: string;
+  /** Source column giving row identity; default the source `_rowId`. */
+  keyColumnId?: string | null;
+  /** Source column shown as a read-only row label. */
+  labelColumnId?: string | null;
+  /** Heading of the row-label column (default "Item"; the builder offers the source column's label). */
+  labelTitle?: string;
+  /** Optional target column receiving a copy of the label (PDF/FHIR). */
+  labelTargetColumnId?: string | null;
+  /** Over the SOURCE row: controllerFieldId = source column id; no conditionRef. */
+  filter?: FieldConditionGroup | null;
+  /** Default "remove-if-unanswered" (answered orphans kept + flagged). */
+  orphanPolicy?: BuilderRepeatOrphanPolicy;
+  /** Default false. */
+  allowManualRows?: boolean;
+  /**
+   * Shown instead of an empty grid when no source row matches; default
+   * "No matching <labelTitle> — nothing to answer here." (RepeatForEachTable).
+   */
+  emptyMessage?: string;
+  /**
+   * How the seeded rows are presented at runtime. Default "grid" (one table
+   * row per item). "cards" renders one card per item headed by its label, with
+   * the item's questions stacked beneath it. Presentation only — the stored
+   * value is the same rows array either way, so sync, completion, validation,
+   * the review page and PDF fill are unaffected.
+   */
+  presentation?: "grid" | "cards";
+}
+export interface BuilderTableRowCompletion {
+  enabled: boolean;
+  /** Complete when all have a meaningful value; absent = visible non-computed columns. */
+  requiredColumnIds?: string[];
+  /** Incomplete rows block Next/Submit and appear in the error summary. */
+  requireAllComplete?: boolean;
+  statusLabel?: string;
+}
+export interface BuilderTablePdfOverflow {
+  /** "drop" = current behaviour. */
+  mode: "drop" | "addendum";
+  /** Derive row field names beyond the explicit map, e.g. "{base}_{row}", "{base}[{row0}]". */
+  numberedFieldPattern?: string | null;
+  addendumTitle?: string;
+  /** Columns printed in the addendum; default all visible. */
+  columnIds?: string[];
+}
+/** Runtime row metadata keys (same underscore convention as _rowId). */
+export const TABLE_ROW_META = {
+  rowId: "_rowId",
+  sourceKey: "_sourceKey",
+  sourceRemoved: "_sourceRemoved",
+  complete: "_complete",
+} as const;
+
+// ---------- Document-fill preparers (SessionFooterButtonConfig + FooterButtonConfig: pdfPreparers?) ----------
+interface DocumentFillPreparerBase {
+  id: string;
+  enabled?: boolean;
+  when?: FieldConditionGroup | null;
+}
+/** targetId: a form-data key, or "pdf:<AcroFieldName>" to write straight to a PDF field. */
+export type DocumentFillPreparer = DocumentFillPreparerBase & (
+  | { kind: "concat"; sourceIds: string[]; separator?: string; skipEmpty?: boolean; targetId: string }
+  | { kind: "split"; sourceId: string; separator: string; targetIds: string[] }
+  | { kind: "map-value"; sourceId: string; map: Record<string, string>; fallback?: string; targetId?: string }
+  | { kind: "format-date"; sourceId: string; format: string; targetId?: string }
+  | { kind: "table-to-text"; tableId: string; template: string; separator?: string; startRow?: number; targetId: string }
+  | { kind: "copy"; sourceId: string; targetId: string }
+);
 
 export interface FieldLinkRule {
   /** PowerForm page navigation while a Show/Hide rule makes the page inactive.
@@ -3024,6 +3215,10 @@ export interface BuilderDocument<TLayoutDraft = unknown> {
   pagePrintLabels?: (string | null)[];
   pageAssignments: Record<string, number | null>;
   workflow?: BuilderWorkflowConfig;
+  /** Reusable named conditions (Logic tab library); refs carry materialized copies. */
+  conditions?: BuilderNamedCondition[];
+  /** Conditional page flow (skip/branch/review). Not on variants: disabled for multi-version forms. */
+  pageFlow?: BuilderPageFlowConfig | null;
 }
 
 /**
@@ -3072,13 +3267,23 @@ export {
   compileFieldLinkConditionGroup,
   compileFieldLinkProtectionRule,
   compileFieldLinkVisibilityRule,
+  collectConditionRefs,
+  collectDirectConditionRefs,
+  conditionDataEqual,
+  createConditionRefGroup,
+  NAMED_CONDITION_MAX_DEPTH,
   DEFAULT_CROSS_FIELD_VALIDATION_MESSAGE,
+  detachConditionRef,
+  evaluateConditionGroupWithLibrary,
+  findNamedConditionCycles,
+  materializeConditionRefs,
   evaluateCrossFieldValidation,
   evaluateFieldCondition,
   getFieldLinkConditionEntries,
   getFieldLinkConditionGroup,
   evaluateConditionGroup,
   evaluateFieldLinkRuleCondition,
+  isConditionEntryMeaningful,
   isConditionValueEmpty,
   normalizeConditionBoolean,
   normalizeConditionChoiceValues,
@@ -3086,7 +3291,9 @@ export {
   type CompiledFieldLinkConditionGroup,
   type CompiledFieldLinkProtectionRule,
   type CompiledFieldLinkVisibilityRule,
+  type ConditionRefIssue,
   type CrossFieldValidationError,
+  type NamedConditionLibrary,
   type FieldConditionMetadata,
   type FieldConditionMetadataLookup,
   type SerializedFieldLinkCondition,

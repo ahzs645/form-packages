@@ -4825,482 +4825,17 @@ const CompactChoiceFieldMultiSchema = {
 `,
   './ComputedField/index.jsx': `const { useEffect, useMemo } = React
 
-const _escapeRegExp = (value) => String(value).replace(/[.*+?^\${}()|[\\]\\\\]/g, "\\\\$&")
-
-const _toNumericValue = (value) => {
-  if (value === undefined || value === null || value === "") return null
-  if (typeof value === "number") {
-    return Number.isFinite(value) ? value : null
-  }
-  if (typeof value === "boolean") {
-    return value ? 1 : 0
-  }
-  if (typeof value === "string") {
-    const trimmed = value.trim()
-    if (!trimmed) return null
-    const parsed = Number(trimmed)
-    return Number.isFinite(parsed) ? parsed : null
-  }
-  if (Array.isArray(value)) {
-    return value.length
-  }
-  if (typeof value === "object") {
-    if (Number.isFinite(value.selectedCount)) {
-      return Number(value.selectedCount)
-    }
-    const candidate = value.value ?? value.selectedKey ?? value.display ?? value.text ?? value.code ?? value.key ?? value.response
-    return _toNumericValue(candidate)
-  }
-  return null
-}
-
-const _toComparableValue = (value) => {
-  if (value === undefined || value === null) return ""
-  if (typeof value === "number" || typeof value === "boolean" || typeof value === "string") return value
-  if (Array.isArray(value)) return value.map(_toComparableValue)
-  if (value instanceof Date) return Number.isFinite(value.getTime()) ? value.toISOString() : ""
-  if (typeof value === "object") {
-    return value.value ?? value.selectedKey ?? value.date ?? value.display ?? value.text ?? value.code ?? value.key ?? value.response ?? ""
-  }
-  return String(value)
-}
-
-// DateSelect stores the *formatted* display string, not ISO, so every builder
-// dateFormat option must parse explicitly. dd/MM/yyyy and MM-dd-yyyy are
-// distinguishable by separator (slash vs dash); MM-dd-yyyy cannot collide with
-// ISO because ISO leads with a 4-digit year. Date-only strings parse as LOCAL
-// calendar dates (not UTC midnight) so local getters read the intended day.
-const _DATE_ONLY_FORMATS = [
-  { pattern: /^(\\d{4})-(\\d{1,2})-(\\d{1,2})$/, order: [1, 2, 3] }, // yyyy-MM-dd (ISO)
-  { pattern: /^(\\d{4})\\.(\\d{1,2})\\.(\\d{1,2})$/, order: [1, 2, 3] }, // yyyy.MM.dd (DateSelect default)
-  { pattern: /^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})$/, order: [3, 2, 1] }, // dd/MM/yyyy
-  { pattern: /^(\\d{1,2})-(\\d{1,2})-(\\d{4})$/, order: [3, 1, 2] }, // MM-dd-yyyy
-]
-
-// null = matched but invalid (e.g. 31/04); undefined = not a date-only string.
-const _parseDateOnlyString = (text) => {
-  for (const format of _DATE_ONLY_FORMATS) {
-    const match = format.pattern.exec(text)
-    if (!match) continue
-    const [year, month, day] = format.order.map((index) => Number(match[index]))
-    const date = new Date(year, month - 1, day)
-    const valid = date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day
-    return valid ? date : null
-  }
-  return undefined
-}
-
-const _toDateValue = (value) => {
-  if (value === undefined || value === null || value === "") return null
-  if (value instanceof Date) {
-    return Number.isFinite(value.getTime()) ? value : null
-  }
-  if (typeof value === "number") {
-    if (!Number.isFinite(value)) return null
-    const date = new Date(value)
-    return Number.isFinite(date.getTime()) ? date : null
-  }
-  if (typeof value === "string") {
-    const trimmed = value.trim()
-    if (!trimmed) return null
-    const dateOnly = _parseDateOnlyString(trimmed)
-    if (dateOnly !== undefined) return dateOnly
-    const date = new Date(trimmed)
-    return Number.isFinite(date.getTime()) ? date : null
-  }
-  if (typeof value === "object") {
-    for (const key of ["value", "date", "text", "display"]) {
-      const date = _toDateValue(value[key])
-      if (date) return date
-    }
-  }
-  return null
-}
-
-const _score = (value, scoreMap) => {
-  const candidate = _toComparableValue(value)
-  if (Array.isArray(candidate)) {
-    return candidate.reduce((sum, entry) => sum + _score(entry, scoreMap), 0)
-  }
-  const direct = scoreMap?.[String(candidate)]
-  if (Number.isFinite(direct)) return Number(direct)
-  const numeric = _toNumericValue(value)
-  return Number.isFinite(numeric) ? numeric : 0
-}
-
-const _contains = (values, value) => {
-  if (!Array.isArray(values)) return false
-  const candidate = _toComparableValue(value)
-  if (Array.isArray(candidate)) {
-    return candidate.some((entry) => _contains(values, entry))
-  }
-  return values.map(String).includes(String(candidate))
-}
-
-const _hasValue = (value) => {
-  if (value === undefined || value === null || value === "") return false
-  if (Array.isArray(value)) return value.length > 0
-  return true
-}
-
-const _iif = (condition, whenTrue, whenFalse) => (condition ? whenTrue : whenFalse)
-const _countTrue = (...values) => values.flat().filter((value) => value === true || value === "true" || value === "Y" || value === "Yes" || value === 1).length
-const _floor = (value) => {
-  const numeric = _toNumericValue(value)
-  return Number.isFinite(numeric) ? Math.floor(numeric) : null
-}
-const _mod = (value, divisor) => {
-  const numeric = _toNumericValue(value)
-  const numericDivisor = _toNumericValue(divisor)
-  if (!Number.isFinite(numeric) || !Number.isFinite(numericDivisor) || numericDivisor === 0) return null
-  return numeric % numericDivisor
-}
-const _round = (value, precision = 0) => {
-  const numeric = _toNumericValue(value)
-  const numericPrecision = _toNumericValue(precision)
-  if (!Number.isFinite(numeric) || !Number.isFinite(numericPrecision)) return null
-  const digits = Math.round(numericPrecision)
-  const factor = 10 ** digits
-  if (!Number.isFinite(factor) || factor === 0) return null
-  return Math.round(numeric * factor) / factor
-}
-const _power = (value, exponent) => {
-  const numeric = _toNumericValue(value)
-  const numericExponent = _toNumericValue(exponent)
-  if (!Number.isFinite(numeric) || !Number.isFinite(numericExponent)) return null
-  const result = numeric ** numericExponent
-  return Number.isFinite(result) ? result : null
-}
-const _ln = (value) => {
-  const numeric = _toNumericValue(value)
-  if (!Number.isFinite(numeric) || numeric <= 0) return null
-  const result = Math.log(numeric)
-  return Number.isFinite(result) ? result : null
-}
-const _exp = (value) => {
-  const numeric = _toNumericValue(value)
-  if (!Number.isFinite(numeric)) return null
-  const result = Math.exp(numeric)
-  return Number.isFinite(result) ? result : null
-}
-const _coalesce = (...values) => values.find((value) => value !== undefined && value !== null && value !== "") ?? null
-const _text = (value) => value == null ? "" : String(value)
-const _numericExtrema = (values, select) => {
-  const numericValues = values.flat().map(_toNumericValue)
-  if (numericValues.length === 0 || numericValues.some((value) => !Number.isFinite(value))) return null
-  return select(...numericValues)
-}
-const _min = (...values) => _numericExtrema(values, Math.min)
-const _max = (...values) => _numericExtrema(values, Math.max)
-const _MS_PER_DAY = 24 * 60 * 60 * 1000
-
-const _isDateOnlyValue = (value) => {
-  if (typeof value === "string") {
-    const trimmed = value.trim()
-    return _DATE_ONLY_FORMATS.some((format) => format.pattern.test(trimmed))
-  }
-  if (!value || typeof value !== "object" || value instanceof Date) return false
-  return ["value", "date", "text", "display"].some((key) => _isDateOnlyValue(value[key]))
-}
-
-const _calendarDayNumber = (date) => Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / _MS_PER_DAY
-
-const _daysSince = (value, ref) => {
-  const date = _toDateValue(value)
-  if (!date) return null
-  const reference = ref === undefined ? new Date() : _toDateValue(ref)
-  if (!reference) return null
-  if (_isDateOnlyValue(value) && _isDateOnlyValue(ref)) {
-    return _calendarDayNumber(reference) - _calendarDayNumber(date)
-  }
-  return Math.floor((reference.getTime() - date.getTime()) / _MS_PER_DAY)
-}
-
-const _monthsSince = (value, ref) => {
-  const date = _toDateValue(value)
-  if (!date) return null
-  const reference = ref === undefined ? new Date() : _toDateValue(ref)
-  if (!reference) return null
-  let months = (reference.getFullYear() - date.getFullYear()) * 12 + (reference.getMonth() - date.getMonth())
-  if (reference.getDate() < date.getDate()) months -= 1
-  return months
-}
-
-// Local calendar date, matching the local-calendar parse of date-only strings.
-const _today = () => {
-  const now = new Date()
-  const pad = (part) => String(part).padStart(2, "0")
-  return \`\${now.getFullYear()}-\${pad(now.getMonth() + 1)}-\${pad(now.getDate())}\`
-}
-
-const _DURATION_UNIT_ALIASES = {
-  day: "days", days: "days",
-  week: "weeks", weeks: "weeks",
-  month: "months", months: "months",
-  year: "years", years: "years",
-}
-
-const _normalizeDurationUnit = (unit) =>
-  typeof unit === "string" ? _DURATION_UNIT_ALIASES[unit.trim().toLowerCase()] ?? null : null
-
-// Exact day difference projected through local calendar components, so results
-// are DST-safe and date-only vs date-only arithmetic stays a whole number
-// (matching _daysSince's calendar-day semantics).
-const _exactDaysBetween = (from, to) => {
-  const project = (date) => Date.UTC(
-    date.getFullYear(), date.getMonth(), date.getDate(),
-    date.getHours(), date.getMinutes(), date.getSeconds(), date.getMilliseconds()
-  )
-  return (project(to) - project(from)) / _MS_PER_DAY
-}
-
-// Whole calendar months, matching _monthsSince's day-of-month rule.
-const _wholeMonthsBetween = (from, to) => {
-  let months = (to.getFullYear() - from.getFullYear()) * 12 + (to.getMonth() - from.getMonth())
-  if (to.getDate() < from.getDate()) months -= 1
-  return months
-}
-
-// Month arithmetic clamps to the target month's last day (Jan 31 + 1 month =
-// Feb 28/29), so a duration anchor never overshoots into the following month.
-const _addMonthsClamped = (date, months) => {
-  const monthIndex = date.getMonth() + months
-  const lastDay = new Date(date.getFullYear(), monthIndex + 1, 0).getDate()
-  return new Date(
-    date.getFullYear(), monthIndex, Math.min(date.getDate(), lastDay),
-    date.getHours(), date.getMinutes(), date.getSeconds(), date.getMilliseconds()
-  )
-}
-
-const _addCalendarDays = (date, days) => new Date(
-  date.getFullYear(), date.getMonth(), date.getDate() + days,
-  date.getHours(), date.getMinutes(), date.getSeconds(), date.getMilliseconds()
-)
-
-const _resolveDurationEndpoints = (value, ref) => {
-  const from = _toDateValue(value)
-  if (!from) return null
-  const to = ref === undefined || ref === null || ref === "" ? new Date() : _toDateValue(ref)
-  if (!to) return null
-  return { from, to }
-}
-
-// Exact (fractional) elapsed amount between two dates in the requested unit.
-// \`ref\` defaults to now; rounding is the caller's job (floor/round).
-const _durationBetween = (value, ref, unit) => {
-  const endpoints = _resolveDurationEndpoints(value, ref)
-  const normalizedUnit = _normalizeDurationUnit(unit)
-  if (!endpoints || !normalizedUnit) return null
-  if (normalizedUnit === "days") return _exactDaysBetween(endpoints.from, endpoints.to)
-  if (normalizedUnit === "weeks") return _exactDaysBetween(endpoints.from, endpoints.to) / 7
-  // Fractional months: whole calendar months plus the remaining days as a
-  // fraction of the actual length of the month being crossed.
-  const whole = _wholeMonthsBetween(endpoints.from, endpoints.to)
-  const anchor = _addMonthsClamped(endpoints.from, whole)
-  const next = _addMonthsClamped(endpoints.from, whole + 1)
-  const monthLength = _exactDaysBetween(anchor, next)
-  const months = whole + (monthLength > 0 ? _exactDaysBetween(anchor, endpoints.to) / monthLength : 0)
-  return normalizedUnit === "months" ? months : months / 12
-}
-
-const _toDateList = (value) => {
-  const items = Array.isArray(value)
-    ? value
-    : typeof value === "string" ? value.split(/[,;\\n]/) : value == null ? [] : [value]
-  return items
-    .map((item) => (typeof item === "string" ? item.trim() : item))
-    .filter((item) => item !== "" && item != null)
-    .map(_toDateValue)
-    .filter(Boolean)
-}
-
-// Monday-Friday days from \`value\` to \`ref\`, counting both ends (Mon..Fri is 5).
-// \`skip\` lists further dates to leave out (stat holidays): an array or a
-// comma-separated string; weekend entries are ignored. Null when a date is
-// missing or the range runs backwards, so the field shows no suggestion.
-const _weekdaysBetween = (value, ref, skip) => {
-  const from = _toDateValue(value)
-  const to = _toDateValue(ref)
-  if (!from || !to) return null
-  const firstDay = _calendarDayNumber(from)
-  const lastDay = _calendarDayNumber(to)
-  const days = lastDay - firstDay
-  if (days < 0) return null
-  // Whole weeks contribute 5 each; walk the remaining (< 7) days.
-  let count = Math.floor((days + 1) / 7) * 5
-  for (let offset = 0; offset < (days + 1) % 7; offset += 1) {
-    const weekday = (from.getDay() + offset) % 7
-    if (weekday !== 0 && weekday !== 6) count += 1
-  }
-  const skipped = new Set()
-  for (const date of _toDateList(skip)) {
-    const day = _calendarDayNumber(date)
-    const weekday = date.getDay()
-    if (day >= firstDay && day <= lastDay && weekday !== 0 && weekday !== 6) skipped.add(day)
-  }
-  return count - skipped.size
-}
-
-// Cascading duration breakdown, e.g. "2 months, 3 weeks" for
-// durationText([dob], today(), "months,weeks"). Each listed unit (descending)
-// is floored and its remainder carried into the next; zero components are
-// omitted except the last unit when everything is zero ("0 days").
-const _durationText = (value, ref, units) => {
-  const endpoints = _resolveDurationEndpoints(value, ref)
-  if (!endpoints) return ""
-  const orderedUnits = String(units ?? "")
-    .split(",")
-    .map(_normalizeDurationUnit)
-    .filter(Boolean)
-    .filter((unit, index, all) => all.indexOf(unit) === index)
-  if (orderedUnits.length === 0) return ""
-
-  // Ages never read as negative: an end date before the start collapses to zero.
-  const end = _exactDaysBetween(endpoints.from, endpoints.to) < 0 ? endpoints.from : endpoints.to
-  let cursor = endpoints.from
-  const parts = orderedUnits.map((unit) => {
-    let amount = 0
-    if (unit === "years" || unit === "months") {
-      const wholeMonths = Math.max(0, _wholeMonthsBetween(cursor, end))
-      amount = unit === "years" ? Math.floor(wholeMonths / 12) : wholeMonths
-      cursor = _addMonthsClamped(cursor, unit === "years" ? amount * 12 : amount)
-    } else {
-      const days = Math.max(0, _exactDaysBetween(cursor, end))
-      amount = Math.floor(unit === "weeks" ? days / 7 : days)
-      cursor = _addCalendarDays(cursor, unit === "weeks" ? amount * 7 : amount)
-    }
-    return { unit, amount }
-  })
-
-  const nonZero = parts.filter((part) => part.amount > 0)
-  const shown = nonZero.length > 0 ? nonZero : [parts[parts.length - 1]]
-  return shown
-    .map((part) => \`\${part.amount} \${part.amount === 1 ? part.unit.slice(0, -1) : part.unit}\`)
-    .join(", ")
-}
-
-// A field reference is \`[field-id]\`, and ids are slugified to id-safe
-// characters. Restricting the class (rather than \`[^\\]]+\`) keeps JSON array
-// literals like \`["often","very-often"]\` — which appear as arguments to
-// \`contains(...)\` — from being mistaken for field references.
-const _COMPUTED_REF_PATTERN = /\\[([A-Za-z0-9_.-]+)\\]/g
-
-const _extractComputedReferences = (expression) => {
-  const bracketedRefs = Array.from(expression.matchAll(_COMPUTED_REF_PATTERN))
-    .map((match) => match[1]?.trim() ?? "")
-    .filter(Boolean)
-  const unwrappedExpression = _stripQuotedStrings(expression.replace(/\\[([^\\]]+)\\]/g, " "))
-  const bareRefs = unwrappedExpression.match(/[A-Za-z_][A-Za-z0-9_]*/g) || []
-  return Array.from(new Set([...bracketedRefs, ...bareRefs]))
-}
-
-const _stripQuotedStrings = (expression) =>
-  String(expression).replace(/"([^"\\\\]|\\\\.)*"|'([^'\\\\]|\\\\.)*'/g, " ")
-
-const _COMPUTED_NON_FIELD_IDENTIFIERS = new Set([
-  "iif", "score", "contains", "hasValue", "countTrue", "daysSince", "monthsSince",
-  "today", "durationBetween", "durationText", "weekdaysBetween",
-  "floor", "mod", "round", "power", "ln", "exp", "coalesce", "text", "min", "max",
-  "Math", "Number", "String", "null", "true", "false",
-])
-
-const _replaceBareReferencesOutsideQuotes = (expression, refs, valuesByFieldId) => {
-  let prepared = ""
-  let cursor = 0
-  const stringPattern = /"([^"\\\\]|\\\\.)*"|'([^'\\\\]|\\\\.)*'/g
-  const replaceInSegment = (segment) => {
-    let nextSegment = segment
-    for (const ref of refs) {
-      if (_COMPUTED_NON_FIELD_IDENTIFIERS.has(ref)) continue
-      const numeric = _toNumericValue(valuesByFieldId?.[ref])
-      if (!Number.isFinite(numeric)) return null
-      nextSegment = nextSegment.replace(new RegExp(\`\\\\b\${_escapeRegExp(ref)}\\\\b\`, "g"), String(numeric))
-    }
-    return nextSegment
-  }
-
-  for (const match of expression.matchAll(stringPattern)) {
-    const start = match.index ?? 0
-    const replaced = replaceInSegment(expression.slice(cursor, start))
-    if (replaced === null) return null
-    prepared += replaced + match[0]
-    cursor = start + match[0].length
-  }
-
-  const tail = replaceInSegment(expression.slice(cursor))
-  if (tail === null) return null
-  return prepared + tail
-}
-
-const _isSafeComputedExpression = (expression) => {
-  const strippedExpression = _stripQuotedStrings(expression).replace(/\\[([^\\]]+)\\]/g, " ")
-  return /^[0-9+\\-*/().,?:<>=!&|{}\\[\\]'"":\\s_a-zA-Z]+$/.test(strippedExpression)
-}
-
-const _roundComputedValue = (value, precision) => {
-  if (typeof value === "string" || typeof value === "boolean") return value
-  if (!Number.isFinite(value)) return null
-  if (!Number.isFinite(precision) || precision < 0) return value
-  return Number(value.toFixed(Math.round(precision)))
-}
-
-const _evaluateComputedExpression = (expression, valuesByFieldId, currentFieldId) => {
-  if (typeof expression !== "string") return null
-  const trimmed = expression.trim()
-  if (!trimmed) return null
-  if (!_isSafeComputedExpression(trimmed)) return null
-
-  const refs = _extractComputedReferences(trimmed)
-  if (currentFieldId && refs.includes(currentFieldId)) {
-    return null
-  }
-
-  let prepared = trimmed
-
-  const bracketedRefs = Array.from(trimmed.matchAll(_COMPUTED_REF_PATTERN))
-    .map((match) => match[1]?.trim() ?? "")
-    .filter(Boolean)
-  const uniqueBracketedRefs = Array.from(new Set(bracketedRefs)).sort((a, b) => b.length - a.length)
-  for (const ref of uniqueBracketedRefs) {
-    prepared = prepared.replace(new RegExp(\`\\\\[\${_escapeRegExp(ref)}\\\\]\`, "g"), JSON.stringify(_toComparableValue(valuesByFieldId?.[ref])))
-  }
-
-  const bareRefs = _stripQuotedStrings(prepared).match(/[A-Za-z_][A-Za-z0-9_]*/g) || []
-  const uniqueBareRefs = Array.from(new Set(bareRefs)).sort((a, b) => b.length - a.length)
-  prepared = _replaceBareReferencesOutsideQuotes(prepared, uniqueBareRefs, valuesByFieldId)
-  if (prepared === null) return null
-
-  try {
-    const result = Function("iif", "score", "contains", "hasValue", "countTrue", "daysSince", "monthsSince", "today", "durationBetween", "durationText", "weekdaysBetween", "floor", "mod", "round", "power", "ln", "exp", "coalesce", "text", "min", "max", \`"use strict"; return (\${prepared});\`)(
-      _iif,
-      _score,
-      _contains,
-      _hasValue,
-      _countTrue,
-      _daysSince,
-      _monthsSince,
-      _today,
-      _durationBetween,
-      _durationText,
-      _weekdaysBetween,
-      _floor,
-      _mod,
-      _round,
-      _power,
-      _ln,
-      _exp,
-      _coalesce,
-      _text,
-      _min,
-      _max
-    )
-    if (typeof result === "number") return Number.isFinite(result) ? result : null
-    if (typeof result === "string" || typeof result === "boolean") return result
-    return null
-  } catch (error) {
-    return null
-  }
-}
+// The formula engine lives in FormulaKit (shared with EditableTable formula
+// columns). Read it only at call time: component files load in no fixed order.
+const _toNumericValue = (value) => FormulaKit.toNumericValue(value)
+const _toComparableValue = (value) => FormulaKit.toComparableValue(value)
+const _hasValue = (value) => FormulaKit.hasValue(value)
+const _extractComputedReferences = (expression) => FormulaKit.extractReferences(expression)
+const _roundComputedValue = (value, precision) => FormulaKit.roundValue(value, precision)
+const _evaluateComputedExpression = (expression, valuesByFieldId, currentFieldId) =>
+  FormulaKit.evaluate(expression, valuesByFieldId, currentFieldId)
+const _hasAllReferencedValues = (expression, valuesByFieldId) =>
+  FormulaKit.hasAllReferencedValues(expression, valuesByFieldId)
 
 const _toDisplayValue = (value, precision, resultType) => {
   if (typeof value === "string") return value
@@ -5351,19 +4886,6 @@ const _toEditableComputedValue = (value) => {
   return _toComparableValue(value) === value ? String(value) : String(_toComparableValue(value) ?? "")
 }
 
-const _hasAllReferencedValues = (expression, valuesByFieldId) => {
-  const refs = _extractComputedReferences(String(expression || ""))
-    .filter((ref) => !_COMPUTED_NON_FIELD_IDENTIFIERS.has(ref))
-  if (refs.length === 0) return true
-  // Controls such as ScaleField initialize an object-shaped value before the
-  // user selects an answer. Check the object's comparable value so an empty
-  // { selectedKey: null, value: null, response: null } is still incomplete,
-  // while valid zero-valued answers count as answered.
-  return Array.from(new Set(refs)).every((ref) =>
-    _hasValue(_toComparableValue(valuesByFieldId?.[ref]))
-  )
-}
-
 const _normalizeComputedDisplayStyle = (displayStyle) =>
   displayStyle === "compact" || displayStyle === "prominent" ? displayStyle : "field"
 
@@ -5388,12 +4910,13 @@ const ComputedValuePresentation = ({
   // Editable calculations retain the regular field control regardless of the
   // chosen summary style, so override and suggestion policies remain usable.
   if (normalizedStyle === "field" || readOnly === false) {
-    const { IconButton, TooltipHost } = Fluent
     // The reset sits inside the box at the far right. Fluent paints the suffix
     // slot grey with 10px padding; the wrapper covers that so the icon reads
     // as part of the input rather than an add-on button.
     const renderSuffix = resetAction
-      ? () => (
+      ? () => {
+        const { IconButton, TooltipHost } = Fluent
+        return (
           <div style={{ display: "flex", alignItems: "center", alignSelf: "stretch", margin: "0 -10px", padding: "0 2px", background: isDarkMode ? "#1f1f1f" : "#ffffff" }}>
             {displaySuffix ? <span style={{ marginRight: 4 }}>{displaySuffix}</span> : null}
             <TooltipHost content={resetAction.tooltip}>
@@ -5406,6 +4929,7 @@ const ComputedValuePresentation = ({
             </TooltipHost>
           </div>
         )
+      }
       : undefined
     const textFieldProps = renderSuffix
       ? { onRenderSuffix: renderSuffix }
@@ -6238,13 +5762,48 @@ const normalizeComparableValue = (value) => {
   return value
 }
 
+// Whether one cell (or nested value) holds an answer: EditableTable's rules
+// (an unchecked checkbox, blank text, NaN, an empty list/object are not).
+const conditionCellAnswered = (value) => {
+  if (value === null || value === undefined) return false
+  if (typeof value === 'string') return value.trim() !== ''
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number') return Number.isFinite(value)
+  if (Array.isArray(value)) return value.some(conditionCellAnswered)
+  if (typeof value === 'object') return Object.keys(value).length > 0
+  return String(value).trim() !== ''
+}
+
+// Whether one entry of a collection answer (table row, multi-select item)
+// holds a real answer. On a row, "_"-prefixed keys are bookkeeping (_rowId,
+// _sourceKey, _complete, ...). Parity: isConditionEntryMeaningful in
+// @webforms/form-model and FormLogicKit.isMeaningfulEntry.
+const conditionEntryMeaningful = (value) => {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return Object.keys(value).some((key) => !key.startsWith('_') && conditionCellAnswered(value[key]))
+  }
+  return conditionCellAnswered(value)
+}
+
+// A table's rows (array or { rows: [...] }) or a multi-select's items.
+const conditionCollectionEntries = (value) => {
+  if (Array.isArray(value)) return value
+  if (value && typeof value === 'object' && Array.isArray(value.rows)) return value.rows
+  return undefined
+}
+
+// "is empty" for any answer; parity with isConditionValueEmpty in
+// @webforms/form-model. A table with no answered row has "no items".
+const isConditionAnswerEmpty = (value) => {
+  const entries = conditionCollectionEntries(value)
+  if (entries) return !entries.some(conditionEntryMeaningful)
+  const normalized = normalizeComparableValue(value)
+  return normalized === null || normalized === undefined || String(normalized).trim() === ''
+}
+
 const checkComparisonMatch = (fieldValue, operator, expectedValue) => {
   const normalized = normalizeComparableValue(fieldValue)
-  if (operator === 'filled') {
-    if (Array.isArray(normalized)) return normalized.length > 0
-    if (normalized && typeof normalized === 'object') return Object.keys(normalized).length > 0
-    return normalized !== null && normalized !== undefined && String(normalized).trim() !== ''
-  }
+  if (operator === 'filled') return !isConditionAnswerEmpty(fieldValue)
   if (operator === 'empty') {
     return !checkComparisonMatch(fieldValue, 'filled', expectedValue)
   }
@@ -6838,11 +6397,7 @@ const validateFieldBehaviors = (configs, values, locale = '', uiTranslations = {
 
 // Choice extension owns per-option disabling, which the faithful MOIS controls
 // do not implement uniformly. Values retain their original codes when translated.
-const checkMeaningfulAnswer = value => {
-  if (Array.isArray(value)) return value.some(checkMeaningfulAnswer)
-  const normalized = normalizeComparableValue(value)
-  return normalized !== undefined && normalized !== null && String(normalized).trim() !== ''
-}
+const checkMeaningfulAnswer = value => !isConditionAnswerEmpty(value)
 const ConditionalChoiceOptions = ({ fieldId, label, optionList, selectionType, required, readOnly, disabled, codeSystem, placeholder }) => {
   const [fd, setFd] = useActiveData()
   const current = readControllerValue(fd?.field?.data, fieldId)
@@ -8012,6 +7567,8 @@ if (typeof EditableTable === "undefined") {
 
 const _getDefaultCellValue = (column = {}) => {
   if (column.type === "checkbox") return column.prefill === true ? true : false
+  // A starting value the filler can change (e.g. 7.5 hours per shift).
+  if (typeof column.prefill === "string" || typeof column.prefill === "number") return String(column.prefill)
   return ""
 }
 
@@ -8241,7 +7798,13 @@ const _isMeaningfulValue = (value) => {
 
 const _isRowEmpty = (row, columns = []) => {
   if (!row) return true
-  return columns.every((col) => !_isMeaningfulValue(_getValueAtPath(row, col.dataPath || col.id)))
+  return columns.every((col) => {
+    // Calculated cells and untouched starting values are not answers.
+    if (col?.computedValue?.mode === "formula") return true
+    const value = _getValueAtPath(row, col.dataPath || col.id)
+    if (col.type !== "checkbox" && col.prefill !== undefined && col.prefill !== null && _stringifyValue(value) === String(col.prefill)) return true
+    return !_isMeaningfulValue(value)
+  })
 }
 
 const _stringifyValue = (value) => {
@@ -8285,6 +7848,12 @@ const _formatCellValue = (row, column) => {
     if (_isMeaningfulValue(computed)) return computed
   }
   const value = _getValueAtPath(row, column.dataPath || column.id)
+  // Choice cells store the option's code; show its wording.
+  if (column.type === "dropdown" && !column.codeSystem && (typeof value === "string" || Array.isArray(value))) {
+    const options = _normalizeChoiceOptions(column.options)
+    const wording = (code) => options.find((option) => String(option.key) === String(code))?.text ?? code
+    return _stringifyValue(Array.isArray(value) ? value.map(wording) : wording(value))
+  }
   if (column.type === "checkbox") {
     if (value === undefined || value === null || value === "") return ""
     if (value) return column.booleanLabels?.on || "Checked"
@@ -8315,7 +7884,100 @@ const _applyComputedColumns = (row, columns = []) => {
     if (column?.computedValue?.mode !== "template") return
     _setValueAtPath(nextRow, column.dataPath || column.id, _computeTemplateColumnValue(nextRow, column))
   })
+  return _applyFormulaColumns(nextRow, columns)
+}
+
+// Formula columns: \`computedValue: { mode: "formula", expression, calculationPolicy?,
+// precision?, incompleteBehavior? }\`. The expression uses ComputedField's syntax
+// (FormulaKit) and reads the same row: \`[columnId]\` is that row's cell, e.g.
+// \`weekdaysBetween([from], [to]) * [hoursPerShift]\`.
+//
+// calculationPolicy (ComputedField's names):
+// - "always-calculated": read-only, recalculated on every change;
+// - "calculated-until-overridden" (default): the filler may type over it; the
+//   row remembers that in \`_formulaOverrides\` and a reset icon restores the
+//   calculation;
+// - "suggested-calculation": the same, but the calculation is only offered
+//   (via the reset icon) and never replaces what the filler typed.
+const _FORMULA_OVERRIDES_KEY = "_formulaOverrides"
+
+const _isFormulaColumn = (column) =>
+  column?.computedValue?.mode === "formula" && typeof column.computedValue.expression === "string"
+
+const _formulaPolicy = (column) => {
+  const policy = column?.computedValue?.calculationPolicy
+  return policy === "always-calculated" || policy === "suggested-calculation" ? policy : "calculated-until-overridden"
+}
+
+const _isFormulaOverridden = (row, column) =>
+  !!row?.[_FORMULA_OVERRIDES_KEY]?.[column.id]
+
+const _setFormulaOverride = (row, column, overridden) => {
+  const overrides = { ...(row[_FORMULA_OVERRIDES_KEY] || {}) }
+  if (overridden) overrides[column.id] = true
+  else delete overrides[column.id]
+  if (Object.keys(overrides).length) row[_FORMULA_OVERRIDES_KEY] = overrides
+  else delete row[_FORMULA_OVERRIDES_KEY]
+}
+
+const _rowFormulaValues = (row, columns = []) => {
+  const values = {}
+  columns.forEach((column) => {
+    const path = column.dataPath || column.id
+    const value = _getValueAtPath(row, path)
+    values[column.id] = value
+    if (path !== column.id) values[path] = value
+  })
+  return values
+}
+
+// The calculated value for one cell, as stored text ("" when the formula's
+// inputs are incomplete or it cannot be evaluated).
+const _computeFormulaCellValue = (row, column, columns = []) => {
+  const config = column.computedValue
+  const values = _rowFormulaValues(row, columns)
+  if (config.incompleteBehavior !== "compute-anyway" && !FormulaKit.hasAllReferencedValues(config.expression, values)) return ""
+  const precision = Number(config.precision)
+  const result = FormulaKit.roundValue(FormulaKit.evaluate(config.expression, values, column.id), Number.isFinite(precision) ? precision : 2)
+  if (result === null || result === undefined || result === "") return ""
+  if (typeof result === "boolean") return result ? "true" : "false"
+  return String(result)
+}
+
+// Recalculate every formula cell the filler has not taken over, in column
+// order so a formula may read an earlier formula column.
+const _applyFormulaColumns = (row, columns = []) => {
+  if (!row || !columns.some(_isFormulaColumn)) return row
+  const nextRow = row
+  columns.forEach((column) => {
+    if (!_isFormulaColumn(column)) return
+    const policy = _formulaPolicy(column)
+    if (policy !== "always-calculated" && _isFormulaOverridden(nextRow, column)) return
+    const computed = _computeFormulaCellValue(nextRow, column, columns)
+    const path = column.dataPath || column.id
+    // A suggestion fills an empty cell but never replaces a typed answer.
+    if (policy === "suggested-calculation" && _isMeaningfulValue(_getValueAtPath(nextRow, path))) return
+    _setValueAtPath(nextRow, path, computed)
+  })
   return nextRow
+}
+
+// Write one cell and recalculate the row. Typing into a formula cell marks it
+// overridden (unless the typed value is the calculation itself).
+const _writeCellAndRecalculate = (row, column, value, columns = []) => {
+  _setValueAtPath(row, column.dataPath || column.id, value)
+  if (_isFormulaColumn(column) && _formulaPolicy(column) !== "always-calculated") {
+    const typed = _stringifyValue(value)
+    const calculated = _computeFormulaCellValue(row, column, columns)
+    _setFormulaOverride(row, column, typed !== "" && typed !== calculated)
+  }
+  return _applyFormulaColumns(row, columns)
+}
+
+const _resetFormulaCell = (row, column, columns = []) => {
+  _setFormulaOverride(row, column, false)
+  _setValueAtPath(row, column.dataPath || column.id, _computeFormulaCellValue(row, column, columns))
+  return _applyFormulaColumns(row, columns)
 }
 
 const _normalizeMirroredCellValue = (value, column) => {
@@ -8762,6 +8424,8 @@ EditableTable = ({
   mode = "inline",
   orientation = "horizontal",
   modalTitle,
+  // Row dialog width in px (Fluent caps a Dialog at 340px unless told otherwise).
+  modalWidth = 640,
   addButtonText = "+ Add Row",
   emptyStateText = "No rows added yet",
   showRowNumbers = true,
@@ -9076,7 +8740,7 @@ EditableTable = ({
     }
     const nextRow = _cloneRow(nextRows[rowIndex], columns)
     const column = columns.find((item) => item.id === columnId) || { id: columnId, dataPath: columnId }
-    _setValueAtPath(nextRow, column.dataPath || column.id, value)
+    _writeCellAndRecalculate(nextRow, column, value, columns)
     nextRows[rowIndex] = nextRow
     commitRows(nextRows, {
       reason: "update",
@@ -9147,8 +8811,28 @@ EditableTable = ({
     if (_getLocalStampLock(draftRow || {}, columns).locked) return
     const nextDraft = _cloneRow(draftRow || _makeEmptyRow(columns, currentRows.length), columns)
     const column = columns.find((item) => item.id === columnId) || { id: columnId, dataPath: columnId }
-    _setValueAtPath(nextDraft, column.dataPath || column.id, value)
+    _writeCellAndRecalculate(nextDraft, column, value, columns)
     setDraftRow(nextDraft)
+  }
+
+  const resetFormulaCell = (rowIndex, column) => {
+    if (isLocked) return
+    if (authorshipEnabled && getRowLock(currentRows[rowIndex]).locked) return
+    const nextRows = [...currentRows]
+    if (!nextRows[rowIndex]) nextRows[rowIndex] = _makeEmptyRow(columns, rowIndex)
+    const nextRow = _resetFormulaCell(_cloneRow(nextRows[rowIndex], columns), column, columns)
+    nextRows[rowIndex] = nextRow
+    commitRows(nextRows, {
+      reason: "update",
+      rowIndex,
+      row: nextRow,
+      previousRows: currentRows,
+    }, { rowId: nextRow._rowId, value: _getValueAtPath(nextRow, column.dataPath || column.id) })
+  }
+
+  const resetDraftFormulaCell = (column) => {
+    const nextDraft = _cloneRow(draftRow || _makeEmptyRow(columns, currentRows.length), columns)
+    setDraftRow(_resetFormulaCell(nextDraft, column, columns))
   }
 
   const stampDraftCell = (column) => {
@@ -9193,7 +8877,13 @@ EditableTable = ({
 
   const updateDraftValueAtPath = useCallback((fieldPath, value) => {
     const nextDraft = _cloneRow(draftRow || _makeEmptyRow(columns, currentRows.length), columns)
-    _setValueAtPath(nextDraft, fieldPath, value)
+    const column = columns.find((item) => (item.dataPath || item.id) === fieldPath)
+    if (column) {
+      _writeCellAndRecalculate(nextDraft, column, value, columns)
+    } else {
+      _setValueAtPath(nextDraft, fieldPath, value)
+      _applyFormulaColumns(nextDraft, columns)
+    }
     setDraftRow(nextDraft)
   }, [draftRow, columns, currentRows.length])
 
@@ -9391,7 +9081,7 @@ EditableTable = ({
     : Number.POSITIVE_INFINITY
   const shouldShowActions = !isLocked && (allowEditRows || allowDeleteRows)
 
-  const renderEditorControl = (row, rowIndex, column, onValueChange, inline, rowReadOnly = false, onStampColumn = null, rowLockState = null) => {
+  const renderEditorControl = (row, rowIndex, column, onValueChange, inline, rowReadOnly = false, onStampColumn = null, rowLockState = null, onResetFormula = null) => {
     const value = _getValueAtPath(row, column.dataPath || column.id)
     const realRowReadOnly = !!rowLockState?.authorship?.locked
     const localStampLocked = !!rowLockState?.localStamp?.locked
@@ -9419,6 +9109,10 @@ EditableTable = ({
           {displayValue || " "}
         </Text>
       )
+    }
+
+    if (_isFormulaColumn(column)) {
+      return renderFormulaControl(row, rowIndex, column, value, onValueChange, inline, onResetFormula)
     }
 
     switch (column.type) {
@@ -9581,14 +9275,76 @@ EditableTable = ({
     }
   }
 
+  // A formula cell: the calculated value, which the filler may type over unless
+  // the column is always-calculated. Once it differs from the calculation, a
+  // reset icon at the right of the box puts the calculation back.
+  const renderFormulaControl = (row, rowIndex, column, value, onValueChange, inline, onResetFormula) => {
+    const policy = _formulaPolicy(column)
+    const calculated = _computeFormulaCellValue(row, column, columns)
+    const current = _stringifyValue(value)
+    const numberConfig = _normalizeNumberConfig(column)
+    const numeric = column.type === "number" || column.computedValue.resultType === "number"
+    const canReset = policy !== "always-calculated" && typeof onResetFormula === "function" && current !== calculated
+    const tooltip = calculated
+      ? \`Reset to the calculated value (\${calculated})\`
+      : "Reset to the calculation (it has no value until its inputs are filled in)"
+    const { TooltipHost } = Fluent
+    // Fluent paints the suffix slot grey with 10px padding; the wrapper covers
+    // that so the icon reads as part of the input (same as ComputedField).
+    const renderSuffix = canReset
+      ? () => (
+          <div style={{ display: "flex", alignItems: "center", alignSelf: "stretch", margin: "0 -10px", padding: "0 2px", background: isDarkMode ? "#1f1f1f" : "#ffffff" }}>
+            {numberConfig.suffix ? <span style={{ marginRight: 4 }}>{numberConfig.suffix}</span> : null}
+            <TooltipHost content={tooltip}>
+              <IconButton
+                iconProps={{ iconName: "Refresh" }}
+                ariaLabel={tooltip}
+                onClick={() => onResetFormula(rowIndex, column)}
+                styles={{ root: { width: 26, height: 26 }, icon: { fontSize: 13 } }}
+              />
+            </TooltipHost>
+          </div>
+        )
+      : undefined
+    const readOnly = policy === "always-calculated"
+    const textFieldProps = renderSuffix
+      ? { onRenderSuffix: renderSuffix }
+      : numberConfig.suffix ? { suffix: numberConfig.suffix } : undefined
+    if (numeric) {
+      // Stored as text: storeAsNumber would turn "7." into 7 while typing.
+      return (
+        <Numeric
+          inline={inline}
+          typeNumber="decimal"
+          value={current}
+          onChange={(valueOrEvent, nextValue) => onValueChange(rowIndex, column.id, String((nextValue === undefined ? valueOrEvent : nextValue) ?? ""))}
+          textFieldProps={textFieldProps}
+          storeAsNumber={false}
+          readOnly={readOnly}
+          disabled={readOnly}
+        />
+      )
+    }
+    return (
+      <TextArea
+        inline={inline}
+        value={current}
+        onChange={(event, newValue) => onValueChange(rowIndex, column.id, newValue || "")}
+        textFieldProps={textFieldProps}
+        readOnly={readOnly}
+        disabled={readOnly}
+      />
+    )
+  }
+
   // Inline cells render live Fluent controls, which print as empty boxed inputs
   // and make a patient-facing handout unreadable. Mirror the formatted value as
   // print-only text and drop the control on paper — the same split the legacy
   // NHForms tables did by hand. The inline \`display: none\` keeps the mirror
   // hidden when a host page ships no print stylesheet; the print rule's
   // \`!important\` overrides it. Dialog editors (inline === false) never print.
-  const renderEditorInput = (row, rowIndex, column, onValueChange, inline, rowReadOnly = false, onStampColumn = null, rowLockState = null) => {
-    const control = renderEditorControl(row, rowIndex, column, onValueChange, inline, rowReadOnly, onStampColumn, rowLockState)
+  const renderEditorInput = (row, rowIndex, column, onValueChange, inline, rowReadOnly = false, onStampColumn = null, rowLockState = null, onResetFormula = null) => {
+    const control = renderEditorControl(row, rowIndex, column, onValueChange, inline, rowReadOnly, onStampColumn, rowLockState, onResetFormula)
     if (!inline) return control
     return (
       <>
@@ -9724,9 +9480,9 @@ EditableTable = ({
                       ? emptyStateText
                       : isModalMode
                         ? col.type === "stampButton"
-                          ? renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell, rowLockState)
+                          ? renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell, rowLockState, resetFormulaCell)
                           : <div>{_formatCellValue(row, col)}</div>
-                        : renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell, rowLockState)}
+                        : renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell, rowLockState, resetFormulaCell)}
                   </td>
                 )
               })}
@@ -9845,9 +9601,9 @@ EditableTable = ({
                       <td key={col.id} style={bodyCellStyle} data-source-field-id={getSourceFieldId(rowIndex, col.id)}>
                         {isModalMode
                           ? col.type === "stampButton"
-                            ? renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell, rowLockState)
+                            ? renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell, rowLockState, resetFormulaCell)
                             : <div>{_formatCellValue(row, col)}</div>
-                          : renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell, rowLockState)}
+                          : renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell, rowLockState, resetFormulaCell)}
                       </td>
                     ))}
                     {showRowAuthorshipColumn && (
@@ -9957,11 +9713,15 @@ EditableTable = ({
           modalProps={{
             isBlocking: true,
           }}
+          minWidth={Math.min(Math.max(340, Number(modalWidth) || 640), typeof window !== "undefined" ? window.innerWidth - 48 : 640)}
+          maxWidth="96vw"
           onDismiss={closeDialog}
         >
           <Stack tokens={{ childrenGap: 12 }}>
+            {/* Two columns when the dialog has room; choices and long text take a full row. */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "12px 16px" }}>
             {modalColumns.filter((column) => _evaluateColumnVisibility(column, draftRow)).map((column) => (
-              <div key={column.id}>
+              <div key={column.id} style={column.type === "dropdown" || column.type === "text" ? { gridColumn: "1 / -1" } : undefined}>
                 <Label>{column.title || column.id}</Label>
                 {renderEditorInput(
                   draftRow,
@@ -9971,10 +9731,12 @@ EditableTable = ({
                   false,
                   draftLocalStampLock.locked,
                   (_rowIndex, stampColumn) => stampDraftCell(stampColumn),
-                  draftLockState
+                  draftLockState,
+                  (_rowIndex, formulaColumn) => resetDraftFormulaCell(formulaColumn)
                 )}
               </div>
             ))}
+            </div>
             {errorMessage && (
               <Text style={{ color: isDarkMode ? "#ffb3b3" : "#b42318" }}>
                 {errorMessage}
@@ -11979,6 +11741,1566 @@ const FormContextHeaderSchema = {
   serviceLoc: { type: "string" },
 }
 `,
+  './FormErrorSummary/index.jsx': `// FormErrorSummary — accessible validation summary rendered under the form
+// title: role="alert", a heading, tabIndex=-1 and focused when it appears;
+// each issue is a link that jumps to the issue's page and focuses the field
+// (FormLogicKit.focusField). Reads uiState.__formErrors =
+// { source: "submit" | "page", pageIndex?, inactivePages?, issues: FormValidationIssue[] },
+// written by the emitted validateSubmitPayload (submit) and FormFlow (Next).
+//
+// Props:
+//   validationConfigs  formValidationConfigs; when given, issues the person has
+//                      since fixed drop out of the summary without a resubmit.
+//   pageNames          page titles, to say where an issue on another page is.
+//   title              heading text (default "There is a problem").
+//   translate          the form's translateFormText; the heading, "Page n"
+//                      and re-checked validation messages go through it.
+//
+// Accessibility: the summary is markup we own, so it carries full ARIA. The
+// MOIS controls are not ours (their error text, label association and DOM ids
+// are the engine's), so as progressive enhancement the summary sets
+// aria-invalid="true" on each located input and points its aria-describedby
+// at the summary entry for that field. Nothing is inserted into the control's
+// DOM; everything added is removed again when the issue clears.
+//
+// FormLogicKit is referenced only inside function bodies (component files
+// load in no guaranteed order).
+
+const FormErrorSummary = (() => {
+  const ENTRY_PREFIX = "wf-error-summary-"
+  const MARK = "data-wf-error-summary-invalid"
+
+  const safeId = (value) => ENTRY_PREFIX + String(value || "").replace(/[^A-Za-z0-9_-]/g, "_")
+
+  const later = (callback, delay) => {
+    if (typeof window !== "undefined" && typeof window.setTimeout === "function") window.setTimeout(callback, delay || 0)
+    else callback()
+  }
+
+  // The page switch commits first; retry briefly until the field is mounted.
+  const focusFieldSoon = (fieldId, label, attempt) => {
+    later(() => {
+      const focused = typeof FormLogicKit !== "undefined" && FormLogicKit.focusField(fieldId, label)
+      if (!focused && (attempt || 0) < 5) focusFieldSoon(fieldId, label, (attempt || 0) + 1)
+    }, attempt ? 40 : 0)
+  }
+
+  // The input MOIS rendered for a field (FormLogicKit.locateField: id /
+  // [data-field-id] in preview; radio name or the control beside the field's
+  // <label> in the real MOIS runtime, whose inputs carry generated ids).
+  const locateInput = (fieldId, label) => {
+    if (typeof FormLogicKit === "undefined" || typeof FormLogicKit.locateField !== "function") return null
+    const found = FormLogicKit.locateField(fieldId, label)
+    const control = found && found.control
+    return control && control.matches && control.matches("input, textarea, select, [role=combobox]") ? control : null
+  }
+
+  const describe = (element, entryId) => {
+    const current = (element.getAttribute("aria-describedby") || "").split(/\\s+/).filter(Boolean)
+    if (!current.includes(entryId)) element.setAttribute("aria-describedby", current.concat(entryId).join(" "))
+    if (element.getAttribute("aria-invalid") !== "true") {
+      element.setAttribute("aria-invalid", "true")
+      element.setAttribute(MARK, entryId)
+    } else if (!element.hasAttribute(MARK)) {
+      element.setAttribute(MARK, "")
+    }
+  }
+
+  const undescribe = (element, entryId) => {
+    const remaining = (element.getAttribute("aria-describedby") || "").split(/\\s+/).filter((id) => id && id !== entryId)
+    if (remaining.length) element.setAttribute("aria-describedby", remaining.join(" "))
+    else element.removeAttribute("aria-describedby")
+    // Only undo aria-invalid we set ourselves.
+    if (element.getAttribute(MARK) === entryId) element.removeAttribute("aria-invalid")
+    element.removeAttribute(MARK)
+  }
+
+  const issueText = (issue) => {
+    const message = String((issue && issue.message) || "")
+    const label = String((issue && issue.label) || "").trim()
+    if (!label || issue.kind === "required" || message.indexOf(label) === 0) return message
+    return label + ": " + message
+  }
+
+  // \`translate\` is the form's translateFormText (uiTranslations keyed by the
+  // English source text for __formLocale); {name} placeholders filled after.
+  const formatText = (translate, source, vars) => {
+    let text = source === undefined || source === null ? "" : String(source)
+    if (typeof translate === "function" && text) {
+      const translated = translate(text)
+      if (typeof translated === "string" && translated) text = translated
+    }
+    if (vars) Object.keys(vars).forEach((key) => { text = text.split("{" + key + "}").join(String(vars[key])) })
+    return text
+  }
+
+  const FormErrorSummaryView = ({ validationConfigs, pageNames, title, translate }) => {
+    const t = (source, vars) => formatText(translate, source, vars)
+    const [fd, setFd] = useActiveData()
+    const rootRef = React.useRef(null)
+    const uiState = (fd && fd.uiState) || {}
+    const errors = uiState.__formErrors || null
+    const data = (fd && fd.field && fd.field.data) || {}
+    const locale = (fd && fd.field && fd.field.status && fd.field.status.__formLocale) || ""
+    // MOIS starts with no breadcrumbSelectedKey: page 0 until PageSelect /
+    // FormFlow writes one (same \`?? 0\` as the native Page / PageStepButton).
+    const storedPage = uiState.breadcrumbSelectedKey
+    const currentPage = storedPage === undefined || storedPage === null || storedPage === "" ? 0 : Number(storedPage)
+
+    const stored = errors && Array.isArray(errors.issues) ? errors.issues : []
+    // Drop issues fixed since the check ran. Cross-field and other issues the
+    // configs cannot re-check stay until the next submit / Next.
+    let issues = stored
+    if (Array.isArray(validationConfigs) && validationConfigs.length && typeof FormLogicKit !== "undefined" && stored.length) {
+      const fresh = FormLogicKit.validate(validationConfigs, data, {
+        pageIndex: errors.source === "page" && typeof errors.pageIndex === "number" ? errors.pageIndex : undefined,
+        inactivePages: Array.isArray(errors.inactivePages) ? errors.inactivePages : undefined,
+        locale,
+        translate,
+      })
+      const known = new Set(validationConfigs.map((config) => config && config.fieldId))
+      const failing = new Map()
+      fresh.forEach((issue) => {
+        const key = issue.fieldId + "|" + issue.kind
+        if (!failing.has(key)) failing.set(key, issue)
+      })
+      issues = stored
+        .filter((issue) => (
+          issue.kind === "cross-field" || issue.fieldId === "_form" || !known.has(issue.fieldId) ||
+          failing.has(issue.fieldId + "|" + issue.kind)
+        ))
+        // A still-failing issue shows its current message: "complete A, B and
+        // C" becomes "complete C" as rows are finished.
+        .map((issue) => {
+          const current = failing.get(issue.fieldId + "|" + issue.kind)
+          return current && current.message !== issue.message ? { ...issue, message: current.message } : issue
+        })
+    }
+
+    // One entry per field (a multi-part date or a field with two problems is
+    // still one link), first message wins.
+    const entries = []
+    const seen = new Set()
+    issues.forEach((issue) => {
+      if (!issue || seen.has(issue.fieldId)) return
+      seen.add(issue.fieldId)
+      entries.push(issue)
+    })
+
+    // Focus the summary when a submit / Next writes a new error set.
+    React.useEffect(() => {
+      if (!errors || !entries.length) return
+      const node = rootRef.current
+      if (node && typeof node.focus === "function") {
+        try {
+          if (typeof node.scrollIntoView === "function") node.scrollIntoView({ block: "start" })
+        } catch (error) {
+          // Some hosts do not implement scrolling.
+        }
+        node.focus()
+      }
+    }, [errors])
+
+    // Progressive ARIA enhancement on the MOIS inputs.
+    const signature = entries.map((issue) => issue.fieldId).join("\\u0000")
+    React.useEffect(() => {
+      const touched = []
+      entries.forEach((issue) => {
+        const element = locateInput(issue.fieldId, issue.label)
+        if (!element) return
+        const entryId = safeId(issue.fieldId)
+        describe(element, entryId)
+        touched.push([element, entryId])
+      })
+      return () => touched.forEach(([element, entryId]) => undescribe(element, entryId))
+    }, [signature, currentPage])
+
+    if (!entries.length) return null
+
+    const names = Array.isArray(pageNames) ? pageNames : []
+    const jump = (event, issue) => {
+      if (event && typeof event.preventDefault === "function") event.preventDefault()
+      const setter = fd && typeof fd.setFormData === "function" ? fd.setFormData : setFd
+      if (typeof issue.pageIndex === "number" && issue.pageIndex !== currentPage && typeof setter === "function") {
+        setter(produce((draft) => {
+          if (!draft) return
+          draft.uiState = draft.uiState || {}
+          draft.uiState.breadcrumbSelectedKey = issue.pageIndex
+        }))
+      }
+      focusFieldSoon(issue.fieldId, issue.label, 0)
+    }
+
+    const heading = t(title || "There is a problem")
+    const headingId = ENTRY_PREFIX + "title"
+    return (
+      <div
+        ref={rootRef}
+        role="alert"
+        aria-labelledby={headingId}
+        tabIndex={-1}
+        data-form-error-summary=""
+        className="hideonprint"
+        style={{ border: "3px solid rgb(164, 38, 44)", borderRadius: 2, padding: "12px 16px", margin: "8px 0 16px", background: "#fff", outlineOffset: 2 }}
+      >
+        <h2 id={headingId} style={{ margin: "0 0 8px", fontSize: 18, fontWeight: 600, color: "rgb(50, 49, 48)" }}>{heading}</h2>
+        <ul style={{ margin: 0, paddingLeft: 20 }}>
+          {entries.map((issue) => {
+            const other = typeof issue.pageIndex === "number" && issue.pageIndex !== currentPage && names.length > 1
+            const where = other ? " (" + (names[issue.pageIndex] || t("Page {n}", { n: issue.pageIndex + 1 })) + ")" : ""
+            return (
+              <li key={issue.fieldId} id={safeId(issue.fieldId)} style={{ margin: "4px 0" }}>
+                {issue.fieldId === "_form" ? (
+                  <span style={{ color: "rgb(164, 38, 44)", fontWeight: 600 }}>{issue.message}</span>
+                ) : (
+                  <a
+                    href={"#" + issue.fieldId}
+                    onClick={(event) => jump(event, issue)}
+                    style={{ color: "rgb(164, 38, 44)", fontWeight: 600, textDecoration: "underline" }}
+                  >
+                    {issueText(issue) + where}
+                  </a>
+                )}
+              </li>
+            )
+          })}
+        </ul>
+      </div>
+    )
+  }
+
+  FormErrorSummaryView.issueText = issueText
+  return FormErrorSummaryView
+})()
+`,
+  './FormFlow/index.jsx': `// FormFlow — conditional page flow for paginated forms: pages that are only
+// active when a condition holds, branch-on-Next, validation before leaving a
+// page, a review page and a post-submit confirmation.
+//
+// Emitted by the MOIS exporter (lib/mois-export/renderers/page-renderer.ts +
+// flow-renderer.ts) in place of PageSelect / Page / PageStepButton when page
+// flow is enabled:
+//   <FormFlow config={formFlowConfig} pageNames={[...]} validationConfigs={formValidationConfigs} translate={translateFormText}>
+//     <FormFlow.Nav />
+//     <FormFlow.Page pageId={0}> ...sections... <FormFlow.Steps pageId={0} /> </FormFlow.Page>
+//     ...
+//     <FormFlow.Review />
+//     <FormFlow.Finish> ...submit bar... </FormFlow.Finish>
+//     <FormFlow.Confirmation />
+//   </FormFlow>
+// The root only provides context (no DOM of its own).
+//
+// Text: \`translate\` (optional) is the form's translateFormText. Every built-in
+// string ("Next step", "Step {n} of {m}", "Not answered", …) and every
+// authored one (review title/intro/edit link, confirmation title/intro/body)
+// is looked up through it, so a design's uiTranslations can translate them
+// per locale; untranslated text shows as written.
+//
+// Page state lives in activeData.uiState.breadcrumbSelectedKey (the key real
+// SMOIS's PageSelect/Page use; the review page is key \`config.reviewIndex\`)
+// plus uiState.__flow = { history: number[], visited: number[] } and, when
+// Next is blocked, uiState.__formErrors = { source: "page", pageIndex, issues }.
+//
+// The navigation semantics are a port of lib/page-flow/index.ts
+// (resolveActivePages / resolveNextPage / resolvePreviousPage) and are
+// parity-tested against it. \`config\` is the normalized runtime config built by
+// buildFormFlowRuntimeConfig (flow-renderer.ts): condition groups are compiled
+// flat groups, targets are page indices, "review" or "end".
+//
+// Condition/validation logic comes from FormLogicKit, referenced only inside
+// function bodies (component files load in no guaranteed order).
+//
+// Follow-up (repeat-for-each) tables: a page may be skipped while a follower
+// table has no items (page.skipWhenNoItems = { tableId, repeatFor }, counted
+// from the SOURCE rows by FormLogicKit.repeatItemCount), and every repeating
+// table in config.repeatTables is synced (RepeatForEachTable.syncFormData,
+// handed over by the form as config.repeatSync) before Next validation and on
+// the review page, because an off-page table is not mounted and cannot sync
+// itself.
+
+const FormFlow = (() => {
+  const FlowContext = React.createContext(null)
+  // Set by the emitted validateSubmitPayload (FormFlow.noteSubmitAttempt) so
+  // the confirmation only follows a submit made in this session, never a
+  // reopened, already-submitted form.
+  let submitAttemptedAt = 0
+
+  // Built-in and authored text goes through the form's translateFormText
+  // (the \`translate\` prop: uiTranslations keyed by the English source text
+  // for fd.field.status.__formLocale); {name} placeholders are filled after.
+  const formatText = (translate, source, vars) => {
+    let text = source === undefined || source === null ? "" : String(source)
+    if (typeof translate === "function" && text) {
+      const translated = translate(text)
+      if (typeof translated === "string" && translated) text = translated
+    }
+    if (vars) {
+      Object.keys(vars).forEach((key) => {
+        text = text.split("{" + key + "}").join(String(vars[key]))
+      })
+    }
+    return text
+  }
+
+  const isUsableGroup = (group) => Boolean(group && Array.isArray(group.conditions) && group.conditions.length > 0)
+  const evaluate = (group, values) => (
+    typeof FormLogicKit !== "undefined" ? FormLogicKit.evaluateGroup(group, values || {}) : false
+  )
+  const pageCountOf = (config) => (config && Number.isInteger(config.pageCount) ? config.pageCount : ((config && config.pages) || []).length)
+
+  // "Skip this page when there are no items": the follower's source rows
+  // that would seed it (the follower itself may not be synced yet).
+  const hasItems = (skip, values) => (
+    !skip || !skip.repeatFor || typeof FormLogicKit === "undefined" ||
+    typeof FormLogicKit.repeatItemCount !== "function" ||
+    FormLogicKit.repeatItemCount(values || {}, skip.repeatFor) > 0
+  )
+
+  const resolveActivePages = (config, values) => {
+    const count = pageCountOf(config)
+    const pages = (config && config.pages) || []
+    return Array.from({ length: count }, (_, index) => {
+      const page = pages[index]
+      if (index === 0 || !page) return true
+      return (!isUsableGroup(page.activeWhen) || evaluate(page.activeWhen, values)) && hasItems(page.skipWhenNoItems, values)
+    })
+  }
+
+  // RepeatForEachTable's sync statics: the form passes its own copy as
+  // config.repeatSync (FormFlow does not list RepeatForEachTable as a
+  // dependency, so a loader may give this module an incomplete copy).
+  const repeatSyncer = (config) => {
+    const candidate = (config && config.repeatSync) || (typeof RepeatForEachTable !== "undefined" ? RepeatForEachTable : null)
+    return candidate && typeof candidate.syncFormData === "function" && typeof candidate.syncActiveData === "function" ? candidate : null
+  }
+
+  // The answers with every repeating table synced, or null when already current.
+  const syncRepeatTables = (config, values) => {
+    const tables = config && Array.isArray(config.repeatTables) ? config.repeatTables : null
+    const syncer = repeatSyncer(config)
+    if (!tables || tables.length === 0 || !syncer) return null
+    return syncer.syncFormData(values || {}, tables)
+  }
+
+  const writeRepeatSync = (config, setter, synced) => {
+    const syncer = repeatSyncer(config)
+    if (syncer) syncer.syncActiveData({ setFormData: setter }, config.repeatTables, synced)
+  }
+
+  const inactivePages = (config, values) => resolveActivePages(config, values)
+    .map((active, index) => (active ? -1 : index))
+    .filter((index) => index >= 0)
+
+  const nextActiveAfter = (config, active, index) => {
+    for (let candidate = index + 1; candidate < pageCountOf(config); candidate++) {
+      if (active[candidate]) return candidate
+    }
+    return config && config.review ? "review" : null
+  }
+
+  const resolveTarget = (config, active, target) => {
+    if (target === "end" || target === null || target === undefined) return null
+    if (target === "review") return config && config.review ? "review" : null
+    if (active[target]) return target
+    return nextActiveAfter(config, active, target)
+  }
+
+  /** Next step from \`current\` (page index or "review"): index, "review" or null (last step). */
+  const resolveNextPage = (config, current, values) => {
+    if (current === "review") return null
+    const page = ((config && config.pages) || [])[current]
+    if (current < 0 || current >= pageCountOf(config)) return null
+    const active = resolveActivePages(config, values)
+    const branches = (page && page.branches) || []
+    const branch = branches.find((candidate) => isUsableGroup(candidate.when) && evaluate(candidate.when, values))
+    if (branch) return resolveTarget(config, active, branch.goTo)
+    if (page && page.defaultNext !== null && page.defaultNext !== undefined) return resolveTarget(config, active, page.defaultNext)
+    return nextActiveAfter(config, active, current)
+  }
+
+  /** Back: most recent still-active page in history, else previous active page. */
+  const resolvePreviousPage = (config, current, history, values) => {
+    const active = resolveActivePages(config, values)
+    const count = pageCountOf(config)
+    const remaining = Array.isArray(history) ? history.slice() : []
+    while (remaining.length > 0) {
+      const candidate = remaining.pop()
+      if (candidate !== current && Number.isInteger(candidate) && candidate >= 0 && candidate < count && active[candidate]) {
+        return { page: candidate, history: remaining }
+      }
+    }
+    const start = current === "review" ? count : current
+    for (let candidate = start - 1; candidate >= 0; candidate--) {
+      if (active[candidate]) return { page: candidate, history: [] }
+    }
+    return null
+  }
+
+  /**
+   * The pages on the path the current answers take: page 0, then Next after
+   * Next (same branch / defaultNext / order rules), stopping at the review
+   * page or the end of the form. Recomputed from answers rather than read from
+   * the visit history, so an answer edited via a review Edit link re-routes
+   * it. A page is never listed twice (a backward branch ends the walk).
+   */
+  const resolvePagePath = (config, values) => {
+    const path = []
+    let step = pageCountOf(config) > 0 ? 0 : null
+    while (typeof step === "number" && !path.includes(step)) {
+      path.push(step)
+      step = resolveNextPage(config, step, values)
+    }
+    return path
+  }
+
+  const toKey = (config, step) => (step === "review" ? config.reviewIndex : step)
+
+  const normalizeKey = (key) => {
+    if (typeof key === "number") return key
+    if (typeof key === "string" && key.trim() !== "" && Number.isFinite(Number(key))) return Number(key)
+    return null
+  }
+
+  // Current step for a uiState key: a page index, "review", or the nearest
+  // earlier active page when the stored page is inactive / out of range.
+  const resolveCurrent = (config, key, active) => {
+    const count = pageCountOf(config)
+    const normalized = normalizeKey(key)
+    if (normalized === null) return 0
+    if (config.review && normalized === config.reviewIndex) return "review"
+    const start = Number.isInteger(normalized) && normalized >= 0 && normalized < count ? normalized : count - 1
+    for (let candidate = start; candidate >= 0; candidate--) {
+      if (active[candidate]) return candidate
+    }
+    return 0
+  }
+
+  const safeSetter = (fd, setFd) => (fd && typeof fd.setFormData === "function" ? fd.setFormData : setFd)
+
+  const scrollToTop = () => {
+    try {
+      if (typeof window !== "undefined" && typeof window.scrollTo === "function") window.scrollTo(0, 0)
+    } catch (error) {
+      // Some hosts (and test DOMs) do not implement scrolling.
+    }
+  }
+
+  const later = (callback, delay) => {
+    if (typeof window !== "undefined" && typeof window.setTimeout === "function") window.setTimeout(callback, delay || 0)
+    else callback()
+  }
+
+  // Page content mounts after the page switch commits; retry briefly. The
+  // label lets FormLogicKit find real-MOIS controls, which carry no field id.
+  const focusFieldSoon = (fieldId, label, attempt) => {
+    later(() => {
+      const focused = typeof FormLogicKit !== "undefined" && FormLogicKit.focusField(fieldId, label)
+      if (!focused && (attempt || 0) < 5) focusFieldSoon(fieldId, label, (attempt || 0) + 1)
+    }, 40)
+  }
+
+  const focusSelector = (selector) => {
+    if (typeof document === "undefined") return false
+    const element = document.querySelector(selector)
+    if (!element || typeof element.focus !== "function") return false
+    element.focus()
+    return true
+  }
+
+  // Error summary first (FormErrorSummary marks itself data-form-error-summary);
+  // else the first invalid field.
+  const focusErrors = (issues) => {
+    later(() => {
+      if (focusSelector("[data-form-error-summary]")) return
+      const first = (issues || []).find((issue) => issue && issue.fieldId && issue.fieldId !== "_form")
+      if (first) focusFieldSoon(first.fieldId, first.label, 0)
+    }, 0)
+  }
+
+  const recordStep = (draft, config, fromStep, toStep, historyOverride) => {
+    draft.uiState = draft.uiState || {}
+    const flow = draft.uiState.__flow || {}
+    let history = Array.isArray(historyOverride) ? historyOverride.slice() : (Array.isArray(flow.history) ? flow.history.slice() : [])
+    if (!historyOverride && typeof fromStep === "number" && fromStep !== toStep) history.push(fromStep)
+    history = history.slice(-50)
+    const visited = Array.isArray(flow.visited) ? flow.visited.slice() : [0]
+    const key = toKey(config, toStep)
+    if (!visited.includes(key)) visited.push(key)
+    draft.uiState.__flow = { ...flow, history, visited }
+    draft.uiState.breadcrumbSelectedKey = key
+    if (draft.uiState.__formErrors && draft.uiState.__formErrors.source === "page") {
+      delete draft.uiState.__formErrors
+    }
+  }
+
+  const REVIEW_SKIP_KINDS = ["component", "layoutTable", "file", "signature", "section", "heading"]
+
+  const normalizeYesNo = (value) => {
+    if (value && typeof value === "object") return normalizeYesNo(value.code ?? value.display ?? value.value ?? value.text)
+    if (value === true || value === "yes" || value === "Yes" || value === "Y" || value === 1 || value === "true") return "yes"
+    if (value === false || value === "no" || value === "No" || value === "N" || value === 0 || value === "false") return "no"
+    return null
+  }
+
+  const formatScalar = (field, value) => {
+    if (value === null || value === undefined) return ""
+    if (Array.isArray(value)) return value.map((entry) => formatScalar(field, entry)).filter(Boolean).join(", ")
+    if (typeof value === "object") {
+      const shown = value.display ?? value.text ?? value.label ?? value.value ?? value.code
+      if (shown !== undefined && shown !== null) return formatScalar(field, shown)
+      return Object.keys(value)
+        .filter((key) => !key.startsWith("_"))
+        .map((key) => key + ": " + formatScalar(null, value[key]))
+        .join("; ")
+    }
+    const text = String(value)
+    if (field && field.options && Object.prototype.hasOwnProperty.call(field.options, text)) return field.options[text]
+    return text
+  }
+
+  const readCell = (row, path) => String(path || "").split(".").filter(Boolean)
+    .reduce((current, key) => (current && typeof current === "object" ? current[key] : undefined), row)
+
+  // Table cell by column type: choices by option label, booleans by their
+  // on/off label (an unchecked checkbox is not an answer, as in EditableTable).
+  const formatCell = (column, value) => {
+    if (column && column.type === "boolean") {
+      const yesNo = normalizeYesNo(value)
+      if (yesNo === "yes") return (column.booleanLabels && column.booleanLabels.on) || "Yes"
+      if (yesNo === "no") return ""
+    }
+    return formatScalar(column && column.type === "choice" ? column : null, value)
+  }
+
+  /**
+   * Human-readable answer for the review page ("" when unanswered). Tables
+   * return [{ heading, text }] per row (an empty array when unanswered).
+   */
+  const formatValue = (field, value) => {
+    const meaningful = (candidate) => (
+      typeof FormLogicKit !== "undefined"
+        ? FormLogicKit.hasMeaningfulValue(candidate)
+        : candidate !== undefined && candidate !== null && String(candidate).trim() !== ""
+    )
+    // Table rows are plain objects keyed by column: a row counts when any
+    // non-metadata cell is answered.
+    const rowAnswered = (row) => Boolean(row && typeof row === "object" && !Array.isArray(row) &&
+      Object.keys(row).some((key) => !key.startsWith("_") && meaningful(row[key])))
+    const hasValue = field.kind === "table" && Array.isArray(value) ? value.some(rowAnswered) : meaningful(value)
+    if (!hasValue) return ""
+    if (field.kind === "boolean") {
+      const yesNo = normalizeYesNo(value)
+      if (yesNo === "yes") return (field.booleanLabels && field.booleanLabels.on) || "Yes"
+      if (yesNo === "no") return (field.booleanLabels && field.booleanLabels.off) || "No"
+    }
+    if (field.kind === "table" && Array.isArray(value)) {
+      // [{ heading, text }] per row: heading = the repeat-for-each row label
+      // (RepeatForEachTable's _sourceLabel), text = "Column: answer; ...".
+      const columns = Array.isArray(field.columns) ? field.columns : null
+      const labelTarget = field.rowLabel && field.rowLabel.labelTargetColumnId
+      return value
+        .map((row) => {
+          if (!row || typeof row !== "object") return { heading: "", text: formatScalar(null, row) }
+          const label = field.rowLabel && typeof row._sourceLabel === "string" ? row._sourceLabel.trim() : ""
+          const heading = label && row._sourceRemoved ? label + " (no longer listed)" : label
+          const parts = columns
+            ? columns
+                .filter((column) => !(heading && labelTarget && column.id === labelTarget))
+                .map((column) => {
+                  const cell = formatCell(column, readCell(row, column.path || column.id))
+                  return cell ? column.label + ": " + cell : ""
+                })
+            : Object.keys(row).filter((key) => !key.startsWith("_")).map((key) => formatScalar(null, row[key]))
+          return { heading, text: parts.filter(Boolean).join("; ") }
+        })
+        .filter((row) => row.heading || row.text)
+    }
+    return formatScalar(field, value)
+  }
+
+  const FormFlowRoot = ({ config, pageNames, validationConfigs, translate, children }) => {
+    const [fd, setFd] = useActiveData()
+    const sd = useSourceData()
+    const cfg = config || { pageCount: 0, pages: [], reviewIndex: 0 }
+    const data = (fd && fd.field && fd.field.data) || {}
+    const uiState = (fd && fd.uiState) || {}
+    const flowState = uiState.__flow || {}
+    const history = Array.isArray(flowState.history) ? flowState.history : []
+    const visited = Array.isArray(flowState.visited) ? flowState.visited : [0]
+    const active = resolveActivePages(cfg, data)
+    const current = resolveCurrent(cfg, uiState.breadcrumbSelectedKey, active)
+    const isPrinting = Boolean(sd && sd.lifecycleState && sd.lifecycleState.isPrinting)
+    const locale = (fd && fd.field && fd.field.status && fd.field.status.__formLocale) || ""
+    const setter = safeSetter(fd, setFd)
+    // A signed record is never rewritten by navigation.
+    const canSync = !isPrinting && !(sd && sd.webform && sd.webform.recordState === "SIGNED")
+
+    const write = (recipe) => {
+      if (typeof setter !== "function") return
+      setter(produce((draft) => {
+        if (!draft) return
+        recipe(draft)
+      }))
+    }
+
+    const validatePage = (pageIndex, values) => {
+      const page = (cfg.pages || [])[pageIndex]
+      const shouldValidate = page && typeof page.validateOnNext === "boolean" ? page.validateOnNext : cfg.validateOnNext !== false
+      if (!shouldValidate || typeof FormLogicKit === "undefined") return []
+      const answers = values || data
+      return FormLogicKit.validate(validationConfigs || [], answers, {
+        pageIndex,
+        inactivePages: inactivePages(cfg, answers),
+        locale,
+        translate,
+      })
+    }
+
+    // Bring off-page follow-up tables up to date (stored + returned), so the
+    // checks that follow see current rows. Converges: once written, the next
+    // sync finds nothing to change.
+    const currentValues = () => {
+      const synced = canSync ? syncRepeatTables(cfg, data) : null
+      if (!synced) return data
+      writeRepeatSync(cfg, setter, synced)
+      return synced
+    }
+
+    const blockWithIssues = (pageIndex, issues) => {
+      write((draft) => {
+        draft.uiState = draft.uiState || {}
+        draft.uiState.__formErrors = { source: "page", pageIndex, issues }
+      })
+      focusErrors(issues)
+    }
+
+    const afterMove = (focusFieldId, focusLabel) => {
+      scrollToTop()
+      if (focusFieldId) focusFieldSoon(focusFieldId, focusLabel, 0)
+      else later(() => focusSelector("[data-form-flow-nav]"), 0)
+    }
+
+    const goTo = (step, options) => {
+      const opts = options || {}
+      write((draft) => recordStep(draft, cfg, current, step, opts.history))
+      afterMove(opts.focusFieldId, opts.focusLabel)
+    }
+
+    const next = () => {
+      if (current === "review") return
+      const values = currentValues()
+      const issues = validatePage(current, values)
+      if (issues.length > 0) {
+        blockWithIssues(current, issues)
+        return
+      }
+      const target = resolveNextPage(cfg, current, values)
+      if (target === null) return
+      goTo(target)
+    }
+
+    const back = () => {
+      const previous = resolvePreviousPage(cfg, current, history, data)
+      if (!previous) return
+      goTo(previous.page, { history: previous.history })
+    }
+
+    // Breadcrumb / review "Edit" / preview jump-to-field. In "visited" mode a
+    // forward jump validates the page being left first.
+    const jump = (step, options) => {
+      const opts = options || {}
+      if (step === current && !opts.focusFieldId) return
+      const isForward = step === "review" || (typeof current === "number" && typeof step === "number" && step > current)
+      if (opts.validate && isForward && typeof current === "number") {
+        const issues = validatePage(current, currentValues())
+        if (issues.length > 0) {
+          blockWithIssues(current, issues)
+          return
+        }
+      }
+      if (step === current) {
+        afterMove(opts.focusFieldId, opts.focusLabel)
+        return
+      }
+      goTo(step, { focusFieldId: opts.focusFieldId, focusLabel: opts.focusLabel })
+    }
+
+    const jumpRef = React.useRef(jump)
+    jumpRef.current = jump
+    React.useEffect(() => {
+      if (typeof window === "undefined" || typeof window.addEventListener !== "function") return undefined
+      // Preview-only: MoisFormRenderer's jump-to-field. Never fired in SMOIS.
+      const handler = (event) => {
+        const pageIndex = Number(event && event.detail && event.detail.pageIndex)
+        if (!Number.isInteger(pageIndex) || pageIndex < 0 || pageIndex >= pageCountOf(cfg)) return
+        jumpRef.current(pageIndex, {})
+      }
+      window.addEventListener("webforms:preview-select-page", handler)
+      return () => window.removeEventListener("webforms:preview-select-page", handler)
+    }, [])
+
+    // hiddenAnswerPolicy "clear": drop answers of fields on inactive pages.
+    // Converges: once cleared, nothing is left to clear.
+    const clearIds = []
+    ;(cfg.pages || []).forEach((page, index) => {
+      if (!page || !page.clearWhenInactive || active[index]) return
+      const modelPage = (cfg.model || []).find((entry) => entry.pageIndex === index)
+      ;((modelPage && modelPage.fields) || []).forEach((field) => {
+        if (data[field.id] !== undefined && data[field.id] !== null && data[field.id] !== "") clearIds.push(field.id)
+      })
+    })
+    const clearKey = clearIds.join("\\u0000")
+    React.useEffect(() => {
+      if (!clearKey) return
+      const ids = clearKey.split("\\u0000")
+      write((draft) => {
+        if (!draft.field || !draft.field.data) return
+        ids.forEach((id) => {
+          delete draft.field.data[id]
+        })
+      })
+    }, [clearKey])
+
+    // Confirmation: only after this session's submit turned the draft final.
+    const isDraft = sd && sd.webform ? sd.webform.isDraft : undefined
+    const previousDraftRef = React.useRef(isDraft)
+    const [showConfirmation, setShowConfirmation] = React.useState(false)
+    React.useEffect(() => {
+      const previous = previousDraftRef.current
+      previousDraftRef.current = isDraft
+      if (!cfg.confirmation || isDraft !== "N" || previous === "N") return
+      if (!submitAttemptedAt || Date.now() - submitAttemptedAt > 10 * 60 * 1000) return
+      submitAttemptedAt = 0
+      setShowConfirmation(true)
+    }, [isDraft])
+
+    // The review page lists current follow-up rows: render from synced
+    // answers at once and store them (a row added to a source table after its
+    // follower's page was left gets its follow-up row).
+    const reviewSynced = React.useMemo(
+      () => (current === "review" && canSync ? syncRepeatTables(cfg, data) : null),
+      [current, canSync, data, cfg]
+    )
+    const syncBurstRef = React.useRef({ since: 0, count: 0 })
+    React.useEffect(() => {
+      if (!reviewSynced) return
+      // Burst guard (as in RepeatForEachTable): stop writing if a sync ever
+      // fails to settle instead of looping render -> write -> render.
+      const burst = syncBurstRef.current
+      const now = Date.now()
+      if (now - burst.since > 1000) {
+        burst.since = now
+        burst.count = 0
+      }
+      burst.count += 1
+      if (burst.count > 10) return
+      writeRepeatSync(cfg, setter, reviewSynced)
+    }, [reviewSynced])
+
+    const pageErrors = (pageIndex) => {
+      const errors = uiState.__formErrors
+      if (!errors || errors.source !== "page" || errors.pageIndex !== pageIndex) return []
+      return Array.isArray(errors.issues) ? errors.issues : []
+    }
+
+    const value = {
+      config: cfg,
+      pageNames: Array.isArray(pageNames) ? pageNames : [],
+      data: reviewSynced || data,
+      active,
+      current,
+      visited,
+      isPrinting,
+      showConfirmation,
+      next,
+      back,
+      jump,
+      nextFrom: (step) => resolveNextPage(cfg, step, data),
+      previousFrom: (step) => resolvePreviousPage(cfg, step, history, data),
+      pageErrors,
+      dismissConfirmation: () => setShowConfirmation(false),
+      t: (source, vars) => formatText(translate, source, vars),
+    }
+    return <FlowContext.Provider value={value}>{children ?? null}</FlowContext.Provider>
+  }
+
+  const useFlow = () => React.useContext(FlowContext)
+
+  const stepLabel = (ctx, step) => (
+    step === "review"
+      ? ctx.t((ctx.config.review && ctx.config.review.title) || "Review")
+      : ctx.pageNames[step] || ctx.t("Page {n}", { n: step + 1 })
+  )
+
+  const activeSteps = (ctx) => {
+    const steps = []
+    ctx.active.forEach((isActive, index) => {
+      if (isActive) steps.push(index)
+    })
+    if (ctx.config.review) steps.push("review")
+    return steps
+  }
+
+  // Breadcrumb in the SMOIS PageSelect look (CircleRing + large text, bold
+  // current) listing only active pages, plus an optional "Step n of m".
+  const Nav = () => {
+    const ctx = useFlow()
+    if (!ctx || ctx.showConfirmation || ctx.isPrinting) return null
+    const steps = activeSteps(ctx)
+    const position = steps.indexOf(ctx.current)
+    const mode = ctx.config.breadcrumb || "all-active"
+    const progress = ctx.config.showProgress && position >= 0
+      ? <Fluent.Text variant="medium" styles={{ root: { color: "rgb(96, 94, 92)", display: "block", padding: "6px 0 0 2em" } }}>{ctx.t("Step {n} of {m}", { n: position + 1, m: steps.length })}</Fluent.Text>
+      : null
+    if (mode === "hidden") {
+      return progress ? <div className="hideonprint" data-form-flow-nav="" tabIndex={-1} style={{ outline: "none" }}>{progress}</div> : null
+    }
+    return (
+      <div className="hideonprint" data-form-flow-nav="" tabIndex={-1} style={{ outline: "none" }}>
+        <div id="breadcrumb" role="navigation" aria-label={ctx.t("Pages")} style={{ background: "rgb(255, 255, 255)", borderBottom: "1px solid rgb(237, 235, 233)", paddingBottom: "10px" }}>
+          <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "4px" }}>
+            {steps.map((step, index) => {
+              const isCurrent = step === ctx.current
+              const key = step === "review" ? ctx.config.reviewIndex : step
+              const enabled = isCurrent || mode !== "visited" || ctx.visited.includes(key)
+              const label = stepLabel(ctx, step)
+              return (
+                <React.Fragment key={String(key)}>
+                  <Fluent.Link
+                    disabled={!enabled}
+                    aria-current={isCurrent ? "step" : undefined}
+                    styles={{ root: { paddingLeft: "2em", paddingRight: "5px" } }}
+                    onClick={() => enabled && ctx.jump(step, { validate: mode === "visited" })}
+                  >
+                    <Fluent.Icon iconName={isCurrent ? "CircleFill" : "CircleRing"} styles={{ root: { paddingRight: "5px" } }} />
+                    <Fluent.Text variant="large">{isCurrent ? <b>{label}</b> : <span>{label}</span>}</Fluent.Text>
+                  </Fluent.Link>
+                  {index < steps.length - 1 ? <Fluent.Text aria-hidden="true" styles={{ root: { color: "rgb(96, 94, 92)" } }}>/</Fluent.Text> : null}
+                </React.Fragment>
+              )
+            })}
+          </div>
+          {progress}
+        </div>
+      </div>
+    )
+  }
+
+  // Page body, rendered iff the page is active and selected (or printing:
+  // every active page prints, inactive pages never do). Same Linear wrapper
+  // as the SMOIS Page component.
+  const Page = ({ pageId, linearLayoutProps, children }) => {
+    const ctx = useFlow()
+    if (!ctx) return <Linear {...(linearLayoutProps || {})}>{children}</Linear>
+    if (ctx.showConfirmation) return null
+    if (!ctx.active[pageId]) return null
+    if (!ctx.isPrinting && ctx.current !== pageId) return null
+    return <Linear {...(linearLayoutProps || {})}>{children}</Linear>
+  }
+
+  // Back / Next for one page (+ extra buttons such as "print this page").
+  const Steps = ({ pageId, children }) => {
+    const ctx = useFlow()
+    if (!ctx || ctx.showConfirmation || ctx.current !== pageId) return null
+    const target = ctx.nextFrom(pageId)
+    const canGoBack = ctx.previousFrom(pageId) !== null
+    const errors = ctx.pageErrors(pageId)
+    const extra = React.Children.toArray(children)
+    if (!canGoBack && target === null && extra.length === 0 && errors.length === 0) return null
+    return (
+      <div className="hideonprint">
+        {errors.length > 0 ? (
+          <div role="status" data-form-flow-page-errors="" style={{ color: "rgb(164, 38, 44)", margin: "8px 0" }}>
+            {errors.length === 1
+              ? ctx.t("1 answer on this page needs attention before you continue.")
+              : ctx.t("{n} answers on this page need attention before you continue.", { n: errors.length })}
+          </div>
+        ) : null}
+        <ButtonBar>
+          {canGoBack ? <Fluent.DefaultButton text={ctx.t("Previous step")} onClick={ctx.back} /> : null}
+          {target !== null ? <Fluent.DefaultButton text={ctx.t(target === "review" ? "Review answers" : "Next step")} onClick={ctx.next} /> : null}
+          {extra}
+        </ButtonBar>
+      </div>
+    )
+  }
+
+  const Review = () => {
+    const ctx = useFlow()
+    const review = ctx && ctx.config.review
+    if (!ctx || !review || ctx.showConfirmation || ctx.isPrinting || ctx.current !== "review") return null
+    const get = (id) => (typeof FormLogicKit !== "undefined" ? FormLogicKit.readValue(ctx.data, id) : ctx.data[id])
+    const editText = ctx.t(review.editLinkText || "Edit")
+    // Only pages on the path the answers take (a page a branch skipped is
+    // not "Not answered", it was never asked).
+    const path = resolvePagePath(ctx.config, ctx.data)
+    const sections = (ctx.config.model || [])
+      .filter((page) => ctx.active[page.pageIndex] && path.includes(page.pageIndex))
+      .map((page) => ({
+        ...page,
+        fields: (page.fields || []).filter((field) => (
+          !REVIEW_SKIP_KINDS.includes(field.kind) &&
+          !field.hidden &&
+          !(field.visibility && typeof FormLogicKit !== "undefined" && FormLogicKit.isFieldHidden(field.visibility, get))
+        )),
+      }))
+      .filter((page) => page.fields.length > 0)
+    const canGoBack = ctx.previousFrom("review") !== null
+    return (
+      <Linear>
+        <div data-form-flow-review="">
+          <Fluent.Text as="h2" variant="xLarge" block styles={{ root: { fontWeight: 600, margin: "8px 0" } }}>{ctx.t(review.title || "Review your answers")}</Fluent.Text>
+          {review.intro ? <Fluent.Text block styles={{ root: { marginBottom: "12px" } }}>{ctx.t(review.intro)}</Fluent.Text> : null}
+          {sections.map((page) => {
+            const pageTitle = ctx.pageNames[page.pageIndex] || (page.title ? ctx.t(page.title) : ctx.t("Page {n}", { n: page.pageIndex + 1 }))
+            return (
+              <section key={page.pageIndex} aria-label={pageTitle} style={{ borderTop: "1px solid rgb(237, 235, 233)", padding: "8px 0 12px" }}>
+                <div style={{ display: "flex", alignItems: "baseline", gap: "12px" }}>
+                  <Fluent.Text as="h3" variant="large" styles={{ root: { fontWeight: 600, margin: 0 } }}>{pageTitle}</Fluent.Text>
+                  <Fluent.Link className="hideonprint" aria-label={editText + " " + pageTitle} onClick={() => ctx.jump(page.pageIndex, {})}>{editText}</Fluent.Link>
+                </div>
+                <dl style={{ margin: "8px 0 0", display: "grid", gridTemplateColumns: "minmax(140px, 1fr) 2fr auto", columnGap: "12px", rowGap: "6px" }}>
+                  {page.fields.map((field) => {
+                    const formatted = formatValue(field, get(field.id))
+                    const empty = Array.isArray(formatted) ? formatted.length === 0 : !formatted
+                    return (
+                      <React.Fragment key={field.id}>
+                        <dt style={{ fontWeight: 600 }}>{field.label || field.id}</dt>
+                        <dd style={{ margin: 0, color: empty ? "rgb(96, 94, 92)" : undefined, whiteSpace: "pre-wrap" }}>
+                          {empty
+                            ? <i>{ctx.t("Not answered")}</i>
+                            : Array.isArray(formatted)
+                              ? <ul style={{ margin: 0, paddingLeft: "18px" }}>{formatted.map((row, index) => (
+                                  <li key={index}>
+                                    {row.heading ? <b data-form-flow-row-heading="" style={{ display: "block" }}>{row.heading}</b> : null}
+                                    {row.text || (row.heading ? <i style={{ color: "rgb(96, 94, 92)" }}>{ctx.t("Not answered")}</i> : null)}
+                                  </li>
+                                ))}</ul>
+                              : formatted}
+                        </dd>
+                        <dd style={{ margin: 0 }} className="hideonprint">
+                          <Fluent.Link aria-label={editText + " " + (field.label || field.id)} onClick={() => ctx.jump(page.pageIndex, { focusFieldId: field.id, focusLabel: field.label })}>{editText}</Fluent.Link>
+                        </dd>
+                      </React.Fragment>
+                    )
+                  })}
+                </dl>
+              </section>
+            )
+          })}
+          {canGoBack ? (
+            <div className="hideonprint">
+              <ButtonBar>
+                <Fluent.DefaultButton text={ctx.t("Previous step")} onClick={ctx.back} />
+              </ButtonBar>
+            </div>
+          ) : null}
+        </div>
+      </Linear>
+    )
+  }
+
+  // Rendered on the last step only (no Next target): the review page, a page
+  // a branch sends to the end, or the last active page. Holds the inline
+  // Submit bar when Submit is configured for the last page.
+  const Finish = ({ children }) => {
+    const ctx = useFlow()
+    if (!ctx) return <React.Fragment>{children ?? null}</React.Fragment>
+    if (ctx.showConfirmation) return null
+    if (ctx.nextFrom(ctx.current) !== null) return null
+    return <React.Fragment>{children ?? null}</React.Fragment>
+  }
+
+  const Confirmation = () => {
+    const ctx = useFlow()
+    const ref = React.useRef(null)
+    const visible = Boolean(ctx && ctx.showConfirmation && ctx.config.confirmation)
+    React.useEffect(() => {
+      if (visible && ref.current && typeof ref.current.focus === "function") ref.current.focus()
+    }, [visible])
+    if (!visible) return null
+    const confirmation = ctx.config.confirmation
+    const paragraphs = String(confirmation.body ? ctx.t(confirmation.body) : "").split(/\\n\\s*\\n/).map((text) => text.trim()).filter(Boolean)
+    return (
+      <Linear>
+        <div ref={ref} tabIndex={-1} role="status" data-form-flow-confirmation="" style={{ outline: "none", padding: "8px 0" }}>
+          <Fluent.MessageBar messageBarType={Fluent.MessageBarType && Fluent.MessageBarType.success}>
+            <b>{ctx.t(confirmation.title || "Your form has been submitted")}</b>
+          </Fluent.MessageBar>
+          {confirmation.intro ? <Fluent.Text block styles={{ root: { margin: "12px 0 0" } }}>{ctx.t(confirmation.intro)}</Fluent.Text> : null}
+          {paragraphs.map((text, index) => (
+            <Fluent.Text key={index} block styles={{ root: { margin: "12px 0 0", whiteSpace: "pre-wrap" } }}>{text}</Fluent.Text>
+          ))}
+          <div className="hideonprint" style={{ marginTop: "12px" }}>
+            <ButtonBar>
+              <Fluent.DefaultButton text={ctx.t("View submitted form")} onClick={ctx.dismissConfirmation} />
+            </ButtonBar>
+          </div>
+        </div>
+      </Linear>
+    )
+  }
+
+  /**
+   * Submit guard helper (emitted validateSubmitPayload): send the user to the
+   * review page instead of submitting. \`fd\` is the form's ActiveData.
+   */
+  const requestReview = (fd, config) => {
+    if (!config || !config.review) return
+    const setter = fd && typeof fd.setFormData === "function" ? fd.setFormData : null
+    if (!setter) return
+    const values = (fd.field && fd.field.data) || {}
+    const from = resolveCurrent(config, fd.uiState && fd.uiState.breadcrumbSelectedKey, resolveActivePages(config, values))
+    setter(produce((draft) => {
+      if (!draft) return
+      recordStep(draft, config, from, "review")
+    }))
+    scrollToTop()
+  }
+
+  const noteSubmitAttempt = () => {
+    submitAttemptedAt = Date.now()
+  }
+
+  FormFlowRoot.Nav = Nav
+  FormFlowRoot.Page = Page
+  FormFlowRoot.Steps = Steps
+  FormFlowRoot.Review = Review
+  FormFlowRoot.Finish = Finish
+  FormFlowRoot.Confirmation = Confirmation
+  FormFlowRoot.resolveActivePages = resolveActivePages
+  FormFlowRoot.inactivePages = inactivePages
+  FormFlowRoot.resolveNextPage = resolveNextPage
+  FormFlowRoot.resolvePreviousPage = resolvePreviousPage
+  FormFlowRoot.resolvePagePath = resolvePagePath
+  FormFlowRoot.syncRepeatTables = syncRepeatTables
+  FormFlowRoot.formatValue = formatValue
+  FormFlowRoot.requestReview = requestReview
+  FormFlowRoot.formatText = formatText
+  FormFlowRoot.noteSubmitAttempt = noteSubmitAttempt
+  return FormFlowRoot
+})()
+`,
+  './FormLogicKit/index.jsx': `// FormLogicKit — shared runtime kernel for form-level logic: condition-group
+// evaluation, rule-aware field visibility, submit/page validation, value
+// formats, and focusing a field from an error summary. Consumed by FormFlow,
+// FormErrorSummary, RepeatForEachTable and inline code the MOIS exporter
+// emits. Non-rendering helper module in the ObservationKit pattern: it exports
+// a single namespace object so consumers keep one bare identifier in engine
+// scope.
+//
+// Consumers must reference FormLogicKit only inside function bodies —
+// component files load in no guaranteed order, so a top-level read of another
+// module's export can run before that module has been evaluated.
+//
+// Condition semantics are ported from ConditionalGroup (evaluateConditionEntry
+// / validateFieldBehaviors) and must stay in parity with
+// packages/form-model/src/conditions.ts.
+
+const FormLogicKit = (() => {
+  const toText = (value) => {
+    if (value === null || value === undefined) return ""
+    return String(value)
+  }
+
+  // Values may be plain scalars or {code, display} coded objects.
+  const normalizeComparableValue = (value) => {
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      return value.code ?? value.display ?? value.value ?? value.text ?? ""
+    }
+    return value
+  }
+
+  // Whether one cell (or nested value) holds an answer: EditableTable's rules,
+  // the same as tableCellAnswered below except NaN/Infinity (finite only).
+  const isAnsweredCell = (value) => {
+    if (value === null || value === undefined) return false
+    if (typeof value === "string") return value.trim() !== ""
+    if (typeof value === "boolean") return value
+    if (typeof value === "number") return Number.isFinite(value)
+    if (Array.isArray(value)) return value.some(isAnsweredCell)
+    if (typeof value === "object") return Object.keys(value).length > 0
+    return String(value).trim() !== ""
+  }
+
+  // Whether one entry of a collection answer (table row, multi-select item)
+  // holds a real answer. On a row, "_"-prefixed keys are bookkeeping (_rowId,
+  // _sourceKey, _complete, ...). Parity: isConditionEntryMeaningful in
+  // @webforms/form-model.
+  const isMeaningfulEntry = (value) => {
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      return Object.keys(value).some((key) => !key.startsWith("_") && isAnsweredCell(value[key]))
+    }
+    return isAnsweredCell(value)
+  }
+
+  // "is empty" for any answer; parity with isConditionValueEmpty in
+  // @webforms/form-model. Collections (table rows as an array or
+  // { rows: [...] }, multi-select items) are empty unless an entry holds a
+  // real answer; scalars and coded objects use the comparable value.
+  const isEmptyValue = (value) => {
+    const entries = Array.isArray(value)
+      ? value
+      : value && typeof value === "object" && Array.isArray(value.rows) ? value.rows : undefined
+    if (entries) return !entries.some(isMeaningfulEntry)
+    const normalized = normalizeComparableValue(value)
+    return normalized === undefined || normalized === null || String(normalized).trim() === ""
+  }
+
+  const hasMeaningfulValue = (value) => !isEmptyValue(value)
+
+  // Direct key first, then a nested search (sections store answers in nested
+  // objects on some legacy forms) — same lookup ConditionalGroup uses.
+  const readValue = (data, fieldId) => {
+    if (!data || !fieldId) return undefined
+    if (Object.prototype.hasOwnProperty.call(data, fieldId)) return data[fieldId]
+    if (typeof data !== "object") return undefined
+    for (const value of Object.values(data)) {
+      if (value && typeof value === "object") {
+        const nested = readValue(value, fieldId)
+        if (nested !== undefined) return nested
+      }
+    }
+    return undefined
+  }
+
+  // Accept either a getter function or a values object.
+  const toGetter = (getValue) => (
+    typeof getValue === "function" ? getValue : (id) => readValue(getValue || {}, id)
+  )
+
+  const normalizeYesNo = (value) => {
+    if (value && typeof value === "object") {
+      return normalizeYesNo(value.code ?? value.display ?? value.value ?? value.text ?? value.label)
+    }
+    if (value === true || value === "yes" || value === "Y" || value === 1) return "yes"
+    if (value === false || value === "no" || value === "N" || value === 0) return "no"
+    return null
+  }
+
+  const checkYesNo = (value, expected) => {
+    const normalized = normalizeYesNo(value)
+    return normalized !== null && normalized === expected
+  }
+
+  const checkChoiceMatch = (fieldValue, optionValues, invert) => {
+    if (fieldValue === null || fieldValue === undefined) return invert
+    const flatten = (value) => {
+      if (Array.isArray(value)) return value.flatMap(flatten)
+      if (value && typeof value === "object") {
+        return [value.code, value.display, value.value, value.text]
+          .filter((entry) => entry !== null && entry !== undefined)
+          .map((entry) => String(entry))
+      }
+      return [String(value)]
+    }
+    const options = (optionValues || []).map((entry) => String(entry))
+    const values = flatten(fieldValue)
+    const hasMatch = options.some((option) => values.includes(option))
+    return invert ? !hasMatch : hasMatch
+  }
+
+  const checkComparisonMatch = (fieldValue, operator, expectedValue) => {
+    const normalized = normalizeComparableValue(fieldValue)
+    if (operator === "filled") return !isEmptyValue(fieldValue)
+    if (operator === "empty") return !checkComparisonMatch(fieldValue, "filled", expectedValue)
+    if (normalized === null || normalized === undefined || normalized === "") return false
+    if (operator && operator.startsWith("number-")) {
+      // Numbers when both sides are numeric, dates otherwise (cross-field date
+      // order rules). Mirrors toOrderedPair in @webforms/form-model.
+      let left = Number(normalized)
+      const expected = normalizeComparableValue(expectedValue)
+      if (expected == null || String(expected).trim() === "") return false
+      let right = Number(expected)
+      if (!Number.isFinite(left) || !Number.isFinite(right)) {
+        left = Date.parse(String(normalized))
+        right = Date.parse(String(expected))
+      }
+      if (!Number.isFinite(left) || !Number.isFinite(right)) return false
+      if (operator === "number-gt") return left > right
+      if (operator === "number-gte") return left >= right
+      if (operator === "number-lt") return left < right
+      if (operator === "number-lte") return left <= right
+      return left === right
+    }
+    const left = String(normalized)
+    const right = String(normalizeComparableValue(expectedValue) ?? "")
+    return operator === "not-equals" ? left !== right : left === right
+  }
+
+  // Leaf entries come in two shapes: the compiled flat contract
+  // ({controllerFieldId, type, optionValues?, value?, compareFieldId?}) that the
+  // exporter emits, or the builder shape ({controllerFieldId, condition: {...}}).
+  const toFlatEntry = (entry) => (
+    entry && entry.condition && typeof entry.condition === "object"
+      ? { ...entry.condition, controllerFieldId: entry.controllerFieldId }
+      : entry
+  )
+
+  const evaluateEntry = (rawEntry, get) => {
+    if (rawEntry && Array.isArray(rawEntry.conditions)) {
+      return evaluateEntries(rawEntry.conditions, rawEntry.match, get)
+    }
+    const entry = toFlatEntry(rawEntry)
+    if (!entry || !entry.controllerFieldId || !entry.type) return false
+    const fieldValue = get(entry.controllerFieldId)
+    const type = entry.type
+    if (type === "choice-selected") return checkChoiceMatch(fieldValue, entry.optionValues, false)
+    if (type === "choice-not-selected") return checkChoiceMatch(fieldValue, entry.optionValues, true)
+    if (type === "boolean-yes") return checkYesNo(fieldValue, "yes")
+    if (type === "boolean-no") return checkYesNo(fieldValue, "no")
+    // An unanswered compare field means no match, so a half-filled form
+    // raises nothing.
+    const compareFieldId = entry.compareFieldId || entry.valueFieldId
+    if (compareFieldId) {
+      const compareValue = get(compareFieldId)
+      if (!checkComparisonMatch(compareValue, "filled", null)) return false
+      return checkComparisonMatch(fieldValue, type, compareValue)
+    }
+    return checkComparisonMatch(fieldValue, type, entry.value)
+  }
+
+  // match "all" (default) or "any". Empty entries = no match.
+  const evaluateEntries = (entries, match, get) => {
+    if (!Array.isArray(entries) || entries.length === 0) return false
+    return match === "any"
+      ? entries.some((entry) => evaluateEntry(entry, get))
+      : entries.every((entry) => evaluateEntry(entry, get))
+  }
+
+  /** Evaluate a (compiled or builder-shape) condition group. Missing/empty group = false. */
+  const evaluateGroup = (group, getValue) => {
+    if (!group || typeof group !== "object") return false
+    return evaluateEntries(group.conditions, group.match, toGetter(getValue))
+  }
+
+  /**
+   * Whether a field is hidden by its own compiled behaviour config
+   * (compileFieldBehavior + gates): explicitly hidden, a failed subgroup gate,
+   * no matching show rule, or a matching hide rule.
+   */
+  const isFieldHidden = (config, getValue) => {
+    if (!config) return false
+    const get = toGetter(getValue)
+    const matches = (group) => evaluateEntries(group?.conditions, group?.match, get)
+    const rules = config.rules || []
+    const showRules = rules.filter((rule) => rule.action === "show")
+    return Boolean(
+      config.hidden ||
+      (config.gates || []).some((gate) => !matches(gate)) ||
+      (showRules.length > 0 && !showRules.some(matches)) ||
+      rules.some((rule) => rule.action === "hide" && matches(rule))
+    )
+  }
+
+  // Copy rules resolve together (targets may sit on unmounted pages); a copy
+  // cycle is reported as a form-level problem. Port of ConditionalGroup's
+  // resolveFieldCopies.
+  const resolveFieldCopies = (configs, original) => {
+    const next = JSON.parse(JSON.stringify(original || {}))
+    const same = (a, b) => JSON.stringify(a) === JSON.stringify(b)
+    for (let pass = 0; pass < Math.min(configs.length + 2, 100); pass++) {
+      const before = JSON.stringify(next)
+      for (const config of configs) {
+        const rules = config.rules || []
+        const matches = (rule) => evaluateEntries(rule.conditions, rule.match, (id) => readValue(next, id))
+        let protectedField = false
+        rules.forEach((rule) => {
+          if (matches(rule) && (rule.action === "set-readonly" || rule.action === "clear-readonly")) {
+            protectedField = rule.action === "set-readonly"
+          }
+        })
+        if (protectedField) continue
+        const rule = [...rules].reverse().find((candidate) => candidate.action === "copy-value" && candidate.copyFromFieldId !== config.fieldId && matches(candidate))
+        if (!rule) continue
+        const source = readValue(next, rule.copyFromFieldId)
+        const value = readValue(next, config.fieldId)
+        if (source === undefined || same(source, value)) continue
+        const state = next.__fieldCopyState?.[config.fieldId]
+        const edited = state?.edited || (state && !same(value, state.value))
+        const policy = rule.copyPolicy || "when-empty"
+        const mayCopy = policy === "always" || (policy === "until-edited" ? !edited && (state || !hasMeaningfulValue(value)) : !hasMeaningfulValue(value))
+        if (mayCopy) {
+          next[config.fieldId] = JSON.parse(JSON.stringify(source))
+          next.__fieldCopyState = { ...next.__fieldCopyState, [config.fieldId]: { value: source, edited: false } }
+        } else if (policy === "until-edited" && edited && !state?.edited) {
+          next.__fieldCopyState = { ...next.__fieldCopyState, [config.fieldId]: { ...state, edited: true } }
+        }
+      }
+      if (before === JSON.stringify(next)) return { values: next, error: "" }
+    }
+    return { values: original, error: "Copy rules did not settle. Check the dependency map for a cycle." }
+  }
+
+  /**
+   * Value formats keyed by BuilderValueFormat ("bc-phn", "ca-postal",
+   * "money"): { test(value) => boolean, message }. An unknown format never
+   * raises an issue. Must stay in parity with lib/validation/formats.ts (the
+   * shared vectors in lib/__tests__/value-formats.test.ts run through both).
+   */
+  const formatText = (value) => {
+    if (typeof value === "number") return Number.isFinite(value) ? String(value) : null
+    if (typeof value !== "string") return null
+    return value.trim()
+  }
+  const PHN_WEIGHTS = [2, 4, 8, 5, 10, 9, 7, 3]
+  const formats = {
+    // BC PHN: 10 digits starting with 9; digits 2-9 times the weights, each
+    // product mod 11, summed; check digit = 11 - (sum mod 11).
+    "bc-phn": {
+      message: "Enter a valid 10-digit BC Personal Health Number (it starts with 9)",
+      test: (value) => {
+        const text = formatText(value)
+        if (text === null) return false
+        const digits = text.replace(/[\\s-]/g, "")
+        if (!/^9\\d{9}$/.test(digits)) return false
+        let sum = 0
+        for (let index = 0; index < PHN_WEIGHTS.length; index++) {
+          sum += (Number(digits[index + 1]) * PHN_WEIGHTS[index]) % 11
+        }
+        return 11 - (sum % 11) === Number(digits[9])
+      },
+    },
+    "ca-postal": {
+      message: "Enter a valid Canadian postal code, like A1A 1A1",
+      test: (value) => typeof value === "string" &&
+        /^[ABCEGHJ-NPRSTVXY]\\d[ABCEGHJ-NPRSTV-Z] ?\\d[ABCEGHJ-NPRSTV-Z]\\d$/.test(value.trim().toUpperCase()),
+    },
+    money: {
+      message: "Enter an amount in dollars and cents, like 12.50",
+      test: (value) => {
+        if (typeof value === "number") {
+          return Number.isFinite(value) && value >= 0 && Math.abs(Math.round(value * 100) - value * 100) < 1e-6
+        }
+        return typeof value === "string" && /^\\$?\\s?(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d{1,2})?$/.test(value.trim())
+      },
+    },
+  }
+
+  // ---- Table row completion (repeat-for-each workstream) — begin ----
+  // config.table = { requiredColumnIds (row data paths), requireAllComplete }.
+  // Rows seeded from another table (_sourceKey) must be completed; manual rows
+  // only once started; rows flagged _sourceRemoved never block. Cell answers
+  // use EditableTable's rules (an unchecked checkbox is not an answer), the
+  // same as RepeatForEachTable's _complete flag.
+  const tableCellAnswered = (value) => {
+    if (value === undefined || value === null) return false
+    if (typeof value === "string") return value.trim().length > 0
+    if (typeof value === "boolean") return value
+    if (typeof value === "number") return !Number.isNaN(value)
+    if (Array.isArray(value)) return value.some(tableCellAnswered)
+    if (typeof value === "object") return Object.keys(value).length > 0
+    return true
+  }
+  const tableRowIssues = (config, value, required, issue, translate) => {
+    const rows = Array.isArray(value) ? value : Array.isArray(value?.rows) ? value.rows : []
+    const cell = (row, path) => String(path || "").split(".").filter(Boolean)
+      .reduce((current, key) => (current && typeof current === "object" ? current[key] : undefined), row)
+    const started = (row) => !!row && typeof row === "object" &&
+      Object.keys(row).some((key) => key.charAt(0) !== "_" && tableCellAnswered(row[key]))
+    const counted = rows.filter((row) => row && !row._sourceRemoved && (row._sourceKey || started(row)))
+    if (counted.length === 0) {
+      return required ? [issue("required", translate(config.label + " is required"))] : []
+    }
+    const paths = config.table.requiredColumnIds || []
+    if (!config.table.requireAllComplete || paths.length === 0) return []
+    // One issue per table (the error summary links once per field) naming
+    // every incomplete row: "Adherence: complete Metformin, Atorvastatin and row 4".
+    const names = counted
+      .filter((row) => !paths.every((path) => tableCellAnswered(cell(row, path))))
+      .map((row) => (row._sourceLabel ? String(row._sourceLabel) : "row " + (rows.indexOf(row) + 1)))
+    if (names.length === 0) return []
+    const list = names.length === 1 ? names[0] : names.slice(0, -1).join(", ") + " and " + names[names.length - 1]
+    return [issue("row-incomplete", translate(config.label + ": complete " + list))]
+  }
+
+  // How many rows a repeat-for-each table WOULD have for the current answers,
+  // counted from its SOURCE table (the follower may not be synced yet, e.g.
+  // its page was never shown): source rows with any answered cell that pass
+  // repeatFor.filter and have a non-empty key. Same rules as
+  // RepeatForEachTable.helpers.syncRows; parity with countRepeatItems in
+  // lib/page-flow. Used by FormFlow's page "skip when there are no items".
+  const repeatKeyText = (value) => {
+    if (value === undefined || value === null) return ""
+    if (typeof value === "string") return value.trim()
+    if (typeof value === "number" || typeof value === "boolean") return String(value)
+    if (Array.isArray(value)) return value.map(repeatKeyText).filter(Boolean).join(", ")
+    if (typeof value === "object") return repeatKeyText(value.display ?? value.text ?? value.value ?? value.code ?? value.key ?? "")
+    return String(value)
+  }
+  const repeatItemCount = (values, repeatFor) => {
+    if (!repeatFor || !repeatFor.sourceFieldId) return 0
+    const data = values || {}
+    const raw = repeatFor.sourceRowsPath
+      ? String(repeatFor.sourceRowsPath).split(".").filter(Boolean)
+        .reduce((current, key) => (current && typeof current === "object" ? current[key] : undefined), data)
+      : readValue(data, repeatFor.sourceFieldId)
+    const rows = Array.isArray(raw) ? raw : Array.isArray(raw && raw.rows) ? raw.rows : []
+    const cell = (row, path) => String(path || "").split(".").filter(Boolean)
+      .reduce((current, key) => (current && typeof current === "object" ? current[key] : undefined), row)
+    const filter = repeatFor.filter
+    const hasFilter = !!(filter && Array.isArray(filter.conditions) && filter.conditions.length > 0)
+    return rows.filter((row, index) => {
+      if (!row || typeof row !== "object") return false
+      if (!Object.keys(row).some((key) => key.charAt(0) !== "_" && tableCellAnswered(row[key]))) return false
+      if (hasFilter && !evaluateGroup(filter, (columnId) => cell(row, columnId))) return false
+      const key = repeatFor.keyColumnId ? repeatKeyText(cell(row, repeatFor.keyColumnId)) : String(row._rowId || "row_" + index)
+      return key !== ""
+    }).length
+  }
+  // ---- Table row completion — end ----
+
+  /**
+   * Validate answers against compiled field configs
+   * (CompiledFieldValidationConfig in lib/mois-export/types.ts).
+   * options: { pageIndex?, inactivePages?, locale?, uiTranslations?, translate? }
+   * \`translate\` (the form's translateFormText) wins over uiTranslations.
+   * Returns FormValidationIssue[]: { fieldId, label, message, pageIndex?, kind }.
+   */
+  const validate = (configs, values, options = {}) => {
+    const list = Array.isArray(configs) ? configs : []
+    const locale = options.locale || ""
+    const uiTranslations = options.uiTranslations || {}
+    const translate = typeof options.translate === "function"
+      ? (source) => options.translate(source) || source
+      : (source) => uiTranslations[locale]?.[source] || source
+    const inactivePages = new Set(Array.isArray(options.inactivePages) ? options.inactivePages : [])
+    const scoped = list.filter((config) => {
+      const pageIndex = typeof config.pageIndex === "number" ? config.pageIndex : 0
+      if (inactivePages.has(pageIndex)) return false
+      return typeof options.pageIndex === "number" ? pageIndex === options.pageIndex : true
+    })
+    const copyResult = resolveFieldCopies(list, values)
+    if (copyResult.error) {
+      return [{ fieldId: "_form", label: "", message: copyResult.error, kind: "rule" }]
+    }
+    const get = (id) => readValue(values, id)
+    const matches = (group) => evaluateEntries(group?.conditions, group?.match, get)
+    return scoped.flatMap((config) => {
+      if (isFieldHidden(config, get)) return []
+      const issue = (kind, message) => ({
+        fieldId: config.fieldId,
+        label: config.label,
+        message,
+        pageIndex: config.pageIndex,
+        kind,
+      })
+      let required = config.required
+      ;(config.rules || []).forEach((rule) => {
+        if (matches(rule)) {
+          if (rule.action === "set-required") required = config.requiredCapable !== false
+          if (rule.action === "clear-required") required = false
+        }
+      })
+      const value = get(config.fieldId)
+      if (config.table) return tableRowIssues(config, value, required, issue, translate) // table rows (repeat-for-each)
+      if (!hasMeaningfulValue(value)) {
+        return required ? [issue("required", translate(config.label + " is required"))] : []
+      }
+      const issues = (config.validations || [])
+        .filter((rule) => !matches(rule.validWhen))
+        .map((rule) => issue("rule", rule.translations?.[locale] || rule.message))
+      const format = config.format ? formats[config.format] : null
+      if (format && typeof format.test === "function" && !format.test(value)) {
+        issues.push(issue("format", config.formatMessage || translate(format.message || (config.label + " is not valid"))))
+      }
+      const selected = Array.isArray(value) ? value : [value]
+      const optionBlocked = (config.optionRules || []).some((rule) =>
+        selected.some((option) => String(normalizeComparableValue(option)) === rule.value) &&
+        ((rule.showWhen && !matches(rule.showWhen)) || (rule.disableWhen && matches(rule.disableWhen)))
+      )
+      if (optionBlocked) issues.push(issue("option", translate(config.label + ": choose an available option")))
+      return issues
+    })
+  }
+
+  const FOCUSABLE = "input, textarea, select, button, [tabindex]"
+  // Enabled controls only: a disabled/read-only display cell (e.g. a
+  // repeat-for-each label column) cannot take focus.
+  const CONTROL = "input:not([disabled]):not([type=hidden]), textarea:not([disabled]), select:not([disabled]), button:not([disabled]), [role=combobox]:not([aria-disabled=true]), [tabindex]:not([tabindex=\\"-1\\"])"
+
+  const escapeAttr = (value) => (
+    typeof CSS !== "undefined" && CSS && typeof CSS.escape === "function"
+      ? CSS.escape(toText(value))
+      : toText(value).replace(/["\\\\]/g, "\\\\$&")
+  )
+
+  // A field label as rendered, without the required marker.
+  const labelText = (element) => toText(element && element.textContent).replace(/\\s*\\*\\s*$/, "").trim()
+
+  /**
+   * The element that stands for a field on screen: { control, wrapper }.
+   * Preview controls carry id=fieldId / [data-field-id]; the real MOIS
+   * runtime does not (its TextField inputs get generated ids such as
+   * "TextField27", OptionChoice radios get name=fieldId, and a LayoutItem
+   * renders <div><label>Label</label>...control...</div>). So after the id
+   * lookups this falls back to radios by name, repeat-for-each tables by
+   * their wrapper, and finally the control beside a <label> with the
+   * field's label text. \`label\` is optional.
+   */
+  const locateField = (fieldId, label) => {
+    if (typeof document === "undefined" || !fieldId) return null
+    const byId = document.getElementById(toText(fieldId))
+    if (byId && byId.matches && byId.matches(FOCUSABLE)) return { control: byId, wrapper: byId }
+    const escaped = escapeAttr(fieldId)
+    const wrapper = byId ||
+      document.querySelector("[data-field-id=\\"" + escaped + "\\"]") ||
+      document.querySelector("[data-repeat-for-table=\\"" + escaped + "\\"]")
+    if (wrapper) {
+      return { control: wrapper.querySelector ? wrapper.querySelector(CONTROL) : null, wrapper }
+    }
+    const radios = Array.from(document.querySelectorAll("input[name=\\"" + escaped + "\\"]:not([disabled])"))
+    if (radios.length > 0) {
+      const checked = radios.find((radio) => radio.checked)
+      return { control: checked || radios[0], wrapper: radios[0].parentElement || radios[0] }
+    }
+    const wanted = toText(label).replace(/\\s*\\*\\s*$/, "").trim()
+    if (!wanted) return null
+    const labels = Array.from(document.querySelectorAll("label")).filter((element) => labelText(element) === wanted)
+    for (const element of labels) {
+      const container = element.parentElement
+      const control = container && container.querySelector ? container.querySelector(CONTROL) : null
+      if (control) return { control, wrapper: container }
+    }
+    return null
+  }
+
+  /**
+   * Move focus to a field (see locateField for how it is found), else just
+   * scroll its wrapper into view. Returns true when something received focus
+   * or was scrolled to.
+   */
+  const focusField = (fieldId, label) => {
+    const found = locateField(fieldId, label)
+    if (!found) return false
+    const { control, wrapper } = found
+    if (control && typeof control.focus === "function") {
+      if (typeof control.scrollIntoView === "function") control.scrollIntoView({ block: "center" })
+      control.focus()
+      return true
+    }
+    if (wrapper && typeof wrapper.scrollIntoView === "function") {
+      wrapper.scrollIntoView({ block: "center" })
+      return true
+    }
+    return false
+  }
+
+  return {
+    hasMeaningfulValue,
+    isEmptyValue,
+    readValue,
+    evaluateGroup,
+    isFieldHidden,
+    resolveFieldCopies,
+    validate,
+    repeatItemCount,
+    formats,
+    locateField,
+    focusField,
+  }
+})()
+`,
   './FormSessionRuntime/index.jsx': `const { createContext, useCallback, useContext, useEffect, useMemo, useState } = React
 
 const __getSessionContext = () => {
@@ -12172,6 +13494,521 @@ const useFormSessionData = (selector) => {
 
   return [selectedSessionDataWithSetter, sessionScopedSetter]
 }
+`,
+  './FormulaKit/index.jsx': `// FormulaKit — the formula engine shared by NHForms components: ComputedField
+// fields and EditableTable formula columns. Non-rendering helper module in the
+// ObservationKit pattern: one namespace object, so consumers keep a single
+// bare identifier in engine scope.
+//
+// Consumers must reference FormulaKit only inside function bodies — component
+// files load in no guaranteed order, so a top-level read of another module's
+// export can run before that module has been evaluated.
+//
+// Semantics are documented in docs/.../architecture/expressions.md and kept in
+// step with lib/expressions (the builder engine); shared cases live in
+// lib/__tests__/fixtures/*-cases.ts.
+
+const FormulaKit = (() => {
+  const _escapeRegExp = (value) => String(value).replace(/[.*+?^\${}()|[\\]\\\\]/g, "\\\\$&")
+
+  const _toNumericValue = (value) => {
+    if (value === undefined || value === null || value === "") return null
+    if (typeof value === "number") {
+      return Number.isFinite(value) ? value : null
+    }
+    if (typeof value === "boolean") {
+      return value ? 1 : 0
+    }
+    if (typeof value === "string") {
+      const trimmed = value.trim()
+      if (!trimmed) return null
+      const parsed = Number(trimmed)
+      return Number.isFinite(parsed) ? parsed : null
+    }
+    if (Array.isArray(value)) {
+      return value.length
+    }
+    if (typeof value === "object") {
+      if (Number.isFinite(value.selectedCount)) {
+        return Number(value.selectedCount)
+      }
+      const candidate = value.value ?? value.selectedKey ?? value.display ?? value.text ?? value.code ?? value.key ?? value.response
+      return _toNumericValue(candidate)
+    }
+    return null
+  }
+
+  const _toComparableValue = (value) => {
+    if (value === undefined || value === null) return ""
+    if (typeof value === "number" || typeof value === "boolean" || typeof value === "string") return value
+    if (Array.isArray(value)) return value.map(_toComparableValue)
+    if (value instanceof Date) return Number.isFinite(value.getTime()) ? value.toISOString() : ""
+    if (typeof value === "object") {
+      return value.value ?? value.selectedKey ?? value.date ?? value.display ?? value.text ?? value.code ?? value.key ?? value.response ?? ""
+    }
+    return String(value)
+  }
+
+  // DateSelect stores the *formatted* display string, not ISO, so every builder
+  // dateFormat option must parse explicitly. dd/MM/yyyy and MM-dd-yyyy are
+  // distinguishable by separator (slash vs dash); MM-dd-yyyy cannot collide with
+  // ISO because ISO leads with a 4-digit year. Date-only strings parse as LOCAL
+  // calendar dates (not UTC midnight) so local getters read the intended day.
+  const _DATE_ONLY_FORMATS = [
+    { pattern: /^(\\d{4})-(\\d{1,2})-(\\d{1,2})$/, order: [1, 2, 3] }, // yyyy-MM-dd (ISO)
+    { pattern: /^(\\d{4})\\.(\\d{1,2})\\.(\\d{1,2})$/, order: [1, 2, 3] }, // yyyy.MM.dd (DateSelect default)
+    { pattern: /^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})$/, order: [3, 2, 1] }, // dd/MM/yyyy
+    { pattern: /^(\\d{1,2})-(\\d{1,2})-(\\d{4})$/, order: [3, 1, 2] }, // MM-dd-yyyy
+  ]
+
+  // null = matched but invalid (e.g. 31/04); undefined = not a date-only string.
+  const _parseDateOnlyString = (text) => {
+    for (const format of _DATE_ONLY_FORMATS) {
+      const match = format.pattern.exec(text)
+      if (!match) continue
+      const [year, month, day] = format.order.map((index) => Number(match[index]))
+      const date = new Date(year, month - 1, day)
+      const valid = date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day
+      return valid ? date : null
+    }
+    return undefined
+  }
+
+  const _toDateValue = (value) => {
+    if (value === undefined || value === null || value === "") return null
+    if (value instanceof Date) {
+      return Number.isFinite(value.getTime()) ? value : null
+    }
+    if (typeof value === "number") {
+      if (!Number.isFinite(value)) return null
+      const date = new Date(value)
+      return Number.isFinite(date.getTime()) ? date : null
+    }
+    if (typeof value === "string") {
+      const trimmed = value.trim()
+      if (!trimmed) return null
+      const dateOnly = _parseDateOnlyString(trimmed)
+      if (dateOnly !== undefined) return dateOnly
+      const date = new Date(trimmed)
+      return Number.isFinite(date.getTime()) ? date : null
+    }
+    if (typeof value === "object") {
+      for (const key of ["value", "date", "text", "display"]) {
+        const date = _toDateValue(value[key])
+        if (date) return date
+      }
+    }
+    return null
+  }
+
+  const _score = (value, scoreMap) => {
+    const candidate = _toComparableValue(value)
+    if (Array.isArray(candidate)) {
+      return candidate.reduce((sum, entry) => sum + _score(entry, scoreMap), 0)
+    }
+    const direct = scoreMap?.[String(candidate)]
+    if (Number.isFinite(direct)) return Number(direct)
+    const numeric = _toNumericValue(value)
+    return Number.isFinite(numeric) ? numeric : 0
+  }
+
+  const _contains = (values, value) => {
+    if (!Array.isArray(values)) return false
+    const candidate = _toComparableValue(value)
+    if (Array.isArray(candidate)) {
+      return candidate.some((entry) => _contains(values, entry))
+    }
+    return values.map(String).includes(String(candidate))
+  }
+
+  const _hasValue = (value) => {
+    if (value === undefined || value === null || value === "") return false
+    if (Array.isArray(value)) return value.length > 0
+    return true
+  }
+
+  const _iif = (condition, whenTrue, whenFalse) => (condition ? whenTrue : whenFalse)
+  const _countTrue = (...values) => values.flat().filter((value) => value === true || value === "true" || value === "Y" || value === "Yes" || value === 1).length
+  const _floor = (value) => {
+    const numeric = _toNumericValue(value)
+    return Number.isFinite(numeric) ? Math.floor(numeric) : null
+  }
+  const _mod = (value, divisor) => {
+    const numeric = _toNumericValue(value)
+    const numericDivisor = _toNumericValue(divisor)
+    if (!Number.isFinite(numeric) || !Number.isFinite(numericDivisor) || numericDivisor === 0) return null
+    return numeric % numericDivisor
+  }
+  const _round = (value, precision = 0) => {
+    const numeric = _toNumericValue(value)
+    const numericPrecision = _toNumericValue(precision)
+    if (!Number.isFinite(numeric) || !Number.isFinite(numericPrecision)) return null
+    const digits = Math.round(numericPrecision)
+    const factor = 10 ** digits
+    if (!Number.isFinite(factor) || factor === 0) return null
+    return Math.round(numeric * factor) / factor
+  }
+  const _power = (value, exponent) => {
+    const numeric = _toNumericValue(value)
+    const numericExponent = _toNumericValue(exponent)
+    if (!Number.isFinite(numeric) || !Number.isFinite(numericExponent)) return null
+    const result = numeric ** numericExponent
+    return Number.isFinite(result) ? result : null
+  }
+  const _ln = (value) => {
+    const numeric = _toNumericValue(value)
+    if (!Number.isFinite(numeric) || numeric <= 0) return null
+    const result = Math.log(numeric)
+    return Number.isFinite(result) ? result : null
+  }
+  const _exp = (value) => {
+    const numeric = _toNumericValue(value)
+    if (!Number.isFinite(numeric)) return null
+    const result = Math.exp(numeric)
+    return Number.isFinite(result) ? result : null
+  }
+  const _coalesce = (...values) => values.find((value) => value !== undefined && value !== null && value !== "") ?? null
+  const _text = (value) => value == null ? "" : String(value)
+  const _numericExtrema = (values, select) => {
+    const numericValues = values.flat().map(_toNumericValue)
+    if (numericValues.length === 0 || numericValues.some((value) => !Number.isFinite(value))) return null
+    return select(...numericValues)
+  }
+  const _min = (...values) => _numericExtrema(values, Math.min)
+  const _max = (...values) => _numericExtrema(values, Math.max)
+  const _MS_PER_DAY = 24 * 60 * 60 * 1000
+
+  const _isDateOnlyValue = (value) => {
+    if (typeof value === "string") {
+      const trimmed = value.trim()
+      return _DATE_ONLY_FORMATS.some((format) => format.pattern.test(trimmed))
+    }
+    if (!value || typeof value !== "object" || value instanceof Date) return false
+    return ["value", "date", "text", "display"].some((key) => _isDateOnlyValue(value[key]))
+  }
+
+  const _calendarDayNumber = (date) => Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / _MS_PER_DAY
+
+  const _daysSince = (value, ref) => {
+    const date = _toDateValue(value)
+    if (!date) return null
+    const reference = ref === undefined ? new Date() : _toDateValue(ref)
+    if (!reference) return null
+    if (_isDateOnlyValue(value) && _isDateOnlyValue(ref)) {
+      return _calendarDayNumber(reference) - _calendarDayNumber(date)
+    }
+    return Math.floor((reference.getTime() - date.getTime()) / _MS_PER_DAY)
+  }
+
+  const _monthsSince = (value, ref) => {
+    const date = _toDateValue(value)
+    if (!date) return null
+    const reference = ref === undefined ? new Date() : _toDateValue(ref)
+    if (!reference) return null
+    let months = (reference.getFullYear() - date.getFullYear()) * 12 + (reference.getMonth() - date.getMonth())
+    if (reference.getDate() < date.getDate()) months -= 1
+    return months
+  }
+
+  // Local calendar date, matching the local-calendar parse of date-only strings.
+  const _today = () => {
+    const now = new Date()
+    const pad = (part) => String(part).padStart(2, "0")
+    return \`\${now.getFullYear()}-\${pad(now.getMonth() + 1)}-\${pad(now.getDate())}\`
+  }
+
+  const _DURATION_UNIT_ALIASES = {
+    day: "days", days: "days",
+    week: "weeks", weeks: "weeks",
+    month: "months", months: "months",
+    year: "years", years: "years",
+  }
+
+  const _normalizeDurationUnit = (unit) =>
+    typeof unit === "string" ? _DURATION_UNIT_ALIASES[unit.trim().toLowerCase()] ?? null : null
+
+  // Exact day difference projected through local calendar components, so results
+  // are DST-safe and date-only vs date-only arithmetic stays a whole number
+  // (matching _daysSince's calendar-day semantics).
+  const _exactDaysBetween = (from, to) => {
+    const project = (date) => Date.UTC(
+      date.getFullYear(), date.getMonth(), date.getDate(),
+      date.getHours(), date.getMinutes(), date.getSeconds(), date.getMilliseconds()
+    )
+    return (project(to) - project(from)) / _MS_PER_DAY
+  }
+
+  // Whole calendar months, matching _monthsSince's day-of-month rule.
+  const _wholeMonthsBetween = (from, to) => {
+    let months = (to.getFullYear() - from.getFullYear()) * 12 + (to.getMonth() - from.getMonth())
+    if (to.getDate() < from.getDate()) months -= 1
+    return months
+  }
+
+  // Month arithmetic clamps to the target month's last day (Jan 31 + 1 month =
+  // Feb 28/29), so a duration anchor never overshoots into the following month.
+  const _addMonthsClamped = (date, months) => {
+    const monthIndex = date.getMonth() + months
+    const lastDay = new Date(date.getFullYear(), monthIndex + 1, 0).getDate()
+    return new Date(
+      date.getFullYear(), monthIndex, Math.min(date.getDate(), lastDay),
+      date.getHours(), date.getMinutes(), date.getSeconds(), date.getMilliseconds()
+    )
+  }
+
+  const _addCalendarDays = (date, days) => new Date(
+    date.getFullYear(), date.getMonth(), date.getDate() + days,
+    date.getHours(), date.getMinutes(), date.getSeconds(), date.getMilliseconds()
+  )
+
+  const _resolveDurationEndpoints = (value, ref) => {
+    const from = _toDateValue(value)
+    if (!from) return null
+    const to = ref === undefined || ref === null || ref === "" ? new Date() : _toDateValue(ref)
+    if (!to) return null
+    return { from, to }
+  }
+
+  // Exact (fractional) elapsed amount between two dates in the requested unit.
+  // \`ref\` defaults to now; rounding is the caller's job (floor/round).
+  const _durationBetween = (value, ref, unit) => {
+    const endpoints = _resolveDurationEndpoints(value, ref)
+    const normalizedUnit = _normalizeDurationUnit(unit)
+    if (!endpoints || !normalizedUnit) return null
+    if (normalizedUnit === "days") return _exactDaysBetween(endpoints.from, endpoints.to)
+    if (normalizedUnit === "weeks") return _exactDaysBetween(endpoints.from, endpoints.to) / 7
+    // Fractional months: whole calendar months plus the remaining days as a
+    // fraction of the actual length of the month being crossed.
+    const whole = _wholeMonthsBetween(endpoints.from, endpoints.to)
+    const anchor = _addMonthsClamped(endpoints.from, whole)
+    const next = _addMonthsClamped(endpoints.from, whole + 1)
+    const monthLength = _exactDaysBetween(anchor, next)
+    const months = whole + (monthLength > 0 ? _exactDaysBetween(anchor, endpoints.to) / monthLength : 0)
+    return normalizedUnit === "months" ? months : months / 12
+  }
+
+  const _toDateList = (value) => {
+    const items = Array.isArray(value)
+      ? value
+      : typeof value === "string" ? value.split(/[,;\\n]/) : value == null ? [] : [value]
+    return items
+      .map((item) => (typeof item === "string" ? item.trim() : item))
+      .filter((item) => item !== "" && item != null)
+      .map(_toDateValue)
+      .filter(Boolean)
+  }
+
+  // Monday-Friday days from \`value\` to \`ref\`, counting both ends (Mon..Fri is 5).
+  // \`skip\` lists further dates to leave out (stat holidays): an array or a
+  // comma-separated string; weekend entries are ignored. Null when a date is
+  // missing or the range runs backwards, so the field shows no suggestion.
+  const _weekdaysBetween = (value, ref, skip) => {
+    const from = _toDateValue(value)
+    const to = _toDateValue(ref)
+    if (!from || !to) return null
+    const firstDay = _calendarDayNumber(from)
+    const lastDay = _calendarDayNumber(to)
+    const days = lastDay - firstDay
+    if (days < 0) return null
+    // Whole weeks contribute 5 each; walk the remaining (< 7) days.
+    let count = Math.floor((days + 1) / 7) * 5
+    for (let offset = 0; offset < (days + 1) % 7; offset += 1) {
+      const weekday = (from.getDay() + offset) % 7
+      if (weekday !== 0 && weekday !== 6) count += 1
+    }
+    const skipped = new Set()
+    for (const date of _toDateList(skip)) {
+      const day = _calendarDayNumber(date)
+      const weekday = date.getDay()
+      if (day >= firstDay && day <= lastDay && weekday !== 0 && weekday !== 6) skipped.add(day)
+    }
+    return count - skipped.size
+  }
+
+  // Cascading duration breakdown, e.g. "2 months, 3 weeks" for
+  // durationText([dob], today(), "months,weeks"). Each listed unit (descending)
+  // is floored and its remainder carried into the next; zero components are
+  // omitted except the last unit when everything is zero ("0 days").
+  const _durationText = (value, ref, units) => {
+    const endpoints = _resolveDurationEndpoints(value, ref)
+    if (!endpoints) return ""
+    const orderedUnits = String(units ?? "")
+      .split(",")
+      .map(_normalizeDurationUnit)
+      .filter(Boolean)
+      .filter((unit, index, all) => all.indexOf(unit) === index)
+    if (orderedUnits.length === 0) return ""
+
+    // Ages never read as negative: an end date before the start collapses to zero.
+    const end = _exactDaysBetween(endpoints.from, endpoints.to) < 0 ? endpoints.from : endpoints.to
+    let cursor = endpoints.from
+    const parts = orderedUnits.map((unit) => {
+      let amount = 0
+      if (unit === "years" || unit === "months") {
+        const wholeMonths = Math.max(0, _wholeMonthsBetween(cursor, end))
+        amount = unit === "years" ? Math.floor(wholeMonths / 12) : wholeMonths
+        cursor = _addMonthsClamped(cursor, unit === "years" ? amount * 12 : amount)
+      } else {
+        const days = Math.max(0, _exactDaysBetween(cursor, end))
+        amount = Math.floor(unit === "weeks" ? days / 7 : days)
+        cursor = _addCalendarDays(cursor, unit === "weeks" ? amount * 7 : amount)
+      }
+      return { unit, amount }
+    })
+
+    const nonZero = parts.filter((part) => part.amount > 0)
+    const shown = nonZero.length > 0 ? nonZero : [parts[parts.length - 1]]
+    return shown
+      .map((part) => \`\${part.amount} \${part.amount === 1 ? part.unit.slice(0, -1) : part.unit}\`)
+      .join(", ")
+  }
+
+  // A field reference is \`[field-id]\`, and ids are slugified to id-safe
+  // characters. Restricting the class (rather than \`[^\\]]+\`) keeps JSON array
+  // literals like \`["often","very-often"]\` — which appear as arguments to
+  // \`contains(...)\` — from being mistaken for field references.
+  const _COMPUTED_REF_PATTERN = /\\[([A-Za-z0-9_.-]+)\\]/g
+
+  const _extractComputedReferences = (expression) => {
+    const bracketedRefs = Array.from(expression.matchAll(_COMPUTED_REF_PATTERN))
+      .map((match) => match[1]?.trim() ?? "")
+      .filter(Boolean)
+    const unwrappedExpression = _stripQuotedStrings(expression.replace(/\\[([^\\]]+)\\]/g, " "))
+    const bareRefs = unwrappedExpression.match(/[A-Za-z_][A-Za-z0-9_]*/g) || []
+    return Array.from(new Set([...bracketedRefs, ...bareRefs]))
+  }
+
+  const _stripQuotedStrings = (expression) =>
+    String(expression).replace(/"([^"\\\\]|\\\\.)*"|'([^'\\\\]|\\\\.)*'/g, " ")
+
+  const _COMPUTED_NON_FIELD_IDENTIFIERS = new Set([
+    "iif", "score", "contains", "hasValue", "countTrue", "daysSince", "monthsSince",
+    "today", "durationBetween", "durationText", "weekdaysBetween",
+    "floor", "mod", "round", "power", "ln", "exp", "coalesce", "text", "min", "max",
+    "Math", "Number", "String", "null", "true", "false",
+  ])
+
+  const _replaceBareReferencesOutsideQuotes = (expression, refs, valuesByFieldId) => {
+    let prepared = ""
+    let cursor = 0
+    const stringPattern = /"([^"\\\\]|\\\\.)*"|'([^'\\\\]|\\\\.)*'/g
+    const replaceInSegment = (segment) => {
+      let nextSegment = segment
+      for (const ref of refs) {
+        if (_COMPUTED_NON_FIELD_IDENTIFIERS.has(ref)) continue
+        const numeric = _toNumericValue(valuesByFieldId?.[ref])
+        if (!Number.isFinite(numeric)) return null
+        nextSegment = nextSegment.replace(new RegExp(\`\\\\b\${_escapeRegExp(ref)}\\\\b\`, "g"), String(numeric))
+      }
+      return nextSegment
+    }
+
+    for (const match of expression.matchAll(stringPattern)) {
+      const start = match.index ?? 0
+      const replaced = replaceInSegment(expression.slice(cursor, start))
+      if (replaced === null) return null
+      prepared += replaced + match[0]
+      cursor = start + match[0].length
+    }
+
+    const tail = replaceInSegment(expression.slice(cursor))
+    if (tail === null) return null
+    return prepared + tail
+  }
+
+  const _isSafeComputedExpression = (expression) => {
+    const strippedExpression = _stripQuotedStrings(expression).replace(/\\[([^\\]]+)\\]/g, " ")
+    return /^[0-9+\\-*/().,?:<>=!&|{}\\[\\]'"":\\s_a-zA-Z]+$/.test(strippedExpression)
+  }
+
+  const _roundComputedValue = (value, precision) => {
+    if (typeof value === "string" || typeof value === "boolean") return value
+    if (!Number.isFinite(value)) return null
+    if (!Number.isFinite(precision) || precision < 0) return value
+    return Number(value.toFixed(Math.round(precision)))
+  }
+
+  const _evaluateComputedExpression = (expression, valuesByFieldId, currentFieldId) => {
+    if (typeof expression !== "string") return null
+    const trimmed = expression.trim()
+    if (!trimmed) return null
+    if (!_isSafeComputedExpression(trimmed)) return null
+
+    const refs = _extractComputedReferences(trimmed)
+    if (currentFieldId && refs.includes(currentFieldId)) {
+      return null
+    }
+
+    let prepared = trimmed
+
+    const bracketedRefs = Array.from(trimmed.matchAll(_COMPUTED_REF_PATTERN))
+      .map((match) => match[1]?.trim() ?? "")
+      .filter(Boolean)
+    const uniqueBracketedRefs = Array.from(new Set(bracketedRefs)).sort((a, b) => b.length - a.length)
+    for (const ref of uniqueBracketedRefs) {
+      prepared = prepared.replace(new RegExp(\`\\\\[\${_escapeRegExp(ref)}\\\\]\`, "g"), JSON.stringify(_toComparableValue(valuesByFieldId?.[ref])))
+    }
+
+    const bareRefs = _stripQuotedStrings(prepared).match(/[A-Za-z_][A-Za-z0-9_]*/g) || []
+    const uniqueBareRefs = Array.from(new Set(bareRefs)).sort((a, b) => b.length - a.length)
+    prepared = _replaceBareReferencesOutsideQuotes(prepared, uniqueBareRefs, valuesByFieldId)
+    if (prepared === null) return null
+
+    try {
+      const result = Function("iif", "score", "contains", "hasValue", "countTrue", "daysSince", "monthsSince", "today", "durationBetween", "durationText", "weekdaysBetween", "floor", "mod", "round", "power", "ln", "exp", "coalesce", "text", "min", "max", \`"use strict"; return (\${prepared});\`)(
+        _iif,
+        _score,
+        _contains,
+        _hasValue,
+        _countTrue,
+        _daysSince,
+        _monthsSince,
+        _today,
+        _durationBetween,
+        _durationText,
+        _weekdaysBetween,
+        _floor,
+        _mod,
+        _round,
+        _power,
+        _ln,
+        _exp,
+        _coalesce,
+        _text,
+        _min,
+        _max
+      )
+      if (typeof result === "number") return Number.isFinite(result) ? result : null
+      if (typeof result === "string" || typeof result === "boolean") return result
+      return null
+    } catch (error) {
+      return null
+    }
+  }
+
+  const _hasAllReferencedValues = (expression, valuesByFieldId) => {
+    const refs = _extractComputedReferences(String(expression || ""))
+      .filter((ref) => !_COMPUTED_NON_FIELD_IDENTIFIERS.has(ref))
+    if (refs.length === 0) return true
+    // Controls such as ScaleField initialize an object-shaped value before the
+    // user selects an answer. Check the object's comparable value so an empty
+    // { selectedKey: null, value: null, response: null } is still incomplete,
+    // while valid zero-valued answers count as answered.
+    return Array.from(new Set(refs)).every((ref) =>
+      _hasValue(_toComparableValue(valuesByFieldId?.[ref]))
+    )
+  }
+
+  return {
+    evaluate: _evaluateComputedExpression,
+    extractReferences: _extractComputedReferences,
+    hasAllReferencedValues: _hasAllReferencedValues,
+    toNumericValue: _toNumericValue,
+    toComparableValue: _toComparableValue,
+    hasValue: _hasValue,
+    roundValue: _roundComputedValue,
+  }
+})()
 `,
   './Goals/index.jsx': `
 // Handle 2.25.12 case where Allergies is a predefined component
@@ -26287,19 +28124,27 @@ const PatientContextDiagnostics = ({
 `,
   './PatientContextQueryTest/index.jsx': `// Portable suite executor: embedded with this component in exported MOIS forms.
 // Uses only the host GraphQL transport and the live schema. No endpoint guessing.
-const runPatientContextVariantSuite = async ({ request, patientId, patient, sourceProfile, context, plan, previous, active, emit, uncertain, uploadAttachment }) => {
+const runPatientContextVariantSuite = async ({ request, patientId, patient, sourceProfile, context, plan, previous, active, emit, uncertain, uploadAttachment, priorProfiles = [] }) => {
   const clone = (v) => v === undefined ? undefined : JSON.parse(JSON.stringify(v))
   const subset = (actual, expected) => Array.isArray(expected) ? Array.isArray(actual) && actual.length === expected.length && expected.every((x, i) => subset(actual[i], x)) : expected && typeof expected === "object" ? Boolean(actual && Object.keys(expected).every((k) => Object.prototype.hasOwnProperty.call(actual, k) && subset(actual[k], expected[k]))) : actual === expected
+  // Same-day date strings may come back with a time part; record the normalization instead of failing.
+  const dateEquivalent = (actual, expected) => typeof actual === "string" && typeof expected === "string" && /^\\d{4}-\\d{2}-\\d{2}/.test(actual) && /^\\d{4}-\\d{2}-\\d{2}/.test(expected) && (expected.length === 10 ? actual.slice(0, 10) === expected : actual.slice(0, 19) === expected.slice(0, 19) || (!Number.isNaN(Date.parse(actual)) && Date.parse(actual) === Date.parse(expected)))
+  // A created child/record ID supplied as 0 is matched by any generated ID.
+  const seedMatch = (actual, expected, key = "") => Array.isArray(expected) ? Array.isArray(actual) && actual.length === expected.length && expected.every((x, i) => seedMatch(actual[i], x)) : expected && typeof expected === "object" ? Boolean(actual && Object.keys(expected).every((k) => Object.prototype.hasOwnProperty.call(actual, k) && seedMatch(actual[k], expected[k], k))) : expected === 0 && /Id$/.test(key) ? Number.isSafeInteger(Number(actual)) && Number(actual) >= 0 : actual === expected || dateEquivalent(actual, expected)
   const same = (a, b) => JSON.stringify(normalize(a)) === JSON.stringify(normalize(b))
   const normalize = (v) => Array.isArray(v) ? v.map(normalize) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).filter((k) => k !== "__typename").sort().map((k) => [k, normalize(v[k])])) : v
   const named = (t) => t?.ofType ? named(t.ofType) : t
   const typeText = (t) => t.kind === "NON_NULL" ? typeText(t.ofType) + "!" : t.kind === "LIST" ? "[" + typeText(t.ofType) + "]" : t.name
   if (!plan?.profiles?.length) throw new Error("Re-export the updated diagnostics sample to include the comprehensive test plan")
-  const suite = previous || { revision: plan.revision, status: "Running", cases: [], ids: {}, origins: {}, created: [], fieldCoverage: [], manualCases: plan.manualCases, startedAt: new Date().toISOString() }
+  if (previous?.patientId != null && Number(previous.patientId) !== patientId) throw new Error("Saved suite progress belongs to another patient; no suite writes sent")
+  const suite = previous || { revision: plan.revision, patientId, status: "Running", cases: [], ids: {}, origins: {}, created: [], fieldCoverage: [], manualCases: plan.manualCases, startedAt: new Date().toISOString() }
+  suite.patientId = patientId; suite.status = "Running"
   const ctx = { ...context }, ids = suite.ids
+  const prior = new Set(priorProfiles || [])
   const notify = () => { if (active()) emit({ ...suite, cases: [...suite.cases], ids: { ...ids } }) }
   const record = (row) => { const i = suite.cases.findIndex((x) => x.id === row.id); if (i < 0) suite.cases.push(row); else suite.cases[i] = row; notify(); return row }
-  const done = (id) => suite.cases.some((x) => x.id === id && !["Needs context", "Pending", "Running"].includes(x.status))
+  // A case is retried only when no request was sent for it; sent cases are never repeated automatically.
+  const done = (id) => suite.cases.some((x) => x.id === id && (x.sent || !["Needs context", "Pending", "Running", "Stopped before result"].includes(x.status)))
   const fail = (reason) => { throw new Error(reason) }
   const positive = (v) => Number.isSafeInteger(Number(v)) && Number(v) > 0
   let mutationCount = 0
@@ -26359,7 +28204,7 @@ const runPatientContextVariantSuite = async ({ request, patientId, patient, sour
   }
   const init = { id: "context", status: "Running", variant: "read context" }; record(init)
   try {
-    const charts = (await call("patient", { id: patientId }, "patientId conditions { condition { code display system } certainty { code display system } } encounters { encounterId providerId } serviceEpisodes { serviceEpisodeId service { code display system } serviceMrp { code display system } serviceMrpId serviceEvents { service { code display system } } }", false, "Context")).patient
+    const charts = (await call("patient", { id: patientId }, "patientId conditions { condition { code display system } certainty { code display system } } encounters { encounterId providerId status { code display system } } serviceEpisodes { serviceEpisodeId service { code display system } serviceMrp { code display system } serviceMrpId serviceEvents { service { code display system } } }", false, "Context")).patient
     if (charts?.length !== 1 || Number(charts[0].patientId) !== patientId) fail("Requested patient not uniquely returned")
     const chart = charts[0]
     const requestedEncounter = ctx.encounterId || patient?.encounterId
@@ -26377,6 +28222,9 @@ const runPatientContextVariantSuite = async ({ request, patientId, patient, sour
     const episode = chart.serviceEpisodes?.find((x) => x.service?.code && positive(x.serviceMrpId) && x.serviceMrp?.system === "MOIS.USER" && String(x.serviceMrp.code) === String(x.serviceMrpId))
     if (episode) { ctx.service ??= episode.service; ctx.serviceMrp ??= episode.serviceMrp; ctx.serviceMrpId ??= episode.serviceMrpId }
     ctx.eventService ??= chart.serviceEpisodes?.flatMap((x) => x.serviceEvents || []).find((x) => x.service?.code)?.service
+    // Status codings already used on this patient's encounters are instance-valid candidates.
+    const statuses = (chart.encounters || []).map((x) => x.status).filter((x) => x?.code && x?.system)
+    ctx.appointmentStatusCandidates = statuses.filter((x, i) => statuses.findIndex((y) => y.code === x.code && y.system === x.system) === i).map(clone)
     init.status = "Read verified"; init.contextFields = Object.keys(ctx); suite.context = clone(ctx)
   } catch (e) { init.status = "Needs context"; init.error = e.message; record(init); fail("Context verification failed; no suite writes sent: " + e.message) }
   record(init)
@@ -26393,9 +28241,7 @@ const runPatientContextVariantSuite = async ({ request, patientId, patient, sour
     if (a && b && typeof a === "object" && typeof b === "object" && !Array.isArray(a) && !Array.isArray(b)) return [...new Set([...Object.keys(a), ...Object.keys(b)])].flatMap((k) => diffs(a[k], b[k], prefix ? prefix + "." + k : k))
     return [prefix || "record"]
   }
-  for (const p of plan.profiles) {
-    if (!active() || uncertain()) break
-    const marker = suite.origins[p.key]?.marker || \`WEBFORMS TEST \${Date.now().toString(36)} \${p.key}\`
+  const tools = (p, marker) => {
     const fields = selection(p.type)
     const read = async (id = ids[p.key]) => {
       let wrapped = fields
@@ -26423,6 +28269,19 @@ const runPatientContextVariantSuite = async ({ request, patientId, patient, sour
       return { ...(op.args.some((a) => a.name === "patientId") ? { patientId } : {}), ...refValue(create ? p.extraCreateArgs || p.extraArgs || {} : p.extraArgs || {}, marker, ids[p.key]), [arg]: (create ? p.inputList : p.updateList || p.inputList) ? [payload] : payload }
     }
     const inputArg = (create = false) => mutations.get(create ? p.create : p.update)?.args.find((a) => a.name === (create ? p.inputArg : p.updateArg || p.inputArg))
+    return { fields, read, mutArgs, inputArg }
+  }
+  // Nested child/back-reference IDs become 0 so a cloned row is submitted as new.
+  const zeroNestedIds = (value, depth = 0) => Array.isArray(value) ? value.map((x) => zeroNestedIds(x, depth + 1)) : value && typeof value === "object" ? Object.fromEntries(Object.entries(value).map(([k, x]) => [k, depth > 0 && /Id$/.test(k) && k !== "patientId" && positive(x) ? 0 : zeroNestedIds(x, depth + 1)])) : value
+  for (const [profileIndex, p] of plan.profiles.entries()) {
+    if (!active() || uncertain()) break
+    suite.progress = { group: profileIndex + 1, groups: plan.profiles.length, key: p.key }; notify()
+    if (prior.has(p.key) && !suite.cases.some((x) => x.profile === p.key)) {
+      record({ id: p.key + ".earlier-load", profile: p.key, status: "Skipped: started in an earlier load of this form", reason: "This browser recorded requests for this test group in an earlier load. They are not repeated, to avoid duplicate records and restoring to an intermediate value. Reconcile with that load's evidence file." })
+      continue
+    }
+    const marker = suite.origins[p.key]?.marker || \`WEBFORMS TEST \${Date.now().toString(36)} \${p.key}\`
+    const { fields, read, mutArgs, inputArg } = tools(p, marker)
     let origin = suite.origins[p.key], rows
     try {
       if (!fields) fail("No readable output fields")
@@ -26434,7 +28293,15 @@ const runPatientContextVariantSuite = async ({ request, patientId, patient, sour
         let row = { id, profile: p.key, operation: p.create, variant: "create " + mode, status: "Running", sent: false }; record(row)
         const before = rows
         try {
-          const seed = refValue(p.seed, marker + " " + mode)
+          let seed
+          if (mode === "clone-existing") {
+            // Copy every input-supported field of an existing positive-ID row, then
+            // replace identity/marker fields. Tests whether a complete shape creates.
+            const source = before.find((r) => positive(r[p.id]))
+            if (!source) { row.status = "Needs context"; row.reason = "No existing positive-ID row to clone"; record(row); continue }
+            seed = { ...zeroNestedIds(copyInput(source, named(inputArg(true)?.type))), ...refValue(p.seed, marker + " " + mode) }
+            seed[p.id] = 0; row.clonedFrom = Number(source[p.id])
+          } else seed = refValue(p.seed, marker + " " + mode)
           if (mode === "zero") seed[p.id] = 0
           if (mode === "null") seed[p.id] = null
           if (mode === "omitted") delete seed[p.id]
@@ -26457,8 +28324,8 @@ const runPatientContextVariantSuite = async ({ request, patientId, patient, sour
           const candidates = rows.filter((r) => positive(r[p.id]) && !beforeIds.has(Number(r[p.id])) && (p.key === "events" ? Number(r.serviceEpisodeId) === ids.episodes && Number(r.objectId) === ctx.encounterId && r.objectType === seed.objectType && subset(r.service, seed.service) : scalarMarkers.length && scalarMarkers.every((k) => r[k] === seed[k])))
           const preserved = before.every((r) => same(withoutAudit(r), withoutAudit(rows.find((x) => Number(x[p.id]) === Number(r[p.id])))))
           if (candidates.length === 1 && rows.length === before.length + 1 && preserved) {
-            const created = candidates[0]; ids[p.key] ||= Number(created[p.id]); row.inputChecks = Object.keys(seed).filter((k) => k !== p.id).map((k) => ({ field: k, matched: subset(created[k], seed[k]) })); row.status = row.inputChecks.every((x) => x.matched) ? error ? "Create verified after mutation error" : "Create verified" : "Created record identified; supplied fields differ"; row.recordId = Number(created[p.id]); row.changedFields = scalarMarkers
-            suite.created.push({ profile: p.key, id: row.recordId, key: p.id, cleanup: p.delete ? "Pending deletion" : "No dedicated delete recipe; retained" })
+            const created = candidates[0]; ids[p.key] ||= Number(created[p.id]); row.inputChecks = Object.keys(seed).filter((k) => k !== p.id).map((k) => ({ field: k, matched: seedMatch(created[k], seed[k], k) })); row.status = row.inputChecks.every((x) => x.matched) ? error ? "Create verified after mutation error" : "Create verified" : "Created record identified; supplied fields differ"; row.recordId = Number(created[p.id]); row.changedFields = scalarMarkers
+            suite.created.push({ profile: p.key, id: row.recordId, key: p.id, cleanup: p.delete ? "Pending deletion" : p.negativeIdDelete ? "Pending negative-ID delete test" : "No dedicated delete recipe; retained" })
             if (!origin) { origin = { marker, record: clone(created), id: ids[p.key] }; suite.origins[p.key] = origin }
           } else if (same(withoutAudit(rows), withoutAudit(before))) { row.status = error ? "Rejected; selected read unchanged" : "Create not verified" }
           else { row.status = "Unexpected read changes; profile stopped"; row.stopProfile = true }
@@ -26473,6 +28340,10 @@ const runPatientContextVariantSuite = async ({ request, patientId, patient, sour
         if (selected) { ids[p.key] = Number(selected[p.id]); origin = { marker, record: clone(selected), id: ids[p.key], existing: true }; suite.origins[p.key] = origin }
       }
       if (!origin) { record({ id: p.key + ".variants", profile: p.key, status: "Needs context", reason: "No independently verified positive-ID record for field variants", variants: p.fields }); continue }
+      // Priority sequences (the pending task acknowledgement test) run before generic field variants.
+      const metadataFirst = Boolean(p.taskMetadata?.runBeforeFields)
+      if (metadataFirst) await taskMetadata(p, read, mutArgs, origin)
+      if (suite.cases.some((r) => r.profile === p.key && r.stopProfile) || uncertain()) continue
       for (const field of p.fields) {
         if (!active() || uncertain()) break
         const arg = inputArg(), inputType = named(arg?.type), spec = types.get(inputType?.name)?.inputFields?.find((f) => f.name === field)
@@ -26502,7 +28373,7 @@ const runPatientContextVariantSuite = async ({ request, patientId, patient, sour
       if (suite.cases.some((r) => r.profile === p.key && r.stopProfile) || uncertain()) continue
       if (p.nestedDosage) await nestedDosage(p, read, mutArgs, origin)
       if (p.healthIssues) await eventChildren(p, read, mutArgs, origin)
-      if (p.taskMetadata) await taskMetadata(p, read, mutArgs, origin)
+      if (p.taskMetadata && !metadataFirst) await taskMetadata(p, read, mutArgs, origin)
       if (p.encounterStatus) await appointmentStatus(p, read, origin)
       if (p.lifecycle) await formLifecycle(p, read, mutArgs, origin)
       if (p.download) await download(p, read)
@@ -26522,12 +28393,13 @@ const runPatientContextVariantSuite = async ({ request, patientId, patient, sour
     })
   }
   suite.fieldCoverage = [...mutations.values()].flatMap((op) => op.args.flatMap((arg) => inputPaths(arg.type).map((f) => {
-    const cases = suite.cases.filter((r) => r.operation === op.name && (r.field === f.path || r.nestedField === f.path))
+    const cases = suite.cases.filter((r) => r.operation === op.name && (r.field === f.path || r.nestedField === f.path || r.fields?.includes(f.path)))
     return { operation: op.name, argument: arg.name, field: f.path, variants: ["set", "change", "omit", ...(f.type.kind !== "NON_NULL" ? ["null"] : []), "restore"], cases: cases.map((r) => r.id), status: cases.some((r) => r.sent) ? "See individual outcomes" : "Not exercised; needs a fixture or dedicated semantic recipe" }
   })))
-  for (const p of [...plan.profiles].reverse().filter((p) => p.delete)) {
+  for (const p of [...plan.profiles].reverse().filter((p) => p.delete || p.negativeIdDelete)) {
     if (!active() || uncertain()) break
     if (suite.cases.some((r) => r.profile === p.key && r.stopProfile)) continue
+    if (p.negativeIdDelete) { await negativeIdDelete(p); continue }
     for (const created of suite.created.filter((x) => x.profile === p.key)) {
       const id = \`\${p.key}.delete.\${created.id}\`
       if (done(id)) continue
@@ -26556,16 +28428,52 @@ const runPatientContextVariantSuite = async ({ request, patientId, patient, sour
   suite.status = !active() ? "Stopped" : uncertain() ? "Stopped: uncertain write; inspect before further mutations" : "Finished; inspect failures and prerequisites"
   suite.completedAt = new Date().toISOString(); notify(); return suite
 
+  // Vendor test forms delete connections/preferences by sending only the negated ID
+  // (mois-module-writes "Record-ID conventions"). Only records created by this suite
+  // are targeted, and an independent read decides the outcome.
+  async function negativeIdDelete(p) {
+    const origin = suite.origins[p.key], { read, mutArgs } = tools(p, origin?.marker || "")
+    for (const created of suite.created.filter((x) => x.profile === p.key)) {
+      const id = \`\${p.key}.negative-id-delete.\${created.id}\`
+      if (done(id)) continue
+      if (!active() || uncertain()) break
+      const row = { id, profile: p.key, operation: p.update, variant: "negative-ID delete (vendor convention)", recordId: created.id, status: "Running", sent: false }; record(row)
+      try {
+        const before = await read(), target = before.find((r) => Number(r[p.id]) === created.id)
+        if (!target) fail("Test record not present before delete")
+        let error
+        const sentBefore = mutationCount
+        try { await call(p.update, mutArgs({ [p.id]: -created.id }), "__typename", true, "NegativeDelete") } catch (e) { error = e.message }
+        row.sent = mutationCount > sentBefore
+        if (!row.sent) { row.status = "Needs context"; row.error = error; record(row); continue }
+        const after = await read(), still = after.find((r) => Number(r[p.id]) === created.id)
+        const othersPreserved = before.filter((r) => Number(r[p.id]) !== created.id).every((r) => same(withoutAudit(r), withoutAudit(after.find((x) => Number(x[p.id]) === Number(r[p.id])))))
+        row.otherRecordsPreserved = othersPreserved
+        if (still) row.retainedChangedPaths = diffs(withoutAudit(target), withoutAudit(still))
+        row.status = uncertain() ? "Outcome requires inspection" : !still && othersPreserved ? "Negative-ID delete verified" : !still ? "Record absent but other rows changed; inspect" : row.retainedChangedPaths.length ? "Record retained with changes; inspect stop/state fields" : error ? "Rejected; record unchanged" : "Record retained unchanged; negative-ID delete not supported here"
+        row.reason = "Absence on independent collection read; soft deletion, history and desktop display remain separate"
+        if (error) row.error = error
+        created.cleanup = row.status
+      } catch (e) { row.status = row.sent ? "Outcome requires inspection" : "Needs context"; row.error = e.message }
+      record(row)
+    }
+  }
   function fieldsForMutation(operation, type, fields) { return named(mutations.get(operation)?.type)?.name === type ? fields : "__typename" }
+  // \`field\` may be one input field or an array changed together (for example a
+  // task's name/date pair); \`variant.values\` then maps each field to its value.
   async function change(p, field, variant, caseId, read, mutArgs, origin) {
-    const row = { id: caseId, profile: p.key, operation: p.update, field, nestedField: variant.nestedField, variant: variant.variant, status: "Running", sent: false }; record(row)
+    const targets = Array.isArray(field) ? field : [field]
+    const want = (f) => variant.values ? variant.values[f] : variant.value
+    const row = { id: caseId, profile: p.key, operation: p.update, field: targets.join("+"), ...(targets.length > 1 ? { fields: targets } : {}), nestedField: variant.nestedField, variant: variant.variant, status: "Running", sent: false }; record(row)
     try {
       const before = await read(), recordBefore = before.find((r) => Number(r[p.id]) === origin.id)
       if (!recordBefore) fail("Target missing from fresh read")
       const arg = mutations.get(p.update)?.args.find((a) => a.name === (p.updateArg || p.inputArg)), payload = copyInput(recordBefore, { ...named(arg?.type) })
       if (variant.prepare) variant.value = variant.prepare(clone(payload))
-      if (variant.variant === "omit") { if (recordBefore[field] == null) { row.status = "Not applicable: omitted field already null"; record(row); return row }; delete payload[field] }
-      else { if (same(recordBefore[field], variant.value)) { row.status = "Not applicable: requested value already present"; record(row); return row }; payload[field] = clone(variant.value) }
+      if (variant.variant === "omit") { if (targets.every((f) => recordBefore[f] == null)) { row.status = "Not applicable: omitted field already null"; record(row); return row }; for (const f of targets) delete payload[f] }
+      else { if (targets.every((f) => same(recordBefore[f], want(f)))) { row.status = "Not applicable: requested value already present"; record(row); return row }; for (const f of targets) payload[f] = clone(want(f)) }
+      row.baselineValues = Object.fromEntries(targets.map((f) => [f, clone(recordBefore[f])]))
+      row.sentValues = variant.variant === "omit" ? { omitted: targets } : Object.fromEntries(targets.map((f) => [f, clone(want(f))]))
       let error
       const sentBefore = mutationCount
       try { await call(p.update, mutArgs(payload), fieldsForMutation(p.update, p.type, selection(p.type)), true, "Change") } catch (e) { error = e.message }
@@ -26573,22 +28481,30 @@ const runPatientContextVariantSuite = async ({ request, patientId, patient, sour
       if (!row.sent) { row.status = "Needs context"; row.error = error; record(row); return row }
       const after = await read(), recordAfter = after.find((r) => Number(r[p.id]) === origin.id)
       if (!recordAfter) fail("Target missing after write")
+      row.readBackValues = Object.fromEntries(targets.map((f) => [f, clone(recordAfter[f])]))
       const changed = diffs(withoutAudit(recordBefore), withoutAudit(recordAfter)); row.changedPaths = changed
       const otherPreserved = before.length === after.length && before.every((r) => {
         const found = after.find((x) => Number(x[p.id]) === Number(r[p.id])); if (!found) return false
         if (Number(r[p.id]) !== origin.id) return same(withoutAudit(r), withoutAudit(found))
-        const a = withoutAudit(r), b = withoutAudit(found); delete a[field]; delete b[field]; return same(a, b)
+        const a = withoutAudit(r), b = withoutAudit(found); for (const f of targets) { delete a[f]; delete b[f] }; return same(a, b)
       })
       row.otherSelectedFieldsAndMembershipPreserved = otherPreserved
       row.auditChangedPaths = diffs(recordBefore.stamp, recordAfter.stamp, "stamp")
       if (uncertain()) fail("Write timed out; read cannot settle eventual persistence")
+      const matches = (f) => {
+        if (variant.expectPreserved) return same(recordAfter[f], recordBefore[f])
+        if (variant.generatedChildren) return matchEventChildren(recordAfter[f], variant.value, recordBefore[f], origin.id)
+        if (subset(recordAfter[f], want(f))) return true
+        if (dateEquivalent(recordAfter[f], want(f))) { (row.normalized ||= []).push({ field: f, sent: want(f), read: recordAfter[f] }); return true }
+        return false
+      }
       if (!otherPreserved) { row.status = "Unexpected changes; profile stopped"; row.stopProfile = true }
       else if (error && same(withoutAudit(recordBefore), withoutAudit(recordAfter))) row.status = "Rejected; selected read unchanged"
-      else if (variant.variant === "omit") row.status = same(recordBefore[field], recordAfter[field]) ? "Omission preserved value" : recordAfter[field] === null ? "Omission cleared value" : "Omission changed value"
-      else if (variant.expectPreserved ? same(recordAfter[field], recordBefore[field]) : variant.generatedChildren ? matchEventChildren(recordAfter[field], variant.value, recordBefore[field], origin.id) : subset(recordAfter[field], variant.value)) row.status = error ? "Write verified after mutation error" : variant.expectPreserved ? "Null preserved value" : variant.variant === "restore" ? "Restoration verified" : "Write verified"
+      else if (variant.variant === "omit") row.status = targets.every((f) => same(recordBefore[f], recordAfter[f])) ? "Omission preserved value" : targets.every((f) => recordAfter[f] === null) ? "Omission cleared value" : "Omission changed value"
+      else if (targets.every(matches)) row.status = error ? "Write verified after mutation error" : variant.expectPreserved ? "Null preserved value" : variant.variant === "restore" ? "Restoration verified" : "Write verified"
       else if (same(recordBefore, recordAfter) || same(withoutAudit(recordBefore), withoutAudit(recordAfter))) row.status = error ? "Rejected; selected read unchanged" : "Write not applied"
       else { row.status = "Unexpected field value; profile stopped"; row.stopProfile = true }
-      if (variant.variant === "restore" && !same(withoutAudit(recordAfter[field]), withoutAudit(origin.record[field]))) row.stopProfile = true
+      if (variant.variant === "restore" && targets.some((f) => !same(withoutAudit(recordAfter[f]), withoutAudit(origin.record[f])))) row.stopProfile = true
       if (error) row.error = error
     } catch (e) { row.status = row.sent ? "Outcome requires inspection" : "Needs context"; row.error = e.message; row.stopProfile = Boolean(row.sent) }
     record(row); return row
@@ -26664,36 +28580,59 @@ const runPatientContextVariantSuite = async ({ request, patientId, patient, sour
       } catch (e) { binary.status = "Read failed"; binary.error = e.message } record(binary)
     } catch (e) { row.status = row.sent ? "Outcome requires inspection" : "Needs context"; row.error = e.message; record(row) }
   }
+  // Task status metadata while both flags are Y. The plan orders the pending focused-52
+  // case first: set acknowledgedBy + acknowledgedDate together (with completion
+  // metadata populated, as in 51), independent read, populated-value omission,
+  // explicit-null clear, set again, restore; then completion pair and single fields.
   async function taskMetadata(p, read, mutArgs, origin) {
+    const spec = p.taskMetadata && typeof p.taskMetadata === "object" ? p.taskMetadata : {}
     const yes = { code: "Y", display: "Yes", system: "MOIS-YESNO" }
-    const flags = ["isAcknowledged", "isComplete"]
-    const metadata = ["acknowledgedBy", "acknowledgedDate", "completedBy", "completedDate"]
-    const step = async (field, variant, value) => {
-      const id = \`\${p.key}.workflow.\${field}.\${variant}\`
+    const flags = spec.flags || ["isAcknowledged", "isComplete"]
+    const pairs = spec.pairs || { acknowledgement: ["acknowledgedBy", "acknowledgedDate"], completion: ["completedBy", "completedDate"] }
+    const sequence = spec.sequence || [{ pair: "completion", variants: ["set"] }, { pair: "acknowledgement", variants: ["set", "omit", "null", "set-again", "restore"] }, { pair: "completion", variants: ["omit", "null", "set-again", "restore"] }]
+    const singles = spec.singleFieldVariants || ["set", "omit", "null", "restore"]
+    const metadata = [...new Set(Object.values(pairs).flat())]
+    const step = async (field, id, variant) => {
       if (done(id)) return true
       if (!active() || uncertain()) return false
-      const result = await change(p, field, { variant, value }, id, read, mutArgs, origin)
+      const result = await change(p, field, variant, id, read, mutArgs, origin)
       return !result.stopProfile
     }
     if (!ctx.userName) { record({ id: p.key + ".workflow.profile", profile: p.key, status: "Needs context", reason: "Needs current profile display name" }); return }
-    for (const f of flags) if (!await step(f, "enable", yes)) return
+    const missing = [...flags, ...metadata].filter((f) => !(f in origin.record))
+    if (missing.length) { record({ id: p.key + ".workflow.fields", profile: p.key, status: "Needs context", reason: "Not in selected task output: " + missing.join(", ") }); return }
+    for (const f of flags) if (!await step(f, \`\${p.key}.workflow.\${f}.enable\`, { variant: "enable", value: yes })) return
     const current = (await read()).find((r) => Number(r[p.id]) === origin.id)
     if (!flags.every((f) => current?.[f]?.code === "Y")) { record({ id: p.key + ".workflow.prerequisite", profile: p.key, status: "Needs context", reason: "Both flags must independently read Y before metadata-under-completion variants" }); return }
-    if (!ctx.userName) { record({ id: p.key + ".workflow.profile", profile: p.key, status: "Needs context", reason: "Needs current profile display name" }); return }
-    for (const f of metadata) {
-      const value = f.endsWith("By") ? ctx.userName : new Date().toISOString().slice(0, 10)
-      for (const [variant, next] of [["set", value], ["omit", undefined], ["null", null], ["set-again", value], ["restore", origin.record[f]]]) if (!await step(f, variant, next)) return
+    const today = new Date().toISOString().slice(0, 10)
+    const valueFor = (f, variant) => variant === "null" ? null : variant === "restore" ? clone(origin.record[f] ?? null) : f.endsWith("By") ? ctx.userName : today
+    for (const { pair, variants } of sequence) {
+      const fields = pairs[pair]
+      if (!fields?.length) continue
+      for (const v of variants) {
+        const variant = v === "omit" ? { variant: "omit" } : { variant: v, values: Object.fromEntries(fields.map((f) => [f, valueFor(f, v)])) }
+        if (!await step(fields, \`\${p.key}.workflow.\${pair}.\${v}\`, variant)) return
+      }
     }
-    for (const f of [...flags].reverse()) if (!await step(f, "restore", origin.record[f])) return
+    for (const f of metadata) for (const v of singles) {
+      const variant = v === "omit" ? { variant: "omit" } : { variant: v, value: valueFor(f, v) }
+      if (!await step(f, \`\${p.key}.workflow.\${f}.\${v}\`, variant)) return
+    }
+    for (const f of [...flags].reverse()) if (!await step(f, \`\${p.key}.workflow.\${f}.restore\`, { variant: "restore", value: origin.record[f] })) return
   }
   async function appointmentStatus(p, read, origin) {
     // Codes come from the current instance/context. Do not invent a status or use the active encounter.
-    const coding = ctx.appointmentStatus
+    // Preference: explicit Test context, then a coding already used on this patient's
+    // encounters, then the D / MOIS-ENCOUNTERSTATUS pair the SMOIS 2.30.31 bundle sends.
+    const differs = (x) => x?.code && x?.system && !(origin.record.status?.code === x.code && origin.record.status?.system === x.system)
+    const discovered = (ctx.appointmentStatusCandidates || []).find(differs)
+    const coding = ctx.appointmentStatus || discovered || { code: "D", system: "MOIS-ENCOUNTERSTATUS" }
+    const codingSource = ctx.appointmentStatus ? "Test context" : discovered ? "Existing encounter status on this patient" : "SMOIS bundle default (D / MOIS-ENCOUNTERSTATUS)"
     if (!coding?.code || !coding?.system) { record({ id: p.key + ".status.fixture", profile: p.key, operation: "updateEncounterStatus", status: "Needs context", reason: "Provide appointmentStatus with a valid current-instance coding; test targets only this suite's new appointment" }); return }
     for (const [variant, value] of [["set", coding], ["restore", origin.record.status]]) {
       const id = p.key + ".status." + variant; if (done(id)) continue
       if (!active() || uncertain()) break
-      const row = { id, profile: p.key, operation: "updateEncounterStatus", field: "appointmentStatus", variant, status: "Running", sent: false }; record(row)
+      const row = { id, profile: p.key, operation: "updateEncounterStatus", field: "appointmentStatus", variant, codingSource: variant === "set" ? codingSource : "Original status of this suite's appointment", status: "Running", sent: false }; record(row)
       try {
         if (!value || typeof value !== "object") fail("No original status coding to restore")
         const before = await read(), old = before.find((r) => Number(r[p.id]) === origin.id)
@@ -26742,6 +28681,18 @@ const runPatientContextVariantSuite = async ({ request, patientId, patient, sour
       if (!value) fail("Requested document not returned")
       row.status = value.encodedFile ? "File value returned; compare content" : "No file value returned"; row.characters = typeof value.encodedFile === "string" ? value.encodedFile.length : 0
     } catch (e) { row.status = "Needs context"; row.error = e.message } record(row)
+    // Read-only: a pre-existing document with a stored file path shows whether GraphQL returns real bytes.
+    const existingId = p.key + ".encodedFile.existing"; if (done(existingId) || !active()) return
+    const existing = { id: existingId, profile: p.key, variant: "read encodedFile of a pre-existing document with a file path (read-only)", operation: "document", status: "Running" }; record(existing)
+    try {
+      const chosen = (await read()).find((x) => positive(x[p.id]) && Number(x[p.id]) !== ids[p.key] && (x.pathname || x.secondaryPathname))
+      if (!chosen) fail("No pre-existing patient document with a file path; add a known attachment to test byte retrieval")
+      const result = await call("document", { patientId, id: Number(chosen.documentId) }, "documentId patientId pathname encodedFile", false, "FileExisting")
+      const value = result.document?.find((r) => Number(r.patientId) === patientId && Number(r.documentId) === Number(chosen.documentId))
+      if (!value) fail("Requested document not returned")
+      existing.recordId = Number(chosen.documentId); existing.characters = typeof value.encodedFile === "string" ? value.encodedFile.length : 0
+      existing.status = value.encodedFile ? "File value returned for an existing document; evidence keeps only its size and prefix" : "No file value returned for a document with a file path; alternate download route remains open"
+    } catch (e) { existing.status = "Needs context"; existing.error = e.message } record(existing)
   }
   async function correspondenceUpdate(p, read, origin) {
     const id = p.key + ".positive-id-update"; if (done(id)) return
@@ -26760,6 +28711,7 @@ const runPatientContextVariantSuite = async ({ request, patientId, patient, sour
 // (operationName, jwToken, apiServer, query, variables, statusSetter,
 //  resultCallback, errorDispatch, { formParams }) and returns data or null.
 // Use that host transport; never invent an endpoint or expose credentials.
+const PATIENT_CONTEXT_QUERY_TEST_VERSION = "2.1.0"
 const PatientContextQueryTest = ({ collections = [], writeTargets = [], suitePlan = null }) => {
   const sd = useSourceData()
   const patient = sd?.patient ?? sd?.queryResult?.patient?.[0]
@@ -26781,9 +28733,23 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [], suitePla
   const pendingWrites = React.useRef(0)
   const epoch = React.useRef(0)
   const busy = React.useRef(false)
+  // Wrong-patient guard: suite and second-window writes require an explicit
+  // confirmation for this exact patient ID; it resets whenever the chart changes.
+  const [confirmedPatient, setConfirmedPatient] = React.useState(null)
+  const [sessionTarget, setSessionTarget] = React.useState("")
+  const [sessionObservation, setSessionObservation] = React.useState("")
+  const [ledgerVersion, setLedgerVersion] = React.useState(0)
+  const confirmed = Boolean(confirmedPatient && confirmedPatient.patientId === patientId)
+  const revision = suitePlan?.revision || "2026-09-24.suite-2"
+  // Per-browser record of which test groups already sent requests, so re-clicking after
+  // an accidental close/reload never re-creates records. Values: group keys only.
+  const ledgerKey = \`webforms.patientContextSuite:\${String(auth.apiServer || "")}:\${patientId}:\${revision}\`
+  const readLedger = () => { try { const value = JSON.parse(window.localStorage.getItem(ledgerKey) || "null"); return value && typeof value === "object" && !Array.isArray(value) ? value : null } catch (_) { return null } }
+  const writeLedger = (value) => { try { if (value) window.localStorage.setItem(ledgerKey, JSON.stringify(value)); else window.localStorage.removeItem(ledgerKey) } catch (_) {} }
   React.useEffect(() => {
     if (pendingWrites.current) uncertainWrite.current = true
     exchanges.current = []; evidenceBytes.current = 0; evidenceTruncated.current = false
+    setConfirmedPatient(null); setSessionTarget(""); setSessionObservation("")
     setTestContext("{}")
     setWriteOverrides("{}")
     setWriteSelection("all")
@@ -26805,8 +28771,9 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [], suitePla
   const schemaQuery = \`query InspectPatientContextType($name: String!) { __type(name: $name) { name kind fields { name args { name defaultValue type { \${typeRef} } } type { \${typeRef} } } inputFields { name defaultValue type { \${typeRef} } } enumValues { name } } }\`
   const readableError = (value) => String(value || "Unknown query error").split(String(auth.jwToken || "\\u0000")).join("[redacted]").slice(0, 1200)
 
-  const run = async (mode = "reads") => {
-    if (!ready || busy.current || (["writes", "suite", "all"].includes(mode) && (uncertainWrite.current || pendingWrites.current))) return
+  const run = async (mode = "reads", options = {}) => {
+    if (!ready || busy.current || (["writes", "suite", "all", "session"].includes(mode) && (uncertainWrite.current || pendingWrites.current))) return
+    if (["all", "suite", "session"].includes(mode) && !confirmed) { setState((previous) => ({ ...previous, message: "Confirm that this chart is the designated MOIS test patient before running writes." })); return }
     busy.current = true
     const runId = ++epoch.current
     const active = () => epoch.current === runId
@@ -26821,15 +28788,28 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [], suitePla
     let phaseResults = [...(current.phaseResults || [])]
     let missingExploration = current.missingExploration || null
     let apiInventory = current.apiInventory || null
+    let sessionTests = current.sessionTests || { rows: [] }
+    let progress = null
+    // A stored ledger applies only when this form load has no in-memory progress of its own.
+    const earlierLoad = mode === "all" && !current.suiteResults && !(current.writeResults || []).some((row) => row.sent) ? readLedger() : null
+    const testPatient = { patientId, chartNumber: patient?.chartNumber ?? null, confirmedAt: confirmedPatient?.at || null }
     const update = (message, running = true) => {
-      if (active()) setState({ patientId, suiteResults, suitePhase, phaseResults, busy: mode === "all" ? true : running, message, rows: [...rows], hasRun: true, schemaFields, apiInventory, writeResults: [...writeResults], createdIds: { ...createdIds }, rootResults: [...rootResults], customResults: [...customResults], missingExploration })
+      if (active()) setState({ patientId, suiteResults, suitePhase, phaseResults, progress, sessionTests, testPatient, earlierLoad: earlierLoad || current.earlierLoad || null, busy: mode === "all" ? true : running, message, rows: [...rows], hasRun: true, schemaFields, apiInventory, writeResults: [...writeResults], createdIds: { ...createdIds }, rootResults: [...rootResults], customResults: [...customResults], missingExploration })
     }
+    const persistLedger = () => {
+      const existing = readLedger() || {}
+      const verifierOps = new Set(suitePlan?.verifierOperations || [])
+      writeLedger({ revision, patientId, updatedAt: new Date().toISOString(),
+        profiles: [...new Set([...(existing.profiles || []), ...(suiteResults?.cases || []).filter((row) => row.sent && row.profile).map((row) => row.profile)])],
+        verifierOps: [...new Set([...(existing.verifierOps || []), ...writeResults.filter((row) => row.sent && row.phase === "verifiers" && verifierOps.has(row.operation)).map((row) => row.operation)])] })
+    }
+    // Large file values (encodedFile) keep their size and a short prefix in the evidence.
     const redact = (value) => {
-      const text = JSON.stringify(value, (key, item) => /jwToken|authorization|password|secret|accessToken|refreshToken/i.test(key) ? "[redacted]" : item)
+      const text = JSON.stringify(value, (key, item) => /jwToken|authorization|password|secret|accessToken|refreshToken|cookie/i.test(key) ? "[redacted]" : typeof item === "string" && item.length > 200000 ? { truncatedString: true, characters: item.length, prefix: item.slice(0, 120) } : item)
       return text ? JSON.parse(text.split(String(auth.jwToken || "\\u0000")).join("[redacted]")) : value
     }
     const capture = (entry) => {
-      if (!active() || mode !== "all" && mode !== "suite") return
+      if (!active() || mode !== "all" && mode !== "suite" && mode !== "session") return
       const safe = redact(entry), size = JSON.stringify(safe).length
       if (evidenceBytes.current + size > 25000000) { evidenceTruncated.current = true; return }
       exchanges.current.push(safe); evidenceBytes.current += size
@@ -26882,11 +28862,138 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [], suitePla
         throw e
       } finally { clearTimeout(timer) }
     }
+    // Optional second-window checks. Never part of Run all remaining tests. Window A
+    // creates and owns one disposable draft; window B may only write to a draft whose
+    // saved answers carry this tool's sessionTestFixture flag on the same patient.
+    const sessionStep = async (step) => {
+      const me = Number(sd?.userProfile?.userProfileId || settings?.userProfile?.userProfileId) || null
+      const windowRole = step === "lock-observe" ? "this window" : step.startsWith("B") ? "B (second window)" : "A (first window)"
+      const row = { step, window: windowRole, userProfileId: me, startedAt: new Date().toISOString(), status: "Running", sent: false }
+      const commit = (message) => { sessionTests = { ...sessionTests, rows: [...sessionTests.rows.filter((x) => x !== row), row] }; update(message || \`Second-window step \${step}: \${row.status}\`, !message ? false : true) }
+      commit("Running second-window step " + step + "…")
+      const fields = "webformId webformDefinitionId patientId documentId encounterId isDraft isLockedToUser recordState userId classVersion { major minor patch } version { major minor patch } formdata note stamp { createUser modifyUser modifyTime }"
+      const readForm = async (id, tag) => {
+        const data = await request("SessionRead" + tag, \`query SessionRead\${tag}($id: Int!) { webform(id: $id) { \${fields} } }\`, { id })
+        const found = (data?.webform || []).filter((record) => Number(record.webformId) === id)
+        if (found.length !== 1) throw new Error("Form " + id + " was not uniquely returned")
+        if (Number(found[0].patientId) !== patientId) throw new Error("That form belongs to another patient; nothing was sent")
+        return found[0]
+      }
+      const answers = (record) => { try { const value = JSON.parse(record.formdata || "{}"); return value && typeof value === "object" && !Array.isArray(value) ? value : null } catch (_) { return null } }
+      const fixture = (record) => { const value = answers(record); if (!value || value.sessionTestFixture !== true) throw new Error("Target is not a disposable second-window draft created by this tool; nothing was sent"); return value }
+      const input = (record, formdata, extra = {}) => ({ ...Object.fromEntries(["webformId", "webformDefinitionId", "patientId", "documentId", "encounterId", "isDraft", "isLockedToUser", "note"].filter((key) => record[key] !== undefined && record[key] !== null).map((key) => [key, record[key]])), formdata, ...extra })
+      const write = async (webform, tag) => {
+        row.sent = true; row.input = webform
+        try { await request("SessionWrite" + tag, \`mutation SessionWrite\${tag}($webform: WebformInput!) { updateWebform(webform: $webform) { webformId } }\`, { webform }, true); return null } catch (error) { if (uncertainWrite.current) throw error; return readableError(error.message) }
+      }
+      const marker = (label) => \`WEBFORMS TEST \${Date.now().toString(36)} \${label}\`
+      const target = () => { const id = Number(sessionTarget || sessionTests.webformId); if (!Number.isSafeInteger(id) || id <= 0) throw new Error("Enter the disposable draft's form ID (shown in window A after step A1)"); return id }
+      try {
+        if (step === "lock-observe") {
+          const id = Number(sessionTarget) || Number(sd?.webform?.webformId || sd?.formParams?.webformId)
+          if (!Number.isSafeInteger(id) || id <= 0) throw new Error("Save this form once (or enter a saved form ID) so its lock state can be read")
+          row.formId = id; row.read = await readForm(id, "Lock")
+          row.hostSaysLocked = row.read.isLockedToUser
+          row.runtimeLockTest = typeof testLock === "function" ? (() => { try { return testLock() } catch (error) { return "testLock failed: " + error.message } })() : "testLock not exposed in this runtime"
+          row.observation = sessionObservation || "(not entered)"
+          row.status = "Observation recorded"
+        } else if (step === "A1") {
+          if (sessionTests.webformId || sessionTests.definitionId) throw new Error("This window already created a disposable draft/definition; run A6 before creating another")
+          const text = marker("second-window")
+          const name = "webforms_session_" + Date.now().toString(36)
+          const definition = { webformDefinitionId: 0, name, title: text, owner: "WEBFORMS TEST", active: "N", type: "ATTACHMENT", buildVersion: new Date().toISOString().slice(0, 10).replace(/-/g, ""), formVersion: { major: 1, minor: 0, patch: 0 }, formdataSchema: JSON.stringify({ type: "object", properties: { diagnostic: { type: "string" }, sessionA: { type: "string" }, sessionB: { type: "string" }, sessionB2: { type: "string" } } }) }
+          row.sent = true
+          const created = await request("SessionDefinition", "mutation SessionDefinition($webform: WebformDefinitionInput!) { addWebformDefinition(webform: $webform) { webformDefinitionId name } }", { webform: definition }, true)
+          const defs = (created?.addWebformDefinition || []).filter((record) => record.name === name && Number(record.webformDefinitionId) > 0)
+          if (defs.length !== 1) throw new Error("Definition creation did not return one positive ID; inspect before retrying")
+          const definitionId = Number(defs[0].webformDefinitionId)
+          sessionTests = { ...sessionTests, definitionId }
+          const check = await request("SessionDefinitionRead", "query SessionDefinitionRead($id: Int) { webformDefinition(id: $id) { webformDefinitionId name } }", { id: definitionId })
+          if (!(check?.webformDefinition || []).some((record) => Number(record.webformDefinitionId) === definitionId && record.name === name)) throw new Error("Created definition not found on independent read")
+          const draft = await request("SessionDraft", "mutation SessionDraft($webform: WebformInput!) { addWebform(webform: $webform) { webformId patientId documentId } }", { webform: { webformId: 0, webformDefinitionId: definitionId, patientId, isDraft: "Y", formdata: JSON.stringify({ sessionTestFixture: true, diagnostic: text, sessionA: null, sessionB: null, sessionB2: null }), note: text } }, true)
+          const forms = (draft?.addWebform || []).filter((record) => Number(record.webformId) > 0 && Number(record.patientId) === patientId)
+          if (forms.length !== 1) throw new Error("Draft creation did not return one positive ID; inspect before retrying")
+          const webformId = Number(forms[0].webformId)
+          sessionTests = { ...sessionTests, webformId, definitionId }
+          row.read = await readForm(webformId, "Created"); fixture(row.read)
+          sessionTests = { ...sessionTests, webformId, definitionId }
+          row.formId = webformId; row.definitionId = definitionId
+          row.status = "Disposable draft created and independently read; enter form ID " + webformId + " in window B"
+        } else if (step === "A2") {
+          const id = target(); const record = await readForm(id, "Baseline"); fixture(record)
+          sessionTests = { ...sessionTests, baseline: record, baselineAt: new Date().toISOString() }
+          row.formId = id; row.read = record; row.status = "Baseline held in this window; now run B1 in the second window"
+        } else if (step === "B1") {
+          const id = target(); const before = await readForm(id, "BeforeB"); const value = fixture(before)
+          const text = marker("window B")
+          const error = await write(input(before, JSON.stringify({ ...value, sessionB: text })), "B")
+          const after = await readForm(id, "AfterB"); row.formId = id; row.before = before; row.read = after; row.error = error
+          row.status = answers(after)?.sessionB === text ? "Window B answer persisted; now run A3 in window A" : error ? "Window B write rejected" : "Window B answer not found on independent read"
+        } else if (step === "A3") {
+          const baseline = sessionTests.baseline
+          if (!baseline) throw new Error("Run A2 in this window before B1, then A3")
+          const id = Number(baseline.webformId), fresh = await readForm(id, "BeforeStale")
+          row.interveningWriteObserved = fresh.formdata !== baseline.formdata
+          if (!row.interveningWriteObserved) throw new Error("No second-window change since the A2 baseline; run B1 in window B first")
+          const text = marker("window A stale")
+          const error = await write(input(baseline, JSON.stringify({ ...fixture(baseline), sessionA: text })), "StaleA")
+          const after = await readForm(id, "AfterStale"), result = answers(after) || {}
+          const hasA = result.sessionA === text, hasB = typeof result.sessionB === "string" && result.sessionB.startsWith("WEBFORMS TEST")
+          row.formId = id; row.before = fresh; row.read = after; row.error = error
+          row.status = error && !hasA && hasB ? "Stale write rejected; window B answer preserved" : hasA && hasB ? "Both answers present after the stale write" : hasA ? "Lost update: stale write replaced the window B answer" : "Outcome requires inspection"
+        } else if (step === "A4" || step === "A5") {
+          const id = target(); const before = await readForm(id, "BeforeLock"); fixture(before)
+          const lock = step === "A4" ? "Y" : "N"
+          const error = await write(input(before, before.formdata, { isLockedToUser: lock }), step === "A4" ? "Lock" : "Unlock")
+          const after = await readForm(id, "AfterLock"); row.formId = id; row.before = before; row.read = after; row.error = error
+          row.status = after.isLockedToUser === lock ? \`isLockedToUser=\${lock} persisted\` + (step === "A4" ? "; now run B2 in window B" : "") : error ? "Lock change rejected" : "Lock value not applied"
+        } else if (step === "B2") {
+          const id = target(); const before = await readForm(id, "BeforeLocked"); const value = fixture(before)
+          row.lockedBefore = before.isLockedToUser; row.sameUserAsFormUser = me != null && Number(before.userId) === me
+          if (before.isLockedToUser !== "Y") throw new Error("Draft is not locked (isLockedToUser is " + before.isLockedToUser + "); run A4 in window A first")
+          const text = marker("window B while locked")
+          const error = await write(input(before, JSON.stringify({ ...value, sessionB2: text }), { isLockedToUser: "Y" }), "Locked")
+          const after = await readForm(id, "AfterLocked"); row.formId = id; row.before = before; row.read = after; row.error = error
+          row.status = answers(after)?.sessionB2 === text ? "Write accepted while isLockedToUser=Y" : error ? "Write rejected while locked" : "Write not applied while locked"
+        } else if (step === "A6") {
+          const { webformId, definitionId } = sessionTests
+          if (!webformId && !definitionId) throw new Error("This window has no disposable draft to delete")
+          row.sent = true; row.deletions = []
+          if (webformId) {
+            fixture(await readForm(webformId, "BeforeDelete"))
+            let error = null; try { await request("SessionDeleteForm", "mutation SessionDeleteForm($webformId: Int!, $leaveOrphanDocument: Boolean) { deleteWebform(webformId: $webformId, leaveOrphanDocument: $leaveOrphanDocument) { webformId } }", { webformId, leaveOrphanDocument: false }, true) } catch (e) { if (uncertainWrite.current) throw e; error = readableError(e.message) }
+            const check = await request("SessionDeleteFormRead", "query SessionDeleteFormRead($id: Int!) { webform(id: $id) { webformId } }", { id: webformId })
+            row.deletions.push({ webformId, error, status: Array.isArray(check?.webform) && !check.webform.some((record) => Number(record.webformId) === webformId) ? "Delete verified" : "Delete unverified" })
+          }
+          if (definitionId) {
+            let error = null; try { await request("SessionDeleteDefinition", "mutation SessionDeleteDefinition($id: Int!) { deleteWebformDefinition(id: $id) { webformDefinitionId } }", { id: definitionId }, true) } catch (e) { if (uncertainWrite.current) throw e; error = readableError(e.message) }
+            const check = await request("SessionDeleteDefinitionRead", "query SessionDeleteDefinitionRead($id: Int) { webformDefinition(id: $id) { webformDefinitionId } }", { id: definitionId })
+            row.deletions.push({ definitionId, error, status: Array.isArray(check?.webformDefinition) && !check.webformDefinition.some((record) => Number(record.webformDefinitionId) === definitionId) ? "Delete verified" : "Delete unverified" })
+          }
+          row.status = row.deletions.every((entry) => entry.status === "Delete verified") ? "Disposable draft and definition deleted" : "Cleanup incomplete; inspect"
+          if (row.status.startsWith("Disposable")) sessionTests = { ...sessionTests, webformId: null, definitionId: null, baseline: null }
+        } else throw new Error("Unknown second-window step")
+      } catch (error) {
+        row.status = row.sent ? (uncertainWrite.current ? "Outcome unknown; do not repeat" : "Outcome requires inspection") : "Not sent: " + readableError(error.message)
+        row.error = readableError(error.message)
+      }
+      row.completedAt = new Date().toISOString()
+      commit()
+    }
     const executePhase = async (mode) => {
       if (mode === "reads") rows = []
       if (mode === "suite") {
-        suiteResults = await runPatientContextVariantSuite({ request, patientId, patient, sourceProfile: sd?.userProfile || settings?.userProfile, context: JSON.parse(testContext || "{}"), plan: suitePlan, previous: suiteResults, active, uploadAttachment, uncertain: () => uncertainWrite.current || pendingWrites.current > 0, emit: (value) => { suiteResults = value; update("Comprehensive variants: " + value.cases.length + " cases recorded") } })
+        suiteResults = await runPatientContextVariantSuite({ request, patientId, patient, sourceProfile: sd?.userProfile || settings?.userProfile, context: JSON.parse(testContext || "{}"), plan: suitePlan, previous: suiteResults, priorProfiles: earlierLoad?.profiles || [], active, uploadAttachment, uncertain: () => uncertainWrite.current || pendingWrites.current > 0, emit: (value) => {
+          suiteResults = value; persistLedger()
+          const last = value.cases[value.cases.length - 1]
+          progress = { ...progress, group: value.progress?.group, groups: value.progress?.groups, groupKey: value.progress?.key, cases: value.cases.length, last: last ? last.id + " — " + last.status : null }
+          update(\`\${progress.label || "Write variants"} · test group \${value.progress?.group || "—"} of \${value.progress?.groups || "—"}\${value.progress?.key ? " (" + value.progress.key + ")" : ""} · \${value.cases.length} cases recorded\`)
+        } })
         update(suiteResults.status, false)
+        return
+      }
+      if (mode === "session") {
+        await sessionStep(options.step)
         return
       }
       if (mode === "missing") {
@@ -27170,10 +29277,20 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [], suitePla
         update("Root query probes complete. These test the selected arguments and small scalar selections; returned records are not included in the report.", false)
         return
       }
-      if (mode === "writes") {
+      if (mode === "writes" || mode === "verifiers") {
         if (!apiInventory?.mutations?.length) throw new Error("Inspect read/write API first.")
+        // The one-click run re-exercises the corrected automatic verifiers (contact,
+        // nickname, resource, changed-field and dedicated deletes) with default inputs only.
+        const allowed = mode === "verifiers" ? suitePlan?.verifierOperations || [] : null
+        const selected = (name) => allowed ? allowed.includes(name) : writeSelection === "all" || writeSelection === name
+        if (allowed) {
+          // paperFormParametersRx may only use a prescription this run created, never an existing chart row.
+          const suitePrescription = (suiteResults?.created || []).find((entry) => entry.profile === "prescriptions" && Number(entry.id) > 0)
+          if (!createdIds.prescriptionId && suitePrescription) createdIds = { ...createdIds, prescriptionId: Number(suitePrescription.id) }
+          for (const operation of earlierLoad?.verifierOps || []) if (!writeResults.some((row) => row.operation === operation)) writeResults.push({ operation, phase: "verifiers", sentEarlierLoad: true, status: "Skipped: sent in an earlier load of this form; not repeated", verification: "Reconcile with that load's evidence file" })
+        }
         let overrides
-        try { overrides = JSON.parse(writeOverrides || "{}") } catch (_) { throw new Error("Write inputs must be a JSON object keyed by mutation name.") }
+        try { overrides = allowed ? {} : JSON.parse(writeOverrides || "{}") } catch (_) { throw new Error("Write inputs must be a JSON object keyed by mutation name.") }
         if (!overrides || Array.isArray(overrides) || typeof overrides !== "object") throw new Error("Write inputs must be a JSON object.")
         apiInventory = { ...apiInventory, executionStatus: "Write tests requested; see writeResults for actual outcomes" }
         const context = JSON.parse(testContext || "{}")
@@ -27245,7 +29362,11 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [], suitePla
             return { patientId, newContact: { ...Object.fromEntries(keys.filter((key) => Object.prototype.hasOwnProperty.call(contact, key)).map((key) => [key, contact[key]])), homeMessage: contact.homeMessage === "Y" ? "N" : "Y" } }
           },
           changePatientInsurance: () => ({ patientId, newInsurance: { insuranceNumber: "WF" + Date.now().toString(36).slice(-6) } }),
-          changePatientName: () => ({ patientId, newUsualName: { first: patient?.name?.first || "WEBFORMS", family: patient?.name?.family || "TEST" }, newNickName: { first: "WEBFORMS", family: "TEST", text: marker } }),
+          changePatientName: () => {
+            // The one-click verifier never substitutes a placeholder usual name.
+            if (allowed && (!patient?.name?.first || !patient?.name?.family)) throw new Error("Host patient first/family name unavailable; usual name cannot be preserved, so the nickname verifier was not sent")
+            return { patientId, newUsualName: { first: patient?.name?.first || "WEBFORMS", family: patient?.name?.family || "TEST" }, newNickName: { first: "WEBFORMS", family: "TEST", text: marker } }
+          },
           changePrescription: () => ({ patientId, prescription: { prescriptionId: 0, patientId, medication: marker, comment: "Synthetic test only", orderDate: date } }),
           changeFavouriteMedication: () => ({ favouriteMedication: { favouriteMedicationId: 0, medication: marker, comment: "Synthetic test only" } }),
           changePrescriptionLog: () => ({ patientId, prescriptionLog: { prescriptionLogId: 0, createdDate: now, method: marker, logItems: [{ prescriptionId: need("prescriptionId"), medication: marker }] } }),
@@ -27318,9 +29439,9 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [], suitePla
         for (const name of ordered) {
           if (!active()) break
           const op = discovered.get(name === "changeObservationPanels" ? "changeObservations" : name)
-          if (!op || (writeSelection !== "all" && writeSelection !== name)) continue
-          if (writeSelection === "all" && writeResults.some((result) => result.operation === name && result.sent)) continue
-          const row = { operation: name, graphqlField: op.name, status: "Preparing", marker, verification: "Not performed", cleanup: "Test data is retained unless a dedicated delete probe succeeds" }
+          if (!op || !selected(name)) continue
+          if ((allowed || writeSelection === "all") && writeResults.some((result) => result.operation === name && (result.sent || result.sentEarlierLoad))) continue
+          const row = { operation: name, graphqlField: op.name, ...(allowed ? { phase: "verifiers" } : {}), status: "Preparing", marker, verification: "Not performed", cleanup: "Test data is retained unless a dedicated delete probe succeeds" }
           writeResults.push(row)
           update(\`Preparing \${name}…\`)
           let sent = false
@@ -27401,6 +29522,7 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [], suitePla
             update(\`Writing \${name}…\`)
             sent = true
             row.sent = true
+            if (allowed) persistLedger()
             const data = await request("ProbeMoisWrite", row.query, vars, true)
             const result = data[op.name]
             const deletion = { deleteWebform: ["webform", "webformId", vars.webformId], deleteWebformDefinition: ["webformDefinition", "webformDefinitionId", vars.id], deleteEncounterCorrespondence: ["encounter", "correspondenceId", vars.correspondenceId] }[name]
@@ -27701,35 +29823,76 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [], suitePla
       update("Live checks complete. Results are from explicit reads, separate from the initial chart load.", false)
     }
     try {
-      const phases = mode === "all" ? ["api", "reads", "roots", "missing", "suite"] : [mode]
-      for (const phase of phases) {
+      const phases = mode === "all" ? ["api", "reads", "roots", "missing", "suite", "verifiers"] : [mode]
+      const labels = { api: "API discovery", reads: "Direct chart reads", roots: "Root queries", missing: "Missing-route exploration", suite: "Write variants", verifiers: "Corrected verifier re-run" }
+      for (const [index, phase] of phases.entries()) {
         if (!active()) break
         suitePhase = phase
+        progress = mode === "all" ? { phase, index: index + 1, phases: phases.length, label: \`Phase \${index + 1} of \${phases.length}: \${labels[phase]}\`, startedAt: progress?.startedAt || new Date().toISOString() } : null
         const phaseResult = { phase, status: "Running", startedAt: new Date().toISOString() }; phaseResults.push(phaseResult)
+        if (mode === "all") update(progress.label + "…")
+        if (["suite", "verifiers"].includes(phase) && (uncertainWrite.current || pendingWrites.current)) { phaseResult.status = "Skipped: an earlier write has an unknown outcome"; phaseResult.completedAt = new Date().toISOString(); continue }
+        if (phase === "verifiers" && phaseResults.some((entry) => entry.phase === "suite" && entry.status === "Failed" && /context|patient/i.test(entry.error || ""))) { phaseResult.status = "Skipped: the write-variant phase failed its patient/context check"; phaseResult.completedAt = new Date().toISOString(); continue }
         try { await executePhase(phase); phaseResult.status = "Finished; inspect case outcomes" } catch (error) {
           phaseResult.status = "Failed"; phaseResult.error = readableError(error.message)
           if (phase === "missing" && missingExploration) { missingExploration.error = readableError(error.message); missingExploration.status = "Exploration incomplete" }
           if (phase === "api" && apiInventory) apiInventory.error = readableError(error.message)
           update(readableError(error.message), false)
           if (mode !== "all") break
-        } finally { phaseResult.completedAt = new Date().toISOString(); if (mode === "all") update("Completed phase: " + phase, false) }
+        } finally { phaseResult.completedAt = new Date().toISOString(); if (mode === "all") update("Completed " + (labels[phase] || phase), false) }
       }
+      if (mode === "all" && progress) progress = { ...progress, finishedAt: new Date().toISOString(), label: "Run finished" }
     } finally {
-      if (active()) { busy.current = false; setState((previous) => ({ ...previous, busy: false, message: mode === "all" ? "Comprehensive run finished. Download full evidence JSON; review case outcomes and prerequisites." : previous.message })) }
+      if (active()) { busy.current = false; setState((previous) => ({ ...previous, busy: false, progress: mode === "all" ? progress : previous.progress, message: mode === "all" ? "Run finished. Step 3: click Download full evidence JSON and send that file back." : previous.message })) }
     }
   }
   const stop = () => {
     if (pendingWrites.current) uncertainWrite.current = true
     epoch.current += 1
     busy.current = false
-    setState((previous) => ({ ...previous, suiteResults: previous.suiteResults ? { ...previous.suiteResults, status: "Stopped; inspect any pending write", cases: previous.suiteResults.cases.map((r) => r.status === "Running" ? { ...r, status: r.sent ? "Outcome unknown; request may finish" : "Stopped before result" } : r) } : null, missingExploration: previous.missingExploration && !previous.missingExploration.coverage.completed ? { ...previous.missingExploration, status: "Stopped; exploration incomplete" } : previous.missingExploration, customResults: (previous.customResults || []).map((row) => row.status === "Sent; outcome pending" ? { ...row, status: "Stopped; request may finish" } : row), writeResults: (previous.writeResults || []).map((row) => row.status === "Sent; outcome pending" ? { ...row, status: "Outcome unknown; request may finish" } : row), busy: false, message: "Stopped. Any request already sent may finish; its result will be ignored." }))
+    setState((previous) => ({ ...previous, suiteResults: previous.suiteResults ? { ...previous.suiteResults, status: "Stopped; inspect any pending write", cases: previous.suiteResults.cases.map((r) => r.status === "Running" ? { ...r, status: r.sent ? "Outcome unknown; request may finish" : "Stopped before result" } : r) } : null, missingExploration: previous.missingExploration && !previous.missingExploration.coverage.completed ? { ...previous.missingExploration, status: "Stopped; exploration incomplete" } : previous.missingExploration, customResults: (previous.customResults || []).map((row) => row.status === "Sent; outcome pending" ? { ...row, status: "Stopped; request may finish" } : row), writeResults: (previous.writeResults || []).map((row) => row.status === "Sent; outcome pending" ? { ...row, status: "Outcome unknown; request may finish" } : row), sessionTests: previous.sessionTests ? { ...previous.sessionTests, rows: previous.sessionTests.rows.map((row) => row.status === "Running" ? { ...row, status: row.sent ? "Outcome unknown; request may finish" : "Stopped before result" } : row) } : previous.sessionTests, busy: false, message: "Stopped. Any request already sent may finish; its result will be ignored." }))
   }
+  // Evidence summary: what ran, what needs attention, what was skipped and why, and
+  // which checks are deferred (including the optional second-window tests).
+  const valueKeys = ["sentValues", "baselineValues", "readBackValues", "normalized"]
+  const withoutValues = (row) => Object.fromEntries(Object.entries(row).filter(([key]) => !valueKeys.includes(key)))
+  const suiteCases = current.suiteResults?.cases || []
+  const verifierRows = (current.writeResults || []).filter((row) => row.phase === "verifiers")
+  const sessionRows = current.sessionTests?.rows || []
+  const deferredChecks = (suitePlan?.manualCases || []).map((item) => {
+    const ran = sessionRows.filter((row) => (item.sessionSteps || []).includes(row.step))
+    return { id: item.id, area: item.area, requires: item.requires || "separate check", inForm: Boolean(item.sessionSteps?.length), includedInRunAll: false, reason: item.reason,
+      status: ran.length ? "Optional second-window steps recorded: " + ran.map((row) => row.step + " — " + row.status).join("; ") : item.deferredStatus || "Deferred: separate check" }
+  })
+  const exercised = new Set([...suiteCases.filter((row) => row.sent).map((row) => row.operation), ...verifierRows.filter((row) => row.sent).map((row) => row.operation)])
+  const statusCounts = suiteCases.reduce((counts, row) => ({ ...counts, [row.status]: (counts[row.status] || 0) + 1 }), {})
+  const runSummary = current.hasRun ? {
+    casesRecorded: suiteCases.length,
+    casesWithRequestsSent: suiteCases.filter((row) => row.sent).length,
+    statusCounts,
+    needsAttention: [...suiteCases, ...verifierRows.map((row) => ({ id: "verifiers." + row.operation, status: row.status, error: row.error || (row.status === "Write verified" || row.status === "Delete verified" ? null : row.verification) }))]
+      .filter((row) => /Rejected|not verified|unverified|Unexpected|inspect|Outcome unknown|differ|failed|not applied|changed value|retained|rejected|error/i.test(row.status || ""))
+      .map(({ id, status, error, reason }) => ({ id, status, detail: error || reason || null })),
+    skippedWithReason: [...suiteCases.filter((row) => /^(Needs context|Not applicable|Skipped|Stopped)/.test(row.status)).map(({ id, status, reason, error }) => ({ id, status, reason: reason || error || null })),
+      ...verifierRows.filter((row) => /^(Not attempted|Skipped)/.test(row.status)).map((row) => ({ id: "verifiers." + row.operation, status: row.status, reason: row.error || row.verification || null })),
+      ...(current.phaseResults || []).filter((phase) => /^Skipped/.test(phase.status)).map((phase) => ({ id: "phase." + phase.phase, status: phase.status, reason: phase.status }))],
+    verifierReRun: verifierRows.map(({ operation, status, verification, recordId, error }) => ({ operation, status, verification, recordId: recordId ?? null, error: error || null })),
+    mutationsNotExercised: (current.apiInventory?.mutations || []).map((operation) => operation.name).filter((name) => name !== "query" && !exercised.has(name)),
+    deferredChecks,
+  } : null
   const report = JSON.stringify({
     reportType: "mois-patient-context-live-query",
-    reportVersion: 6,
-    diagnosticsRevision: "2026-09-11.suite-1",
+    reportVersion: 7,
+    diagnosticsRevision: revision,
+    componentVersion: PATIENT_CONTEXT_QUERY_TEST_VERSION,
+    testPatient: current.testPatient || null,
+    progress: current.progress || null,
+    runSummary,
+    deferredChecks,
+    earlierLoadLedger: current.earlierLoad || null,
     phaseResults: current.phaseResults || [],
-    comprehensiveSuite: current.suiteResults ? (({ context, origins, ...summary }) => summary)(current.suiteResults) : null,
+    comprehensiveSuite: current.suiteResults ? (({ context, origins, ...summary }) => ({ ...summary, cases: summary.cases.map(withoutValues) }))(current.suiteResults) : null,
+    secondWindowTests: sessionRows.map(({ input, read, before, ...row }) => row),
     evidenceCapture: { exchanges: exchanges.current.length, truncated: evidenceTruncated.current, limitCharacters: 25000000 },
     missingCollectionExploration: current.missingExploration || null,
     writeResults: (current.writeResults || []).map(({ variables, ...result }) => result),
@@ -27746,7 +29909,11 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [], suitePla
     if (!current.hasRun) return
     const urlApi = window.URL
     if (!window.Blob || !urlApi?.createObjectURL) return
-    const url = urlApi.createObjectURL(new window.Blob([full ? JSON.stringify({ ...JSON.parse(report), evidenceKind: "Full test-patient evidence: inputs, baseline/mutation/read responses", context: current.suiteResults?.context, origins: current.suiteResults?.origins, exchanges: exchanges.current }, (key, value) => /jwToken|authorization|password|secret|accessToken|refreshToken/i.test(key) ? "[redacted]" : value, 2).split(String(auth.jwToken || "\\u0000")).join("[redacted]") : report], { type: "application/json;charset=utf-8" }))
+    const fullReport = () => JSON.stringify({ ...JSON.parse(report), evidenceKind: "Full test-patient evidence: inputs, baseline/mutation/independent-read responses, failures, skipped cases with reasons and deferred checks. Credentials removed.",
+      context: current.suiteResults?.context, origins: current.suiteResults?.origins,
+      comprehensiveSuiteCasesWithValues: suiteCases, writeResultsWithInputs: current.writeResults || [], secondWindowTestsWithReads: sessionRows,
+      exchanges: exchanges.current }, (key, value) => /jwToken|authorization|password|secret|accessToken|refreshToken|cookie/i.test(key) ? "[redacted]" : value, 2).split(String(auth.jwToken || "\\u0000")).join("[redacted]")
+    const url = urlApi.createObjectURL(new window.Blob([full ? fullReport() : report], { type: "application/json;charset=utf-8" }))
     const link = window.document.createElement("a")
     link.href = url
     link.download = \`mois-live-query-\${full ? "full-evidence" : "results"}-\${Date.now()}.json\`
@@ -27766,18 +29933,48 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [], suitePla
     <button type="button" disabled={!ready || current.busy || !current.apiInventory} onClick={() => run("roots")}>Test root queries</button>{" "}
     <button type="button" disabled={!ready || current.busy || !current.apiInventory || uncertainWrite.current || pendingWrites.current > 0} onClick={() => run("writes")}>Run test writes</button>{" "}
     <div style={{ margin: "16px 0", padding: 12, background: "#f1f5f9", color: "#0f172a" }}>
-      <h3>Comprehensive test suite</h3>
-      <p>Run discovery, patient/root reads, missing-path exploration and all configured field variants in sequence. Writes create synthetic records, test patient demographics/contact fields and use existing positive-ID medication rows if needed, then attempt field restoration. Set, change, omission, null, empty and restoration outcomes are recorded separately. Unsupported cases remain visible. Test records can remain.</p>
-      <button type="button" disabled={!ready || current.busy || !suitePlan || uncertainWrite.current || pendingWrites.current > 0} onClick={() => run("all")}>Run all remaining tests</button>{" "}
+      <h3>Comprehensive test suite · revision {revision} · component {PATIENT_CONTEXT_QUERY_TEST_VERSION}</h3>
+      <ol>
+        <li>Open this form on the designated MOIS test patient and tick the confirmation below.</li>
+        <li>Click <strong>Run all remaining tests</strong> once and leave the form open until the status says the run finished.</li>
+        <li>Click <strong>Download full evidence JSON</strong> and send that file back.</li>
+      </ol>
+      <p>The run performs API discovery, chart and root reads, missing-route exploration, every configured create/update/omission/null/empty/restore variant with an independent read after each write (starting with task acknowledgement name/date while both task flags are Y), then re-runs the corrected contact, nickname, resource and changed-field verifiers. Writes create synthetic records and change this test chart; restoration is attempted and reported. Checks that need a second window are listed below as optional and are never run by this button.</p>
+      <label style={{ display: "block", margin: "8px 0" }}><input type="checkbox" aria-label="Confirm designated test patient" checked={confirmed} disabled={!ready || current.busy} onChange={(event) => setConfirmedPatient(event.target.checked ? { patientId, at: new Date().toISOString() } : null)} /> This is the designated MOIS test patient (Patient ID {Number.isInteger(patientId) ? patientId : "—"}, chart {patient?.chartNumber || "—"}). Test writes may change it.</label>
+      {!current.suiteResults && !current.busy && readLedger()?.profiles?.length ? <p>An earlier load of this form in this browser already sent requests for {readLedger().profiles.length} test groups on this patient. Run all remaining tests skips those groups rather than repeating them. <button type="button" onClick={() => { writeLedger(null); setLedgerVersion(ledgerVersion + 1) }}>Forget earlier-load record</button></p> : null}
+      <button type="button" disabled={!ready || current.busy || !suitePlan || !confirmed || uncertainWrite.current || pendingWrites.current > 0} onClick={() => run("all")}>Run all remaining tests</button>{" "}
       <button type="button" disabled={!current.hasRun} onClick={() => downloadReport(true)}>Download full evidence JSON</button>
-      <p>The full report contains test-patient values and exact request/response snapshots, with credentials removed. Download a checkpoint while running if needed. Repeated runs skip cases already attempted; missing context can be supplied below.</p>
-      {(current.phaseResults || []).filter((p) => p.status === "Failed").map((p, i) => <p key={i}>{p.phase}: {p.error}</p>)}
+      {current.progress ? <p aria-label="Run progress"><strong>{current.progress.label}</strong>{current.progress.group ? \` · test group \${current.progress.group} of \${current.progress.groups} (\${current.progress.groupKey})\` : ""}{current.progress.cases ? \` · \${current.progress.cases} cases recorded\` : ""}{current.progress.last ? \` · last: \${current.progress.last}\` : ""}</p> : null}
+      <p>The full file contains test-patient values, exact inputs, responses and independent read-backs, failures, skipped cases with reasons and deferred checks, with credentials removed. Keep it private. Download a checkpoint while running if needed. Clicking again skips every case that already sent a request; missing context can be supplied under Test context.</p>
+      {(current.phaseResults || []).filter((p) => p.status === "Failed" || /^Skipped/.test(p.status)).map((p, i) => <p key={i}>{p.phase}: {p.error || p.status}</p>)}
       {current.suiteResults ? <details open><summary>{current.suiteResults.cases.length} variant results · {current.suiteResults.status}</summary>
         <ul>{current.suiteResults.cases.map((row) => <li key={row.id}><code>{row.id}</code> — {row.status}{row.error || row.reason ? <p>{row.error || row.reason}</p> : null}</li>)}</ul>
-        <details><summary>Operations still unexercised</summary><ul>{(current.suiteResults.operationCoverage || []).filter((op) => !op.cases.length).map((op) => <li key={op.operation}><code>{op.operation}</code>: {op.status}</li>)}</ul></details>
-        <details><summary>Requires a separate check</summary><ul>{(suitePlan?.manualCases || []).map((item) => <li key={item.id}>{item.area}: {item.reason}</li>)}</ul></details>
+        {verifierRows.length ? <details><summary>Corrected verifier re-run ({verifierRows.length})</summary><ul>{verifierRows.map((row) => <li key={row.operation}><code>{row.operation}</code> — {row.status}. {row.verification}{row.error ? <p>{row.error}</p> : null}</li>)}</ul></details> : null}
+        <details><summary>Operations still unexercised</summary><ul>{(runSummary?.mutationsNotExercised || []).map((operation) => <li key={operation}><code>{operation}</code></li>)}</ul></details>
       </details> : null}
+      <details><summary>Deferred and optional checks (not run by Run all remaining tests)</summary><ul>{deferredChecks.map((item) => <li key={item.id}><strong>{item.area}</strong> — {item.status}. {item.reason}</li>)}</ul></details>
     </div>
+    <details style={{ margin: "16px 0", padding: 12, border: "1px dashed #94a3b8" }}><summary><strong>Optional — needs a second window, run later</strong> (form locking and simultaneous edits; not part of Run all remaining tests)</summary>
+      <p>These checks need two MOIS windows open at the same time on this same test patient: window A and window B. Use a second login for window B when possible; a second window under the same login only shows same-user behaviour. Tick the test-patient confirmation in each window. Each window downloads its own full evidence JSON; send both files. Skipping this section leaves these checks reported as deferred.</p>
+      <h4>Form lock observation</h4>
+      <ol>
+        <li>Window A: save this diagnostics form once, then keep it open.</li>
+        <li>Window B: open that same saved form instance for this patient. Note whether MOIS shows it read-only, shows a lock notice, or allows editing.</li>
+        <li>In each window, describe what MOIS showed in the box below and click <strong>Record lock state here</strong>. It reads the saved form record (isLockedToUser, state, audit stamp) and the runtime lock test when available.</li>
+      </ol>
+      <label>What MOIS showed in this window <textarea aria-label="Lock observation" value={sessionObservation} disabled={current.busy} onChange={(event) => setSessionObservation(event.target.value)} rows={2} style={{ width: "100%" }} /></label>
+      <h4>Simultaneous edits and API lock on a disposable draft</h4>
+      <ol>
+        <li>Window A: <strong>A1</strong> creates a disposable draft form and definition on this patient and shows its form ID; then <strong>A2</strong> holds a baseline copy.</li>
+        <li>Window B: enter that form ID below, then <strong>B1</strong> writes a window-B answer.</li>
+        <li>Window A: <strong>A3</strong> writes from the stale A2 baseline and reports whether window B's answer was lost, preserved or rejected.</li>
+        <li>Window A: <strong>A4</strong> sets isLockedToUser=Y. Window B: <strong>B2</strong> tries to write while locked. Window A: <strong>A5</strong> unlocks, then <strong>A6</strong> deletes the draft and definition with independent reads.</li>
+      </ol>
+      <label>Form ID for second-window steps <input aria-label="Second-window form ID" value={sessionTarget} disabled={current.busy} onChange={(event) => setSessionTarget(event.target.value.replace(/[^0-9]/g, ""))} /></label>
+      {current.sessionTests?.webformId ? <p>This window's disposable draft: form ID <strong>{current.sessionTests.webformId}</strong> (definition {current.sessionTests.definitionId}).</p> : null}
+      <p>{[["lock-observe", "Record lock state here"], ["A1", "A1 — Create disposable shared draft"], ["A2", "A2 — Hold baseline"], ["B1", "B1 — Write as window B"], ["A3", "A3 — Write from stale baseline"], ["A4", "A4 — Lock draft"], ["B2", "B2 — Try write while locked (window B)"], ["A5", "A5 — Unlock draft"], ["A6", "A6 — Delete draft and definition"]].map(([step, label]) => <React.Fragment key={step}><button type="button" disabled={!ready || current.busy || !confirmed || uncertainWrite.current || pendingWrites.current > 0} onClick={() => run("session", { step })}>{label}</button>{" "}</React.Fragment>)}</p>
+      {sessionRows.length ? <ul>{sessionRows.map((row, index) => <li key={index}><code>{row.step}</code> ({row.window}) — {row.status}{row.error ? <p>{row.error}</p> : null}</li>)}</ul> : null}
+    </details>
     <details><summary>Custom GraphQL probe</summary><p>Run a named query or mutation through this MOIS login. This supports additional fields and operations without rebuilding the form. Mutations execute immediately when Run custom operation is clicked. Responses appear here, but response values are excluded from the diagnostic report. Query text is included, so use variables for patient values.</p>
       <textarea aria-label="Custom GraphQL query" value={customQuery} disabled={current.busy} onChange={(event) => setCustomQuery(event.target.value)} rows={6} style={{ width: "100%", fontFamily: "monospace" }} />
       <textarea aria-label="Custom GraphQL variables" value={customVariables} disabled={current.busy} onChange={(event) => setCustomVariables(event.target.value)} rows={4} style={{ width: "100%", fontFamily: "monospace" }} />
@@ -28294,6 +30491,7 @@ var DocumentDateRuntime = (() => {
   __export(document_date_format_exports, {
     formatDocumentDate: () => formatDocumentDate
   });
+  var MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
   function formatDocumentDate(value, format) {
     const raw = typeof value === "object" && value !== null && "date" in value ? value.date : value;
     if (raw == null || raw === "") return "";
@@ -28303,12 +30501,982 @@ var DocumentDateRuntime = (() => {
     const [, year, month, day] = match;
     const days = new Date(Date.UTC(Number(year), Number(month), 0)).getUTCDate();
     if (+month < 1 || +month > 12 || +day < 1 || +day > days) throw new Error("Enter a valid calendar date.");
-    const mon = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][+month - 1];
+    const monthName = MONTHS[+month - 1];
+    const mon = monthName.slice(0, 3);
     if (format === "dd/MMM/yyyy") return \`\${day}/\${mon}/\${year}\`;
     if (format === "ddMMMyyyy") return \`\${day}\${mon}\${year}\`;
+    if (format === "yyyy.MM.dd") return \`\${year}.\${month}.\${day}\`;
+    if (format === "dd/MM/yyyy") return \`\${day}/\${month}/\${year}\`;
+    if (format === "MM/dd/yyyy") return \`\${month}/\${day}/\${year}\`;
+    if (format === "MMMM d, yyyy") return \`\${monthName} \${+day}, \${year}\`;
     return \`\${year}-\${month}-\${day}\`;
   }
   return __toCommonJS(document_date_format_exports);
+})();
+
+"use strict";
+var PdfTextFlowLayout = (() => {
+  var __defProp = Object.defineProperty;
+  var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+  var __getOwnPropNames = Object.getOwnPropertyNames;
+  var __hasOwnProp = Object.prototype.hasOwnProperty;
+  var __export = (target, all) => {
+    for (var name in all)
+      __defProp(target, name, { get: all[name], enumerable: true });
+  };
+  var __copyProps = (to, from, except, desc) => {
+    if (from && typeof from === "object" || typeof from === "function") {
+      for (let key of __getOwnPropNames(from))
+        if (!__hasOwnProp.call(to, key) && key !== except)
+          __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+    }
+    return to;
+  };
+  var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+
+  // lib/pdf-text-flow.ts
+  var pdf_text_flow_exports = {};
+  __export(pdf_text_flow_exports, {
+    PDF_TEXT_FLOW_TRUNCATION_MARK: () => PDF_TEXT_FLOW_TRUNCATION_MARK,
+    estimatePdfTextFlowCapacity: () => estimatePdfTextFlowCapacity,
+    layoutPdfTextFlow: () => layoutPdfTextFlow,
+    measureHelvetica: () => measureHelvetica,
+    resolveCompositeTextFlowSlots: () => resolveCompositeTextFlowSlots,
+    resolvePdfTextFlowSlot: () => resolvePdfTextFlowSlot,
+    truncatePdfTextFlow: () => truncatePdfTextFlow
+  });
+  var HELVETICA_ASCII = [278, 278, 355, 556, 556, 889, 667, 191, 333, 333, 389, 584, 278, 333, 278, 278, 556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 278, 278, 584, 584, 584, 556, 1015, 667, 667, 722, 722, 667, 611, 778, 722, 278, 500, 667, 556, 833, 722, 778, 667, 778, 722, 667, 611, 722, 667, 944, 667, 667, 611, 278, 278, 278, 469, 556, 333, 556, 556, 500, 556, 556, 278, 556, 556, 222, 222, 500, 222, 833, 556, 556, 556, 556, 333, 500, 278, 556, 500, 722, 500, 500, 500, 334, 260, 334, 584];
+  var HELVETICA_EXTRA = { 160: 278, 173: 333, 176: 400, 181: 556, 183: 278, 8211: 556, 8212: 1e3, 8216: 222, 8217: 222, 8220: 333, 8221: 333, 8226: 350, 8230: 1e3 };
+  var HELVETICA_FALLBACK = 556;
+  var PDF_TEXT_FLOW_TRUNCATION_MARK = " \\u2026";
+  function measureHelvetica(text, fontSize) {
+    let units = 0;
+    for (const char of text) {
+      const code = char.codePointAt(0) ?? 0;
+      units += code >= 32 && code <= 126 ? HELVETICA_ASCII[code - 32] : HELVETICA_EXTRA[code] ?? HELVETICA_FALLBACK;
+    }
+    return units * fontSize / 1e3;
+  }
+  function resolvePdfTextFlowSlot(fieldId, bbox, declaredFontSize) {
+    const fontSize = declaredFontSize && declaredFontSize > 0 ? declaredFontSize : Math.min(10, Math.max(6, bbox.height - 3));
+    return { fieldId, width: Math.max(0, bbox.width - 8), fontSize };
+  }
+  function resolveCompositeTextFlowSlots(composite, lookup) {
+    const snapshotBox = new Map((composite.componentSnapshots ?? []).map((snapshot) => [snapshot.id, snapshot.bbox ?? null]));
+    const slots = [];
+    for (const { fieldId } of composite.components) {
+      const box = snapshotBox.get(fieldId) ?? lookup?.(fieldId) ?? null;
+      if (!box || !(box.width > 0) || !(box.height > 0)) return null;
+      slots.push(resolvePdfTextFlowSlot(fieldId, box));
+    }
+    return slots.length >= 2 ? slots : null;
+  }
+  var TYPICAL_TEXT = "Give 2 tabs PO at bedtime if no bowel movement in 48 hours; reassess daily.";
+  var WRAP_LOSS_CHARS = 3;
+  function typicalCharWidth(fontSize) {
+    return measureHelvetica(TYPICAL_TEXT, fontSize) / TYPICAL_TEXT.length;
+  }
+  function estimatePdfTextFlowCapacity(slots) {
+    return layoutPdfTextFlow("", slots).remainingChars;
+  }
+  var isLetter = (char) => Boolean(char) && /[A-Za-z\\u00C0-\\u024F]/.test(char);
+  var NUMBER_START = /^[<>~+\\u2264\\u2265-]?\\d/;
+  var UNIT_WORD = /^(?:mg|mcg|\\u00b5g|g|kg|ml|l|units?|iu|tabs?|tablets?|caps?|capsules?|sachets?|packets?|drops?|puffs?|sprays?|mmol|meq|%|h|hrs?|hours?|d|days?|min|mins|minutes?|weeks?|times?|x|doses?|suppositor(?:y|ies)|enemas?)[.,;:)]*$/i;
+  var SOFT_HYPHEN = "\\xAD";
+  var stripSoftHyphens = (value) => value.split(SOFT_HYPHEN).join("");
+  function layoutPdfTextFlow(text, slots, measure = measureHelvetica) {
+    const lines = slots.map(() => "");
+    const source = String(text ?? "").replace(/\\r\\n?/g, "\\n");
+    let index = 0;
+    let overflowAt = -1;
+    const fitsOn = (value) => measure(value, slots[index].fontSize) <= slots[index].width;
+    const breakInside = (word, prefix) => {
+      let best = null;
+      for (let i = 1; i < word.length; i += 1) {
+        const before = word[i - 1];
+        let head = null;
+        if (before === SOFT_HYPHEN) head = \`\${stripSoftHyphens(word.slice(0, i - 1))}-\`;
+        else if ((before === "-" || before === "/") && isLetter(word[i - 2]) && isLetter(word[i])) head = stripSoftHyphens(word.slice(0, i));
+        if (head === null) continue;
+        if (!fitsOn(prefix + head)) break;
+        best = { head, consumed: i };
+      }
+      return best;
+    };
+    const forceSplit = (word) => {
+      const chars = Array.from(stripSoftHyphens(word));
+      let best = null;
+      for (let count = 1; count < chars.length; count += 1) {
+        const head = chars.slice(0, count).join("");
+        if (!fitsOn(head)) break;
+        best = { head, consumed: head.length };
+      }
+      if (!best) return null;
+      let seen = 0;
+      let consumed = 0;
+      while (consumed < word.length && seen < best.consumed) {
+        if (word[consumed] !== SOFT_HYPHEN) seen += 1;
+        consumed += 1;
+      }
+      return { head: best.head, consumed };
+    };
+    const placeWord = (token) => {
+      let word = token.text;
+      let wordStart = token.start;
+      while (word) {
+        if (index >= slots.length) {
+          overflowAt = wordStart;
+          return false;
+        }
+        const prefix = lines[index] ? \`\${lines[index]} \` : "";
+        const whole = stripSoftHyphens(word);
+        if (fitsOn(prefix + whole)) {
+          lines[index] = prefix + whole;
+          return true;
+        }
+        const cut = breakInside(word, prefix) ?? (prefix ? null : forceSplit(word));
+        if (cut) {
+          lines[index] = prefix + cut.head;
+          word = word.slice(cut.consumed);
+          wordStart += cut.consumed;
+        } else if (!prefix) {
+          throw new Error("A PDF text line is too narrow for its font.");
+        }
+        index += 1;
+      }
+      return true;
+    };
+    let offset = 0;
+    const paragraphs = source.split("\\n");
+    outer: for (let p = 0; p < paragraphs.length; p += 1) {
+      const paragraph = paragraphs[p];
+      const tokens = [];
+      const pattern = /\\S+/g;
+      let match;
+      while (match = pattern.exec(paragraph)) tokens.push({ text: match[0], start: offset + match.index });
+      offset += paragraph.length + 1;
+      const runs = [];
+      tokens.forEach((token, tokenIndex) => {
+        const previous = tokens[tokenIndex - 1];
+        const glued = previous && (NUMBER_START.test(token.text) || NUMBER_START.test(previous.text) && UNIT_WORD.test(token.text));
+        if (glued) runs[runs.length - 1].push(token);
+        else runs.push([token]);
+      });
+      if (p > 0 && runs.length && index < slots.length && lines[index]) index += 1;
+      for (const run of runs) {
+        if (run.length > 1) {
+          if (index >= slots.length) {
+            overflowAt = run[0].start;
+            break outer;
+          }
+          const joined = run.map((token) => stripSoftHyphens(token.text)).join(" ");
+          if (lines[index] && !fitsOn(\`\${lines[index]} \${joined}\`)) index += 1;
+          if (index >= slots.length) {
+            overflowAt = run[0].start;
+            break outer;
+          }
+          if (fitsOn(lines[index] ? \`\${lines[index]} \${joined}\` : joined)) {
+            lines[index] = lines[index] ? \`\${lines[index]} \${joined}\` : joined;
+            continue;
+          }
+        }
+        for (const token of run) {
+          if (!placeWord(token)) break outer;
+        }
+      }
+    }
+    const fits = overflowAt < 0;
+    const usedLines = lines.filter(Boolean).length;
+    let remainingChars = 0;
+    if (fits) {
+      const current = Math.min(usedLines === 0 ? 0 : lines.reduce((last, line, lineIndex) => line ? lineIndex : last, 0), slots.length - 1);
+      let width = 0;
+      let lineBreaks = 0;
+      slots.forEach((slot, slotIndex) => {
+        if (slotIndex < current) return;
+        const used = slotIndex === current && lines[slotIndex] ? measure(\`\${lines[slotIndex]} \`, slot.fontSize) : 0;
+        width += Math.max(0, slot.width - used) / typicalCharWidth(slot.fontSize);
+        if (slotIndex > current) lineBreaks += 1;
+      });
+      remainingChars = Math.max(0, Math.floor(width) - WRAP_LOSS_CHARS * lineBreaks);
+    }
+    return { lines, fits, overflowText: fits ? "" : source.slice(overflowAt).trim(), usedLines, remainingChars };
+  }
+  function truncatePdfTextFlow(layout, slots, measure = measureHelvetica) {
+    if (layout.fits) return { lines: layout.lines, notPrinted: "" };
+    const lines = [...layout.lines];
+    const last = lines.length - 1;
+    const full = lines[last];
+    let text = full;
+    while (text && measure(text + PDF_TEXT_FLOW_TRUNCATION_MARK, slots[last].fontSize) > slots[last].width) {
+      const space = text.lastIndexOf(" ");
+      text = space > 0 ? text.slice(0, space) : "";
+    }
+    lines[last] = \`\${text}\${PDF_TEXT_FLOW_TRUNCATION_MARK}\`.trimStart();
+    const dropped = full.slice(text.length).trim();
+    return { lines, notPrinted: dropped ? \`\${dropped} \${layout.overflowText}\` : layout.overflowText };
+  }
+  return __toCommonJS(pdf_text_flow_exports);
+})();
+
+"use strict";
+var DocumentFillRuntime = (() => {
+  var __defProp = Object.defineProperty;
+  var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+  var __getOwnPropNames = Object.getOwnPropertyNames;
+  var __hasOwnProp = Object.prototype.hasOwnProperty;
+  var __export = (target, all) => {
+    for (var name in all)
+      __defProp(target, name, { get: all[name], enumerable: true });
+  };
+  var __copyProps = (to, from, except, desc) => {
+    if (from && typeof from === "object" || typeof from === "function") {
+      for (let key of __getOwnPropNames(from))
+        if (!__hasOwnProp.call(to, key) && key !== except)
+          __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+    }
+    return to;
+  };
+  var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+
+  // lib/document-fill/runtime-entry.ts
+  var runtime_entry_exports = {};
+  __export(runtime_entry_exports, {
+    appendOverflowAddendum: () => appendOverflowAddendum,
+    applyDocumentFillPreparers: () => applyDocumentFillPreparers,
+    documentValueText: () => documentValueText,
+    expandNumberedRowFields: () => expandNumberedRowFields,
+    expandTableSourceMaps: () => expandTableSourceMaps,
+    formatDateWithPattern: () => formatDateWithPattern,
+    planTableOverflow: () => planTableOverflow
+  });
+
+  // packages/form-model/src/conditions.ts
+  function normalizeConditionComparable(candidate) {
+    if (candidate && typeof candidate === "object") {
+      const record = candidate;
+      return record.code ?? record.display ?? record.value ?? record.text ?? "";
+    }
+    return candidate;
+  }
+  function normalizeConditionChoiceValues(candidate) {
+    if (Array.isArray(candidate)) {
+      return candidate.flatMap(normalizeConditionChoiceValues);
+    }
+    if (candidate && typeof candidate === "object") {
+      const record = candidate;
+      return [record.code, record.display, record.value, record.text].filter((entry) => entry !== void 0 && entry !== null).map((entry) => String(entry));
+    }
+    if (candidate === void 0 || candidate === null) return [];
+    return [String(candidate)];
+  }
+  function normalizeConditionBoolean(value, _metadata) {
+    if (value && typeof value === "object") {
+      const record = value;
+      return normalizeConditionBoolean(
+        record.code ?? record.display ?? record.value ?? record.text ?? record.label
+      );
+    }
+    if (value === true || value === "yes" || value === "Y" || value === 1) return "yes";
+    if (value === false || value === "no" || value === "N" || value === 0) return "no";
+    return void 0;
+  }
+  function isConditionCellAnswered(value) {
+    if (value === null || value === void 0) return false;
+    if (typeof value === "string") return value.trim() !== "";
+    if (typeof value === "boolean") return value;
+    if (typeof value === "number") return Number.isFinite(value);
+    if (Array.isArray(value)) return value.some(isConditionCellAnswered);
+    if (typeof value === "object") return Object.keys(value).length > 0;
+    return String(value).trim() !== "";
+  }
+  function isConditionEntryMeaningful(value) {
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      const record = value;
+      return Object.keys(record).some((key) => !key.startsWith("_") && isConditionCellAnswered(record[key]));
+    }
+    return isConditionCellAnswered(value);
+  }
+  function conditionCollectionEntries(value) {
+    if (Array.isArray(value)) return value;
+    if (value && typeof value === "object" && Array.isArray(value.rows)) {
+      return value.rows;
+    }
+    return void 0;
+  }
+  function isConditionValueEmpty(value) {
+    const entries = conditionCollectionEntries(value);
+    if (entries) return !entries.some(isConditionEntryMeaningful);
+    const normalized = normalizeConditionComparable(value);
+    return normalized === null || normalized === void 0 || String(normalized).trim() === "";
+  }
+  function toOrderedPair(leftValue, rightValue) {
+    const left = Number(leftValue);
+    const right = Number(rightValue);
+    if (Number.isFinite(left) && Number.isFinite(right)) return [left, right];
+    const leftDate = Date.parse(String(leftValue));
+    const rightDate = Date.parse(String(rightValue));
+    if (Number.isFinite(leftDate) && Number.isFinite(rightDate)) return [leftDate, rightDate];
+    return null;
+  }
+  function evaluateNumericCondition(type, leftValue, rightValue) {
+    const normalized = normalizeConditionComparable(leftValue);
+    if (normalized === null || normalized === void 0 || normalized === "") return false;
+    if (isConditionValueEmpty(rightValue)) return false;
+    const pair = toOrderedPair(normalized, rightValue);
+    if (!pair) return false;
+    const [left, right] = pair;
+    if (type === "number-gt") return left > right;
+    if (type === "number-gte") return left >= right;
+    if (type === "number-lt") return left < right;
+    if (type === "number-lte") return left <= right;
+    return left === right;
+  }
+  function evaluateFieldCondition(condition, controllerValue, metadata) {
+    const { type, optionValues, value } = condition;
+    switch (type) {
+      case "boolean-yes":
+        return normalizeConditionBoolean(controllerValue, metadata) === "yes";
+      case "boolean-no":
+        return normalizeConditionBoolean(controllerValue, metadata) === "no";
+      case "choice-selected": {
+        if (!optionValues?.length) return false;
+        const values = normalizeConditionChoiceValues(controllerValue);
+        return optionValues.some((option) => values.includes(option));
+      }
+      case "choice-not-selected": {
+        if (!optionValues?.length) return true;
+        const values = normalizeConditionChoiceValues(controllerValue);
+        return !optionValues.some((option) => values.includes(option));
+      }
+      case "number-gt":
+      case "number-gte":
+      case "number-lt":
+      case "number-lte":
+      case "number-equals":
+        return evaluateNumericCondition(type, controllerValue, value);
+      case "equals": {
+        const normalized = normalizeConditionComparable(controllerValue);
+        if (normalized === null || normalized === void 0 || normalized === "") return false;
+        return String(normalized) === String(value ?? "");
+      }
+      case "not-equals": {
+        const normalized = normalizeConditionComparable(controllerValue);
+        if (normalized === null || normalized === void 0 || normalized === "") return false;
+        return String(normalized) !== String(value ?? "");
+      }
+      case "filled":
+        return !isConditionValueEmpty(controllerValue);
+      case "empty":
+        return isConditionValueEmpty(controllerValue);
+    }
+  }
+  function asConditionValue(value) {
+    const normalized = normalizeConditionComparable(value);
+    if (normalized === null || normalized === void 0) return null;
+    if (typeof normalized === "number" || typeof normalized === "boolean") return normalized;
+    return String(normalized);
+  }
+  function evaluateConditionGroup(group, metadata, values) {
+    if (!group.conditions.length) return false;
+    const evaluate = (entry) => {
+      if ("conditions" in entry) return evaluateConditionGroup(entry, metadata, values);
+      const compareFieldId = entry.condition.compareFieldId || entry.condition.valueFieldId;
+      if (compareFieldId && isConditionValueEmpty(values[compareFieldId])) return false;
+      return evaluateFieldCondition(
+        compareFieldId ? { ...entry.condition, value: asConditionValue(values[compareFieldId]) } : entry.condition,
+        values[entry.controllerFieldId],
+        metadata(entry.controllerFieldId)
+      );
+    };
+    return group.match === "any" ? group.conditions.some(evaluate) : group.conditions.every(evaluate);
+  }
+
+  // lib/document-fill/value-text.ts
+  var TEXT_KEYS = ["display", "label", "text", "name", "title", "value", "code"];
+  function documentValueText(value) {
+    if (value === null || value === void 0) return "";
+    if (typeof value === "string") return value;
+    if (typeof value === "number") return Number.isFinite(value) ? String(value) : "";
+    if (typeof value === "boolean") return value ? "Yes" : "No";
+    if (value instanceof Date) return Number.isNaN(value.getTime()) ? "" : value.toISOString().slice(0, 10);
+    if (Array.isArray(value)) {
+      return value.map(documentValueText).filter((part) => part.trim() !== "").join(", ");
+    }
+    if (typeof value === "object") {
+      const record = value;
+      if (typeof record.date === "string") {
+        return typeof record.time === "string" && record.time ? \`\${record.date} \${record.time}\` : record.date;
+      }
+      for (const key of TEXT_KEYS) {
+        const candidate = record[key];
+        if (typeof candidate === "string" && candidate.trim() !== "") return candidate;
+        if (typeof candidate === "number" && Number.isFinite(candidate)) return String(candidate);
+      }
+    }
+    return "";
+  }
+  function readValuePath(root, path) {
+    if (!root || typeof root !== "object" || !path) return void 0;
+    const record = root;
+    if (Object.prototype.hasOwnProperty.call(record, path)) return record[path];
+    let current = root;
+    for (const segment of path.split(".")) {
+      if (!current || typeof current !== "object") return void 0;
+      current = current[segment];
+    }
+    return current;
+  }
+
+  // lib/document-fill/preparers.ts
+  var PDF_TARGET_PREFIX = "pdf:";
+  var MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  function pad(value, width = 2) {
+    return String(value).padStart(width, "0");
+  }
+  function formatDateWithPattern(value, pattern) {
+    const raw = value && typeof value === "object" && "date" in value ? value.date : value;
+    if (raw === null || raw === void 0 || raw === "") return "";
+    const match = /^(\\d{4})[-./](\\d{1,2})[-./](\\d{1,2})(?:[T ](\\d{1,2}):(\\d{2}))?/.exec(String(raw).trim());
+    if (!match) return null;
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const hour = match[4] === void 0 ? 0 : Number(match[4]);
+    const minute = match[5] === void 0 ? 0 : Number(match[5]);
+    const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    if (month < 1 || month > 12 || day < 1 || day > daysInMonth) return null;
+    const monthName = MONTHS[month - 1];
+    return pattern.replace(/'([^']*)'|yyyy|yy|MMMM|MMM|MM|M|dd|d|HH|H|mm/g, (token, literal) => {
+      if (literal !== void 0) return literal;
+      switch (token) {
+        case "yyyy":
+          return pad(year, 4);
+        case "yy":
+          return pad(year % 100);
+        case "MMMM":
+          return monthName;
+        case "MMM":
+          return monthName.slice(0, 3);
+        case "MM":
+          return pad(month);
+        case "M":
+          return String(month);
+        case "dd":
+          return pad(day);
+        case "d":
+          return String(day);
+        case "HH":
+          return pad(hour);
+        case "H":
+          return String(hour);
+        case "mm":
+          return pad(minute);
+        default:
+          return token;
+      }
+    });
+  }
+  function isPdfTarget(id) {
+    return id.startsWith(PDF_TARGET_PREFIX);
+  }
+  function renderRowTemplate(template, row, rowNumber) {
+    let hasValue = false;
+    const text = template.replace(/\\{([^{}]+)\\}/g, (_match, key) => {
+      const name = key.trim();
+      if (name === "row") return String(rowNumber);
+      const cell = documentValueText(readValuePath(row, name));
+      if (cell.trim() !== "") hasValue = true;
+      return cell;
+    });
+    return { text, hasValue };
+  }
+  function mapValue(raw, map, fallback) {
+    const lookup = (value) => {
+      const text = documentValueText(value);
+      if (Object.prototype.hasOwnProperty.call(map, text)) return map[text];
+      const token = text.trim().toLowerCase();
+      const key = Object.keys(map).find((candidate) => candidate.trim().toLowerCase() === token);
+      return key === void 0 ? void 0 : map[key];
+    };
+    if (Array.isArray(raw)) {
+      const parts = raw.map((item) => lookup(item) ?? fallback ?? documentValueText(item)).filter((part) => part !== "");
+      return parts.join(", ");
+    }
+    const mapped = lookup(raw);
+    if (mapped !== void 0) return mapped;
+    if (fallback !== void 0) return fallback;
+    return raw;
+  }
+  function applyDocumentFillPreparers(input, steps) {
+    const values = { ...input ?? {} };
+    const pdfValues = {};
+    const touched = /* @__PURE__ */ new Set();
+    const warnings = [];
+    if (!Array.isArray(steps) || steps.length === 0) return { values, pdfValues, touched: [], warnings };
+    const list = steps;
+    const read = (id) => {
+      if (isPdfTarget(id)) return pdfValues[id.slice(PDF_TARGET_PREFIX.length)];
+      return Object.prototype.hasOwnProperty.call(values, id) ? values[id] : readValuePath(values, id);
+    };
+    const write = (id, value) => {
+      if (!id) return;
+      if (isPdfTarget(id)) {
+        const name = id.slice(PDF_TARGET_PREFIX.length);
+        if (name) pdfValues[name] = value;
+        return;
+      }
+      values[id] = value;
+      touched.add(id);
+    };
+    const conditionMet = (group) => {
+      if (!group || !Array.isArray(group.conditions) || group.conditions.length === 0) return true;
+      try {
+        return evaluateConditionGroup(group, () => void 0, values);
+      } catch {
+        return false;
+      }
+    };
+    list.forEach((step, index) => {
+      if (!step || typeof step !== "object" || step.enabled === false) return;
+      const name = step.id || \`step \${index + 1}\`;
+      if (!conditionMet(step.when)) return;
+      switch (step.kind) {
+        case "concat": {
+          const parts = (step.sourceIds ?? []).map((id) => documentValueText(read(id)));
+          const kept = step.skipEmpty === false ? parts : parts.filter((part) => part.trim() !== "");
+          write(step.targetId, kept.join(step.separator ?? " "));
+          return;
+        }
+        case "split": {
+          const targets = step.targetIds ?? [];
+          if (!targets.length) return;
+          const text = documentValueText(read(step.sourceId));
+          const parts = step.separator ? text.split(step.separator) : Array.from(text);
+          targets.forEach((target, targetIndex) => {
+            const isLast = targetIndex === targets.length - 1;
+            const value = isLast ? parts.slice(targetIndex).join(step.separator ?? "") : parts[targetIndex] ?? "";
+            write(target, value.trim());
+          });
+          return;
+        }
+        case "map-value": {
+          write(step.targetId || step.sourceId, mapValue(read(step.sourceId), step.map ?? {}, step.fallback));
+          return;
+        }
+        case "format-date": {
+          const raw = read(step.sourceId);
+          const formatted = formatDateWithPattern(raw, step.format || "yyyy-MM-dd");
+          if (formatted === null) {
+            warnings.push(\`Preparer "\${name}": "\${step.sourceId}" is not a date (\${JSON.stringify(documentValueText(raw))}); it was printed unchanged.\`);
+            if (step.targetId && step.targetId !== step.sourceId) write(step.targetId, raw);
+            return;
+          }
+          write(step.targetId || step.sourceId, formatted);
+          return;
+        }
+        case "table-to-text": {
+          const rows = read(step.tableId);
+          if (rows !== void 0 && rows !== null && !Array.isArray(rows)) {
+            warnings.push(\`Preparer "\${name}": "\${step.tableId}" is not a table.\`);
+            return;
+          }
+          const start = Math.max(1, Math.floor(Number(step.startRow) || 1));
+          const lines = [];
+          (Array.isArray(rows) ? rows : []).forEach((row, rowIndex) => {
+            if (rowIndex + 1 < start || !row || typeof row !== "object") return;
+            const rendered = renderRowTemplate(step.template ?? "", row, rowIndex + 1);
+            if (rendered.hasValue) lines.push(rendered.text.trim());
+          });
+          write(step.targetId, lines.join(step.separator ?? "\\n"));
+          return;
+        }
+        case "copy": {
+          write(step.targetId, read(step.sourceId));
+          return;
+        }
+        default:
+          warnings.push(\`Preparer "\${name}": unknown kind \${JSON.stringify(step.kind)}; skipped.\`);
+      }
+    });
+    return { values, pdfValues, touched: Array.from(touched), warnings };
+  }
+
+  // lib/document-fill/numbered-fields.ts
+  function toNameSet(names) {
+    if (!names) return null;
+    return names instanceof Set ? names : new Set(names);
+  }
+  function escapeRegExp(text) {
+    return text.replace(/[.*+?^\${}()|[\\]\\\\]/g, "\\\\$&");
+  }
+  function applyNumberedFieldPattern(pattern, base, rowIndex) {
+    return pattern.replace(/\\{base\\}/g, base).replace(/\\{row0\\}/g, String(rowIndex)).replace(/\\{row\\}/g, String(rowIndex + 1));
+  }
+  function matchNumberedFieldBase(pattern, name, rowIndex) {
+    if (!pattern.includes("{base}")) return null;
+    const source = pattern.split(/(\\{base\\}|\\{row0\\}|\\{row\\})/).map((part) => {
+      if (part === "{base}") return "(.+?)";
+      if (part === "{row0}") return escapeRegExp(String(rowIndex));
+      if (part === "{row}") return escapeRegExp(String(rowIndex + 1));
+      return escapeRegExp(part);
+    }).join("");
+    const match = new RegExp(\`^\${source}$\`).exec(name);
+    return match ? match[1] : null;
+  }
+  function isUsablePattern(pattern) {
+    return typeof pattern === "string" && pattern.includes("{base}") && /\\{row0?\\}/.test(pattern);
+  }
+  function mapColumnIds(map) {
+    const ids = /* @__PURE__ */ new Set();
+    (map.columns ?? []).forEach((column) => column?.id && ids.add(column.id));
+    Object.values(map.sourceFieldIdsByRow ?? {}).forEach((row) => Object.keys(row ?? {}).forEach((id) => ids.add(id)));
+    Object.keys(map.sourceFieldIds ?? {}).forEach((id) => ids.add(id));
+    return Array.from(ids);
+  }
+  function candidateBases(map, pattern, columnId) {
+    const bases = [];
+    const add = (base) => {
+      if (base && !bases.includes(base)) bases.push(base);
+    };
+    Object.entries(map.sourceFieldIdsByRow ?? {}).sort(([a], [b]) => Number(a) - Number(b)).forEach(([rowKey, row]) => {
+      const name = row?.[columnId];
+      if (typeof name === "string" && name) add(matchNumberedFieldBase(pattern, name, Number(rowKey)));
+    });
+    const sample = map.sourceFieldIds?.[columnId];
+    if (typeof sample === "string" && sample) {
+      add(matchNumberedFieldBase(pattern, sample, 0));
+      add(sample);
+    }
+    add(columnId);
+    return bases;
+  }
+  function expandNumberedRowFields(map, pdfFieldNames, rowCount) {
+    const pattern = map?.overflow?.numberedFieldPattern;
+    if (!isUsablePattern(pattern) || !(rowCount > 0)) return map;
+    const names = toNameSet(pdfFieldNames);
+    const byRow = {};
+    const used = /* @__PURE__ */ new Set();
+    Object.entries(map.sourceFieldIdsByRow ?? {}).forEach(([rowKey, row]) => {
+      byRow[Number(rowKey)] = { ...row ?? {} };
+      Object.values(row ?? {}).forEach((name) => typeof name === "string" && used.add(name));
+    });
+    let changed = false;
+    for (const columnId of mapColumnIds(map)) {
+      const bases = candidateBases(map, pattern, columnId);
+      for (let rowIndex = 0; rowIndex < rowCount; rowIndex += 1) {
+        if (byRow[rowIndex]?.[columnId]) continue;
+        const name = bases.map((base) => applyNumberedFieldPattern(pattern, base, rowIndex)).find((candidate) => !used.has(candidate) && (!names || names.has(candidate)));
+        if (!name) continue;
+        byRow[rowIndex] = { ...byRow[rowIndex] ?? {}, [columnId]: name };
+        used.add(name);
+        changed = true;
+      }
+    }
+    return changed ? { ...map, sourceFieldIdsByRow: byRow } : map;
+  }
+  function tableRowCount(formData, tableId) {
+    const rows = formData?.[tableId];
+    return Array.isArray(rows) ? rows.length : 0;
+  }
+  function expandTableSourceMaps(maps, formData, pdfFieldNames) {
+    if (!Array.isArray(maps)) return [];
+    return maps.map((map) => map && map.overflow?.numberedFieldPattern ? expandNumberedRowFields(map, pdfFieldNames, tableRowCount(formData, map.tableId)) : map);
+  }
+
+  // lib/document-fill/table-overflow.ts
+  function toNameSet2(names) {
+    if (!names) return null;
+    return names instanceof Set ? names : new Set(names);
+  }
+  function printedRows(map, names) {
+    const printed = /* @__PURE__ */ new Map();
+    Object.entries(map.sourceFieldIdsByRow ?? {}).forEach(([rowKey, row]) => {
+      const rowIndex = Number(rowKey);
+      if (!Number.isInteger(rowIndex) || rowIndex < 0) return;
+      const name = Object.values(row ?? {}).find((candidate) => typeof candidate === "string" && candidate && (!names || names.has(candidate)));
+      if (name) printed.set(rowIndex, name);
+    });
+    if (!printed.has(0)) {
+      const sample = Object.values(map.sourceFieldIds ?? {}).find((candidate) => typeof candidate === "string" && candidate && (!names || names.has(candidate)));
+      if (sample) printed.set(0, sample);
+    }
+    return printed;
+  }
+  function planTableOverflow(formData, maps, pdfFieldNames) {
+    if (!Array.isArray(maps)) return [];
+    const list = maps;
+    const names = toNameSet2(pdfFieldNames);
+    const plans = [];
+    const seen = /* @__PURE__ */ new Set();
+    list.forEach((map) => {
+      const overflow = map?.overflow;
+      if (!overflow || seen.has(map.tableId)) return;
+      const rows = formData?.[map.tableId];
+      if (!Array.isArray(rows) || rows.length === 0) return;
+      const pathById = new Map((map.columns ?? []).map((column) => [column.id, column.dataPath || column.id]));
+      const columns = overflow.columns?.length ? overflow.columns : (map.columns ?? []).map((column) => ({ id: column.id, label: column.id }));
+      const printed = printedRows(map, names);
+      const capacity = printed.size;
+      const planRows = [];
+      rows.forEach((row, rowIndex) => {
+        if (printed.has(rowIndex) || !row || typeof row !== "object") return;
+        const cells = columns.map((column) => documentValueText(readValuePath(row, pathById.get(column.id) ?? column.id)).trim());
+        if (cells.every((cell) => cell === "")) return;
+        planRows.push({ rowNumber: rowIndex + 1, cells });
+      });
+      if (!planRows.length) return;
+      seen.add(map.tableId);
+      const lastPrinted = Array.from(printed.keys()).sort((a, b) => b - a)[0];
+      plans.push({
+        tableId: map.tableId,
+        title: overflow.title?.trim() || \`\${map.tableId} (continued)\`,
+        mode: overflow.mode === "addendum" ? "addendum" : "drop",
+        capacity,
+        columns: columns.map((column) => ({ id: column.id, label: column.label || column.id })),
+        rows: planRows,
+        ...lastPrinted !== void 0 ? { anchorFieldName: printed.get(lastPrinted) } : {}
+      });
+    });
+    return plans;
+  }
+
+  // lib/document-fill/addendum.ts
+  var LETTER = [612, 792];
+  function plural(count, word) {
+    return \`\${count} \${word}\${count === 1 ? "" : "s"}\`;
+  }
+  function createSanitizer(font) {
+    const cache = /* @__PURE__ */ new Map();
+    return (text) => Array.from(String(text ?? "").replace(/\\r\\n?/g, "\\n").replace(/\\t/g, " ")).map((char) => {
+      if (char === "\\n") return char;
+      let safe = cache.get(char);
+      if (safe === void 0) {
+        try {
+          font.encodeText(char);
+          safe = char;
+        } catch {
+          safe = "?";
+        }
+        cache.set(char, safe);
+      }
+      return safe;
+    }).join("");
+  }
+  function wrapTextToWidth(text, font, size, width) {
+    const lines = [];
+    const fits = (value) => font.widthOfTextAtSize(value, size) <= width;
+    for (const paragraph of text.split("\\n")) {
+      const words = paragraph.split(/\\s+/).filter(Boolean);
+      if (!words.length) {
+        lines.push("");
+        continue;
+      }
+      let line = "";
+      for (const original of words) {
+        let word = original;
+        const candidate = line ? \`\${line} \${word}\` : word;
+        if (fits(candidate)) {
+          line = candidate;
+          continue;
+        }
+        if (line) {
+          lines.push(line);
+          line = "";
+        }
+        while (!fits(word)) {
+          const chars = Array.from(word);
+          let count = 1;
+          while (count < chars.length && fits(chars.slice(0, count + 1).join(""))) count += 1;
+          lines.push(chars.slice(0, count).join(""));
+          word = chars.slice(count).join("");
+        }
+        line = word;
+      }
+      lines.push(line);
+    }
+    while (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
+    while (lines.length > 1 && lines[0] === "") lines.shift();
+    return lines.length ? lines : [""];
+  }
+  function pageNumberOfField(doc, name) {
+    if (!name) return void 0;
+    try {
+      const field = doc.getForm().getFieldMaybe(name);
+      if (!field) return void 0;
+      const pages = doc.getPages();
+      for (const widget of field.acroField.getWidgets()) {
+        const pageRef = widget.P();
+        if (pageRef) {
+          const index = pages.findIndex((page2) => page2.ref === pageRef || page2.ref.toString() === pageRef.toString());
+          if (index >= 0) return index + 1;
+        }
+        const ref = doc.context.getObjectRef(widget.dict);
+        const page = ref ? doc.findPageForAnnotationRef(ref) : void 0;
+        if (page) {
+          const index = pages.indexOf(page);
+          if (index >= 0) return index + 1;
+        }
+      }
+    } catch {
+      return void 0;
+    }
+    return void 0;
+  }
+  function columnWidths(plan, available) {
+    const weights = plan.columns.map((column, index) => {
+      const lengths = plan.rows.map((row) => (row.cells[index] ?? "").length);
+      const longest = Math.max(0, ...lengths);
+      const average = lengths.length ? lengths.reduce((sum, value) => sum + value, 0) / lengths.length : 0;
+      const typical = Math.min(longest, Math.max(average * 1.5, 8));
+      return Math.min(40, Math.max(6, column.label.length, typical));
+    });
+    const total = weights.reduce((sum, value) => sum + value, 0) || 1;
+    const widths = weights.map((weight) => weight / total * available);
+    const minimum = Math.min(48, available / Math.max(1, widths.length));
+    widths.forEach((width, index) => {
+      if (width >= minimum) return;
+      const widest = widths.indexOf(Math.max(...widths));
+      const need = minimum - width;
+      if (widest !== index && widths[widest] - need >= minimum) {
+        widths[widest] -= need;
+        widths[index] = minimum;
+      }
+    });
+    return widths;
+  }
+  async function appendOverflowAddendum(doc, plans, PDFLib, options = {}) {
+    const warnings = options.warnings;
+    const list = Array.isArray(plans) ? plans : [];
+    list.forEach((plan) => {
+      if (plan.mode === "drop" && plan.rows.length) {
+        warnings?.push(\`\${plural(plan.rows.length, "row")} of "\${plan.title}" did not fit on the form and \${plan.rows.length === 1 ? "was" : "were"} not printed.\`);
+      }
+    });
+    const printable = list.filter((plan) => plan.mode === "addendum" && plan.rows.length > 0 && plan.columns.length > 0);
+    if (!printable.length) return { pagesAdded: 0, rowsPrinted: 0 };
+    const existingPages = doc.getPages();
+    const firstSize = existingPages[0]?.getSize();
+    const [pageWidth, pageHeight] = options.pageSize ?? (firstSize ? [firstSize.width, firstSize.height] : LETTER);
+    const margin = options.margin ?? 48;
+    const size = options.fontSize ?? 9;
+    const lineHeight = size * 1.3;
+    const pad2 = 4;
+    const titleSize = size + 4;
+    const footerSize = Math.max(6, size - 1);
+    const bottom = margin + footerSize + 8;
+    const contentWidth = pageWidth - margin * 2;
+    const font = await doc.embedFont(PDFLib.StandardFonts.Helvetica);
+    const bold = await doc.embedFont(PDFLib.StandardFonts.HelveticaBold);
+    const sanitize = createSanitizer(font);
+    const black = PDFLib.rgb(0, 0, 0);
+    const muted = PDFLib.rgb(0.35, 0.35, 0.35);
+    const rule = PDFLib.rgb(0.55, 0.55, 0.55);
+    const headerFill = PDFLib.rgb(0.9, 0.9, 0.9);
+    const sourcePages = new Map(printable.map((plan) => [plan, pageNumberOfField(doc, plan.anchorFieldName)]));
+    const firstPageNumber = existingPages.length + 1;
+    const added = [];
+    let rowsPrinted = 0;
+    for (const plan of printable) {
+      const labels = plan.columns.map((column) => sanitize(column.label));
+      const rowLabel = "Row";
+      const rowWidth = Math.max(
+        bold.widthOfTextAtSize(rowLabel, size),
+        font.widthOfTextAtSize(String(Math.max(...plan.rows.map((row) => row.rowNumber))), size)
+      ) + pad2 * 2;
+      const widths = [rowWidth, ...columnWidths({ ...plan, columns: plan.columns.map((column, index) => ({ ...column, label: labels[index] })) }, contentWidth - rowWidth)];
+      const headerCells = [rowLabel, ...labels].map((label, index) => wrapTextToWidth(label, bold, size, widths[index] - pad2 * 2));
+      const headerHeight = Math.max(...headerCells.map((lines) => lines.length)) * lineHeight + pad2 * 2;
+      const title = sanitize(plan.title);
+      const sourcePage = sourcePages.get(plan);
+      const firstRow = plan.rows[0].rowNumber;
+      const lastRow = plan.rows[plan.rows.length - 1].rowNumber;
+      const rowsText = firstRow === lastRow ? \`row \${firstRow}\` : \`rows \${firstRow}-\${lastRow}\`;
+      let page = doc.addPage([pageWidth, pageHeight]);
+      let y = pageHeight - margin;
+      let bodyRowsOnPage = 0;
+      let continuation = false;
+      const drawCellLines = (lines, x, top, face, color = black) => {
+        lines.forEach((line, index) => {
+          if (!line) return;
+          page.drawText(line, { x: x + pad2, y: top - pad2 - size - index * lineHeight + (lineHeight - size) / 2, size, font: face, color });
+        });
+      };
+      const drawRowFrame = (top, height, fill) => {
+        let x = margin;
+        widths.forEach((width) => {
+          page.drawRectangle({ x, y: top - height, width, height, borderColor: rule, borderWidth: 0.5, ...fill ? { color: fill } : {} });
+          x += width;
+        });
+      };
+      const startPage = () => {
+        added.push(page);
+        const continuedTitle = /\\(continued\\)\\s*$/i.test(title) ? title : \`\${title} (continued)\`;
+        const titleLines = wrapTextToWidth(continuation ? continuedTitle : title, bold, titleSize, contentWidth);
+        titleLines.forEach((line) => {
+          y -= titleSize;
+          page.drawText(line, { x: margin, y, size: titleSize, font: bold, color: black });
+          y -= titleSize * 0.35;
+        });
+        const subtitle = continuation ? "Continued from the previous addendum page." : \`\${sourcePage ? \`Continued from page \${sourcePage}. \` : ""}The form prints \${plural(plan.capacity, "row")}; \${rowsText} did not fit and \${plan.rows.length === 1 ? "is" : "are"} listed here.\`;
+        wrapTextToWidth(sanitize(subtitle), font, size, contentWidth).forEach((line) => {
+          y -= lineHeight;
+          page.drawText(line, { x: margin, y, size, font, color: muted });
+        });
+        y -= lineHeight * 0.8;
+        drawRowFrame(y, headerHeight, headerFill);
+        let x = margin;
+        headerCells.forEach((lines, index) => {
+          drawCellLines(lines, x, y, bold);
+          x += widths[index];
+        });
+        y -= headerHeight;
+        bodyRowsOnPage = 0;
+      };
+      const nextPage = () => {
+        page = doc.addPage([pageWidth, pageHeight]);
+        y = pageHeight - margin;
+        continuation = true;
+        startPage();
+      };
+      startPage();
+      for (const row of plan.rows) {
+        const cells = [String(row.rowNumber), ...row.cells.map((cell) => sanitize(cell))].map((text, index) => wrapTextToWidth(text, font, size, widths[index] - pad2 * 2));
+        const totalLines = Math.max(...cells.map((lines) => lines.length));
+        const freshPageLines = Math.floor((pageHeight - margin - bottom - titleSize * 3 - lineHeight * 3 - headerHeight - pad2 * 2) / lineHeight);
+        let offset = 0;
+        while (offset < totalLines) {
+          const fitLines = Math.floor((y - bottom - pad2 * 2) / lineHeight);
+          const needed = totalLines - offset;
+          if (needed > fitLines && (bodyRowsOnPage > 0 || fitLines < 1) && (needed <= freshPageLines || fitLines < 1)) {
+            nextPage();
+            continue;
+          }
+          const count = Math.min(needed, Math.max(1, fitLines));
+          const height = count * lineHeight + pad2 * 2;
+          drawRowFrame(y, height);
+          let x = margin;
+          cells.forEach((lines, index) => {
+            drawCellLines(lines.slice(offset, offset + count), x, y, font);
+            x += widths[index];
+          });
+          y -= height;
+          offset += count;
+          bodyRowsOnPage += 1;
+          if (offset < totalLines) nextPage();
+        }
+        rowsPrinted += 1;
+      }
+      warnings?.push(\`\${plural(plan.rows.length, "row")} of "\${plan.title}" did not fit on the form (\${plan.capacity} printed) and \${plan.rows.length === 1 ? "was" : "were"} added on an addendum page.\`);
+    }
+    added.forEach((page, index) => {
+      const text = \`Addendum page \${index + 1} of \${added.length}\`;
+      const width = font.widthOfTextAtSize(text, footerSize);
+      page.drawText(text, { x: (pageWidth - width) / 2, y: margin - footerSize, size: footerSize, font, color: muted });
+    });
+    return { pagesAdded: added.length, rowsPrinted, firstPageNumber };
+  }
+  return __toCommonJS(runtime_entry_exports);
 })();
 
 /**
@@ -29413,42 +32581,6 @@ const _statusColor = (kind) => {
   return "#605e5c"
 }
 
-// One Webforms answer is distributed into the existing PDF text widgets.
-const _wrapTextAcrossFields = (text, slots, measure) => {
-  const lines = slots.map(() => "")
-  let index = 0
-  const assertSlot = () => {
-    if (index >= slots.length) throw new Error("Text exceeds the available PDF lines. Shorten the answer before saving the PDF.")
-  }
-  text.replace(/\\r\\n?/g, "\\n").split("\\n").forEach((paragraph, paragraphIndex) => {
-    if (paragraphIndex > 0) index += 1
-    assertSlot()
-    paragraph.trim().split(/\\s+/u).filter(Boolean).forEach((word) => {
-      let remaining = word
-      while (remaining) {
-        assertSlot()
-        const prefix = lines[index] ? \`\${lines[index]} \` : ""
-        if (measure(prefix + remaining, slots[index].fontSize) <= slots[index].width) {
-          lines[index] = prefix + remaining
-          break
-        }
-        if (prefix) {
-          index += 1
-          continue
-        }
-        const chars = Array.from(remaining)
-        let count = 0
-        while (count < chars.length && measure(chars.slice(0, count + 1).join(""), slots[index].fontSize) <= slots[index].width) count += 1
-        if (!count) throw new Error("A PDF text line is too narrow for its font.")
-        lines[index] = chars.slice(0, count).join("")
-        remaining = chars.slice(count).join("")
-        if (remaining) index += 1
-      }
-    })
-  })
-  return lines
-}
-
 const _buildTextFlowValues = async ({ doc, pdfFields, textFlowMaps, formData, map, includeSet, PDFLib }) => {
   const valuesByField = new Map()
   if (!Array.isArray(textFlowMaps) || textFlowMaps.length === 0) return valuesByField
@@ -29469,10 +32601,16 @@ const _buildTextFlowValues = async ({ doc, pdfFields, textFlowMaps, formData, ma
       const rect = widget.getRectangle()
       const da = widget.getDefaultAppearance?.() || field.acroField.getDefaultAppearance?.() || ""
       const declaredSize = Number(da.match(/(\\d+(?:\\.\\d+)?)\\s+Tf\\b/)?.[1])
-      const fontSize = declaredSize > 0 ? declaredSize : Math.min(10, Math.max(6, rect.height - 3))
-      return { width: Math.max(0, rect.width - 8), fontSize }
+      return PdfTextFlowLayout.resolvePdfTextFlowSlot(fieldId, rect, declaredSize)
     })
-    const values = _wrapTextAcrossFields(text, slots, (value, size) => measureFont.widthOfTextAtSize(value, size))
+    // Same layout as PdfTextFlowField's live meter (both bundle lib/pdf-text-flow.ts).
+    const measure = (value, size) => measureFont.widthOfTextAtSize(value, size)
+    const layout = PdfTextFlowLayout.layoutPdfTextFlow(text, slots, measure)
+    if (!layout.fits && flow.overflow !== "truncate") {
+      const name = flow.label ? \`"\${flow.label}"\` : "The answer"
+      throw new Error(\`\${name} is about \${layout.overflowText.length} characters longer than its \${slots.length} PDF lines. Shorten it before saving the PDF.\`)
+    }
+    const values = layout.fits ? layout.lines : PdfTextFlowLayout.truncatePdfTextFlow(layout, slots, measure).lines
     flow.fieldIds.forEach((fieldId, index) => valuesByField.set(fieldId, values[index]))
   }
   return valuesByField
@@ -29492,6 +32630,7 @@ const PdfRegenerator = ({
   pdfLibSource,
   fieldMap,
   tableSourceMaps,
+  pdfPreparers,
   booleanFieldStates,
   fieldMaxLengths,
   dateComponentMaps,
@@ -29552,9 +32691,11 @@ const PdfRegenerator = ({
     try {
       const PDFLib = await _loadPdfLib({ strategy: pdfLibStrategy, source: pdfLibSource })
       const bytes = _base64ToBytes(resolvedPdfSource)
-      const formData = fd?.field?.data || {}
+      // Preparers (lib/document-fill) transform a copy of the answers for the document only.
+      const prepared = DocumentFillRuntime.applyDocumentFillPreparers(fd?.field?.data || {}, pdfPreparers)
+      const preparedTouched = new Set(prepared.touched)
+      const formData = prepared.values
       const map = _normalizeFieldMap(fieldMap, formData)
-      const tableIndex = _buildTableReverseIndex(tableSourceMaps)
       const dateComponentIndex = _buildDateComponentIndex(dateComponentMaps)
       const choiceComponentIndex = _buildChoiceComponentIndex(choiceComponentMaps)
       const includeSet = Array.isArray(includeOnlyFieldIds)
@@ -29568,11 +32709,15 @@ const PdfRegenerator = ({
 
       const form = doc.getForm()
       if (form.getFields().some(field => field instanceof PDFLib.PDFSignature && field.acroField.dict.get(PDFLib.PDFName.of("V")))) throw new Error("The source PDF is already signed. Fill an unsigned original to avoid invalidating its signature.")
-      const warnings = []
+      const warnings = [...prepared.warnings]
       let filledFieldCount = 0
       let skippedFieldCount = 0
 
       const pdfFields = form.getFields()
+      // Numbered row fields (pdfOverflow.numberedFieldPattern) extend each table's row map to every row the PDF has.
+      const pdfFieldNames = pdfFields.map((field) => field.getName())
+      const fillTableMaps = DocumentFillRuntime.expandTableSourceMaps(tableSourceMaps, formData, pdfFieldNames)
+      const tableIndex = _buildTableReverseIndex(fillTableMaps)
       // PDF rectangles may legally have reversed endpoints. pdf-lib's
       // appearance generator expects positive dimensions (several OT fields
       // use reversed Y coordinates in the supplied templates).
@@ -29590,7 +32735,7 @@ const PdfRegenerator = ({
           continue
         }
 
-        let rawValue = textFlowValues.has(pdfFieldName) ? textFlowValues.get(pdfFieldName) : formData[sourceFieldId]
+        let rawValue = textFlowValues.has(pdfFieldName) ? textFlowValues.get(pdfFieldName) : Object.prototype.hasOwnProperty.call(prepared.pdfValues, pdfFieldName) ? prepared.pdfValues[pdfFieldName] : formData[sourceFieldId]
         const choiceEntry = choiceComponentIndex.get(pdfFieldName) || choiceComponentIndex.get(sourceFieldId)
         const choiceComponentValue = choiceEntry
           ? _resolveChoiceComponentValue(formData, choiceEntry, rawValue)
@@ -29625,7 +32770,7 @@ const PdfRegenerator = ({
           continue
         }
 
-        if (documentDateFormats?.[sourceFieldId]) rawValue = DocumentDateRuntime.formatDocumentDate(rawValue, documentDateFormats[sourceFieldId])
+        if (documentDateFormats?.[sourceFieldId] && !preparedTouched.has(sourceFieldId)) rawValue = DocumentDateRuntime.formatDocumentDate(rawValue, documentDateFormats[sourceFieldId])
         const booleanStates = booleanFieldStates
           ? (booleanFieldStates[sourceFieldId] || booleanFieldStates[pdfFieldName])
           : undefined
@@ -29661,6 +32806,10 @@ const PdfRegenerator = ({
           form.markFieldAsClean(field.ref)
         }
       })
+      // Table rows the PDF has no printed row for: addendum pages (or a warning for mode "drop").
+      const overflowPlans = DocumentFillRuntime.planTableOverflow(formData, fillTableMaps, pdfFieldNames)
+        .filter((plan) => !includeSet || includeSet.has(plan.tableId))
+      await DocumentFillRuntime.appendOverflowAddendum(doc, overflowPlans, PDFLib, { warnings })
       if (flatten) _flattenForm(form, PDFLib, font, warnings)
 
       let outputBytes = await doc.save({ updateFieldAppearances: false })
@@ -29699,7 +32848,7 @@ const PdfRegenerator = ({
     } finally {
       setIsBusy(false)
     }
-  }, [resolvedPdfSource, fd, fieldMap, tableSourceMaps, booleanFieldStates, fieldMaxLengths, dateComponentMaps, documentDateFormats, choiceComponentMaps, textFlowMaps, geometryOverlayFields, includeOnlyFieldIds, flatten, recalculate, organizationSigning, fileName, onComplete, pdfLibStrategy, pdfLibSource])
+  }, [resolvedPdfSource, fd, fieldMap, tableSourceMaps, pdfPreparers, booleanFieldStates, fieldMaxLengths, dateComponentMaps, documentDateFormats, choiceComponentMaps, textFlowMaps, geometryOverlayFields, includeOnlyFieldIds, flatten, recalculate, organizationSigning, fileName, onComplete, pdfLibStrategy, pdfLibSource])
 
   const diagnosticsText = useMemo(() => {
     if (!showDiagnostics) return null
@@ -29768,6 +32917,296 @@ const PdfRegenerator = ({
         </Stack>
       ) : null}
     </Stack>
+  )
+}
+`,
+  './PdfTextFlowField/index.jsx': `// Generated by scripts/generate-pdf-signing.mjs from scripts/templates/pdf-text-flow-field.jsx and lib/pdf-text-flow.ts.
+"use strict";
+var PdfTextFlowFieldLayout = (() => {
+  var __defProp = Object.defineProperty;
+  var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+  var __getOwnPropNames = Object.getOwnPropertyNames;
+  var __hasOwnProp = Object.prototype.hasOwnProperty;
+  var __export = (target, all) => {
+    for (var name in all)
+      __defProp(target, name, { get: all[name], enumerable: true });
+  };
+  var __copyProps = (to, from, except, desc) => {
+    if (from && typeof from === "object" || typeof from === "function") {
+      for (let key of __getOwnPropNames(from))
+        if (!__hasOwnProp.call(to, key) && key !== except)
+          __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+    }
+    return to;
+  };
+  var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+
+  // lib/pdf-text-flow.ts
+  var pdf_text_flow_exports = {};
+  __export(pdf_text_flow_exports, {
+    PDF_TEXT_FLOW_TRUNCATION_MARK: () => PDF_TEXT_FLOW_TRUNCATION_MARK,
+    estimatePdfTextFlowCapacity: () => estimatePdfTextFlowCapacity,
+    layoutPdfTextFlow: () => layoutPdfTextFlow,
+    measureHelvetica: () => measureHelvetica,
+    resolveCompositeTextFlowSlots: () => resolveCompositeTextFlowSlots,
+    resolvePdfTextFlowSlot: () => resolvePdfTextFlowSlot,
+    truncatePdfTextFlow: () => truncatePdfTextFlow
+  });
+  var HELVETICA_ASCII = [278, 278, 355, 556, 556, 889, 667, 191, 333, 333, 389, 584, 278, 333, 278, 278, 556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 278, 278, 584, 584, 584, 556, 1015, 667, 667, 722, 722, 667, 611, 778, 722, 278, 500, 667, 556, 833, 722, 778, 667, 778, 722, 667, 611, 722, 667, 944, 667, 667, 611, 278, 278, 278, 469, 556, 333, 556, 556, 500, 556, 556, 278, 556, 556, 222, 222, 500, 222, 833, 556, 556, 556, 556, 333, 500, 278, 556, 500, 722, 500, 500, 500, 334, 260, 334, 584];
+  var HELVETICA_EXTRA = { 160: 278, 173: 333, 176: 400, 181: 556, 183: 278, 8211: 556, 8212: 1e3, 8216: 222, 8217: 222, 8220: 333, 8221: 333, 8226: 350, 8230: 1e3 };
+  var HELVETICA_FALLBACK = 556;
+  var PDF_TEXT_FLOW_TRUNCATION_MARK = " \\u2026";
+  function measureHelvetica(text, fontSize) {
+    let units = 0;
+    for (const char of text) {
+      const code = char.codePointAt(0) ?? 0;
+      units += code >= 32 && code <= 126 ? HELVETICA_ASCII[code - 32] : HELVETICA_EXTRA[code] ?? HELVETICA_FALLBACK;
+    }
+    return units * fontSize / 1e3;
+  }
+  function resolvePdfTextFlowSlot(fieldId, bbox, declaredFontSize) {
+    const fontSize = declaredFontSize && declaredFontSize > 0 ? declaredFontSize : Math.min(10, Math.max(6, bbox.height - 3));
+    return { fieldId, width: Math.max(0, bbox.width - 8), fontSize };
+  }
+  function resolveCompositeTextFlowSlots(composite, lookup) {
+    const snapshotBox = new Map((composite.componentSnapshots ?? []).map((snapshot) => [snapshot.id, snapshot.bbox ?? null]));
+    const slots = [];
+    for (const { fieldId } of composite.components) {
+      const box = snapshotBox.get(fieldId) ?? lookup?.(fieldId) ?? null;
+      if (!box || !(box.width > 0) || !(box.height > 0)) return null;
+      slots.push(resolvePdfTextFlowSlot(fieldId, box));
+    }
+    return slots.length >= 2 ? slots : null;
+  }
+  var TYPICAL_TEXT = "Give 2 tabs PO at bedtime if no bowel movement in 48 hours; reassess daily.";
+  var WRAP_LOSS_CHARS = 3;
+  function typicalCharWidth(fontSize) {
+    return measureHelvetica(TYPICAL_TEXT, fontSize) / TYPICAL_TEXT.length;
+  }
+  function estimatePdfTextFlowCapacity(slots) {
+    return layoutPdfTextFlow("", slots).remainingChars;
+  }
+  var isLetter = (char) => Boolean(char) && /[A-Za-z\\u00C0-\\u024F]/.test(char);
+  var NUMBER_START = /^[<>~+\\u2264\\u2265-]?\\d/;
+  var UNIT_WORD = /^(?:mg|mcg|\\u00b5g|g|kg|ml|l|units?|iu|tabs?|tablets?|caps?|capsules?|sachets?|packets?|drops?|puffs?|sprays?|mmol|meq|%|h|hrs?|hours?|d|days?|min|mins|minutes?|weeks?|times?|x|doses?|suppositor(?:y|ies)|enemas?)[.,;:)]*$/i;
+  var SOFT_HYPHEN = "\\xAD";
+  var stripSoftHyphens = (value) => value.split(SOFT_HYPHEN).join("");
+  function layoutPdfTextFlow(text, slots, measure = measureHelvetica) {
+    const lines = slots.map(() => "");
+    const source = String(text ?? "").replace(/\\r\\n?/g, "\\n");
+    let index = 0;
+    let overflowAt = -1;
+    const fitsOn = (value) => measure(value, slots[index].fontSize) <= slots[index].width;
+    const breakInside = (word, prefix) => {
+      let best = null;
+      for (let i = 1; i < word.length; i += 1) {
+        const before = word[i - 1];
+        let head = null;
+        if (before === SOFT_HYPHEN) head = \`\${stripSoftHyphens(word.slice(0, i - 1))}-\`;
+        else if ((before === "-" || before === "/") && isLetter(word[i - 2]) && isLetter(word[i])) head = stripSoftHyphens(word.slice(0, i));
+        if (head === null) continue;
+        if (!fitsOn(prefix + head)) break;
+        best = { head, consumed: i };
+      }
+      return best;
+    };
+    const forceSplit = (word) => {
+      const chars = Array.from(stripSoftHyphens(word));
+      let best = null;
+      for (let count = 1; count < chars.length; count += 1) {
+        const head = chars.slice(0, count).join("");
+        if (!fitsOn(head)) break;
+        best = { head, consumed: head.length };
+      }
+      if (!best) return null;
+      let seen = 0;
+      let consumed = 0;
+      while (consumed < word.length && seen < best.consumed) {
+        if (word[consumed] !== SOFT_HYPHEN) seen += 1;
+        consumed += 1;
+      }
+      return { head: best.head, consumed };
+    };
+    const placeWord = (token) => {
+      let word = token.text;
+      let wordStart = token.start;
+      while (word) {
+        if (index >= slots.length) {
+          overflowAt = wordStart;
+          return false;
+        }
+        const prefix = lines[index] ? \`\${lines[index]} \` : "";
+        const whole = stripSoftHyphens(word);
+        if (fitsOn(prefix + whole)) {
+          lines[index] = prefix + whole;
+          return true;
+        }
+        const cut = breakInside(word, prefix) ?? (prefix ? null : forceSplit(word));
+        if (cut) {
+          lines[index] = prefix + cut.head;
+          word = word.slice(cut.consumed);
+          wordStart += cut.consumed;
+        } else if (!prefix) {
+          throw new Error("A PDF text line is too narrow for its font.");
+        }
+        index += 1;
+      }
+      return true;
+    };
+    let offset = 0;
+    const paragraphs = source.split("\\n");
+    outer: for (let p = 0; p < paragraphs.length; p += 1) {
+      const paragraph = paragraphs[p];
+      const tokens = [];
+      const pattern = /\\S+/g;
+      let match;
+      while (match = pattern.exec(paragraph)) tokens.push({ text: match[0], start: offset + match.index });
+      offset += paragraph.length + 1;
+      const runs = [];
+      tokens.forEach((token, tokenIndex) => {
+        const previous = tokens[tokenIndex - 1];
+        const glued = previous && (NUMBER_START.test(token.text) || NUMBER_START.test(previous.text) && UNIT_WORD.test(token.text));
+        if (glued) runs[runs.length - 1].push(token);
+        else runs.push([token]);
+      });
+      if (p > 0 && runs.length && index < slots.length && lines[index]) index += 1;
+      for (const run of runs) {
+        if (run.length > 1) {
+          if (index >= slots.length) {
+            overflowAt = run[0].start;
+            break outer;
+          }
+          const joined = run.map((token) => stripSoftHyphens(token.text)).join(" ");
+          if (lines[index] && !fitsOn(\`\${lines[index]} \${joined}\`)) index += 1;
+          if (index >= slots.length) {
+            overflowAt = run[0].start;
+            break outer;
+          }
+          if (fitsOn(lines[index] ? \`\${lines[index]} \${joined}\` : joined)) {
+            lines[index] = lines[index] ? \`\${lines[index]} \${joined}\` : joined;
+            continue;
+          }
+        }
+        for (const token of run) {
+          if (!placeWord(token)) break outer;
+        }
+      }
+    }
+    const fits = overflowAt < 0;
+    const usedLines = lines.filter(Boolean).length;
+    let remainingChars = 0;
+    if (fits) {
+      const current = Math.min(usedLines === 0 ? 0 : lines.reduce((last, line, lineIndex) => line ? lineIndex : last, 0), slots.length - 1);
+      let width = 0;
+      let lineBreaks = 0;
+      slots.forEach((slot, slotIndex) => {
+        if (slotIndex < current) return;
+        const used = slotIndex === current && lines[slotIndex] ? measure(\`\${lines[slotIndex]} \`, slot.fontSize) : 0;
+        width += Math.max(0, slot.width - used) / typicalCharWidth(slot.fontSize);
+        if (slotIndex > current) lineBreaks += 1;
+      });
+      remainingChars = Math.max(0, Math.floor(width) - WRAP_LOSS_CHARS * lineBreaks);
+    }
+    return { lines, fits, overflowText: fits ? "" : source.slice(overflowAt).trim(), usedLines, remainingChars };
+  }
+  function truncatePdfTextFlow(layout, slots, measure = measureHelvetica) {
+    if (layout.fits) return { lines: layout.lines, notPrinted: "" };
+    const lines = [...layout.lines];
+    const last = lines.length - 1;
+    const full = lines[last];
+    let text = full;
+    while (text && measure(text + PDF_TEXT_FLOW_TRUNCATION_MARK, slots[last].fontSize) > slots[last].width) {
+      const space = text.lastIndexOf(" ");
+      text = space > 0 ? text.slice(0, space) : "";
+    }
+    lines[last] = \`\${text}\${PDF_TEXT_FLOW_TRUNCATION_MARK}\`.trimStart();
+    const dropped = full.slice(text.length).trim();
+    return { lines, notPrinted: dropped ? \`\${dropped} \${layout.overflowText}\` : layout.overflowText };
+  }
+  return __toCommonJS(pdf_text_flow_exports);
+})();
+
+// A TextArea for a Flow text answer, with a live meter for the PDF lines it
+// fills. PdfTextFlowFieldLayout is lib/pdf-text-flow.ts bundled in by
+// scripts/generate-pdf-signing.mjs, the same layout PdfRegenerator uses to write
+// the PDF, so the meter breaks lines exactly where the saved PDF will.
+const PdfTextFlowField = (props) => {
+  const { textFlowSlots, textFlowOverflow = "block", ...textAreaProps } = props
+  const [fd] = useActiveData(useSection().activeSelector)
+  const [showLines, setShowLines] = React.useState(false)
+  const raw = fd ? fd[props.fieldId] : undefined
+  const text = typeof raw === "string" ? raw : raw == null ? "" : String(raw)
+  const layout = React.useMemo(() => {
+    if (!Array.isArray(textFlowSlots) || textFlowSlots.length < 2) return null
+    try {
+      return PdfTextFlowFieldLayout.layoutPdfTextFlow(text, textFlowSlots)
+    } catch (error) {
+      return null
+    }
+  }, [text, textFlowSlots])
+  const hideOnPrint = Fluent.mergeStyles({ "@media print": { display: "none !important" } })
+
+  if (!layout) return <TextArea {...textAreaProps} />
+
+  const slots = textFlowSlots
+  const truncate = textFlowOverflow === "truncate"
+  const cut = !layout.fits && truncate ? PdfTextFlowFieldLayout.truncatePdfTextFlow(layout, slots) : null
+  const printed = cut ? cut.lines : layout.lines
+  const notPrinted = cut ? cut.notPrinted : layout.overflowText
+  const over = notPrinted.length
+  const hasText = text.trim().length > 0
+  const color = layout.fits ? "#605e5c" : truncate ? "#8a5a00" : "#a4262c"
+  const message = layout.fits
+    ? hasText
+      ? \`Fits the PDF: \${layout.usedLines} of \${slots.length} lines used, about \${layout.remainingChars} characters left.\`
+      : \`Prints on \${slots.length} PDF lines, about \${layout.remainingChars} characters.\`
+    : truncate
+      ? \`About \${over} characters won't print. The PDF's last line ends with "…"; the full answer stays in the form.\`
+      : \`About \${over} characters too long for the PDF's \${slots.length} lines. Shorten the answer before saving the PDF.\`
+
+  return (
+    <div>
+      <TextArea {...textAreaProps} />
+      <div className={hideOnPrint} style={{ marginTop: 4 }}>
+        <div style={{ display: "flex", gap: 3 }} aria-hidden="true">
+          {slots.map((slot, index) => {
+            const used = Math.min(1, PdfTextFlowFieldLayout.measureHelvetica(printed[index] || "", slot.fontSize) / slot.width)
+            const full = !layout.fits && index === slots.length - 1
+            return (
+              <div key={slot.fieldId || index} title={printed[index] || ""} style={{ flex: slot.width, height: 4, borderRadius: 2, overflow: "hidden", background: "#edebe9" }}>
+                <div style={{ width: \`\${Math.round(used * 100)}%\`, height: "100%", background: full ? color : "#0078d4" }} />
+              </div>
+            )
+          })}
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, marginTop: 2, fontSize: 12, color }}>
+          <span role="status">{message}</span>
+          {hasText ? (
+            <button
+              type="button"
+              onClick={() => setShowLines(!showLines)}
+              aria-expanded={showLines}
+              style={{ border: "none", background: "none", padding: 0, color: "#0078d4", cursor: "pointer", fontSize: 12, whiteSpace: "nowrap" }}
+            >
+              {showLines ? "Hide PDF lines" : "Show PDF lines"}
+            </button>
+          ) : null}
+        </div>
+        {showLines ? (
+          <div style={{ marginTop: 4, fontSize: 12, fontFamily: "Helvetica, Arial, sans-serif" }}>
+            {printed.map((line, index) => (
+              <div key={index} style={{ display: "flex", gap: 6, borderBottom: "1px solid #c8c6c4", padding: "1px 0" }}>
+                <span style={{ color: "#605e5c", minWidth: 44 }}>{\`Line \${index + 1}\`}</span>
+                <span style={{ whiteSpace: "pre-wrap" }}>{line || " "}</span>
+              </div>
+            ))}
+            {!layout.fits ? (
+              <div style={{ marginTop: 2, color }}>{\`Won't print: \${notPrinted}\`}</div>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    </div>
   )
 }
 `,
@@ -29906,6 +33345,1496 @@ const RelationshipStatus = ({
       {...props}
     />
   )
+}
+`,
+  './RepeatForEachTable/index.jsx': `/**
+ * __nhAuth — self-contained field/row authorship runtime for NHForms components.
+ *
+ * WHY THIS EXISTS
+ * Export hosts may execute generated component sources without importing the
+ * webforms package helpers. This runtime is therefore INLINED into each
+ * authorship-aware component's source (prepended by the nhforms generator and
+ * the Vite loader for any component that references \`__nhAuth\`). The generated
+ * component remains self-contained in SMOIS/FormTester and in other browser
+ * hosts that implement the same source-data/active-data contract.
+ *
+ * COLLISION SAFETY
+ * Everything lives inside a single anonymous IIFE that assigns \`window.__nhAuth\`
+ * exactly once (idempotent). There are NO top-level declarations, so prepending
+ * this snippet to several components in a concatenating host can never produce
+ * a duplicate-declaration SyntaxError.
+ *
+ * SCOPE / LIMITS (see docs runtime/mois-locking-signing-audit.md)
+ * - Advisory, client-side only: the host stores \`field.data.__authorship\` as an
+ *   opaque blob and enforcement remains in the generated UI. Not a security
+ *   boundary.
+ * - A component can only enforce read-only on inputs IT renders. Authored values
+ *   must live inside an authorship-aware component, not as loose native fields.
+ * - Claims persist in \`field.data.__authorship\` (that is what MOIS saves).
+ *
+ * Mirror of packages/form-components/src/authorship.ts — keep in rough sync.
+ */
+;(function () {
+  if (typeof window === "undefined" || !window || window.__nhAuth) return;
+
+  var DEFAULT_WINDOW_HOURS = 72;
+
+  function isNonEmpty(v) {
+    if (v === null || v === undefined) return false;
+    if (typeof v === "string") return v.trim().length > 0;
+    if (Array.isArray(v)) return v.length > 0;
+    if (typeof v === "object") return Object.keys(v).length > 0;
+    return true;
+  }
+
+  function buildKey(q) {
+    q = q || {};
+    if (q.scope === "row") {
+      return "row:" + (q.componentId || "component") + ":" + (q.rowKey || q.fieldId || "");
+    }
+    return "field:" + (q.fieldId || q.rowKey || q.componentId || "");
+  }
+
+  function normalizeStore(input) {
+    var claims = {};
+    if (input && typeof input === "object" && input.claims && typeof input.claims === "object") {
+      Object.keys(input.claims).forEach(function (k) {
+        var c = input.claims[k];
+        if (c && typeof c === "object") {
+          var ck = c.claimKey || k;
+          if (ck) claims[ck] = c;
+        }
+      });
+    }
+    return { version: 1, claims: claims };
+  }
+
+  function readStore(state) {
+    var data =
+      state && state.field && state.field.data
+        ? state.field.data
+        : state && state.formData
+          ? state.formData
+          : null;
+    return normalizeStore(data && data.__authorship);
+  }
+
+  function addHoursIso(ts, hours) {
+    var d = ts ? new Date(ts) : new Date();
+    if (isNaN(d.getTime())) return undefined;
+    return new Date(d.getTime() + hours * 3600000).toISOString();
+  }
+
+  function pad2(n) {
+    return String(n).length < 2 ? "0" + n : String(n);
+  }
+
+  function formatTimestamp(ts) {
+    if (!ts) return "";
+    var d = new Date(ts);
+    if (isNaN(d.getTime())) return String(ts);
+    return (
+      d.getFullYear() +
+      "." + pad2(d.getMonth() + 1) +
+      "." + pad2(d.getDate()) +
+      " - " + pad2(d.getHours()) +
+      ":" + pad2(d.getMinutes())
+    );
+  }
+
+  function sameActor(claim, actor) {
+    if (!claim || !actor) return false;
+    if (
+      actor.ownerId !== undefined && actor.ownerId !== null &&
+      claim.ownerId !== undefined && claim.ownerId !== null
+    ) {
+      return String(actor.ownerId) === String(claim.ownerId);
+    }
+    return !!actor.ownerName && !!claim.ownerName && actor.ownerName === claim.ownerName;
+  }
+
+  // Identity is read from the genuine MOIS session. Prefer sd.userProfile so the
+  // live actor matches the visible logged-in profile; fall back to sd.auth for
+  // runtimes that only expose the auth id.
+  function actorFrom(sd, state) {
+    var ownerId =
+      sd && sd.userProfile && sd.userProfile.userProfileId !== undefined && sd.userProfile.userProfileId !== null
+          ? sd.userProfile.userProfileId
+          : sd && sd.auth && sd.auth.userProfileId !== undefined && sd.auth.userProfileId !== null
+            ? sd.auth.userProfileId
+            : undefined;
+    var ownerName =
+      (sd && sd.userProfile && sd.userProfile.identity && sd.userProfile.identity.fullName) ||
+      (state && state.field && state.field.data && state.field.data.createdBy) ||
+      (sd && sd.webform && sd.webform.provider && sd.webform.provider.name) ||
+      "";
+    return { ownerId: ownerId, ownerName: ownerName };
+  }
+
+  function resolveNow(sd, opts) {
+    var raw =
+      opts && opts.now !== undefined && opts.now !== null
+        ? opts.now
+        : sd && sd.previewOptions
+          ? sd.previewOptions.authorshipNow
+          : undefined;
+    return raw ? new Date(raw) : new Date();
+  }
+
+  // Read: compute lock state for a target. \`opts\` carries the current actor
+  // (ownerId/ownerName) and an optional \`now\` override (preview clock).
+  // A "pending" claim (lock-on-save, not yet saved) is NOT enforced.
+  function lockInfo(state, sd, query, opts) {
+    opts = opts || {};
+    var store = readStore(state);
+    var claim = store.claims[buildKey(query)];
+    if (!claim || claim.status === "unlocked" || claim.status === "pending") return { locked: false };
+
+    var ownerName = claim.ownerName || "Unknown";
+    var ts = formatTimestamp(claim.timestamp);
+    var actor = { ownerId: opts.ownerId, ownerName: opts.ownerName };
+    var isOwner = sameActor(claim, actor);
+    var editableUntil = claim.editableUntil || addHoursIso(claim.claimedAt || claim.timestamp, DEFAULT_WINDOW_HOURS);
+    var now = resolveNow(sd, opts);
+    var euDate = editableUntil ? new Date(editableUntil) : null;
+    var expired = !!euDate && !isNaN(euDate.getTime()) && now.getTime() > euDate.getTime();
+
+    if (claim.status !== "signed" && isOwner && !expired) {
+      var untilSelf = formatTimestamp(editableUntil);
+      return {
+        locked: false,
+        claim: claim,
+        isOwner: true,
+        expired: false,
+        ownerName: ownerName,
+        note: untilSelf ? "Locked to you until " + untilSelf : "Locked to you",
+      };
+    }
+
+    var label = claim.status === "signed"
+      ? "Signed by"
+      : expired
+        ? "Editing window expired for"
+        : "Locked by";
+    return {
+      locked: true,
+      claim: claim,
+      isOwner: isOwner,
+      expired: expired,
+      ownerName: ownerName,
+      note: ts ? label + " " + ownerName + " at " + ts : label + " " + ownerName,
+    };
+  }
+
+  // Write: mutate a produce() draft to upsert/refresh the current actor's claim
+  // for a target. Returns true when the claim store changed. Call inside the
+  // component's own setFormData(produce(draft => ...)) on value change.
+  function claim(draft, sd, query, value, policy, opts) {
+    opts = opts || {};
+    policy = policy || {};
+    if (policy.enabled === false) return false;
+    if (!draft || typeof draft !== "object") return false;
+    if (!draft.field) draft.field = { data: {}, status: {}, history: [] };
+    if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {};
+
+    var store = normalizeStore(draft.field.data.__authorship);
+    var key = buildKey(query);
+    var existing = store.claims[key];
+    var actor = actorFrom(sd, draft);
+    var now = resolveNow(sd, opts);
+    var nowIso = now.toISOString();
+    var windowHours =
+      typeof policy.editableWindowHours === "number" && policy.editableWindowHours > 0
+        ? policy.editableWindowHours
+        : DEFAULT_WINDOW_HOURS;
+
+    var lockOn = policy.lockOn || "edit";
+    // lock-on-edit enforces immediately; lock-on-save/submit/sign records a
+    // non-enforced "pending" claim that a later save promotes to "locked".
+    var pending = lockOn !== "edit";
+
+    // Enforcement: a signed claim is terminal; a LOCKED claim owned by someone
+    // else blocks until its window expires; a PENDING claim is not yet enforced
+    // so anyone may take it over.
+    if (existing && existing.status === "signed") return false;
+    if (existing && existing.status === "locked") {
+      var lockedUntil = existing.editableUntil || addHoursIso(existing.claimedAt || existing.timestamp, DEFAULT_WINDOW_HOURS);
+      var lockExpired = lockedUntil && now.getTime() > new Date(lockedUntil).getTime();
+      if (!sameActor(existing, actor) || lockExpired) return false;
+    }
+
+    var ownerRefresh = existing && existing.status !== "unlocked" && sameActor(existing, actor);
+    if (ownerRefresh) {
+      // Owner edit: refresh value/timestamp, keep the original window. A claim
+      // already promoted to locked/signed stays so; a pending one stays pending.
+      var keepStatus = (existing.status === "locked" || existing.status === "signed")
+        ? existing.status
+        : (pending ? "pending" : "locked");
+      store.claims[key] = Object.assign({}, existing, {
+        status: keepStatus,
+        timestamp: nowIso,
+        lastSavedAt: nowIso,
+        currentValue: value,
+        ownerName: actor.ownerName || existing.ownerName,
+        ownerId: actor.ownerId !== undefined && actor.ownerId !== null ? actor.ownerId : existing.ownerId,
+      });
+    } else {
+      // New / taken-over / released claim: only claim a meaningful value.
+      if (!isNonEmpty(value)) return false;
+      store.claims[key] = {
+        claimKey: key,
+        scope: query.scope === "row" ? "row" : "field",
+        fieldId: query.fieldId,
+        rowKey: query.rowKey,
+        componentId: query.componentId,
+        ownerName: actor.ownerName,
+        ownerId: actor.ownerId,
+        timestamp: nowIso,
+        claimedAt: nowIso,
+        lastSavedAt: nowIso,
+        editableUntil: addHoursIso(nowIso, windowHours),
+        status: pending ? "pending" : "locked",
+        lockOn: lockOn,
+        editableWindowHours: windowHours,
+        currentValue: value,
+      };
+    }
+
+    draft.field.data.__authorship = store;
+    return true;
+  }
+
+  function policyAppliesToAction(lockOn, action) {
+    lockOn = lockOn || "save";
+    if (action === "save") return lockOn === "save";
+    if (action === "submit") return lockOn === "save" || lockOn === "submit";
+    if (action === "sign") return true; // a sign finalizes everything pending
+    return false;
+  }
+
+  // Promote eligible pending contributions while preserving each author.
+  // Pure — returns { changed, formData, nextState }; commitSave persists it.
+  // Called by save components (UnsavedChangesGuard / SaveOnClose) at save time.
+  function prepareSave(state, sd, action) {
+    action = action || "save";
+    var fieldData = state && state.field && state.field.data ? state.field.data : {};
+    var nextFieldData;
+    try {
+      nextFieldData = JSON.parse(JSON.stringify(fieldData));
+    } catch (e) {
+      nextFieldData = Object.assign({}, fieldData);
+    }
+    var store = normalizeStore(nextFieldData.__authorship);
+    var actor = actorFrom(sd, state);
+    var nowIso = resolveNow(sd).toISOString();
+    var changed = false;
+
+    Object.keys(store.claims).forEach(function (k) {
+      var c = store.claims[k];
+      if (!c || c.status !== "pending") return;
+      if (!policyAppliesToAction(c.lockOn || "save", action)) return;
+      var windowHours =
+        typeof c.editableWindowHours === "number" && c.editableWindowHours > 0
+          ? c.editableWindowHours
+          : DEFAULT_WINDOW_HOURS;
+      var nextStatus = "locked";
+      // The owner-editable window starts when the claim actually locks (now).
+      store.claims[k] = Object.assign({}, c, {
+        status: nextStatus,
+        timestamp: nowIso,
+        lastSavedAt: nowIso,
+        claimedAt: nowIso,
+        editableUntil: addHoursIso(nowIso, windowHours),
+      });
+      changed = true;
+    });
+
+    if (changed) nextFieldData.__authorship = store;
+    return {
+      changed: changed,
+      formData: nextFieldData,
+      nextState: Object.assign({}, state, {
+        field: Object.assign({}, state && state.field ? state.field : { status: {}, history: [] }, { data: nextFieldData }),
+      }),
+    };
+  }
+
+  function commitSave(state, prepared) {
+    if (!prepared || !prepared.changed) return prepared ? prepared.nextState : undefined;
+    if (state && typeof state.setFormData === "function") {
+      state.setFormData(prepared.nextState);
+    }
+    return prepared.nextState;
+  }
+
+  // Release (unlock) a claim on a produce() draft. Returns true if it changed.
+  function release(draft, query) {
+    if (!draft || !draft.field || !draft.field.data) return false;
+    var store = normalizeStore(draft.field.data.__authorship);
+    var key = buildKey(query);
+    var current = store.claims[key];
+    if (!current || current.status === "unlocked") return false;
+    store.claims[key] = Object.assign({}, current, {
+      status: "unlocked",
+      releasedAt: new Date().toISOString(),
+    });
+    draft.field.data.__authorship = store;
+    return true;
+  }
+
+  window.__nhAuth = {
+    version: 1,
+    buildKey: buildKey,
+    lockInfo: lockInfo,
+    claim: claim,
+    release: release,
+    actor: actorFrom,
+    formatTimestamp: formatTimestamp,
+    // lock-on-save
+    prepareSave: prepareSave,
+    commitSave: commitSave,
+  };
+})();
+
+// RepeatForEachTable — an EditableTable whose rows are seeded from another
+// table field (tableConfig.repeatFor): one row per source row, filtered by a
+// condition over the source row, keyed by a source column or the source
+// _rowId, with orphaned rows removed or kept and flagged (_sourceRemoved) and
+// a per-row completion flag (_complete).
+//
+// Emitted by the MOIS exporter (lib/mois-export/renderers/repeat-table-renderer.ts)
+// in place of <EditableTable> for tables with repeatFor, row completion or
+// delete confirmation. Every EditableTable prop passes through; the extra
+// props are:
+//   repeatFor = { sourceFieldId, keyColumnId?, labelColumnId?, labelTitle?,
+//                 labelTargetColumnId?, filter?, orphanPolicy?, allowManualRows?,
+//                 emptyMessage? (shown when no source row matches),
+//                 presentation? ("grid" default | "cards": one card per item) }
+//   rowCompletion = { enabled, requiredColumnIds?, requireAllComplete?, statusLabel? }
+//   confirmDelete = true to ask before a row is deleted
+//   translate = the form's translateFormText (uiTranslations for
+//               fd.field.status.__formLocale); every built-in and authored
+//               string shown here goes through it. _rowStatus stays English;
+//               the grid shows the translated _rowStatusText.
+//
+// presentation "cards" renders each row as a card headed by its label (and a
+// "No longer listed" flag for kept orphans), its questions stacked with the
+// same MOIS controls and value shapes EditableTable's cells use, and a status
+// line. The data (the rows array), sync, completion and validation are the
+// same as the grid. Tables with a stamp column or per-row authorship locks
+// keep the grid (those need EditableTable's own machinery).
+//
+// Row metadata (same underscore convention as EditableTable's _rowId, see
+// TABLE_ROW_META in @webforms/form-model): _sourceKey, _sourceRemoved,
+// _complete, plus the display-only _sourceLabel and _rowStatus.
+//
+// The label and status are shown through extra EditableTable columns, so
+// EditableTable itself is unchanged: in inline mode they are always-calculated
+// formula columns reading the row's own _sourceLabel / _rowStatus (rendered
+// read-only); in modal mode they are template columns (display cells).
+//
+// Sync contract: rows are rewritten ONLY when a _rowId-insensitive content
+// signature changes (EditableTable's React #185 lesson), the rewrite is a
+// produce recipe computed from the draft (never a spread snapshot), and a
+// burst guard stops writing if the sync ever fails to converge.
+//
+// EditableTable, FormLogicKit and FormulaKit are referenced only inside
+// function bodies (component files load in no guaranteed order).
+
+const RepeatForEachTable = (props) => {
+  const {
+    repeatFor,
+    rowCompletion,
+    confirmDelete,
+    translate,
+    ...tableProps
+  } = props
+  const [fd, setFd] = useActiveData()
+  const section = typeof useSection === "function" ? useSection() : null
+  const theme = typeof useTheme === "function" ? useTheme() : null
+  const isDarkMode = !!(theme && theme.isInverted)
+  const [notice, setNotice] = React.useState("")
+  const [pendingDelete, setPendingDelete] = React.useState(null)
+  const burstRef = React.useRef({ since: 0, count: 0, halted: false })
+  const helpers = RepeatForEachTable.helpers
+  const t = (source, vars) => helpers.formatText(translate, source, vars)
+
+  const id = tableProps.id || "editableTable"
+  const rowsPath = tableProps.rowsPath || id
+  const countPath = tableProps.countPath
+  const locked = !!(tableProps.readOnly || tableProps.disabled)
+  const repeatConfig = repeatFor && repeatFor.sourceFieldId ? repeatFor : null
+  const completion = rowCompletion && rowCompletion.enabled ? rowCompletion : null
+  const isModalMode = tableProps.mode === "modal"
+  const baseColumns = Array.isArray(tableProps.columns) ? tableProps.columns : []
+
+  // translateFormText is a new function every render: key the grid's display
+  // columns on the translated text, not on the function.
+  const displayTextKey = [
+    t((repeatConfig && repeatConfig.labelTitle) || "Item"),
+    t((completion && completion.statusLabel) || "Status"),
+    typeof translate === "function" ? "translated" : "",
+  ].join("\\u0000")
+  const columns = React.useMemo(
+    () => helpers.buildColumns(baseColumns, repeatConfig, completion, isModalMode, translate),
+    [baseColumns, repeatConfig, completion, isModalMode, displayTextKey]
+  )
+
+  // "One card per item": same rows, one card each. Stamp columns and
+  // per-row authorship locks need EditableTable's own machinery, so those
+  // tables keep the grid.
+  const authorshipPolicy = tableProps.authorshipPolicy || (section && section.authorshipPolicy) || null
+  const authorshipActive = !!(typeof window !== "undefined" && window.__nhAuth && authorshipPolicy && authorshipPolicy.enabled)
+  const showCards = !!(repeatConfig && repeatConfig.presentation === "cards") &&
+    !helpers.cardsUnsupportedReason(baseColumns, authorshipActive)
+
+  const fieldData = fd && fd.field && fd.field.data ? fd.field.data : {}
+  const targetRows = helpers.normalizeRows(helpers.getPath(fieldData, rowsPath))
+  const sourceRows = repeatConfig ? helpers.readSourceRows(fieldData, repeatConfig) : []
+  // With the form's translateFormText the rows also carry _rowStatusText (the
+  // translated status the grid shows); stored _rowStatus stays English.
+  const syncOptions = { repeatFor: repeatConfig, rowCompletion: completion, columns: baseColumns, translate: typeof translate === "function" ? translate : null }
+
+  const writer = (fd && typeof fd.setFormData === "function" ? fd.setFormData : null) || setFd
+
+  // Mirrored per-row source fields (PDF row maps) follow the rows, the same
+  // way EditableTable's own setRows keeps them in step.
+  const writeRowsRecipe = (compute) => {
+    if (typeof writer !== "function") return
+    writer(produce((draft) => {
+      if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
+      if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
+      const data = draft.field.data
+      const current = helpers.normalizeRows(helpers.getPath(data, rowsPath))
+      const currentPlain = current ? JSON.parse(JSON.stringify(current)) : null
+      const next = compute(currentPlain, data)
+      if (!Array.isArray(next)) return
+      if (currentPlain && helpers.signature(currentPlain) === helpers.signature(next)) return
+      helpers.setPath(data, rowsPath, next)
+      if (countPath) helpers.setPath(data, countPath, next.length)
+      helpers.mirrorRows(data, next, baseColumns, tableProps.sourceFieldIds, tableProps.sourceFieldIdsByRow)
+    }))
+  }
+
+  const sourceSignature = repeatConfig ? helpers.signature(sourceRows) : ""
+  const targetSignature = targetRows ? helpers.signature(targetRows) : "null"
+  const configSignature = JSON.stringify([repeatConfig, completion])
+  const needsSync = (() => {
+    if (locked) return false
+    if (!repeatConfig && !targetRows) return false
+    if (!repeatConfig && !completion && !targetRows.some(helpers.hasRowMeta)) return false
+    const next = helpers.syncRows(sourceRows, targetRows || [], syncOptions)
+    return !targetRows || helpers.signature(next) !== targetSignature
+  })()
+
+  React.useEffect(() => {
+    if (!needsSync) return
+    const burst = burstRef.current
+    const now = Date.now()
+    if (now - burst.since > 1000) {
+      burst.since = now
+      burst.count = 0
+    }
+    burst.count += 1
+    if (burst.count > 25) {
+      if (!burst.halted) {
+        burst.halted = true
+        console.warn("RepeatForEachTable: row sync did not settle; stopped updating " + id)
+      }
+      return
+    }
+    writeRowsRecipe((current, data) => {
+      const liveSource = repeatConfig ? helpers.readSourceRows(data, repeatConfig) : []
+      return helpers.syncRows(JSON.parse(JSON.stringify(liveSource)), current || [], syncOptions)
+    })
+  }, [needsSync, sourceSignature, targetSignature, configSignature, locked])
+
+  // EditableTable has already written the delete when this runs; put the row
+  // back in the same batch when the deletion is not allowed or needs a yes.
+  const handleRowsChange = (event) => {
+    if (typeof tableProps.onRowsChange === "function") tableProps.onRowsChange(event)
+    if (!event || event.reason !== "delete" || !event.row) return
+    const row = event.row
+    const sourceDriven = !!(row._sourceKey && !row._sourceRemoved && repeatConfig)
+    if (!sourceDriven && !confirmDelete) return
+    const previousRows = Array.isArray(event.previousRows) ? JSON.parse(JSON.stringify(event.previousRows)) : null
+    if (!previousRows) return
+    writeRowsRecipe(() => previousRows)
+    if (sourceDriven) {
+      setNotice(t("This row follows the table it repeats for; change that table to remove it."))
+      return
+    }
+    setNotice("")
+    setPendingDelete({ rowId: row._rowId, label: row._sourceLabel || "" })
+  }
+
+  const confirmPendingDelete = () => {
+    const target = pendingDelete
+    setPendingDelete(null)
+    if (!target) return
+    writeRowsRecipe((current) => (current || []).filter((row) => row && row._rowId !== target.rowId))
+  }
+
+  // Seeded tables wait for the first sync so EditableTable never seeds its own
+  // blank rows underneath them.
+  if (repeatConfig && !targetRows && !locked) {
+    return <div data-repeat-for-table={id} />
+  }
+
+  const allowManualRows = !repeatConfig || repeatConfig.allowManualRows === true
+  const orphanPolicy = repeatConfig ? repeatConfig.orphanPolicy || "remove-if-unanswered" : "remove"
+  const allowDeleteRows = tableProps.allowDeleteRows !== false &&
+    (allowManualRows || orphanPolicy !== "remove")
+  const { Dialog, DialogType, DialogFooter, PrimaryButton, DefaultButton, Text, Label } = Fluent
+
+  // Empty state: nothing in the source table matches, so there is nothing to
+  // answer. The grid is dropped too unless people may add their own rows or
+  // kept (orphaned) rows still show.
+  const rows = targetRows || []
+  const noItems = !!repeatConfig && !rows.some((row) => row && row._sourceKey && !row._sourceRemoved)
+  const emptyText = noItems
+    ? (typeof repeatConfig.emptyMessage === "string" && repeatConfig.emptyMessage.trim() && t(repeatConfig.emptyMessage.trim())) ||
+      t("No matching {items} — nothing to answer here.", {
+        items: repeatConfig.labelTitle ? t(String(repeatConfig.labelTitle).trim()).toLowerCase() : t("items"),
+      })
+    : ""
+  const showGrid = !noItems || rows.length > 0 || allowManualRows
+
+  // ---- Cards ----
+  const mutedColor = isDarkMode ? "#c8c8c8" : "#605e5c"
+  const textColor = isDarkMode ? "#f3f4f6" : "#323130"
+  const maxRows = Number(tableProps.maxRows) > 0 ? Number(tableProps.maxRows) : Number.POSITIVE_INFINITY
+  const canAddCard = !locked && allowManualRows && tableProps.allowAddRows !== false && rows.length < maxRows
+  const questionColumns = showCards ? helpers.cardColumns(baseColumns, repeatConfig, isModalMode) : []
+
+  const notifyRowsChange = (event) => {
+    if (typeof tableProps.onRowsChange === "function") tableProps.onRowsChange(event)
+  }
+
+  const writeCardCell = (rowId, column, value) => {
+    if (locked) return
+    writeRowsRecipe((current) => helpers.writeCell(current || [], rowId, column, value, baseColumns))
+    notifyRowsChange({ tableId: id, reason: "update", rowId, columnId: column.id })
+  }
+
+  const addCard = () => {
+    if (!canAddCard) return
+    writeRowsRecipe((current) => (current || []).concat([helpers.blankRow(baseColumns)]))
+    notifyRowsChange({ tableId: id, reason: "add" })
+  }
+
+  const deleteCard = (row) => {
+    if (locked || !row) return
+    if (confirmDelete) {
+      setNotice("")
+      setPendingDelete({ rowId: row._rowId, label: row._sourceLabel || "" })
+      return
+    }
+    writeRowsRecipe((current) => (current || []).filter((entry) => entry && entry._rowId !== row._rowId))
+    notifyRowsChange({ tableId: id, reason: "delete", row })
+  }
+
+  const renderCardControl = (row, column) => {
+    const path = helpers.columnPath(column)
+    const value = helpers.getPath(row, path)
+    const rowId = row._rowId
+    if (locked || helpers.isComputedColumn(column)) {
+      return (
+        <Text styles={{ root: { color: textColor, whiteSpace: "pre-wrap" } }}>
+          {helpers.formatCell(row, column) || " "}
+        </Text>
+      )
+    }
+    const onValue = (next) => writeCardCell(rowId, column, next)
+    switch (column.type) {
+      case "number": {
+        const settings = helpers.numberSettings(column)
+        const spinButtonProps = {}
+        Object.keys(settings.spinButtonProps).forEach((key) => {
+          if (settings.spinButtonProps[key] !== undefined && settings.spinButtonProps[key] !== null) spinButtonProps[key] = settings.spinButtonProps[key]
+        })
+        return (
+          <Numeric
+            inline={true}
+            typeNumber={settings.typeNumber}
+            buttonControls={settings.buttonControls}
+            value={value === undefined || value === null ? "" : value.toString()}
+            onChange={(valueOrEvent, nextValue) => onValue(helpers.coerceNumber(nextValue === undefined ? valueOrEvent : nextValue, column))}
+            spinButtonProps={spinButtonProps}
+            textFieldProps={settings.suffix ? { suffix: settings.suffix } : undefined}
+            storeAsNumber={settings.storeAsNumber !== false}
+          />
+        )
+      }
+      case "date":
+        if (column.withTime) {
+          return (
+            <DateTimeSelect
+              inline={true}
+              value={value || ""}
+              onChange={(next) => onValue(next || "")}
+              placeholder={column.placeholder || "Select date and time"}
+            />
+          )
+        }
+        return (
+          <DateSelect
+            dateFormat={column.dateConfig ? column.dateConfig.dateFormat : undefined}
+            inline={true}
+            value={value || ""}
+            onChange={(next) => onValue(helpers.dateCellValue(next))}
+            placeholder={column.placeholder || "Select date"}
+          />
+        )
+      case "time":
+        return (
+          <TimeSelect
+            inline={true}
+            value={value || ""}
+            onChange={(event, next) => onValue(next || "")}
+            placeholder={column.placeholder || "HH:mm"}
+          />
+        )
+      case "dropdown": {
+        const options = helpers.choiceOptions(column.options)
+        const multiple = column.choiceStyle === "multiselect" || column.choiceStyle === "checkbox"
+        return (
+          <SimpleCodeSelect
+            inline={true}
+            optionList={column.codeSystem ? undefined : options}
+            codeSystem={column.codeSystem || undefined}
+            selectionType={multiple ? "multiple" : "single"}
+            value={helpers.choiceForControl(value, column, options)}
+            onChange={(coding, codings) => onValue(helpers.choiceForStorage(coding, codings, column))}
+            placeholder={column.placeholder || "Select..."}
+            showOther={column.showOtherOption === true}
+          />
+        )
+      }
+      case "checkbox":
+        return (
+          <OptionChoice
+            inline={true}
+            displayStyle="checkmark"
+            value={value}
+            onChange={(event, checked) => onValue(!!checked)}
+          />
+        )
+      case "text":
+      default:
+        return (
+          <TextArea
+            multiline={column.textareaConfig ? column.textareaConfig.multiline : undefined}
+            textFieldProps={column.textareaConfig ? { rows: column.textareaConfig.rows, resizable: column.textareaConfig.resizable } : undefined}
+            inline={true}
+            value={value || ""}
+            onChange={(event, next) => onValue(next || "")}
+            placeholder={column.placeholder || ""}
+          />
+        )
+    }
+  }
+
+  const renderCard = (row, index) => {
+    const removed = !!row._sourceRemoved
+    const manual = !row._sourceKey
+    const heading = row._sourceLabel
+      ? String(row._sourceLabel)
+      : manual
+        ? t("Added item {n}", { n: index + 1 })
+        : t((repeatConfig && repeatConfig.labelTitle) || "Item") + " " + (index + 1)
+    const status = typeof row._rowStatus === "string" && row._rowStatus ? row._rowStatus : ""
+    const statusColor = status === helpers.STATUS_TEXT.complete
+      ? (isDarkMode ? "#92c353" : "#107c10")
+      : status === helpers.STATUS_TEXT.incomplete
+        ? (isDarkMode ? "#fce100" : "#8a6a00")
+        : mutedColor
+    const canDelete = !locked && allowDeleteRows && (manual || removed)
+    return (
+      <div
+        key={row._rowId || index}
+        role="group"
+        aria-label={heading}
+        data-repeat-for-card={row._rowId || String(index)}
+        data-repeat-for-orphan={removed ? "" : undefined}
+        style={{
+          border: "1px " + (removed ? "dashed " : "solid ") + (isDarkMode ? "#505050" : removed ? "#a19f9d" : "#e1dfdd"),
+          borderRadius: 4,
+          padding: "10px 14px 12px",
+          marginBottom: 10,
+          background: removed ? (isDarkMode ? "#262626" : "#faf9f8") : (isDarkMode ? "#1f1f1f" : "#ffffff"),
+          breakInside: "avoid",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
+          <Text variant="mediumPlus" styles={{ root: { fontWeight: 600, color: removed ? mutedColor : textColor } }}>
+            {heading}
+          </Text>
+          {removed ? (
+            <Text data-repeat-for-orphan-flag="" variant="small" styles={{ root: { padding: "1px 8px", borderRadius: 10, border: "1px solid " + (isDarkMode ? "#8a8886" : "#a19f9d"), color: mutedColor } }}>
+              {t(helpers.STATUS_TEXT.removed)}
+            </Text>
+          ) : null}
+          {canDelete ? (
+            <span className="hideonprint" style={{ marginLeft: "auto" }}>
+              <DefaultButton text={t("Remove")} onClick={() => deleteCard(row)} />
+            </span>
+          ) : null}
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {questionColumns.filter((column) => helpers.columnVisible(column, row)).map((column) => (
+            <div key={column.id} data-repeat-for-question={column.id}>
+              <Label required={column.required === true}>{column.title || column.label || column.id}</Label>
+              <span className="showonprint" style={{ display: "none", whiteSpace: "pre-wrap" }}>
+                {helpers.formatCell(row, column) || " "}
+              </span>
+              <div className="hideonprint">{renderCardControl(row, column)}</div>
+            </div>
+          ))}
+        </div>
+        {status && !removed ? (
+          <Text data-repeat-for-card-status="" role="status" variant="small" styles={{ root: { display: "block", marginTop: 8, color: statusColor, fontWeight: 600 } }}>
+            {t((completion && completion.statusLabel) || "Status") + ": " + t(status)}
+          </Text>
+        ) : null}
+      </div>
+    )
+  }
+
+  const renderCards = () => (
+    <div data-repeat-for-cards="">
+      {tableProps.label ? (
+        <Label styles={{ root: { fontSize: "16px", fontWeight: 600, marginBottom: 8 } }}>{tableProps.label}</Label>
+      ) : null}
+      {rows.map((row, index) => (row && typeof row === "object" ? renderCard(row, index) : null))}
+      {canAddCard ? (
+        <div className="hideonprint">
+          <DefaultButton text={t(tableProps.addButtonText || "+ Add Row")} onClick={addCard} />
+        </div>
+      ) : null}
+    </div>
+  )
+
+  return (
+    <div data-repeat-for-table={id} data-repeat-for-presentation={showCards ? "cards" : undefined}>
+      {emptyText ? (
+        <Text data-repeat-for-empty="" role="note" variant="small" styles={{ root: { display: "block", margin: "4px 0 6px", color: "#605e5c", fontStyle: "italic" } }}>
+          {emptyText}
+        </Text>
+      ) : null}
+      {showGrid && showCards ? renderCards() : null}
+      {showGrid && !showCards ? (
+        <EditableTable
+          {...tableProps}
+          columns={columns}
+          addButtonText={tableProps.addButtonText ? t(tableProps.addButtonText) : undefined}
+          allowAddRows={allowManualRows && tableProps.allowAddRows !== false}
+          allowDeleteRows={allowDeleteRows}
+          onRowsChange={handleRowsChange}
+        />
+      ) : null}
+      {notice ? (
+        <Text role="status" variant="small" styles={{ root: { display: "block", marginTop: 6, color: "#605e5c" } }}>
+          {notice}
+        </Text>
+      ) : null}
+      {pendingDelete ? (
+        <Dialog
+          hidden={false}
+          onDismiss={() => setPendingDelete(null)}
+          dialogContentProps={{
+            type: DialogType.normal,
+            title: t("Delete this row?"),
+            subText: pendingDelete.label
+              ? t("\\"{label}\\" and its answers will be removed.", { label: pendingDelete.label })
+              : t("The row and its answers will be removed."),
+          }}
+          modalProps={{ isBlocking: true }}
+        >
+          <DialogFooter>
+            <PrimaryButton text={t("Delete")} onClick={confirmPendingDelete} />
+            <DefaultButton text={t("Cancel")} onClick={() => setPendingDelete(null)} />
+          </DialogFooter>
+        </Dialog>
+      ) : null}
+    </div>
+  )
+}
+
+// Pure row logic, exposed for tests and for any consumer that needs the same
+// semantics (row completion mirrors FormLogicKit.validate's table branch).
+RepeatForEachTable.helpers = (() => {
+  const LABEL_KEY = "_sourceLabel"
+  const STATUS_KEY = "_rowStatus"
+  // Display-only translation of _rowStatus, kept by the mounted table (which
+  // has the form's translateFormText); the off-page sync leaves it alone.
+  const STATUS_TEXT_KEY = "_rowStatusText"
+  const LABEL_COLUMN_ID = "__repeatLabel"
+  const STATUS_COLUMN_ID = "__repeatStatus"
+  const STATUS_TEXT = { complete: "Complete", incomplete: "Incomplete", removed: "No longer listed" }
+
+  const toSegments = (path) => String(path || "").split(".").map((part) => part.trim()).filter(Boolean)
+
+  const getPath = (root, path) => {
+    const segments = toSegments(path)
+    if (segments.length === 0) return undefined
+    let current = root
+    for (const segment of segments) {
+      if (!current || typeof current !== "object") return undefined
+      current = current[segment]
+    }
+    return current
+  }
+
+  const setPath = (root, path, value) => {
+    const segments = toSegments(path)
+    if (segments.length === 0) return root
+    let current = root
+    for (let index = 0; index < segments.length - 1; index += 1) {
+      const key = segments[index]
+      if (!current[key] || typeof current[key] !== "object" || Array.isArray(current[key])) current[key] = {}
+      current = current[key]
+    }
+    current[segments[segments.length - 1]] = value
+    return root
+  }
+
+  const normalizeRows = (value) => {
+    if (Array.isArray(value)) return value
+    if (value && Array.isArray(value.rows)) return value.rows
+    return null
+  }
+
+  // EditableTable's notion of an answer: an unchecked checkbox is not one.
+  const isMeaningful = (value) => {
+    if (value === undefined || value === null) return false
+    if (typeof value === "string") return value.trim().length > 0
+    if (typeof value === "boolean") return value
+    if (typeof value === "number") return !Number.isNaN(value)
+    if (Array.isArray(value)) return value.some(isMeaningful)
+    if (typeof value === "object") return Object.keys(value).length > 0
+    return true
+  }
+
+  const toText = (value) => {
+    if (value === undefined || value === null) return ""
+    if (typeof value === "string") return value.trim()
+    if (typeof value === "number" || typeof value === "boolean") return String(value)
+    if (Array.isArray(value)) return value.map(toText).filter(Boolean).join(", ")
+    if (typeof value === "object") return toText(value.display ?? value.text ?? value.value ?? value.code ?? value.key ?? "")
+    return String(value)
+  }
+
+  const stableStringify = (value) => {
+    if (Array.isArray(value)) return "[" + value.map(stableStringify).join(",") + "]"
+    if (value && typeof value === "object") {
+      return "{" + Object.keys(value).sort()
+        .filter((key) => value[key] !== undefined)
+        .map((key) => JSON.stringify(key) + ":" + stableStringify(value[key]))
+        .join(",") + "}"
+    }
+    return JSON.stringify(value === undefined ? null : value)
+  }
+
+  // Row content with the volatile _rowId stripped.
+  const signature = (rows) => stableStringify((rows || []).map((row) => {
+    if (!row || typeof row !== "object") return row
+    const { _rowId, ...rest } = row
+    return rest
+  }))
+
+  const columnPath = (column) => (column && (column.dataPath || column.fieldName || column.id)) || ""
+  const isComputedColumn = (column) => !!(column && column.computedValue && column.computedValue.mode)
+  const isInjectedColumn = (column) => !!column && (column.id === LABEL_COLUMN_ID || column.id === STATUS_COLUMN_ID)
+
+  const hasRowMeta = (row) => !!row && (row._complete !== undefined || row[STATUS_KEY] !== undefined)
+
+  const defaultCellValue = (column) => {
+    if (column.type === "checkbox") return column.prefill === true
+    if (typeof column.prefill === "string" || typeof column.prefill === "number") return String(column.prefill)
+    return ""
+  }
+
+  // Columns whose cells are the filler's answers (not the label copy, not
+  // calculated). An untouched prefill is not an answer.
+  const answerColumns = (columns, repeatFor) => (columns || []).filter((column) =>
+    column && !isComputedColumn(column) && !isInjectedColumn(column) &&
+    !(repeatFor && repeatFor.labelTargetColumnId && column.id === repeatFor.labelTargetColumnId)
+  )
+
+  const cellAnswered = (row, column) => {
+    const value = getPath(row, columnPath(column))
+    if (column.type !== "checkbox" && column.prefill !== undefined && column.prefill !== null && toText(value) === String(column.prefill)) return false
+    return isMeaningful(value)
+  }
+
+  const rowAnswered = (row, columns, repeatFor) =>
+    answerColumns(columns, repeatFor).some((column) => cellAnswered(row, column))
+
+  const requiredColumns = (columns, repeatFor, rowCompletion) => {
+    const ids = rowCompletion && Array.isArray(rowCompletion.requiredColumnIds) ? rowCompletion.requiredColumnIds : null
+    const answers = answerColumns(columns, repeatFor)
+    if (!ids || ids.length === 0) return answers
+    return (columns || []).filter((column) => column && (ids.includes(column.id) || ids.includes(columnPath(column))))
+  }
+
+  const rowComplete = (row, columns, repeatFor, rowCompletion) =>
+    requiredColumns(columns, repeatFor, rowCompletion).every((column) => cellAnswered(row, column))
+
+  const sourceRowHasContent = (row) => !!row && typeof row === "object" &&
+    Object.keys(row).some((key) => key.charAt(0) !== "_" && isMeaningful(row[key]))
+
+  const readSourceRows = (data, repeatFor) => {
+    if (!data || !repeatFor || !repeatFor.sourceFieldId) return []
+    const direct = repeatFor.sourceRowsPath ? getPath(data, repeatFor.sourceRowsPath) : undefined
+    const value = direct !== undefined
+      ? direct
+      : Object.prototype.hasOwnProperty.call(data, repeatFor.sourceFieldId)
+        ? data[repeatFor.sourceFieldId]
+        : FormLogicKit.readValue(data, repeatFor.sourceFieldId)
+    return normalizeRows(value) || []
+  }
+
+  const filterPasses = (row, filter) => {
+    if (!filter || !Array.isArray(filter.conditions) || filter.conditions.length === 0) return true
+    return FormLogicKit.evaluateGroup(filter, (columnId) => getPath(row, columnId))
+  }
+
+  /**
+   * The target rows for the current source rows. Pure and idempotent:
+   * syncRows(source, syncRows(source, rows)) has the same signature.
+   * options: { repeatFor, rowCompletion, translate? (sets _rowStatusText), columns (target, without the
+   * injected label/status columns), makeRowId?, rowIds? (key -> _rowId for
+   * new rows) }
+   */
+  const syncRows = (sourceRows, targetRows, options = {}) => {
+    const repeatFor = options.repeatFor && options.repeatFor.sourceFieldId ? options.repeatFor : null
+    const completion = options.rowCompletion && options.rowCompletion.enabled ? options.rowCompletion : null
+    const columns = Array.isArray(options.columns) ? options.columns : []
+    const translate = typeof options.translate === "function" ? options.translate : null
+    let counter = 0
+    const makeRowId = typeof options.makeRowId === "function"
+      ? options.makeRowId
+      : () => "row_" + Date.now() + "_" + (counter += 1) + "_" + Math.random().toString(36).slice(2, 7)
+    const rows = (Array.isArray(targetRows) ? targetRows : []).filter((row) => row && typeof row === "object")
+    const labelTarget = repeatFor && repeatFor.labelTargetColumnId
+      ? columns.find((column) => column && column.id === repeatFor.labelTargetColumnId)
+      : null
+
+    const live = []
+    if (repeatFor) {
+      const seen = {}
+      ;(Array.isArray(sourceRows) ? sourceRows : []).forEach((sourceRow, index) => {
+        if (!sourceRowHasContent(sourceRow) || !filterPasses(sourceRow, repeatFor.filter)) return
+        const baseKey = repeatFor.keyColumnId
+          ? toText(getPath(sourceRow, repeatFor.keyColumnId))
+          : String(sourceRow._rowId || "row_" + index)
+        if (!baseKey) return
+        seen[baseKey] = (seen[baseKey] || 0) + 1
+        const key = seen[baseKey] > 1 ? baseKey + "#" + seen[baseKey] : baseKey
+        const label = repeatFor.labelColumnId ? toText(getPath(sourceRow, repeatFor.labelColumnId)) : ""
+        live.push({ key, label })
+      })
+    }
+    const liveKeys = {}
+    live.forEach((entry) => { liveKeys[entry.key] = true })
+
+    const claimed = {}
+    const byKey = {}
+    rows.forEach((row) => {
+      if (row._sourceKey && !byKey[row._sourceKey]) byKey[row._sourceKey] = row
+    })
+
+    const next = []
+    live.forEach((entry) => {
+      const existing = byKey[entry.key]
+      let row
+      if (existing) {
+        row = { ...existing }
+        claimed[entry.key] = existing
+      } else {
+        // rowIds (key -> _rowId) lets a second pass over the same answers
+        // reuse the ids a first, pure pass chose (see syncTablesInPlace).
+        const reused = options.rowIds && typeof options.rowIds[entry.key] === "string" ? options.rowIds[entry.key] : ""
+        row = { _rowId: reused || makeRowId() }
+        columns.forEach((column) => {
+          if (!column || isInjectedColumn(column) || isComputedColumn(column)) return
+          setPath(row, columnPath(column), defaultCellValue(column))
+        })
+      }
+      row._sourceKey = entry.key
+      delete row._sourceRemoved
+      row[LABEL_KEY] = entry.label
+      if (labelTarget) setPath(row, columnPath(labelTarget), entry.label)
+      next.push(row)
+    })
+
+    const policy = repeatFor ? repeatFor.orphanPolicy || "remove-if-unanswered" : "remove"
+    rows.forEach((row) => {
+      if (!row._sourceKey || claimed[row._sourceKey] === row) return
+      if (!repeatFor) {
+        // Not a seeded table: nothing is an orphan; keep the row as it is.
+        next.push({ ...row })
+        return
+      }
+      if (liveKeys[row._sourceKey] && claimed[row._sourceKey]) {
+        // A duplicate of a claimed key: keep only if it carries answers.
+        if (!rowAnswered(row, columns, repeatFor)) return
+      }
+      if (policy === "remove") return
+      if (policy === "remove-if-unanswered" && !rowAnswered(row, columns, repeatFor)) return
+      next.push({ ...row, _sourceRemoved: true })
+    })
+
+    const allowManualRows = !repeatFor || repeatFor.allowManualRows === true
+    const showStatus = statusColumnShown(repeatFor, completion)
+    rows.forEach((row) => {
+      if (row._sourceKey) return
+      if (!allowManualRows && !rowAnswered(row, columns, repeatFor)) return
+      next.push({ ...row })
+    })
+
+    next.forEach((row) => {
+      const manual = !row._sourceKey
+      let status = ""
+      if (row._sourceRemoved) status = STATUS_TEXT.removed
+      if (completion) {
+        const complete = rowComplete(row, columns, repeatFor, completion)
+        row._complete = complete
+        if (!status && !(manual && !rowAnswered(row, columns, repeatFor))) {
+          status = complete ? STATUS_TEXT.complete : STATUS_TEXT.incomplete
+        }
+      } else {
+        delete row._complete
+      }
+      // While the status column is shown EditableTable fills an absent
+      // _rowStatus with "", so keep the key present to avoid churn.
+      if (showStatus) row[STATUS_KEY] = status
+      else delete row[STATUS_KEY]
+      if (!showStatus) delete row[STATUS_TEXT_KEY]
+      else if (translate) row[STATUS_TEXT_KEY] = status ? formatText(translate, status) : ""
+    })
+    return next
+  }
+
+  const statusColumnShown = (repeatFor, rowCompletion) =>
+    !!((rowCompletion && rowCompletion.enabled !== false) || (repeatFor && (repeatFor.orphanPolicy || "remove-if-unanswered") !== "remove"))
+
+  // ---- Translation ----
+  // \`translate\` is the form's translateFormText (uiTranslations keyed by the
+  // English source text for fd.field.status.__formLocale), handed over as a
+  // prop by the exporter. _rowStatus is always the English STATUS_TEXT value
+  // (validation, the off-page sync and tests read it); the translation goes
+  // in the display-only _rowStatusText, which only the mounted table (the one
+  // with a translate function) writes and the off-page sync leaves alone, so
+  // the two never fight. Placeholders ({name}) are filled after translation.
+  const formatText = (translate, source, vars) => {
+    let text = source === undefined || source === null ? "" : String(source)
+    if (typeof translate === "function" && text) {
+      const translated = translate(text)
+      if (typeof translated === "string" && translated) text = translated
+    }
+    if (vars) {
+      Object.keys(vars).forEach((key) => {
+        text = text.split("{" + key + "}").join(vars[key] === undefined || vars[key] === null ? "" : String(vars[key]))
+      })
+    }
+    return text
+  }
+
+  // Extra display columns: the row label first, the status last. Inline mode
+  // uses always-calculated formula columns that read the row's own meta key
+  // (read-only cells); modal mode uses template columns (display cells, and
+  // a template column keeps the row visible in the summary table). With a
+  // \`translate\` function the status column shows _rowStatusText (the
+  // translated status the mounted table keeps) and the headings are
+  // translated; without one the output is exactly as before.
+  const buildColumns = (columns, repeatFor, rowCompletion, isModalMode, translate) => {
+    const base = Array.isArray(columns) ? columns : []
+    const showLabel = !!(repeatFor && repeatFor.labelColumnId && !repeatFor.labelTargetColumnId)
+    const showStatus = statusColumnShown(repeatFor, rowCompletion)
+    if (!showLabel && !showStatus) return base
+    const displayColumn = (id, title, path) => (isModalMode
+      ? { id, title, type: "text", dataPath: path, showInTable: true, showInModal: false, computedValue: { mode: "template", template: "{" + path + "}" } }
+      : { id, title, type: "text", dataPath: path, showInTable: true, showInModal: false, computedValue: { mode: "formula", expression: "[" + path + "]", calculationPolicy: "always-calculated" } })
+    const statusPath = typeof translate === "function" ? STATUS_TEXT_KEY : STATUS_KEY
+    return [
+      ...(showLabel ? [displayColumn(LABEL_COLUMN_ID, formatText(translate, repeatFor.labelTitle || "Item"), LABEL_KEY)] : []),
+      ...base,
+      ...(showStatus ? [displayColumn(STATUS_COLUMN_ID, formatText(translate, (rowCompletion && rowCompletion.statusLabel) || "Status"), statusPath)] : []),
+    ]
+  }
+
+  // ---- "One card per item" presentation (repeatFor.presentation = "cards") ----
+  // Same rows array as the grid; only the editing surface differs. Cards use
+  // the MOIS scope controls EditableTable's cells use, with the same value
+  // shapes (choice code / code[], number via storeAsNumber, date strings,
+  // checkbox boolean), and recalculate template + formula columns on every
+  // write exactly as EditableTable does (overridden formula cells are left).
+  // Calculated cells are shown read-only.
+
+  /** Why cards cannot be used for these columns (the grid is shown instead), or "". */
+  const cardsUnsupportedReason = (columns, authorshipActive) => {
+    if ((columns || []).some((column) => column && column.type === "stampButton")) return "stamp-column"
+    if (authorshipActive) return "row-authorship"
+    return ""
+  }
+
+  /** The columns a card asks, in order (not the label copy; modal tables: the modal's columns). */
+  const cardColumns = (columns, repeatFor, isModalMode) => (columns || []).filter((column) =>
+    column && !isInjectedColumn(column) &&
+    !(repeatFor && repeatFor.labelTargetColumnId && column.id === repeatFor.labelTargetColumnId) &&
+    !(isModalMode && column.showInModal === false)
+  )
+
+  // EditableTable's per-row column visibility rule.
+  const columnVisible = (column, row) => {
+    const rule = column && column.visibility
+    if (!rule || typeof rule !== "object" || rule.type === "always" || !rule.controllerId) return true
+    const value = getPath(row || {}, rule.controllerId)
+    if (rule.type === "filled") return isMeaningful(value)
+    if (rule.type === "equals") return String(value === undefined || value === null ? "" : value) === String(rule.value === undefined || rule.value === null ? "" : rule.value)
+    if (rule.type === "gt" || rule.type === "lt") {
+      const left = Number(value)
+      const right = Number(rule.value === undefined || rule.value === null ? 0 : rule.value)
+      if (!Number.isFinite(left) || !Number.isFinite(right)) return false
+      return rule.type === "gt" ? left > right : left < right
+    }
+    return true
+  }
+
+  const choiceOptions = (options) => (Array.isArray(options) ? options : [])
+    .map((option, index) => {
+      if (typeof option === "string") {
+        const trimmed = option.trim()
+        return trimmed ? { key: trimmed, text: trimmed } : null
+      }
+      if (option && typeof option === "object") {
+        const candidate = option.text || option.display || option.label || option.code || option.key || option.value
+        const text = typeof candidate === "string" ? candidate.trim() : ""
+        if (!text) return null
+        return { key: String(option.key || option.code || option.value || option.id || text || "option_" + (index + 1)), text }
+      }
+      return null
+    })
+    .filter(Boolean)
+
+  const isMultipleChoice = (column) => column.choiceStyle === "multiselect" || column.choiceStyle === "checkbox"
+
+  const choiceCoding = (value, options) => {
+    if (value === undefined || value === null || value === "") return null
+    if (typeof value === "object" && !Array.isArray(value)) {
+      const code = value.code !== undefined ? value.code : value.value !== undefined ? value.value : value.key
+      if (code === undefined || code === null || code === "") return null
+      return { code: String(code), display: String(value.display || value.text || value.label || code) }
+    }
+    const code = String(value)
+    const option = options.find((entry) => String(entry.key) === code)
+    return { code, display: option ? option.text : code }
+  }
+
+  const choiceForControl = (value, column, options) => {
+    if (isMultipleChoice(column)) {
+      const values = Array.isArray(value) ? value : value ? [value] : []
+      return values.map((entry) => choiceCoding(entry, options)).filter(Boolean)
+    }
+    return choiceCoding(value, options) || undefined
+  }
+
+  const choiceForStorage = (coding, codings, column) => (isMultipleChoice(column)
+    ? (codings || []).map((entry) => entry && entry.code).filter(Boolean)
+    : (coding && coding.code) || "")
+
+  const numberSettings = (column) => {
+    const config = column.numberConfig || {}
+    const spin = config.spinButtonProps || {}
+    const pick = (a, b) => (a !== undefined && a !== null ? a : b)
+    return {
+      typeNumber: config.typeNumber || column.typeNumber || "number",
+      suffix: pick(config.suffix, column.suffix),
+      buttonControls: pick(pick(config.buttonControls, column.buttonControls), false),
+      storeAsNumber: pick(pick(config.storeAsNumber, column.storeAsNumber), true),
+      spinButtonProps: { min: pick(spin.min, column.min), max: pick(spin.max, column.max), step: pick(spin.step, column.step) },
+    }
+  }
+
+  // SMOIS DateSelect reports a Date, preview a string: store the local day.
+  const dateCellValue = (value) => {
+    if (value && typeof value.getFullYear === "function") {
+      if (Number.isNaN(value.getTime())) return ""
+      const pad2 = (part) => (part < 10 ? "0" : "") + part
+      return value.getFullYear() + "-" + pad2(value.getMonth() + 1) + "-" + pad2(value.getDate())
+    }
+    return typeof value === "string" ? value : ""
+  }
+
+  const coerceNumber = (value, column) => {
+    if (value === "" || value === undefined || value === null) return ""
+    if (numberSettings(column).storeAsNumber === false) return value
+    const numeric = Number(value)
+    return Number.isNaN(numeric) ? "" : numeric
+  }
+
+  const templateValue = (row, column) => {
+    const config = column && column.computedValue
+    if (!config || config.mode !== "template" || typeof config.template !== "string") return ""
+    const rendered = config.template.replace(/\\{([^{}]+)\\}/g, (_match, path) => toText(getPath(row, String(path || "").trim())))
+    return config.emptyBehavior !== "blank"
+      ? rendered.split(/\\r?\\n/).map((line) => line.replace(/\\s+$/, "")).filter((line) => line.trim().length > 0).join("\\n")
+      : rendered
+  }
+
+  /** A cell as display text (EditableTable's _formatCellValue). */
+  const formatCell = (row, column) => {
+    if (column.computedValue && column.computedValue.mode === "template") {
+      const computed = templateValue(row, column)
+      if (isMeaningful(computed)) return computed
+    }
+    const value = getPath(row, columnPath(column))
+    if (column.type === "dropdown" && !column.codeSystem && (typeof value === "string" || Array.isArray(value))) {
+      const options = choiceOptions(column.options)
+      const wording = (code) => {
+        const option = options.find((entry) => String(entry.key) === String(code))
+        return option ? option.text : code
+      }
+      return toText(Array.isArray(value) ? value.map(wording) : wording(value))
+    }
+    if (column.type === "checkbox") {
+      if (value === undefined || value === null || value === "") return ""
+      const labels = column.booleanLabels || {}
+      return value ? labels.on || "Checked" : labels.off || "Unchecked"
+    }
+    return toText(value)
+  }
+
+  const isFormulaColumn = (column) =>
+    !!(column && column.computedValue && column.computedValue.mode === "formula" && typeof column.computedValue.expression === "string")
+
+  const formulaPolicy = (column) => {
+    const policy = column.computedValue.calculationPolicy
+    return policy === "always-calculated" || policy === "suggested-calculation" ? policy : "calculated-until-overridden"
+  }
+
+  const formulaValue = (row, column, columns) => {
+    if (typeof FormulaKit === "undefined") return ""
+    const config = column.computedValue
+    const values = {}
+    ;(columns || []).forEach((entry) => {
+      const path = columnPath(entry)
+      const value = getPath(row, path)
+      values[entry.id] = value
+      if (path !== entry.id) values[path] = value
+    })
+    if (config.incompleteBehavior !== "compute-anyway" && !FormulaKit.hasAllReferencedValues(config.expression, values)) return ""
+    const precision = Number(config.precision)
+    const result = FormulaKit.roundValue(FormulaKit.evaluate(config.expression, values, column.id), Number.isFinite(precision) ? precision : 2)
+    if (result === null || result === undefined || result === "") return ""
+    if (typeof result === "boolean") return result ? "true" : "false"
+    return String(result)
+  }
+
+  /** Recalculate template + formula cells of one row in place (EditableTable's _applyComputedColumns). */
+  const applyComputed = (row, columns) => {
+    ;(columns || []).forEach((column) => {
+      if (column && column.computedValue && column.computedValue.mode === "template") setPath(row, columnPath(column), templateValue(row, column))
+    })
+    ;(columns || []).forEach((column) => {
+      if (!isFormulaColumn(column)) return
+      const policy = formulaPolicy(column)
+      if (policy !== "always-calculated" && row._formulaOverrides && row._formulaOverrides[column.id]) return
+      if (policy === "suggested-calculation" && isMeaningful(getPath(row, columnPath(column)))) return
+      setPath(row, columnPath(column), formulaValue(row, column, columns))
+    })
+    return row
+  }
+
+  /** The rows with one cell of one row (by _rowId) written and that row recalculated. */
+  const writeCell = (rows, rowId, column, value, columns) => (rows || []).map((row) => {
+    if (!row || row._rowId !== rowId) return row
+    const next = JSON.parse(JSON.stringify(row))
+    setPath(next, columnPath(column), value)
+    return applyComputed(next, columns)
+  })
+
+  /** A blank manual row (EditableTable's empty row: default cell values). */
+  const blankRow = (columns, makeRowId) => {
+    const row = { _rowId: makeRowId ? makeRowId() : "row_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8) }
+    ;(columns || []).forEach((column) => {
+      if (!column || isInjectedColumn(column) || isComputedColumn(column)) return
+      setPath(row, columnPath(column), defaultCellValue(column))
+    })
+    return applyComputed(row, columns)
+  }
+
+  const mirrorValue = (value, column) => {
+    if (column && column.type === "checkbox") return Boolean(value)
+    if (value === undefined || value === null) return null
+    if (typeof value === "string") {
+      const trimmed = value.trim()
+      return trimmed.length > 0 ? trimmed : null
+    }
+    return value
+  }
+
+  const mirrorRows = (data, rows, columns, sourceFieldIds, sourceFieldIdsByRow) => {
+    const flat = sourceFieldIds || {}
+    const byRow = sourceFieldIdsByRow || {}
+    const ids = new Set()
+    Object.values(flat).forEach((fieldId) => { if (fieldId) ids.add(fieldId) })
+    Object.values(byRow).forEach((mapping) => Object.values(mapping || {}).forEach((fieldId) => { if (fieldId) ids.add(fieldId) }))
+    if (ids.size === 0) return
+    ids.forEach((fieldId) => { data[fieldId] = null })
+    ;(rows || []).forEach((row, rowIndex) => {
+      ;(columns || []).forEach((column) => {
+        const fieldId = (byRow[rowIndex] && byRow[rowIndex][column.id]) || flat[column.id]
+        if (!fieldId) return
+        data[fieldId] = mirrorValue(getPath(row, columnPath(column)), column)
+      })
+    })
+  }
+
+  // ---- Off-page sync (every repeating table, mounted or not) ----
+  // A table spec is what the exporter emits per repeating table
+  // (buildRepeatTableSyncSpecs in lib/mois-export/renderers/repeat-table-renderer.ts):
+  //   { id, rowsPath?, countPath?, repeatFor, rowCompletion?, columns,
+  //     sourceFieldIds?, sourceFieldIdsByRow?, readOnly? }
+  // FormFlow runs it before Next validation and on the review page, and the
+  // generated validateSubmitPayload before submit validation, so a row added
+  // to a source table after its follower's page was left still gets its
+  // follow-up row (FormFlow.Page renders nothing off-page, so the mounted
+  // component cannot). Same syncRows as the mounted component, so the two
+  // agree and never fight; answers are kept by the orphan policy as usual.
+
+  const rowIdsByKey = (rows) => {
+    const ids = {}
+    ;(rows || []).forEach((row) => {
+      if (row && row._sourceKey && typeof row._rowId === "string" && !ids[row._sourceKey]) ids[row._sourceKey] = row._rowId
+    })
+    return ids
+  }
+
+  /** Sync one table inside \`data\` (a plain object or an immer draft). Returns true when it wrote. */
+  const syncTableInPlace = (data, spec, rowIdsFrom) => {
+    if (!data || typeof data !== "object" || !spec || spec.readOnly) return false
+    const repeatFor = spec.repeatFor && spec.repeatFor.sourceFieldId ? spec.repeatFor : null
+    if (!repeatFor) return false
+    const rowsPath = spec.rowsPath || spec.id
+    if (!rowsPath) return false
+    const currentRaw = normalizeRows(getPath(data, rowsPath))
+    const current = currentRaw ? JSON.parse(JSON.stringify(currentRaw)) : []
+    const source = JSON.parse(JSON.stringify(readSourceRows(data, repeatFor)))
+    const columns = Array.isArray(spec.columns) ? spec.columns : []
+    const next = syncRows(source, current, {
+      repeatFor,
+      rowCompletion: spec.rowCompletion,
+      columns,
+      rowIds: rowIdsFrom ? rowIdsByKey(normalizeRows(getPath(rowIdsFrom, rowsPath))) : null,
+    })
+    // A never-shown table with nothing to seed stays absent (no churn).
+    if (!currentRaw && next.length === 0) return false
+    if (currentRaw && signature(current) === signature(next)) return false
+    setPath(data, rowsPath, next)
+    if (spec.countPath) setPath(data, spec.countPath, next.length)
+    mirrorRows(data, next, columns, spec.sourceFieldIds, spec.sourceFieldIdsByRow)
+    return true
+  }
+
+  /**
+   * Sync every table spec inside \`data\`, repeating until nothing changes so a
+   * follower of a follower settles (bounded; syncRows is idempotent, so a
+   * second pass over unchanged sources writes nothing). Returns the ids of
+   * the tables that changed. \`rowIdsFrom\` (optional) is an already-synced copy
+   * of the same answers whose new-row ids should be reused.
+   */
+  const syncTablesInPlace = (data, tables, rowIdsFrom) => {
+    const list = Array.isArray(tables) ? tables.filter(Boolean) : []
+    const changed = []
+    for (let pass = 0; pass <= list.length; pass += 1) {
+      let wrote = false
+      list.forEach((spec) => {
+        if (syncTableInPlace(data, spec, rowIdsFrom)) {
+          wrote = true
+          if (!changed.includes(spec.id)) changed.push(spec.id)
+        }
+      })
+      if (!wrote) break
+    }
+    return changed
+  }
+
+  return {
+    LABEL_KEY,
+    STATUS_KEY,
+    STATUS_TEXT_KEY,
+    STATUS_TEXT,
+    syncTableInPlace,
+    syncTablesInPlace,
+    getPath,
+    setPath,
+    normalizeRows,
+    isMeaningful,
+    signature,
+    hasRowMeta,
+    rowAnswered,
+    rowComplete,
+    readSourceRows,
+    syncRows,
+    buildColumns,
+    mirrorRows,
+    formatText,
+    cardsUnsupportedReason,
+    cardColumns,
+    columnVisible,
+    choiceOptions,
+    choiceForControl,
+    choiceForStorage,
+    numberSettings,
+    coerceNumber,
+    dateCellValue,
+    formatCell,
+    isComputedColumn,
+    columnPath,
+    applyComputed,
+    writeCell,
+    blankRow,
+  }
+})()
+
+/**
+ * The answers with every repeating table synced, or null when nothing would
+ * change. Pure: \`values\` is never modified (the result is a deep copy).
+ */
+RepeatForEachTable.syncFormData = (values, tables) => {
+  if (!Array.isArray(tables) || tables.length === 0 || !values || typeof values !== "object") return null
+  const copy = JSON.parse(JSON.stringify(values))
+  return RepeatForEachTable.helpers.syncTablesInPlace(copy, tables).length > 0 ? copy : null
+}
+
+/**
+ * Write the sync into ActiveData (fd.setFormData, a produce recipe computed
+ * from the draft). \`synced\` (optional, from syncFormData) supplies the ids of
+ * new rows so the stored rows match what was just validated or submitted.
+ */
+RepeatForEachTable.syncActiveData = (fd, tables, synced) => {
+  const setter = fd && typeof fd.setFormData === "function" ? fd.setFormData : null
+  if (!setter || !Array.isArray(tables) || tables.length === 0) return
+  setter(produce((draft) => {
+    if (!draft || !draft.field || !draft.field.data || typeof draft.field.data !== "object") return
+    RepeatForEachTable.helpers.syncTablesInPlace(draft.field.data, tables, synced || null)
+  }))
+}
+
+/**
+ * Emitted first in validateSubmitPayload: sync the payload's formData (so
+ * submit validation and the saved record see current rows) and the live
+ * ActiveData. Never blocks the submit by itself.
+ */
+RepeatForEachTable.syncSubmitPayload = (payload, fd, tables) => {
+  if (!payload || !payload.formData) return
+  const synced = RepeatForEachTable.syncFormData(payload.formData, tables)
+  if (!synced) return
+  payload.formData = synced
+  RepeatForEachTable.syncActiveData(fd, tables, synced)
 }
 `,
   './RichMarkdownBlock/index.jsx': `const { useMemo } = React
@@ -33530,6 +38459,67 @@ const _buildMappedPayload = (values, action) => {
   return payload
 }
 
+// Full-record MOIS writes carry a declarative recordShape (see
+// data/mois-write-targets.json). This interpreter is kept verbatim in sync with
+// MOIS_RECORD_SHAPE_RUNTIME_SOURCE in lib/mois-export/mois-record-shape-runtime.ts;
+// the registry test fails if the two drift.
+const _applyMoisRecordShape = (payload, shape, context) => {
+  const ctx = context || {}
+  const input = { ...(payload || {}) }
+  const blank = (value) => value === undefined || value === null || value === ""
+  const toNumber = (value) => (typeof value === "string" && /^-?\\d+$/.test(value.trim()) ? Number(value.trim()) : value)
+  const titleCase = (code) => String(code).toLowerCase().split(/[_\\s]+/).filter(Boolean).map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ")
+  const toCoding = (value, rule) => {
+    if (value === undefined || value === null) return value
+    if (typeof value === "object") return { code: value.code ?? null, display: value.display ?? null, system: value.system ?? rule.system ?? null }
+    const code = typeof value === "boolean" ? (value ? "Y" : "N") : String(value)
+    return { code, display: (rule.displays && rule.displays[code]) || titleCase(code), system: rule.system }
+  }
+  const codings = shape.codings || {}
+  for (const key of shape.numeric || []) if (key in input) input[key] = toNumber(input[key])
+  for (const key of Object.keys(codings)) if (key in input) input[key] = toCoding(input[key], codings[key])
+  const id = Number(input[shape.idKey] || 0)
+  if (!Number.isFinite(id) || id < 0) return { error: shape.idKey + " must be empty (create) or a positive id (update); deleting through this write is not verified" }
+  const isUpdate = id > 0
+  if (!isUpdate && shape.updateOnly) return { error: shape.idKey + " is required: this write only updates an existing record" }
+  let base = null
+  if (isUpdate && shape.base) {
+    let rows = [ctx.patient]
+    for (const segment of shape.base.path) rows = rows.flatMap((row) => { const next = row && row[segment]; return Array.isArray(next) ? next : next ? [next] : [] })
+    const existing = rows.find((row) => row && Number(row[shape.idKey]) === id)
+    if (!existing && shape.base.required) return { error: shape.idKey + " " + id + " is not on the loaded chart, so its other fields cannot be resent unchanged" }
+    if (existing) {
+      base = {}
+      for (const key of shape.base.fields) if (existing[key] !== undefined) base[key] = codings[key] ? toCoding(existing[key], codings[key]) : existing[key]
+    }
+  }
+  const fromContext = (source) => (source === "today" ? ctx.today : ctx[source])
+  const contextValues = {}
+  const contextSources = { ...(isUpdate ? {} : shape.createContextDefaults || {}), ...(shape.contextFields || {}) }
+  for (const key of Object.keys(contextSources)) {
+    const value = fromContext(contextSources[key])
+    if (!blank(value)) contextValues[key] = toNumber(value)
+  }
+  const record = { ...(shape.defaults || {}), ...(isUpdate ? {} : shape.createDefaults || {}), ...contextValues, ...(base || {}), ...input }
+  if (!isUpdate) record[shape.idKey] = 0
+  for (const key of Object.keys(shape.derive || {})) {
+    const rule = shape.derive[key]
+    const source = record[rule.from]
+    if (!blank(record[key]) || blank(source)) continue
+    if (rule.coding) record[key] = { code: String(source), display: null, system: rule.coding }
+    else record[key] = toNumber(rule.field ? source[rule.field] : source)
+  }
+  const required = ((shape.required || {})[isUpdate ? "update" : "create"]) || []
+  const missing = required.filter((key) => blank(record[key]))
+  if (missing.length) return { error: "Missing " + missing.join(", ") + (isUpdate ? " for this update" : " to create this record") }
+  return { record, isUpdate }
+}
+
+const _moisLocalToday = () => {
+  const now = new Date()
+  return now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0") + "-" + String(now.getDate()).padStart(2, "0")
+}
+
 // MOIS write actions supported at runtime, keyed by \`\${resource}.\${mutation}\`
 // to match lib/mois-write-action-registry.ts ids — every key here must be
 // runtimeStatus "supported" there, and vice versa. Every mutation document is
@@ -33624,6 +38614,51 @@ const MOIS_WRITE_MUTATIONS = {
       return { encounterId: typeof resolved === "string" ? Number(resolved) : resolved, newCorrespondence }
     },
   },
+  // Full-record writes, live-verified 2026-09-10/11: the executor applies the
+  // recordShape (copy the current record from the chart, then the mapped
+  // fields) before buildVariables sees the payload.
+  "encounterNote.changeEncounterNote": {
+    document: \`mutation addEncounterNote($patientId: Int!, $encounterNote: EncounterNoteInput!) {
+      changeEncounterNote(patientId: $patientId, encounterNote: $encounterNote) {
+        encounterId
+      }
+    }\`,
+    idVariable: "patientId",
+    recordShape: {"idKey":"encounterNoteId","numeric":["encounterNoteId","encounterId","authorUserProfileId","creatorUserProfileId"],"codings":{"isComplete":{"system":"MOIS-YESNO","displays":{"Y":"Yes","N":"No"}}},"base":{"path":["encounters","notes"],"required":true,"fields":["encounterNoteId","encounterId","authorUserProfileId","creatorUserProfileId","noteCreationDate","note","isComplete","extraInfoTemplate","extraInfo"]},"createDefaults":{"extraInfoTemplate":null,"extraInfo":null,"isComplete":{"code":"N","display":"No","system":"MOIS-YESNO"}},"createContextDefaults":{"encounterId":"encounterId","authorUserProfileId":"userId","creatorUserProfileId":"userId","noteCreationDate":"today"},"required":{"create":["encounterId","note","authorUserProfileId","creatorUserProfileId"],"update":["encounterNoteId","encounterId"]}},
+    buildVariables: (patientId, record) => ({ patientId: Number(patientId), encounterNote: record }),
+  },
+  "task.changeTask": {
+    document: \`mutation changeTask($patientId: Int!, $task: MoisTaskInput!) {
+      changeTask(patientId: $patientId, task: $task) {
+        taskId
+      }
+    }\`,
+    idVariable: "patientId",
+    recordShape: {"idKey":"taskId","numeric":["taskId","encounterId","documentId","assignedUserId"],"codings":{"priority":{"system":"MOIS-TASKPRIORITY","displays":{"MEDIUM":"Medium"}},"isAcknowledged":{"system":"MOIS-YESNO","displays":{"Y":"Yes","N":"No"}},"isComplete":{"system":"MOIS-YESNO","displays":{"Y":"Yes","N":"No"}}},"base":{"path":["encounters","tasks"],"required":true,"fields":["documentId","encounterId","taskId","createdDate","assignedUserId","priority","dueDate","isAcknowledged","acknowledgedBy","acknowledgedDate","isComplete","completedBy","completedDate","description","note"]},"updateOnly":true,"required":{"update":["taskId"]}},
+    buildVariables: (patientId, record) => ({ patientId: Number(patientId), task: record }),
+  },
+  "serviceEpisode.changeServiceEpisode": {
+    document: \`mutation changeServiceEpisode($patientId: Int!, $serviceEpisode: ServiceEpisodeInput!) {
+      changeServiceEpisode(patientId: $patientId, serviceEpisode: $serviceEpisode) {
+        patientId
+      }
+    }\`,
+    idVariable: "patientId",
+    recordShape: {"idKey":"serviceEpisodeId","numeric":["serviceEpisodeId","encounterId","serviceMrpId"],"codings":{"service":{"system":"NH.SERVICE"},"serviceMrp":{"system":"MOIS.USER"},"includeOnDemographics":{"system":"MOIS-YESNO","displays":{"Y":"Yes","N":"No"}},"includeOnCarePlan":{"system":"MOIS-YESNO","displays":{"Y":"Yes","N":"No"}}},"base":{"path":["serviceEpisodes"],"required":true,"fields":["serviceEpisodeId","encounterId","startDate","endDate","service","serviceMrp","serviceMrpId","stopReason","stopNote","note","includeOnDemographics","includeOnCarePlan"]},"createDefaults":{"encounterId":null,"endDate":null,"stopReason":{"code":null,"display":null,"system":null},"stopNote":null,"includeOnDemographics":{"code":"N","display":"No","system":"MOIS-YESNO"},"includeOnCarePlan":{"code":"N","display":"No","system":"MOIS-YESNO"},"asMemberOfs":[]},"createContextDefaults":{"startDate":"today"},"contextFields":{"patientId":"patientId"},"derive":{"serviceMrp":{"from":"serviceMrpId","coding":"MOIS.USER"},"serviceMrpId":{"from":"serviceMrp","field":"code"}},"required":{"create":["service","serviceMrp","serviceMrpId","startDate"],"update":["serviceEpisodeId","service"]}},
+    buildVariables: (patientId, record) => ({ patientId: Number(patientId), serviceEpisode: record }),
+  },
+  // The parent episode is both the $serviceEpisodeId variable and a field of
+  // ServiceEventInput, so it is read from the shaped record, not the context.
+  "serviceEvent.changeServiceEvent": {
+    document: \`mutation changeServiceEvent($serviceEpisodeId: Int!, $serviceEvent: ServiceEventInput!) {
+      changeServiceEvent(serviceEpisodeId: $serviceEpisodeId, serviceEvent: $serviceEvent) {
+        serviceEventId
+      }
+    }\`,
+    idVariable: "serviceEpisodeId",
+    recordShape: {"idKey":"serviceEventId","numeric":["serviceEventId","serviceEpisodeId","objectId"],"codings":{"service":{"system":"NH.SERVICE"},"phase":{"system":"MOIS-SERVICEEVENTPHASE","displays":{"INITIAL":"Initial","FOLLOWUP":"Follow Up"}}},"defaults":{"objectType":"tdt_encounter","objectTypeExt":null},"createDefaults":{"healthIssues":[]},"createContextDefaults":{"objectId":"encounterId"},"required":{"create":["serviceEpisodeId","objectId","service","phase"],"update":["serviceEventId","serviceEpisodeId","objectId","service","phase"]}},
+    buildVariables: (_contextId, record) => ({ serviceEpisodeId: record.serviceEpisodeId, serviceEvent: record }),
+  },
   "prescription.updatePrescription": {
     document: \`mutation updatePrescription($patientId: Int!, $prescription: PrescriptionInput!) {
       changePrescription(patientId: $patientId, prescription: $prescription) {
@@ -33640,7 +38675,10 @@ const MOIS_WRITE_MUTATIONS = {
       }
     }\`,
     idVariable: "patientId",
-    buildVariables: (patientId, payload) => ({ patientId, longTermMedication: payload }),
+    // Full-record update, live-verified 2026-09-11: the executor resends the
+    // chart record (drug durations and dosages included) with the mapped text.
+    recordShape: {"idKey":"longTermMedicationId","numeric":["longTermMedicationId"],"base":{"path":["longTermMedications"],"required":true,"fields":["longTermMedicationId","patientId","encounterId","startDate","endDate","orderingProvider","medication","doseFrequency","comment","instruction","genericName","indication","atcCode","cdicCode","prn","type","doNotSubstitute","doNotAdapt","doseType","drugDurations","partFill","partFillQuantity","partFillUnits","partFillFrequency","prnRangeLow","prnRangeHigh","prnDailyMaximum","prnDoseUnits","prnFrequencyLow","prnFrequencyHigh","prnFrequencyUnits","dispenseQuantity","dispenseQuantityUnits","dailyDose","dailyDoseUnits","witnessIngestionDPW","deliveryNotAuthorized","carriesDPW","saferSupply","isOAT","isOATDual"]},"updateOnly":true,"contextFields":{"patientId":"patientId"},"required":{"update":["longTermMedicationId","patientId","medication"]}},
+    buildVariables: (patientId, payload) => ({ patientId: Number(patientId), longTermMedication: payload }),
   },
   "prescription.updateFavouriteMedication": {
     document: \`mutation updateFavouriteMedication($userId: Int, $favouriteMedication: FavouriteMedicationInput!) {
@@ -36624,7 +41662,29 @@ const SubformScoringInner = ({
                     dataEntryAction,
                     { sd, fd, sourceData: sd, formData: fd?.field?.data, patient: sd?.patient }
                   )
-                  const payload = _buildMappedPayload(dataEntryValues, dataEntryAction)
+                  let payload = _buildMappedPayload(dataEntryValues, dataEntryAction)
+                  if (writeDefinition.recordShape) {
+                    const contextRoot = { sd, fd, sourceData: sd, formData: fd?.field?.data, patient: sd?.patient }
+                    const shaped = _applyMoisRecordShape(payload, writeDefinition.recordShape, {
+                      patient: sd?.patient,
+                      patientId: resolvedId,
+                      encounterId: _resolveWriteActionId("encounterId", null, contextRoot),
+                      userId: _resolveWriteActionId("userId", null, contextRoot),
+                      today: _moisLocalToday(),
+                    })
+                    if (shaped.error) {
+                      // Refuse rather than send a partial record: the modal stays
+                      // open and the reason is recorded for the DebugView.
+                      _recordSubformActionPayload(fd?.setFormData, id, {
+                        kind: "moisMutation",
+                        resource: dataEntryAction.resource,
+                        mutation: dataEntryAction.mutation,
+                        error: shaped.error,
+                      })
+                      return
+                    }
+                    payload = shaped.record
+                  }
                   const variables = writeDefinition.buildVariables(resolvedId, payload)
                   actionPayload = {
                     kind: "moisMutation",
@@ -39282,7 +44342,7 @@ var WordFormRuntime = (() => {
             }
             return e2.insert = e2.strstart < x - 1 ? e2.strstart : x - 1, t2 === f ? (N(e2, true), 0 === e2.strm.avail_out ? O : B) : e2.last_lit && (N(e2, false), 0 === e2.strm.avail_out) ? A : I;
           }
-          function W3(e2, t2) {
+          function W4(e2, t2) {
             for (var r2, n2, i2; ; ) {
               if (e2.lookahead < z) {
                 if (j(e2), e2.lookahead < z && t2 === l) return A;
@@ -39334,7 +44394,7 @@ var WordFormRuntime = (() => {
               if (e2.strstart - e2.block_start >= e2.w_size - z && (N(e2, false), 0 === e2.strm.avail_out)) return A;
             }
             return e2.insert = 0, t2 === f ? (N(e2, true), 0 === e2.strm.avail_out ? O : B) : (e2.strstart > e2.block_start && (N(e2, false), e2.strm.avail_out), A);
-          }), new M(4, 4, 8, 4, Z), new M(4, 5, 16, 8, Z), new M(4, 6, 32, 32, Z), new M(4, 4, 16, 16, W3), new M(8, 16, 32, 32, W3), new M(8, 16, 128, 128, W3), new M(8, 32, 128, 256, W3), new M(32, 128, 258, 1024, W3), new M(32, 258, 258, 4096, W3)], r.deflateInit = function(e2, t2) {
+          }), new M(4, 4, 8, 4, Z), new M(4, 5, 16, 8, Z), new M(4, 6, 32, 32, Z), new M(4, 4, 16, 16, W4), new M(8, 16, 32, 32, W4), new M(8, 16, 128, 128, W4), new M(8, 32, 128, 256, W4), new M(32, 128, 258, 1024, W4), new M(32, 258, 258, 4096, W4)], r.deflateInit = function(e2, t2) {
             return Y(e2, t2, v, 15, 8, 0);
           }, r.deflateInit2 = Y, r.deflateReset = K, r.deflateResetKeep = G, r.deflateSetHeader = function(e2, t2) {
             return e2 && e2.state ? 2 !== e2.state.wrap ? _ : (e2.state.gzhead = t2, m) : _;
@@ -39988,7 +45048,7 @@ var WordFormRuntime = (() => {
               0 !== o2 && (e2[2 * i2] = j(s2[o2]++, o2));
             }
           }
-          function W3(e2) {
+          function W4(e2) {
             var t2;
             for (t2 = 0; t2 < l; t2++) e2.dyn_ltree[2 * t2] = 0;
             for (t2 = 0; t2 < f; t2++) e2.dyn_dtree[2 * t2] = 0;
@@ -40062,7 +45122,7 @@ var WordFormRuntime = (() => {
               for (; e3 <= 287; ) z[2 * e3 + 1] = 8, e3++, s2[8]++;
               for (Z(z, l + 1, s2), e3 = 0; e3 < f; e3++) C[2 * e3 + 1] = 5, C[2 * e3] = j(e3, 5);
               O = new D(z, w, u + 1, l, g), B = new D(C, k, 0, f, g), R = new D(new Array(0), x, 0, c, p);
-            })(), q = true), e2.l_desc = new F(e2.dyn_ltree, O), e2.d_desc = new F(e2.dyn_dtree, B), e2.bl_desc = new F(e2.bl_tree, R), e2.bi_buf = 0, e2.bi_valid = 0, W3(e2);
+            })(), q = true), e2.l_desc = new F(e2.dyn_ltree, O), e2.d_desc = new F(e2.dyn_dtree, B), e2.bl_desc = new F(e2.bl_tree, R), e2.bi_buf = 0, e2.bi_valid = 0, W4(e2);
           }, r._tr_stored_block = J, r._tr_flush_block = function(e2, t2, r2, n2) {
             var i2, s2, a2 = 0;
             0 < e2.level ? (2 === e2.strm.data_type && (e2.strm.data_type = (function(e3) {
@@ -40079,7 +45139,7 @@ var WordFormRuntime = (() => {
               var i3;
               for (P(e3, t3 - 257, 5), P(e3, r3 - 1, 5), P(e3, n3 - 4, 4), i3 = 0; i3 < n3; i3++) P(e3, e3.bl_tree[2 * S[i3] + 1], 3);
               V(e3, e3.dyn_ltree, t3 - 1), V(e3, e3.dyn_dtree, r3 - 1);
-            })(e2, e2.l_desc.max_code + 1, e2.d_desc.max_code + 1, a2 + 1), K(e2, e2.dyn_ltree, e2.dyn_dtree)), W3(e2), n2 && M(e2);
+            })(e2, e2.l_desc.max_code + 1, e2.d_desc.max_code + 1, a2 + 1), K(e2, e2.dyn_ltree, e2.dyn_dtree)), W4(e2), n2 && M(e2);
           }, r._tr_tally = function(e2, t2, r2) {
             return e2.pending_buf[e2.d_buf + 2 * e2.last_lit] = t2 >>> 8 & 255, e2.pending_buf[e2.d_buf + 2 * e2.last_lit + 1] = 255 & t2, e2.pending_buf[e2.l_buf + e2.last_lit] = 255 & r2, e2.last_lit++, 0 === t2 ? e2.dyn_ltree[2 * r2]++ : (e2.matches++, t2--, e2.dyn_ltree[2 * (A[r2] + u + 1)]++, e2.dyn_dtree[2 * N(t2)]++), e2.last_lit === e2.lit_bufsize - 1;
           }, r._tr_align = function(e2) {
@@ -40178,10 +45238,12 @@ var WordFormRuntime = (() => {
   var word_form_exports = {};
   __export(word_form_exports, {
     WORD_FORM_MIME: () => WORD_FORM_MIME,
+    applyDocumentFillPreparers: () => applyDocumentFillPreparers,
     fillWordForm: () => fillWordForm,
     fillWordFormDetailed: () => fillWordFormDetailed,
     formatDocumentDate: () => formatDocumentDate,
     inspectWordForm: () => inspectWordForm,
+    planTableOverflow: () => planTableOverflow,
     prepareWordFormPreview: () => prepareWordFormPreview
   });
   var import_jszip = __toESM(require_jszip_min());
@@ -40263,7 +45325,7 @@ var WordFormRuntime = (() => {
       for (const f of nested) evaluate(f);
       return number(contents.filter((n) => n.localName === "t" && n.namespaceURI === W).map((n) => n.textContent).join(""));
     };
-    const cellValue = (cell) => containedValue(Array.from(cell.getElementsByTagName("*")));
+    const cellValue = (cell2) => containedValue(Array.from(cell2.getElementsByTagName("*")));
     const resolve = (name, table) => {
       const mark = bookmarks.get(name.toLowerCase());
       if (mark) return containedValue(mark);
@@ -40271,8 +45333,8 @@ var WordFormRuntime = (() => {
       if (ref && table) {
         const col = [...ref[1].toUpperCase()].reduce((n, c) => n * 26 + c.charCodeAt(0) - 64, 0) - 1;
         const row = all(table, "tr").filter((n) => ancestor(n.parentElement, "tbl") === table)[Number(ref[2]) - 1];
-        const cell = row && Array.from(row.children).filter((n) => n.localName === "tc")[col];
-        if (cell) return cellValue(cell);
+        const cell2 = row && Array.from(row.children).filter((n) => n.localName === "tc")[col];
+        if (cell2) return cellValue(cell2);
       }
       throw new Error(\`Unknown reference \${name}\`);
     };
@@ -40301,13 +45363,13 @@ var WordFormRuntime = (() => {
           if (!["SUM", "PRODUCT", "AVERAGE", "MIN", "MAX", "ABS", "ROUND"].includes(token.toUpperCase())) throw new Error(\`Unsupported function \${token}\`);
           const args = [];
           if (/^(ABOVE|BELOW|LEFT|RIGHT)$/i.test(tokens[at] || "")) {
-            const direction = tokens[at++].toUpperCase(), cell = ancestor(f.node, "tc");
+            const direction = tokens[at++].toUpperCase(), cell2 = ancestor(f.node, "tc");
             const grid = table && tables.get(table);
-            if (!grid || !cell) throw new Error("Positional formula outside table");
-            const r = grid.findIndex((row) => row.includes(cell)), c = grid[r].lastIndexOf(cell);
+            if (!grid || !cell2) throw new Error("Positional formula outside table");
+            const r = grid.findIndex((row) => row.includes(cell2)), c = grid[r].lastIndexOf(cell2);
             const cells = direction === "ABOVE" ? grid.slice(0, r).map((row) => row[c]).reverse() : direction === "BELOW" ? grid.slice(r + 1).map((row) => row[c]) : direction === "LEFT" ? grid[r].slice(0, c).reverse() : grid[r].slice(c + 1);
             for (const candidate of [...new Set(cells)]) {
-              if (!candidate || candidate === cell) continue;
+              if (!candidate || candidate === cell2) continue;
               const content = all(candidate, "t").map((n) => n.textContent).join("").trim();
               if (!content && !formulas.some((other) => ancestor(other.node, "tc") === candidate)) break;
               try {
@@ -40382,10 +45444,10 @@ var WordFormRuntime = (() => {
         f.result[0].textContent = output;
         for (const n of f.result.slice(1)) n.textContent = "";
       } else {
-        const run = doc.createElementNS(W, "w:r"), t = doc.createElementNS(W, "w:t");
+        const run2 = doc.createElementNS(W, "w:r"), t = doc.createElementNS(W, "w:t");
         t.textContent = output;
-        run.append(t);
-        if (f.node.localName === "fldSimple") f.node.append(run);
+        run2.append(t);
+        if (f.node.localName === "fldSimple") f.node.append(run2);
         else {
           const endRun = ancestor(f.end, "r");
           if (!endRun || f.end.parentNode !== endRun || !f.separated) throw new Error("Formula has no result boundary");
@@ -40406,7 +45468,91 @@ var WordFormRuntime = (() => {
     return formulas.filter((f) => !isLocked(f)).length;
   }
 
+  // lib/document-fill/word-continuation.ts
+  var W2 = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+  var XML_NS = "http://www.w3.org/XML/1998/namespace";
+  var TEXT_WIDTH_TWIPS = 9360;
+  var ROW_COLUMN_TWIPS = 720;
+  function plural(count, word) {
+    return \`\${count} \${word}\${count === 1 ? "" : "s"}\`;
+  }
+  function el(doc, name, attrs = {}, children = []) {
+    const node = doc.createElementNS(W2, \`w:\${name}\`);
+    for (const [key, value] of Object.entries(attrs)) node.setAttributeNS(W2, \`w:\${key}\`, value);
+    children.forEach((child) => node.appendChild(child));
+    return node;
+  }
+  function run(doc, text2, props = []) {
+    const node = el(doc, "r", {}, props.length ? [el(doc, "rPr", {}, props)] : []);
+    String(text2 ?? "").replace(/\\r\\n?/g, "\\n").split("\\n").forEach((line, index) => {
+      if (index) node.appendChild(el(doc, "br"));
+      const t = el(doc, "t");
+      t.setAttributeNS(XML_NS, "xml:space", "preserve");
+      t.textContent = line;
+      node.appendChild(t);
+    });
+    return node;
+  }
+  function paragraph(doc, runs, props = []) {
+    return el(doc, "p", {}, [...props.length ? [el(doc, "pPr", {}, props)] : [], ...runs]);
+  }
+  function cell(doc, text2, widthTwips, header) {
+    const tcProps = [el(doc, "tcW", { w: String(widthTwips), type: "dxa" })];
+    if (header) tcProps.push(el(doc, "shd", { val: "clear", color: "auto", fill: "E6E6E6" }));
+    return el(doc, "tc", {}, [
+      el(doc, "tcPr", {}, tcProps),
+      paragraph(doc, text2 ? [run(doc, text2, header ? [el(doc, "b")] : [])] : [])
+    ]);
+  }
+  function borders(doc) {
+    return el(doc, "tblBorders", {}, ["top", "left", "bottom", "right", "insideH", "insideV"].map((side) => el(doc, side, { val: "single", sz: "4", space: "0", color: "808080" })));
+  }
+  function continuationTable(doc, plan) {
+    const dataWidth = Math.max(720, Math.floor((TEXT_WIDTH_TWIPS - ROW_COLUMN_TWIPS) / Math.max(1, plan.columns.length)));
+    const widths = [ROW_COLUMN_TWIPS, ...plan.columns.map(() => dataWidth)];
+    const header = el(doc, "tr", {}, [
+      el(doc, "trPr", {}, [el(doc, "tblHeader")]),
+      ...["Row", ...plan.columns.map((column) => column.label || column.id)].map((label, index) => cell(doc, label, widths[index], true))
+    ]);
+    const rows = plan.rows.map((row) => el(doc, "tr", {}, [
+      el(doc, "trPr", {}, [el(doc, "cantSplit")]),
+      ...[String(row.rowNumber), ...row.cells].map((text2, index) => cell(doc, text2, widths[index], false))
+    ]));
+    return el(doc, "tbl", {}, [
+      el(doc, "tblPr", {}, [el(doc, "tblW", { w: "5000", type: "pct" }), borders(doc), el(doc, "tblLayout", { type: "autofit" })]),
+      el(doc, "tblGrid", {}, widths.map((width) => el(doc, "gridCol", { w: String(width) }))),
+      header,
+      ...rows
+    ]);
+  }
+  function appendWordContinuation(doc, plans, warnings) {
+    const list = Array.isArray(plans) ? plans : [];
+    list.forEach((plan) => {
+      if (plan.mode === "drop" && plan.rows.length) {
+        warnings?.push(\`\${plural(plan.rows.length, "row")} of "\${plan.title}" did not fit on the form and \${plan.rows.length === 1 ? "was" : "were"} not printed.\`);
+      }
+    });
+    const printable = list.filter((plan) => plan.mode === "addendum" && plan.rows.length > 0 && plan.columns.length > 0);
+    const body = doc.getElementsByTagNameNS(W2, "body")[0];
+    if (!printable.length || !body) return { rowsPrinted: 0, tablesPrinted: 0 };
+    const children = Array.from(body.childNodes).filter((node) => node.nodeType === 1);
+    const last = children[children.length - 1];
+    const sectPr = last && last.namespaceURI === W2 && last.localName === "sectPr" ? last : null;
+    const insert = (node) => body.insertBefore(node, sectPr);
+    let rowsPrinted = 0;
+    for (const plan of printable) {
+      insert(paragraph(doc, [run(doc, plan.title, [el(doc, "b"), el(doc, "sz", { val: "26" })])], [el(doc, "keepNext"), el(doc, "pageBreakBefore")]));
+      insert(paragraph(doc, [run(doc, \`Rows that did not fit in the table on the form (\${plural(plan.capacity, "row")} printed there).\`, [el(doc, "i")])], [el(doc, "keepNext")]));
+      insert(continuationTable(doc, plan));
+      insert(paragraph(doc, []));
+      rowsPrinted += plan.rows.length;
+      warnings?.push(\`\${plural(plan.rows.length, "row")} of "\${plan.title}" did not fit on the form (\${plan.capacity} printed) and \${plan.rows.length === 1 ? "was" : "were"} added in a continuation section at the end of the document.\`);
+    }
+    return { rowsPrinted, tablesPrinted: printable.length };
+  }
+
   // lib/document-date-format.ts
+  var MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
   function formatDocumentDate(value, format) {
     const raw = typeof value === "object" && value !== null && "date" in value ? value.date : value;
     if (raw == null || raw === "") return "";
@@ -40416,43 +45562,456 @@ var WordFormRuntime = (() => {
     const [, year, month, day] = match;
     const days = new Date(Date.UTC(Number(year), Number(month), 0)).getUTCDate();
     if (+month < 1 || +month > 12 || +day < 1 || +day > days) throw new Error("Enter a valid calendar date.");
-    const mon = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][+month - 1];
+    const monthName = MONTHS[+month - 1];
+    const mon = monthName.slice(0, 3);
     if (format === "dd/MMM/yyyy") return \`\${day}/\${mon}/\${year}\`;
     if (format === "ddMMMyyyy") return \`\${day}\${mon}\${year}\`;
+    if (format === "yyyy.MM.dd") return \`\${year}.\${month}.\${day}\`;
+    if (format === "dd/MM/yyyy") return \`\${day}/\${month}/\${year}\`;
+    if (format === "MM/dd/yyyy") return \`\${month}/\${day}/\${year}\`;
+    if (format === "MMMM d, yyyy") return \`\${monthName} \${+day}, \${year}\`;
     return \`\${year}-\${month}-\${day}\`;
   }
 
+  // packages/form-model/src/conditions.ts
+  function normalizeConditionComparable(candidate) {
+    if (candidate && typeof candidate === "object") {
+      const record = candidate;
+      return record.code ?? record.display ?? record.value ?? record.text ?? "";
+    }
+    return candidate;
+  }
+  function normalizeConditionChoiceValues(candidate) {
+    if (Array.isArray(candidate)) {
+      return candidate.flatMap(normalizeConditionChoiceValues);
+    }
+    if (candidate && typeof candidate === "object") {
+      const record = candidate;
+      return [record.code, record.display, record.value, record.text].filter((entry) => entry !== void 0 && entry !== null).map((entry) => String(entry));
+    }
+    if (candidate === void 0 || candidate === null) return [];
+    return [String(candidate)];
+  }
+  function normalizeConditionBoolean(value, _metadata) {
+    if (value && typeof value === "object") {
+      const record = value;
+      return normalizeConditionBoolean(
+        record.code ?? record.display ?? record.value ?? record.text ?? record.label
+      );
+    }
+    if (value === true || value === "yes" || value === "Y" || value === 1) return "yes";
+    if (value === false || value === "no" || value === "N" || value === 0) return "no";
+    return void 0;
+  }
+  function isConditionCellAnswered(value) {
+    if (value === null || value === void 0) return false;
+    if (typeof value === "string") return value.trim() !== "";
+    if (typeof value === "boolean") return value;
+    if (typeof value === "number") return Number.isFinite(value);
+    if (Array.isArray(value)) return value.some(isConditionCellAnswered);
+    if (typeof value === "object") return Object.keys(value).length > 0;
+    return String(value).trim() !== "";
+  }
+  function isConditionEntryMeaningful(value) {
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      const record = value;
+      return Object.keys(record).some((key) => !key.startsWith("_") && isConditionCellAnswered(record[key]));
+    }
+    return isConditionCellAnswered(value);
+  }
+  function conditionCollectionEntries(value) {
+    if (Array.isArray(value)) return value;
+    if (value && typeof value === "object" && Array.isArray(value.rows)) {
+      return value.rows;
+    }
+    return void 0;
+  }
+  function isConditionValueEmpty(value) {
+    const entries = conditionCollectionEntries(value);
+    if (entries) return !entries.some(isConditionEntryMeaningful);
+    const normalized = normalizeConditionComparable(value);
+    return normalized === null || normalized === void 0 || String(normalized).trim() === "";
+  }
+  function toOrderedPair(leftValue, rightValue) {
+    const left = Number(leftValue);
+    const right = Number(rightValue);
+    if (Number.isFinite(left) && Number.isFinite(right)) return [left, right];
+    const leftDate = Date.parse(String(leftValue));
+    const rightDate = Date.parse(String(rightValue));
+    if (Number.isFinite(leftDate) && Number.isFinite(rightDate)) return [leftDate, rightDate];
+    return null;
+  }
+  function evaluateNumericCondition(type, leftValue, rightValue) {
+    const normalized = normalizeConditionComparable(leftValue);
+    if (normalized === null || normalized === void 0 || normalized === "") return false;
+    if (isConditionValueEmpty(rightValue)) return false;
+    const pair = toOrderedPair(normalized, rightValue);
+    if (!pair) return false;
+    const [left, right] = pair;
+    if (type === "number-gt") return left > right;
+    if (type === "number-gte") return left >= right;
+    if (type === "number-lt") return left < right;
+    if (type === "number-lte") return left <= right;
+    return left === right;
+  }
+  function evaluateFieldCondition(condition, controllerValue, metadata) {
+    const { type, optionValues, value } = condition;
+    switch (type) {
+      case "boolean-yes":
+        return normalizeConditionBoolean(controllerValue, metadata) === "yes";
+      case "boolean-no":
+        return normalizeConditionBoolean(controllerValue, metadata) === "no";
+      case "choice-selected": {
+        if (!optionValues?.length) return false;
+        const values = normalizeConditionChoiceValues(controllerValue);
+        return optionValues.some((option) => values.includes(option));
+      }
+      case "choice-not-selected": {
+        if (!optionValues?.length) return true;
+        const values = normalizeConditionChoiceValues(controllerValue);
+        return !optionValues.some((option) => values.includes(option));
+      }
+      case "number-gt":
+      case "number-gte":
+      case "number-lt":
+      case "number-lte":
+      case "number-equals":
+        return evaluateNumericCondition(type, controllerValue, value);
+      case "equals": {
+        const normalized = normalizeConditionComparable(controllerValue);
+        if (normalized === null || normalized === void 0 || normalized === "") return false;
+        return String(normalized) === String(value ?? "");
+      }
+      case "not-equals": {
+        const normalized = normalizeConditionComparable(controllerValue);
+        if (normalized === null || normalized === void 0 || normalized === "") return false;
+        return String(normalized) !== String(value ?? "");
+      }
+      case "filled":
+        return !isConditionValueEmpty(controllerValue);
+      case "empty":
+        return isConditionValueEmpty(controllerValue);
+    }
+  }
+  function asConditionValue(value) {
+    const normalized = normalizeConditionComparable(value);
+    if (normalized === null || normalized === void 0) return null;
+    if (typeof normalized === "number" || typeof normalized === "boolean") return normalized;
+    return String(normalized);
+  }
+  function evaluateConditionGroup(group, metadata, values) {
+    if (!group.conditions.length) return false;
+    const evaluate = (entry) => {
+      if ("conditions" in entry) return evaluateConditionGroup(entry, metadata, values);
+      const compareFieldId = entry.condition.compareFieldId || entry.condition.valueFieldId;
+      if (compareFieldId && isConditionValueEmpty(values[compareFieldId])) return false;
+      return evaluateFieldCondition(
+        compareFieldId ? { ...entry.condition, value: asConditionValue(values[compareFieldId]) } : entry.condition,
+        values[entry.controllerFieldId],
+        metadata(entry.controllerFieldId)
+      );
+    };
+    return group.match === "any" ? group.conditions.some(evaluate) : group.conditions.every(evaluate);
+  }
+
+  // lib/document-fill/value-text.ts
+  var TEXT_KEYS = ["display", "label", "text", "name", "title", "value", "code"];
+  function documentValueText(value) {
+    if (value === null || value === void 0) return "";
+    if (typeof value === "string") return value;
+    if (typeof value === "number") return Number.isFinite(value) ? String(value) : "";
+    if (typeof value === "boolean") return value ? "Yes" : "No";
+    if (value instanceof Date) return Number.isNaN(value.getTime()) ? "" : value.toISOString().slice(0, 10);
+    if (Array.isArray(value)) {
+      return value.map(documentValueText).filter((part) => part.trim() !== "").join(", ");
+    }
+    if (typeof value === "object") {
+      const record = value;
+      if (typeof record.date === "string") {
+        return typeof record.time === "string" && record.time ? \`\${record.date} \${record.time}\` : record.date;
+      }
+      for (const key of TEXT_KEYS) {
+        const candidate = record[key];
+        if (typeof candidate === "string" && candidate.trim() !== "") return candidate;
+        if (typeof candidate === "number" && Number.isFinite(candidate)) return String(candidate);
+      }
+    }
+    return "";
+  }
+  function readValuePath(root, path) {
+    if (!root || typeof root !== "object" || !path) return void 0;
+    const record = root;
+    if (Object.prototype.hasOwnProperty.call(record, path)) return record[path];
+    let current = root;
+    for (const segment of path.split(".")) {
+      if (!current || typeof current !== "object") return void 0;
+      current = current[segment];
+    }
+    return current;
+  }
+
+  // lib/document-fill/preparers.ts
+  var PDF_TARGET_PREFIX = "pdf:";
+  var MONTHS2 = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  function pad(value, width = 2) {
+    return String(value).padStart(width, "0");
+  }
+  function formatDateWithPattern(value, pattern) {
+    const raw = value && typeof value === "object" && "date" in value ? value.date : value;
+    if (raw === null || raw === void 0 || raw === "") return "";
+    const match = /^(\\d{4})[-./](\\d{1,2})[-./](\\d{1,2})(?:[T ](\\d{1,2}):(\\d{2}))?/.exec(String(raw).trim());
+    if (!match) return null;
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const hour = match[4] === void 0 ? 0 : Number(match[4]);
+    const minute = match[5] === void 0 ? 0 : Number(match[5]);
+    const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    if (month < 1 || month > 12 || day < 1 || day > daysInMonth) return null;
+    const monthName = MONTHS2[month - 1];
+    return pattern.replace(/'([^']*)'|yyyy|yy|MMMM|MMM|MM|M|dd|d|HH|H|mm/g, (token, literal) => {
+      if (literal !== void 0) return literal;
+      switch (token) {
+        case "yyyy":
+          return pad(year, 4);
+        case "yy":
+          return pad(year % 100);
+        case "MMMM":
+          return monthName;
+        case "MMM":
+          return monthName.slice(0, 3);
+        case "MM":
+          return pad(month);
+        case "M":
+          return String(month);
+        case "dd":
+          return pad(day);
+        case "d":
+          return String(day);
+        case "HH":
+          return pad(hour);
+        case "H":
+          return String(hour);
+        case "mm":
+          return pad(minute);
+        default:
+          return token;
+      }
+    });
+  }
+  function isPdfTarget(id) {
+    return id.startsWith(PDF_TARGET_PREFIX);
+  }
+  function renderRowTemplate(template, row, rowNumber) {
+    let hasValue = false;
+    const text2 = template.replace(/\\{([^{}]+)\\}/g, (_match, key) => {
+      const name = key.trim();
+      if (name === "row") return String(rowNumber);
+      const cell2 = documentValueText(readValuePath(row, name));
+      if (cell2.trim() !== "") hasValue = true;
+      return cell2;
+    });
+    return { text: text2, hasValue };
+  }
+  function mapValue(raw, map, fallback) {
+    const lookup = (value) => {
+      const text2 = documentValueText(value);
+      if (Object.prototype.hasOwnProperty.call(map, text2)) return map[text2];
+      const token = text2.trim().toLowerCase();
+      const key = Object.keys(map).find((candidate) => candidate.trim().toLowerCase() === token);
+      return key === void 0 ? void 0 : map[key];
+    };
+    if (Array.isArray(raw)) {
+      const parts = raw.map((item) => lookup(item) ?? fallback ?? documentValueText(item)).filter((part) => part !== "");
+      return parts.join(", ");
+    }
+    const mapped = lookup(raw);
+    if (mapped !== void 0) return mapped;
+    if (fallback !== void 0) return fallback;
+    return raw;
+  }
+  function applyDocumentFillPreparers(input, steps) {
+    const values = { ...input ?? {} };
+    const pdfValues = {};
+    const touched = /* @__PURE__ */ new Set();
+    const warnings = [];
+    if (!Array.isArray(steps) || steps.length === 0) return { values, pdfValues, touched: [], warnings };
+    const list = steps;
+    const read = (id) => {
+      if (isPdfTarget(id)) return pdfValues[id.slice(PDF_TARGET_PREFIX.length)];
+      return Object.prototype.hasOwnProperty.call(values, id) ? values[id] : readValuePath(values, id);
+    };
+    const write = (id, value) => {
+      if (!id) return;
+      if (isPdfTarget(id)) {
+        const name = id.slice(PDF_TARGET_PREFIX.length);
+        if (name) pdfValues[name] = value;
+        return;
+      }
+      values[id] = value;
+      touched.add(id);
+    };
+    const conditionMet = (group) => {
+      if (!group || !Array.isArray(group.conditions) || group.conditions.length === 0) return true;
+      try {
+        return evaluateConditionGroup(group, () => void 0, values);
+      } catch {
+        return false;
+      }
+    };
+    list.forEach((step, index) => {
+      if (!step || typeof step !== "object" || step.enabled === false) return;
+      const name = step.id || \`step \${index + 1}\`;
+      if (!conditionMet(step.when)) return;
+      switch (step.kind) {
+        case "concat": {
+          const parts = (step.sourceIds ?? []).map((id) => documentValueText(read(id)));
+          const kept = step.skipEmpty === false ? parts : parts.filter((part) => part.trim() !== "");
+          write(step.targetId, kept.join(step.separator ?? " "));
+          return;
+        }
+        case "split": {
+          const targets = step.targetIds ?? [];
+          if (!targets.length) return;
+          const text2 = documentValueText(read(step.sourceId));
+          const parts = step.separator ? text2.split(step.separator) : Array.from(text2);
+          targets.forEach((target, targetIndex) => {
+            const isLast = targetIndex === targets.length - 1;
+            const value = isLast ? parts.slice(targetIndex).join(step.separator ?? "") : parts[targetIndex] ?? "";
+            write(target, value.trim());
+          });
+          return;
+        }
+        case "map-value": {
+          write(step.targetId || step.sourceId, mapValue(read(step.sourceId), step.map ?? {}, step.fallback));
+          return;
+        }
+        case "format-date": {
+          const raw = read(step.sourceId);
+          const formatted = formatDateWithPattern(raw, step.format || "yyyy-MM-dd");
+          if (formatted === null) {
+            warnings.push(\`Preparer "\${name}": "\${step.sourceId}" is not a date (\${JSON.stringify(documentValueText(raw))}); it was printed unchanged.\`);
+            if (step.targetId && step.targetId !== step.sourceId) write(step.targetId, raw);
+            return;
+          }
+          write(step.targetId || step.sourceId, formatted);
+          return;
+        }
+        case "table-to-text": {
+          const rows = read(step.tableId);
+          if (rows !== void 0 && rows !== null && !Array.isArray(rows)) {
+            warnings.push(\`Preparer "\${name}": "\${step.tableId}" is not a table.\`);
+            return;
+          }
+          const start = Math.max(1, Math.floor(Number(step.startRow) || 1));
+          const lines = [];
+          (Array.isArray(rows) ? rows : []).forEach((row, rowIndex) => {
+            if (rowIndex + 1 < start || !row || typeof row !== "object") return;
+            const rendered = renderRowTemplate(step.template ?? "", row, rowIndex + 1);
+            if (rendered.hasValue) lines.push(rendered.text.trim());
+          });
+          write(step.targetId, lines.join(step.separator ?? "\\n"));
+          return;
+        }
+        case "copy": {
+          write(step.targetId, read(step.sourceId));
+          return;
+        }
+        default:
+          warnings.push(\`Preparer "\${name}": unknown kind \${JSON.stringify(step.kind)}; skipped.\`);
+      }
+    });
+    return { values, pdfValues, touched: Array.from(touched), warnings };
+  }
+
+  // lib/document-fill/table-overflow.ts
+  function toNameSet(names) {
+    if (!names) return null;
+    return names instanceof Set ? names : new Set(names);
+  }
+  function printedRows(map, names) {
+    const printed = /* @__PURE__ */ new Map();
+    Object.entries(map.sourceFieldIdsByRow ?? {}).forEach(([rowKey, row]) => {
+      const rowIndex = Number(rowKey);
+      if (!Number.isInteger(rowIndex) || rowIndex < 0) return;
+      const name = Object.values(row ?? {}).find((candidate) => typeof candidate === "string" && candidate && (!names || names.has(candidate)));
+      if (name) printed.set(rowIndex, name);
+    });
+    if (!printed.has(0)) {
+      const sample = Object.values(map.sourceFieldIds ?? {}).find((candidate) => typeof candidate === "string" && candidate && (!names || names.has(candidate)));
+      if (sample) printed.set(0, sample);
+    }
+    return printed;
+  }
+  function planTableOverflow(formData, maps, pdfFieldNames) {
+    if (!Array.isArray(maps)) return [];
+    const list = maps;
+    const names = toNameSet(pdfFieldNames);
+    const plans = [];
+    const seen = /* @__PURE__ */ new Set();
+    list.forEach((map) => {
+      const overflow = map?.overflow;
+      if (!overflow || seen.has(map.tableId)) return;
+      const rows = formData?.[map.tableId];
+      if (!Array.isArray(rows) || rows.length === 0) return;
+      const pathById = new Map((map.columns ?? []).map((column) => [column.id, column.dataPath || column.id]));
+      const columns = overflow.columns?.length ? overflow.columns : (map.columns ?? []).map((column) => ({ id: column.id, label: column.id }));
+      const printed = printedRows(map, names);
+      const capacity = printed.size;
+      const planRows = [];
+      rows.forEach((row, rowIndex) => {
+        if (printed.has(rowIndex) || !row || typeof row !== "object") return;
+        const cells = columns.map((column) => documentValueText(readValuePath(row, pathById.get(column.id) ?? column.id)).trim());
+        if (cells.every((cell2) => cell2 === "")) return;
+        planRows.push({ rowNumber: rowIndex + 1, cells });
+      });
+      if (!planRows.length) return;
+      seen.add(map.tableId);
+      const lastPrinted = Array.from(printed.keys()).sort((a, b) => b - a)[0];
+      plans.push({
+        tableId: map.tableId,
+        title: overflow.title?.trim() || \`\${map.tableId} (continued)\`,
+        mode: overflow.mode === "addendum" ? "addendum" : "drop",
+        capacity,
+        columns: columns.map((column) => ({ id: column.id, label: column.label || column.id })),
+        rows: planRows,
+        ...lastPrinted !== void 0 ? { anchorFieldName: printed.get(lastPrinted) } : {}
+      });
+    });
+    return plans;
+  }
+
   // lib/word-form.ts
-  var W2 = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+  var W3 = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
   var W14 = "http://schemas.microsoft.com/office/word/2010/wordml";
   var WORD_FORM_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-  var descendants = (node, name, ns = W2) => Array.from(node.getElementsByTagNameNS(ns, name));
-  var first = (node, name, ns = W2) => descendants(node, name, ns)[0];
-  var val = (node, ns = W2) => node?.getAttributeNS(ns, "val") ?? "";
-  var textNodes = (node) => Array.from(node.getElementsByTagNameNS(W2, "*")).filter((n) => ["t", "br", "tab"].includes(n.localName));
+  var descendants = (node, name, ns = W3) => Array.from(node.getElementsByTagNameNS(ns, name));
+  var first = (node, name, ns = W3) => descendants(node, name, ns)[0];
+  var val = (node, ns = W3) => node?.getAttributeNS(ns, "val") ?? "";
+  var textNodes = (node) => Array.from(node.getElementsByTagNameNS(W3, "*")).filter((n) => ["t", "br", "tab"].includes(n.localName));
   var nodeText = (n) => n.localName === "br" ? "\\n" : n.localName === "tab" ? "	" : n.textContent ?? "";
   var text = (node) => textNodes(node).map(nodeText).join("");
   function ancestor2(node, name) {
     let p = node;
     while (p) {
-      if (p.namespaceURI === W2 && p.localName === name) return p;
+      if (p.namespaceURI === W3 && p.localName === name) return p;
       p = p.parentElement;
     }
   }
   function context(node, paragraphs) {
     const p = ancestor2(node, "p");
-    const cell = ancestor2(node, "tc");
+    const cell2 = ancestor2(node, "tc");
     const own = (p ? text(p) : "").trim();
     if (own) return own.slice(0, 220);
-    if (cell && p) {
-      const local = descendants(cell, "p");
+    if (cell2 && p) {
+      const local = descendants(cell2, "p");
       const index = local.indexOf(p);
       for (let j = index - 1; j >= 0; j--) {
         const previous = text(local[j]).trim();
         if (previous) return previous.slice(0, 220);
       }
     }
-    const cellText = cell ? text(cell).trim() : "";
+    const cellText = cell2 ? text(cell2).trim() : "";
     if (cellText) return cellText.slice(0, 220);
     const i = p ? paragraphs.indexOf(p) : -1;
     for (let j = i - 1; j >= Math.max(0, i - 5); j--) {
@@ -40477,9 +46036,9 @@ var WordFormRuntime = (() => {
     const stack = [];
     let index = 0;
     for (const node of Array.from(doc.getElementsByTagName("*"))) {
-      if (node.namespaceURI !== W2) continue;
+      if (node.namespaceURI !== W3) continue;
       if (node.localName === "fldChar") {
-        const type = node.getAttributeNS(W2, "fldCharType");
+        const type = node.getAttributeNS(W3, "fldCharType");
         if (type === "begin") stack.push({ begin: node, result: [], separate: false });
         else if (type === "separate" && stack.length) stack[stack.length - 1].separate = true;
         else if (type === "end") {
@@ -40527,7 +46086,7 @@ var WordFormRuntime = (() => {
         context: context(sdt, paragraphs),
         kind: checkbox ? "checkbox" : dropdown ? "dropdown" : "text",
         value: checkbox ? ["1", "true", "on"].includes(val(first(checkbox, "checked", W14), W14)) : first(pr, "showingPlcHdr") ? "" : text(content),
-        options: dropdown ? descendants(dropdown, "listItem").map((n) => n.getAttributeNS(W2, "displayText") || n.getAttributeNS(W2, "value") || "") : []
+        options: dropdown ? descendants(dropdown, "listItem").map((n) => n.getAttributeNS(W3, "displayText") || n.getAttributeNS(W3, "value") || "") : []
       } });
     }
     const blanks = paragraphs.flatMap((p, i) => {
@@ -40560,38 +46119,38 @@ var WordFormRuntime = (() => {
     form.warnings = [...new Set(form.warnings)];
     return form;
   }
-  function element(doc, name, value, ns = W2) {
+  function element(doc, name, value, ns = W3) {
     const node = doc.createElementNS(ns, \`\${ns === W14 ? "w14" : "w"}:\${name}\`);
     if (value !== void 0) node.setAttributeNS(ns, \`\${ns === W14 ? "w14" : "w"}:val\`, value);
     return node;
   }
-  function setProperty(parent, name, value, ns = W2) {
+  function setProperty(parent, name, value, ns = W3) {
     const node = first(parent, name, ns) ?? parent.appendChild(element(parent.ownerDocument, name, void 0, ns));
     node.setAttributeNS(ns, \`\${ns === W14 ? "w14" : "w"}:val\`, value);
   }
   function writeText(target, value) {
     const doc = target.node.ownerDocument;
     const anchor = target.result[0];
-    let run = anchor?.parentElement;
+    let run2 = anchor?.parentElement;
     let before = anchor ?? null;
-    if (!run || run.localName !== "r") {
+    if (!run2 || run2.localName !== "r") {
       if (target.legacy) {
-        run = ancestor2(target.end, "r");
+        run2 = ancestor2(target.end, "r");
         before = target.end ?? null;
-        if (!run || before?.parentNode !== run) throw new Error("Cannot safely update this Word field.");
+        if (!run2 || before?.parentNode !== run2) throw new Error("Cannot safely update this Word field.");
       } else {
-        run = element(doc, "r");
+        run2 = element(doc, "r");
         const content = first(target.node, "sdtContent");
-        (first(content, "p") ?? content).appendChild(run);
+        (first(content, "p") ?? content).appendChild(run2);
         before = null;
       }
     }
     for (const [i, line] of value.split(/\\r\\n|\\r|\\n/).entries()) {
-      if (i) run.insertBefore(element(doc, "br"), before);
+      if (i) run2.insertBefore(element(doc, "br"), before);
       const t = element(doc, "t");
       t.setAttributeNS("http://www.w3.org/XML/1998/namespace", "xml:space", "preserve");
       t.textContent = line;
-      run.insertBefore(t, before);
+      run2.insertBefore(t, before);
     }
     for (const node of target.result) node.parentNode?.removeChild(node);
   }
@@ -40604,7 +46163,9 @@ var WordFormRuntime = (() => {
       recalculated: 0,
       pendingRecalculation: 0,
       lockedCalculations: 0,
-      calculationMode: options.recalculate === false ? "word" : "cached"
+      calculationMode: options.recalculate === false ? "word" : "cached",
+      continuedRows: 0,
+      warnings: []
     };
     for (const part of parts) {
       const doc = parseXml(await zip.file(part).async("string"));
@@ -40649,10 +46210,10 @@ var WordFormRuntime = (() => {
         pr.appendChild(element(doc, "tag", blank.id));
         pr.appendChild(element(doc, "text"));
         const content = sdt.appendChild(element(doc, "sdtContent"));
-        const run = content.appendChild(element(doc, "r"));
+        const run2 = content.appendChild(element(doc, "r"));
         const existingStyle = first(p, "rPr");
-        if (existingStyle) run.appendChild(existingStyle.cloneNode(true));
-        const anchor = run.appendChild(element(doc, "t"));
+        if (existingStyle) run2.appendChild(existingStyle.cloneNode(true));
+        const anchor = run2.appendChild(element(doc, "t"));
         p.appendChild(sdt);
         writeText({ node: sdt, result: [anchor], legacy: false, field: {} }, addition.value);
         remaining.delete(blank.id);
@@ -40662,6 +46223,12 @@ var WordFormRuntime = (() => {
     }
     if (remaining.size) throw new Error("Some fields no longer match this document. Import the original document again.");
     const answersChanged = documents.some((entry) => entry.changed);
+    const body = documents.find((entry) => entry.part === "word/document.xml");
+    if (body && options.continuation?.length) {
+      const continued = appendWordContinuation(body.doc, options.continuation, result.warnings);
+      result.continuedRows = continued.rowsPrinted;
+      if (continued.rowsPrinted) body.changed = true;
+    }
     for (const entry of documents) {
       const state = inspectWordCalculations(entry.doc);
       result.lockedCalculations += state.locked;
@@ -40688,7 +46255,7 @@ var WordFormRuntime = (() => {
       const doc = parseXml(await zip.file(part).async("string"));
       if (part === "word/document.xml") {
         const section = descendants(doc, "sectPr")[0];
-        omitFirstHeader = Boolean(section && first(section, "titlePg") && !["0", "false", "off"].includes(val(first(section, "titlePg"))) && !descendants(section, "headerReference").some((n) => n.getAttributeNS(W2, "type") === "first"));
+        omitFirstHeader = Boolean(section && first(section, "titlePg") && !["0", "false", "off"].includes(val(first(section, "titlePg"))) && !descendants(section, "headerReference").some((n) => n.getAttributeNS(W3, "type") === "first"));
       }
       let changed = false;
       for (const target of scan(doc, part).targets) {
@@ -40718,35 +46285,43 @@ jszip/dist/jszip.min.js:
   *)
 */
 
-const WordRegenerator = ({ sourceDocxBase64, bindings = [], fileName = "filled-form.docx", disabled = false }) => {
+const WordRegenerator = ({ sourceDocxBase64, bindings = [], preparers = [], tableOverflowMaps = [], fileName = "filled-form.docx", disabled = false }) => {
   const { DefaultButton } = Fluent;
   const [fd] = useActiveData();
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState("");
+  const [warnings, setWarnings] = React.useState([]);
   const download = async () => {
-    setBusy(true); setError("");
+    setBusy(true); setError(""); setWarnings([]);
     try {
-      const data = fd?.field?.data || {};
+      // Same steps as PdfRegenerator and the agent Word fill (lib/document-fill):
+      // preparers transform a copy of the answers for the document only.
+      const prepared = WordFormRuntime.applyDocumentFillPreparers(fd?.field?.data || {}, preparers);
+      const touched = new Set(prepared.touched);
+      const data = prepared.values;
       const values = {};
       for (const binding of bindings) {
         let value = data[binding.sourceId];
         if (value === undefined || value === null) continue;
-        if (binding.dateFormat) value = WordFormRuntime.formatDocumentDate(value, binding.dateFormat);
+        if (binding.dateFormat && !touched.has(binding.sourceId)) value = WordFormRuntime.formatDocumentDate(value, binding.dateFormat);
         if (value && typeof value === "object" && !Array.isArray(value)) value = value.display ?? value.code ?? "";
         if (binding.kind === "checkbox") {
           if (typeof value !== "boolean") value = ["true", "yes", "1"].includes(String(value).toLowerCase());
         } else value = String(value);
         values[binding.targetId] = value;
       }
+      // A table row prints when one of its mapped answers is bound to a Word field.
+      const plans = WordFormRuntime.planTableOverflow(data, tableOverflowMaps, bindings.map(binding => binding.sourceId));
       const source = Uint8Array.from(atob(sourceDocxBase64), c => c.charCodeAt(0));
-      const bytes = await WordFormRuntime.fillWordForm(source, values);
-      const url = URL.createObjectURL(new Blob([bytes], { type: WordFormRuntime.WORD_FORM_MIME }));
+      const result = await WordFormRuntime.fillWordFormDetailed(source, values, {}, { continuation: plans });
+      setWarnings([...prepared.warnings, ...result.warnings]);
+      const url = URL.createObjectURL(new Blob([result.bytes], { type: WordFormRuntime.WORD_FORM_MIME }));
       const link = document.createElement("a"); link.href = url; link.download = fileName; link.click();
       setTimeout(() => URL.revokeObjectURL(url), 10000);
     } catch (e) { setError(e.message || "Unable to fill the Word document."); }
     finally { setBusy(false); }
   };
-  return <div><DefaultButton disabled={disabled || busy || !sourceDocxBase64} onClick={download}>{busy ? "Preparing document…" : "Save Filled Word Document"}</DefaultButton>{error && <div role="alert">{error}</div>}</div>;
+  return <div><DefaultButton disabled={disabled || busy || !sourceDocxBase64} onClick={download}>{busy ? "Preparing document…" : "Save Filled Word Document"}</DefaultButton>{error && <div role="alert">{error}</div>}{!error && warnings.length > 0 && <div role="status" style={{ fontSize: 12, color: "#605e5c" }}>{warnings.slice(0, 3).map((warning, index) => <div key={index}>{warning}</div>)}{warnings.length > 3 && <div>+{warnings.length - 3} more</div>}</div>}</div>;
 };
 `,
 };
@@ -41140,6 +46715,7 @@ export const componentIdentities: Record<string, any> = {
       "patch": 18
     },
     "components": [
+      "FormulaKit",
       "ObservationValueDisplay"
     ]
   },
@@ -41336,6 +46912,7 @@ export const componentIdentities: Record<string, any> = {
       "patch": 12
     },
     "components": [
+      "FormulaKit",
       "SubformScoring"
     ]
   },
@@ -41550,6 +47127,88 @@ export const componentIdentities: Record<string, any> = {
     },
     "components": []
   },
+  'FormErrorSummary': {
+    "name": "FormErrorSummary",
+    "title": "Form Error Summary",
+    "description": "Accessible error summary (role=alert) listing validation issues as links that jump to the page and focus the field.",
+    "version": {
+      "major": 1,
+      "minor": 0,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "Northern Health",
+    "author": "Claude",
+    "publisher": "Northern Health",
+    "globalIdentifier": "",
+    "requiredFormViewerVersion": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "requiredMoisVersion": {
+      "major": 2,
+      "minor": 28,
+      "patch": 10
+    },
+    "components": [
+      "FormLogicKit"
+    ]
+  },
+  'FormFlow': {
+    "name": "FormFlow",
+    "title": "Form Flow",
+    "description": "Conditional page flow: skip and branch pages on answers, validate before Next, review and confirmation pages. Renders its own page containers keyed on uiState.breadcrumbSelectedKey.",
+    "version": {
+      "major": 1,
+      "minor": 0,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "Northern Health",
+    "author": "Claude",
+    "publisher": "Northern Health",
+    "globalIdentifier": "",
+    "requiredFormViewerVersion": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "requiredMoisVersion": {
+      "major": 2,
+      "minor": 28,
+      "patch": 10
+    },
+    "components": [
+      "FormLogicKit"
+    ]
+  },
+  'FormLogicKit': {
+    "name": "FormLogicKit",
+    "title": "Form logic helper kit",
+    "description": "Non-rendering helper module for form-level logic: condition-group evaluation, rule-aware field visibility, submit/page validation, value formats, and focusing a field from an error summary.",
+    "version": {
+      "major": 1,
+      "minor": 0,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "Northern Health",
+    "author": "Claude",
+    "publisher": "Northern Health",
+    "globalIdentifier": "",
+    "requiredFormViewerVersion": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "requiredMoisVersion": {
+      "major": 2,
+      "minor": 28,
+      "patch": 10
+    },
+    "components": []
+  },
   'FormSessionRuntime': {
     "name": "FormSessionRuntime",
     "title": "Form Session Runtime",
@@ -41563,6 +47222,32 @@ export const componentIdentities: Record<string, any> = {
     "owner": "MOIS",
     "author": "MOIS Exporter",
     "publisher": "MOIS",
+    "globalIdentifier": "",
+    "requiredFormViewerVersion": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "requiredMoisVersion": {
+      "major": 2,
+      "minor": 28,
+      "patch": 10
+    },
+    "components": []
+  },
+  'FormulaKit': {
+    "name": "FormulaKit",
+    "title": "Formula helper kit",
+    "description": "Non-rendering helper module: the formula engine (field references, iif/score/contains, date helpers such as durationBetween and weekdaysBetween) shared by ComputedField and EditableTable formula columns.",
+    "version": {
+      "major": 1,
+      "minor": 0,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "Northern Health",
+    "author": "Claude",
+    "publisher": "Northern Health",
     "globalIdentifier": "",
     "requiredFormViewerVersion": {
       "major": 0,
@@ -42280,7 +47965,7 @@ export const componentIdentities: Record<string, any> = {
     "description": "Combined MOIS test-instance API suite: discovery, missing routes, create/update/omit/null/empty/restore variants, independent verification and full evidence JSON.",
     "version": {
       "major": 2,
-      "minor": 0,
+      "minor": 1,
       "patch": 0
     },
     "type": "component",
@@ -42348,6 +48033,32 @@ export const componentIdentities: Record<string, any> = {
       "minor": 26,
       "patch": 18
     }
+  },
+  'PdfTextFlowField': {
+    "name": "PdfTextFlowField",
+    "title": "PDF flow text field",
+    "description": "A multi-line answer that continues across a PDF's consecutive text lines, with a live meter showing how much of those lines it fills",
+    "version": {
+      "major": 1,
+      "minor": 0,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "Northern Health",
+    "author": "Northern Health",
+    "publisher": "Northern Health",
+    "globalIdentifier": "",
+    "requiredFormViewerVersion": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "requiredMoisVersion": {
+      "major": 2,
+      "minor": 26,
+      "patch": 12
+    },
+    "components": []
   },
   'PlannedActions': {
     "name": "PlannedActions",
@@ -42423,6 +48134,36 @@ export const componentIdentities: Record<string, any> = {
       "minor": 26,
       "patch": 12
     }
+  },
+  'RepeatForEachTable': {
+    "name": "RepeatForEachTable",
+    "title": "Repeat-for-each Table",
+    "description": "Editable table that seeds one row per row of another table (e.g. an adherence row per medication), with orphan handling and row completion.",
+    "version": {
+      "major": 1,
+      "minor": 0,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "Northern Health",
+    "author": "Claude",
+    "publisher": "Northern Health",
+    "globalIdentifier": "",
+    "requiredFormViewerVersion": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "requiredMoisVersion": {
+      "major": 2,
+      "minor": 28,
+      "patch": 10
+    },
+    "components": [
+      "EditableTable",
+      "FormLogicKit",
+      "FormulaKit"
+    ]
   },
   'RichMarkdownBlock': {
     "name": "RichMarkdownBlock",

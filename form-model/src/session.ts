@@ -3,6 +3,7 @@ import type {
   BuilderField,
   BuilderFormPresentation,
   BuilderInvestigationTab,
+  DocumentFillPreparer,
   ParseMeta,
   WorkspaceDocumentV3,
 } from "./index";
@@ -40,6 +41,8 @@ export interface SessionFooterButtonConfig {
   pdfLibStrategy?: "inline" | "cdn" | "host";
   pdfRegeneratorAction?: "print" | "save";
   pdfRecalculate?: boolean;
+  /** Ordered value transforms applied before filling the PDF/Word document. */
+  pdfPreparers?: DocumentFillPreparer[];
 }
 
 export interface SessionPreviewSettings {

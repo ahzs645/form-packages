@@ -1,4 +1,5 @@
 import type {
+  BuilderNamedCondition,
   FieldLinkCondition,
   FieldLinkConditionType,
   FieldLinkRule,
@@ -156,10 +157,55 @@ export function normalizeConditionBoolean(
   return undefined;
 }
 
+/**
+ * Whether one cell (or nested value) holds an answer. Same rules as
+ * EditableTable / FormLogicKit's tableCellAnswered: an unchecked checkbox
+ * (false), a blank string, NaN and an empty list/object are not answers.
+ */
+function isConditionCellAnswered(value: unknown): boolean {
+  if (value === null || value === undefined) return false;
+  if (typeof value === "string") return value.trim() !== "";
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return Number.isFinite(value);
+  if (Array.isArray(value)) return value.some(isConditionCellAnswered);
+  if (typeof value === "object") return Object.keys(value).length > 0;
+  return String(value).trim() !== "";
+}
+
+/**
+ * Whether one entry of a collection answer (a table row, a multi-select item)
+ * holds a real answer. On a row, keys starting with "_" are bookkeeping
+ * (_rowId, _sourceKey, _complete, _formulaOverrides, ...), never answers.
+ * Kept in parity with the ConditionalGroup and FormLogicKit NHForms and the
+ * exporter's cross-field helper (shared vectors in condition-empty-parity.test.tsx).
+ */
+export function isConditionEntryMeaningful(value: unknown): boolean {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const record = value as Record<string, unknown>;
+    return Object.keys(record).some((key) => !key.startsWith("_") && isConditionCellAnswered(record[key]));
+  }
+  return isConditionCellAnswered(value);
+}
+
+/** A table's rows (array or `{ rows: [...] }`) or a multi-select's items; undefined for scalars. */
+function conditionCollectionEntries(value: unknown): unknown[] | undefined {
+  if (Array.isArray(value)) return value;
+  if (value && typeof value === "object" && Array.isArray((value as { rows?: unknown }).rows)) {
+    return (value as { rows: unknown[] }).rows;
+  }
+  return undefined;
+}
+
+/**
+ * "is empty" for any answer. Collections (table rows, multi-select items) are
+ * empty unless some entry holds a real answer, so a table whose only row is
+ * blank or holds only meta keys has "no items". Scalars and coded objects keep
+ * the comparable-value rule (blank string / null / undefined is empty).
+ */
 export function isConditionValueEmpty(value: unknown): boolean {
+  const entries = conditionCollectionEntries(value);
+  if (entries) return !entries.some(isConditionEntryMeaningful);
   const normalized = normalizeConditionComparable(value);
-  if (Array.isArray(normalized)) return normalized.length === 0;
-  if (normalized && typeof normalized === "object") return Object.keys(normalized).length === 0;
   return normalized === null || normalized === undefined || String(normalized).trim() === "";
 }
 
@@ -286,6 +332,235 @@ export function evaluateConditionGroup(group: FieldConditionGroup, metadata: Fie
     );
   };
   return group.match === "any" ? group.conditions.some(evaluate) : group.conditions.every(evaluate);
+}
+
+// ---------- Named condition references ----------
+// A group with `conditionRef` carries a MATERIALIZED copy of the named
+// condition it points at. Consumers read the copy; authoring code refreshes it
+// with materializeConditionRefs. Broken refs (missing, cyclic, too deep, or an
+// empty definition) keep their stale copy and are reported, never emptied.
+
+export type NamedConditionLibrary = ReadonlyArray<BuilderNamedCondition>;
+
+export interface ConditionRefIssue {
+  /**
+   * missing: the id is not in the library. cycle: the definition (transitively)
+   * references itself. depth: nesting exceeded maxDepth. empty: the definition
+   * has no conditions yet (half-authored), so the stale copy is kept.
+   */
+  kind: "missing" | "cycle" | "depth" | "empty";
+  ref: string;
+  /** Ref ids from the outermost reference down to `ref` (a cycle repeats its first id). */
+  path: string[];
+}
+
+/** Default limit on nested named-condition references (not group nesting). */
+export const NAMED_CONDITION_MAX_DEPTH = 16;
+
+function cloneConditionGroup(group: FieldConditionGroup): FieldConditionGroup {
+  return JSON.parse(JSON.stringify(group)) as FieldConditionGroup;
+}
+
+function isConditionGroupEntry(entry: unknown): entry is FieldConditionGroup {
+  return Boolean(entry) && typeof entry === "object" && Array.isArray((entry as FieldConditionGroup).conditions);
+}
+
+/** Structural equality over JSON-like condition data (key order insensitive, undefined keys ignored). */
+export function conditionDataEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  if (Array.isArray(a)) {
+    const other = b as unknown[];
+    return a.length === other.length && a.every((value, index) => conditionDataEqual(value, other[index]));
+  }
+  const left = a as Record<string, unknown>;
+  const right = b as Record<string, unknown>;
+  const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
+  for (const key of keys) {
+    if (left[key] === undefined && right[key] === undefined) continue;
+    if (!conditionDataEqual(left[key], right[key])) return false;
+  }
+  return true;
+}
+
+/** A group that references `named`, carrying a materialized copy of its definition. */
+export function createConditionRefGroup(named: BuilderNamedCondition): FieldConditionGroup {
+  const copy = cloneConditionGroup(named.group);
+  return { ...copy, conditionRef: named.id };
+}
+
+/** Every named-condition id referenced by `group` or any nested group, first-seen order. */
+export function collectConditionRefs(group: FieldConditionGroup): string[] {
+  const refs: string[] = [];
+  const seen = new Set<string>();
+  const walk = (entry: FieldConditionGroup): void => {
+    if (entry.conditionRef && !seen.has(entry.conditionRef)) {
+      seen.add(entry.conditionRef);
+      refs.push(entry.conditionRef);
+    }
+    for (const child of entry.conditions ?? []) {
+      if (child && typeof child === "object" && "conditions" in child) walk(child);
+    }
+  };
+  walk(group);
+  return refs;
+}
+
+/**
+ * Refs written directly in `group`: nested ref groups are reported but their
+ * materialized copies are not descended into (those are the definition's own
+ * edges, not this group's).
+ */
+export function collectDirectConditionRefs(group: FieldConditionGroup): string[] {
+  const refs: string[] = [];
+  const seen = new Set<string>();
+  const walk = (entry: FieldConditionGroup, top: boolean): void => {
+    if (entry.conditionRef && !top) {
+      if (!seen.has(entry.conditionRef)) {
+        seen.add(entry.conditionRef);
+        refs.push(entry.conditionRef);
+      }
+      return;
+    }
+    for (const child of entry.conditions ?? []) {
+      if (isConditionGroupEntry(child)) walk(child, false);
+    }
+  };
+  // A library definition whose top level is itself a ref is an alias edge.
+  if (group.conditionRef) return [group.conditionRef];
+  walk(group, true);
+  return refs;
+}
+
+/**
+ * Refresh every ref's materialized copy from `library`.
+ * On missing/cycle keep the stale cached copy and report an issue (never produce an empty group).
+ * Returns the SAME group object when nothing changed (structural sharing below).
+ */
+export function materializeConditionRefs(
+  group: FieldConditionGroup,
+  library: NamedConditionLibrary,
+  options?: { maxDepth?: number },
+): { group: FieldConditionGroup; changed: boolean; issues: ConditionRefIssue[] } {
+  const maxDepth = options?.maxDepth ?? NAMED_CONDITION_MAX_DEPTH;
+  const byId = new Map(library.map((named) => [named.id, named]));
+  const issues: ConditionRefIssue[] = [];
+  const issueKeys = new Set<string>();
+  const report = (issue: ConditionRefIssue) => {
+    const key = `${issue.kind}:${issue.path.join(">")}`;
+    if (issueKeys.has(key)) return;
+    issueKeys.add(key);
+    issues.push(issue);
+  };
+
+  // Materialize the children of `entry` (not its own ref).
+  const materializeChildren = (entry: FieldConditionGroup, stack: string[]): FieldConditionGroup => {
+    if (!Array.isArray(entry.conditions)) return entry;
+    let changed = false;
+    const conditions = entry.conditions.map((child) => {
+      if (!isConditionGroupEntry(child)) return child;
+      const next = materializeGroup(child, stack);
+      if (next !== child) changed = true;
+      return next;
+    });
+    return changed ? { ...entry, conditions } : entry;
+  };
+
+  const materializeGroup = (entry: FieldConditionGroup, stack: string[]): FieldConditionGroup => {
+    const ref = entry.conditionRef;
+    if (!ref) return materializeChildren(entry, stack);
+    const path = [...stack, ref];
+    if (stack.includes(ref)) {
+      report({ kind: "cycle", ref, path });
+      return entry;
+    }
+    if (stack.length >= maxDepth) {
+      report({ kind: "depth", ref, path });
+      return entry;
+    }
+    const named = byId.get(ref);
+    if (!named || !isConditionGroupEntry(named.group)) {
+      report({ kind: "missing", ref, path });
+      // Nested refs inside the stale copy may still resolve.
+      return materializeChildren(entry, path);
+    }
+    const before = issues.length;
+    const definition = materializeGroup(named.group, path);
+    const brokenCycle = issues.slice(before).some((issue) => issue.kind === "cycle" && issue.path.includes(ref) && issue.path[issue.path.length - 1] === ref);
+    if (brokenCycle) return entry;
+    if (!definition.conditions.length) {
+      report({ kind: "empty", ref, path });
+      return materializeChildren(entry, path);
+    }
+    const fresh: FieldConditionGroup = {
+      match: definition.match === "any" ? "any" : "all",
+      conditions: cloneConditionGroup(definition).conditions,
+      conditionRef: ref,
+    };
+    return conditionDataEqual(fresh, entry) ? entry : fresh;
+  };
+
+  const next = materializeGroup(group, []);
+  return { group: next, changed: next !== group, issues };
+}
+
+/** Turn a reference into an ordinary inline group (keeps its current copy). */
+export function detachConditionRef(group: FieldConditionGroup): FieldConditionGroup {
+  const { conditionRef: _conditionRef, ...rest } = group;
+  return rest;
+}
+
+/**
+ * Reference cycles in the library, each as the list of ids forming the loop
+ * (first id repeated at the end, rotated to start at the smallest id).
+ * Only direct edges count: a definition's nested copies are not followed.
+ */
+export function findNamedConditionCycles(library: NamedConditionLibrary): string[][] {
+  const edges = new Map<string, string[]>();
+  for (const named of library) {
+    edges.set(named.id, isConditionGroupEntry(named.group) ? collectDirectConditionRefs(named.group) : []);
+  }
+  const cycles: string[][] = [];
+  const seenCycles = new Set<string>();
+  const state = new Map<string, "active" | "done">();
+  const stack: string[] = [];
+  const visit = (id: string) => {
+    state.set(id, "active");
+    stack.push(id);
+    for (const next of edges.get(id) ?? []) {
+      if (!edges.has(next)) continue; // missing ref, not a cycle
+      const nextState = state.get(next);
+      if (nextState === "active") {
+        const loop = stack.slice(stack.indexOf(next));
+        const minIndex = loop.reduce((best, value, index) => (value < loop[best] ? index : best), 0);
+        const rotated = [...loop.slice(minIndex), ...loop.slice(0, minIndex)];
+        const key = rotated.join(">");
+        if (!seenCycles.has(key)) {
+          seenCycles.add(key);
+          cycles.push([...rotated, rotated[0]]);
+        }
+      } else if (!nextState) {
+        visit(next);
+      }
+    }
+    stack.pop();
+    state.set(id, "done");
+  };
+  for (const named of library) {
+    if (!state.has(named.id)) visit(named.id);
+  }
+  return cycles;
+}
+
+/** Evaluate after materializing refs from `library` (stale copies are used when a ref is broken). */
+export function evaluateConditionGroupWithLibrary(
+  group: FieldConditionGroup,
+  library: NamedConditionLibrary,
+  metadata: FieldConditionMetadataLookup,
+  values: Record<string, unknown>,
+): boolean {
+  return evaluateConditionGroup(materializeConditionRefs(group, library).group, metadata, values);
 }
 
 /** A blocking error raised by a cross-field rule. */

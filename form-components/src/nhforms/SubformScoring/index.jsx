@@ -325,6 +325,67 @@ const _buildMappedPayload = (values, action) => {
   return payload
 }
 
+// Full-record MOIS writes carry a declarative recordShape (see
+// data/mois-write-targets.json). This interpreter is kept verbatim in sync with
+// MOIS_RECORD_SHAPE_RUNTIME_SOURCE in lib/mois-export/mois-record-shape-runtime.ts;
+// the registry test fails if the two drift.
+const _applyMoisRecordShape = (payload, shape, context) => {
+  const ctx = context || {}
+  const input = { ...(payload || {}) }
+  const blank = (value) => value === undefined || value === null || value === ""
+  const toNumber = (value) => (typeof value === "string" && /^-?\d+$/.test(value.trim()) ? Number(value.trim()) : value)
+  const titleCase = (code) => String(code).toLowerCase().split(/[_\s]+/).filter(Boolean).map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ")
+  const toCoding = (value, rule) => {
+    if (value === undefined || value === null) return value
+    if (typeof value === "object") return { code: value.code ?? null, display: value.display ?? null, system: value.system ?? rule.system ?? null }
+    const code = typeof value === "boolean" ? (value ? "Y" : "N") : String(value)
+    return { code, display: (rule.displays && rule.displays[code]) || titleCase(code), system: rule.system }
+  }
+  const codings = shape.codings || {}
+  for (const key of shape.numeric || []) if (key in input) input[key] = toNumber(input[key])
+  for (const key of Object.keys(codings)) if (key in input) input[key] = toCoding(input[key], codings[key])
+  const id = Number(input[shape.idKey] || 0)
+  if (!Number.isFinite(id) || id < 0) return { error: shape.idKey + " must be empty (create) or a positive id (update); deleting through this write is not verified" }
+  const isUpdate = id > 0
+  if (!isUpdate && shape.updateOnly) return { error: shape.idKey + " is required: this write only updates an existing record" }
+  let base = null
+  if (isUpdate && shape.base) {
+    let rows = [ctx.patient]
+    for (const segment of shape.base.path) rows = rows.flatMap((row) => { const next = row && row[segment]; return Array.isArray(next) ? next : next ? [next] : [] })
+    const existing = rows.find((row) => row && Number(row[shape.idKey]) === id)
+    if (!existing && shape.base.required) return { error: shape.idKey + " " + id + " is not on the loaded chart, so its other fields cannot be resent unchanged" }
+    if (existing) {
+      base = {}
+      for (const key of shape.base.fields) if (existing[key] !== undefined) base[key] = codings[key] ? toCoding(existing[key], codings[key]) : existing[key]
+    }
+  }
+  const fromContext = (source) => (source === "today" ? ctx.today : ctx[source])
+  const contextValues = {}
+  const contextSources = { ...(isUpdate ? {} : shape.createContextDefaults || {}), ...(shape.contextFields || {}) }
+  for (const key of Object.keys(contextSources)) {
+    const value = fromContext(contextSources[key])
+    if (!blank(value)) contextValues[key] = toNumber(value)
+  }
+  const record = { ...(shape.defaults || {}), ...(isUpdate ? {} : shape.createDefaults || {}), ...contextValues, ...(base || {}), ...input }
+  if (!isUpdate) record[shape.idKey] = 0
+  for (const key of Object.keys(shape.derive || {})) {
+    const rule = shape.derive[key]
+    const source = record[rule.from]
+    if (!blank(record[key]) || blank(source)) continue
+    if (rule.coding) record[key] = { code: String(source), display: null, system: rule.coding }
+    else record[key] = toNumber(rule.field ? source[rule.field] : source)
+  }
+  const required = ((shape.required || {})[isUpdate ? "update" : "create"]) || []
+  const missing = required.filter((key) => blank(record[key]))
+  if (missing.length) return { error: "Missing " + missing.join(", ") + (isUpdate ? " for this update" : " to create this record") }
+  return { record, isUpdate }
+}
+
+const _moisLocalToday = () => {
+  const now = new Date()
+  return now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0") + "-" + String(now.getDate()).padStart(2, "0")
+}
+
 // MOIS write actions supported at runtime, keyed by `${resource}.${mutation}`
 // to match lib/mois-write-action-registry.ts ids — every key here must be
 // runtimeStatus "supported" there, and vice versa. Every mutation document is
@@ -419,6 +480,51 @@ const MOIS_WRITE_MUTATIONS = {
       return { encounterId: typeof resolved === "string" ? Number(resolved) : resolved, newCorrespondence }
     },
   },
+  // Full-record writes, live-verified 2026-09-10/11: the executor applies the
+  // recordShape (copy the current record from the chart, then the mapped
+  // fields) before buildVariables sees the payload.
+  "encounterNote.changeEncounterNote": {
+    document: `mutation addEncounterNote($patientId: Int!, $encounterNote: EncounterNoteInput!) {
+      changeEncounterNote(patientId: $patientId, encounterNote: $encounterNote) {
+        encounterId
+      }
+    }`,
+    idVariable: "patientId",
+    recordShape: {"idKey":"encounterNoteId","numeric":["encounterNoteId","encounterId","authorUserProfileId","creatorUserProfileId"],"codings":{"isComplete":{"system":"MOIS-YESNO","displays":{"Y":"Yes","N":"No"}}},"base":{"path":["encounters","notes"],"required":true,"fields":["encounterNoteId","encounterId","authorUserProfileId","creatorUserProfileId","noteCreationDate","note","isComplete","extraInfoTemplate","extraInfo"]},"createDefaults":{"extraInfoTemplate":null,"extraInfo":null,"isComplete":{"code":"N","display":"No","system":"MOIS-YESNO"}},"createContextDefaults":{"encounterId":"encounterId","authorUserProfileId":"userId","creatorUserProfileId":"userId","noteCreationDate":"today"},"required":{"create":["encounterId","note","authorUserProfileId","creatorUserProfileId"],"update":["encounterNoteId","encounterId"]}},
+    buildVariables: (patientId, record) => ({ patientId: Number(patientId), encounterNote: record }),
+  },
+  "task.changeTask": {
+    document: `mutation changeTask($patientId: Int!, $task: MoisTaskInput!) {
+      changeTask(patientId: $patientId, task: $task) {
+        taskId
+      }
+    }`,
+    idVariable: "patientId",
+    recordShape: {"idKey":"taskId","numeric":["taskId","encounterId","documentId","assignedUserId"],"codings":{"priority":{"system":"MOIS-TASKPRIORITY","displays":{"MEDIUM":"Medium"}},"isAcknowledged":{"system":"MOIS-YESNO","displays":{"Y":"Yes","N":"No"}},"isComplete":{"system":"MOIS-YESNO","displays":{"Y":"Yes","N":"No"}}},"base":{"path":["encounters","tasks"],"required":true,"fields":["documentId","encounterId","taskId","createdDate","assignedUserId","priority","dueDate","isAcknowledged","acknowledgedBy","acknowledgedDate","isComplete","completedBy","completedDate","description","note"]},"updateOnly":true,"required":{"update":["taskId"]}},
+    buildVariables: (patientId, record) => ({ patientId: Number(patientId), task: record }),
+  },
+  "serviceEpisode.changeServiceEpisode": {
+    document: `mutation changeServiceEpisode($patientId: Int!, $serviceEpisode: ServiceEpisodeInput!) {
+      changeServiceEpisode(patientId: $patientId, serviceEpisode: $serviceEpisode) {
+        patientId
+      }
+    }`,
+    idVariable: "patientId",
+    recordShape: {"idKey":"serviceEpisodeId","numeric":["serviceEpisodeId","encounterId","serviceMrpId"],"codings":{"service":{"system":"NH.SERVICE"},"serviceMrp":{"system":"MOIS.USER"},"includeOnDemographics":{"system":"MOIS-YESNO","displays":{"Y":"Yes","N":"No"}},"includeOnCarePlan":{"system":"MOIS-YESNO","displays":{"Y":"Yes","N":"No"}}},"base":{"path":["serviceEpisodes"],"required":true,"fields":["serviceEpisodeId","encounterId","startDate","endDate","service","serviceMrp","serviceMrpId","stopReason","stopNote","note","includeOnDemographics","includeOnCarePlan"]},"createDefaults":{"encounterId":null,"endDate":null,"stopReason":{"code":null,"display":null,"system":null},"stopNote":null,"includeOnDemographics":{"code":"N","display":"No","system":"MOIS-YESNO"},"includeOnCarePlan":{"code":"N","display":"No","system":"MOIS-YESNO"},"asMemberOfs":[]},"createContextDefaults":{"startDate":"today"},"contextFields":{"patientId":"patientId"},"derive":{"serviceMrp":{"from":"serviceMrpId","coding":"MOIS.USER"},"serviceMrpId":{"from":"serviceMrp","field":"code"}},"required":{"create":["service","serviceMrp","serviceMrpId","startDate"],"update":["serviceEpisodeId","service"]}},
+    buildVariables: (patientId, record) => ({ patientId: Number(patientId), serviceEpisode: record }),
+  },
+  // The parent episode is both the $serviceEpisodeId variable and a field of
+  // ServiceEventInput, so it is read from the shaped record, not the context.
+  "serviceEvent.changeServiceEvent": {
+    document: `mutation changeServiceEvent($serviceEpisodeId: Int!, $serviceEvent: ServiceEventInput!) {
+      changeServiceEvent(serviceEpisodeId: $serviceEpisodeId, serviceEvent: $serviceEvent) {
+        serviceEventId
+      }
+    }`,
+    idVariable: "serviceEpisodeId",
+    recordShape: {"idKey":"serviceEventId","numeric":["serviceEventId","serviceEpisodeId","objectId"],"codings":{"service":{"system":"NH.SERVICE"},"phase":{"system":"MOIS-SERVICEEVENTPHASE","displays":{"INITIAL":"Initial","FOLLOWUP":"Follow Up"}}},"defaults":{"objectType":"tdt_encounter","objectTypeExt":null},"createDefaults":{"healthIssues":[]},"createContextDefaults":{"objectId":"encounterId"},"required":{"create":["serviceEpisodeId","objectId","service","phase"],"update":["serviceEventId","serviceEpisodeId","objectId","service","phase"]}},
+    buildVariables: (_contextId, record) => ({ serviceEpisodeId: record.serviceEpisodeId, serviceEvent: record }),
+  },
   "prescription.updatePrescription": {
     document: `mutation updatePrescription($patientId: Int!, $prescription: PrescriptionInput!) {
       changePrescription(patientId: $patientId, prescription: $prescription) {
@@ -435,7 +541,10 @@ const MOIS_WRITE_MUTATIONS = {
       }
     }`,
     idVariable: "patientId",
-    buildVariables: (patientId, payload) => ({ patientId, longTermMedication: payload }),
+    // Full-record update, live-verified 2026-09-11: the executor resends the
+    // chart record (drug durations and dosages included) with the mapped text.
+    recordShape: {"idKey":"longTermMedicationId","numeric":["longTermMedicationId"],"base":{"path":["longTermMedications"],"required":true,"fields":["longTermMedicationId","patientId","encounterId","startDate","endDate","orderingProvider","medication","doseFrequency","comment","instruction","genericName","indication","atcCode","cdicCode","prn","type","doNotSubstitute","doNotAdapt","doseType","drugDurations","partFill","partFillQuantity","partFillUnits","partFillFrequency","prnRangeLow","prnRangeHigh","prnDailyMaximum","prnDoseUnits","prnFrequencyLow","prnFrequencyHigh","prnFrequencyUnits","dispenseQuantity","dispenseQuantityUnits","dailyDose","dailyDoseUnits","witnessIngestionDPW","deliveryNotAuthorized","carriesDPW","saferSupply","isOAT","isOATDual"]},"updateOnly":true,"contextFields":{"patientId":"patientId"},"required":{"update":["longTermMedicationId","patientId","medication"]}},
+    buildVariables: (patientId, payload) => ({ patientId: Number(patientId), longTermMedication: payload }),
   },
   "prescription.updateFavouriteMedication": {
     document: `mutation updateFavouriteMedication($userId: Int, $favouriteMedication: FavouriteMedicationInput!) {
@@ -3419,7 +3528,29 @@ const SubformScoringInner = ({
                     dataEntryAction,
                     { sd, fd, sourceData: sd, formData: fd?.field?.data, patient: sd?.patient }
                   )
-                  const payload = _buildMappedPayload(dataEntryValues, dataEntryAction)
+                  let payload = _buildMappedPayload(dataEntryValues, dataEntryAction)
+                  if (writeDefinition.recordShape) {
+                    const contextRoot = { sd, fd, sourceData: sd, formData: fd?.field?.data, patient: sd?.patient }
+                    const shaped = _applyMoisRecordShape(payload, writeDefinition.recordShape, {
+                      patient: sd?.patient,
+                      patientId: resolvedId,
+                      encounterId: _resolveWriteActionId("encounterId", null, contextRoot),
+                      userId: _resolveWriteActionId("userId", null, contextRoot),
+                      today: _moisLocalToday(),
+                    })
+                    if (shaped.error) {
+                      // Refuse rather than send a partial record: the modal stays
+                      // open and the reason is recorded for the DebugView.
+                      _recordSubformActionPayload(fd?.setFormData, id, {
+                        kind: "moisMutation",
+                        resource: dataEntryAction.resource,
+                        mutation: dataEntryAction.mutation,
+                        error: shaped.error,
+                      })
+                      return
+                    }
+                    payload = shaped.record
+                  }
                   const variables = writeDefinition.buildVariables(resolvedId, payload)
                   actionPayload = {
                     kind: "moisMutation",

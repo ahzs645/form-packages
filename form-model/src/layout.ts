@@ -461,6 +461,13 @@ export interface CompositeField {
   autoFillSource?: string | null;
   moisContract?: MoisFieldContract | null;
   /**
+   * textFlow only: what saving the PDF does when the answer is longer than the
+   * PDF lines. "block" (default) stops the save and asks for a shorter answer;
+   * "truncate" prints what fits, ending the last line with an ellipsis, and
+   * keeps the full answer in the form.
+   */
+  textFlowOverflow?: "block" | "truncate";
+  /**
    * Snapshot of the original component builder fields (in component order,
    * primary first), captured when the builder collapses the members into one
    * card. Lets an in-builder uncombine restore the exact source fields without
@@ -1220,6 +1227,8 @@ export interface SubformDataEntryConfig {
       | "encounter"
       | "correspondence"
       | "task"
+      | "serviceEpisode"
+      | "serviceEvent"
       | "prescription"
       | "formLifecycle"
       | "documentUpdate"
@@ -1245,6 +1254,9 @@ export interface SubformDataEntryConfig {
       | "saveCallCounts"
       | "createCorrespondence"
       | "createTask"
+      | "changeTask"
+      | "changeServiceEpisode"
+      | "changeServiceEvent"
       | "updatePrescription"
       | "updateLongTermMedication"
       | "updateFavouriteMedication"

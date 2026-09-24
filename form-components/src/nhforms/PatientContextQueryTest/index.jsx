@@ -1,18 +1,26 @@
 // Portable suite executor: embedded with this component in exported MOIS forms.
 // Uses only the host GraphQL transport and the live schema. No endpoint guessing.
-const runPatientContextVariantSuite = async ({ request, patientId, patient, sourceProfile, context, plan, previous, active, emit, uncertain, uploadAttachment }) => {
+const runPatientContextVariantSuite = async ({ request, patientId, patient, sourceProfile, context, plan, previous, active, emit, uncertain, uploadAttachment, priorProfiles = [] }) => {
   const clone = (v) => v === undefined ? undefined : JSON.parse(JSON.stringify(v))
   const subset = (actual, expected) => Array.isArray(expected) ? Array.isArray(actual) && actual.length === expected.length && expected.every((x, i) => subset(actual[i], x)) : expected && typeof expected === "object" ? Boolean(actual && Object.keys(expected).every((k) => Object.prototype.hasOwnProperty.call(actual, k) && subset(actual[k], expected[k]))) : actual === expected
+  // Same-day date strings may come back with a time part; record the normalization instead of failing.
+  const dateEquivalent = (actual, expected) => typeof actual === "string" && typeof expected === "string" && /^\d{4}-\d{2}-\d{2}/.test(actual) && /^\d{4}-\d{2}-\d{2}/.test(expected) && (expected.length === 10 ? actual.slice(0, 10) === expected : actual.slice(0, 19) === expected.slice(0, 19) || (!Number.isNaN(Date.parse(actual)) && Date.parse(actual) === Date.parse(expected)))
+  // A created child/record ID supplied as 0 is matched by any generated ID.
+  const seedMatch = (actual, expected, key = "") => Array.isArray(expected) ? Array.isArray(actual) && actual.length === expected.length && expected.every((x, i) => seedMatch(actual[i], x)) : expected && typeof expected === "object" ? Boolean(actual && Object.keys(expected).every((k) => Object.prototype.hasOwnProperty.call(actual, k) && seedMatch(actual[k], expected[k], k))) : expected === 0 && /Id$/.test(key) ? Number.isSafeInteger(Number(actual)) && Number(actual) >= 0 : actual === expected || dateEquivalent(actual, expected)
   const same = (a, b) => JSON.stringify(normalize(a)) === JSON.stringify(normalize(b))
   const normalize = (v) => Array.isArray(v) ? v.map(normalize) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).filter((k) => k !== "__typename").sort().map((k) => [k, normalize(v[k])])) : v
   const named = (t) => t?.ofType ? named(t.ofType) : t
   const typeText = (t) => t.kind === "NON_NULL" ? typeText(t.ofType) + "!" : t.kind === "LIST" ? "[" + typeText(t.ofType) + "]" : t.name
   if (!plan?.profiles?.length) throw new Error("Re-export the updated diagnostics sample to include the comprehensive test plan")
-  const suite = previous || { revision: plan.revision, status: "Running", cases: [], ids: {}, origins: {}, created: [], fieldCoverage: [], manualCases: plan.manualCases, startedAt: new Date().toISOString() }
+  if (previous?.patientId != null && Number(previous.patientId) !== patientId) throw new Error("Saved suite progress belongs to another patient; no suite writes sent")
+  const suite = previous || { revision: plan.revision, patientId, status: "Running", cases: [], ids: {}, origins: {}, created: [], fieldCoverage: [], manualCases: plan.manualCases, startedAt: new Date().toISOString() }
+  suite.patientId = patientId; suite.status = "Running"
   const ctx = { ...context }, ids = suite.ids
+  const prior = new Set(priorProfiles || [])
   const notify = () => { if (active()) emit({ ...suite, cases: [...suite.cases], ids: { ...ids } }) }
   const record = (row) => { const i = suite.cases.findIndex((x) => x.id === row.id); if (i < 0) suite.cases.push(row); else suite.cases[i] = row; notify(); return row }
-  const done = (id) => suite.cases.some((x) => x.id === id && !["Needs context", "Pending", "Running"].includes(x.status))
+  // A case is retried only when no request was sent for it; sent cases are never repeated automatically.
+  const done = (id) => suite.cases.some((x) => x.id === id && (x.sent || !["Needs context", "Pending", "Running", "Stopped before result"].includes(x.status)))
   const fail = (reason) => { throw new Error(reason) }
   const positive = (v) => Number.isSafeInteger(Number(v)) && Number(v) > 0
   let mutationCount = 0
@@ -72,7 +80,7 @@ const runPatientContextVariantSuite = async ({ request, patientId, patient, sour
   }
   const init = { id: "context", status: "Running", variant: "read context" }; record(init)
   try {
-    const charts = (await call("patient", { id: patientId }, "patientId conditions { condition { code display system } certainty { code display system } } encounters { encounterId providerId } serviceEpisodes { serviceEpisodeId service { code display system } serviceMrp { code display system } serviceMrpId serviceEvents { service { code display system } } }", false, "Context")).patient
+    const charts = (await call("patient", { id: patientId }, "patientId conditions { condition { code display system } certainty { code display system } } encounters { encounterId providerId status { code display system } } serviceEpisodes { serviceEpisodeId service { code display system } serviceMrp { code display system } serviceMrpId serviceEvents { service { code display system } } }", false, "Context")).patient
     if (charts?.length !== 1 || Number(charts[0].patientId) !== patientId) fail("Requested patient not uniquely returned")
     const chart = charts[0]
     const requestedEncounter = ctx.encounterId || patient?.encounterId
@@ -90,6 +98,9 @@ const runPatientContextVariantSuite = async ({ request, patientId, patient, sour
     const episode = chart.serviceEpisodes?.find((x) => x.service?.code && positive(x.serviceMrpId) && x.serviceMrp?.system === "MOIS.USER" && String(x.serviceMrp.code) === String(x.serviceMrpId))
     if (episode) { ctx.service ??= episode.service; ctx.serviceMrp ??= episode.serviceMrp; ctx.serviceMrpId ??= episode.serviceMrpId }
     ctx.eventService ??= chart.serviceEpisodes?.flatMap((x) => x.serviceEvents || []).find((x) => x.service?.code)?.service
+    // Status codings already used on this patient's encounters are instance-valid candidates.
+    const statuses = (chart.encounters || []).map((x) => x.status).filter((x) => x?.code && x?.system)
+    ctx.appointmentStatusCandidates = statuses.filter((x, i) => statuses.findIndex((y) => y.code === x.code && y.system === x.system) === i).map(clone)
     init.status = "Read verified"; init.contextFields = Object.keys(ctx); suite.context = clone(ctx)
   } catch (e) { init.status = "Needs context"; init.error = e.message; record(init); fail("Context verification failed; no suite writes sent: " + e.message) }
   record(init)
@@ -106,9 +117,7 @@ const runPatientContextVariantSuite = async ({ request, patientId, patient, sour
     if (a && b && typeof a === "object" && typeof b === "object" && !Array.isArray(a) && !Array.isArray(b)) return [...new Set([...Object.keys(a), ...Object.keys(b)])].flatMap((k) => diffs(a[k], b[k], prefix ? prefix + "." + k : k))
     return [prefix || "record"]
   }
-  for (const p of plan.profiles) {
-    if (!active() || uncertain()) break
-    const marker = suite.origins[p.key]?.marker || `WEBFORMS TEST ${Date.now().toString(36)} ${p.key}`
+  const tools = (p, marker) => {
     const fields = selection(p.type)
     const read = async (id = ids[p.key]) => {
       let wrapped = fields
@@ -136,6 +145,19 @@ const runPatientContextVariantSuite = async ({ request, patientId, patient, sour
       return { ...(op.args.some((a) => a.name === "patientId") ? { patientId } : {}), ...refValue(create ? p.extraCreateArgs || p.extraArgs || {} : p.extraArgs || {}, marker, ids[p.key]), [arg]: (create ? p.inputList : p.updateList || p.inputList) ? [payload] : payload }
     }
     const inputArg = (create = false) => mutations.get(create ? p.create : p.update)?.args.find((a) => a.name === (create ? p.inputArg : p.updateArg || p.inputArg))
+    return { fields, read, mutArgs, inputArg }
+  }
+  // Nested child/back-reference IDs become 0 so a cloned row is submitted as new.
+  const zeroNestedIds = (value, depth = 0) => Array.isArray(value) ? value.map((x) => zeroNestedIds(x, depth + 1)) : value && typeof value === "object" ? Object.fromEntries(Object.entries(value).map(([k, x]) => [k, depth > 0 && /Id$/.test(k) && k !== "patientId" && positive(x) ? 0 : zeroNestedIds(x, depth + 1)])) : value
+  for (const [profileIndex, p] of plan.profiles.entries()) {
+    if (!active() || uncertain()) break
+    suite.progress = { group: profileIndex + 1, groups: plan.profiles.length, key: p.key }; notify()
+    if (prior.has(p.key) && !suite.cases.some((x) => x.profile === p.key)) {
+      record({ id: p.key + ".earlier-load", profile: p.key, status: "Skipped: started in an earlier load of this form", reason: "This browser recorded requests for this test group in an earlier load. They are not repeated, to avoid duplicate records and restoring to an intermediate value. Reconcile with that load's evidence file." })
+      continue
+    }
+    const marker = suite.origins[p.key]?.marker || `WEBFORMS TEST ${Date.now().toString(36)} ${p.key}`
+    const { fields, read, mutArgs, inputArg } = tools(p, marker)
     let origin = suite.origins[p.key], rows
     try {
       if (!fields) fail("No readable output fields")
@@ -147,7 +169,15 @@ const runPatientContextVariantSuite = async ({ request, patientId, patient, sour
         let row = { id, profile: p.key, operation: p.create, variant: "create " + mode, status: "Running", sent: false }; record(row)
         const before = rows
         try {
-          const seed = refValue(p.seed, marker + " " + mode)
+          let seed
+          if (mode === "clone-existing") {
+            // Copy every input-supported field of an existing positive-ID row, then
+            // replace identity/marker fields. Tests whether a complete shape creates.
+            const source = before.find((r) => positive(r[p.id]))
+            if (!source) { row.status = "Needs context"; row.reason = "No existing positive-ID row to clone"; record(row); continue }
+            seed = { ...zeroNestedIds(copyInput(source, named(inputArg(true)?.type))), ...refValue(p.seed, marker + " " + mode) }
+            seed[p.id] = 0; row.clonedFrom = Number(source[p.id])
+          } else seed = refValue(p.seed, marker + " " + mode)
           if (mode === "zero") seed[p.id] = 0
           if (mode === "null") seed[p.id] = null
           if (mode === "omitted") delete seed[p.id]
@@ -170,8 +200,8 @@ const runPatientContextVariantSuite = async ({ request, patientId, patient, sour
           const candidates = rows.filter((r) => positive(r[p.id]) && !beforeIds.has(Number(r[p.id])) && (p.key === "events" ? Number(r.serviceEpisodeId) === ids.episodes && Number(r.objectId) === ctx.encounterId && r.objectType === seed.objectType && subset(r.service, seed.service) : scalarMarkers.length && scalarMarkers.every((k) => r[k] === seed[k])))
           const preserved = before.every((r) => same(withoutAudit(r), withoutAudit(rows.find((x) => Number(x[p.id]) === Number(r[p.id])))))
           if (candidates.length === 1 && rows.length === before.length + 1 && preserved) {
-            const created = candidates[0]; ids[p.key] ||= Number(created[p.id]); row.inputChecks = Object.keys(seed).filter((k) => k !== p.id).map((k) => ({ field: k, matched: subset(created[k], seed[k]) })); row.status = row.inputChecks.every((x) => x.matched) ? error ? "Create verified after mutation error" : "Create verified" : "Created record identified; supplied fields differ"; row.recordId = Number(created[p.id]); row.changedFields = scalarMarkers
-            suite.created.push({ profile: p.key, id: row.recordId, key: p.id, cleanup: p.delete ? "Pending deletion" : "No dedicated delete recipe; retained" })
+            const created = candidates[0]; ids[p.key] ||= Number(created[p.id]); row.inputChecks = Object.keys(seed).filter((k) => k !== p.id).map((k) => ({ field: k, matched: seedMatch(created[k], seed[k], k) })); row.status = row.inputChecks.every((x) => x.matched) ? error ? "Create verified after mutation error" : "Create verified" : "Created record identified; supplied fields differ"; row.recordId = Number(created[p.id]); row.changedFields = scalarMarkers
+            suite.created.push({ profile: p.key, id: row.recordId, key: p.id, cleanup: p.delete ? "Pending deletion" : p.negativeIdDelete ? "Pending negative-ID delete test" : "No dedicated delete recipe; retained" })
             if (!origin) { origin = { marker, record: clone(created), id: ids[p.key] }; suite.origins[p.key] = origin }
           } else if (same(withoutAudit(rows), withoutAudit(before))) { row.status = error ? "Rejected; selected read unchanged" : "Create not verified" }
           else { row.status = "Unexpected read changes; profile stopped"; row.stopProfile = true }
@@ -186,6 +216,10 @@ const runPatientContextVariantSuite = async ({ request, patientId, patient, sour
         if (selected) { ids[p.key] = Number(selected[p.id]); origin = { marker, record: clone(selected), id: ids[p.key], existing: true }; suite.origins[p.key] = origin }
       }
       if (!origin) { record({ id: p.key + ".variants", profile: p.key, status: "Needs context", reason: "No independently verified positive-ID record for field variants", variants: p.fields }); continue }
+      // Priority sequences (the pending task acknowledgement test) run before generic field variants.
+      const metadataFirst = Boolean(p.taskMetadata?.runBeforeFields)
+      if (metadataFirst) await taskMetadata(p, read, mutArgs, origin)
+      if (suite.cases.some((r) => r.profile === p.key && r.stopProfile) || uncertain()) continue
       for (const field of p.fields) {
         if (!active() || uncertain()) break
         const arg = inputArg(), inputType = named(arg?.type), spec = types.get(inputType?.name)?.inputFields?.find((f) => f.name === field)
@@ -215,7 +249,7 @@ const runPatientContextVariantSuite = async ({ request, patientId, patient, sour
       if (suite.cases.some((r) => r.profile === p.key && r.stopProfile) || uncertain()) continue
       if (p.nestedDosage) await nestedDosage(p, read, mutArgs, origin)
       if (p.healthIssues) await eventChildren(p, read, mutArgs, origin)
-      if (p.taskMetadata) await taskMetadata(p, read, mutArgs, origin)
+      if (p.taskMetadata && !metadataFirst) await taskMetadata(p, read, mutArgs, origin)
       if (p.encounterStatus) await appointmentStatus(p, read, origin)
       if (p.lifecycle) await formLifecycle(p, read, mutArgs, origin)
       if (p.download) await download(p, read)
@@ -235,12 +269,13 @@ const runPatientContextVariantSuite = async ({ request, patientId, patient, sour
     })
   }
   suite.fieldCoverage = [...mutations.values()].flatMap((op) => op.args.flatMap((arg) => inputPaths(arg.type).map((f) => {
-    const cases = suite.cases.filter((r) => r.operation === op.name && (r.field === f.path || r.nestedField === f.path))
+    const cases = suite.cases.filter((r) => r.operation === op.name && (r.field === f.path || r.nestedField === f.path || r.fields?.includes(f.path)))
     return { operation: op.name, argument: arg.name, field: f.path, variants: ["set", "change", "omit", ...(f.type.kind !== "NON_NULL" ? ["null"] : []), "restore"], cases: cases.map((r) => r.id), status: cases.some((r) => r.sent) ? "See individual outcomes" : "Not exercised; needs a fixture or dedicated semantic recipe" }
   })))
-  for (const p of [...plan.profiles].reverse().filter((p) => p.delete)) {
+  for (const p of [...plan.profiles].reverse().filter((p) => p.delete || p.negativeIdDelete)) {
     if (!active() || uncertain()) break
     if (suite.cases.some((r) => r.profile === p.key && r.stopProfile)) continue
+    if (p.negativeIdDelete) { await negativeIdDelete(p); continue }
     for (const created of suite.created.filter((x) => x.profile === p.key)) {
       const id = `${p.key}.delete.${created.id}`
       if (done(id)) continue
@@ -269,16 +304,52 @@ const runPatientContextVariantSuite = async ({ request, patientId, patient, sour
   suite.status = !active() ? "Stopped" : uncertain() ? "Stopped: uncertain write; inspect before further mutations" : "Finished; inspect failures and prerequisites"
   suite.completedAt = new Date().toISOString(); notify(); return suite
 
+  // Vendor test forms delete connections/preferences by sending only the negated ID
+  // (mois-module-writes "Record-ID conventions"). Only records created by this suite
+  // are targeted, and an independent read decides the outcome.
+  async function negativeIdDelete(p) {
+    const origin = suite.origins[p.key], { read, mutArgs } = tools(p, origin?.marker || "")
+    for (const created of suite.created.filter((x) => x.profile === p.key)) {
+      const id = `${p.key}.negative-id-delete.${created.id}`
+      if (done(id)) continue
+      if (!active() || uncertain()) break
+      const row = { id, profile: p.key, operation: p.update, variant: "negative-ID delete (vendor convention)", recordId: created.id, status: "Running", sent: false }; record(row)
+      try {
+        const before = await read(), target = before.find((r) => Number(r[p.id]) === created.id)
+        if (!target) fail("Test record not present before delete")
+        let error
+        const sentBefore = mutationCount
+        try { await call(p.update, mutArgs({ [p.id]: -created.id }), "__typename", true, "NegativeDelete") } catch (e) { error = e.message }
+        row.sent = mutationCount > sentBefore
+        if (!row.sent) { row.status = "Needs context"; row.error = error; record(row); continue }
+        const after = await read(), still = after.find((r) => Number(r[p.id]) === created.id)
+        const othersPreserved = before.filter((r) => Number(r[p.id]) !== created.id).every((r) => same(withoutAudit(r), withoutAudit(after.find((x) => Number(x[p.id]) === Number(r[p.id])))))
+        row.otherRecordsPreserved = othersPreserved
+        if (still) row.retainedChangedPaths = diffs(withoutAudit(target), withoutAudit(still))
+        row.status = uncertain() ? "Outcome requires inspection" : !still && othersPreserved ? "Negative-ID delete verified" : !still ? "Record absent but other rows changed; inspect" : row.retainedChangedPaths.length ? "Record retained with changes; inspect stop/state fields" : error ? "Rejected; record unchanged" : "Record retained unchanged; negative-ID delete not supported here"
+        row.reason = "Absence on independent collection read; soft deletion, history and desktop display remain separate"
+        if (error) row.error = error
+        created.cleanup = row.status
+      } catch (e) { row.status = row.sent ? "Outcome requires inspection" : "Needs context"; row.error = e.message }
+      record(row)
+    }
+  }
   function fieldsForMutation(operation, type, fields) { return named(mutations.get(operation)?.type)?.name === type ? fields : "__typename" }
+  // `field` may be one input field or an array changed together (for example a
+  // task's name/date pair); `variant.values` then maps each field to its value.
   async function change(p, field, variant, caseId, read, mutArgs, origin) {
-    const row = { id: caseId, profile: p.key, operation: p.update, field, nestedField: variant.nestedField, variant: variant.variant, status: "Running", sent: false }; record(row)
+    const targets = Array.isArray(field) ? field : [field]
+    const want = (f) => variant.values ? variant.values[f] : variant.value
+    const row = { id: caseId, profile: p.key, operation: p.update, field: targets.join("+"), ...(targets.length > 1 ? { fields: targets } : {}), nestedField: variant.nestedField, variant: variant.variant, status: "Running", sent: false }; record(row)
     try {
       const before = await read(), recordBefore = before.find((r) => Number(r[p.id]) === origin.id)
       if (!recordBefore) fail("Target missing from fresh read")
       const arg = mutations.get(p.update)?.args.find((a) => a.name === (p.updateArg || p.inputArg)), payload = copyInput(recordBefore, { ...named(arg?.type) })
       if (variant.prepare) variant.value = variant.prepare(clone(payload))
-      if (variant.variant === "omit") { if (recordBefore[field] == null) { row.status = "Not applicable: omitted field already null"; record(row); return row }; delete payload[field] }
-      else { if (same(recordBefore[field], variant.value)) { row.status = "Not applicable: requested value already present"; record(row); return row }; payload[field] = clone(variant.value) }
+      if (variant.variant === "omit") { if (targets.every((f) => recordBefore[f] == null)) { row.status = "Not applicable: omitted field already null"; record(row); return row }; for (const f of targets) delete payload[f] }
+      else { if (targets.every((f) => same(recordBefore[f], want(f)))) { row.status = "Not applicable: requested value already present"; record(row); return row }; for (const f of targets) payload[f] = clone(want(f)) }
+      row.baselineValues = Object.fromEntries(targets.map((f) => [f, clone(recordBefore[f])]))
+      row.sentValues = variant.variant === "omit" ? { omitted: targets } : Object.fromEntries(targets.map((f) => [f, clone(want(f))]))
       let error
       const sentBefore = mutationCount
       try { await call(p.update, mutArgs(payload), fieldsForMutation(p.update, p.type, selection(p.type)), true, "Change") } catch (e) { error = e.message }
@@ -286,22 +357,30 @@ const runPatientContextVariantSuite = async ({ request, patientId, patient, sour
       if (!row.sent) { row.status = "Needs context"; row.error = error; record(row); return row }
       const after = await read(), recordAfter = after.find((r) => Number(r[p.id]) === origin.id)
       if (!recordAfter) fail("Target missing after write")
+      row.readBackValues = Object.fromEntries(targets.map((f) => [f, clone(recordAfter[f])]))
       const changed = diffs(withoutAudit(recordBefore), withoutAudit(recordAfter)); row.changedPaths = changed
       const otherPreserved = before.length === after.length && before.every((r) => {
         const found = after.find((x) => Number(x[p.id]) === Number(r[p.id])); if (!found) return false
         if (Number(r[p.id]) !== origin.id) return same(withoutAudit(r), withoutAudit(found))
-        const a = withoutAudit(r), b = withoutAudit(found); delete a[field]; delete b[field]; return same(a, b)
+        const a = withoutAudit(r), b = withoutAudit(found); for (const f of targets) { delete a[f]; delete b[f] }; return same(a, b)
       })
       row.otherSelectedFieldsAndMembershipPreserved = otherPreserved
       row.auditChangedPaths = diffs(recordBefore.stamp, recordAfter.stamp, "stamp")
       if (uncertain()) fail("Write timed out; read cannot settle eventual persistence")
+      const matches = (f) => {
+        if (variant.expectPreserved) return same(recordAfter[f], recordBefore[f])
+        if (variant.generatedChildren) return matchEventChildren(recordAfter[f], variant.value, recordBefore[f], origin.id)
+        if (subset(recordAfter[f], want(f))) return true
+        if (dateEquivalent(recordAfter[f], want(f))) { (row.normalized ||= []).push({ field: f, sent: want(f), read: recordAfter[f] }); return true }
+        return false
+      }
       if (!otherPreserved) { row.status = "Unexpected changes; profile stopped"; row.stopProfile = true }
       else if (error && same(withoutAudit(recordBefore), withoutAudit(recordAfter))) row.status = "Rejected; selected read unchanged"
-      else if (variant.variant === "omit") row.status = same(recordBefore[field], recordAfter[field]) ? "Omission preserved value" : recordAfter[field] === null ? "Omission cleared value" : "Omission changed value"
-      else if (variant.expectPreserved ? same(recordAfter[field], recordBefore[field]) : variant.generatedChildren ? matchEventChildren(recordAfter[field], variant.value, recordBefore[field], origin.id) : subset(recordAfter[field], variant.value)) row.status = error ? "Write verified after mutation error" : variant.expectPreserved ? "Null preserved value" : variant.variant === "restore" ? "Restoration verified" : "Write verified"
+      else if (variant.variant === "omit") row.status = targets.every((f) => same(recordBefore[f], recordAfter[f])) ? "Omission preserved value" : targets.every((f) => recordAfter[f] === null) ? "Omission cleared value" : "Omission changed value"
+      else if (targets.every(matches)) row.status = error ? "Write verified after mutation error" : variant.expectPreserved ? "Null preserved value" : variant.variant === "restore" ? "Restoration verified" : "Write verified"
       else if (same(recordBefore, recordAfter) || same(withoutAudit(recordBefore), withoutAudit(recordAfter))) row.status = error ? "Rejected; selected read unchanged" : "Write not applied"
       else { row.status = "Unexpected field value; profile stopped"; row.stopProfile = true }
-      if (variant.variant === "restore" && !same(withoutAudit(recordAfter[field]), withoutAudit(origin.record[field]))) row.stopProfile = true
+      if (variant.variant === "restore" && targets.some((f) => !same(withoutAudit(recordAfter[f]), withoutAudit(origin.record[f])))) row.stopProfile = true
       if (error) row.error = error
     } catch (e) { row.status = row.sent ? "Outcome requires inspection" : "Needs context"; row.error = e.message; row.stopProfile = Boolean(row.sent) }
     record(row); return row
@@ -377,36 +456,59 @@ const runPatientContextVariantSuite = async ({ request, patientId, patient, sour
       } catch (e) { binary.status = "Read failed"; binary.error = e.message } record(binary)
     } catch (e) { row.status = row.sent ? "Outcome requires inspection" : "Needs context"; row.error = e.message; record(row) }
   }
+  // Task status metadata while both flags are Y. The plan orders the pending focused-52
+  // case first: set acknowledgedBy + acknowledgedDate together (with completion
+  // metadata populated, as in 51), independent read, populated-value omission,
+  // explicit-null clear, set again, restore; then completion pair and single fields.
   async function taskMetadata(p, read, mutArgs, origin) {
+    const spec = p.taskMetadata && typeof p.taskMetadata === "object" ? p.taskMetadata : {}
     const yes = { code: "Y", display: "Yes", system: "MOIS-YESNO" }
-    const flags = ["isAcknowledged", "isComplete"]
-    const metadata = ["acknowledgedBy", "acknowledgedDate", "completedBy", "completedDate"]
-    const step = async (field, variant, value) => {
-      const id = `${p.key}.workflow.${field}.${variant}`
+    const flags = spec.flags || ["isAcknowledged", "isComplete"]
+    const pairs = spec.pairs || { acknowledgement: ["acknowledgedBy", "acknowledgedDate"], completion: ["completedBy", "completedDate"] }
+    const sequence = spec.sequence || [{ pair: "completion", variants: ["set"] }, { pair: "acknowledgement", variants: ["set", "omit", "null", "set-again", "restore"] }, { pair: "completion", variants: ["omit", "null", "set-again", "restore"] }]
+    const singles = spec.singleFieldVariants || ["set", "omit", "null", "restore"]
+    const metadata = [...new Set(Object.values(pairs).flat())]
+    const step = async (field, id, variant) => {
       if (done(id)) return true
       if (!active() || uncertain()) return false
-      const result = await change(p, field, { variant, value }, id, read, mutArgs, origin)
+      const result = await change(p, field, variant, id, read, mutArgs, origin)
       return !result.stopProfile
     }
     if (!ctx.userName) { record({ id: p.key + ".workflow.profile", profile: p.key, status: "Needs context", reason: "Needs current profile display name" }); return }
-    for (const f of flags) if (!await step(f, "enable", yes)) return
+    const missing = [...flags, ...metadata].filter((f) => !(f in origin.record))
+    if (missing.length) { record({ id: p.key + ".workflow.fields", profile: p.key, status: "Needs context", reason: "Not in selected task output: " + missing.join(", ") }); return }
+    for (const f of flags) if (!await step(f, `${p.key}.workflow.${f}.enable`, { variant: "enable", value: yes })) return
     const current = (await read()).find((r) => Number(r[p.id]) === origin.id)
     if (!flags.every((f) => current?.[f]?.code === "Y")) { record({ id: p.key + ".workflow.prerequisite", profile: p.key, status: "Needs context", reason: "Both flags must independently read Y before metadata-under-completion variants" }); return }
-    if (!ctx.userName) { record({ id: p.key + ".workflow.profile", profile: p.key, status: "Needs context", reason: "Needs current profile display name" }); return }
-    for (const f of metadata) {
-      const value = f.endsWith("By") ? ctx.userName : new Date().toISOString().slice(0, 10)
-      for (const [variant, next] of [["set", value], ["omit", undefined], ["null", null], ["set-again", value], ["restore", origin.record[f]]]) if (!await step(f, variant, next)) return
+    const today = new Date().toISOString().slice(0, 10)
+    const valueFor = (f, variant) => variant === "null" ? null : variant === "restore" ? clone(origin.record[f] ?? null) : f.endsWith("By") ? ctx.userName : today
+    for (const { pair, variants } of sequence) {
+      const fields = pairs[pair]
+      if (!fields?.length) continue
+      for (const v of variants) {
+        const variant = v === "omit" ? { variant: "omit" } : { variant: v, values: Object.fromEntries(fields.map((f) => [f, valueFor(f, v)])) }
+        if (!await step(fields, `${p.key}.workflow.${pair}.${v}`, variant)) return
+      }
     }
-    for (const f of [...flags].reverse()) if (!await step(f, "restore", origin.record[f])) return
+    for (const f of metadata) for (const v of singles) {
+      const variant = v === "omit" ? { variant: "omit" } : { variant: v, value: valueFor(f, v) }
+      if (!await step(f, `${p.key}.workflow.${f}.${v}`, variant)) return
+    }
+    for (const f of [...flags].reverse()) if (!await step(f, `${p.key}.workflow.${f}.restore`, { variant: "restore", value: origin.record[f] })) return
   }
   async function appointmentStatus(p, read, origin) {
     // Codes come from the current instance/context. Do not invent a status or use the active encounter.
-    const coding = ctx.appointmentStatus
+    // Preference: explicit Test context, then a coding already used on this patient's
+    // encounters, then the D / MOIS-ENCOUNTERSTATUS pair the SMOIS 2.30.31 bundle sends.
+    const differs = (x) => x?.code && x?.system && !(origin.record.status?.code === x.code && origin.record.status?.system === x.system)
+    const discovered = (ctx.appointmentStatusCandidates || []).find(differs)
+    const coding = ctx.appointmentStatus || discovered || { code: "D", system: "MOIS-ENCOUNTERSTATUS" }
+    const codingSource = ctx.appointmentStatus ? "Test context" : discovered ? "Existing encounter status on this patient" : "SMOIS bundle default (D / MOIS-ENCOUNTERSTATUS)"
     if (!coding?.code || !coding?.system) { record({ id: p.key + ".status.fixture", profile: p.key, operation: "updateEncounterStatus", status: "Needs context", reason: "Provide appointmentStatus with a valid current-instance coding; test targets only this suite's new appointment" }); return }
     for (const [variant, value] of [["set", coding], ["restore", origin.record.status]]) {
       const id = p.key + ".status." + variant; if (done(id)) continue
       if (!active() || uncertain()) break
-      const row = { id, profile: p.key, operation: "updateEncounterStatus", field: "appointmentStatus", variant, status: "Running", sent: false }; record(row)
+      const row = { id, profile: p.key, operation: "updateEncounterStatus", field: "appointmentStatus", variant, codingSource: variant === "set" ? codingSource : "Original status of this suite's appointment", status: "Running", sent: false }; record(row)
       try {
         if (!value || typeof value !== "object") fail("No original status coding to restore")
         const before = await read(), old = before.find((r) => Number(r[p.id]) === origin.id)
@@ -455,6 +557,18 @@ const runPatientContextVariantSuite = async ({ request, patientId, patient, sour
       if (!value) fail("Requested document not returned")
       row.status = value.encodedFile ? "File value returned; compare content" : "No file value returned"; row.characters = typeof value.encodedFile === "string" ? value.encodedFile.length : 0
     } catch (e) { row.status = "Needs context"; row.error = e.message } record(row)
+    // Read-only: a pre-existing document with a stored file path shows whether GraphQL returns real bytes.
+    const existingId = p.key + ".encodedFile.existing"; if (done(existingId) || !active()) return
+    const existing = { id: existingId, profile: p.key, variant: "read encodedFile of a pre-existing document with a file path (read-only)", operation: "document", status: "Running" }; record(existing)
+    try {
+      const chosen = (await read()).find((x) => positive(x[p.id]) && Number(x[p.id]) !== ids[p.key] && (x.pathname || x.secondaryPathname))
+      if (!chosen) fail("No pre-existing patient document with a file path; add a known attachment to test byte retrieval")
+      const result = await call("document", { patientId, id: Number(chosen.documentId) }, "documentId patientId pathname encodedFile", false, "FileExisting")
+      const value = result.document?.find((r) => Number(r.patientId) === patientId && Number(r.documentId) === Number(chosen.documentId))
+      if (!value) fail("Requested document not returned")
+      existing.recordId = Number(chosen.documentId); existing.characters = typeof value.encodedFile === "string" ? value.encodedFile.length : 0
+      existing.status = value.encodedFile ? "File value returned for an existing document; evidence keeps only its size and prefix" : "No file value returned for a document with a file path; alternate download route remains open"
+    } catch (e) { existing.status = "Needs context"; existing.error = e.message } record(existing)
   }
   async function correspondenceUpdate(p, read, origin) {
     const id = p.key + ".positive-id-update"; if (done(id)) return
@@ -473,6 +587,7 @@ const runPatientContextVariantSuite = async ({ request, patientId, patient, sour
 // (operationName, jwToken, apiServer, query, variables, statusSetter,
 //  resultCallback, errorDispatch, { formParams }) and returns data or null.
 // Use that host transport; never invent an endpoint or expose credentials.
+const PATIENT_CONTEXT_QUERY_TEST_VERSION = "2.1.0"
 const PatientContextQueryTest = ({ collections = [], writeTargets = [], suitePlan = null }) => {
   const sd = useSourceData()
   const patient = sd?.patient ?? sd?.queryResult?.patient?.[0]
@@ -494,9 +609,23 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [], suitePla
   const pendingWrites = React.useRef(0)
   const epoch = React.useRef(0)
   const busy = React.useRef(false)
+  // Wrong-patient guard: suite and second-window writes require an explicit
+  // confirmation for this exact patient ID; it resets whenever the chart changes.
+  const [confirmedPatient, setConfirmedPatient] = React.useState(null)
+  const [sessionTarget, setSessionTarget] = React.useState("")
+  const [sessionObservation, setSessionObservation] = React.useState("")
+  const [ledgerVersion, setLedgerVersion] = React.useState(0)
+  const confirmed = Boolean(confirmedPatient && confirmedPatient.patientId === patientId)
+  const revision = suitePlan?.revision || "2026-09-24.suite-2"
+  // Per-browser record of which test groups already sent requests, so re-clicking after
+  // an accidental close/reload never re-creates records. Values: group keys only.
+  const ledgerKey = `webforms.patientContextSuite:${String(auth.apiServer || "")}:${patientId}:${revision}`
+  const readLedger = () => { try { const value = JSON.parse(window.localStorage.getItem(ledgerKey) || "null"); return value && typeof value === "object" && !Array.isArray(value) ? value : null } catch (_) { return null } }
+  const writeLedger = (value) => { try { if (value) window.localStorage.setItem(ledgerKey, JSON.stringify(value)); else window.localStorage.removeItem(ledgerKey) } catch (_) {} }
   React.useEffect(() => {
     if (pendingWrites.current) uncertainWrite.current = true
     exchanges.current = []; evidenceBytes.current = 0; evidenceTruncated.current = false
+    setConfirmedPatient(null); setSessionTarget(""); setSessionObservation("")
     setTestContext("{}")
     setWriteOverrides("{}")
     setWriteSelection("all")
@@ -518,8 +647,9 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [], suitePla
   const schemaQuery = `query InspectPatientContextType($name: String!) { __type(name: $name) { name kind fields { name args { name defaultValue type { ${typeRef} } } type { ${typeRef} } } inputFields { name defaultValue type { ${typeRef} } } enumValues { name } } }`
   const readableError = (value) => String(value || "Unknown query error").split(String(auth.jwToken || "\u0000")).join("[redacted]").slice(0, 1200)
 
-  const run = async (mode = "reads") => {
-    if (!ready || busy.current || (["writes", "suite", "all"].includes(mode) && (uncertainWrite.current || pendingWrites.current))) return
+  const run = async (mode = "reads", options = {}) => {
+    if (!ready || busy.current || (["writes", "suite", "all", "session"].includes(mode) && (uncertainWrite.current || pendingWrites.current))) return
+    if (["all", "suite", "session"].includes(mode) && !confirmed) { setState((previous) => ({ ...previous, message: "Confirm that this chart is the designated MOIS test patient before running writes." })); return }
     busy.current = true
     const runId = ++epoch.current
     const active = () => epoch.current === runId
@@ -534,15 +664,28 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [], suitePla
     let phaseResults = [...(current.phaseResults || [])]
     let missingExploration = current.missingExploration || null
     let apiInventory = current.apiInventory || null
+    let sessionTests = current.sessionTests || { rows: [] }
+    let progress = null
+    // A stored ledger applies only when this form load has no in-memory progress of its own.
+    const earlierLoad = mode === "all" && !current.suiteResults && !(current.writeResults || []).some((row) => row.sent) ? readLedger() : null
+    const testPatient = { patientId, chartNumber: patient?.chartNumber ?? null, confirmedAt: confirmedPatient?.at || null }
     const update = (message, running = true) => {
-      if (active()) setState({ patientId, suiteResults, suitePhase, phaseResults, busy: mode === "all" ? true : running, message, rows: [...rows], hasRun: true, schemaFields, apiInventory, writeResults: [...writeResults], createdIds: { ...createdIds }, rootResults: [...rootResults], customResults: [...customResults], missingExploration })
+      if (active()) setState({ patientId, suiteResults, suitePhase, phaseResults, progress, sessionTests, testPatient, earlierLoad: earlierLoad || current.earlierLoad || null, busy: mode === "all" ? true : running, message, rows: [...rows], hasRun: true, schemaFields, apiInventory, writeResults: [...writeResults], createdIds: { ...createdIds }, rootResults: [...rootResults], customResults: [...customResults], missingExploration })
     }
+    const persistLedger = () => {
+      const existing = readLedger() || {}
+      const verifierOps = new Set(suitePlan?.verifierOperations || [])
+      writeLedger({ revision, patientId, updatedAt: new Date().toISOString(),
+        profiles: [...new Set([...(existing.profiles || []), ...(suiteResults?.cases || []).filter((row) => row.sent && row.profile).map((row) => row.profile)])],
+        verifierOps: [...new Set([...(existing.verifierOps || []), ...writeResults.filter((row) => row.sent && row.phase === "verifiers" && verifierOps.has(row.operation)).map((row) => row.operation)])] })
+    }
+    // Large file values (encodedFile) keep their size and a short prefix in the evidence.
     const redact = (value) => {
-      const text = JSON.stringify(value, (key, item) => /jwToken|authorization|password|secret|accessToken|refreshToken/i.test(key) ? "[redacted]" : item)
+      const text = JSON.stringify(value, (key, item) => /jwToken|authorization|password|secret|accessToken|refreshToken|cookie/i.test(key) ? "[redacted]" : typeof item === "string" && item.length > 200000 ? { truncatedString: true, characters: item.length, prefix: item.slice(0, 120) } : item)
       return text ? JSON.parse(text.split(String(auth.jwToken || "\u0000")).join("[redacted]")) : value
     }
     const capture = (entry) => {
-      if (!active() || mode !== "all" && mode !== "suite") return
+      if (!active() || mode !== "all" && mode !== "suite" && mode !== "session") return
       const safe = redact(entry), size = JSON.stringify(safe).length
       if (evidenceBytes.current + size > 25000000) { evidenceTruncated.current = true; return }
       exchanges.current.push(safe); evidenceBytes.current += size
@@ -595,11 +738,138 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [], suitePla
         throw e
       } finally { clearTimeout(timer) }
     }
+    // Optional second-window checks. Never part of Run all remaining tests. Window A
+    // creates and owns one disposable draft; window B may only write to a draft whose
+    // saved answers carry this tool's sessionTestFixture flag on the same patient.
+    const sessionStep = async (step) => {
+      const me = Number(sd?.userProfile?.userProfileId || settings?.userProfile?.userProfileId) || null
+      const windowRole = step === "lock-observe" ? "this window" : step.startsWith("B") ? "B (second window)" : "A (first window)"
+      const row = { step, window: windowRole, userProfileId: me, startedAt: new Date().toISOString(), status: "Running", sent: false }
+      const commit = (message) => { sessionTests = { ...sessionTests, rows: [...sessionTests.rows.filter((x) => x !== row), row] }; update(message || `Second-window step ${step}: ${row.status}`, !message ? false : true) }
+      commit("Running second-window step " + step + "…")
+      const fields = "webformId webformDefinitionId patientId documentId encounterId isDraft isLockedToUser recordState userId classVersion { major minor patch } version { major minor patch } formdata note stamp { createUser modifyUser modifyTime }"
+      const readForm = async (id, tag) => {
+        const data = await request("SessionRead" + tag, `query SessionRead${tag}($id: Int!) { webform(id: $id) { ${fields} } }`, { id })
+        const found = (data?.webform || []).filter((record) => Number(record.webformId) === id)
+        if (found.length !== 1) throw new Error("Form " + id + " was not uniquely returned")
+        if (Number(found[0].patientId) !== patientId) throw new Error("That form belongs to another patient; nothing was sent")
+        return found[0]
+      }
+      const answers = (record) => { try { const value = JSON.parse(record.formdata || "{}"); return value && typeof value === "object" && !Array.isArray(value) ? value : null } catch (_) { return null } }
+      const fixture = (record) => { const value = answers(record); if (!value || value.sessionTestFixture !== true) throw new Error("Target is not a disposable second-window draft created by this tool; nothing was sent"); return value }
+      const input = (record, formdata, extra = {}) => ({ ...Object.fromEntries(["webformId", "webformDefinitionId", "patientId", "documentId", "encounterId", "isDraft", "isLockedToUser", "note"].filter((key) => record[key] !== undefined && record[key] !== null).map((key) => [key, record[key]])), formdata, ...extra })
+      const write = async (webform, tag) => {
+        row.sent = true; row.input = webform
+        try { await request("SessionWrite" + tag, `mutation SessionWrite${tag}($webform: WebformInput!) { updateWebform(webform: $webform) { webformId } }`, { webform }, true); return null } catch (error) { if (uncertainWrite.current) throw error; return readableError(error.message) }
+      }
+      const marker = (label) => `WEBFORMS TEST ${Date.now().toString(36)} ${label}`
+      const target = () => { const id = Number(sessionTarget || sessionTests.webformId); if (!Number.isSafeInteger(id) || id <= 0) throw new Error("Enter the disposable draft's form ID (shown in window A after step A1)"); return id }
+      try {
+        if (step === "lock-observe") {
+          const id = Number(sessionTarget) || Number(sd?.webform?.webformId || sd?.formParams?.webformId)
+          if (!Number.isSafeInteger(id) || id <= 0) throw new Error("Save this form once (or enter a saved form ID) so its lock state can be read")
+          row.formId = id; row.read = await readForm(id, "Lock")
+          row.hostSaysLocked = row.read.isLockedToUser
+          row.runtimeLockTest = typeof testLock === "function" ? (() => { try { return testLock() } catch (error) { return "testLock failed: " + error.message } })() : "testLock not exposed in this runtime"
+          row.observation = sessionObservation || "(not entered)"
+          row.status = "Observation recorded"
+        } else if (step === "A1") {
+          if (sessionTests.webformId || sessionTests.definitionId) throw new Error("This window already created a disposable draft/definition; run A6 before creating another")
+          const text = marker("second-window")
+          const name = "webforms_session_" + Date.now().toString(36)
+          const definition = { webformDefinitionId: 0, name, title: text, owner: "WEBFORMS TEST", active: "N", type: "ATTACHMENT", buildVersion: new Date().toISOString().slice(0, 10).replace(/-/g, ""), formVersion: { major: 1, minor: 0, patch: 0 }, formdataSchema: JSON.stringify({ type: "object", properties: { diagnostic: { type: "string" }, sessionA: { type: "string" }, sessionB: { type: "string" }, sessionB2: { type: "string" } } }) }
+          row.sent = true
+          const created = await request("SessionDefinition", "mutation SessionDefinition($webform: WebformDefinitionInput!) { addWebformDefinition(webform: $webform) { webformDefinitionId name } }", { webform: definition }, true)
+          const defs = (created?.addWebformDefinition || []).filter((record) => record.name === name && Number(record.webformDefinitionId) > 0)
+          if (defs.length !== 1) throw new Error("Definition creation did not return one positive ID; inspect before retrying")
+          const definitionId = Number(defs[0].webformDefinitionId)
+          sessionTests = { ...sessionTests, definitionId }
+          const check = await request("SessionDefinitionRead", "query SessionDefinitionRead($id: Int) { webformDefinition(id: $id) { webformDefinitionId name } }", { id: definitionId })
+          if (!(check?.webformDefinition || []).some((record) => Number(record.webformDefinitionId) === definitionId && record.name === name)) throw new Error("Created definition not found on independent read")
+          const draft = await request("SessionDraft", "mutation SessionDraft($webform: WebformInput!) { addWebform(webform: $webform) { webformId patientId documentId } }", { webform: { webformId: 0, webformDefinitionId: definitionId, patientId, isDraft: "Y", formdata: JSON.stringify({ sessionTestFixture: true, diagnostic: text, sessionA: null, sessionB: null, sessionB2: null }), note: text } }, true)
+          const forms = (draft?.addWebform || []).filter((record) => Number(record.webformId) > 0 && Number(record.patientId) === patientId)
+          if (forms.length !== 1) throw new Error("Draft creation did not return one positive ID; inspect before retrying")
+          const webformId = Number(forms[0].webformId)
+          sessionTests = { ...sessionTests, webformId, definitionId }
+          row.read = await readForm(webformId, "Created"); fixture(row.read)
+          sessionTests = { ...sessionTests, webformId, definitionId }
+          row.formId = webformId; row.definitionId = definitionId
+          row.status = "Disposable draft created and independently read; enter form ID " + webformId + " in window B"
+        } else if (step === "A2") {
+          const id = target(); const record = await readForm(id, "Baseline"); fixture(record)
+          sessionTests = { ...sessionTests, baseline: record, baselineAt: new Date().toISOString() }
+          row.formId = id; row.read = record; row.status = "Baseline held in this window; now run B1 in the second window"
+        } else if (step === "B1") {
+          const id = target(); const before = await readForm(id, "BeforeB"); const value = fixture(before)
+          const text = marker("window B")
+          const error = await write(input(before, JSON.stringify({ ...value, sessionB: text })), "B")
+          const after = await readForm(id, "AfterB"); row.formId = id; row.before = before; row.read = after; row.error = error
+          row.status = answers(after)?.sessionB === text ? "Window B answer persisted; now run A3 in window A" : error ? "Window B write rejected" : "Window B answer not found on independent read"
+        } else if (step === "A3") {
+          const baseline = sessionTests.baseline
+          if (!baseline) throw new Error("Run A2 in this window before B1, then A3")
+          const id = Number(baseline.webformId), fresh = await readForm(id, "BeforeStale")
+          row.interveningWriteObserved = fresh.formdata !== baseline.formdata
+          if (!row.interveningWriteObserved) throw new Error("No second-window change since the A2 baseline; run B1 in window B first")
+          const text = marker("window A stale")
+          const error = await write(input(baseline, JSON.stringify({ ...fixture(baseline), sessionA: text })), "StaleA")
+          const after = await readForm(id, "AfterStale"), result = answers(after) || {}
+          const hasA = result.sessionA === text, hasB = typeof result.sessionB === "string" && result.sessionB.startsWith("WEBFORMS TEST")
+          row.formId = id; row.before = fresh; row.read = after; row.error = error
+          row.status = error && !hasA && hasB ? "Stale write rejected; window B answer preserved" : hasA && hasB ? "Both answers present after the stale write" : hasA ? "Lost update: stale write replaced the window B answer" : "Outcome requires inspection"
+        } else if (step === "A4" || step === "A5") {
+          const id = target(); const before = await readForm(id, "BeforeLock"); fixture(before)
+          const lock = step === "A4" ? "Y" : "N"
+          const error = await write(input(before, before.formdata, { isLockedToUser: lock }), step === "A4" ? "Lock" : "Unlock")
+          const after = await readForm(id, "AfterLock"); row.formId = id; row.before = before; row.read = after; row.error = error
+          row.status = after.isLockedToUser === lock ? `isLockedToUser=${lock} persisted` + (step === "A4" ? "; now run B2 in window B" : "") : error ? "Lock change rejected" : "Lock value not applied"
+        } else if (step === "B2") {
+          const id = target(); const before = await readForm(id, "BeforeLocked"); const value = fixture(before)
+          row.lockedBefore = before.isLockedToUser; row.sameUserAsFormUser = me != null && Number(before.userId) === me
+          if (before.isLockedToUser !== "Y") throw new Error("Draft is not locked (isLockedToUser is " + before.isLockedToUser + "); run A4 in window A first")
+          const text = marker("window B while locked")
+          const error = await write(input(before, JSON.stringify({ ...value, sessionB2: text }), { isLockedToUser: "Y" }), "Locked")
+          const after = await readForm(id, "AfterLocked"); row.formId = id; row.before = before; row.read = after; row.error = error
+          row.status = answers(after)?.sessionB2 === text ? "Write accepted while isLockedToUser=Y" : error ? "Write rejected while locked" : "Write not applied while locked"
+        } else if (step === "A6") {
+          const { webformId, definitionId } = sessionTests
+          if (!webformId && !definitionId) throw new Error("This window has no disposable draft to delete")
+          row.sent = true; row.deletions = []
+          if (webformId) {
+            fixture(await readForm(webformId, "BeforeDelete"))
+            let error = null; try { await request("SessionDeleteForm", "mutation SessionDeleteForm($webformId: Int!, $leaveOrphanDocument: Boolean) { deleteWebform(webformId: $webformId, leaveOrphanDocument: $leaveOrphanDocument) { webformId } }", { webformId, leaveOrphanDocument: false }, true) } catch (e) { if (uncertainWrite.current) throw e; error = readableError(e.message) }
+            const check = await request("SessionDeleteFormRead", "query SessionDeleteFormRead($id: Int!) { webform(id: $id) { webformId } }", { id: webformId })
+            row.deletions.push({ webformId, error, status: Array.isArray(check?.webform) && !check.webform.some((record) => Number(record.webformId) === webformId) ? "Delete verified" : "Delete unverified" })
+          }
+          if (definitionId) {
+            let error = null; try { await request("SessionDeleteDefinition", "mutation SessionDeleteDefinition($id: Int!) { deleteWebformDefinition(id: $id) { webformDefinitionId } }", { id: definitionId }, true) } catch (e) { if (uncertainWrite.current) throw e; error = readableError(e.message) }
+            const check = await request("SessionDeleteDefinitionRead", "query SessionDeleteDefinitionRead($id: Int) { webformDefinition(id: $id) { webformDefinitionId } }", { id: definitionId })
+            row.deletions.push({ definitionId, error, status: Array.isArray(check?.webformDefinition) && !check.webformDefinition.some((record) => Number(record.webformDefinitionId) === definitionId) ? "Delete verified" : "Delete unverified" })
+          }
+          row.status = row.deletions.every((entry) => entry.status === "Delete verified") ? "Disposable draft and definition deleted" : "Cleanup incomplete; inspect"
+          if (row.status.startsWith("Disposable")) sessionTests = { ...sessionTests, webformId: null, definitionId: null, baseline: null }
+        } else throw new Error("Unknown second-window step")
+      } catch (error) {
+        row.status = row.sent ? (uncertainWrite.current ? "Outcome unknown; do not repeat" : "Outcome requires inspection") : "Not sent: " + readableError(error.message)
+        row.error = readableError(error.message)
+      }
+      row.completedAt = new Date().toISOString()
+      commit()
+    }
     const executePhase = async (mode) => {
       if (mode === "reads") rows = []
       if (mode === "suite") {
-        suiteResults = await runPatientContextVariantSuite({ request, patientId, patient, sourceProfile: sd?.userProfile || settings?.userProfile, context: JSON.parse(testContext || "{}"), plan: suitePlan, previous: suiteResults, active, uploadAttachment, uncertain: () => uncertainWrite.current || pendingWrites.current > 0, emit: (value) => { suiteResults = value; update("Comprehensive variants: " + value.cases.length + " cases recorded") } })
+        suiteResults = await runPatientContextVariantSuite({ request, patientId, patient, sourceProfile: sd?.userProfile || settings?.userProfile, context: JSON.parse(testContext || "{}"), plan: suitePlan, previous: suiteResults, priorProfiles: earlierLoad?.profiles || [], active, uploadAttachment, uncertain: () => uncertainWrite.current || pendingWrites.current > 0, emit: (value) => {
+          suiteResults = value; persistLedger()
+          const last = value.cases[value.cases.length - 1]
+          progress = { ...progress, group: value.progress?.group, groups: value.progress?.groups, groupKey: value.progress?.key, cases: value.cases.length, last: last ? last.id + " — " + last.status : null }
+          update(`${progress.label || "Write variants"} · test group ${value.progress?.group || "—"} of ${value.progress?.groups || "—"}${value.progress?.key ? " (" + value.progress.key + ")" : ""} · ${value.cases.length} cases recorded`)
+        } })
         update(suiteResults.status, false)
+        return
+      }
+      if (mode === "session") {
+        await sessionStep(options.step)
         return
       }
       if (mode === "missing") {
@@ -883,10 +1153,20 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [], suitePla
         update("Root query probes complete. These test the selected arguments and small scalar selections; returned records are not included in the report.", false)
         return
       }
-      if (mode === "writes") {
+      if (mode === "writes" || mode === "verifiers") {
         if (!apiInventory?.mutations?.length) throw new Error("Inspect read/write API first.")
+        // The one-click run re-exercises the corrected automatic verifiers (contact,
+        // nickname, resource, changed-field and dedicated deletes) with default inputs only.
+        const allowed = mode === "verifiers" ? suitePlan?.verifierOperations || [] : null
+        const selected = (name) => allowed ? allowed.includes(name) : writeSelection === "all" || writeSelection === name
+        if (allowed) {
+          // paperFormParametersRx may only use a prescription this run created, never an existing chart row.
+          const suitePrescription = (suiteResults?.created || []).find((entry) => entry.profile === "prescriptions" && Number(entry.id) > 0)
+          if (!createdIds.prescriptionId && suitePrescription) createdIds = { ...createdIds, prescriptionId: Number(suitePrescription.id) }
+          for (const operation of earlierLoad?.verifierOps || []) if (!writeResults.some((row) => row.operation === operation)) writeResults.push({ operation, phase: "verifiers", sentEarlierLoad: true, status: "Skipped: sent in an earlier load of this form; not repeated", verification: "Reconcile with that load's evidence file" })
+        }
         let overrides
-        try { overrides = JSON.parse(writeOverrides || "{}") } catch (_) { throw new Error("Write inputs must be a JSON object keyed by mutation name.") }
+        try { overrides = allowed ? {} : JSON.parse(writeOverrides || "{}") } catch (_) { throw new Error("Write inputs must be a JSON object keyed by mutation name.") }
         if (!overrides || Array.isArray(overrides) || typeof overrides !== "object") throw new Error("Write inputs must be a JSON object.")
         apiInventory = { ...apiInventory, executionStatus: "Write tests requested; see writeResults for actual outcomes" }
         const context = JSON.parse(testContext || "{}")
@@ -958,7 +1238,11 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [], suitePla
             return { patientId, newContact: { ...Object.fromEntries(keys.filter((key) => Object.prototype.hasOwnProperty.call(contact, key)).map((key) => [key, contact[key]])), homeMessage: contact.homeMessage === "Y" ? "N" : "Y" } }
           },
           changePatientInsurance: () => ({ patientId, newInsurance: { insuranceNumber: "WF" + Date.now().toString(36).slice(-6) } }),
-          changePatientName: () => ({ patientId, newUsualName: { first: patient?.name?.first || "WEBFORMS", family: patient?.name?.family || "TEST" }, newNickName: { first: "WEBFORMS", family: "TEST", text: marker } }),
+          changePatientName: () => {
+            // The one-click verifier never substitutes a placeholder usual name.
+            if (allowed && (!patient?.name?.first || !patient?.name?.family)) throw new Error("Host patient first/family name unavailable; usual name cannot be preserved, so the nickname verifier was not sent")
+            return { patientId, newUsualName: { first: patient?.name?.first || "WEBFORMS", family: patient?.name?.family || "TEST" }, newNickName: { first: "WEBFORMS", family: "TEST", text: marker } }
+          },
           changePrescription: () => ({ patientId, prescription: { prescriptionId: 0, patientId, medication: marker, comment: "Synthetic test only", orderDate: date } }),
           changeFavouriteMedication: () => ({ favouriteMedication: { favouriteMedicationId: 0, medication: marker, comment: "Synthetic test only" } }),
           changePrescriptionLog: () => ({ patientId, prescriptionLog: { prescriptionLogId: 0, createdDate: now, method: marker, logItems: [{ prescriptionId: need("prescriptionId"), medication: marker }] } }),
@@ -1031,9 +1315,9 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [], suitePla
         for (const name of ordered) {
           if (!active()) break
           const op = discovered.get(name === "changeObservationPanels" ? "changeObservations" : name)
-          if (!op || (writeSelection !== "all" && writeSelection !== name)) continue
-          if (writeSelection === "all" && writeResults.some((result) => result.operation === name && result.sent)) continue
-          const row = { operation: name, graphqlField: op.name, status: "Preparing", marker, verification: "Not performed", cleanup: "Test data is retained unless a dedicated delete probe succeeds" }
+          if (!op || !selected(name)) continue
+          if ((allowed || writeSelection === "all") && writeResults.some((result) => result.operation === name && (result.sent || result.sentEarlierLoad))) continue
+          const row = { operation: name, graphqlField: op.name, ...(allowed ? { phase: "verifiers" } : {}), status: "Preparing", marker, verification: "Not performed", cleanup: "Test data is retained unless a dedicated delete probe succeeds" }
           writeResults.push(row)
           update(`Preparing ${name}…`)
           let sent = false
@@ -1114,6 +1398,7 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [], suitePla
             update(`Writing ${name}…`)
             sent = true
             row.sent = true
+            if (allowed) persistLedger()
             const data = await request("ProbeMoisWrite", row.query, vars, true)
             const result = data[op.name]
             const deletion = { deleteWebform: ["webform", "webformId", vars.webformId], deleteWebformDefinition: ["webformDefinition", "webformDefinitionId", vars.id], deleteEncounterCorrespondence: ["encounter", "correspondenceId", vars.correspondenceId] }[name]
@@ -1414,35 +1699,76 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [], suitePla
       update("Live checks complete. Results are from explicit reads, separate from the initial chart load.", false)
     }
     try {
-      const phases = mode === "all" ? ["api", "reads", "roots", "missing", "suite"] : [mode]
-      for (const phase of phases) {
+      const phases = mode === "all" ? ["api", "reads", "roots", "missing", "suite", "verifiers"] : [mode]
+      const labels = { api: "API discovery", reads: "Direct chart reads", roots: "Root queries", missing: "Missing-route exploration", suite: "Write variants", verifiers: "Corrected verifier re-run" }
+      for (const [index, phase] of phases.entries()) {
         if (!active()) break
         suitePhase = phase
+        progress = mode === "all" ? { phase, index: index + 1, phases: phases.length, label: `Phase ${index + 1} of ${phases.length}: ${labels[phase]}`, startedAt: progress?.startedAt || new Date().toISOString() } : null
         const phaseResult = { phase, status: "Running", startedAt: new Date().toISOString() }; phaseResults.push(phaseResult)
+        if (mode === "all") update(progress.label + "…")
+        if (["suite", "verifiers"].includes(phase) && (uncertainWrite.current || pendingWrites.current)) { phaseResult.status = "Skipped: an earlier write has an unknown outcome"; phaseResult.completedAt = new Date().toISOString(); continue }
+        if (phase === "verifiers" && phaseResults.some((entry) => entry.phase === "suite" && entry.status === "Failed" && /context|patient/i.test(entry.error || ""))) { phaseResult.status = "Skipped: the write-variant phase failed its patient/context check"; phaseResult.completedAt = new Date().toISOString(); continue }
         try { await executePhase(phase); phaseResult.status = "Finished; inspect case outcomes" } catch (error) {
           phaseResult.status = "Failed"; phaseResult.error = readableError(error.message)
           if (phase === "missing" && missingExploration) { missingExploration.error = readableError(error.message); missingExploration.status = "Exploration incomplete" }
           if (phase === "api" && apiInventory) apiInventory.error = readableError(error.message)
           update(readableError(error.message), false)
           if (mode !== "all") break
-        } finally { phaseResult.completedAt = new Date().toISOString(); if (mode === "all") update("Completed phase: " + phase, false) }
+        } finally { phaseResult.completedAt = new Date().toISOString(); if (mode === "all") update("Completed " + (labels[phase] || phase), false) }
       }
+      if (mode === "all" && progress) progress = { ...progress, finishedAt: new Date().toISOString(), label: "Run finished" }
     } finally {
-      if (active()) { busy.current = false; setState((previous) => ({ ...previous, busy: false, message: mode === "all" ? "Comprehensive run finished. Download full evidence JSON; review case outcomes and prerequisites." : previous.message })) }
+      if (active()) { busy.current = false; setState((previous) => ({ ...previous, busy: false, progress: mode === "all" ? progress : previous.progress, message: mode === "all" ? "Run finished. Step 3: click Download full evidence JSON and send that file back." : previous.message })) }
     }
   }
   const stop = () => {
     if (pendingWrites.current) uncertainWrite.current = true
     epoch.current += 1
     busy.current = false
-    setState((previous) => ({ ...previous, suiteResults: previous.suiteResults ? { ...previous.suiteResults, status: "Stopped; inspect any pending write", cases: previous.suiteResults.cases.map((r) => r.status === "Running" ? { ...r, status: r.sent ? "Outcome unknown; request may finish" : "Stopped before result" } : r) } : null, missingExploration: previous.missingExploration && !previous.missingExploration.coverage.completed ? { ...previous.missingExploration, status: "Stopped; exploration incomplete" } : previous.missingExploration, customResults: (previous.customResults || []).map((row) => row.status === "Sent; outcome pending" ? { ...row, status: "Stopped; request may finish" } : row), writeResults: (previous.writeResults || []).map((row) => row.status === "Sent; outcome pending" ? { ...row, status: "Outcome unknown; request may finish" } : row), busy: false, message: "Stopped. Any request already sent may finish; its result will be ignored." }))
+    setState((previous) => ({ ...previous, suiteResults: previous.suiteResults ? { ...previous.suiteResults, status: "Stopped; inspect any pending write", cases: previous.suiteResults.cases.map((r) => r.status === "Running" ? { ...r, status: r.sent ? "Outcome unknown; request may finish" : "Stopped before result" } : r) } : null, missingExploration: previous.missingExploration && !previous.missingExploration.coverage.completed ? { ...previous.missingExploration, status: "Stopped; exploration incomplete" } : previous.missingExploration, customResults: (previous.customResults || []).map((row) => row.status === "Sent; outcome pending" ? { ...row, status: "Stopped; request may finish" } : row), writeResults: (previous.writeResults || []).map((row) => row.status === "Sent; outcome pending" ? { ...row, status: "Outcome unknown; request may finish" } : row), sessionTests: previous.sessionTests ? { ...previous.sessionTests, rows: previous.sessionTests.rows.map((row) => row.status === "Running" ? { ...row, status: row.sent ? "Outcome unknown; request may finish" : "Stopped before result" } : row) } : previous.sessionTests, busy: false, message: "Stopped. Any request already sent may finish; its result will be ignored." }))
   }
+  // Evidence summary: what ran, what needs attention, what was skipped and why, and
+  // which checks are deferred (including the optional second-window tests).
+  const valueKeys = ["sentValues", "baselineValues", "readBackValues", "normalized"]
+  const withoutValues = (row) => Object.fromEntries(Object.entries(row).filter(([key]) => !valueKeys.includes(key)))
+  const suiteCases = current.suiteResults?.cases || []
+  const verifierRows = (current.writeResults || []).filter((row) => row.phase === "verifiers")
+  const sessionRows = current.sessionTests?.rows || []
+  const deferredChecks = (suitePlan?.manualCases || []).map((item) => {
+    const ran = sessionRows.filter((row) => (item.sessionSteps || []).includes(row.step))
+    return { id: item.id, area: item.area, requires: item.requires || "separate check", inForm: Boolean(item.sessionSteps?.length), includedInRunAll: false, reason: item.reason,
+      status: ran.length ? "Optional second-window steps recorded: " + ran.map((row) => row.step + " — " + row.status).join("; ") : item.deferredStatus || "Deferred: separate check" }
+  })
+  const exercised = new Set([...suiteCases.filter((row) => row.sent).map((row) => row.operation), ...verifierRows.filter((row) => row.sent).map((row) => row.operation)])
+  const statusCounts = suiteCases.reduce((counts, row) => ({ ...counts, [row.status]: (counts[row.status] || 0) + 1 }), {})
+  const runSummary = current.hasRun ? {
+    casesRecorded: suiteCases.length,
+    casesWithRequestsSent: suiteCases.filter((row) => row.sent).length,
+    statusCounts,
+    needsAttention: [...suiteCases, ...verifierRows.map((row) => ({ id: "verifiers." + row.operation, status: row.status, error: row.error || (row.status === "Write verified" || row.status === "Delete verified" ? null : row.verification) }))]
+      .filter((row) => /Rejected|not verified|unverified|Unexpected|inspect|Outcome unknown|differ|failed|not applied|changed value|retained|rejected|error/i.test(row.status || ""))
+      .map(({ id, status, error, reason }) => ({ id, status, detail: error || reason || null })),
+    skippedWithReason: [...suiteCases.filter((row) => /^(Needs context|Not applicable|Skipped|Stopped)/.test(row.status)).map(({ id, status, reason, error }) => ({ id, status, reason: reason || error || null })),
+      ...verifierRows.filter((row) => /^(Not attempted|Skipped)/.test(row.status)).map((row) => ({ id: "verifiers." + row.operation, status: row.status, reason: row.error || row.verification || null })),
+      ...(current.phaseResults || []).filter((phase) => /^Skipped/.test(phase.status)).map((phase) => ({ id: "phase." + phase.phase, status: phase.status, reason: phase.status }))],
+    verifierReRun: verifierRows.map(({ operation, status, verification, recordId, error }) => ({ operation, status, verification, recordId: recordId ?? null, error: error || null })),
+    mutationsNotExercised: (current.apiInventory?.mutations || []).map((operation) => operation.name).filter((name) => name !== "query" && !exercised.has(name)),
+    deferredChecks,
+  } : null
   const report = JSON.stringify({
     reportType: "mois-patient-context-live-query",
-    reportVersion: 6,
-    diagnosticsRevision: "2026-09-11.suite-1",
+    reportVersion: 7,
+    diagnosticsRevision: revision,
+    componentVersion: PATIENT_CONTEXT_QUERY_TEST_VERSION,
+    testPatient: current.testPatient || null,
+    progress: current.progress || null,
+    runSummary,
+    deferredChecks,
+    earlierLoadLedger: current.earlierLoad || null,
     phaseResults: current.phaseResults || [],
-    comprehensiveSuite: current.suiteResults ? (({ context, origins, ...summary }) => summary)(current.suiteResults) : null,
+    comprehensiveSuite: current.suiteResults ? (({ context, origins, ...summary }) => ({ ...summary, cases: summary.cases.map(withoutValues) }))(current.suiteResults) : null,
+    secondWindowTests: sessionRows.map(({ input, read, before, ...row }) => row),
     evidenceCapture: { exchanges: exchanges.current.length, truncated: evidenceTruncated.current, limitCharacters: 25000000 },
     missingCollectionExploration: current.missingExploration || null,
     writeResults: (current.writeResults || []).map(({ variables, ...result }) => result),
@@ -1459,7 +1785,11 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [], suitePla
     if (!current.hasRun) return
     const urlApi = window.URL
     if (!window.Blob || !urlApi?.createObjectURL) return
-    const url = urlApi.createObjectURL(new window.Blob([full ? JSON.stringify({ ...JSON.parse(report), evidenceKind: "Full test-patient evidence: inputs, baseline/mutation/read responses", context: current.suiteResults?.context, origins: current.suiteResults?.origins, exchanges: exchanges.current }, (key, value) => /jwToken|authorization|password|secret|accessToken|refreshToken/i.test(key) ? "[redacted]" : value, 2).split(String(auth.jwToken || "\u0000")).join("[redacted]") : report], { type: "application/json;charset=utf-8" }))
+    const fullReport = () => JSON.stringify({ ...JSON.parse(report), evidenceKind: "Full test-patient evidence: inputs, baseline/mutation/independent-read responses, failures, skipped cases with reasons and deferred checks. Credentials removed.",
+      context: current.suiteResults?.context, origins: current.suiteResults?.origins,
+      comprehensiveSuiteCasesWithValues: suiteCases, writeResultsWithInputs: current.writeResults || [], secondWindowTestsWithReads: sessionRows,
+      exchanges: exchanges.current }, (key, value) => /jwToken|authorization|password|secret|accessToken|refreshToken|cookie/i.test(key) ? "[redacted]" : value, 2).split(String(auth.jwToken || "\u0000")).join("[redacted]")
+    const url = urlApi.createObjectURL(new window.Blob([full ? fullReport() : report], { type: "application/json;charset=utf-8" }))
     const link = window.document.createElement("a")
     link.href = url
     link.download = `mois-live-query-${full ? "full-evidence" : "results"}-${Date.now()}.json`
@@ -1479,18 +1809,48 @@ const PatientContextQueryTest = ({ collections = [], writeTargets = [], suitePla
     <button type="button" disabled={!ready || current.busy || !current.apiInventory} onClick={() => run("roots")}>Test root queries</button>{" "}
     <button type="button" disabled={!ready || current.busy || !current.apiInventory || uncertainWrite.current || pendingWrites.current > 0} onClick={() => run("writes")}>Run test writes</button>{" "}
     <div style={{ margin: "16px 0", padding: 12, background: "#f1f5f9", color: "#0f172a" }}>
-      <h3>Comprehensive test suite</h3>
-      <p>Run discovery, patient/root reads, missing-path exploration and all configured field variants in sequence. Writes create synthetic records, test patient demographics/contact fields and use existing positive-ID medication rows if needed, then attempt field restoration. Set, change, omission, null, empty and restoration outcomes are recorded separately. Unsupported cases remain visible. Test records can remain.</p>
-      <button type="button" disabled={!ready || current.busy || !suitePlan || uncertainWrite.current || pendingWrites.current > 0} onClick={() => run("all")}>Run all remaining tests</button>{" "}
+      <h3>Comprehensive test suite · revision {revision} · component {PATIENT_CONTEXT_QUERY_TEST_VERSION}</h3>
+      <ol>
+        <li>Open this form on the designated MOIS test patient and tick the confirmation below.</li>
+        <li>Click <strong>Run all remaining tests</strong> once and leave the form open until the status says the run finished.</li>
+        <li>Click <strong>Download full evidence JSON</strong> and send that file back.</li>
+      </ol>
+      <p>The run performs API discovery, chart and root reads, missing-route exploration, every configured create/update/omission/null/empty/restore variant with an independent read after each write (starting with task acknowledgement name/date while both task flags are Y), then re-runs the corrected contact, nickname, resource and changed-field verifiers. Writes create synthetic records and change this test chart; restoration is attempted and reported. Checks that need a second window are listed below as optional and are never run by this button.</p>
+      <label style={{ display: "block", margin: "8px 0" }}><input type="checkbox" aria-label="Confirm designated test patient" checked={confirmed} disabled={!ready || current.busy} onChange={(event) => setConfirmedPatient(event.target.checked ? { patientId, at: new Date().toISOString() } : null)} /> This is the designated MOIS test patient (Patient ID {Number.isInteger(patientId) ? patientId : "—"}, chart {patient?.chartNumber || "—"}). Test writes may change it.</label>
+      {!current.suiteResults && !current.busy && readLedger()?.profiles?.length ? <p>An earlier load of this form in this browser already sent requests for {readLedger().profiles.length} test groups on this patient. Run all remaining tests skips those groups rather than repeating them. <button type="button" onClick={() => { writeLedger(null); setLedgerVersion(ledgerVersion + 1) }}>Forget earlier-load record</button></p> : null}
+      <button type="button" disabled={!ready || current.busy || !suitePlan || !confirmed || uncertainWrite.current || pendingWrites.current > 0} onClick={() => run("all")}>Run all remaining tests</button>{" "}
       <button type="button" disabled={!current.hasRun} onClick={() => downloadReport(true)}>Download full evidence JSON</button>
-      <p>The full report contains test-patient values and exact request/response snapshots, with credentials removed. Download a checkpoint while running if needed. Repeated runs skip cases already attempted; missing context can be supplied below.</p>
-      {(current.phaseResults || []).filter((p) => p.status === "Failed").map((p, i) => <p key={i}>{p.phase}: {p.error}</p>)}
+      {current.progress ? <p aria-label="Run progress"><strong>{current.progress.label}</strong>{current.progress.group ? ` · test group ${current.progress.group} of ${current.progress.groups} (${current.progress.groupKey})` : ""}{current.progress.cases ? ` · ${current.progress.cases} cases recorded` : ""}{current.progress.last ? ` · last: ${current.progress.last}` : ""}</p> : null}
+      <p>The full file contains test-patient values, exact inputs, responses and independent read-backs, failures, skipped cases with reasons and deferred checks, with credentials removed. Keep it private. Download a checkpoint while running if needed. Clicking again skips every case that already sent a request; missing context can be supplied under Test context.</p>
+      {(current.phaseResults || []).filter((p) => p.status === "Failed" || /^Skipped/.test(p.status)).map((p, i) => <p key={i}>{p.phase}: {p.error || p.status}</p>)}
       {current.suiteResults ? <details open><summary>{current.suiteResults.cases.length} variant results · {current.suiteResults.status}</summary>
         <ul>{current.suiteResults.cases.map((row) => <li key={row.id}><code>{row.id}</code> — {row.status}{row.error || row.reason ? <p>{row.error || row.reason}</p> : null}</li>)}</ul>
-        <details><summary>Operations still unexercised</summary><ul>{(current.suiteResults.operationCoverage || []).filter((op) => !op.cases.length).map((op) => <li key={op.operation}><code>{op.operation}</code>: {op.status}</li>)}</ul></details>
-        <details><summary>Requires a separate check</summary><ul>{(suitePlan?.manualCases || []).map((item) => <li key={item.id}>{item.area}: {item.reason}</li>)}</ul></details>
+        {verifierRows.length ? <details><summary>Corrected verifier re-run ({verifierRows.length})</summary><ul>{verifierRows.map((row) => <li key={row.operation}><code>{row.operation}</code> — {row.status}. {row.verification}{row.error ? <p>{row.error}</p> : null}</li>)}</ul></details> : null}
+        <details><summary>Operations still unexercised</summary><ul>{(runSummary?.mutationsNotExercised || []).map((operation) => <li key={operation}><code>{operation}</code></li>)}</ul></details>
       </details> : null}
+      <details><summary>Deferred and optional checks (not run by Run all remaining tests)</summary><ul>{deferredChecks.map((item) => <li key={item.id}><strong>{item.area}</strong> — {item.status}. {item.reason}</li>)}</ul></details>
     </div>
+    <details style={{ margin: "16px 0", padding: 12, border: "1px dashed #94a3b8" }}><summary><strong>Optional — needs a second window, run later</strong> (form locking and simultaneous edits; not part of Run all remaining tests)</summary>
+      <p>These checks need two MOIS windows open at the same time on this same test patient: window A and window B. Use a second login for window B when possible; a second window under the same login only shows same-user behaviour. Tick the test-patient confirmation in each window. Each window downloads its own full evidence JSON; send both files. Skipping this section leaves these checks reported as deferred.</p>
+      <h4>Form lock observation</h4>
+      <ol>
+        <li>Window A: save this diagnostics form once, then keep it open.</li>
+        <li>Window B: open that same saved form instance for this patient. Note whether MOIS shows it read-only, shows a lock notice, or allows editing.</li>
+        <li>In each window, describe what MOIS showed in the box below and click <strong>Record lock state here</strong>. It reads the saved form record (isLockedToUser, state, audit stamp) and the runtime lock test when available.</li>
+      </ol>
+      <label>What MOIS showed in this window <textarea aria-label="Lock observation" value={sessionObservation} disabled={current.busy} onChange={(event) => setSessionObservation(event.target.value)} rows={2} style={{ width: "100%" }} /></label>
+      <h4>Simultaneous edits and API lock on a disposable draft</h4>
+      <ol>
+        <li>Window A: <strong>A1</strong> creates a disposable draft form and definition on this patient and shows its form ID; then <strong>A2</strong> holds a baseline copy.</li>
+        <li>Window B: enter that form ID below, then <strong>B1</strong> writes a window-B answer.</li>
+        <li>Window A: <strong>A3</strong> writes from the stale A2 baseline and reports whether window B's answer was lost, preserved or rejected.</li>
+        <li>Window A: <strong>A4</strong> sets isLockedToUser=Y. Window B: <strong>B2</strong> tries to write while locked. Window A: <strong>A5</strong> unlocks, then <strong>A6</strong> deletes the draft and definition with independent reads.</li>
+      </ol>
+      <label>Form ID for second-window steps <input aria-label="Second-window form ID" value={sessionTarget} disabled={current.busy} onChange={(event) => setSessionTarget(event.target.value.replace(/[^0-9]/g, ""))} /></label>
+      {current.sessionTests?.webformId ? <p>This window's disposable draft: form ID <strong>{current.sessionTests.webformId}</strong> (definition {current.sessionTests.definitionId}).</p> : null}
+      <p>{[["lock-observe", "Record lock state here"], ["A1", "A1 — Create disposable shared draft"], ["A2", "A2 — Hold baseline"], ["B1", "B1 — Write as window B"], ["A3", "A3 — Write from stale baseline"], ["A4", "A4 — Lock draft"], ["B2", "B2 — Try write while locked (window B)"], ["A5", "A5 — Unlock draft"], ["A6", "A6 — Delete draft and definition"]].map(([step, label]) => <React.Fragment key={step}><button type="button" disabled={!ready || current.busy || !confirmed || uncertainWrite.current || pendingWrites.current > 0} onClick={() => run("session", { step })}>{label}</button>{" "}</React.Fragment>)}</p>
+      {sessionRows.length ? <ul>{sessionRows.map((row, index) => <li key={index}><code>{row.step}</code> ({row.window}) — {row.status}{row.error ? <p>{row.error}</p> : null}</li>)}</ul> : null}
+    </details>
     <details><summary>Custom GraphQL probe</summary><p>Run a named query or mutation through this MOIS login. This supports additional fields and operations without rebuilding the form. Mutations execute immediately when Run custom operation is clicked. Responses appear here, but response values are excluded from the diagnostic report. Query text is included, so use variables for patient values.</p>
       <textarea aria-label="Custom GraphQL query" value={customQuery} disabled={current.busy} onChange={(event) => setCustomQuery(event.target.value)} rows={6} style={{ width: "100%", fontFamily: "monospace" }} />
       <textarea aria-label="Custom GraphQL variables" value={customVariables} disabled={current.busy} onChange={(event) => setCustomVariables(event.target.value)} rows={4} style={{ width: "100%", fontFamily: "monospace" }} />

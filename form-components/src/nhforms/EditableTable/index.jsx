@@ -27,6 +27,8 @@ if (typeof EditableTable === "undefined") {
 
 const _getDefaultCellValue = (column = {}) => {
   if (column.type === "checkbox") return column.prefill === true ? true : false
+  // A starting value the filler can change (e.g. 7.5 hours per shift).
+  if (typeof column.prefill === "string" || typeof column.prefill === "number") return String(column.prefill)
   return ""
 }
 
@@ -256,7 +258,13 @@ const _isMeaningfulValue = (value) => {
 
 const _isRowEmpty = (row, columns = []) => {
   if (!row) return true
-  return columns.every((col) => !_isMeaningfulValue(_getValueAtPath(row, col.dataPath || col.id)))
+  return columns.every((col) => {
+    // Calculated cells and untouched starting values are not answers.
+    if (col?.computedValue?.mode === "formula") return true
+    const value = _getValueAtPath(row, col.dataPath || col.id)
+    if (col.type !== "checkbox" && col.prefill !== undefined && col.prefill !== null && _stringifyValue(value) === String(col.prefill)) return true
+    return !_isMeaningfulValue(value)
+  })
 }
 
 const _stringifyValue = (value) => {
@@ -300,6 +308,12 @@ const _formatCellValue = (row, column) => {
     if (_isMeaningfulValue(computed)) return computed
   }
   const value = _getValueAtPath(row, column.dataPath || column.id)
+  // Choice cells store the option's code; show its wording.
+  if (column.type === "dropdown" && !column.codeSystem && (typeof value === "string" || Array.isArray(value))) {
+    const options = _normalizeChoiceOptions(column.options)
+    const wording = (code) => options.find((option) => String(option.key) === String(code))?.text ?? code
+    return _stringifyValue(Array.isArray(value) ? value.map(wording) : wording(value))
+  }
   if (column.type === "checkbox") {
     if (value === undefined || value === null || value === "") return ""
     if (value) return column.booleanLabels?.on || "Checked"
@@ -330,7 +344,100 @@ const _applyComputedColumns = (row, columns = []) => {
     if (column?.computedValue?.mode !== "template") return
     _setValueAtPath(nextRow, column.dataPath || column.id, _computeTemplateColumnValue(nextRow, column))
   })
+  return _applyFormulaColumns(nextRow, columns)
+}
+
+// Formula columns: `computedValue: { mode: "formula", expression, calculationPolicy?,
+// precision?, incompleteBehavior? }`. The expression uses ComputedField's syntax
+// (FormulaKit) and reads the same row: `[columnId]` is that row's cell, e.g.
+// `weekdaysBetween([from], [to]) * [hoursPerShift]`.
+//
+// calculationPolicy (ComputedField's names):
+// - "always-calculated": read-only, recalculated on every change;
+// - "calculated-until-overridden" (default): the filler may type over it; the
+//   row remembers that in `_formulaOverrides` and a reset icon restores the
+//   calculation;
+// - "suggested-calculation": the same, but the calculation is only offered
+//   (via the reset icon) and never replaces what the filler typed.
+const _FORMULA_OVERRIDES_KEY = "_formulaOverrides"
+
+const _isFormulaColumn = (column) =>
+  column?.computedValue?.mode === "formula" && typeof column.computedValue.expression === "string"
+
+const _formulaPolicy = (column) => {
+  const policy = column?.computedValue?.calculationPolicy
+  return policy === "always-calculated" || policy === "suggested-calculation" ? policy : "calculated-until-overridden"
+}
+
+const _isFormulaOverridden = (row, column) =>
+  !!row?.[_FORMULA_OVERRIDES_KEY]?.[column.id]
+
+const _setFormulaOverride = (row, column, overridden) => {
+  const overrides = { ...(row[_FORMULA_OVERRIDES_KEY] || {}) }
+  if (overridden) overrides[column.id] = true
+  else delete overrides[column.id]
+  if (Object.keys(overrides).length) row[_FORMULA_OVERRIDES_KEY] = overrides
+  else delete row[_FORMULA_OVERRIDES_KEY]
+}
+
+const _rowFormulaValues = (row, columns = []) => {
+  const values = {}
+  columns.forEach((column) => {
+    const path = column.dataPath || column.id
+    const value = _getValueAtPath(row, path)
+    values[column.id] = value
+    if (path !== column.id) values[path] = value
+  })
+  return values
+}
+
+// The calculated value for one cell, as stored text ("" when the formula's
+// inputs are incomplete or it cannot be evaluated).
+const _computeFormulaCellValue = (row, column, columns = []) => {
+  const config = column.computedValue
+  const values = _rowFormulaValues(row, columns)
+  if (config.incompleteBehavior !== "compute-anyway" && !FormulaKit.hasAllReferencedValues(config.expression, values)) return ""
+  const precision = Number(config.precision)
+  const result = FormulaKit.roundValue(FormulaKit.evaluate(config.expression, values, column.id), Number.isFinite(precision) ? precision : 2)
+  if (result === null || result === undefined || result === "") return ""
+  if (typeof result === "boolean") return result ? "true" : "false"
+  return String(result)
+}
+
+// Recalculate every formula cell the filler has not taken over, in column
+// order so a formula may read an earlier formula column.
+const _applyFormulaColumns = (row, columns = []) => {
+  if (!row || !columns.some(_isFormulaColumn)) return row
+  const nextRow = row
+  columns.forEach((column) => {
+    if (!_isFormulaColumn(column)) return
+    const policy = _formulaPolicy(column)
+    if (policy !== "always-calculated" && _isFormulaOverridden(nextRow, column)) return
+    const computed = _computeFormulaCellValue(nextRow, column, columns)
+    const path = column.dataPath || column.id
+    // A suggestion fills an empty cell but never replaces a typed answer.
+    if (policy === "suggested-calculation" && _isMeaningfulValue(_getValueAtPath(nextRow, path))) return
+    _setValueAtPath(nextRow, path, computed)
+  })
   return nextRow
+}
+
+// Write one cell and recalculate the row. Typing into a formula cell marks it
+// overridden (unless the typed value is the calculation itself).
+const _writeCellAndRecalculate = (row, column, value, columns = []) => {
+  _setValueAtPath(row, column.dataPath || column.id, value)
+  if (_isFormulaColumn(column) && _formulaPolicy(column) !== "always-calculated") {
+    const typed = _stringifyValue(value)
+    const calculated = _computeFormulaCellValue(row, column, columns)
+    _setFormulaOverride(row, column, typed !== "" && typed !== calculated)
+  }
+  return _applyFormulaColumns(row, columns)
+}
+
+const _resetFormulaCell = (row, column, columns = []) => {
+  _setFormulaOverride(row, column, false)
+  _setValueAtPath(row, column.dataPath || column.id, _computeFormulaCellValue(row, column, columns))
+  return _applyFormulaColumns(row, columns)
 }
 
 const _normalizeMirroredCellValue = (value, column) => {
@@ -777,6 +884,8 @@ EditableTable = ({
   mode = "inline",
   orientation = "horizontal",
   modalTitle,
+  // Row dialog width in px (Fluent caps a Dialog at 340px unless told otherwise).
+  modalWidth = 640,
   addButtonText = "+ Add Row",
   emptyStateText = "No rows added yet",
   showRowNumbers = true,
@@ -1091,7 +1200,7 @@ EditableTable = ({
     }
     const nextRow = _cloneRow(nextRows[rowIndex], columns)
     const column = columns.find((item) => item.id === columnId) || { id: columnId, dataPath: columnId }
-    _setValueAtPath(nextRow, column.dataPath || column.id, value)
+    _writeCellAndRecalculate(nextRow, column, value, columns)
     nextRows[rowIndex] = nextRow
     commitRows(nextRows, {
       reason: "update",
@@ -1162,8 +1271,28 @@ EditableTable = ({
     if (_getLocalStampLock(draftRow || {}, columns).locked) return
     const nextDraft = _cloneRow(draftRow || _makeEmptyRow(columns, currentRows.length), columns)
     const column = columns.find((item) => item.id === columnId) || { id: columnId, dataPath: columnId }
-    _setValueAtPath(nextDraft, column.dataPath || column.id, value)
+    _writeCellAndRecalculate(nextDraft, column, value, columns)
     setDraftRow(nextDraft)
+  }
+
+  const resetFormulaCell = (rowIndex, column) => {
+    if (isLocked) return
+    if (authorshipEnabled && getRowLock(currentRows[rowIndex]).locked) return
+    const nextRows = [...currentRows]
+    if (!nextRows[rowIndex]) nextRows[rowIndex] = _makeEmptyRow(columns, rowIndex)
+    const nextRow = _resetFormulaCell(_cloneRow(nextRows[rowIndex], columns), column, columns)
+    nextRows[rowIndex] = nextRow
+    commitRows(nextRows, {
+      reason: "update",
+      rowIndex,
+      row: nextRow,
+      previousRows: currentRows,
+    }, { rowId: nextRow._rowId, value: _getValueAtPath(nextRow, column.dataPath || column.id) })
+  }
+
+  const resetDraftFormulaCell = (column) => {
+    const nextDraft = _cloneRow(draftRow || _makeEmptyRow(columns, currentRows.length), columns)
+    setDraftRow(_resetFormulaCell(nextDraft, column, columns))
   }
 
   const stampDraftCell = (column) => {
@@ -1208,7 +1337,13 @@ EditableTable = ({
 
   const updateDraftValueAtPath = useCallback((fieldPath, value) => {
     const nextDraft = _cloneRow(draftRow || _makeEmptyRow(columns, currentRows.length), columns)
-    _setValueAtPath(nextDraft, fieldPath, value)
+    const column = columns.find((item) => (item.dataPath || item.id) === fieldPath)
+    if (column) {
+      _writeCellAndRecalculate(nextDraft, column, value, columns)
+    } else {
+      _setValueAtPath(nextDraft, fieldPath, value)
+      _applyFormulaColumns(nextDraft, columns)
+    }
     setDraftRow(nextDraft)
   }, [draftRow, columns, currentRows.length])
 
@@ -1406,7 +1541,7 @@ EditableTable = ({
     : Number.POSITIVE_INFINITY
   const shouldShowActions = !isLocked && (allowEditRows || allowDeleteRows)
 
-  const renderEditorControl = (row, rowIndex, column, onValueChange, inline, rowReadOnly = false, onStampColumn = null, rowLockState = null) => {
+  const renderEditorControl = (row, rowIndex, column, onValueChange, inline, rowReadOnly = false, onStampColumn = null, rowLockState = null, onResetFormula = null) => {
     const value = _getValueAtPath(row, column.dataPath || column.id)
     const realRowReadOnly = !!rowLockState?.authorship?.locked
     const localStampLocked = !!rowLockState?.localStamp?.locked
@@ -1434,6 +1569,10 @@ EditableTable = ({
           {displayValue || " "}
         </Text>
       )
+    }
+
+    if (_isFormulaColumn(column)) {
+      return renderFormulaControl(row, rowIndex, column, value, onValueChange, inline, onResetFormula)
     }
 
     switch (column.type) {
@@ -1596,14 +1735,76 @@ EditableTable = ({
     }
   }
 
+  // A formula cell: the calculated value, which the filler may type over unless
+  // the column is always-calculated. Once it differs from the calculation, a
+  // reset icon at the right of the box puts the calculation back.
+  const renderFormulaControl = (row, rowIndex, column, value, onValueChange, inline, onResetFormula) => {
+    const policy = _formulaPolicy(column)
+    const calculated = _computeFormulaCellValue(row, column, columns)
+    const current = _stringifyValue(value)
+    const numberConfig = _normalizeNumberConfig(column)
+    const numeric = column.type === "number" || column.computedValue.resultType === "number"
+    const canReset = policy !== "always-calculated" && typeof onResetFormula === "function" && current !== calculated
+    const tooltip = calculated
+      ? `Reset to the calculated value (${calculated})`
+      : "Reset to the calculation (it has no value until its inputs are filled in)"
+    const { TooltipHost } = Fluent
+    // Fluent paints the suffix slot grey with 10px padding; the wrapper covers
+    // that so the icon reads as part of the input (same as ComputedField).
+    const renderSuffix = canReset
+      ? () => (
+          <div style={{ display: "flex", alignItems: "center", alignSelf: "stretch", margin: "0 -10px", padding: "0 2px", background: isDarkMode ? "#1f1f1f" : "#ffffff" }}>
+            {numberConfig.suffix ? <span style={{ marginRight: 4 }}>{numberConfig.suffix}</span> : null}
+            <TooltipHost content={tooltip}>
+              <IconButton
+                iconProps={{ iconName: "Refresh" }}
+                ariaLabel={tooltip}
+                onClick={() => onResetFormula(rowIndex, column)}
+                styles={{ root: { width: 26, height: 26 }, icon: { fontSize: 13 } }}
+              />
+            </TooltipHost>
+          </div>
+        )
+      : undefined
+    const readOnly = policy === "always-calculated"
+    const textFieldProps = renderSuffix
+      ? { onRenderSuffix: renderSuffix }
+      : numberConfig.suffix ? { suffix: numberConfig.suffix } : undefined
+    if (numeric) {
+      // Stored as text: storeAsNumber would turn "7." into 7 while typing.
+      return (
+        <Numeric
+          inline={inline}
+          typeNumber="decimal"
+          value={current}
+          onChange={(valueOrEvent, nextValue) => onValueChange(rowIndex, column.id, String((nextValue === undefined ? valueOrEvent : nextValue) ?? ""))}
+          textFieldProps={textFieldProps}
+          storeAsNumber={false}
+          readOnly={readOnly}
+          disabled={readOnly}
+        />
+      )
+    }
+    return (
+      <TextArea
+        inline={inline}
+        value={current}
+        onChange={(event, newValue) => onValueChange(rowIndex, column.id, newValue || "")}
+        textFieldProps={textFieldProps}
+        readOnly={readOnly}
+        disabled={readOnly}
+      />
+    )
+  }
+
   // Inline cells render live Fluent controls, which print as empty boxed inputs
   // and make a patient-facing handout unreadable. Mirror the formatted value as
   // print-only text and drop the control on paper — the same split the legacy
   // NHForms tables did by hand. The inline `display: none` keeps the mirror
   // hidden when a host page ships no print stylesheet; the print rule's
   // `!important` overrides it. Dialog editors (inline === false) never print.
-  const renderEditorInput = (row, rowIndex, column, onValueChange, inline, rowReadOnly = false, onStampColumn = null, rowLockState = null) => {
-    const control = renderEditorControl(row, rowIndex, column, onValueChange, inline, rowReadOnly, onStampColumn, rowLockState)
+  const renderEditorInput = (row, rowIndex, column, onValueChange, inline, rowReadOnly = false, onStampColumn = null, rowLockState = null, onResetFormula = null) => {
+    const control = renderEditorControl(row, rowIndex, column, onValueChange, inline, rowReadOnly, onStampColumn, rowLockState, onResetFormula)
     if (!inline) return control
     return (
       <>
@@ -1739,9 +1940,9 @@ EditableTable = ({
                       ? emptyStateText
                       : isModalMode
                         ? col.type === "stampButton"
-                          ? renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell, rowLockState)
+                          ? renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell, rowLockState, resetFormulaCell)
                           : <div>{_formatCellValue(row, col)}</div>
-                        : renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell, rowLockState)}
+                        : renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell, rowLockState, resetFormulaCell)}
                   </td>
                 )
               })}
@@ -1860,9 +2061,9 @@ EditableTable = ({
                       <td key={col.id} style={bodyCellStyle} data-source-field-id={getSourceFieldId(rowIndex, col.id)}>
                         {isModalMode
                           ? col.type === "stampButton"
-                            ? renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell, rowLockState)
+                            ? renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell, rowLockState, resetFormulaCell)
                             : <div>{_formatCellValue(row, col)}</div>
-                          : renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell, rowLockState)}
+                          : renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell, rowLockState, resetFormulaCell)}
                       </td>
                     ))}
                     {showRowAuthorshipColumn && (
@@ -1972,11 +2173,15 @@ EditableTable = ({
           modalProps={{
             isBlocking: true,
           }}
+          minWidth={Math.min(Math.max(340, Number(modalWidth) || 640), typeof window !== "undefined" ? window.innerWidth - 48 : 640)}
+          maxWidth="96vw"
           onDismiss={closeDialog}
         >
           <Stack tokens={{ childrenGap: 12 }}>
+            {/* Two columns when the dialog has room; choices and long text take a full row. */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "12px 16px" }}>
             {modalColumns.filter((column) => _evaluateColumnVisibility(column, draftRow)).map((column) => (
-              <div key={column.id}>
+              <div key={column.id} style={column.type === "dropdown" || column.type === "text" ? { gridColumn: "1 / -1" } : undefined}>
                 <Label>{column.title || column.id}</Label>
                 {renderEditorInput(
                   draftRow,
@@ -1986,10 +2191,12 @@ EditableTable = ({
                   false,
                   draftLocalStampLock.locked,
                   (_rowIndex, stampColumn) => stampDraftCell(stampColumn),
-                  draftLockState
+                  draftLockState,
+                  (_rowIndex, formulaColumn) => resetDraftFormulaCell(formulaColumn)
                 )}
               </div>
             ))}
+            </div>
             {errorMessage && (
               <Text style={{ color: isDarkMode ? "#ffb3b3" : "#b42318" }}>
                 {errorMessage}

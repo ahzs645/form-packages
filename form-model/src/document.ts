@@ -1,4 +1,5 @@
 import type {
+  BuilderTableFormulaColumn,
   BuilderField,
   BuilderFieldMoisConfig,
   BuilderFieldSourceConfig,
@@ -7,6 +8,9 @@ import type {
   BuilderMoisOutputMapping,
   BuilderOscarImportMapping,
   BuilderRichTextImageAsset,
+  BuilderTablePdfOverflow,
+  BuilderTableRepeatFor,
+  BuilderTableRowCompletion,
   BuilderValidationConfig,
   BuilderVisibilityRule,
   HiddenAnswerPolicy,
@@ -115,7 +119,7 @@ export interface TableColumn {
       | { id?: string; kind: "text"; text: string }
       | { id?: string; kind: "answer"; path: string }
     >;
-  } | null;
+  } | BuilderTableFormulaColumn | null;
   visibility?: ParsedFieldVisibility | null;
   moisTargetId?: string | null;
   stampConfig?: {
@@ -391,6 +395,7 @@ export interface ParsedField {
     initialRows?: number;
     addButtonText?: string;
     modalTitle?: string;
+    modalWidth?: number;
     uniqueBy?: string[];
     sourceFieldIds?: Record<string, string>;
     sourceFieldIdsByRow?: Record<number, Record<string, string>>;
@@ -400,6 +405,10 @@ export interface ParsedField {
     countPath?: string;
     modalEditorPresetId?: string;
     modalEditorConfig?: Record<string, unknown> | null;
+    repeatFor?: BuilderTableRepeatFor | null;
+    rowCompletion?: BuilderTableRowCompletion | null;
+    confirmDelete?: boolean;
+    pdfOverflow?: BuilderTablePdfOverflow | null;
   };
   layoutTableConfig?: LayoutTableConfig | null;
   page?: number;
@@ -535,7 +544,7 @@ export interface ParsedField {
   dateWithTime?: boolean;
   dateRange?: boolean;
   dateFormat?: "yyyy.MM.dd" | "dd/MM/yyyy" | "MM-dd-yyyy" | "yyyy-MM-dd";
-  documentOutputFormat?: "stored" | "yyyy-MM-dd" | "dd/MMM/yyyy" | "ddMMMyyyy";
+  documentOutputFormat?: "stored" | "yyyy-MM-dd" | "yyyy.MM.dd" | "dd/MM/yyyy" | "MM/dd/yyyy" | "dd/MMM/yyyy" | "ddMMMyyyy" | "MMMM d, yyyy";
   disablePastDates?: boolean;
   disableFutureDates?: boolean;
   prefillToday?: boolean;
@@ -581,6 +590,9 @@ export interface ParsedField {
     listMode?: "allowlist" | "denylist";
     listValues?: string[];
     listMatch?: "domain" | "address";
+    /** Structured value format (BuilderValidationConfig.format). */
+    format?: BuilderValidationConfig["format"];
+    formatMessage?: string;
   } | null;
 
   // Inline show-when rule (builder field visibility editor). The exporter

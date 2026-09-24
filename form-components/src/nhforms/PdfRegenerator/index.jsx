@@ -31,6 +31,7 @@ var DocumentDateRuntime = (() => {
   __export(document_date_format_exports, {
     formatDocumentDate: () => formatDocumentDate
   });
+  var MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
   function formatDocumentDate(value, format) {
     const raw = typeof value === "object" && value !== null && "date" in value ? value.date : value;
     if (raw == null || raw === "") return "";
@@ -40,12 +41,982 @@ var DocumentDateRuntime = (() => {
     const [, year, month, day] = match;
     const days = new Date(Date.UTC(Number(year), Number(month), 0)).getUTCDate();
     if (+month < 1 || +month > 12 || +day < 1 || +day > days) throw new Error("Enter a valid calendar date.");
-    const mon = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][+month - 1];
+    const monthName = MONTHS[+month - 1];
+    const mon = monthName.slice(0, 3);
     if (format === "dd/MMM/yyyy") return `${day}/${mon}/${year}`;
     if (format === "ddMMMyyyy") return `${day}${mon}${year}`;
+    if (format === "yyyy.MM.dd") return `${year}.${month}.${day}`;
+    if (format === "dd/MM/yyyy") return `${day}/${month}/${year}`;
+    if (format === "MM/dd/yyyy") return `${month}/${day}/${year}`;
+    if (format === "MMMM d, yyyy") return `${monthName} ${+day}, ${year}`;
     return `${year}-${month}-${day}`;
   }
   return __toCommonJS(document_date_format_exports);
+})();
+
+"use strict";
+var PdfTextFlowLayout = (() => {
+  var __defProp = Object.defineProperty;
+  var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+  var __getOwnPropNames = Object.getOwnPropertyNames;
+  var __hasOwnProp = Object.prototype.hasOwnProperty;
+  var __export = (target, all) => {
+    for (var name in all)
+      __defProp(target, name, { get: all[name], enumerable: true });
+  };
+  var __copyProps = (to, from, except, desc) => {
+    if (from && typeof from === "object" || typeof from === "function") {
+      for (let key of __getOwnPropNames(from))
+        if (!__hasOwnProp.call(to, key) && key !== except)
+          __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+    }
+    return to;
+  };
+  var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+
+  // lib/pdf-text-flow.ts
+  var pdf_text_flow_exports = {};
+  __export(pdf_text_flow_exports, {
+    PDF_TEXT_FLOW_TRUNCATION_MARK: () => PDF_TEXT_FLOW_TRUNCATION_MARK,
+    estimatePdfTextFlowCapacity: () => estimatePdfTextFlowCapacity,
+    layoutPdfTextFlow: () => layoutPdfTextFlow,
+    measureHelvetica: () => measureHelvetica,
+    resolveCompositeTextFlowSlots: () => resolveCompositeTextFlowSlots,
+    resolvePdfTextFlowSlot: () => resolvePdfTextFlowSlot,
+    truncatePdfTextFlow: () => truncatePdfTextFlow
+  });
+  var HELVETICA_ASCII = [278, 278, 355, 556, 556, 889, 667, 191, 333, 333, 389, 584, 278, 333, 278, 278, 556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 278, 278, 584, 584, 584, 556, 1015, 667, 667, 722, 722, 667, 611, 778, 722, 278, 500, 667, 556, 833, 722, 778, 667, 778, 722, 667, 611, 722, 667, 944, 667, 667, 611, 278, 278, 278, 469, 556, 333, 556, 556, 500, 556, 556, 278, 556, 556, 222, 222, 500, 222, 833, 556, 556, 556, 556, 333, 500, 278, 556, 500, 722, 500, 500, 500, 334, 260, 334, 584];
+  var HELVETICA_EXTRA = { 160: 278, 173: 333, 176: 400, 181: 556, 183: 278, 8211: 556, 8212: 1e3, 8216: 222, 8217: 222, 8220: 333, 8221: 333, 8226: 350, 8230: 1e3 };
+  var HELVETICA_FALLBACK = 556;
+  var PDF_TEXT_FLOW_TRUNCATION_MARK = " \u2026";
+  function measureHelvetica(text, fontSize) {
+    let units = 0;
+    for (const char of text) {
+      const code = char.codePointAt(0) ?? 0;
+      units += code >= 32 && code <= 126 ? HELVETICA_ASCII[code - 32] : HELVETICA_EXTRA[code] ?? HELVETICA_FALLBACK;
+    }
+    return units * fontSize / 1e3;
+  }
+  function resolvePdfTextFlowSlot(fieldId, bbox, declaredFontSize) {
+    const fontSize = declaredFontSize && declaredFontSize > 0 ? declaredFontSize : Math.min(10, Math.max(6, bbox.height - 3));
+    return { fieldId, width: Math.max(0, bbox.width - 8), fontSize };
+  }
+  function resolveCompositeTextFlowSlots(composite, lookup) {
+    const snapshotBox = new Map((composite.componentSnapshots ?? []).map((snapshot) => [snapshot.id, snapshot.bbox ?? null]));
+    const slots = [];
+    for (const { fieldId } of composite.components) {
+      const box = snapshotBox.get(fieldId) ?? lookup?.(fieldId) ?? null;
+      if (!box || !(box.width > 0) || !(box.height > 0)) return null;
+      slots.push(resolvePdfTextFlowSlot(fieldId, box));
+    }
+    return slots.length >= 2 ? slots : null;
+  }
+  var TYPICAL_TEXT = "Give 2 tabs PO at bedtime if no bowel movement in 48 hours; reassess daily.";
+  var WRAP_LOSS_CHARS = 3;
+  function typicalCharWidth(fontSize) {
+    return measureHelvetica(TYPICAL_TEXT, fontSize) / TYPICAL_TEXT.length;
+  }
+  function estimatePdfTextFlowCapacity(slots) {
+    return layoutPdfTextFlow("", slots).remainingChars;
+  }
+  var isLetter = (char) => Boolean(char) && /[A-Za-z\u00C0-\u024F]/.test(char);
+  var NUMBER_START = /^[<>~+\u2264\u2265-]?\d/;
+  var UNIT_WORD = /^(?:mg|mcg|\u00b5g|g|kg|ml|l|units?|iu|tabs?|tablets?|caps?|capsules?|sachets?|packets?|drops?|puffs?|sprays?|mmol|meq|%|h|hrs?|hours?|d|days?|min|mins|minutes?|weeks?|times?|x|doses?|suppositor(?:y|ies)|enemas?)[.,;:)]*$/i;
+  var SOFT_HYPHEN = "\xAD";
+  var stripSoftHyphens = (value) => value.split(SOFT_HYPHEN).join("");
+  function layoutPdfTextFlow(text, slots, measure = measureHelvetica) {
+    const lines = slots.map(() => "");
+    const source = String(text ?? "").replace(/\r\n?/g, "\n");
+    let index = 0;
+    let overflowAt = -1;
+    const fitsOn = (value) => measure(value, slots[index].fontSize) <= slots[index].width;
+    const breakInside = (word, prefix) => {
+      let best = null;
+      for (let i = 1; i < word.length; i += 1) {
+        const before = word[i - 1];
+        let head = null;
+        if (before === SOFT_HYPHEN) head = `${stripSoftHyphens(word.slice(0, i - 1))}-`;
+        else if ((before === "-" || before === "/") && isLetter(word[i - 2]) && isLetter(word[i])) head = stripSoftHyphens(word.slice(0, i));
+        if (head === null) continue;
+        if (!fitsOn(prefix + head)) break;
+        best = { head, consumed: i };
+      }
+      return best;
+    };
+    const forceSplit = (word) => {
+      const chars = Array.from(stripSoftHyphens(word));
+      let best = null;
+      for (let count = 1; count < chars.length; count += 1) {
+        const head = chars.slice(0, count).join("");
+        if (!fitsOn(head)) break;
+        best = { head, consumed: head.length };
+      }
+      if (!best) return null;
+      let seen = 0;
+      let consumed = 0;
+      while (consumed < word.length && seen < best.consumed) {
+        if (word[consumed] !== SOFT_HYPHEN) seen += 1;
+        consumed += 1;
+      }
+      return { head: best.head, consumed };
+    };
+    const placeWord = (token) => {
+      let word = token.text;
+      let wordStart = token.start;
+      while (word) {
+        if (index >= slots.length) {
+          overflowAt = wordStart;
+          return false;
+        }
+        const prefix = lines[index] ? `${lines[index]} ` : "";
+        const whole = stripSoftHyphens(word);
+        if (fitsOn(prefix + whole)) {
+          lines[index] = prefix + whole;
+          return true;
+        }
+        const cut = breakInside(word, prefix) ?? (prefix ? null : forceSplit(word));
+        if (cut) {
+          lines[index] = prefix + cut.head;
+          word = word.slice(cut.consumed);
+          wordStart += cut.consumed;
+        } else if (!prefix) {
+          throw new Error("A PDF text line is too narrow for its font.");
+        }
+        index += 1;
+      }
+      return true;
+    };
+    let offset = 0;
+    const paragraphs = source.split("\n");
+    outer: for (let p = 0; p < paragraphs.length; p += 1) {
+      const paragraph = paragraphs[p];
+      const tokens = [];
+      const pattern = /\S+/g;
+      let match;
+      while (match = pattern.exec(paragraph)) tokens.push({ text: match[0], start: offset + match.index });
+      offset += paragraph.length + 1;
+      const runs = [];
+      tokens.forEach((token, tokenIndex) => {
+        const previous = tokens[tokenIndex - 1];
+        const glued = previous && (NUMBER_START.test(token.text) || NUMBER_START.test(previous.text) && UNIT_WORD.test(token.text));
+        if (glued) runs[runs.length - 1].push(token);
+        else runs.push([token]);
+      });
+      if (p > 0 && runs.length && index < slots.length && lines[index]) index += 1;
+      for (const run of runs) {
+        if (run.length > 1) {
+          if (index >= slots.length) {
+            overflowAt = run[0].start;
+            break outer;
+          }
+          const joined = run.map((token) => stripSoftHyphens(token.text)).join(" ");
+          if (lines[index] && !fitsOn(`${lines[index]} ${joined}`)) index += 1;
+          if (index >= slots.length) {
+            overflowAt = run[0].start;
+            break outer;
+          }
+          if (fitsOn(lines[index] ? `${lines[index]} ${joined}` : joined)) {
+            lines[index] = lines[index] ? `${lines[index]} ${joined}` : joined;
+            continue;
+          }
+        }
+        for (const token of run) {
+          if (!placeWord(token)) break outer;
+        }
+      }
+    }
+    const fits = overflowAt < 0;
+    const usedLines = lines.filter(Boolean).length;
+    let remainingChars = 0;
+    if (fits) {
+      const current = Math.min(usedLines === 0 ? 0 : lines.reduce((last, line, lineIndex) => line ? lineIndex : last, 0), slots.length - 1);
+      let width = 0;
+      let lineBreaks = 0;
+      slots.forEach((slot, slotIndex) => {
+        if (slotIndex < current) return;
+        const used = slotIndex === current && lines[slotIndex] ? measure(`${lines[slotIndex]} `, slot.fontSize) : 0;
+        width += Math.max(0, slot.width - used) / typicalCharWidth(slot.fontSize);
+        if (slotIndex > current) lineBreaks += 1;
+      });
+      remainingChars = Math.max(0, Math.floor(width) - WRAP_LOSS_CHARS * lineBreaks);
+    }
+    return { lines, fits, overflowText: fits ? "" : source.slice(overflowAt).trim(), usedLines, remainingChars };
+  }
+  function truncatePdfTextFlow(layout, slots, measure = measureHelvetica) {
+    if (layout.fits) return { lines: layout.lines, notPrinted: "" };
+    const lines = [...layout.lines];
+    const last = lines.length - 1;
+    const full = lines[last];
+    let text = full;
+    while (text && measure(text + PDF_TEXT_FLOW_TRUNCATION_MARK, slots[last].fontSize) > slots[last].width) {
+      const space = text.lastIndexOf(" ");
+      text = space > 0 ? text.slice(0, space) : "";
+    }
+    lines[last] = `${text}${PDF_TEXT_FLOW_TRUNCATION_MARK}`.trimStart();
+    const dropped = full.slice(text.length).trim();
+    return { lines, notPrinted: dropped ? `${dropped} ${layout.overflowText}` : layout.overflowText };
+  }
+  return __toCommonJS(pdf_text_flow_exports);
+})();
+
+"use strict";
+var DocumentFillRuntime = (() => {
+  var __defProp = Object.defineProperty;
+  var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+  var __getOwnPropNames = Object.getOwnPropertyNames;
+  var __hasOwnProp = Object.prototype.hasOwnProperty;
+  var __export = (target, all) => {
+    for (var name in all)
+      __defProp(target, name, { get: all[name], enumerable: true });
+  };
+  var __copyProps = (to, from, except, desc) => {
+    if (from && typeof from === "object" || typeof from === "function") {
+      for (let key of __getOwnPropNames(from))
+        if (!__hasOwnProp.call(to, key) && key !== except)
+          __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+    }
+    return to;
+  };
+  var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+
+  // lib/document-fill/runtime-entry.ts
+  var runtime_entry_exports = {};
+  __export(runtime_entry_exports, {
+    appendOverflowAddendum: () => appendOverflowAddendum,
+    applyDocumentFillPreparers: () => applyDocumentFillPreparers,
+    documentValueText: () => documentValueText,
+    expandNumberedRowFields: () => expandNumberedRowFields,
+    expandTableSourceMaps: () => expandTableSourceMaps,
+    formatDateWithPattern: () => formatDateWithPattern,
+    planTableOverflow: () => planTableOverflow
+  });
+
+  // packages/form-model/src/conditions.ts
+  function normalizeConditionComparable(candidate) {
+    if (candidate && typeof candidate === "object") {
+      const record = candidate;
+      return record.code ?? record.display ?? record.value ?? record.text ?? "";
+    }
+    return candidate;
+  }
+  function normalizeConditionChoiceValues(candidate) {
+    if (Array.isArray(candidate)) {
+      return candidate.flatMap(normalizeConditionChoiceValues);
+    }
+    if (candidate && typeof candidate === "object") {
+      const record = candidate;
+      return [record.code, record.display, record.value, record.text].filter((entry) => entry !== void 0 && entry !== null).map((entry) => String(entry));
+    }
+    if (candidate === void 0 || candidate === null) return [];
+    return [String(candidate)];
+  }
+  function normalizeConditionBoolean(value, _metadata) {
+    if (value && typeof value === "object") {
+      const record = value;
+      return normalizeConditionBoolean(
+        record.code ?? record.display ?? record.value ?? record.text ?? record.label
+      );
+    }
+    if (value === true || value === "yes" || value === "Y" || value === 1) return "yes";
+    if (value === false || value === "no" || value === "N" || value === 0) return "no";
+    return void 0;
+  }
+  function isConditionCellAnswered(value) {
+    if (value === null || value === void 0) return false;
+    if (typeof value === "string") return value.trim() !== "";
+    if (typeof value === "boolean") return value;
+    if (typeof value === "number") return Number.isFinite(value);
+    if (Array.isArray(value)) return value.some(isConditionCellAnswered);
+    if (typeof value === "object") return Object.keys(value).length > 0;
+    return String(value).trim() !== "";
+  }
+  function isConditionEntryMeaningful(value) {
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      const record = value;
+      return Object.keys(record).some((key) => !key.startsWith("_") && isConditionCellAnswered(record[key]));
+    }
+    return isConditionCellAnswered(value);
+  }
+  function conditionCollectionEntries(value) {
+    if (Array.isArray(value)) return value;
+    if (value && typeof value === "object" && Array.isArray(value.rows)) {
+      return value.rows;
+    }
+    return void 0;
+  }
+  function isConditionValueEmpty(value) {
+    const entries = conditionCollectionEntries(value);
+    if (entries) return !entries.some(isConditionEntryMeaningful);
+    const normalized = normalizeConditionComparable(value);
+    return normalized === null || normalized === void 0 || String(normalized).trim() === "";
+  }
+  function toOrderedPair(leftValue, rightValue) {
+    const left = Number(leftValue);
+    const right = Number(rightValue);
+    if (Number.isFinite(left) && Number.isFinite(right)) return [left, right];
+    const leftDate = Date.parse(String(leftValue));
+    const rightDate = Date.parse(String(rightValue));
+    if (Number.isFinite(leftDate) && Number.isFinite(rightDate)) return [leftDate, rightDate];
+    return null;
+  }
+  function evaluateNumericCondition(type, leftValue, rightValue) {
+    const normalized = normalizeConditionComparable(leftValue);
+    if (normalized === null || normalized === void 0 || normalized === "") return false;
+    if (isConditionValueEmpty(rightValue)) return false;
+    const pair = toOrderedPair(normalized, rightValue);
+    if (!pair) return false;
+    const [left, right] = pair;
+    if (type === "number-gt") return left > right;
+    if (type === "number-gte") return left >= right;
+    if (type === "number-lt") return left < right;
+    if (type === "number-lte") return left <= right;
+    return left === right;
+  }
+  function evaluateFieldCondition(condition, controllerValue, metadata) {
+    const { type, optionValues, value } = condition;
+    switch (type) {
+      case "boolean-yes":
+        return normalizeConditionBoolean(controllerValue, metadata) === "yes";
+      case "boolean-no":
+        return normalizeConditionBoolean(controllerValue, metadata) === "no";
+      case "choice-selected": {
+        if (!optionValues?.length) return false;
+        const values = normalizeConditionChoiceValues(controllerValue);
+        return optionValues.some((option) => values.includes(option));
+      }
+      case "choice-not-selected": {
+        if (!optionValues?.length) return true;
+        const values = normalizeConditionChoiceValues(controllerValue);
+        return !optionValues.some((option) => values.includes(option));
+      }
+      case "number-gt":
+      case "number-gte":
+      case "number-lt":
+      case "number-lte":
+      case "number-equals":
+        return evaluateNumericCondition(type, controllerValue, value);
+      case "equals": {
+        const normalized = normalizeConditionComparable(controllerValue);
+        if (normalized === null || normalized === void 0 || normalized === "") return false;
+        return String(normalized) === String(value ?? "");
+      }
+      case "not-equals": {
+        const normalized = normalizeConditionComparable(controllerValue);
+        if (normalized === null || normalized === void 0 || normalized === "") return false;
+        return String(normalized) !== String(value ?? "");
+      }
+      case "filled":
+        return !isConditionValueEmpty(controllerValue);
+      case "empty":
+        return isConditionValueEmpty(controllerValue);
+    }
+  }
+  function asConditionValue(value) {
+    const normalized = normalizeConditionComparable(value);
+    if (normalized === null || normalized === void 0) return null;
+    if (typeof normalized === "number" || typeof normalized === "boolean") return normalized;
+    return String(normalized);
+  }
+  function evaluateConditionGroup(group, metadata, values) {
+    if (!group.conditions.length) return false;
+    const evaluate = (entry) => {
+      if ("conditions" in entry) return evaluateConditionGroup(entry, metadata, values);
+      const compareFieldId = entry.condition.compareFieldId || entry.condition.valueFieldId;
+      if (compareFieldId && isConditionValueEmpty(values[compareFieldId])) return false;
+      return evaluateFieldCondition(
+        compareFieldId ? { ...entry.condition, value: asConditionValue(values[compareFieldId]) } : entry.condition,
+        values[entry.controllerFieldId],
+        metadata(entry.controllerFieldId)
+      );
+    };
+    return group.match === "any" ? group.conditions.some(evaluate) : group.conditions.every(evaluate);
+  }
+
+  // lib/document-fill/value-text.ts
+  var TEXT_KEYS = ["display", "label", "text", "name", "title", "value", "code"];
+  function documentValueText(value) {
+    if (value === null || value === void 0) return "";
+    if (typeof value === "string") return value;
+    if (typeof value === "number") return Number.isFinite(value) ? String(value) : "";
+    if (typeof value === "boolean") return value ? "Yes" : "No";
+    if (value instanceof Date) return Number.isNaN(value.getTime()) ? "" : value.toISOString().slice(0, 10);
+    if (Array.isArray(value)) {
+      return value.map(documentValueText).filter((part) => part.trim() !== "").join(", ");
+    }
+    if (typeof value === "object") {
+      const record = value;
+      if (typeof record.date === "string") {
+        return typeof record.time === "string" && record.time ? `${record.date} ${record.time}` : record.date;
+      }
+      for (const key of TEXT_KEYS) {
+        const candidate = record[key];
+        if (typeof candidate === "string" && candidate.trim() !== "") return candidate;
+        if (typeof candidate === "number" && Number.isFinite(candidate)) return String(candidate);
+      }
+    }
+    return "";
+  }
+  function readValuePath(root, path) {
+    if (!root || typeof root !== "object" || !path) return void 0;
+    const record = root;
+    if (Object.prototype.hasOwnProperty.call(record, path)) return record[path];
+    let current = root;
+    for (const segment of path.split(".")) {
+      if (!current || typeof current !== "object") return void 0;
+      current = current[segment];
+    }
+    return current;
+  }
+
+  // lib/document-fill/preparers.ts
+  var PDF_TARGET_PREFIX = "pdf:";
+  var MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  function pad(value, width = 2) {
+    return String(value).padStart(width, "0");
+  }
+  function formatDateWithPattern(value, pattern) {
+    const raw = value && typeof value === "object" && "date" in value ? value.date : value;
+    if (raw === null || raw === void 0 || raw === "") return "";
+    const match = /^(\d{4})[-./](\d{1,2})[-./](\d{1,2})(?:[T ](\d{1,2}):(\d{2}))?/.exec(String(raw).trim());
+    if (!match) return null;
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const hour = match[4] === void 0 ? 0 : Number(match[4]);
+    const minute = match[5] === void 0 ? 0 : Number(match[5]);
+    const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    if (month < 1 || month > 12 || day < 1 || day > daysInMonth) return null;
+    const monthName = MONTHS[month - 1];
+    return pattern.replace(/'([^']*)'|yyyy|yy|MMMM|MMM|MM|M|dd|d|HH|H|mm/g, (token, literal) => {
+      if (literal !== void 0) return literal;
+      switch (token) {
+        case "yyyy":
+          return pad(year, 4);
+        case "yy":
+          return pad(year % 100);
+        case "MMMM":
+          return monthName;
+        case "MMM":
+          return monthName.slice(0, 3);
+        case "MM":
+          return pad(month);
+        case "M":
+          return String(month);
+        case "dd":
+          return pad(day);
+        case "d":
+          return String(day);
+        case "HH":
+          return pad(hour);
+        case "H":
+          return String(hour);
+        case "mm":
+          return pad(minute);
+        default:
+          return token;
+      }
+    });
+  }
+  function isPdfTarget(id) {
+    return id.startsWith(PDF_TARGET_PREFIX);
+  }
+  function renderRowTemplate(template, row, rowNumber) {
+    let hasValue = false;
+    const text = template.replace(/\{([^{}]+)\}/g, (_match, key) => {
+      const name = key.trim();
+      if (name === "row") return String(rowNumber);
+      const cell = documentValueText(readValuePath(row, name));
+      if (cell.trim() !== "") hasValue = true;
+      return cell;
+    });
+    return { text, hasValue };
+  }
+  function mapValue(raw, map, fallback) {
+    const lookup = (value) => {
+      const text = documentValueText(value);
+      if (Object.prototype.hasOwnProperty.call(map, text)) return map[text];
+      const token = text.trim().toLowerCase();
+      const key = Object.keys(map).find((candidate) => candidate.trim().toLowerCase() === token);
+      return key === void 0 ? void 0 : map[key];
+    };
+    if (Array.isArray(raw)) {
+      const parts = raw.map((item) => lookup(item) ?? fallback ?? documentValueText(item)).filter((part) => part !== "");
+      return parts.join(", ");
+    }
+    const mapped = lookup(raw);
+    if (mapped !== void 0) return mapped;
+    if (fallback !== void 0) return fallback;
+    return raw;
+  }
+  function applyDocumentFillPreparers(input, steps) {
+    const values = { ...input ?? {} };
+    const pdfValues = {};
+    const touched = /* @__PURE__ */ new Set();
+    const warnings = [];
+    if (!Array.isArray(steps) || steps.length === 0) return { values, pdfValues, touched: [], warnings };
+    const list = steps;
+    const read = (id) => {
+      if (isPdfTarget(id)) return pdfValues[id.slice(PDF_TARGET_PREFIX.length)];
+      return Object.prototype.hasOwnProperty.call(values, id) ? values[id] : readValuePath(values, id);
+    };
+    const write = (id, value) => {
+      if (!id) return;
+      if (isPdfTarget(id)) {
+        const name = id.slice(PDF_TARGET_PREFIX.length);
+        if (name) pdfValues[name] = value;
+        return;
+      }
+      values[id] = value;
+      touched.add(id);
+    };
+    const conditionMet = (group) => {
+      if (!group || !Array.isArray(group.conditions) || group.conditions.length === 0) return true;
+      try {
+        return evaluateConditionGroup(group, () => void 0, values);
+      } catch {
+        return false;
+      }
+    };
+    list.forEach((step, index) => {
+      if (!step || typeof step !== "object" || step.enabled === false) return;
+      const name = step.id || `step ${index + 1}`;
+      if (!conditionMet(step.when)) return;
+      switch (step.kind) {
+        case "concat": {
+          const parts = (step.sourceIds ?? []).map((id) => documentValueText(read(id)));
+          const kept = step.skipEmpty === false ? parts : parts.filter((part) => part.trim() !== "");
+          write(step.targetId, kept.join(step.separator ?? " "));
+          return;
+        }
+        case "split": {
+          const targets = step.targetIds ?? [];
+          if (!targets.length) return;
+          const text = documentValueText(read(step.sourceId));
+          const parts = step.separator ? text.split(step.separator) : Array.from(text);
+          targets.forEach((target, targetIndex) => {
+            const isLast = targetIndex === targets.length - 1;
+            const value = isLast ? parts.slice(targetIndex).join(step.separator ?? "") : parts[targetIndex] ?? "";
+            write(target, value.trim());
+          });
+          return;
+        }
+        case "map-value": {
+          write(step.targetId || step.sourceId, mapValue(read(step.sourceId), step.map ?? {}, step.fallback));
+          return;
+        }
+        case "format-date": {
+          const raw = read(step.sourceId);
+          const formatted = formatDateWithPattern(raw, step.format || "yyyy-MM-dd");
+          if (formatted === null) {
+            warnings.push(`Preparer "${name}": "${step.sourceId}" is not a date (${JSON.stringify(documentValueText(raw))}); it was printed unchanged.`);
+            if (step.targetId && step.targetId !== step.sourceId) write(step.targetId, raw);
+            return;
+          }
+          write(step.targetId || step.sourceId, formatted);
+          return;
+        }
+        case "table-to-text": {
+          const rows = read(step.tableId);
+          if (rows !== void 0 && rows !== null && !Array.isArray(rows)) {
+            warnings.push(`Preparer "${name}": "${step.tableId}" is not a table.`);
+            return;
+          }
+          const start = Math.max(1, Math.floor(Number(step.startRow) || 1));
+          const lines = [];
+          (Array.isArray(rows) ? rows : []).forEach((row, rowIndex) => {
+            if (rowIndex + 1 < start || !row || typeof row !== "object") return;
+            const rendered = renderRowTemplate(step.template ?? "", row, rowIndex + 1);
+            if (rendered.hasValue) lines.push(rendered.text.trim());
+          });
+          write(step.targetId, lines.join(step.separator ?? "\n"));
+          return;
+        }
+        case "copy": {
+          write(step.targetId, read(step.sourceId));
+          return;
+        }
+        default:
+          warnings.push(`Preparer "${name}": unknown kind ${JSON.stringify(step.kind)}; skipped.`);
+      }
+    });
+    return { values, pdfValues, touched: Array.from(touched), warnings };
+  }
+
+  // lib/document-fill/numbered-fields.ts
+  function toNameSet(names) {
+    if (!names) return null;
+    return names instanceof Set ? names : new Set(names);
+  }
+  function escapeRegExp(text) {
+    return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+  function applyNumberedFieldPattern(pattern, base, rowIndex) {
+    return pattern.replace(/\{base\}/g, base).replace(/\{row0\}/g, String(rowIndex)).replace(/\{row\}/g, String(rowIndex + 1));
+  }
+  function matchNumberedFieldBase(pattern, name, rowIndex) {
+    if (!pattern.includes("{base}")) return null;
+    const source = pattern.split(/(\{base\}|\{row0\}|\{row\})/).map((part) => {
+      if (part === "{base}") return "(.+?)";
+      if (part === "{row0}") return escapeRegExp(String(rowIndex));
+      if (part === "{row}") return escapeRegExp(String(rowIndex + 1));
+      return escapeRegExp(part);
+    }).join("");
+    const match = new RegExp(`^${source}$`).exec(name);
+    return match ? match[1] : null;
+  }
+  function isUsablePattern(pattern) {
+    return typeof pattern === "string" && pattern.includes("{base}") && /\{row0?\}/.test(pattern);
+  }
+  function mapColumnIds(map) {
+    const ids = /* @__PURE__ */ new Set();
+    (map.columns ?? []).forEach((column) => column?.id && ids.add(column.id));
+    Object.values(map.sourceFieldIdsByRow ?? {}).forEach((row) => Object.keys(row ?? {}).forEach((id) => ids.add(id)));
+    Object.keys(map.sourceFieldIds ?? {}).forEach((id) => ids.add(id));
+    return Array.from(ids);
+  }
+  function candidateBases(map, pattern, columnId) {
+    const bases = [];
+    const add = (base) => {
+      if (base && !bases.includes(base)) bases.push(base);
+    };
+    Object.entries(map.sourceFieldIdsByRow ?? {}).sort(([a], [b]) => Number(a) - Number(b)).forEach(([rowKey, row]) => {
+      const name = row?.[columnId];
+      if (typeof name === "string" && name) add(matchNumberedFieldBase(pattern, name, Number(rowKey)));
+    });
+    const sample = map.sourceFieldIds?.[columnId];
+    if (typeof sample === "string" && sample) {
+      add(matchNumberedFieldBase(pattern, sample, 0));
+      add(sample);
+    }
+    add(columnId);
+    return bases;
+  }
+  function expandNumberedRowFields(map, pdfFieldNames, rowCount) {
+    const pattern = map?.overflow?.numberedFieldPattern;
+    if (!isUsablePattern(pattern) || !(rowCount > 0)) return map;
+    const names = toNameSet(pdfFieldNames);
+    const byRow = {};
+    const used = /* @__PURE__ */ new Set();
+    Object.entries(map.sourceFieldIdsByRow ?? {}).forEach(([rowKey, row]) => {
+      byRow[Number(rowKey)] = { ...row ?? {} };
+      Object.values(row ?? {}).forEach((name) => typeof name === "string" && used.add(name));
+    });
+    let changed = false;
+    for (const columnId of mapColumnIds(map)) {
+      const bases = candidateBases(map, pattern, columnId);
+      for (let rowIndex = 0; rowIndex < rowCount; rowIndex += 1) {
+        if (byRow[rowIndex]?.[columnId]) continue;
+        const name = bases.map((base) => applyNumberedFieldPattern(pattern, base, rowIndex)).find((candidate) => !used.has(candidate) && (!names || names.has(candidate)));
+        if (!name) continue;
+        byRow[rowIndex] = { ...byRow[rowIndex] ?? {}, [columnId]: name };
+        used.add(name);
+        changed = true;
+      }
+    }
+    return changed ? { ...map, sourceFieldIdsByRow: byRow } : map;
+  }
+  function tableRowCount(formData, tableId) {
+    const rows = formData?.[tableId];
+    return Array.isArray(rows) ? rows.length : 0;
+  }
+  function expandTableSourceMaps(maps, formData, pdfFieldNames) {
+    if (!Array.isArray(maps)) return [];
+    return maps.map((map) => map && map.overflow?.numberedFieldPattern ? expandNumberedRowFields(map, pdfFieldNames, tableRowCount(formData, map.tableId)) : map);
+  }
+
+  // lib/document-fill/table-overflow.ts
+  function toNameSet2(names) {
+    if (!names) return null;
+    return names instanceof Set ? names : new Set(names);
+  }
+  function printedRows(map, names) {
+    const printed = /* @__PURE__ */ new Map();
+    Object.entries(map.sourceFieldIdsByRow ?? {}).forEach(([rowKey, row]) => {
+      const rowIndex = Number(rowKey);
+      if (!Number.isInteger(rowIndex) || rowIndex < 0) return;
+      const name = Object.values(row ?? {}).find((candidate) => typeof candidate === "string" && candidate && (!names || names.has(candidate)));
+      if (name) printed.set(rowIndex, name);
+    });
+    if (!printed.has(0)) {
+      const sample = Object.values(map.sourceFieldIds ?? {}).find((candidate) => typeof candidate === "string" && candidate && (!names || names.has(candidate)));
+      if (sample) printed.set(0, sample);
+    }
+    return printed;
+  }
+  function planTableOverflow(formData, maps, pdfFieldNames) {
+    if (!Array.isArray(maps)) return [];
+    const list = maps;
+    const names = toNameSet2(pdfFieldNames);
+    const plans = [];
+    const seen = /* @__PURE__ */ new Set();
+    list.forEach((map) => {
+      const overflow = map?.overflow;
+      if (!overflow || seen.has(map.tableId)) return;
+      const rows = formData?.[map.tableId];
+      if (!Array.isArray(rows) || rows.length === 0) return;
+      const pathById = new Map((map.columns ?? []).map((column) => [column.id, column.dataPath || column.id]));
+      const columns = overflow.columns?.length ? overflow.columns : (map.columns ?? []).map((column) => ({ id: column.id, label: column.id }));
+      const printed = printedRows(map, names);
+      const capacity = printed.size;
+      const planRows = [];
+      rows.forEach((row, rowIndex) => {
+        if (printed.has(rowIndex) || !row || typeof row !== "object") return;
+        const cells = columns.map((column) => documentValueText(readValuePath(row, pathById.get(column.id) ?? column.id)).trim());
+        if (cells.every((cell) => cell === "")) return;
+        planRows.push({ rowNumber: rowIndex + 1, cells });
+      });
+      if (!planRows.length) return;
+      seen.add(map.tableId);
+      const lastPrinted = Array.from(printed.keys()).sort((a, b) => b - a)[0];
+      plans.push({
+        tableId: map.tableId,
+        title: overflow.title?.trim() || `${map.tableId} (continued)`,
+        mode: overflow.mode === "addendum" ? "addendum" : "drop",
+        capacity,
+        columns: columns.map((column) => ({ id: column.id, label: column.label || column.id })),
+        rows: planRows,
+        ...lastPrinted !== void 0 ? { anchorFieldName: printed.get(lastPrinted) } : {}
+      });
+    });
+    return plans;
+  }
+
+  // lib/document-fill/addendum.ts
+  var LETTER = [612, 792];
+  function plural(count, word) {
+    return `${count} ${word}${count === 1 ? "" : "s"}`;
+  }
+  function createSanitizer(font) {
+    const cache = /* @__PURE__ */ new Map();
+    return (text) => Array.from(String(text ?? "").replace(/\r\n?/g, "\n").replace(/\t/g, " ")).map((char) => {
+      if (char === "\n") return char;
+      let safe = cache.get(char);
+      if (safe === void 0) {
+        try {
+          font.encodeText(char);
+          safe = char;
+        } catch {
+          safe = "?";
+        }
+        cache.set(char, safe);
+      }
+      return safe;
+    }).join("");
+  }
+  function wrapTextToWidth(text, font, size, width) {
+    const lines = [];
+    const fits = (value) => font.widthOfTextAtSize(value, size) <= width;
+    for (const paragraph of text.split("\n")) {
+      const words = paragraph.split(/\s+/).filter(Boolean);
+      if (!words.length) {
+        lines.push("");
+        continue;
+      }
+      let line = "";
+      for (const original of words) {
+        let word = original;
+        const candidate = line ? `${line} ${word}` : word;
+        if (fits(candidate)) {
+          line = candidate;
+          continue;
+        }
+        if (line) {
+          lines.push(line);
+          line = "";
+        }
+        while (!fits(word)) {
+          const chars = Array.from(word);
+          let count = 1;
+          while (count < chars.length && fits(chars.slice(0, count + 1).join(""))) count += 1;
+          lines.push(chars.slice(0, count).join(""));
+          word = chars.slice(count).join("");
+        }
+        line = word;
+      }
+      lines.push(line);
+    }
+    while (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
+    while (lines.length > 1 && lines[0] === "") lines.shift();
+    return lines.length ? lines : [""];
+  }
+  function pageNumberOfField(doc, name) {
+    if (!name) return void 0;
+    try {
+      const field = doc.getForm().getFieldMaybe(name);
+      if (!field) return void 0;
+      const pages = doc.getPages();
+      for (const widget of field.acroField.getWidgets()) {
+        const pageRef = widget.P();
+        if (pageRef) {
+          const index = pages.findIndex((page2) => page2.ref === pageRef || page2.ref.toString() === pageRef.toString());
+          if (index >= 0) return index + 1;
+        }
+        const ref = doc.context.getObjectRef(widget.dict);
+        const page = ref ? doc.findPageForAnnotationRef(ref) : void 0;
+        if (page) {
+          const index = pages.indexOf(page);
+          if (index >= 0) return index + 1;
+        }
+      }
+    } catch {
+      return void 0;
+    }
+    return void 0;
+  }
+  function columnWidths(plan, available) {
+    const weights = plan.columns.map((column, index) => {
+      const lengths = plan.rows.map((row) => (row.cells[index] ?? "").length);
+      const longest = Math.max(0, ...lengths);
+      const average = lengths.length ? lengths.reduce((sum, value) => sum + value, 0) / lengths.length : 0;
+      const typical = Math.min(longest, Math.max(average * 1.5, 8));
+      return Math.min(40, Math.max(6, column.label.length, typical));
+    });
+    const total = weights.reduce((sum, value) => sum + value, 0) || 1;
+    const widths = weights.map((weight) => weight / total * available);
+    const minimum = Math.min(48, available / Math.max(1, widths.length));
+    widths.forEach((width, index) => {
+      if (width >= minimum) return;
+      const widest = widths.indexOf(Math.max(...widths));
+      const need = minimum - width;
+      if (widest !== index && widths[widest] - need >= minimum) {
+        widths[widest] -= need;
+        widths[index] = minimum;
+      }
+    });
+    return widths;
+  }
+  async function appendOverflowAddendum(doc, plans, PDFLib, options = {}) {
+    const warnings = options.warnings;
+    const list = Array.isArray(plans) ? plans : [];
+    list.forEach((plan) => {
+      if (plan.mode === "drop" && plan.rows.length) {
+        warnings?.push(`${plural(plan.rows.length, "row")} of "${plan.title}" did not fit on the form and ${plan.rows.length === 1 ? "was" : "were"} not printed.`);
+      }
+    });
+    const printable = list.filter((plan) => plan.mode === "addendum" && plan.rows.length > 0 && plan.columns.length > 0);
+    if (!printable.length) return { pagesAdded: 0, rowsPrinted: 0 };
+    const existingPages = doc.getPages();
+    const firstSize = existingPages[0]?.getSize();
+    const [pageWidth, pageHeight] = options.pageSize ?? (firstSize ? [firstSize.width, firstSize.height] : LETTER);
+    const margin = options.margin ?? 48;
+    const size = options.fontSize ?? 9;
+    const lineHeight = size * 1.3;
+    const pad2 = 4;
+    const titleSize = size + 4;
+    const footerSize = Math.max(6, size - 1);
+    const bottom = margin + footerSize + 8;
+    const contentWidth = pageWidth - margin * 2;
+    const font = await doc.embedFont(PDFLib.StandardFonts.Helvetica);
+    const bold = await doc.embedFont(PDFLib.StandardFonts.HelveticaBold);
+    const sanitize = createSanitizer(font);
+    const black = PDFLib.rgb(0, 0, 0);
+    const muted = PDFLib.rgb(0.35, 0.35, 0.35);
+    const rule = PDFLib.rgb(0.55, 0.55, 0.55);
+    const headerFill = PDFLib.rgb(0.9, 0.9, 0.9);
+    const sourcePages = new Map(printable.map((plan) => [plan, pageNumberOfField(doc, plan.anchorFieldName)]));
+    const firstPageNumber = existingPages.length + 1;
+    const added = [];
+    let rowsPrinted = 0;
+    for (const plan of printable) {
+      const labels = plan.columns.map((column) => sanitize(column.label));
+      const rowLabel = "Row";
+      const rowWidth = Math.max(
+        bold.widthOfTextAtSize(rowLabel, size),
+        font.widthOfTextAtSize(String(Math.max(...plan.rows.map((row) => row.rowNumber))), size)
+      ) + pad2 * 2;
+      const widths = [rowWidth, ...columnWidths({ ...plan, columns: plan.columns.map((column, index) => ({ ...column, label: labels[index] })) }, contentWidth - rowWidth)];
+      const headerCells = [rowLabel, ...labels].map((label, index) => wrapTextToWidth(label, bold, size, widths[index] - pad2 * 2));
+      const headerHeight = Math.max(...headerCells.map((lines) => lines.length)) * lineHeight + pad2 * 2;
+      const title = sanitize(plan.title);
+      const sourcePage = sourcePages.get(plan);
+      const firstRow = plan.rows[0].rowNumber;
+      const lastRow = plan.rows[plan.rows.length - 1].rowNumber;
+      const rowsText = firstRow === lastRow ? `row ${firstRow}` : `rows ${firstRow}-${lastRow}`;
+      let page = doc.addPage([pageWidth, pageHeight]);
+      let y = pageHeight - margin;
+      let bodyRowsOnPage = 0;
+      let continuation = false;
+      const drawCellLines = (lines, x, top, face, color = black) => {
+        lines.forEach((line, index) => {
+          if (!line) return;
+          page.drawText(line, { x: x + pad2, y: top - pad2 - size - index * lineHeight + (lineHeight - size) / 2, size, font: face, color });
+        });
+      };
+      const drawRowFrame = (top, height, fill) => {
+        let x = margin;
+        widths.forEach((width) => {
+          page.drawRectangle({ x, y: top - height, width, height, borderColor: rule, borderWidth: 0.5, ...fill ? { color: fill } : {} });
+          x += width;
+        });
+      };
+      const startPage = () => {
+        added.push(page);
+        const continuedTitle = /\(continued\)\s*$/i.test(title) ? title : `${title} (continued)`;
+        const titleLines = wrapTextToWidth(continuation ? continuedTitle : title, bold, titleSize, contentWidth);
+        titleLines.forEach((line) => {
+          y -= titleSize;
+          page.drawText(line, { x: margin, y, size: titleSize, font: bold, color: black });
+          y -= titleSize * 0.35;
+        });
+        const subtitle = continuation ? "Continued from the previous addendum page." : `${sourcePage ? `Continued from page ${sourcePage}. ` : ""}The form prints ${plural(plan.capacity, "row")}; ${rowsText} did not fit and ${plan.rows.length === 1 ? "is" : "are"} listed here.`;
+        wrapTextToWidth(sanitize(subtitle), font, size, contentWidth).forEach((line) => {
+          y -= lineHeight;
+          page.drawText(line, { x: margin, y, size, font, color: muted });
+        });
+        y -= lineHeight * 0.8;
+        drawRowFrame(y, headerHeight, headerFill);
+        let x = margin;
+        headerCells.forEach((lines, index) => {
+          drawCellLines(lines, x, y, bold);
+          x += widths[index];
+        });
+        y -= headerHeight;
+        bodyRowsOnPage = 0;
+      };
+      const nextPage = () => {
+        page = doc.addPage([pageWidth, pageHeight]);
+        y = pageHeight - margin;
+        continuation = true;
+        startPage();
+      };
+      startPage();
+      for (const row of plan.rows) {
+        const cells = [String(row.rowNumber), ...row.cells.map((cell) => sanitize(cell))].map((text, index) => wrapTextToWidth(text, font, size, widths[index] - pad2 * 2));
+        const totalLines = Math.max(...cells.map((lines) => lines.length));
+        const freshPageLines = Math.floor((pageHeight - margin - bottom - titleSize * 3 - lineHeight * 3 - headerHeight - pad2 * 2) / lineHeight);
+        let offset = 0;
+        while (offset < totalLines) {
+          const fitLines = Math.floor((y - bottom - pad2 * 2) / lineHeight);
+          const needed = totalLines - offset;
+          if (needed > fitLines && (bodyRowsOnPage > 0 || fitLines < 1) && (needed <= freshPageLines || fitLines < 1)) {
+            nextPage();
+            continue;
+          }
+          const count = Math.min(needed, Math.max(1, fitLines));
+          const height = count * lineHeight + pad2 * 2;
+          drawRowFrame(y, height);
+          let x = margin;
+          cells.forEach((lines, index) => {
+            drawCellLines(lines.slice(offset, offset + count), x, y, font);
+            x += widths[index];
+          });
+          y -= height;
+          offset += count;
+          bodyRowsOnPage += 1;
+          if (offset < totalLines) nextPage();
+        }
+        rowsPrinted += 1;
+      }
+      warnings?.push(`${plural(plan.rows.length, "row")} of "${plan.title}" did not fit on the form (${plan.capacity} printed) and ${plan.rows.length === 1 ? "was" : "were"} added on an addendum page.`);
+    }
+    added.forEach((page, index) => {
+      const text = `Addendum page ${index + 1} of ${added.length}`;
+      const width = font.widthOfTextAtSize(text, footerSize);
+      page.drawText(text, { x: (pageWidth - width) / 2, y: margin - footerSize, size: footerSize, font, color: muted });
+    });
+    return { pagesAdded: added.length, rowsPrinted, firstPageNumber };
+  }
+  return __toCommonJS(runtime_entry_exports);
 })();
 
 /**
@@ -1150,42 +2121,6 @@ const _statusColor = (kind) => {
   return "#605e5c"
 }
 
-// One Webforms answer is distributed into the existing PDF text widgets.
-const _wrapTextAcrossFields = (text, slots, measure) => {
-  const lines = slots.map(() => "")
-  let index = 0
-  const assertSlot = () => {
-    if (index >= slots.length) throw new Error("Text exceeds the available PDF lines. Shorten the answer before saving the PDF.")
-  }
-  text.replace(/\r\n?/g, "\n").split("\n").forEach((paragraph, paragraphIndex) => {
-    if (paragraphIndex > 0) index += 1
-    assertSlot()
-    paragraph.trim().split(/\s+/u).filter(Boolean).forEach((word) => {
-      let remaining = word
-      while (remaining) {
-        assertSlot()
-        const prefix = lines[index] ? `${lines[index]} ` : ""
-        if (measure(prefix + remaining, slots[index].fontSize) <= slots[index].width) {
-          lines[index] = prefix + remaining
-          break
-        }
-        if (prefix) {
-          index += 1
-          continue
-        }
-        const chars = Array.from(remaining)
-        let count = 0
-        while (count < chars.length && measure(chars.slice(0, count + 1).join(""), slots[index].fontSize) <= slots[index].width) count += 1
-        if (!count) throw new Error("A PDF text line is too narrow for its font.")
-        lines[index] = chars.slice(0, count).join("")
-        remaining = chars.slice(count).join("")
-        if (remaining) index += 1
-      }
-    })
-  })
-  return lines
-}
-
 const _buildTextFlowValues = async ({ doc, pdfFields, textFlowMaps, formData, map, includeSet, PDFLib }) => {
   const valuesByField = new Map()
   if (!Array.isArray(textFlowMaps) || textFlowMaps.length === 0) return valuesByField
@@ -1206,10 +2141,16 @@ const _buildTextFlowValues = async ({ doc, pdfFields, textFlowMaps, formData, ma
       const rect = widget.getRectangle()
       const da = widget.getDefaultAppearance?.() || field.acroField.getDefaultAppearance?.() || ""
       const declaredSize = Number(da.match(/(\d+(?:\.\d+)?)\s+Tf\b/)?.[1])
-      const fontSize = declaredSize > 0 ? declaredSize : Math.min(10, Math.max(6, rect.height - 3))
-      return { width: Math.max(0, rect.width - 8), fontSize }
+      return PdfTextFlowLayout.resolvePdfTextFlowSlot(fieldId, rect, declaredSize)
     })
-    const values = _wrapTextAcrossFields(text, slots, (value, size) => measureFont.widthOfTextAtSize(value, size))
+    // Same layout as PdfTextFlowField's live meter (both bundle lib/pdf-text-flow.ts).
+    const measure = (value, size) => measureFont.widthOfTextAtSize(value, size)
+    const layout = PdfTextFlowLayout.layoutPdfTextFlow(text, slots, measure)
+    if (!layout.fits && flow.overflow !== "truncate") {
+      const name = flow.label ? `"${flow.label}"` : "The answer"
+      throw new Error(`${name} is about ${layout.overflowText.length} characters longer than its ${slots.length} PDF lines. Shorten it before saving the PDF.`)
+    }
+    const values = layout.fits ? layout.lines : PdfTextFlowLayout.truncatePdfTextFlow(layout, slots, measure).lines
     flow.fieldIds.forEach((fieldId, index) => valuesByField.set(fieldId, values[index]))
   }
   return valuesByField
@@ -1229,6 +2170,7 @@ const PdfRegenerator = ({
   pdfLibSource,
   fieldMap,
   tableSourceMaps,
+  pdfPreparers,
   booleanFieldStates,
   fieldMaxLengths,
   dateComponentMaps,
@@ -1289,9 +2231,11 @@ const PdfRegenerator = ({
     try {
       const PDFLib = await _loadPdfLib({ strategy: pdfLibStrategy, source: pdfLibSource })
       const bytes = _base64ToBytes(resolvedPdfSource)
-      const formData = fd?.field?.data || {}
+      // Preparers (lib/document-fill) transform a copy of the answers for the document only.
+      const prepared = DocumentFillRuntime.applyDocumentFillPreparers(fd?.field?.data || {}, pdfPreparers)
+      const preparedTouched = new Set(prepared.touched)
+      const formData = prepared.values
       const map = _normalizeFieldMap(fieldMap, formData)
-      const tableIndex = _buildTableReverseIndex(tableSourceMaps)
       const dateComponentIndex = _buildDateComponentIndex(dateComponentMaps)
       const choiceComponentIndex = _buildChoiceComponentIndex(choiceComponentMaps)
       const includeSet = Array.isArray(includeOnlyFieldIds)
@@ -1305,11 +2249,15 @@ const PdfRegenerator = ({
 
       const form = doc.getForm()
       if (form.getFields().some(field => field instanceof PDFLib.PDFSignature && field.acroField.dict.get(PDFLib.PDFName.of("V")))) throw new Error("The source PDF is already signed. Fill an unsigned original to avoid invalidating its signature.")
-      const warnings = []
+      const warnings = [...prepared.warnings]
       let filledFieldCount = 0
       let skippedFieldCount = 0
 
       const pdfFields = form.getFields()
+      // Numbered row fields (pdfOverflow.numberedFieldPattern) extend each table's row map to every row the PDF has.
+      const pdfFieldNames = pdfFields.map((field) => field.getName())
+      const fillTableMaps = DocumentFillRuntime.expandTableSourceMaps(tableSourceMaps, formData, pdfFieldNames)
+      const tableIndex = _buildTableReverseIndex(fillTableMaps)
       // PDF rectangles may legally have reversed endpoints. pdf-lib's
       // appearance generator expects positive dimensions (several OT fields
       // use reversed Y coordinates in the supplied templates).
@@ -1327,7 +2275,7 @@ const PdfRegenerator = ({
           continue
         }
 
-        let rawValue = textFlowValues.has(pdfFieldName) ? textFlowValues.get(pdfFieldName) : formData[sourceFieldId]
+        let rawValue = textFlowValues.has(pdfFieldName) ? textFlowValues.get(pdfFieldName) : Object.prototype.hasOwnProperty.call(prepared.pdfValues, pdfFieldName) ? prepared.pdfValues[pdfFieldName] : formData[sourceFieldId]
         const choiceEntry = choiceComponentIndex.get(pdfFieldName) || choiceComponentIndex.get(sourceFieldId)
         const choiceComponentValue = choiceEntry
           ? _resolveChoiceComponentValue(formData, choiceEntry, rawValue)
@@ -1362,7 +2310,7 @@ const PdfRegenerator = ({
           continue
         }
 
-        if (documentDateFormats?.[sourceFieldId]) rawValue = DocumentDateRuntime.formatDocumentDate(rawValue, documentDateFormats[sourceFieldId])
+        if (documentDateFormats?.[sourceFieldId] && !preparedTouched.has(sourceFieldId)) rawValue = DocumentDateRuntime.formatDocumentDate(rawValue, documentDateFormats[sourceFieldId])
         const booleanStates = booleanFieldStates
           ? (booleanFieldStates[sourceFieldId] || booleanFieldStates[pdfFieldName])
           : undefined
@@ -1398,6 +2346,10 @@ const PdfRegenerator = ({
           form.markFieldAsClean(field.ref)
         }
       })
+      // Table rows the PDF has no printed row for: addendum pages (or a warning for mode "drop").
+      const overflowPlans = DocumentFillRuntime.planTableOverflow(formData, fillTableMaps, pdfFieldNames)
+        .filter((plan) => !includeSet || includeSet.has(plan.tableId))
+      await DocumentFillRuntime.appendOverflowAddendum(doc, overflowPlans, PDFLib, { warnings })
       if (flatten) _flattenForm(form, PDFLib, font, warnings)
 
       let outputBytes = await doc.save({ updateFieldAppearances: false })
@@ -1436,7 +2388,7 @@ const PdfRegenerator = ({
     } finally {
       setIsBusy(false)
     }
-  }, [resolvedPdfSource, fd, fieldMap, tableSourceMaps, booleanFieldStates, fieldMaxLengths, dateComponentMaps, documentDateFormats, choiceComponentMaps, textFlowMaps, geometryOverlayFields, includeOnlyFieldIds, flatten, recalculate, organizationSigning, fileName, onComplete, pdfLibStrategy, pdfLibSource])
+  }, [resolvedPdfSource, fd, fieldMap, tableSourceMaps, pdfPreparers, booleanFieldStates, fieldMaxLengths, dateComponentMaps, documentDateFormats, choiceComponentMaps, textFlowMaps, geometryOverlayFields, includeOnlyFieldIds, flatten, recalculate, organizationSigning, fileName, onComplete, pdfLibStrategy, pdfLibSource])
 
   const diagnosticsText = useMemo(() => {
     if (!showDiagnostics) return null

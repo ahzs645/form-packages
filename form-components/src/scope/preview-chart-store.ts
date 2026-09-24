@@ -68,6 +68,11 @@ const COLLECTION_FIELDS: Record<
     idKey: "prescriptionLogId",
     variableKey: "prescriptionLog",
   },
+  changeServiceEpisode: {
+    collection: "serviceEpisodes",
+    idKey: "serviceEpisodeId",
+    variableKey: "serviceEpisode",
+  },
 };
 
 let ops: PreviewChartOp[] = [];

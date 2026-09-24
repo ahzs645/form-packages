@@ -13,7 +13,7 @@ const source = fs.readFileSync(
 let helper: ((input: {
   doc: PDFLib.PDFDocument;
   pdfFields: PDFLib.PDFField[];
-  textFlowMaps: Array<{ sourceFieldId: string; fieldIds: string[] }>;
+  textFlowMaps: Array<{ sourceFieldId: string; fieldIds: string[]; label?: string; overflow?: "block" | "truncate" }>;
   formData: Record<string, unknown>;
   map: Map<string, string>;
   PDFLib: typeof PDFLib;
@@ -84,6 +84,28 @@ describe("PdfRegenerator text continuation", { timeout: 30000 }, () => {
     await expect(buildTextFlowValues()({
       ...input,
       formData: { combined: "long ".repeat(300) },
-    })).rejects.toThrow("exceeds the available PDF lines");
+    })).rejects.toThrow(/about \d+ characters longer than its 3 PDF lines/);
+  });
+
+  it("names the field when blocking and cuts with a visible mark when set to truncate", async () => {
+    const { doc, form, ids } = await createThreeLinePdf();
+    const input = {
+      doc,
+      pdfFields: form.getFields(),
+      map: new Map(ids.map((id) => [id, "combined"])),
+      PDFLib,
+      formData: { combined: "Reassess symptoms and continue the regimen. ".repeat(12) },
+    };
+    await expect(buildTextFlowValues()({
+      ...input,
+      textFlowMaps: [{ sourceFieldId: "combined", fieldIds: ids, label: "Additional orders" }],
+    })).rejects.toThrow('"Additional orders" is about');
+
+    const values = await buildTextFlowValues()({
+      ...input,
+      textFlowMaps: [{ sourceFieldId: "combined", fieldIds: ids, overflow: "truncate" }],
+    });
+    expect(values.get("bottom")!.endsWith(" \u2026")).toBe(true);
+    ids.forEach((id) => form.getTextField(id).setText(values.get(id)!));
   });
 });

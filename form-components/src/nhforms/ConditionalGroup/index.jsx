@@ -497,13 +497,48 @@ const normalizeComparableValue = (value) => {
   return value
 }
 
+// Whether one cell (or nested value) holds an answer: EditableTable's rules
+// (an unchecked checkbox, blank text, NaN, an empty list/object are not).
+const conditionCellAnswered = (value) => {
+  if (value === null || value === undefined) return false
+  if (typeof value === 'string') return value.trim() !== ''
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number') return Number.isFinite(value)
+  if (Array.isArray(value)) return value.some(conditionCellAnswered)
+  if (typeof value === 'object') return Object.keys(value).length > 0
+  return String(value).trim() !== ''
+}
+
+// Whether one entry of a collection answer (table row, multi-select item)
+// holds a real answer. On a row, "_"-prefixed keys are bookkeeping (_rowId,
+// _sourceKey, _complete, ...). Parity: isConditionEntryMeaningful in
+// @webforms/form-model and FormLogicKit.isMeaningfulEntry.
+const conditionEntryMeaningful = (value) => {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return Object.keys(value).some((key) => !key.startsWith('_') && conditionCellAnswered(value[key]))
+  }
+  return conditionCellAnswered(value)
+}
+
+// A table's rows (array or { rows: [...] }) or a multi-select's items.
+const conditionCollectionEntries = (value) => {
+  if (Array.isArray(value)) return value
+  if (value && typeof value === 'object' && Array.isArray(value.rows)) return value.rows
+  return undefined
+}
+
+// "is empty" for any answer; parity with isConditionValueEmpty in
+// @webforms/form-model. A table with no answered row has "no items".
+const isConditionAnswerEmpty = (value) => {
+  const entries = conditionCollectionEntries(value)
+  if (entries) return !entries.some(conditionEntryMeaningful)
+  const normalized = normalizeComparableValue(value)
+  return normalized === null || normalized === undefined || String(normalized).trim() === ''
+}
+
 const checkComparisonMatch = (fieldValue, operator, expectedValue) => {
   const normalized = normalizeComparableValue(fieldValue)
-  if (operator === 'filled') {
-    if (Array.isArray(normalized)) return normalized.length > 0
-    if (normalized && typeof normalized === 'object') return Object.keys(normalized).length > 0
-    return normalized !== null && normalized !== undefined && String(normalized).trim() !== ''
-  }
+  if (operator === 'filled') return !isConditionAnswerEmpty(fieldValue)
   if (operator === 'empty') {
     return !checkComparisonMatch(fieldValue, 'filled', expectedValue)
   }
@@ -1097,11 +1132,7 @@ const validateFieldBehaviors = (configs, values, locale = '', uiTranslations = {
 
 // Choice extension owns per-option disabling, which the faithful MOIS controls
 // do not implement uniformly. Values retain their original codes when translated.
-const checkMeaningfulAnswer = value => {
-  if (Array.isArray(value)) return value.some(checkMeaningfulAnswer)
-  const normalized = normalizeComparableValue(value)
-  return normalized !== undefined && normalized !== null && String(normalized).trim() !== ''
-}
+const checkMeaningfulAnswer = value => !isConditionAnswerEmpty(value)
 const ConditionalChoiceOptions = ({ fieldId, label, optionList, selectionType, required, readOnly, disabled, codeSystem, placeholder }) => {
   const [fd, setFd] = useActiveData()
   const current = readControllerValue(fd?.field?.data, fieldId)

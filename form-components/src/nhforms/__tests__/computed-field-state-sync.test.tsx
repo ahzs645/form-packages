@@ -12,7 +12,12 @@ import { describe, expect, it } from "vitest";
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const NHFORMS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const source = fs.readFileSync(path.join(NHFORMS_DIR, "ComputedField", "index.jsx"), "utf8");
+// ComputedField delegates its formula engine to the FormulaKit helper module,
+// which the runtime loads into the same scope.
+const source = [
+  fs.readFileSync(path.join(NHFORMS_DIR, "FormulaKit", "index.jsx"), "utf8"),
+  fs.readFileSync(path.join(NHFORMS_DIR, "ComputedField", "index.jsx"), "utf8"),
+].join("\n");
 
 type ActiveTuple = [any, (updater: any) => void];
 const ActiveDataContext = React.createContext<ActiveTuple>([{}, () => undefined]);
@@ -37,12 +42,13 @@ function loadComputedField(): React.ComponentType<any> {
   const factory = new Function(
     "React",
     "TextArea",
+    "Numeric",
     "useActiveData",
     "ObservationValueDisplay",
     "useTheme",
     `${compiled};\nreturn { ComputedField };`
   );
-  return factory(React, TextArea, useActiveData, ObservationValueDisplay, useTheme).ComputedField;
+  return factory(React, TextArea, TextArea, useActiveData, ObservationValueDisplay, useTheme).ComputedField;
 }
 
 function renderComputedField(

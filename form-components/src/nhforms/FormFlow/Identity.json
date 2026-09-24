@@ -1,0 +1,28 @@
+{
+  "name": "FormFlow",
+  "title": "Form Flow",
+  "description": "Conditional page flow: skip and branch pages on answers, validate before Next, review and confirmation pages. Renders its own page containers keyed on uiState.breadcrumbSelectedKey.",
+  "version": {
+    "major": 1,
+    "minor": 0,
+    "patch": 0
+  },
+  "type": "component",
+  "owner": "Northern Health",
+  "author": "Claude",
+  "publisher": "Northern Health",
+  "globalIdentifier": "",
+  "requiredFormViewerVersion": {
+    "major": 0,
+    "minor": 1,
+    "patch": 0
+  },
+  "requiredMoisVersion": {
+    "major": 2,
+    "minor": 28,
+    "patch": 10
+  },
+  "components": [
+    "FormLogicKit"
+  ]
+}

@@ -1512,7 +1512,7 @@ var WordFormRuntime = (() => {
             }
             return e2.insert = e2.strstart < x - 1 ? e2.strstart : x - 1, t2 === f ? (N(e2, true), 0 === e2.strm.avail_out ? O : B) : e2.last_lit && (N(e2, false), 0 === e2.strm.avail_out) ? A : I;
           }
-          function W3(e2, t2) {
+          function W4(e2, t2) {
             for (var r2, n2, i2; ; ) {
               if (e2.lookahead < z) {
                 if (j(e2), e2.lookahead < z && t2 === l) return A;
@@ -1564,7 +1564,7 @@ var WordFormRuntime = (() => {
               if (e2.strstart - e2.block_start >= e2.w_size - z && (N(e2, false), 0 === e2.strm.avail_out)) return A;
             }
             return e2.insert = 0, t2 === f ? (N(e2, true), 0 === e2.strm.avail_out ? O : B) : (e2.strstart > e2.block_start && (N(e2, false), e2.strm.avail_out), A);
-          }), new M(4, 4, 8, 4, Z), new M(4, 5, 16, 8, Z), new M(4, 6, 32, 32, Z), new M(4, 4, 16, 16, W3), new M(8, 16, 32, 32, W3), new M(8, 16, 128, 128, W3), new M(8, 32, 128, 256, W3), new M(32, 128, 258, 1024, W3), new M(32, 258, 258, 4096, W3)], r.deflateInit = function(e2, t2) {
+          }), new M(4, 4, 8, 4, Z), new M(4, 5, 16, 8, Z), new M(4, 6, 32, 32, Z), new M(4, 4, 16, 16, W4), new M(8, 16, 32, 32, W4), new M(8, 16, 128, 128, W4), new M(8, 32, 128, 256, W4), new M(32, 128, 258, 1024, W4), new M(32, 258, 258, 4096, W4)], r.deflateInit = function(e2, t2) {
             return Y(e2, t2, v, 15, 8, 0);
           }, r.deflateInit2 = Y, r.deflateReset = K, r.deflateResetKeep = G, r.deflateSetHeader = function(e2, t2) {
             return e2 && e2.state ? 2 !== e2.state.wrap ? _ : (e2.state.gzhead = t2, m) : _;
@@ -2218,7 +2218,7 @@ var WordFormRuntime = (() => {
               0 !== o2 && (e2[2 * i2] = j(s2[o2]++, o2));
             }
           }
-          function W3(e2) {
+          function W4(e2) {
             var t2;
             for (t2 = 0; t2 < l; t2++) e2.dyn_ltree[2 * t2] = 0;
             for (t2 = 0; t2 < f; t2++) e2.dyn_dtree[2 * t2] = 0;
@@ -2292,7 +2292,7 @@ var WordFormRuntime = (() => {
               for (; e3 <= 287; ) z[2 * e3 + 1] = 8, e3++, s2[8]++;
               for (Z(z, l + 1, s2), e3 = 0; e3 < f; e3++) C[2 * e3 + 1] = 5, C[2 * e3] = j(e3, 5);
               O = new D(z, w, u + 1, l, g), B = new D(C, k, 0, f, g), R = new D(new Array(0), x, 0, c, p);
-            })(), q = true), e2.l_desc = new F(e2.dyn_ltree, O), e2.d_desc = new F(e2.dyn_dtree, B), e2.bl_desc = new F(e2.bl_tree, R), e2.bi_buf = 0, e2.bi_valid = 0, W3(e2);
+            })(), q = true), e2.l_desc = new F(e2.dyn_ltree, O), e2.d_desc = new F(e2.dyn_dtree, B), e2.bl_desc = new F(e2.bl_tree, R), e2.bi_buf = 0, e2.bi_valid = 0, W4(e2);
           }, r._tr_stored_block = J, r._tr_flush_block = function(e2, t2, r2, n2) {
             var i2, s2, a2 = 0;
             0 < e2.level ? (2 === e2.strm.data_type && (e2.strm.data_type = (function(e3) {
@@ -2309,7 +2309,7 @@ var WordFormRuntime = (() => {
               var i3;
               for (P(e3, t3 - 257, 5), P(e3, r3 - 1, 5), P(e3, n3 - 4, 4), i3 = 0; i3 < n3; i3++) P(e3, e3.bl_tree[2 * S[i3] + 1], 3);
               V(e3, e3.dyn_ltree, t3 - 1), V(e3, e3.dyn_dtree, r3 - 1);
-            })(e2, e2.l_desc.max_code + 1, e2.d_desc.max_code + 1, a2 + 1), K(e2, e2.dyn_ltree, e2.dyn_dtree)), W3(e2), n2 && M(e2);
+            })(e2, e2.l_desc.max_code + 1, e2.d_desc.max_code + 1, a2 + 1), K(e2, e2.dyn_ltree, e2.dyn_dtree)), W4(e2), n2 && M(e2);
           }, r._tr_tally = function(e2, t2, r2) {
             return e2.pending_buf[e2.d_buf + 2 * e2.last_lit] = t2 >>> 8 & 255, e2.pending_buf[e2.d_buf + 2 * e2.last_lit + 1] = 255 & t2, e2.pending_buf[e2.l_buf + e2.last_lit] = 255 & r2, e2.last_lit++, 0 === t2 ? e2.dyn_ltree[2 * r2]++ : (e2.matches++, t2--, e2.dyn_ltree[2 * (A[r2] + u + 1)]++, e2.dyn_dtree[2 * N(t2)]++), e2.last_lit === e2.lit_bufsize - 1;
           }, r._tr_align = function(e2) {
@@ -2408,10 +2408,12 @@ var WordFormRuntime = (() => {
   var word_form_exports = {};
   __export(word_form_exports, {
     WORD_FORM_MIME: () => WORD_FORM_MIME,
+    applyDocumentFillPreparers: () => applyDocumentFillPreparers,
     fillWordForm: () => fillWordForm,
     fillWordFormDetailed: () => fillWordFormDetailed,
     formatDocumentDate: () => formatDocumentDate,
     inspectWordForm: () => inspectWordForm,
+    planTableOverflow: () => planTableOverflow,
     prepareWordFormPreview: () => prepareWordFormPreview
   });
   var import_jszip = __toESM(require_jszip_min());
@@ -2493,7 +2495,7 @@ var WordFormRuntime = (() => {
       for (const f of nested) evaluate(f);
       return number(contents.filter((n) => n.localName === "t" && n.namespaceURI === W).map((n) => n.textContent).join(""));
     };
-    const cellValue = (cell) => containedValue(Array.from(cell.getElementsByTagName("*")));
+    const cellValue = (cell2) => containedValue(Array.from(cell2.getElementsByTagName("*")));
     const resolve = (name, table) => {
       const mark = bookmarks.get(name.toLowerCase());
       if (mark) return containedValue(mark);
@@ -2501,8 +2503,8 @@ var WordFormRuntime = (() => {
       if (ref && table) {
         const col = [...ref[1].toUpperCase()].reduce((n, c) => n * 26 + c.charCodeAt(0) - 64, 0) - 1;
         const row = all(table, "tr").filter((n) => ancestor(n.parentElement, "tbl") === table)[Number(ref[2]) - 1];
-        const cell = row && Array.from(row.children).filter((n) => n.localName === "tc")[col];
-        if (cell) return cellValue(cell);
+        const cell2 = row && Array.from(row.children).filter((n) => n.localName === "tc")[col];
+        if (cell2) return cellValue(cell2);
       }
       throw new Error(`Unknown reference ${name}`);
     };
@@ -2531,13 +2533,13 @@ var WordFormRuntime = (() => {
           if (!["SUM", "PRODUCT", "AVERAGE", "MIN", "MAX", "ABS", "ROUND"].includes(token.toUpperCase())) throw new Error(`Unsupported function ${token}`);
           const args = [];
           if (/^(ABOVE|BELOW|LEFT|RIGHT)$/i.test(tokens[at] || "")) {
-            const direction = tokens[at++].toUpperCase(), cell = ancestor(f.node, "tc");
+            const direction = tokens[at++].toUpperCase(), cell2 = ancestor(f.node, "tc");
             const grid = table && tables.get(table);
-            if (!grid || !cell) throw new Error("Positional formula outside table");
-            const r = grid.findIndex((row) => row.includes(cell)), c = grid[r].lastIndexOf(cell);
+            if (!grid || !cell2) throw new Error("Positional formula outside table");
+            const r = grid.findIndex((row) => row.includes(cell2)), c = grid[r].lastIndexOf(cell2);
             const cells = direction === "ABOVE" ? grid.slice(0, r).map((row) => row[c]).reverse() : direction === "BELOW" ? grid.slice(r + 1).map((row) => row[c]) : direction === "LEFT" ? grid[r].slice(0, c).reverse() : grid[r].slice(c + 1);
             for (const candidate of [...new Set(cells)]) {
-              if (!candidate || candidate === cell) continue;
+              if (!candidate || candidate === cell2) continue;
               const content = all(candidate, "t").map((n) => n.textContent).join("").trim();
               if (!content && !formulas.some((other) => ancestor(other.node, "tc") === candidate)) break;
               try {
@@ -2612,10 +2614,10 @@ var WordFormRuntime = (() => {
         f.result[0].textContent = output;
         for (const n of f.result.slice(1)) n.textContent = "";
       } else {
-        const run = doc.createElementNS(W, "w:r"), t = doc.createElementNS(W, "w:t");
+        const run2 = doc.createElementNS(W, "w:r"), t = doc.createElementNS(W, "w:t");
         t.textContent = output;
-        run.append(t);
-        if (f.node.localName === "fldSimple") f.node.append(run);
+        run2.append(t);
+        if (f.node.localName === "fldSimple") f.node.append(run2);
         else {
           const endRun = ancestor(f.end, "r");
           if (!endRun || f.end.parentNode !== endRun || !f.separated) throw new Error("Formula has no result boundary");
@@ -2636,7 +2638,91 @@ var WordFormRuntime = (() => {
     return formulas.filter((f) => !isLocked(f)).length;
   }
 
+  // lib/document-fill/word-continuation.ts
+  var W2 = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+  var XML_NS = "http://www.w3.org/XML/1998/namespace";
+  var TEXT_WIDTH_TWIPS = 9360;
+  var ROW_COLUMN_TWIPS = 720;
+  function plural(count, word) {
+    return `${count} ${word}${count === 1 ? "" : "s"}`;
+  }
+  function el(doc, name, attrs = {}, children = []) {
+    const node = doc.createElementNS(W2, `w:${name}`);
+    for (const [key, value] of Object.entries(attrs)) node.setAttributeNS(W2, `w:${key}`, value);
+    children.forEach((child) => node.appendChild(child));
+    return node;
+  }
+  function run(doc, text2, props = []) {
+    const node = el(doc, "r", {}, props.length ? [el(doc, "rPr", {}, props)] : []);
+    String(text2 ?? "").replace(/\r\n?/g, "\n").split("\n").forEach((line, index) => {
+      if (index) node.appendChild(el(doc, "br"));
+      const t = el(doc, "t");
+      t.setAttributeNS(XML_NS, "xml:space", "preserve");
+      t.textContent = line;
+      node.appendChild(t);
+    });
+    return node;
+  }
+  function paragraph(doc, runs, props = []) {
+    return el(doc, "p", {}, [...props.length ? [el(doc, "pPr", {}, props)] : [], ...runs]);
+  }
+  function cell(doc, text2, widthTwips, header) {
+    const tcProps = [el(doc, "tcW", { w: String(widthTwips), type: "dxa" })];
+    if (header) tcProps.push(el(doc, "shd", { val: "clear", color: "auto", fill: "E6E6E6" }));
+    return el(doc, "tc", {}, [
+      el(doc, "tcPr", {}, tcProps),
+      paragraph(doc, text2 ? [run(doc, text2, header ? [el(doc, "b")] : [])] : [])
+    ]);
+  }
+  function borders(doc) {
+    return el(doc, "tblBorders", {}, ["top", "left", "bottom", "right", "insideH", "insideV"].map((side) => el(doc, side, { val: "single", sz: "4", space: "0", color: "808080" })));
+  }
+  function continuationTable(doc, plan) {
+    const dataWidth = Math.max(720, Math.floor((TEXT_WIDTH_TWIPS - ROW_COLUMN_TWIPS) / Math.max(1, plan.columns.length)));
+    const widths = [ROW_COLUMN_TWIPS, ...plan.columns.map(() => dataWidth)];
+    const header = el(doc, "tr", {}, [
+      el(doc, "trPr", {}, [el(doc, "tblHeader")]),
+      ...["Row", ...plan.columns.map((column) => column.label || column.id)].map((label, index) => cell(doc, label, widths[index], true))
+    ]);
+    const rows = plan.rows.map((row) => el(doc, "tr", {}, [
+      el(doc, "trPr", {}, [el(doc, "cantSplit")]),
+      ...[String(row.rowNumber), ...row.cells].map((text2, index) => cell(doc, text2, widths[index], false))
+    ]));
+    return el(doc, "tbl", {}, [
+      el(doc, "tblPr", {}, [el(doc, "tblW", { w: "5000", type: "pct" }), borders(doc), el(doc, "tblLayout", { type: "autofit" })]),
+      el(doc, "tblGrid", {}, widths.map((width) => el(doc, "gridCol", { w: String(width) }))),
+      header,
+      ...rows
+    ]);
+  }
+  function appendWordContinuation(doc, plans, warnings) {
+    const list = Array.isArray(plans) ? plans : [];
+    list.forEach((plan) => {
+      if (plan.mode === "drop" && plan.rows.length) {
+        warnings?.push(`${plural(plan.rows.length, "row")} of "${plan.title}" did not fit on the form and ${plan.rows.length === 1 ? "was" : "were"} not printed.`);
+      }
+    });
+    const printable = list.filter((plan) => plan.mode === "addendum" && plan.rows.length > 0 && plan.columns.length > 0);
+    const body = doc.getElementsByTagNameNS(W2, "body")[0];
+    if (!printable.length || !body) return { rowsPrinted: 0, tablesPrinted: 0 };
+    const children = Array.from(body.childNodes).filter((node) => node.nodeType === 1);
+    const last = children[children.length - 1];
+    const sectPr = last && last.namespaceURI === W2 && last.localName === "sectPr" ? last : null;
+    const insert = (node) => body.insertBefore(node, sectPr);
+    let rowsPrinted = 0;
+    for (const plan of printable) {
+      insert(paragraph(doc, [run(doc, plan.title, [el(doc, "b"), el(doc, "sz", { val: "26" })])], [el(doc, "keepNext"), el(doc, "pageBreakBefore")]));
+      insert(paragraph(doc, [run(doc, `Rows that did not fit in the table on the form (${plural(plan.capacity, "row")} printed there).`, [el(doc, "i")])], [el(doc, "keepNext")]));
+      insert(continuationTable(doc, plan));
+      insert(paragraph(doc, []));
+      rowsPrinted += plan.rows.length;
+      warnings?.push(`${plural(plan.rows.length, "row")} of "${plan.title}" did not fit on the form (${plan.capacity} printed) and ${plan.rows.length === 1 ? "was" : "were"} added in a continuation section at the end of the document.`);
+    }
+    return { rowsPrinted, tablesPrinted: printable.length };
+  }
+
   // lib/document-date-format.ts
+  var MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
   function formatDocumentDate(value, format) {
     const raw = typeof value === "object" && value !== null && "date" in value ? value.date : value;
     if (raw == null || raw === "") return "";
@@ -2646,43 +2732,456 @@ var WordFormRuntime = (() => {
     const [, year, month, day] = match;
     const days = new Date(Date.UTC(Number(year), Number(month), 0)).getUTCDate();
     if (+month < 1 || +month > 12 || +day < 1 || +day > days) throw new Error("Enter a valid calendar date.");
-    const mon = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][+month - 1];
+    const monthName = MONTHS[+month - 1];
+    const mon = monthName.slice(0, 3);
     if (format === "dd/MMM/yyyy") return `${day}/${mon}/${year}`;
     if (format === "ddMMMyyyy") return `${day}${mon}${year}`;
+    if (format === "yyyy.MM.dd") return `${year}.${month}.${day}`;
+    if (format === "dd/MM/yyyy") return `${day}/${month}/${year}`;
+    if (format === "MM/dd/yyyy") return `${month}/${day}/${year}`;
+    if (format === "MMMM d, yyyy") return `${monthName} ${+day}, ${year}`;
     return `${year}-${month}-${day}`;
   }
 
+  // packages/form-model/src/conditions.ts
+  function normalizeConditionComparable(candidate) {
+    if (candidate && typeof candidate === "object") {
+      const record = candidate;
+      return record.code ?? record.display ?? record.value ?? record.text ?? "";
+    }
+    return candidate;
+  }
+  function normalizeConditionChoiceValues(candidate) {
+    if (Array.isArray(candidate)) {
+      return candidate.flatMap(normalizeConditionChoiceValues);
+    }
+    if (candidate && typeof candidate === "object") {
+      const record = candidate;
+      return [record.code, record.display, record.value, record.text].filter((entry) => entry !== void 0 && entry !== null).map((entry) => String(entry));
+    }
+    if (candidate === void 0 || candidate === null) return [];
+    return [String(candidate)];
+  }
+  function normalizeConditionBoolean(value, _metadata) {
+    if (value && typeof value === "object") {
+      const record = value;
+      return normalizeConditionBoolean(
+        record.code ?? record.display ?? record.value ?? record.text ?? record.label
+      );
+    }
+    if (value === true || value === "yes" || value === "Y" || value === 1) return "yes";
+    if (value === false || value === "no" || value === "N" || value === 0) return "no";
+    return void 0;
+  }
+  function isConditionCellAnswered(value) {
+    if (value === null || value === void 0) return false;
+    if (typeof value === "string") return value.trim() !== "";
+    if (typeof value === "boolean") return value;
+    if (typeof value === "number") return Number.isFinite(value);
+    if (Array.isArray(value)) return value.some(isConditionCellAnswered);
+    if (typeof value === "object") return Object.keys(value).length > 0;
+    return String(value).trim() !== "";
+  }
+  function isConditionEntryMeaningful(value) {
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      const record = value;
+      return Object.keys(record).some((key) => !key.startsWith("_") && isConditionCellAnswered(record[key]));
+    }
+    return isConditionCellAnswered(value);
+  }
+  function conditionCollectionEntries(value) {
+    if (Array.isArray(value)) return value;
+    if (value && typeof value === "object" && Array.isArray(value.rows)) {
+      return value.rows;
+    }
+    return void 0;
+  }
+  function isConditionValueEmpty(value) {
+    const entries = conditionCollectionEntries(value);
+    if (entries) return !entries.some(isConditionEntryMeaningful);
+    const normalized = normalizeConditionComparable(value);
+    return normalized === null || normalized === void 0 || String(normalized).trim() === "";
+  }
+  function toOrderedPair(leftValue, rightValue) {
+    const left = Number(leftValue);
+    const right = Number(rightValue);
+    if (Number.isFinite(left) && Number.isFinite(right)) return [left, right];
+    const leftDate = Date.parse(String(leftValue));
+    const rightDate = Date.parse(String(rightValue));
+    if (Number.isFinite(leftDate) && Number.isFinite(rightDate)) return [leftDate, rightDate];
+    return null;
+  }
+  function evaluateNumericCondition(type, leftValue, rightValue) {
+    const normalized = normalizeConditionComparable(leftValue);
+    if (normalized === null || normalized === void 0 || normalized === "") return false;
+    if (isConditionValueEmpty(rightValue)) return false;
+    const pair = toOrderedPair(normalized, rightValue);
+    if (!pair) return false;
+    const [left, right] = pair;
+    if (type === "number-gt") return left > right;
+    if (type === "number-gte") return left >= right;
+    if (type === "number-lt") return left < right;
+    if (type === "number-lte") return left <= right;
+    return left === right;
+  }
+  function evaluateFieldCondition(condition, controllerValue, metadata) {
+    const { type, optionValues, value } = condition;
+    switch (type) {
+      case "boolean-yes":
+        return normalizeConditionBoolean(controllerValue, metadata) === "yes";
+      case "boolean-no":
+        return normalizeConditionBoolean(controllerValue, metadata) === "no";
+      case "choice-selected": {
+        if (!optionValues?.length) return false;
+        const values = normalizeConditionChoiceValues(controllerValue);
+        return optionValues.some((option) => values.includes(option));
+      }
+      case "choice-not-selected": {
+        if (!optionValues?.length) return true;
+        const values = normalizeConditionChoiceValues(controllerValue);
+        return !optionValues.some((option) => values.includes(option));
+      }
+      case "number-gt":
+      case "number-gte":
+      case "number-lt":
+      case "number-lte":
+      case "number-equals":
+        return evaluateNumericCondition(type, controllerValue, value);
+      case "equals": {
+        const normalized = normalizeConditionComparable(controllerValue);
+        if (normalized === null || normalized === void 0 || normalized === "") return false;
+        return String(normalized) === String(value ?? "");
+      }
+      case "not-equals": {
+        const normalized = normalizeConditionComparable(controllerValue);
+        if (normalized === null || normalized === void 0 || normalized === "") return false;
+        return String(normalized) !== String(value ?? "");
+      }
+      case "filled":
+        return !isConditionValueEmpty(controllerValue);
+      case "empty":
+        return isConditionValueEmpty(controllerValue);
+    }
+  }
+  function asConditionValue(value) {
+    const normalized = normalizeConditionComparable(value);
+    if (normalized === null || normalized === void 0) return null;
+    if (typeof normalized === "number" || typeof normalized === "boolean") return normalized;
+    return String(normalized);
+  }
+  function evaluateConditionGroup(group, metadata, values) {
+    if (!group.conditions.length) return false;
+    const evaluate = (entry) => {
+      if ("conditions" in entry) return evaluateConditionGroup(entry, metadata, values);
+      const compareFieldId = entry.condition.compareFieldId || entry.condition.valueFieldId;
+      if (compareFieldId && isConditionValueEmpty(values[compareFieldId])) return false;
+      return evaluateFieldCondition(
+        compareFieldId ? { ...entry.condition, value: asConditionValue(values[compareFieldId]) } : entry.condition,
+        values[entry.controllerFieldId],
+        metadata(entry.controllerFieldId)
+      );
+    };
+    return group.match === "any" ? group.conditions.some(evaluate) : group.conditions.every(evaluate);
+  }
+
+  // lib/document-fill/value-text.ts
+  var TEXT_KEYS = ["display", "label", "text", "name", "title", "value", "code"];
+  function documentValueText(value) {
+    if (value === null || value === void 0) return "";
+    if (typeof value === "string") return value;
+    if (typeof value === "number") return Number.isFinite(value) ? String(value) : "";
+    if (typeof value === "boolean") return value ? "Yes" : "No";
+    if (value instanceof Date) return Number.isNaN(value.getTime()) ? "" : value.toISOString().slice(0, 10);
+    if (Array.isArray(value)) {
+      return value.map(documentValueText).filter((part) => part.trim() !== "").join(", ");
+    }
+    if (typeof value === "object") {
+      const record = value;
+      if (typeof record.date === "string") {
+        return typeof record.time === "string" && record.time ? `${record.date} ${record.time}` : record.date;
+      }
+      for (const key of TEXT_KEYS) {
+        const candidate = record[key];
+        if (typeof candidate === "string" && candidate.trim() !== "") return candidate;
+        if (typeof candidate === "number" && Number.isFinite(candidate)) return String(candidate);
+      }
+    }
+    return "";
+  }
+  function readValuePath(root, path) {
+    if (!root || typeof root !== "object" || !path) return void 0;
+    const record = root;
+    if (Object.prototype.hasOwnProperty.call(record, path)) return record[path];
+    let current = root;
+    for (const segment of path.split(".")) {
+      if (!current || typeof current !== "object") return void 0;
+      current = current[segment];
+    }
+    return current;
+  }
+
+  // lib/document-fill/preparers.ts
+  var PDF_TARGET_PREFIX = "pdf:";
+  var MONTHS2 = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  function pad(value, width = 2) {
+    return String(value).padStart(width, "0");
+  }
+  function formatDateWithPattern(value, pattern) {
+    const raw = value && typeof value === "object" && "date" in value ? value.date : value;
+    if (raw === null || raw === void 0 || raw === "") return "";
+    const match = /^(\d{4})[-./](\d{1,2})[-./](\d{1,2})(?:[T ](\d{1,2}):(\d{2}))?/.exec(String(raw).trim());
+    if (!match) return null;
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const hour = match[4] === void 0 ? 0 : Number(match[4]);
+    const minute = match[5] === void 0 ? 0 : Number(match[5]);
+    const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    if (month < 1 || month > 12 || day < 1 || day > daysInMonth) return null;
+    const monthName = MONTHS2[month - 1];
+    return pattern.replace(/'([^']*)'|yyyy|yy|MMMM|MMM|MM|M|dd|d|HH|H|mm/g, (token, literal) => {
+      if (literal !== void 0) return literal;
+      switch (token) {
+        case "yyyy":
+          return pad(year, 4);
+        case "yy":
+          return pad(year % 100);
+        case "MMMM":
+          return monthName;
+        case "MMM":
+          return monthName.slice(0, 3);
+        case "MM":
+          return pad(month);
+        case "M":
+          return String(month);
+        case "dd":
+          return pad(day);
+        case "d":
+          return String(day);
+        case "HH":
+          return pad(hour);
+        case "H":
+          return String(hour);
+        case "mm":
+          return pad(minute);
+        default:
+          return token;
+      }
+    });
+  }
+  function isPdfTarget(id) {
+    return id.startsWith(PDF_TARGET_PREFIX);
+  }
+  function renderRowTemplate(template, row, rowNumber) {
+    let hasValue = false;
+    const text2 = template.replace(/\{([^{}]+)\}/g, (_match, key) => {
+      const name = key.trim();
+      if (name === "row") return String(rowNumber);
+      const cell2 = documentValueText(readValuePath(row, name));
+      if (cell2.trim() !== "") hasValue = true;
+      return cell2;
+    });
+    return { text: text2, hasValue };
+  }
+  function mapValue(raw, map, fallback) {
+    const lookup = (value) => {
+      const text2 = documentValueText(value);
+      if (Object.prototype.hasOwnProperty.call(map, text2)) return map[text2];
+      const token = text2.trim().toLowerCase();
+      const key = Object.keys(map).find((candidate) => candidate.trim().toLowerCase() === token);
+      return key === void 0 ? void 0 : map[key];
+    };
+    if (Array.isArray(raw)) {
+      const parts = raw.map((item) => lookup(item) ?? fallback ?? documentValueText(item)).filter((part) => part !== "");
+      return parts.join(", ");
+    }
+    const mapped = lookup(raw);
+    if (mapped !== void 0) return mapped;
+    if (fallback !== void 0) return fallback;
+    return raw;
+  }
+  function applyDocumentFillPreparers(input, steps) {
+    const values = { ...input ?? {} };
+    const pdfValues = {};
+    const touched = /* @__PURE__ */ new Set();
+    const warnings = [];
+    if (!Array.isArray(steps) || steps.length === 0) return { values, pdfValues, touched: [], warnings };
+    const list = steps;
+    const read = (id) => {
+      if (isPdfTarget(id)) return pdfValues[id.slice(PDF_TARGET_PREFIX.length)];
+      return Object.prototype.hasOwnProperty.call(values, id) ? values[id] : readValuePath(values, id);
+    };
+    const write = (id, value) => {
+      if (!id) return;
+      if (isPdfTarget(id)) {
+        const name = id.slice(PDF_TARGET_PREFIX.length);
+        if (name) pdfValues[name] = value;
+        return;
+      }
+      values[id] = value;
+      touched.add(id);
+    };
+    const conditionMet = (group) => {
+      if (!group || !Array.isArray(group.conditions) || group.conditions.length === 0) return true;
+      try {
+        return evaluateConditionGroup(group, () => void 0, values);
+      } catch {
+        return false;
+      }
+    };
+    list.forEach((step, index) => {
+      if (!step || typeof step !== "object" || step.enabled === false) return;
+      const name = step.id || `step ${index + 1}`;
+      if (!conditionMet(step.when)) return;
+      switch (step.kind) {
+        case "concat": {
+          const parts = (step.sourceIds ?? []).map((id) => documentValueText(read(id)));
+          const kept = step.skipEmpty === false ? parts : parts.filter((part) => part.trim() !== "");
+          write(step.targetId, kept.join(step.separator ?? " "));
+          return;
+        }
+        case "split": {
+          const targets = step.targetIds ?? [];
+          if (!targets.length) return;
+          const text2 = documentValueText(read(step.sourceId));
+          const parts = step.separator ? text2.split(step.separator) : Array.from(text2);
+          targets.forEach((target, targetIndex) => {
+            const isLast = targetIndex === targets.length - 1;
+            const value = isLast ? parts.slice(targetIndex).join(step.separator ?? "") : parts[targetIndex] ?? "";
+            write(target, value.trim());
+          });
+          return;
+        }
+        case "map-value": {
+          write(step.targetId || step.sourceId, mapValue(read(step.sourceId), step.map ?? {}, step.fallback));
+          return;
+        }
+        case "format-date": {
+          const raw = read(step.sourceId);
+          const formatted = formatDateWithPattern(raw, step.format || "yyyy-MM-dd");
+          if (formatted === null) {
+            warnings.push(`Preparer "${name}": "${step.sourceId}" is not a date (${JSON.stringify(documentValueText(raw))}); it was printed unchanged.`);
+            if (step.targetId && step.targetId !== step.sourceId) write(step.targetId, raw);
+            return;
+          }
+          write(step.targetId || step.sourceId, formatted);
+          return;
+        }
+        case "table-to-text": {
+          const rows = read(step.tableId);
+          if (rows !== void 0 && rows !== null && !Array.isArray(rows)) {
+            warnings.push(`Preparer "${name}": "${step.tableId}" is not a table.`);
+            return;
+          }
+          const start = Math.max(1, Math.floor(Number(step.startRow) || 1));
+          const lines = [];
+          (Array.isArray(rows) ? rows : []).forEach((row, rowIndex) => {
+            if (rowIndex + 1 < start || !row || typeof row !== "object") return;
+            const rendered = renderRowTemplate(step.template ?? "", row, rowIndex + 1);
+            if (rendered.hasValue) lines.push(rendered.text.trim());
+          });
+          write(step.targetId, lines.join(step.separator ?? "\n"));
+          return;
+        }
+        case "copy": {
+          write(step.targetId, read(step.sourceId));
+          return;
+        }
+        default:
+          warnings.push(`Preparer "${name}": unknown kind ${JSON.stringify(step.kind)}; skipped.`);
+      }
+    });
+    return { values, pdfValues, touched: Array.from(touched), warnings };
+  }
+
+  // lib/document-fill/table-overflow.ts
+  function toNameSet(names) {
+    if (!names) return null;
+    return names instanceof Set ? names : new Set(names);
+  }
+  function printedRows(map, names) {
+    const printed = /* @__PURE__ */ new Map();
+    Object.entries(map.sourceFieldIdsByRow ?? {}).forEach(([rowKey, row]) => {
+      const rowIndex = Number(rowKey);
+      if (!Number.isInteger(rowIndex) || rowIndex < 0) return;
+      const name = Object.values(row ?? {}).find((candidate) => typeof candidate === "string" && candidate && (!names || names.has(candidate)));
+      if (name) printed.set(rowIndex, name);
+    });
+    if (!printed.has(0)) {
+      const sample = Object.values(map.sourceFieldIds ?? {}).find((candidate) => typeof candidate === "string" && candidate && (!names || names.has(candidate)));
+      if (sample) printed.set(0, sample);
+    }
+    return printed;
+  }
+  function planTableOverflow(formData, maps, pdfFieldNames) {
+    if (!Array.isArray(maps)) return [];
+    const list = maps;
+    const names = toNameSet(pdfFieldNames);
+    const plans = [];
+    const seen = /* @__PURE__ */ new Set();
+    list.forEach((map) => {
+      const overflow = map?.overflow;
+      if (!overflow || seen.has(map.tableId)) return;
+      const rows = formData?.[map.tableId];
+      if (!Array.isArray(rows) || rows.length === 0) return;
+      const pathById = new Map((map.columns ?? []).map((column) => [column.id, column.dataPath || column.id]));
+      const columns = overflow.columns?.length ? overflow.columns : (map.columns ?? []).map((column) => ({ id: column.id, label: column.id }));
+      const printed = printedRows(map, names);
+      const capacity = printed.size;
+      const planRows = [];
+      rows.forEach((row, rowIndex) => {
+        if (printed.has(rowIndex) || !row || typeof row !== "object") return;
+        const cells = columns.map((column) => documentValueText(readValuePath(row, pathById.get(column.id) ?? column.id)).trim());
+        if (cells.every((cell2) => cell2 === "")) return;
+        planRows.push({ rowNumber: rowIndex + 1, cells });
+      });
+      if (!planRows.length) return;
+      seen.add(map.tableId);
+      const lastPrinted = Array.from(printed.keys()).sort((a, b) => b - a)[0];
+      plans.push({
+        tableId: map.tableId,
+        title: overflow.title?.trim() || `${map.tableId} (continued)`,
+        mode: overflow.mode === "addendum" ? "addendum" : "drop",
+        capacity,
+        columns: columns.map((column) => ({ id: column.id, label: column.label || column.id })),
+        rows: planRows,
+        ...lastPrinted !== void 0 ? { anchorFieldName: printed.get(lastPrinted) } : {}
+      });
+    });
+    return plans;
+  }
+
   // lib/word-form.ts
-  var W2 = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+  var W3 = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
   var W14 = "http://schemas.microsoft.com/office/word/2010/wordml";
   var WORD_FORM_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-  var descendants = (node, name, ns = W2) => Array.from(node.getElementsByTagNameNS(ns, name));
-  var first = (node, name, ns = W2) => descendants(node, name, ns)[0];
-  var val = (node, ns = W2) => node?.getAttributeNS(ns, "val") ?? "";
-  var textNodes = (node) => Array.from(node.getElementsByTagNameNS(W2, "*")).filter((n) => ["t", "br", "tab"].includes(n.localName));
+  var descendants = (node, name, ns = W3) => Array.from(node.getElementsByTagNameNS(ns, name));
+  var first = (node, name, ns = W3) => descendants(node, name, ns)[0];
+  var val = (node, ns = W3) => node?.getAttributeNS(ns, "val") ?? "";
+  var textNodes = (node) => Array.from(node.getElementsByTagNameNS(W3, "*")).filter((n) => ["t", "br", "tab"].includes(n.localName));
   var nodeText = (n) => n.localName === "br" ? "\n" : n.localName === "tab" ? "	" : n.textContent ?? "";
   var text = (node) => textNodes(node).map(nodeText).join("");
   function ancestor2(node, name) {
     let p = node;
     while (p) {
-      if (p.namespaceURI === W2 && p.localName === name) return p;
+      if (p.namespaceURI === W3 && p.localName === name) return p;
       p = p.parentElement;
     }
   }
   function context(node, paragraphs) {
     const p = ancestor2(node, "p");
-    const cell = ancestor2(node, "tc");
+    const cell2 = ancestor2(node, "tc");
     const own = (p ? text(p) : "").trim();
     if (own) return own.slice(0, 220);
-    if (cell && p) {
-      const local = descendants(cell, "p");
+    if (cell2 && p) {
+      const local = descendants(cell2, "p");
       const index = local.indexOf(p);
       for (let j = index - 1; j >= 0; j--) {
         const previous = text(local[j]).trim();
         if (previous) return previous.slice(0, 220);
       }
     }
-    const cellText = cell ? text(cell).trim() : "";
+    const cellText = cell2 ? text(cell2).trim() : "";
     if (cellText) return cellText.slice(0, 220);
     const i = p ? paragraphs.indexOf(p) : -1;
     for (let j = i - 1; j >= Math.max(0, i - 5); j--) {
@@ -2707,9 +3206,9 @@ var WordFormRuntime = (() => {
     const stack = [];
     let index = 0;
     for (const node of Array.from(doc.getElementsByTagName("*"))) {
-      if (node.namespaceURI !== W2) continue;
+      if (node.namespaceURI !== W3) continue;
       if (node.localName === "fldChar") {
-        const type = node.getAttributeNS(W2, "fldCharType");
+        const type = node.getAttributeNS(W3, "fldCharType");
         if (type === "begin") stack.push({ begin: node, result: [], separate: false });
         else if (type === "separate" && stack.length) stack[stack.length - 1].separate = true;
         else if (type === "end") {
@@ -2757,7 +3256,7 @@ var WordFormRuntime = (() => {
         context: context(sdt, paragraphs),
         kind: checkbox ? "checkbox" : dropdown ? "dropdown" : "text",
         value: checkbox ? ["1", "true", "on"].includes(val(first(checkbox, "checked", W14), W14)) : first(pr, "showingPlcHdr") ? "" : text(content),
-        options: dropdown ? descendants(dropdown, "listItem").map((n) => n.getAttributeNS(W2, "displayText") || n.getAttributeNS(W2, "value") || "") : []
+        options: dropdown ? descendants(dropdown, "listItem").map((n) => n.getAttributeNS(W3, "displayText") || n.getAttributeNS(W3, "value") || "") : []
       } });
     }
     const blanks = paragraphs.flatMap((p, i) => {
@@ -2790,38 +3289,38 @@ var WordFormRuntime = (() => {
     form.warnings = [...new Set(form.warnings)];
     return form;
   }
-  function element(doc, name, value, ns = W2) {
+  function element(doc, name, value, ns = W3) {
     const node = doc.createElementNS(ns, `${ns === W14 ? "w14" : "w"}:${name}`);
     if (value !== void 0) node.setAttributeNS(ns, `${ns === W14 ? "w14" : "w"}:val`, value);
     return node;
   }
-  function setProperty(parent, name, value, ns = W2) {
+  function setProperty(parent, name, value, ns = W3) {
     const node = first(parent, name, ns) ?? parent.appendChild(element(parent.ownerDocument, name, void 0, ns));
     node.setAttributeNS(ns, `${ns === W14 ? "w14" : "w"}:val`, value);
   }
   function writeText(target, value) {
     const doc = target.node.ownerDocument;
     const anchor = target.result[0];
-    let run = anchor?.parentElement;
+    let run2 = anchor?.parentElement;
     let before = anchor ?? null;
-    if (!run || run.localName !== "r") {
+    if (!run2 || run2.localName !== "r") {
       if (target.legacy) {
-        run = ancestor2(target.end, "r");
+        run2 = ancestor2(target.end, "r");
         before = target.end ?? null;
-        if (!run || before?.parentNode !== run) throw new Error("Cannot safely update this Word field.");
+        if (!run2 || before?.parentNode !== run2) throw new Error("Cannot safely update this Word field.");
       } else {
-        run = element(doc, "r");
+        run2 = element(doc, "r");
         const content = first(target.node, "sdtContent");
-        (first(content, "p") ?? content).appendChild(run);
+        (first(content, "p") ?? content).appendChild(run2);
         before = null;
       }
     }
     for (const [i, line] of value.split(/\r\n|\r|\n/).entries()) {
-      if (i) run.insertBefore(element(doc, "br"), before);
+      if (i) run2.insertBefore(element(doc, "br"), before);
       const t = element(doc, "t");
       t.setAttributeNS("http://www.w3.org/XML/1998/namespace", "xml:space", "preserve");
       t.textContent = line;
-      run.insertBefore(t, before);
+      run2.insertBefore(t, before);
     }
     for (const node of target.result) node.parentNode?.removeChild(node);
   }
@@ -2834,7 +3333,9 @@ var WordFormRuntime = (() => {
       recalculated: 0,
       pendingRecalculation: 0,
       lockedCalculations: 0,
-      calculationMode: options.recalculate === false ? "word" : "cached"
+      calculationMode: options.recalculate === false ? "word" : "cached",
+      continuedRows: 0,
+      warnings: []
     };
     for (const part of parts) {
       const doc = parseXml(await zip.file(part).async("string"));
@@ -2879,10 +3380,10 @@ var WordFormRuntime = (() => {
         pr.appendChild(element(doc, "tag", blank.id));
         pr.appendChild(element(doc, "text"));
         const content = sdt.appendChild(element(doc, "sdtContent"));
-        const run = content.appendChild(element(doc, "r"));
+        const run2 = content.appendChild(element(doc, "r"));
         const existingStyle = first(p, "rPr");
-        if (existingStyle) run.appendChild(existingStyle.cloneNode(true));
-        const anchor = run.appendChild(element(doc, "t"));
+        if (existingStyle) run2.appendChild(existingStyle.cloneNode(true));
+        const anchor = run2.appendChild(element(doc, "t"));
         p.appendChild(sdt);
         writeText({ node: sdt, result: [anchor], legacy: false, field: {} }, addition.value);
         remaining.delete(blank.id);
@@ -2892,6 +3393,12 @@ var WordFormRuntime = (() => {
     }
     if (remaining.size) throw new Error("Some fields no longer match this document. Import the original document again.");
     const answersChanged = documents.some((entry) => entry.changed);
+    const body = documents.find((entry) => entry.part === "word/document.xml");
+    if (body && options.continuation?.length) {
+      const continued = appendWordContinuation(body.doc, options.continuation, result.warnings);
+      result.continuedRows = continued.rowsPrinted;
+      if (continued.rowsPrinted) body.changed = true;
+    }
     for (const entry of documents) {
       const state = inspectWordCalculations(entry.doc);
       result.lockedCalculations += state.locked;
@@ -2918,7 +3425,7 @@ var WordFormRuntime = (() => {
       const doc = parseXml(await zip.file(part).async("string"));
       if (part === "word/document.xml") {
         const section = descendants(doc, "sectPr")[0];
-        omitFirstHeader = Boolean(section && first(section, "titlePg") && !["0", "false", "off"].includes(val(first(section, "titlePg"))) && !descendants(section, "headerReference").some((n) => n.getAttributeNS(W2, "type") === "first"));
+        omitFirstHeader = Boolean(section && first(section, "titlePg") && !["0", "false", "off"].includes(val(first(section, "titlePg"))) && !descendants(section, "headerReference").some((n) => n.getAttributeNS(W3, "type") === "first"));
       }
       let changed = false;
       for (const target of scan(doc, part).targets) {
@@ -2948,33 +3455,41 @@ jszip/dist/jszip.min.js:
   *)
 */
 
-const WordRegenerator = ({ sourceDocxBase64, bindings = [], fileName = "filled-form.docx", disabled = false }) => {
+const WordRegenerator = ({ sourceDocxBase64, bindings = [], preparers = [], tableOverflowMaps = [], fileName = "filled-form.docx", disabled = false }) => {
   const { DefaultButton } = Fluent;
   const [fd] = useActiveData();
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState("");
+  const [warnings, setWarnings] = React.useState([]);
   const download = async () => {
-    setBusy(true); setError("");
+    setBusy(true); setError(""); setWarnings([]);
     try {
-      const data = fd?.field?.data || {};
+      // Same steps as PdfRegenerator and the agent Word fill (lib/document-fill):
+      // preparers transform a copy of the answers for the document only.
+      const prepared = WordFormRuntime.applyDocumentFillPreparers(fd?.field?.data || {}, preparers);
+      const touched = new Set(prepared.touched);
+      const data = prepared.values;
       const values = {};
       for (const binding of bindings) {
         let value = data[binding.sourceId];
         if (value === undefined || value === null) continue;
-        if (binding.dateFormat) value = WordFormRuntime.formatDocumentDate(value, binding.dateFormat);
+        if (binding.dateFormat && !touched.has(binding.sourceId)) value = WordFormRuntime.formatDocumentDate(value, binding.dateFormat);
         if (value && typeof value === "object" && !Array.isArray(value)) value = value.display ?? value.code ?? "";
         if (binding.kind === "checkbox") {
           if (typeof value !== "boolean") value = ["true", "yes", "1"].includes(String(value).toLowerCase());
         } else value = String(value);
         values[binding.targetId] = value;
       }
+      // A table row prints when one of its mapped answers is bound to a Word field.
+      const plans = WordFormRuntime.planTableOverflow(data, tableOverflowMaps, bindings.map(binding => binding.sourceId));
       const source = Uint8Array.from(atob(sourceDocxBase64), c => c.charCodeAt(0));
-      const bytes = await WordFormRuntime.fillWordForm(source, values);
-      const url = URL.createObjectURL(new Blob([bytes], { type: WordFormRuntime.WORD_FORM_MIME }));
+      const result = await WordFormRuntime.fillWordFormDetailed(source, values, {}, { continuation: plans });
+      setWarnings([...prepared.warnings, ...result.warnings]);
+      const url = URL.createObjectURL(new Blob([result.bytes], { type: WordFormRuntime.WORD_FORM_MIME }));
       const link = document.createElement("a"); link.href = url; link.download = fileName; link.click();
       setTimeout(() => URL.revokeObjectURL(url), 10000);
     } catch (e) { setError(e.message || "Unable to fill the Word document."); }
     finally { setBusy(false); }
   };
-  return <div><DefaultButton disabled={disabled || busy || !sourceDocxBase64} onClick={download}>{busy ? "Preparing document…" : "Save Filled Word Document"}</DefaultButton>{error && <div role="alert">{error}</div>}</div>;
+  return <div><DefaultButton disabled={disabled || busy || !sourceDocxBase64} onClick={download}>{busy ? "Preparing document…" : "Save Filled Word Document"}</DefaultButton>{error && <div role="alert">{error}</div>}{!error && warnings.length > 0 && <div role="status" style={{ fontSize: 12, color: "#605e5c" }}>{warnings.slice(0, 3).map((warning, index) => <div key={index}>{warning}</div>)}{warnings.length > 3 && <div>+{warnings.length - 3} more</div>}</div>}</div>;
 };

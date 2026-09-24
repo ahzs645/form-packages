@@ -4,6 +4,8 @@ import fs from 'node:fs';
 import * as Babel from '@babel/standalone';
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 const compiled = Babel.transform(fs.readFileSync('packages/form-components/src/nhforms/PatientContextQueryTest/index.jsx', 'utf8'), { presets: ['react'] }).code!;
@@ -106,7 +108,7 @@ describe('PatientContextQueryTest', () => {
     mount(transport, [{ id: 'test.changeTest', graphqlField: 'changeTest', runtimeStatus: 'supported' }]);
     await act(async () => { Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Inspect read/write API')!.click(); });
     const report = JSON.parse(container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Live query results JSON"]')!.value);
-    expect(report.reportVersion).toBe(6);
+    expect(report.reportVersion).toBe(7);
     expect(report.apiInventory.inputTypes).toHaveLength(2);
     expect(report.apiInventory.mutations[0]).toMatchObject({ coverage: 'Mapped adapter; live write untested', executionStatus: 'Not executed' });
     expect(report.apiInventory.mutations[1]).toMatchObject({ coverage: 'Needs a dedicated write test', executionStatus: 'Not executed' });
@@ -656,7 +658,12 @@ describe('missing exploration boundaries', () => {
 });
 
 
+async function confirmPatient(target: ParentNode = container) {
+  await act(async () => { target.querySelector<HTMLInputElement>('input[aria-label="Confirm designated test patient"]')!.click(); });
+}
+
 describe('combined suite UI', () => {
+  afterEach(() => { try { window.localStorage.clear(); } catch { /* storage unavailable */ } });
   it('runs phases from one click, preserves failures, and downloads redacted full evidence', async () => {
     const schema = JSON.parse(fs.readFileSync('data/mois-second-instance-schema.json','utf8')).schema;
     const plan = JSON.parse(fs.readFileSync('data/mois-comprehensive-suite.json','utf8'));
@@ -672,9 +679,14 @@ describe('combined suite UI', () => {
     const update = mount(transport, [], {...plan,attachmentUpload:false,profiles:[{...plan.profiles.find((p:any)=>p.key==='tasks'),fields:[],taskMetadata:false}]});
     update({...initial,userProfile:{userProfileId:7}});
     const button = () => [...container.querySelectorAll('button')].find(b => b.textContent === 'Run all remaining tests')!;
+    expect(button().disabled).toBe(true);
+    await confirmPatient();
+    expect(button().disabled).toBe(false);
     await act(async () => {button().click();});
     const report = JSON.parse(container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Live query results JSON"]')!.value);
-    expect(report.phaseResults.map((p:any)=>p.phase)).toEqual(['api','reads','roots','missing','suite']);
+    expect(report.phaseResults.map((p:any)=>p.phase)).toEqual(['api','reads','roots','missing','suite','verifiers']);
+    expect(report.testPatient).toMatchObject({patientId:42});
+    expect(report.deferredChecks.filter((c:any)=>c.requires==='second-window').map((c:any)=>[c.id,c.status,c.includedInRunAll])).toEqual([['form-lock','Deferred: needs second window',false],['concurrent-session','Deferred: needs second window',false]]);
     expect(report.phaseResults.some((p:any)=>p.status==='Failed')).toBe(true);
     expect(report.comprehensiveSuite.cases.find((c:any)=>c.id==='tasks.create.seed').status).toBe('Create verified');
     let downloaded: any;
@@ -689,5 +701,127 @@ describe('combined suite UI', () => {
       await act(async () => {button().click();});
       expect(transport.mock.calls.filter(c=>c[0]==='SuiteCreate')).toHaveLength(1);
     } finally {url.mockRestore();click.mockRestore();}
+  });
+  it('resets the test-patient confirmation when the chart changes and sends nothing without it', async () => {
+    const plan = JSON.parse(fs.readFileSync('data/mois-comprehensive-suite.json','utf8'));
+    const transport = vi.fn(async () => { throw new Error('should not be called'); });
+    const update = mount(transport, [], plan);
+    const button = () => [...container.querySelectorAll('button')].find(b => b.textContent === 'Run all remaining tests')!;
+    await confirmPatient();
+    expect(button().disabled).toBe(false);
+    update({ ...initial, patient: { patientId: 43, name: { text: 'Other patient' } } });
+    expect(container.querySelector<HTMLInputElement>('input[aria-label="Confirm designated test patient"]')!.checked).toBe(false);
+    expect(button().disabled).toBe(true);
+    await act(async () => { button().click(); });
+    expect(transport).not.toHaveBeenCalled();
+  });
+
+  it('does not repeat test groups that an earlier load of the form already started', async () => {
+    const schema = JSON.parse(fs.readFileSync('data/mois-second-instance-schema.json','utf8')).schema;
+    const plan = JSON.parse(fs.readFileSync('data/mois-comprehensive-suite.json','utf8'));
+    const tasks: any[] = [];
+    const transport = vi.fn(async (op: string, _token: string, _server: string, _query: string, vars: any) => {
+      if (op === 'SuiteSchema') return {__schema:schema};
+      if (op === 'SuiteContext') return {patient:[{patientId:42,encounters:[{encounterId:5,providerId:6}],serviceEpisodes:[]}]};
+      if (op === 'SuiteProfile') return {userProfile:[{userProfileId:7,identity:{fullName:'TEST USER'}}]};
+      if (op === 'SuiteVerify') return {task:JSON.parse(JSON.stringify(tasks))};
+      if (op === 'SuiteCreate') {const task={...vars.newTask,taskId:123,patientId:42};tasks.push(task);return {createEncounterTask:[task]};}
+      throw new Error('Discovery fixture denied');
+    });
+    const suitePlan = {...plan,attachmentUpload:false,profiles:[{...plan.profiles.find((p:any)=>p.key==='tasks'),fields:[],taskMetadata:false}]};
+    const button = () => [...container.querySelectorAll('button')].find(b => b.textContent === 'Run all remaining tests')!;
+    const update = mount(transport, [], suitePlan); update({...initial,userProfile:{userProfileId:7}});
+    await confirmPatient(); await act(async () => {button().click();});
+    expect(transport.mock.calls.filter(c=>c[0]==='SuiteCreate')).toHaveLength(1);
+    act(() => root.unmount()); container.remove();
+    const again = mount(transport, [], suitePlan); again({...initial,userProfile:{userProfileId:7}});
+    expect(container.textContent).toContain('An earlier load of this form in this browser already sent requests for 1 test groups');
+    await confirmPatient(); await act(async () => {button().click();});
+    expect(transport.mock.calls.filter(c=>c[0]==='SuiteCreate')).toHaveLength(1);
+    const report = reportValue();
+    expect(report.comprehensiveSuite.cases.find((c:any)=>c.id==='tasks.earlier-load').status).toBe('Skipped: started in an earlier load of this form');
+    expect(report.runSummary.skippedWithReason.some((c:any)=>c.id==='tasks.earlier-load' && c.reason)).toBe(true);
+  });
+
+  it('runs the optional second-window concurrent-edit and lock steps only on its own disposable draft', async () => {
+    const { buildClientSchema, parse, validate } = require('graphql') as typeof import('graphql');
+    const schemaData = JSON.parse(fs.readFileSync('data/mois-second-instance-schema.json','utf8')).schema;
+    for (const t of schemaData.types) if (['OBJECT','INTERFACE'].includes(t.kind)) t.interfaces ??= [];
+    schemaData.directives ??= [];
+    const schema = buildClientSchema({ __schema: schemaData });
+    const plan = JSON.parse(fs.readFileSync('data/mois-comprehensive-suite.json','utf8'));
+    const copy = (v: any) => JSON.parse(JSON.stringify(v));
+    const forms = new Map<number, any>([[999, { webformId: 999, patientId: 42, formdata: '{"real":"answers"}', isDraft: 'Y', isLockedToUser: 'N' }]]);
+    const defs = new Map<number, any>();
+    let nextId = 700;
+    const transport = vi.fn(async (op: string, _token: string, _server: string, query: string, vars: any) => {
+      expect(validate(schema, parse(query)).map((e: any) => e.message), query).toEqual([]);
+      if (op === 'SessionDefinition') { const id = nextId++; defs.set(id, { ...vars.webform, webformDefinitionId: id }); return { addWebformDefinition: [{ webformDefinitionId: id, name: vars.webform.name }] }; }
+      if (op === 'SessionDefinitionRead' || op === 'SessionDeleteDefinitionRead') return { webformDefinition: defs.has(vars.id) ? [{ webformDefinitionId: vars.id, name: defs.get(vars.id).name }] : [] };
+      if (op === 'SessionDraft') { const id = nextId++; forms.set(id, { ...vars.webform, webformId: id, userId: 7, isLockedToUser: 'N' }); return { addWebform: [{ webformId: id, patientId: 42, documentId: null }] }; }
+      if (op.startsWith('SessionRead') || op === 'SessionDeleteFormRead') return { webform: forms.has(vars.id) ? [copy(forms.get(vars.id))] : [] };
+      if (op.startsWith('SessionWrite')) { Object.assign(forms.get(vars.webform.webformId), copy(vars.webform)); return { updateWebform: [{ webformId: vars.webform.webformId }] }; }
+      if (op === 'SessionDeleteForm') { forms.delete(vars.webformId); return { deleteWebform: [] }; }
+      if (op === 'SessionDeleteDefinition') { defs.delete(vars.id); return { deleteWebformDefinition: [] }; }
+      throw new Error('Unexpected operation ' + op);
+    });
+    const open = (profileId: number) => {
+      const Component = new Function('React', 'useSourceData', 'queryGraphQL', `${compiled}; return PatientContextQueryTest;`)(React, () => ({ ...initial, userProfile: { userProfileId: profileId } }), transport);
+      const el = document.createElement('div'); document.body.appendChild(el); const r = createRoot(el);
+      act(() => r.render(<Component collections={[]} writeTargets={[]} suitePlan={plan} />));
+      return { el, r, click: async (label: string) => { await act(async () => { [...el.querySelectorAll('button')].find(b => b.textContent === label)!.click(); }); },
+        target: async (value: string) => { await act(async () => { const input = el.querySelector<HTMLInputElement>('input[aria-label="Second-window form ID"]')!; Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value); input.dispatchEvent(new Event('input', { bubbles: true })); }); },
+        report: () => JSON.parse(el.querySelector<HTMLTextAreaElement>('textarea[aria-label="Live query results JSON"]')!.value) };
+    };
+    const a = open(7), b = open(8);
+    try {
+      expect([...a.el.querySelectorAll('button')].find(x => x.textContent === 'A1 — Create disposable shared draft')!.disabled).toBe(true);
+      await confirmPatient(a.el); await confirmPatient(b.el);
+      await b.target('999'); await b.click('B1 — Write as window B');
+      expect(forms.get(999).formdata).toBe('{"real":"answers"}');
+      expect(b.report().secondWindowTests[0].status).toContain('Not sent: Target is not a disposable');
+      await a.click('A1 — Create disposable shared draft');
+      const id = [...forms.keys()].find(k => k !== 999)!;
+      expect(a.el.textContent).toContain(`form ID ${id}`);
+      await a.click('A2 — Hold baseline');
+      await b.target(String(id)); await b.click('B1 — Write as window B');
+      await a.click('A3 — Write from stale baseline');
+      const stale = a.report().secondWindowTests.find((row: any) => row.step === 'A3');
+      expect(stale).toMatchObject({ interveningWriteObserved: true, status: 'Lost update: stale write replaced the window B answer' });
+      await a.click('A4 — Lock draft');
+      await b.click('B2 — Try write while locked (window B)');
+      expect(b.report().secondWindowTests.find((row: any) => row.step === 'B2')).toMatchObject({ lockedBefore: 'Y', status: 'Write accepted while isLockedToUser=Y' });
+      await a.click('A5 — Unlock draft');
+      await a.click('A6 — Delete draft and definition');
+      expect(forms.has(id)).toBe(false); expect(defs.size).toBe(0); expect(forms.has(999)).toBe(true);
+      const report = a.report();
+      expect(report.secondWindowTests.find((row: any) => row.step === 'A6').status).toBe('Disposable draft and definition deleted');
+      expect(report.deferredChecks.find((c: any) => c.id === 'concurrent-session').status).toContain('Optional second-window steps recorded: A1');
+      expect(report.deferredChecks.find((c: any) => c.id === 'form-lock').status).toContain('A4 — isLockedToUser=Y persisted');
+      expect(JSON.stringify(report)).not.toContain('secret-token');
+    } finally { act(() => { a.r.unmount(); b.r.unmount(); }); a.el.remove(); b.el.remove(); }
+  });
+  it('re-runs only the corrected verifier operations after the suite, never a placeholder usual name', async () => {
+    const plan = JSON.parse(fs.readFileSync('data/mois-comprehensive-suite.json','utf8'));
+    const host = testHost();
+    const transport = vi.fn(async (operation: string, token: string, server: string, query: string, vars: any) => {
+      if (operation === 'SuiteSchema') throw new Error('Introspection unavailable in this fixture');
+      if (operation === 'InspectPatientContextType' && vars.name === 'Patient') return { __type: { fields } };
+      if (operation === 'ProbePatientContext') return { patient: [{ patientId: 42, observations: [] }] };
+      return host(operation, token, server, query, vars);
+    });
+    mount(transport, [], plan);
+    await confirmPatient();
+    await clickButton('Run all remaining tests');
+    const report = reportValue();
+    expect(report.phaseResults.find((p: any) => p.phase === 'suite').status).toBe('Failed');
+    expect(report.phaseResults.find((p: any) => p.phase === 'verifiers').status).toBe('Finished; inspect case outcomes');
+    const sent = transport.mock.calls.filter((c) => c[0] === 'ProbeMoisWrite').map((c) => (c[3] as string).match(/\{\s*(\w+)/)![1]);
+    expect(sent.length).toBeGreaterThan(0);
+    expect(sent.every((name) => plan.verifierOperations.includes(name))).toBe(true);
+    expect(sent).not.toContain('changePatientName');
+    expect(sent).not.toContain('registerNewPatient');
+    expect(report.runSummary.verifierReRun.find((r: any) => r.operation === 'changePatientName').status).toBe('Not attempted');
+    expect(report.runSummary.mutationsNotExercised).toContain('registerNewPatient');
   });
 });

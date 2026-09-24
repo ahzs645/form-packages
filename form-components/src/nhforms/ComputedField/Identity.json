@@ -23,6 +23,7 @@
     "patch": 18
   },
   "components": [
+    "FormulaKit",
     "ObservationValueDisplay"
   ]
 }

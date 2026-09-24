@@ -4,7 +4,7 @@
   "description": "Combined MOIS test-instance API suite: discovery, missing routes, create/update/omit/null/empty/restore variants, independent verification and full evidence JSON.",
   "version": {
     "major": 2,
-    "minor": 0,
+    "minor": 1,
     "patch": 0
   },
   "type": "component",

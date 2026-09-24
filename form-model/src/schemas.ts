@@ -51,6 +51,22 @@ export const BuilderDocumentSchema = z.object({
   paginationEnabled: z.boolean(),
   pageCount: z.number().int().positive(),
   pageAssignments: z.record(z.number().int().nullable()),
+  // Lenient on purpose: a document must stay loadable while an author is
+  // mid-way through defining a condition or a page flow (empty groups etc.).
+  conditions: z.array(z.object({
+    id: z.string().min(1),
+    name: z.string(),
+    description: z.string().optional(),
+    group: z.object({
+      match: z.enum(["all", "any"]),
+      conditions: z.array(z.unknown()),
+      conditionRef: z.string().optional(),
+    }).passthrough(),
+  }).passthrough()).optional(),
+  pageFlow: z.object({
+    enabled: z.boolean(),
+    pages: z.array(z.union([z.object({}).passthrough(), z.null()])).optional(),
+  }).passthrough().nullable().optional(),
 }).passthrough();
 
 const FieldLinkConditionSchema = z.object({
@@ -80,6 +96,7 @@ function conditionGroupSchema(depth: number): z.ZodType<FieldConditionGroup> {
   return z.object({
     match: z.enum(["all", "any"]),
     conditions: z.array(depth < 8 ? z.union([z.lazy(() => conditionGroupSchema(depth + 1)), leaf]) : leaf).min(1).max(100),
+    conditionRef: z.string().optional(),
   });
 }
 export const FieldConditionGroupSchema = conditionGroupSchema(0);
