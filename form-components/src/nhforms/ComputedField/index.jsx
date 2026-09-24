@@ -278,6 +278,44 @@ const _durationBetween = (value, ref, unit) => {
   return normalizedUnit === "months" ? months : months / 12
 }
 
+const _toDateList = (value) => {
+  const items = Array.isArray(value)
+    ? value
+    : typeof value === "string" ? value.split(/[,;\n]/) : value == null ? [] : [value]
+  return items
+    .map((item) => (typeof item === "string" ? item.trim() : item))
+    .filter((item) => item !== "" && item != null)
+    .map(_toDateValue)
+    .filter(Boolean)
+}
+
+// Monday-Friday days from `value` to `ref`, counting both ends (Mon..Fri is 5).
+// `skip` lists further dates to leave out (stat holidays): an array or a
+// comma-separated string; weekend entries are ignored. Null when a date is
+// missing or the range runs backwards, so the field shows no suggestion.
+const _weekdaysBetween = (value, ref, skip) => {
+  const from = _toDateValue(value)
+  const to = _toDateValue(ref)
+  if (!from || !to) return null
+  const firstDay = _calendarDayNumber(from)
+  const lastDay = _calendarDayNumber(to)
+  const days = lastDay - firstDay
+  if (days < 0) return null
+  // Whole weeks contribute 5 each; walk the remaining (< 7) days.
+  let count = Math.floor((days + 1) / 7) * 5
+  for (let offset = 0; offset < (days + 1) % 7; offset += 1) {
+    const weekday = (from.getDay() + offset) % 7
+    if (weekday !== 0 && weekday !== 6) count += 1
+  }
+  const skipped = new Set()
+  for (const date of _toDateList(skip)) {
+    const day = _calendarDayNumber(date)
+    const weekday = date.getDay()
+    if (day >= firstDay && day <= lastDay && weekday !== 0 && weekday !== 6) skipped.add(day)
+  }
+  return count - skipped.size
+}
+
 // Cascading duration breakdown, e.g. "2 months, 3 weeks" for
 // durationText([dob], today(), "months,weeks"). Each listed unit (descending)
 // is floored and its remainder carried into the next; zero components are
@@ -336,7 +374,7 @@ const _stripQuotedStrings = (expression) =>
 
 const _COMPUTED_NON_FIELD_IDENTIFIERS = new Set([
   "iif", "score", "contains", "hasValue", "countTrue", "daysSince", "monthsSince",
-  "today", "durationBetween", "durationText",
+  "today", "durationBetween", "durationText", "weekdaysBetween",
   "floor", "mod", "round", "power", "ln", "exp", "coalesce", "text", "min", "max",
   "Math", "Number", "String", "null", "true", "false",
 ])
@@ -408,7 +446,7 @@ const _evaluateComputedExpression = (expression, valuesByFieldId, currentFieldId
   if (prepared === null) return null
 
   try {
-    const result = Function("iif", "score", "contains", "hasValue", "countTrue", "daysSince", "monthsSince", "today", "durationBetween", "durationText", "floor", "mod", "round", "power", "ln", "exp", "coalesce", "text", "min", "max", `"use strict"; return (${prepared});`)(
+    const result = Function("iif", "score", "contains", "hasValue", "countTrue", "daysSince", "monthsSince", "today", "durationBetween", "durationText", "weekdaysBetween", "floor", "mod", "round", "power", "ln", "exp", "coalesce", "text", "min", "max", `"use strict"; return (${prepared});`)(
       _iif,
       _score,
       _contains,
@@ -419,6 +457,7 @@ const _evaluateComputedExpression = (expression, valuesByFieldId, currentFieldId
       _today,
       _durationBetween,
       _durationText,
+      _weekdaysBetween,
       _floor,
       _mod,
       _round,
