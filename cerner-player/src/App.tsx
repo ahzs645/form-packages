@@ -271,18 +271,19 @@ export const App: React.FC<{ host?: PlayerHost }> = ({ host = null }) => {
   // Terra's own DemographicsBanner in the Terra target; the Fluent-era
   // reproduction stays on the MOIS path, which has no terra-base to size it.
   const BannerComponent = terraTarget ? DemographicsBanner : TerraDemographicsBanner;
+  const encounterId = chart?.encntrId;
   const banner = useMemo(() => {
     const entries: Array<[string, string]> = (person?.aliases ?? [])
       .filter((alias) => alias.alias)
       .map((alias) => [alias.aliasType ?? "ID", String(alias.alias)]);
-    if (chart?.encntrId) entries.push(["Encounter", String(chart.encntrId)]);
+    if (encounterId) entries.push(["Encounter", String(encounterId)]);
     const longForm: Record<string, string> = {};
     for (const [label] of entries) {
       const spelled = IDENTIFIER_LONG_FORMS[label.toUpperCase()];
       if (spelled) longForm[label] = spelled;
     }
     return { identifiers: Object.fromEntries(entries), identifiersLongForm: longForm };
-  }, [person?.aliases, chart?.encntrId]);
+  }, [person?.aliases, encounterId]);
 
   const shell = (
     <ThemeProvider theme={cernerLook ? terraFluentTheme : moisPreviewTheme} applyTo="none">
