@@ -19770,7 +19770,7 @@ const formatLayoutTableFieldDisplayValue = (cell, data) => {
   return formatOne(value);
 };
 const renderLayoutTableReadOnlyField = (cell, data) => {
-  const label = cell.label || "";
+  const label = cell.labelPosition === "none" ? "" : cell.label || "";
   const displayValue = formatLayoutTableFieldDisplayValue(cell, data);
   return /*#__PURE__*/React.createElement("div", {
     "data-field-id": cell.fieldId || cell.id,
@@ -19862,7 +19862,7 @@ const renderLayoutTableField = (cell, readOnly, data, setFieldValue) => {
     case "booleanSingle":
       return /*#__PURE__*/React.createElement(Checkbox, {
         name: cell.name || fieldId,
-        label: label,
+        label: cell.labelPosition === "none" ? "" : label,
         ariaLabel: label || fieldId,
         checked: isCheckedValue(data?.[fieldId]),
         disabled: readOnly,

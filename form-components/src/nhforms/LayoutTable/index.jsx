@@ -159,7 +159,7 @@ const formatLayoutTableFieldDisplayValue = (cell, data) => {
 }
 
 const renderLayoutTableReadOnlyField = (cell, data) => {
-  const label = cell.label || ""
+  const label = cell.labelPosition === "none" ? "" : cell.label || ""
   const displayValue = formatLayoutTableFieldDisplayValue(cell, data)
 
   return (
@@ -272,7 +272,7 @@ const renderLayoutTableField = (cell, readOnly, data, setFieldValue) => {
       return (
         <Checkbox
           name={cell.name || fieldId}
-          label={label}
+          label={cell.labelPosition === "none" ? "" : label}
           ariaLabel={label || fieldId}
           checked={isCheckedValue(data?.[fieldId])}
           disabled={readOnly}
