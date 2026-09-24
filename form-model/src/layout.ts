@@ -435,7 +435,7 @@ export function stripRedundantDraftFieldLabelPrefix(
 }
 
 // Composite field types (e.g., combining DD/MM/YYYY into a single date field, or merging duplicate boolean fields)
-export type CompositeFieldType = "date" | "boolean" | "text" | "choice";
+export type CompositeFieldType = "date" | "boolean" | "text" | "textFlow" | "choice";
 
 export type DateFieldRole = "day" | "month" | "year";
 export type GenericFieldRole = "primary" | "secondary" | "tertiary";

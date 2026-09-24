@@ -1150,6 +1150,71 @@ const _statusColor = (kind) => {
   return "#605e5c"
 }
 
+// One Webforms answer is distributed into the existing PDF text widgets.
+const _wrapTextAcrossFields = (text, slots, measure) => {
+  const lines = slots.map(() => "")
+  let index = 0
+  const assertSlot = () => {
+    if (index >= slots.length) throw new Error("Text exceeds the available PDF lines. Shorten the answer before saving the PDF.")
+  }
+  text.replace(/\r\n?/g, "\n").split("\n").forEach((paragraph, paragraphIndex) => {
+    if (paragraphIndex > 0) index += 1
+    assertSlot()
+    paragraph.trim().split(/\s+/u).filter(Boolean).forEach((word) => {
+      let remaining = word
+      while (remaining) {
+        assertSlot()
+        const prefix = lines[index] ? `${lines[index]} ` : ""
+        if (measure(prefix + remaining, slots[index].fontSize) <= slots[index].width) {
+          lines[index] = prefix + remaining
+          break
+        }
+        if (prefix) {
+          index += 1
+          continue
+        }
+        const chars = Array.from(remaining)
+        let count = 0
+        while (count < chars.length && measure(chars.slice(0, count + 1).join(""), slots[index].fontSize) <= slots[index].width) count += 1
+        if (!count) throw new Error("A PDF text line is too narrow for its font.")
+        lines[index] = chars.slice(0, count).join("")
+        remaining = chars.slice(count).join("")
+        if (remaining) index += 1
+      }
+    })
+  })
+  return lines
+}
+
+const _buildTextFlowValues = async ({ doc, pdfFields, textFlowMaps, formData, map, includeSet, PDFLib }) => {
+  const valuesByField = new Map()
+  if (!Array.isArray(textFlowMaps) || textFlowMaps.length === 0) return valuesByField
+  const pdfFieldByName = new Map(pdfFields.map((field) => [field.getName(), field]))
+  const measureFont = await doc.embedFont(PDFLib.StandardFonts.Helvetica)
+  for (const flow of textFlowMaps) {
+    if (!Array.isArray(flow.fieldIds) || flow.fieldIds.length < 2) continue
+    if (includeSet && !includeSet.has(flow.sourceFieldId) && !flow.fieldIds.some((id) => includeSet.has(id) || includeSet.has(map.get(id)))) continue
+    const sourceFieldId = map.get(flow.fieldIds[0]) || flow.sourceFieldId
+    const answer = formData[sourceFieldId] ?? formData[flow.sourceFieldId] ?? formData[flow.fieldIds[0]]
+    if (answer === undefined || answer === null) continue
+    const text = typeof answer === "string" ? answer : (_toText(answer) || "")
+    const slots = flow.fieldIds.map((fieldId) => {
+      const field = pdfFieldByName.get(fieldId)
+      if (!(field instanceof PDFLib.PDFTextField)) throw new Error(`Flow text target "${fieldId}" is not a PDF text field.`)
+      const widget = field.acroField.getWidgets()[0]
+      if (!widget) throw new Error(`Flow text target "${fieldId}" has no PDF widget.`)
+      const rect = widget.getRectangle()
+      const da = widget.getDefaultAppearance?.() || field.acroField.getDefaultAppearance?.() || ""
+      const declaredSize = Number(da.match(/(\d+(?:\.\d+)?)\s+Tf\b/)?.[1])
+      const fontSize = declaredSize > 0 ? declaredSize : Math.min(10, Math.max(6, rect.height - 3))
+      return { width: Math.max(0, rect.width - 8), fontSize }
+    })
+    const values = _wrapTextAcrossFields(text, slots, (value, size) => measureFont.widthOfTextAtSize(value, size))
+    flow.fieldIds.forEach((fieldId, index) => valuesByField.set(fieldId, values[index]))
+  }
+  return valuesByField
+}
+
 const PdfRegenerator = ({
   label,
   buttonText = "Save Filled PDF",
@@ -1169,6 +1234,7 @@ const PdfRegenerator = ({
   dateComponentMaps,
   documentDateFormats,
   choiceComponentMaps,
+  textFlowMaps,
   geometryOverlayFields,
   includeOnlyFieldIds,
   flatten = false,
@@ -1251,6 +1317,7 @@ const PdfRegenerator = ({
         const r = widget.getRectangle()
         if (r.width < 0 || r.height < 0) widget.setRectangle({ x: Math.min(r.x, r.x + r.width), y: Math.min(r.y, r.y + r.height), width: Math.abs(r.width), height: Math.abs(r.height) })
       }))
+      const textFlowValues = await _buildTextFlowValues({ doc, pdfFields, textFlowMaps, formData, map, includeSet, PDFLib })
       for (const field of pdfFields) {
         const pdfFieldName = field.getName()
         const sourceFieldId = map.get(pdfFieldName) || pdfFieldName
@@ -1260,7 +1327,7 @@ const PdfRegenerator = ({
           continue
         }
 
-        let rawValue = formData[sourceFieldId]
+        let rawValue = textFlowValues.has(pdfFieldName) ? textFlowValues.get(pdfFieldName) : formData[sourceFieldId]
         const choiceEntry = choiceComponentIndex.get(pdfFieldName) || choiceComponentIndex.get(sourceFieldId)
         const choiceComponentValue = choiceEntry
           ? _resolveChoiceComponentValue(formData, choiceEntry, rawValue)
@@ -1369,7 +1436,7 @@ const PdfRegenerator = ({
     } finally {
       setIsBusy(false)
     }
-  }, [resolvedPdfSource, fd, fieldMap, tableSourceMaps, booleanFieldStates, fieldMaxLengths, dateComponentMaps, documentDateFormats, choiceComponentMaps, geometryOverlayFields, includeOnlyFieldIds, flatten, recalculate, organizationSigning, fileName, onComplete, pdfLibStrategy, pdfLibSource])
+  }, [resolvedPdfSource, fd, fieldMap, tableSourceMaps, booleanFieldStates, fieldMaxLengths, dateComponentMaps, documentDateFormats, choiceComponentMaps, textFlowMaps, geometryOverlayFields, includeOnlyFieldIds, flatten, recalculate, organizationSigning, fileName, onComplete, pdfLibStrategy, pdfLibSource])
 
   const diagnosticsText = useMemo(() => {
     if (!showDiagnostics) return null
