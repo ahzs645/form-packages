@@ -104,6 +104,8 @@ export interface TableColumn {
     };
   } | null;
   options?: TableChoiceOption[] | null;
+  /** For a single choice backed by separate PDF checkbox fields, map option keys to row paths. */
+  choiceBooleanTargets?: Record<string, string> | null;
   choiceStyle?: "dropdown" | "radio" | "multiselect" | "checkbox" | "simpleCodeSelect" | "findCode";
   codeSystem?: string | null;
   showOtherOption?: boolean;

@@ -267,6 +267,11 @@ const _isRowEmpty = (row, columns = []) => {
   })
 }
 
+const _isRowEmptyWithMappedFields = (row, columns, rowMapping) => {
+  if (!_isRowEmpty(row, columns)) return false
+  return Object.keys(rowMapping || {}).every((fieldId) => !_isMeaningfulValue(_getValueAtPath(row, fieldId)))
+}
+
 const _stringifyValue = (value) => {
   if (value === undefined || value === null) return ""
   if (typeof value === "string") return value.trim()
@@ -426,6 +431,12 @@ const _applyFormulaColumns = (row, columns = []) => {
 // overridden (unless the typed value is the calculation itself).
 const _writeCellAndRecalculate = (row, column, value, columns = []) => {
   _setValueAtPath(row, column.dataPath || column.id, value)
+  // A single inline choice can represent distinct checkboxes on the source PDF.
+  // Keep every target in the row so the usual source-field mirroring fills the
+  // selected checkbox and clears its siblings.
+  Object.entries(column.choiceBooleanTargets || {}).forEach(([optionKey, targetPath]) => {
+    _setValueAtPath(row, targetPath, String(value) === optionKey)
+  })
   if (_isFormulaColumn(column) && _formulaPolicy(column) !== "always-calculated") {
     const typed = _stringifyValue(value)
     const calculated = _computeFormulaCellValue(row, column, columns)
@@ -527,6 +538,23 @@ const _buildRowsFromSourceFields = ({
       if (_isMeaningfulValue(normalizedValue)) {
         hasMeaningfulValue = true
       }
+    })
+
+    // A compact summary table may edit additional PDF-backed row values in its
+    // SubformScoring modal. Those values are mapped by row but are not display
+    // columns, so restore them when loading existing form data as well.
+    Object.entries(explicitRowMapping || {}).forEach(([columnId, sourceFieldId]) => {
+      if (columns.some((column) => column.id === columnId)) return
+      const rawValue = fieldData[sourceFieldId]
+      if (rawValue === undefined || rawValue === null) return
+      _setValueAtPath(row, columnId, rawValue)
+      if (_isMeaningfulValue(rawValue)) hasMeaningfulValue = true
+    })
+
+    columns.forEach((column) => {
+      const selected = Object.entries(column.choiceBooleanTargets || {})
+        .find(([, targetPath]) => _isMeaningfulValue(_getValueAtPath(row, targetPath)))
+      if (selected) _setValueAtPath(row, column.dataPath || column.id, selected[0])
     })
 
     rows.push(row)
@@ -1047,6 +1075,12 @@ EditableTable = ({
           const rawValue = _getValueAtPath(row, column.dataPath || column.id)
           data[sourceFieldId] = _normalizeMirroredCellValue(rawValue, column)
         })
+        // Modal-only row values have source mappings too, even though they are
+        // absent from the two summary columns. Mirror them for PDF regeneration.
+        Object.entries(sourceFieldIdsByRow?.[rowIndex] || {}).forEach(([columnId, sourceFieldId]) => {
+          if (!sourceFieldId || columns.some((column) => column.id === columnId)) return
+          data[sourceFieldId] = _normalizeMirroredCellValue(_getValueAtPath(row, columnId))
+        })
       })
 
       // Lock-on-edit: stamp the editing author's claim onto field.data.__authorship
@@ -1077,7 +1111,7 @@ EditableTable = ({
   useEffect(() => {
     if (rows) return
 
-    const seededRows = isModalMode
+    const seededRows = isModalMode && modalEditorConfig?.seedInitialRows !== true
       ? []
       : initialSeedRows.length > 0
         ? initialSeedRows
@@ -1089,7 +1123,8 @@ EditableTable = ({
     if (sourceSeedRows.length === 0) return
 
     const existingRows = Array.isArray(rows) ? rows : []
-    const hasMeaningfulRows = existingRows.some((row) => !_isRowEmpty(row, columns))
+    const hasMeaningfulRows = existingRows.some((row, rowIndex) =>
+      !_isRowEmptyWithMappedFields(row, columns, sourceFieldIdsByRow?.[rowIndex]))
     if (hasMeaningfulRows) return
     // Convergence guard: compare row CONTENT with the volatile _rowId stripped.
     // Seed builders stamp Date.now()-based _rowIds, so raw JSON never matches
@@ -1161,6 +1196,14 @@ EditableTable = ({
 
   const openCreateDialog = () => {
     if (isLocked || !allowAddRows || currentRows.length >= effectiveMaxRows) return
+    if (modalEditorConfig?.seedInitialRows === true) {
+      const emptyRowIndex = currentRows.findIndex((row, rowIndex) =>
+        _isRowEmptyWithMappedFields(row, columns, sourceFieldIdsByRow?.[rowIndex]))
+      if (emptyRowIndex >= 0) {
+        openEditDialog(emptyRowIndex)
+        return
+      }
+    }
     setEditingRowIndex(null)
     setDraftRow(makeDraftRow(currentRows.length))
     setErrorMessage("")
@@ -1516,7 +1559,8 @@ EditableTable = ({
     if (isModalMode) {
       return currentRows
         .map((row, rowIndex) => ({ row, rowIndex }))
-        .filter(({ row }) => !_isRowEmpty(row, columns))
+        .filter(({ row, rowIndex }) => modalEditorConfig?.seedInitialRows === true ||
+          !_isRowEmptyWithMappedFields(row, columns, sourceFieldIdsByRow?.[rowIndex]))
     }
 
     // Until the seeding effect writes the initial rows into form data, render
@@ -2008,7 +2052,7 @@ EditableTable = ({
               </tr>
             ) : (
               displayRows.map(({ row, rowIndex }, displayIndex) => {
-                const isEmpty = _isRowEmpty(row, columns)
+                const isEmpty = _isRowEmptyWithMappedFields(row, columns, sourceFieldIdsByRow?.[rowIndex])
                 const rowLock = getRowLock(row)
                 const localStampLock = _hasPersistedAuthorshipClaim(rowLock)
                   ? { locked: false, columns: [] }

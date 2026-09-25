@@ -1046,6 +1046,11 @@ export interface BuilderAlayaCareConfig {
   docmosisTableMode?: "static" | "comments" | "manual" | "none" | null;
   /** Docmosis expression override used for computed/template-only output. */
   docmosisExpression?: string | null;
+  /**
+   * Raw Docmosis template snippet (tags, literals and `cs_` sections) emitted as-is.
+   * Compiled from a chart value formula; takes precedence over `docmosisExpression`.
+   */
+  docmosisTemplate?: string | null;
   /** Optional Docmosis numFormat pattern, for example '#.00' or '$###0.00'. */
   docmosisNumberFormat?: string | null;
   /** Optional manual Docmosis visibility expression, without surrounding cs_/cr_ tags. */
@@ -2211,6 +2216,8 @@ export interface BuilderField {
         };
       } | null;
       options?: BuilderChoiceOption[] | null;
+      /** For a single choice backed by separate PDF checkbox fields, map each option key to its row path. */
+      choiceBooleanTargets?: Record<string, string> | null;
       choiceStyle?:
         | "dropdown"
         | "radio"

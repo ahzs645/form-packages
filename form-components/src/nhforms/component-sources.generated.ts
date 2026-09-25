@@ -7807,6 +7807,11 @@ const _isRowEmpty = (row, columns = []) => {
   })
 }
 
+const _isRowEmptyWithMappedFields = (row, columns, rowMapping) => {
+  if (!_isRowEmpty(row, columns)) return false
+  return Object.keys(rowMapping || {}).every((fieldId) => !_isMeaningfulValue(_getValueAtPath(row, fieldId)))
+}
+
 const _stringifyValue = (value) => {
   if (value === undefined || value === null) return ""
   if (typeof value === "string") return value.trim()
@@ -7966,6 +7971,12 @@ const _applyFormulaColumns = (row, columns = []) => {
 // overridden (unless the typed value is the calculation itself).
 const _writeCellAndRecalculate = (row, column, value, columns = []) => {
   _setValueAtPath(row, column.dataPath || column.id, value)
+  // A single inline choice can represent distinct checkboxes on the source PDF.
+  // Keep every target in the row so the usual source-field mirroring fills the
+  // selected checkbox and clears its siblings.
+  Object.entries(column.choiceBooleanTargets || {}).forEach(([optionKey, targetPath]) => {
+    _setValueAtPath(row, targetPath, String(value) === optionKey)
+  })
   if (_isFormulaColumn(column) && _formulaPolicy(column) !== "always-calculated") {
     const typed = _stringifyValue(value)
     const calculated = _computeFormulaCellValue(row, column, columns)
@@ -8067,6 +8078,23 @@ const _buildRowsFromSourceFields = ({
       if (_isMeaningfulValue(normalizedValue)) {
         hasMeaningfulValue = true
       }
+    })
+
+    // A compact summary table may edit additional PDF-backed row values in its
+    // SubformScoring modal. Those values are mapped by row but are not display
+    // columns, so restore them when loading existing form data as well.
+    Object.entries(explicitRowMapping || {}).forEach(([columnId, sourceFieldId]) => {
+      if (columns.some((column) => column.id === columnId)) return
+      const rawValue = fieldData[sourceFieldId]
+      if (rawValue === undefined || rawValue === null) return
+      _setValueAtPath(row, columnId, rawValue)
+      if (_isMeaningfulValue(rawValue)) hasMeaningfulValue = true
+    })
+
+    columns.forEach((column) => {
+      const selected = Object.entries(column.choiceBooleanTargets || {})
+        .find(([, targetPath]) => _isMeaningfulValue(_getValueAtPath(row, targetPath)))
+      if (selected) _setValueAtPath(row, column.dataPath || column.id, selected[0])
     })
 
     rows.push(row)
@@ -8587,6 +8615,12 @@ EditableTable = ({
           const rawValue = _getValueAtPath(row, column.dataPath || column.id)
           data[sourceFieldId] = _normalizeMirroredCellValue(rawValue, column)
         })
+        // Modal-only row values have source mappings too, even though they are
+        // absent from the two summary columns. Mirror them for PDF regeneration.
+        Object.entries(sourceFieldIdsByRow?.[rowIndex] || {}).forEach(([columnId, sourceFieldId]) => {
+          if (!sourceFieldId || columns.some((column) => column.id === columnId)) return
+          data[sourceFieldId] = _normalizeMirroredCellValue(_getValueAtPath(row, columnId))
+        })
       })
 
       // Lock-on-edit: stamp the editing author's claim onto field.data.__authorship
@@ -8617,7 +8651,7 @@ EditableTable = ({
   useEffect(() => {
     if (rows) return
 
-    const seededRows = isModalMode
+    const seededRows = isModalMode && modalEditorConfig?.seedInitialRows !== true
       ? []
       : initialSeedRows.length > 0
         ? initialSeedRows
@@ -8629,7 +8663,8 @@ EditableTable = ({
     if (sourceSeedRows.length === 0) return
 
     const existingRows = Array.isArray(rows) ? rows : []
-    const hasMeaningfulRows = existingRows.some((row) => !_isRowEmpty(row, columns))
+    const hasMeaningfulRows = existingRows.some((row, rowIndex) =>
+      !_isRowEmptyWithMappedFields(row, columns, sourceFieldIdsByRow?.[rowIndex]))
     if (hasMeaningfulRows) return
     // Convergence guard: compare row CONTENT with the volatile _rowId stripped.
     // Seed builders stamp Date.now()-based _rowIds, so raw JSON never matches
@@ -8701,6 +8736,14 @@ EditableTable = ({
 
   const openCreateDialog = () => {
     if (isLocked || !allowAddRows || currentRows.length >= effectiveMaxRows) return
+    if (modalEditorConfig?.seedInitialRows === true) {
+      const emptyRowIndex = currentRows.findIndex((row, rowIndex) =>
+        _isRowEmptyWithMappedFields(row, columns, sourceFieldIdsByRow?.[rowIndex]))
+      if (emptyRowIndex >= 0) {
+        openEditDialog(emptyRowIndex)
+        return
+      }
+    }
     setEditingRowIndex(null)
     setDraftRow(makeDraftRow(currentRows.length))
     setErrorMessage("")
@@ -9056,7 +9099,8 @@ EditableTable = ({
     if (isModalMode) {
       return currentRows
         .map((row, rowIndex) => ({ row, rowIndex }))
-        .filter(({ row }) => !_isRowEmpty(row, columns))
+        .filter(({ row, rowIndex }) => modalEditorConfig?.seedInitialRows === true ||
+          !_isRowEmptyWithMappedFields(row, columns, sourceFieldIdsByRow?.[rowIndex]))
     }
 
     // Until the seeding effect writes the initial rows into form data, render
@@ -9548,7 +9592,7 @@ EditableTable = ({
               </tr>
             ) : (
               displayRows.map(({ row, rowIndex }, displayIndex) => {
-                const isEmpty = _isRowEmpty(row, columns)
+                const isEmpty = _isRowEmptyWithMappedFields(row, columns, sourceFieldIdsByRow?.[rowIndex])
                 const rowLock = getRowLock(row)
                 const localStampLock = _hasPersistedAuthorshipClaim(rowLock)
                   ? { locked: false, columns: [] }
@@ -42844,7 +42888,11 @@ var WordFormRuntime = (() => {
     throw Error('Dynamic require of "' + x + '" is not supported');
   });
   var __commonJS = (cb, mod) => function __require2() {
-    return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+    try {
+      return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+    } catch (e) {
+      throw mod = 0, e;
+    }
   };
   var __export = (target, all2) => {
     for (var name in all2)
@@ -42868,9 +42916,9 @@ var WordFormRuntime = (() => {
   ));
   var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-  // node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/dist/jszip.min.js
+  // node_modules/.pnpm/jszip@3.10.2/node_modules/jszip/dist/jszip.min.js
   var require_jszip_min = __commonJS({
-    "node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/dist/jszip.min.js"(exports, module) {
+    "node_modules/.pnpm/jszip@3.10.2/node_modules/jszip/dist/jszip.min.js"(exports, module) {
       !(function(e) {
         if ("object" == typeof exports && "undefined" != typeof module) module.exports = e();
         else if ("function" == typeof define && define.amd) define([], e);
@@ -43098,7 +43146,7 @@ var WordFormRuntime = (() => {
               return e2;
             };
           }
-          (n.prototype = e("./object")).loadAsync = e("./load"), n.support = e("./support"), n.defaults = e("./defaults"), n.version = "3.10.1", n.loadAsync = function(e2, t2) {
+          (n.prototype = e("./object")).loadAsync = e("./load"), n.support = e("./support"), n.defaults = e("./defaults"), n.version = "3.10.2", n.loadAsync = function(e2, t2) {
             return new n().loadAsync(e2, t2);
           }, n.external = e("./external"), t.exports = n;
         }, { "./defaults": 5, "./external": 6, "./load": 11, "./object": 15, "./support": 30 }], 11: [function(e, t, r) {
@@ -43741,7 +43789,9 @@ var WordFormRuntime = (() => {
             }
             return r2.join("/");
           }, a.getTypeOf = function(e2) {
-            return "string" == typeof e2 ? "string" : "[object Array]" === Object.prototype.toString.call(e2) ? "array" : o.nodebuffer && r.isBuffer(e2) ? "nodebuffer" : o.uint8array && e2 instanceof Uint8Array ? "uint8array" : o.arraybuffer && e2 instanceof ArrayBuffer ? "arraybuffer" : void 0;
+            if ("string" == typeof e2) return "string";
+            var t2 = Object.prototype.toString.call(e2);
+            return "[object Array]" === t2 ? "array" : o.nodebuffer && r.isBuffer(e2) ? "nodebuffer" : o.uint8array && "[object Uint8Array]" === t2 ? "uint8array" : o.arraybuffer && "[object ArrayBuffer]" === t2 ? "arraybuffer" : void 0;
           }, a.checkSupport = function(e2) {
             if (!o[e2.toLowerCase()]) throw new Error(e2 + " is not supported by this platform");
           }, a.MAX_VALUE_16BITS = 65535, a.MAX_VALUE_32BITS = -1, a.pretty = function(e2) {
@@ -43762,14 +43812,14 @@ var WordFormRuntime = (() => {
             return r2;
           }, a.prepareContent = function(r2, e2, n2, i2, s2) {
             return u.Promise.resolve(e2).then(function(n3) {
-              return o.blob && (n3 instanceof Blob || -1 !== ["[object File]", "[object Blob]"].indexOf(Object.prototype.toString.call(n3))) && "undefined" != typeof FileReader ? new u.Promise(function(t2, r3) {
+              return o.blob && (n3 instanceof Blob || -1 !== ["[object File]", "[object Blob]"].indexOf(Object.prototype.toString.call(n3))) ? void 0 !== Blob.prototype.arrayBuffer ? n3.arrayBuffer() : "undefined" != typeof FileReader ? new u.Promise(function(t2, r3) {
                 var e3 = new FileReader();
                 e3.onload = function(e4) {
                   t2(e4.target.result);
                 }, e3.onerror = function(e4) {
                   r3(e4.target.error);
                 }, e3.readAsArrayBuffer(n3);
-              }) : n3;
+              }) : u.Promise.reject(new Error(r2 + " is a Blob, but we have no way of reading it.")) : n3;
             }).then(function(e3) {
               var t2 = a.getTypeOf(e3);
               return t2 ? ("arraybuffer" === t2 ? e3 = a.transformTo("uint8array", e3) : "string" === t2 && (s2 ? e3 = h.decode(e3) : n2 && true !== i2 && (e3 = (function(e4) {
@@ -46274,7 +46324,7 @@ var WordFormRuntime = (() => {
 jszip/dist/jszip.min.js:
   (*!
 
-  JSZip v3.10.1 - A JavaScript class for generating and reading zip files
+  JSZip v3.10.2 - A JavaScript class for generating and reading zip files
   <http://stuartk.com/jszip>
 
   (c) 2009-2016 Stuart Knightley <stuart [at] stuartk.com>

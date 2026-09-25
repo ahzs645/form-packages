@@ -8115,6 +8115,10 @@ const _isRowEmpty = (row, columns = []) => {
     return !_isMeaningfulValue(value);
   });
 };
+const _isRowEmptyWithMappedFields = (row, columns, rowMapping) => {
+  if (!_isRowEmpty(row, columns)) return false;
+  return Object.keys(rowMapping || {}).every(fieldId => !_isMeaningfulValue(_getValueAtPath(row, fieldId)));
+};
 const _stringifyValue = value => {
   if (value === undefined || value === null) return "";
   if (typeof value === "string") return value.trim();
@@ -8253,6 +8257,12 @@ const _applyFormulaColumns = (row, columns = []) => {
 // overridden (unless the typed value is the calculation itself).
 const _writeCellAndRecalculate = (row, column, value, columns = []) => {
   _setValueAtPath(row, column.dataPath || column.id, value);
+  // A single inline choice can represent distinct checkboxes on the source PDF.
+  // Keep every target in the row so the usual source-field mirroring fills the
+  // selected checkbox and clears its siblings.
+  Object.entries(column.choiceBooleanTargets || {}).forEach(([optionKey, targetPath]) => {
+    _setValueAtPath(row, targetPath, String(value) === optionKey);
+  });
   if (_isFormulaColumn(column) && _formulaPolicy(column) !== "always-calculated") {
     const typed = _stringifyValue(value);
     const calculated = _computeFormulaCellValue(row, column, columns);
@@ -8329,6 +8339,21 @@ const _buildRowsFromSourceFields = ({
       if (_isMeaningfulValue(normalizedValue)) {
         hasMeaningfulValue = true;
       }
+    });
+
+    // A compact summary table may edit additional PDF-backed row values in its
+    // SubformScoring modal. Those values are mapped by row but are not display
+    // columns, so restore them when loading existing form data as well.
+    Object.entries(explicitRowMapping || {}).forEach(([columnId, sourceFieldId]) => {
+      if (columns.some(column => column.id === columnId)) return;
+      const rawValue = fieldData[sourceFieldId];
+      if (rawValue === undefined || rawValue === null) return;
+      _setValueAtPath(row, columnId, rawValue);
+      if (_isMeaningfulValue(rawValue)) hasMeaningfulValue = true;
+    });
+    columns.forEach(column => {
+      const selected = Object.entries(column.choiceBooleanTargets || {}).find(([, targetPath]) => _isMeaningfulValue(_getValueAtPath(row, targetPath)));
+      if (selected) _setValueAtPath(row, column.dataPath || column.id, selected[0]);
     });
     rows.push(row);
     if (hasMeaningfulValue) {
@@ -8788,6 +8813,12 @@ EditableTable = ({
           const rawValue = _getValueAtPath(row, column.dataPath || column.id);
           data[sourceFieldId] = _normalizeMirroredCellValue(rawValue, column);
         });
+        // Modal-only row values have source mappings too, even though they are
+        // absent from the two summary columns. Mirror them for PDF regeneration.
+        Object.entries(sourceFieldIdsByRow?.[rowIndex] || {}).forEach(([columnId, sourceFieldId]) => {
+          if (!sourceFieldId || columns.some(column => column.id === columnId)) return;
+          data[sourceFieldId] = _normalizeMirroredCellValue(_getValueAtPath(row, columnId));
+        });
       });
 
       // Lock-on-edit: stamp the editing author's claim onto field.data.__authorship
@@ -8818,7 +8849,7 @@ EditableTable = ({
   }), [fd?.field?.data, columns, sourceFieldIds, sourceFieldIdsByRow, initialRowCount]);
   useEffect(() => {
     if (rows) return;
-    const seededRows = isModalMode ? [] : initialSeedRows.length > 0 ? initialSeedRows : Array.from({
+    const seededRows = isModalMode && modalEditorConfig?.seedInitialRows !== true ? [] : initialSeedRows.length > 0 ? initialSeedRows : Array.from({
       length: initialRowCount
     }, (_, index) => _makeEmptyRow(columns, index));
     setRows(seededRows);
@@ -8826,7 +8857,7 @@ EditableTable = ({
   useEffect(() => {
     if (sourceSeedRows.length === 0) return;
     const existingRows = Array.isArray(rows) ? rows : [];
-    const hasMeaningfulRows = existingRows.some(row => !_isRowEmpty(row, columns));
+    const hasMeaningfulRows = existingRows.some((row, rowIndex) => !_isRowEmptyWithMappedFields(row, columns, sourceFieldIdsByRow?.[rowIndex]));
     if (hasMeaningfulRows) return;
     // Convergence guard: compare row CONTENT with the volatile _rowId stripped.
     // Seed builders stamp Date.now()-based _rowIds, so raw JSON never matches
@@ -8885,6 +8916,13 @@ EditableTable = ({
   };
   const openCreateDialog = () => {
     if (isLocked || !allowAddRows || currentRows.length >= effectiveMaxRows) return;
+    if (modalEditorConfig?.seedInitialRows === true) {
+      const emptyRowIndex = currentRows.findIndex((row, rowIndex) => _isRowEmptyWithMappedFields(row, columns, sourceFieldIdsByRow?.[rowIndex]));
+      if (emptyRowIndex >= 0) {
+        openEditDialog(emptyRowIndex);
+        return;
+      }
+    }
     setEditingRowIndex(null);
     setDraftRow(makeDraftRow(currentRows.length));
     setErrorMessage("");
@@ -9219,8 +9257,9 @@ EditableTable = ({
         row,
         rowIndex
       })).filter(({
-        row
-      }) => !_isRowEmpty(row, columns));
+        row,
+        rowIndex
+      }) => modalEditorConfig?.seedInitialRows === true || !_isRowEmptyWithMappedFields(row, columns, sourceFieldIdsByRow?.[rowIndex]));
     }
 
     // Until the seeding effect writes the initial rows into form data, render
@@ -9679,7 +9718,7 @@ EditableTable = ({
     row,
     rowIndex
   }, displayIndex) => {
-    const isEmpty = _isRowEmpty(row, columns);
+    const isEmpty = _isRowEmptyWithMappedFields(row, columns, sourceFieldIdsByRow?.[rowIndex]);
     const rowLock = getRowLock(row);
     const localStampLock = _hasPersistedAuthorshipClaim(rowLock) ? {
       locked: false,
@@ -45289,9 +45328,13 @@ var WordFormRuntime = (() => {
     throw Error('Dynamic require of "' + x + '" is not supported');
   });
   var __commonJS = (cb, mod) => function __require2() {
-    return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = {
-      exports: {}
-    }).exports, mod), mod.exports;
+    try {
+      return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = {
+        exports: {}
+      }).exports, mod), mod.exports;
+    } catch (e) {
+      throw mod = 0, e;
+    }
   };
   var __export = (target, all2) => {
     for (var name in all2) __defProp(target, name, {
@@ -45321,9 +45364,9 @@ var WordFormRuntime = (() => {
     value: true
   }), mod);
 
-  // node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/dist/jszip.min.js
+  // node_modules/.pnpm/jszip@3.10.2/node_modules/jszip/dist/jszip.min.js
   var require_jszip_min = __commonJS({
-    "node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/dist/jszip.min.js"(exports, module) {
+    "node_modules/.pnpm/jszip@3.10.2/node_modules/jszip/dist/jszip.min.js"(exports, module) {
       !function (e) {
         if ("object" == typeof exports && "undefined" != typeof module) module.exports = e();else if ("function" == typeof define && define.amd) define([], e);else {
           ("undefined" != typeof window ? window : "undefined" != typeof global ? global : "undefined" != typeof self ? self : this).JSZip = e();
@@ -45711,7 +45754,7 @@ var WordFormRuntime = (() => {
                 return e2;
               };
             }
-            (n.prototype = e("./object")).loadAsync = e("./load"), n.support = e("./support"), n.defaults = e("./defaults"), n.version = "3.10.1", n.loadAsync = function (e2, t2) {
+            (n.prototype = e("./object")).loadAsync = e("./load"), n.support = e("./support"), n.defaults = e("./defaults"), n.version = "3.10.2", n.loadAsync = function (e2, t2) {
               return new n().loadAsync(e2, t2);
             }, n.external = e("./external"), t.exports = n;
           }, {
@@ -46689,7 +46732,9 @@ var WordFormRuntime = (() => {
               }
               return r2.join("/");
             }, a.getTypeOf = function (e2) {
-              return "string" == typeof e2 ? "string" : "[object Array]" === Object.prototype.toString.call(e2) ? "array" : o.nodebuffer && r.isBuffer(e2) ? "nodebuffer" : o.uint8array && e2 instanceof Uint8Array ? "uint8array" : o.arraybuffer && e2 instanceof ArrayBuffer ? "arraybuffer" : void 0;
+              if ("string" == typeof e2) return "string";
+              var t2 = Object.prototype.toString.call(e2);
+              return "[object Array]" === t2 ? "array" : o.nodebuffer && r.isBuffer(e2) ? "nodebuffer" : o.uint8array && "[object Uint8Array]" === t2 ? "uint8array" : o.arraybuffer && "[object ArrayBuffer]" === t2 ? "arraybuffer" : void 0;
             }, a.checkSupport = function (e2) {
               if (!o[e2.toLowerCase()]) throw new Error(e2 + " is not supported by this platform");
             }, a.MAX_VALUE_16BITS = 65535, a.MAX_VALUE_32BITS = -1, a.pretty = function (e2) {
@@ -46713,14 +46758,14 @@ var WordFormRuntime = (() => {
               return r2;
             }, a.prepareContent = function (r2, e2, n2, i2, s2) {
               return u.Promise.resolve(e2).then(function (n3) {
-                return o.blob && (n3 instanceof Blob || -1 !== ["[object File]", "[object Blob]"].indexOf(Object.prototype.toString.call(n3))) && "undefined" != typeof FileReader ? new u.Promise(function (t2, r3) {
+                return o.blob && (n3 instanceof Blob || -1 !== ["[object File]", "[object Blob]"].indexOf(Object.prototype.toString.call(n3))) ? void 0 !== Blob.prototype.arrayBuffer ? n3.arrayBuffer() : "undefined" != typeof FileReader ? new u.Promise(function (t2, r3) {
                   var e3 = new FileReader();
                   e3.onload = function (e4) {
                     t2(e4.target.result);
                   }, e3.onerror = function (e4) {
                     r3(e4.target.error);
                   }, e3.readAsArrayBuffer(n3);
-                }) : n3;
+                }) : u.Promise.reject(new Error(r2 + " is a Blob, but we have no way of reading it.")) : n3;
               }).then(function (e3) {
                 var t2 = a.getTypeOf(e3);
                 return t2 ? ("arraybuffer" === t2 ? e3 = a.transformTo("uint8array", e3) : "string" === t2 && (s2 ? e3 = h.decode(e3) : n2 && true !== i2 && (e3 = function (e4) {
@@ -49849,7 +49894,7 @@ var WordFormRuntime = (() => {
 jszip/dist/jszip.min.js:
   (*!
 
-  JSZip v3.10.1 - A JavaScript class for generating and reading zip files
+  JSZip v3.10.2 - A JavaScript class for generating and reading zip files
   <http://stuartk.com/jszip>
 
   (c) 2009-2016 Stuart Knightley <stuart [at] stuartk.com>
@@ -49964,7 +50009,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './CustomJsxBlock/index.jsx': ["CustomJsxBlock","displaySource","raw"],
   './DentalWeightConverter/index.jsx': ["DentalWeightConverter","DentalWeightConverterSchema","_positiveNumber","_readDentalField","_sanitizeDentalWeight","cellStyle","clearWeights","convertWeights","data","disabled","factor","fieldWrapperStyle","fixedPrecision","kgValue","kilograms","lastEdited","lastEditedRef","lbValue","nextValue","numeric","parsed","parts","pounds","setDentalValues","text","updateWeight"],
   './DocumentSignButton/index.jsx': ["DocumentSignButton","available","confirm","dismiss","note","prepared","running","sd","signed"],
-  './EditableTable/index.jsx': ["ButtonComponent","DEFAULT_WINDOW_HOURS","EditableTable","EditableTableSchema","_FORMULA_OVERRIDES_KEY","_addDaysToDateValue","_applyComputedColumns","_applyDefaultValuesToRow","_applyFormulaColumns","_applyRowProcessingConfig","_buildRowsFromSourceFields","_buildSubformFieldFromColumn","_choiceValueForControl","_choiceValueForStorage","_choiceValueToCoding","_cloneRow","_coerceNumberCellValue","_computeFormulaCellValue","_computeTemplateColumnValue","_evaluateColumnVisibility","_formatCellValue","_formatLocalDate","_formatProcessedNumber","_formulaPolicy","_getDefaultCellValue","_getLocalStampLock","_getValueAtPath","_hasPersistedAuthorshipClaim","_hasStampedLockValue","_isFormulaColumn","_isFormulaOverridden","_isMeaningfulValue","_isRowEmpty","_makeEmptyRow","_normalizeChoiceOptions","_normalizeDateCellValue","_normalizeInitialRowCount","_normalizeInitialRows","_normalizeMirroredCellValue","_normalizeNumberConfig","_normalizeRows","_normalizeSourceCellValue","_normalizeStampCellValue","_normalizeTableColumns","_normalizeUniqueToken","_normalizeValidationMessage","_normalizeZeroLikeValue","_resetFormulaCell","_resolveFieldDefaultValue","_resolveLiteralValue","_resolvePathValue","_resolveStampCellValue","_rowContentSignature","_rowFormulaValues","_setFormulaOverride","_setValueAtPath","_sortRowsByPath","_stampColumnLocksRow","_stringifyValue","_toFiniteNumber","_toPathSegments","_todayDateValue","_validateRowWithConfig","_writeCellAndRecalculate","actor","actorFrom","addHoursIso","addInlineRow","authorshipEnabled","authorshipHeaderCellStyle","authorshipPolicy","bodyCellStyle","buildKey","buildRowContext","c","cadNumber","cadPath","cadPrecision","calculated","canDeleteInline","canReset","canResign","canSaveAndAddNext","candidate","changed","ck","claim","claims","closeDialog","code","column","columns","commitRows","commitSave","computed","config","configMessage","containerStyle","control","controllerId","copy","count","createTableColumns","current","currentRowCount","currentRows","currentValue","customMessage","customResult","d","data","date","defaultSubformDataEntryConfig","deletedRow","disabledStamp","display","displayRows","displayValue","draftLocalStampLock","draftLockState","dropdownOptions","duplicateIndex","editableUntil","effectiveMaxRows","effectiveReadOnly","euDate","existing","existingRows","expired","explicitRowIndexes","explicitRowMapping","factor","fallback","fieldData","fieldId","first","formatTimestamp","getRowLock","getRows","getSourceFieldId","hasMeaningfulRows","hasMeaningfulValue","hasStampedValue","hasValue","headerCellStyle","headerRowStyle","id","index","inferredRowCount","initialRowCount","initialSeedRows","isDarkMode","isEmpty","isLocked","isModalMode","isNonEmpty","isOwner","isVertical","keepStatus","key","label","lastMeaningfulRowIndex","left","leftDate","leftValue","localStampLock","localStampLocked","lockColumns","lockExpired","lockInfo","lockOn","lockedUntil","makeDraftRow","match","message","mirroredFieldIds","modalColumns","modalEditorConfig","modalEditorType","nextDate","nextDraft","nextRow","nextRows","nextStatus","nextValue","nhAuth","normalizeStore","normalizedConfig","normalizedRow","normalizedValue","now","nowIso","numberConfig","numeric","numericValue","omitEmptyLines","onBeforeSaveRow","onRowDeleted","onRowSaved","onRowsChange","openCreateDialog","openEditDialog","option","options","overrides","owner","ownerId","ownerName","ownerRefresh","pad2","pairCadPrecision","pairFactor","pairPrefer","pairUsPrecision","pairs","parsed","path","paths","pending","policy","policyAppliesToAction","precision","prefer","prepareSave","processingConfig","raw","rawCad","rawKey","rawUs","rawValue","readOnly","readStore","realRowReadOnly","release","remaining","removeRowAt","renderEditorControl","renderEditorInput","renderFormulaControl","renderRowAuthorshipStatus","renderSuffix","renderVerticalTable","rendered","requireAnyGroups","requiredPaths","resetDraftFormulaCell","resetFormulaCell","resolveNow","resolvedFactor","resolvedRow","result","right","rightDate","rightValue","row","rowIndex","rowLock","rowLockState","rowNumberCellStyle","rowNumberHeaderStyle","rowReadOnly","rows","rowsForVerticalLayout","rule","safeFactor","safePrecision","sameActor","saveAndAddNextConfig","saveAndAddNextLabel","saveDraftRow","saved","savedAt","savedRowIndex","sd","section","seededRows","segments","selectionType","setRows","shouldShowActions","shouldToggleLocalLock","showRowAuthorshipColumn","sign","signedAt","sortedRows","sourceColumn","sourceFieldId","sourcePath","sourceSeedRows","spinButtonProps","stampCanUnlockLocalRow","stampCell","stampConfig","stampDraftCell","stampPath","stampedValue","store","subformModalConfig","tableColumns","tableContainerStyle","tableStyle","text","textFieldProps","theme","thisStampLocksRow","tooltip","transformedRow","trimTrailingZero","trimmed","ts","typed","untilSelf","updateCell","updateDraftCell","updateDraftValueAtPath","usNumber","usPath","usPrecision","usesSubformEditor","validateResolvedRow","validateRow","validationConfig","validationError","value","values","verticalBodyCellStyle","verticalLabelCellStyle","visibility","windowHours","withCommon","wording","zeroIsEmpty"],
+  './EditableTable/index.jsx': ["ButtonComponent","DEFAULT_WINDOW_HOURS","EditableTable","EditableTableSchema","_FORMULA_OVERRIDES_KEY","_addDaysToDateValue","_applyComputedColumns","_applyDefaultValuesToRow","_applyFormulaColumns","_applyRowProcessingConfig","_buildRowsFromSourceFields","_buildSubformFieldFromColumn","_choiceValueForControl","_choiceValueForStorage","_choiceValueToCoding","_cloneRow","_coerceNumberCellValue","_computeFormulaCellValue","_computeTemplateColumnValue","_evaluateColumnVisibility","_formatCellValue","_formatLocalDate","_formatProcessedNumber","_formulaPolicy","_getDefaultCellValue","_getLocalStampLock","_getValueAtPath","_hasPersistedAuthorshipClaim","_hasStampedLockValue","_isFormulaColumn","_isFormulaOverridden","_isMeaningfulValue","_isRowEmpty","_isRowEmptyWithMappedFields","_makeEmptyRow","_normalizeChoiceOptions","_normalizeDateCellValue","_normalizeInitialRowCount","_normalizeInitialRows","_normalizeMirroredCellValue","_normalizeNumberConfig","_normalizeRows","_normalizeSourceCellValue","_normalizeStampCellValue","_normalizeTableColumns","_normalizeUniqueToken","_normalizeValidationMessage","_normalizeZeroLikeValue","_resetFormulaCell","_resolveFieldDefaultValue","_resolveLiteralValue","_resolvePathValue","_resolveStampCellValue","_rowContentSignature","_rowFormulaValues","_setFormulaOverride","_setValueAtPath","_sortRowsByPath","_stampColumnLocksRow","_stringifyValue","_toFiniteNumber","_toPathSegments","_todayDateValue","_validateRowWithConfig","_writeCellAndRecalculate","actor","actorFrom","addHoursIso","addInlineRow","authorshipEnabled","authorshipHeaderCellStyle","authorshipPolicy","bodyCellStyle","buildKey","buildRowContext","c","cadNumber","cadPath","cadPrecision","calculated","canDeleteInline","canReset","canResign","canSaveAndAddNext","candidate","changed","ck","claim","claims","closeDialog","code","column","columns","commitRows","commitSave","computed","config","configMessage","containerStyle","control","controllerId","copy","count","createTableColumns","current","currentRowCount","currentRows","currentValue","customMessage","customResult","d","data","date","defaultSubformDataEntryConfig","deletedRow","disabledStamp","display","displayRows","displayValue","draftLocalStampLock","draftLockState","dropdownOptions","duplicateIndex","editableUntil","effectiveMaxRows","effectiveReadOnly","emptyRowIndex","euDate","existing","existingRows","expired","explicitRowIndexes","explicitRowMapping","factor","fallback","fieldData","fieldId","first","formatTimestamp","getRowLock","getRows","getSourceFieldId","hasMeaningfulRows","hasMeaningfulValue","hasStampedValue","hasValue","headerCellStyle","headerRowStyle","id","index","inferredRowCount","initialRowCount","initialSeedRows","isDarkMode","isEmpty","isLocked","isModalMode","isNonEmpty","isOwner","isVertical","keepStatus","key","label","lastMeaningfulRowIndex","left","leftDate","leftValue","localStampLock","localStampLocked","lockColumns","lockExpired","lockInfo","lockOn","lockedUntil","makeDraftRow","match","message","mirroredFieldIds","modalColumns","modalEditorConfig","modalEditorType","nextDate","nextDraft","nextRow","nextRows","nextStatus","nextValue","nhAuth","normalizeStore","normalizedConfig","normalizedRow","normalizedValue","now","nowIso","numberConfig","numeric","numericValue","omitEmptyLines","onBeforeSaveRow","onRowDeleted","onRowSaved","onRowsChange","openCreateDialog","openEditDialog","option","options","overrides","owner","ownerId","ownerName","ownerRefresh","pad2","pairCadPrecision","pairFactor","pairPrefer","pairUsPrecision","pairs","parsed","path","paths","pending","policy","policyAppliesToAction","precision","prefer","prepareSave","processingConfig","raw","rawCad","rawKey","rawUs","rawValue","readOnly","readStore","realRowReadOnly","release","remaining","removeRowAt","renderEditorControl","renderEditorInput","renderFormulaControl","renderRowAuthorshipStatus","renderSuffix","renderVerticalTable","rendered","requireAnyGroups","requiredPaths","resetDraftFormulaCell","resetFormulaCell","resolveNow","resolvedFactor","resolvedRow","result","right","rightDate","rightValue","row","rowIndex","rowLock","rowLockState","rowNumberCellStyle","rowNumberHeaderStyle","rowReadOnly","rows","rowsForVerticalLayout","rule","safeFactor","safePrecision","sameActor","saveAndAddNextConfig","saveAndAddNextLabel","saveDraftRow","saved","savedAt","savedRowIndex","sd","section","seededRows","segments","selected","selectionType","setRows","shouldShowActions","shouldToggleLocalLock","showRowAuthorshipColumn","sign","signedAt","sortedRows","sourceColumn","sourceFieldId","sourcePath","sourceSeedRows","spinButtonProps","stampCanUnlockLocalRow","stampCell","stampConfig","stampDraftCell","stampPath","stampedValue","store","subformModalConfig","tableColumns","tableContainerStyle","tableStyle","text","textFieldProps","theme","thisStampLocksRow","tooltip","transformedRow","trimTrailingZero","trimmed","ts","typed","untilSelf","updateCell","updateDraftCell","updateDraftValueAtPath","usNumber","usPath","usPrecision","usesSubformEditor","validateResolvedRow","validateRow","validationConfig","validationError","value","values","verticalBodyCellStyle","verticalLabelCellStyle","visibility","windowHours","withCommon","wording","zeroIsEmpty"],
   './EducationHistory/index.jsx': ["EducationHistory","EducationHistoryFields"],
   './Ethnicity/index.jsx': ["Ethnicity","firstNationEthnicityCodes","firstNationsEthnicityReferenceSet"],
   './FieldStampButton/index.jsx': ["ButtonComponent","FieldStampButton","buildContext","clearStamp","context","effectiveStampFieldId","fallback","fieldData","fieldId","isDisabled","isSigned","normalizeStampTargets","normalizeStampValue","normalizedTargets","raw","resolveLiteralValue","resolvePathValue","sd","signedAt","signedAtText","sourcePath","stamp","stampRecord","statusText","value","written"],

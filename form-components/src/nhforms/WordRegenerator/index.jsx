@@ -14,7 +14,11 @@ var WordFormRuntime = (() => {
     throw Error('Dynamic require of "' + x + '" is not supported');
   });
   var __commonJS = (cb, mod) => function __require2() {
-    return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+    try {
+      return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+    } catch (e) {
+      throw mod = 0, e;
+    }
   };
   var __export = (target, all2) => {
     for (var name in all2)
@@ -38,9 +42,9 @@ var WordFormRuntime = (() => {
   ));
   var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-  // node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/dist/jszip.min.js
+  // node_modules/.pnpm/jszip@3.10.2/node_modules/jszip/dist/jszip.min.js
   var require_jszip_min = __commonJS({
-    "node_modules/.pnpm/jszip@3.10.1/node_modules/jszip/dist/jszip.min.js"(exports, module) {
+    "node_modules/.pnpm/jszip@3.10.2/node_modules/jszip/dist/jszip.min.js"(exports, module) {
       !(function(e) {
         if ("object" == typeof exports && "undefined" != typeof module) module.exports = e();
         else if ("function" == typeof define && define.amd) define([], e);
@@ -268,7 +272,7 @@ var WordFormRuntime = (() => {
               return e2;
             };
           }
-          (n.prototype = e("./object")).loadAsync = e("./load"), n.support = e("./support"), n.defaults = e("./defaults"), n.version = "3.10.1", n.loadAsync = function(e2, t2) {
+          (n.prototype = e("./object")).loadAsync = e("./load"), n.support = e("./support"), n.defaults = e("./defaults"), n.version = "3.10.2", n.loadAsync = function(e2, t2) {
             return new n().loadAsync(e2, t2);
           }, n.external = e("./external"), t.exports = n;
         }, { "./defaults": 5, "./external": 6, "./load": 11, "./object": 15, "./support": 30 }], 11: [function(e, t, r) {
@@ -911,7 +915,9 @@ var WordFormRuntime = (() => {
             }
             return r2.join("/");
           }, a.getTypeOf = function(e2) {
-            return "string" == typeof e2 ? "string" : "[object Array]" === Object.prototype.toString.call(e2) ? "array" : o.nodebuffer && r.isBuffer(e2) ? "nodebuffer" : o.uint8array && e2 instanceof Uint8Array ? "uint8array" : o.arraybuffer && e2 instanceof ArrayBuffer ? "arraybuffer" : void 0;
+            if ("string" == typeof e2) return "string";
+            var t2 = Object.prototype.toString.call(e2);
+            return "[object Array]" === t2 ? "array" : o.nodebuffer && r.isBuffer(e2) ? "nodebuffer" : o.uint8array && "[object Uint8Array]" === t2 ? "uint8array" : o.arraybuffer && "[object ArrayBuffer]" === t2 ? "arraybuffer" : void 0;
           }, a.checkSupport = function(e2) {
             if (!o[e2.toLowerCase()]) throw new Error(e2 + " is not supported by this platform");
           }, a.MAX_VALUE_16BITS = 65535, a.MAX_VALUE_32BITS = -1, a.pretty = function(e2) {
@@ -932,14 +938,14 @@ var WordFormRuntime = (() => {
             return r2;
           }, a.prepareContent = function(r2, e2, n2, i2, s2) {
             return u.Promise.resolve(e2).then(function(n3) {
-              return o.blob && (n3 instanceof Blob || -1 !== ["[object File]", "[object Blob]"].indexOf(Object.prototype.toString.call(n3))) && "undefined" != typeof FileReader ? new u.Promise(function(t2, r3) {
+              return o.blob && (n3 instanceof Blob || -1 !== ["[object File]", "[object Blob]"].indexOf(Object.prototype.toString.call(n3))) ? void 0 !== Blob.prototype.arrayBuffer ? n3.arrayBuffer() : "undefined" != typeof FileReader ? new u.Promise(function(t2, r3) {
                 var e3 = new FileReader();
                 e3.onload = function(e4) {
                   t2(e4.target.result);
                 }, e3.onerror = function(e4) {
                   r3(e4.target.error);
                 }, e3.readAsArrayBuffer(n3);
-              }) : n3;
+              }) : u.Promise.reject(new Error(r2 + " is a Blob, but we have no way of reading it.")) : n3;
             }).then(function(e3) {
               var t2 = a.getTypeOf(e3);
               return t2 ? ("arraybuffer" === t2 ? e3 = a.transformTo("uint8array", e3) : "string" === t2 && (s2 ? e3 = h.decode(e3) : n2 && true !== i2 && (e3 = (function(e4) {
@@ -3444,7 +3450,7 @@ var WordFormRuntime = (() => {
 jszip/dist/jszip.min.js:
   (*!
 
-  JSZip v3.10.1 - A JavaScript class for generating and reading zip files
+  JSZip v3.10.2 - A JavaScript class for generating and reading zip files
   <http://stuartk.com/jszip>
 
   (c) 2009-2016 Stuart Knightley <stuart [at] stuartk.com>
