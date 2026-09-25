@@ -91,6 +91,8 @@ export interface TableColumn {
   withTime?: boolean;
   dateConfig?: BuilderField["dateConfig"];
   textareaConfig?: BuilderField["textareaConfig"];
+  /** Project one modal answer into two PDF-backed text paths. */
+  textContinuation?: { firstPath: string; secondPath: string; firstSegmentMaxChars: number } | null;
   useToggleSwitch?: boolean;
   numberConfig?: {
     typeNumber: "number" | "decimal" | "year";
@@ -104,7 +106,7 @@ export interface TableColumn {
     };
   } | null;
   options?: TableChoiceOption[] | null;
-  /** For a single choice backed by separate PDF checkbox fields, map option keys to row paths. */
+  /** For a choice backed by separate PDF checkbox fields, map option keys to row paths. */
   choiceBooleanTargets?: Record<string, string> | null;
   choiceStyle?: "dropdown" | "radio" | "multiselect" | "checkbox" | "simpleCodeSelect" | "findCode";
   codeSystem?: string | null;
@@ -112,6 +114,10 @@ export interface TableColumn {
   dataPath?: string | null;
   showInTable?: boolean;
   showInModal?: boolean;
+  /** Optional heading that groups adjacent fields in the MOIS row modal. */
+  modalSection?: string;
+  /** Require this column when its visibility rule currently shows it. */
+  requiredWhenVisible?: boolean;
   computedValue?: {
     mode: "template";
     template: string;

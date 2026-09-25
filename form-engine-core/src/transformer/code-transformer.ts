@@ -132,7 +132,10 @@ const createFormComponent = (
   try {
     const transformed = Babel.transform(cleanCode, {
       presets: ['react', 'typescript'],
-      filename: 'form.tsx'
+      filename: 'form.tsx',
+      // Keep large forms readable to the declaration scanner below and avoid
+      // Babel's automatic compact-mode notice being shown as a preview error.
+      compact: false,
     }).code;
 
     const scope = scopeBuilder.buildScope();

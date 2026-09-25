@@ -89,5 +89,7 @@ export interface SmartTemplateDefinition {
     codeValueActive?: boolean;
     scriptInstalled?: boolean;
     documentTemplateActive?: boolean;
+    /** PowerNote term association in Knowledge Editor; separate from a PowerForm placement. */
+    powerNoteTerm?: { canonicalSentence?: string; term?: string; conceptCki?: string };
   };
 }

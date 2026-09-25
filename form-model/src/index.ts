@@ -1438,7 +1438,11 @@ export interface BuilderCernerConfig {
     /** Source GRIDITEMLIST leaves, retained verbatim for imported grids. */
     nativeItems?: Array<Record<string, string>>;
     /** Authored UltraGrid intersection destinations, keyed by stable axis ids. */
-    intersections?: Array<{ rowId: string; columnId: string; eventDisplay: string; eventCode?: string; eventUid?: string; eventCki?: string }>;
+    intersections?: Array<{ rowId: string; columnId: string; eventDisplay: string; eventCode?: string; eventUid?: string; eventCki?: string;
+      /** Separate target-domain DTA needed to document this detail cell in iView; handoff only, not a GRIDITEM leaf. */
+      iviewDtaMnemonic?: string; iviewDtaActivityType?: string }>;
+    /** iView charting DTAs for imported GRIDITEM rows, keyed by their retained source order; never serialized as GRIDITEM leaves. */
+    iviewNativeDtas?: Array<{ sourceIndex: number; mnemonic: string; activityType?: string }>;
     view: "grid" | "row" | "detail";
     rowComments?: boolean;
     /** Discrete-grid "Other" column heading (native `other_title`); an empty string is a column without a heading. */
@@ -2230,6 +2234,10 @@ export interface BuilderField {
       dataPath?: string | null;
       showInTable?: boolean;
       showInModal?: boolean;
+      /** Optional heading that groups adjacent fields in the MOIS row modal. */
+      modalSection?: string;
+      /** Require this column when its visibility rule currently shows it. */
+      requiredWhenVisible?: boolean;
       computedValue?: {
         mode: "template";
         template: string;

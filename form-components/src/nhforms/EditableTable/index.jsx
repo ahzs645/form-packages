@@ -19,6 +19,8 @@ const {
   Dialog,
   DialogType,
   Text,
+  Checkbox,
+  ChoiceGroup,
 } = Fluent
 
 if (typeof EditableTable === "undefined") {
@@ -115,6 +117,23 @@ const _setValueAtPath = (root, path, value) => {
   }
   current[segments[segments.length - 1]] = value
   return root
+}
+
+const _combinedTextValue = (row, column) => {
+  const authored = _getValueAtPath(row, column.dataPath || column.id)
+  if (!column.textContinuation || _isMeaningfulValue(authored)) return authored
+  const first = _getValueAtPath(row, column.textContinuation.firstPath)
+  const second = _getValueAtPath(row, column.textContinuation.secondPath)
+  return [first, second].map((part) => String(part ?? "").trim()).filter(Boolean).join(" ")
+}
+
+const _splitContinuationText = (value, firstSegmentMaxChars) => {
+  const normalized = String(value ?? "").replace(/\s+/g, " ").trim()
+  const maxChars = Math.max(1, Number(firstSegmentMaxChars) || 12)
+  if (normalized.length <= maxChars) return [normalized, ""]
+  const wordBoundary = normalized.lastIndexOf(" ", maxChars)
+  const splitAt = wordBoundary > 0 ? wordBoundary : maxChars
+  return [normalized.slice(0, splitAt).trim(), normalized.slice(splitAt).trim()]
 }
 
 const _resolvePathValue = (root, path) => {
@@ -312,7 +331,9 @@ const _formatCellValue = (row, column) => {
     const computed = _computeTemplateColumnValue(row, column)
     if (_isMeaningfulValue(computed)) return computed
   }
-  const value = _getValueAtPath(row, column.dataPath || column.id)
+  const value = column.textContinuation
+    ? _combinedTextValue(row, column)
+    : _getValueAtPath(row, column.dataPath || column.id)
   // Choice cells store the option's code; show its wording.
   if (column.type === "dropdown" && !column.codeSystem && (typeof value === "string" || Array.isArray(value))) {
     const options = _normalizeChoiceOptions(column.options)
@@ -431,18 +452,25 @@ const _applyFormulaColumns = (row, columns = []) => {
 // overridden (unless the typed value is the calculation itself).
 const _writeCellAndRecalculate = (row, column, value, columns = []) => {
   _setValueAtPath(row, column.dataPath || column.id, value)
-  // A single inline choice can represent distinct checkboxes on the source PDF.
-  // Keep every target in the row so the usual source-field mirroring fills the
-  // selected checkbox and clears its siblings.
+  if (column.textContinuation?.firstPath && column.textContinuation?.secondPath) {
+    const [first, second] = _splitContinuationText(value, column.textContinuation.firstSegmentMaxChars)
+    _setValueAtPath(row, column.textContinuation.firstPath, first)
+    _setValueAtPath(row, column.textContinuation.secondPath, second)
+  }
+  // A choice can represent distinct checkboxes on the source PDF. Preserve
+  // every selected option for multi-select choices, and clear deselected ones.
+  const selectedValues = new Set(
+    (Array.isArray(value) ? value : [value]).map((entry) => String(entry))
+  )
   Object.entries(column.choiceBooleanTargets || {}).forEach(([optionKey, targetPath]) => {
-    _setValueAtPath(row, targetPath, String(value) === optionKey)
+    _setValueAtPath(row, targetPath, selectedValues.has(optionKey))
   })
   if (_isFormulaColumn(column) && _formulaPolicy(column) !== "always-calculated") {
     const typed = _stringifyValue(value)
     const calculated = _computeFormulaCellValue(row, column, columns)
     _setFormulaOverride(row, column, typed !== "" && typed !== calculated)
   }
-  return _applyFormulaColumns(row, columns)
+  return _clearHiddenColumnAnswers(_applyFormulaColumns(row, columns), columns)
 }
 
 const _resetFormulaCell = (row, column, columns = []) => {
@@ -553,8 +581,17 @@ const _buildRowsFromSourceFields = ({
 
     columns.forEach((column) => {
       const selected = Object.entries(column.choiceBooleanTargets || {})
-        .find(([, targetPath]) => _isMeaningfulValue(_getValueAtPath(row, targetPath)))
-      if (selected) _setValueAtPath(row, column.dataPath || column.id, selected[0])
+        .filter(([, targetPath]) => _isMeaningfulValue(_getValueAtPath(row, targetPath)))
+        .map(([optionKey]) => optionKey)
+      if (selected.length > 0) {
+        _setValueAtPath(row, column.dataPath || column.id,
+          column.choiceStyle === "multiselect" || column.choiceStyle === "checkbox"
+            ? selected : selected[0])
+      }
+    })
+    columns.forEach((column) => {
+      if (!column.textContinuation) return
+      _setValueAtPath(row, column.dataPath || column.id, _combinedTextValue(row, column))
     })
 
     rows.push(row)
@@ -677,6 +714,12 @@ const _validateRowWithConfig = (row, validationConfig, columns = []) => {
       const column = columns.find((item) => (item.dataPath || item.id) === path)
       return `${column?.title || column?.label || path} is required.`
     }
+  }
+
+  for (const column of columns) {
+    if (column.requiredWhenVisible !== true || !_evaluateColumnVisibility(column, row)) continue
+    if (_isMeaningfulValue(_getValueAtPath(row, column.dataPath || column.id))) continue
+    return `${column.title || column.label || column.id} is required.`
   }
 
   return null
@@ -847,7 +890,7 @@ const _buildSubformFieldFromColumn = (column) => {
         id: fieldId,
         label,
         type: "choice",
-        choiceStyle: "dropdown",
+        choiceStyle: column.choiceStyle || "dropdown",
         options: _normalizeChoiceOptions(column.options),
         required: column.required === true,
       })
@@ -901,6 +944,18 @@ const _evaluateColumnVisibility = (column, row = {}) => {
     return rule.type === "gt" ? left > right : left < right
   }
   return true
+}
+
+const _clearHiddenColumnAnswers = (row, columns = []) => {
+  if (!row) return row
+  columns.forEach((column) => {
+    if (column.visibility?.hiddenAnswerPolicy !== "clear" || _evaluateColumnVisibility(column, row)) return
+    _setValueAtPath(row, column.dataPath || column.id, column.type === "checkbox" ? false : "")
+    Object.values(column.choiceBooleanTargets || {}).forEach((targetPath) => {
+      _setValueAtPath(row, targetPath, false)
+    })
+  })
+  return row
 }
 
 EditableTable = ({
@@ -992,6 +1047,9 @@ EditableTable = ({
   const modalEditorConfig = props.modalEditorConfig || null
   const processingConfig = props.processingConfig || modalEditorConfig?.processingConfig || null
   const validationConfig = props.validationConfig || modalEditorConfig?.validationConfig || null
+  const isRequiredModalColumn = (column) => column.requiredWhenVisible === true ||
+    (Array.isArray(validationConfig?.requiredPaths) ? validationConfig.requiredPaths : []).some((entry) =>
+      (typeof entry === "string" ? entry : entry?.path) === (column.dataPath || column.id))
   const onBeforeSaveRow = props.onBeforeSaveRow
   const validateRow = props.validateRow
   const onRowsChange = props.onRowsChange
@@ -1475,6 +1533,7 @@ EditableTable = ({
       return null
     }
 
+    _clearHiddenColumnAnswers(resolvedRow, columns)
     const validationError = validateResolvedRow(resolvedRow)
     if (validationError) {
       setErrorMessage(validationError)
@@ -1586,7 +1645,9 @@ EditableTable = ({
   const shouldShowActions = !isLocked && (allowEditRows || allowDeleteRows)
 
   const renderEditorControl = (row, rowIndex, column, onValueChange, inline, rowReadOnly = false, onStampColumn = null, rowLockState = null, onResetFormula = null) => {
-    const value = _getValueAtPath(row, column.dataPath || column.id)
+    const value = column.textContinuation
+      ? _combinedTextValue(row, column)
+      : _getValueAtPath(row, column.dataPath || column.id)
     const realRowReadOnly = !!rowLockState?.authorship?.locked
     const localStampLocked = !!rowLockState?.localStamp?.locked
     const thisStampLocksRow = _hasStampedLockValue(row, column)
@@ -1670,6 +1731,37 @@ EditableTable = ({
 
       case "dropdown":
         const dropdownOptions = _normalizeChoiceOptions(column.options)
+        if (column.choiceStyle === "checkbox") {
+          const selected = new Set((Array.isArray(value) ? value : value ? [value] : []).map(String))
+          return (
+            <Stack tokens={{ childrenGap: 4 }}>
+              {dropdownOptions.map((option) => (
+                <Checkbox
+                  key={option.key}
+                  label={option.text}
+                  checked={selected.has(option.key)}
+                  disabled={effectiveReadOnly}
+                  onChange={(_event, checked) => {
+                    const next = new Set(selected)
+                    if (checked) next.add(option.key)
+                    else next.delete(option.key)
+                    onValueChange(rowIndex, column.id, Array.from(next))
+                  }}
+                />
+              ))}
+            </Stack>
+          )
+        }
+        if (column.choiceStyle === "radio") {
+          return (
+            <ChoiceGroup
+              options={dropdownOptions}
+              selectedKey={value ? String(value) : undefined}
+              disabled={effectiveReadOnly}
+              onChange={(_event, option) => onValueChange(rowIndex, column.id, option?.key || "")}
+            />
+          )
+        }
         const selectionType =
           column.choiceStyle === "multiselect" || column.choiceStyle === "checkbox"
             ? "multiple"
@@ -2224,9 +2316,12 @@ EditableTable = ({
           <Stack tokens={{ childrenGap: 12 }}>
             {/* Two columns when the dialog has room; choices and long text take a full row. */}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "12px 16px" }}>
-            {modalColumns.filter((column) => _evaluateColumnVisibility(column, draftRow)).map((column) => (
+            {modalColumns.filter((column) => _evaluateColumnVisibility(column, draftRow)).flatMap((column, index, visibleColumns) => [
+              ...(column.modalSection && (index === 0 || visibleColumns[index - 1]?.modalSection !== column.modalSection)
+                ? [<div key={`section-${column.id}`} style={{ gridColumn: "1 / -1", fontWeight: 600, borderBottom: `1px solid ${isDarkMode ? "#505050" : "#d1d5db"}`, paddingTop: "8px", paddingBottom: "4px" }}>{column.modalSection}</div>]
+                : []),
               <div key={column.id} style={column.type === "dropdown" || column.type === "text" ? { gridColumn: "1 / -1" } : undefined}>
-                <Label>{column.title || column.id}</Label>
+                <Label>{column.title || column.id}{isRequiredModalColumn(column) ? " *" : ""}</Label>
                 {renderEditorInput(
                   draftRow,
                   editingRowIndex ?? currentRows.length,
@@ -2238,8 +2333,8 @@ EditableTable = ({
                   draftLockState,
                   (_rowIndex, formulaColumn) => resetDraftFormulaCell(formulaColumn)
                 )}
-              </div>
-            ))}
+              </div>,
+            ])}
             </div>
             {errorMessage && (
               <Text style={{ color: isDarkMode ? "#ffb3b3" : "#b42318" }}>
