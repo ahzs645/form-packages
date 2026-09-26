@@ -995,6 +995,47 @@ const _evaluateDataEntryVisibility = (field, values = {}) => {
   return true
 }
 
+// How FormLogicKit should compare a controller's answer, from its entry type.
+const _dataEntryControllerKind = (field) => {
+  const type = field?.type
+  if (type === "booleanYesNo") return "boolean"
+  if (type === "choice") return "choice"
+  if (type === "number" || type === "scale") return "number"
+  return "text"
+}
+
+/**
+ * Whether a data-entry field's visibility rule (a builder BuilderVisibilityRule
+ * lifted by lib/subform-data-entry.ts) shows it. FormLogicKit evaluates the
+ * full operator set (not-filled, gte, additional conditions, match any, ...)
+ * the same way regular fields do; the local evaluator is the fallback when the
+ * kit is not loaded. `getValue(controllerId)` returns the raw answer.
+ */
+const _isDataEntryFieldVisible = (field, getValue, fieldById) => {
+  const rule = field?.visibility
+  if (!rule || typeof rule !== "object" || rule.type === "always") return true
+  if (
+    typeof FormLogicKit !== "undefined" &&
+    FormLogicKit &&
+    typeof FormLogicKit.evaluateVisibilityRule === "function"
+  ) {
+    return FormLogicKit.evaluateVisibilityRule(rule, getValue, {
+      controllerKind: (controllerId) => _dataEntryControllerKind(fieldById?.get?.(controllerId)),
+    }) !== false
+  }
+  const controllerId = rule.controllerId
+  return _evaluateDataEntryVisibility(field, controllerId ? { [controllerId]: getValue(controllerId) } : {})
+}
+
+// "Dose is required." / "Dose and Route are required." — the wording
+// EditableTable's row Save uses, naming every missing field at once.
+const _formatMissingRequiredMessage = (fields) => {
+  const labels = (fields || []).map((field) => String(field?.label || field?.id || "").trim()).filter(Boolean)
+  if (labels.length === 0) return ""
+  if (labels.length === 1) return `${labels[0]} is required.`
+  return `${labels.slice(0, -1).join(", ")} and ${labels[labels.length - 1]} are required.`
+}
+
 const _toPathSegments = (path) =>
   String(path || "")
     .split(".")
@@ -1395,12 +1436,16 @@ const _resolveFieldDefaultValue = (field, sd, allowObservationDefault = true) =>
   const explicitDefault = observationDefault ?? field.defaultValue ?? field.default_value
   if (explicitDefault === undefined) return undefined
 
-  if (explicitDefault === "__today") {
+  if (explicitDefault === "__today" || explicitDefault === "__now") {
     const today = new Date()
     const year = today.getFullYear()
     const month = String(today.getMonth() + 1).padStart(2, "0")
     const day = String(today.getDate()).padStart(2, "0")
-    return `${year}-${month}-${day}`
+    if (explicitDefault === "__today") return `${year}-${month}-${day}`
+    // datetime-local value, the format the date-time input stores.
+    const hours = String(today.getHours()).padStart(2, "0")
+    const minutes = String(today.getMinutes()).padStart(2, "0")
+    return `${year}-${month}-${day}T${hours}:${minutes}`
   }
 
   if (field.type === "choice" || field.type === "booleanYesNo") {
@@ -1828,9 +1873,20 @@ const SubformScoringInner = ({
   onDataEntryValueChange,
   observationOutputs = [],
   formDataOutputs = [],
+  // Locked (section complete / signed / host read-only): the modal still opens
+  // to show the answers, but nothing in it can change and Done cannot save.
+  readOnly = false,
+  disabled = false,
+  // A host-side validation message (e.g. EditableTable's row Save) shown
+  // inside the dialog above its buttons.
+  errorMessage = null,
   ...props
 }) => {
+  const isReadOnly = readOnly === true || disabled === true
   const [internalIsOpen, setInternalIsOpen] = useState(false)
+  // Set by a Done that found missing required answers; the message then
+  // tracks the answers live until every required field is filled.
+  const [showRequiredErrors, setShowRequiredErrors] = useState(false)
   const [fd] = useFormSessionData()
   const sd = useSourceData()
   // One useMutation per supported write action. Iterating a module-constant
@@ -1860,6 +1916,7 @@ const SubformScoringInner = ({
     if (typeof controlledIsOpen !== "boolean") {
       setInternalIsOpen(nextValue)
     }
+    setShowRequiredErrors(false)
     onOpenChange?.(nextValue)
   }, [controlledIsOpen, onOpenChange])
 
@@ -2126,7 +2183,8 @@ const SubformScoringInner = ({
   }, [isDataEntryMode, isMorphineCalculatorMode, dataEntryCalculatorConfig, dataEntryFields, fd, hasExternalDataEntryStore, dataEntryValueRoot])
 
   useEffect(() => {
-    if (!isDataEntryMode || !isDialogOpen) return
+    // A locked record is shown as saved; defaults never write into it.
+    if (!isDataEntryMode || !isDialogOpen || isReadOnly) return
 
     const pendingDefaults = []
     for (const field of dataEntryFields) {
@@ -2158,7 +2216,37 @@ const SubformScoringInner = ({
         draft.field.data[fieldId] = defaultValue
       })
     }))
-  }, [bringForward, isDataEntryMode, isDialogOpen, dataEntryFields, dataEntryValues, fd, onDataEntryValueChange, sd])
+  }, [bringForward, isDataEntryMode, isDialogOpen, isReadOnly, dataEntryFields, dataEntryValues, fd, onDataEntryValueChange, sd])
+
+  // Visibility rules may name a sibling (the usual case) or a parent-form
+  // field, read from the same store the subform's answers live in.
+  const getVisibilityControllerValue = useCallback((controllerId) => {
+    if (Object.prototype.hasOwnProperty.call(dataEntryValues, controllerId)) {
+      return dataEntryValues[controllerId]
+    }
+    return hasExternalDataEntryStore
+      ? _getValueAtPath(dataEntryValueRoot, controllerId)
+      : fd?.field?.data?.[controllerId]
+  }, [dataEntryValues, dataEntryValueRoot, fd, hasExternalDataEntryStore])
+
+  // Hidden fields still collect their default answer but are never drawn,
+  // never required and never counted in progress.
+  const isDataEntryFieldShown = useCallback((field) => (
+    field?.hidden !== true &&
+    _isDataEntryFieldVisible(field, getVisibilityControllerValue, dataEntryFieldById)
+  ), [dataEntryFieldById, getVisibilityControllerValue])
+
+  const missingRequiredFields = useMemo(() => {
+    if (!isDataEntryMode) return []
+    return dataEntryFields.filter((field) => (
+      field?.id &&
+      field.required === true &&
+      !_isHeadingField(field) &&
+      field.type !== "conversion" &&
+      isDataEntryFieldShown(field) &&
+      !_isMeaningfulValue(dataEntryValues[field.id])
+    ))
+  }, [isDataEntryMode, dataEntryFields, dataEntryValues, isDataEntryFieldShown])
 
   const dataEntryCalculations = useMemo(() => {
     if (Array.isArray(dataEntryConfig?.calculatedValues) && dataEntryConfig.calculatedValues.length > 0) {
@@ -2224,7 +2312,7 @@ const SubformScoringInner = ({
         : []
       const answerableFields = calculatorFields.length > 0
         ? calculatorFields
-        : dataEntryFields.filter((field) => !_isHeadingField(field))
+        : dataEntryFields.filter((field) => !_isHeadingField(field) && isDataEntryFieldShown(field))
       const requiredFields = answerableFields.filter((field) => field.required)
       const fieldsForProgress = requiredFields.length > 0 ? requiredFields : answerableFields
       const total = fieldsForProgress.length
@@ -2247,7 +2335,7 @@ const SubformScoringInner = ({
       total,
       percentage: total > 0 ? Math.round((answered / total) * 100) : 0
     }
-  }, [isDataEntryMode, isMorphineCalculatorMode, dataEntryCalculatorConfig, dataEntryFieldById, dataEntryFields, dataEntryValues, config.questions, answers])
+  }, [isDataEntryMode, isMorphineCalculatorMode, dataEntryCalculatorConfig, dataEntryFieldById, dataEntryFields, dataEntryValues, isDataEntryFieldShown, config.questions, answers])
 
   const hasAnyAnswers = useMemo(() => {
     if (isDataEntryMode) {
@@ -2407,6 +2495,7 @@ const SubformScoringInner = ({
           convertOnBlur={field.convertOnBlur !== false}
           allowNegative={field.allowNegative === true}
           required={required}
+          readOnly={isReadOnly}
           valueRoot={hasExternalDataEntryStore ? dataEntryValueRoot : undefined}
           onValueChange={setDataEntryValue}
         />
@@ -2466,6 +2555,7 @@ const SubformScoringInner = ({
           showTooltip={field.showTooltip === true}
           tooltipMode={field.tooltipMode === "option" ? "option" : "all"}
           disableHorizontalScroll={renderOptions.disableHorizontalScroll === true}
+          readOnly={isReadOnly}
         />
       )
     }
@@ -2483,6 +2573,27 @@ const SubformScoringInner = ({
             placeholder={field.placeholder}
             value={dataEntryValues[field.id] ?? ""}
             onChange={(value) => setDataEntryValue(field.id, (value ?? "").replace(/\./g, "-"))}
+            readOnly={isReadOnly}
+            disabled={isReadOnly}
+          />
+        </div>
+      )
+    }
+
+    if (field.type === "time") {
+      // The MOIS masked HH:mm control, driven the same controlled way as the
+      // date branch (and EditableTable/RepeatForEachTable time cells): no
+      // fieldId, so the answer lands only in this subform's store.
+      return (
+        <div key={`field-${field.id}`}>
+          <Label required={required}>{field.label}</Label>
+          <TimeSelect
+            inline
+            placeholder={field.placeholder || "HH:mm"}
+            value={dataEntryValues[field.id] ?? ""}
+            onChange={(_event, value) => setDataEntryValue(field.id, value || "")}
+            readOnly={isReadOnly}
+            disabled={isReadOnly}
           />
         </div>
       )
@@ -2518,6 +2629,7 @@ const SubformScoringInner = ({
             defaultValue={_resolveFieldDefaultValue(field, sd, bringForward)}
             placeholder={field.placeholder || "Please search"}
             required={required}
+            readOnly={isReadOnly}
             openOnFocus
             showOtherOption={Boolean(field.showOtherOption || field.show_other_option)}
             onChange={(nextValue) => setDataEntryValue(field.id, nextValue)}
@@ -2716,6 +2828,7 @@ const SubformScoringInner = ({
           totalCountFieldId={field.totalCountFieldId}
           selectedIdsFieldId={field.selectedIdsFieldId}
           selectedLabelsFieldId={field.selectedLabelsFieldId}
+          readOnly={isReadOnly}
         />
       )
     }
@@ -2736,7 +2849,7 @@ const SubformScoringInner = ({
 
   const renderDataEntryScaleStack = (group) => {
     const fields = (Array.isArray(group?.fields) ? group.fields : [])
-      .filter((field) => _evaluateDataEntryVisibility(field, dataEntryValues))
+      .filter(isDataEntryFieldShown)
     if (fields.length === 0) return null
 
     const stackMinWidth = fields.reduce((widest, field) => {
@@ -2768,7 +2881,7 @@ const SubformScoringInner = ({
 
   const renderDataEntryScaleMatrix = (group) => {
     const options = Array.isArray(group?.options) ? group.options : []
-    const fields = Array.isArray(group?.fields) ? group.fields : []
+    const fields = (Array.isArray(group?.fields) ? group.fields : []).filter(isDataEntryFieldShown)
     if (options.length === 0 || fields.length === 0) return null
 
     const columnTemplate = `minmax(240px, 1.8fr) repeat(${options.length}, minmax(56px, 1fr))`
@@ -3247,6 +3360,19 @@ const SubformScoringInner = ({
     }
   }
 
+  // Done/Save & Add Next refuse to complete while a visible required field is
+  // empty, like EditableTable's row Save: the dialog stays open and names them.
+  const blockOnMissingRequired = () => {
+    if (missingRequiredFields.length === 0) return false
+    setShowRequiredErrors(true)
+    return true
+  }
+  const requiredErrorMessage = showRequiredErrors
+    ? _formatMissingRequiredMessage(missingRequiredFields)
+    : ""
+  const hostErrorMessage = typeof errorMessage === "string" ? errorMessage.trim() : ""
+  const dialogErrorMessage = requiredErrorMessage || hostErrorMessage
+
   const containerStyle = {
     padding: "8px 0",
   }
@@ -3360,6 +3486,15 @@ const SubformScoringInner = ({
         modalProps={modalProps}
         minWidth={dialogMinWidth}
       >
+        {/* A disabled fieldset is the platform-level guarantee that every
+            native control inside (inputs, radios, selects, pickers' buttons)
+            is inert while locked — the same technique the exporter uses for
+            read-only archetype fields. Cancel stays outside it. */}
+        <fieldset
+          disabled={isReadOnly}
+          data-subform-readonly={isReadOnly ? "true" : undefined}
+          style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}
+        >
         {isDataEntryMode ? (
           <div style={{ maxHeight: "65vh", overflowY: "auto", paddingRight: "4px" }}>
             {useBloodGlucoseReadingLayout ? (
@@ -3392,7 +3527,7 @@ const SubformScoringInner = ({
                   }
 
                   const field = entry.field
-                  if (!_evaluateDataEntryVisibility(field, dataEntryValues)) return null
+                  if (!isDataEntryFieldShown(field)) return null
                   const isHeading = _isHeadingField(field)
                   const basis = _resolveFieldWidthBasis(field)
                   let showLegendForScale = undefined
@@ -3465,7 +3600,7 @@ const SubformScoringInner = ({
             {dataEntryFields.length > 0 && (
               <div style={{ display: "flex", flexWrap: "wrap", columnGap: "12px", rowGap: "10px", marginBottom: "16px" }}>
                 {dataEntryFields.map((field) => {
-                  if (!_evaluateDataEntryVisibility(field, dataEntryValues)) return null
+                  if (!isDataEntryFieldShown(field)) return null
                   const basis = _resolveFieldWidthBasis(field)
                   return (
                     <div
@@ -3486,12 +3621,24 @@ const SubformScoringInner = ({
             />
           </div>
         )}
+        </fieldset>
+        {dialogErrorMessage ? (
+          <div
+            role="alert"
+            data-subform-error=""
+            style={{ marginTop: "12px", fontSize: "13px", color: isDarkMode ? "#ffb3b3" : "#b42318" }}
+          >
+            {dialogErrorMessage}
+          </div>
+        ) : null}
         <div style={{ height: "16px" }} />
         <Stack horizontal horizontalAlign="end" tokens={{ childrenGap: 8 }}>
           {typeof onSecondaryComplete === "function" ? (
             <DefaultButton
               text={secondaryCompleteButtonText || "Save & Add Next"}
+              disabled={isReadOnly}
               onClick={() => {
+                if (isReadOnly) return
                 const shouldClose = onSecondaryComplete({
                   mode: isDataEntryMode ? "data-entry" : "scoring",
                   dataEntryValues,
@@ -3501,6 +3648,7 @@ const SubformScoringInner = ({
                   calculatedTotals,
                 })
                 if (shouldClose !== false) {
+                  if (blockOnMissingRequired()) return
                   onCommitToParent?.(prepareCompletionState())
                   setDialogOpen(false)
                 }
@@ -3509,7 +3657,9 @@ const SubformScoringInner = ({
           ) : null}
           <PrimaryButton
             text={completeButtonText}
+            disabled={isReadOnly}
             onClick={async () => {
+              if (isReadOnly) return
               const shouldClose = onComplete?.({
                 mode: isDataEntryMode ? "data-entry" : "scoring",
                 dataEntryValues,
@@ -3519,6 +3669,10 @@ const SubformScoringInner = ({
                 calculatedTotals,
               })
               if (shouldClose !== false) {
+                // A host that keeps the dialog open (onComplete returning
+                // false, e.g. EditableTable's row editor) runs its own
+                // validation and reports it through errorMessage.
+                if (blockOnMissingRequired()) return
                 let actionPayload = null
                 if (isDataEntryMode && dataEntryAction) {
                   const writeDefinition = MOIS_WRITE_MUTATIONS[dataEntryAction.writeKey]
@@ -3600,6 +3754,7 @@ const SubformScoring = (props) => {
     onOpenChange,
     formDataOutputs = [],
     persistNestedFields = true,
+    onCommitToParent: hostCommitToParent,
   } = props
   const [parentFd] = useActiveData()
   const [internalIsOpen, setInternalIsOpen] = useState(false)
@@ -3620,7 +3775,7 @@ const SubformScoring = (props) => {
     onOpenChange?.(nextValue)
   }, [controlledIsOpen, onOpenChange, parentFd])
 
-  const handleCommitToParent = useCallback((sessionFd) => {
+  const mergeSessionIntoParent = useCallback((sessionFd) => {
     if (!parentFd?.setFormData) return
     const sessionState = cloneFormSessionState(sessionFd)
     parentFd.setFormData((current) => {
@@ -3649,6 +3804,15 @@ const SubformScoring = (props) => {
       return nextState
     })
   }, [formDataOutputs, parentFd, persistNestedFields])
+
+  // Merge the isolated session into the parent form, then hand the committed
+  // state to the host's own onCommitToParent (ChartRecordManager refreshes the
+  // chart there). The two compose: `{...props}` used to be overridden by this
+  // wrapper, so a host's callback silently never ran.
+  const handleCommitToParent = useCallback((sessionFd) => {
+    mergeSessionIntoParent(sessionFd)
+    if (typeof hostCommitToParent === "function") hostCommitToParent(sessionFd)
+  }, [hostCommitToParent, mergeSessionIntoParent])
 
   return (
     <FormSessionProvider initialFormData={effectiveInitialData}>

@@ -2236,7 +2236,24 @@ export interface BuilderField {
       showInModal?: boolean;
       /** Optional heading that groups adjacent fields in the MOIS row modal. */
       modalSection?: string;
-      /** Require this column when its visibility rule currently shows it. */
+      /**
+       * The row cannot be saved while this column is shown and empty. A column
+       * hidden by its visibility rule is never required. Edited through the
+       * regular field inspector (lib/tables/table-column-fields.ts), which
+       * folds the two legacy stores below into this flag.
+       */
+      required?: boolean;
+      /** Row-save message when a required column is empty (default "<label> is required."). */
+      requiredMessage?: string;
+      /** Hint shown with the column's input in the row editor. */
+      helpText?: string;
+      placeholder?: string;
+      /**
+       * Legacy alias of `required` (same meaning). Older runtimes only read
+       * this, so the exporter keeps emitting it. The other legacy store is a
+       * `modalEditorConfig.validationConfig.requiredPaths` entry for the
+       * column's row path.
+       */
       requiredWhenVisible?: boolean;
       computedValue?: {
         mode: "template";
@@ -2248,6 +2265,10 @@ export interface BuilderField {
           | { id?: string; kind: "answer"; path: string }
         >;
       } | BuilderTableFormulaColumn | null;
+      /**
+       * Row-level rule: `controllerId` (and each additional condition's)
+       * names a sibling column by its row path (`dataPath || id`).
+       */
       visibility?: BuilderVisibilityRule | null;
       moisTargetId?: string | null;
       /** Row-1 cell of `tableConfig.documentRowPath` (derived on load, never trusted from a package). */

@@ -7,6 +7,9 @@
  * - Row add/edit/delete actions
  * - Empty row detection and row-level uniqueness checks
  * - Configurable column types
+ * - Per-row column visibility (column.visibility, a BuilderVisibilityRule
+ *   evaluated by FormLogicKit) and required-while-shown columns
+ *   (column.required / requiredWhenVisible, requiredMessage) checked on row Save
  */
 
 const { useState, useEffect, useMemo, useCallback } = React
@@ -32,6 +35,27 @@ const _getDefaultCellValue = (column = {}) => {
   // A starting value the filler can change (e.g. 7.5 hours per shift).
   if (typeof column.prefill === "string" || typeof column.prefill === "number") return String(column.prefill)
   return ""
+}
+
+// Required while the column is shown in the row (requiredWhenVisible is the
+// older name for the same thing); a hidden column is never required.
+const _isRequiredColumn = (column = {}) => column?.required === true || column?.requiredWhenVisible === true
+
+// Checkbox cells store a boolean. The subform row editor reports its
+// checkbox as a selected option ({ selectedKey: "true" }) and older rows
+// stored the label ("Checked"), so read those as booleans too.
+const _CHECKBOX_TRUE_TEXT = ["true", "yes", "y", "1", "on", "checked"]
+const _toCheckboxValue = (value, column = {}) => {
+  if (typeof value === "boolean") return value
+  if (value === null || value === undefined) return false
+  if (typeof value === "number") return Number.isFinite(value) && value !== 0
+  if (Array.isArray(value)) return value.some((entry) => _toCheckboxValue(entry, column))
+  if (typeof value === "object") {
+    return _toCheckboxValue(value.selectedKey ?? value.code ?? value.value ?? value.key ?? null, column)
+  }
+  const text = String(value).trim().toLowerCase()
+  const onLabel = String(column?.booleanLabels?.on || "").trim().toLowerCase()
+  return _CHECKBOX_TRUE_TEXT.includes(text) || (onLabel !== "" && text === onLabel)
 }
 
 const _formatLocalDate = (date) => {
@@ -342,7 +366,7 @@ const _formatCellValue = (row, column) => {
   }
   if (column.type === "checkbox") {
     if (value === undefined || value === null || value === "") return ""
-    if (value) return column.booleanLabels?.on || "Checked"
+    if (_toCheckboxValue(value, column)) return column.booleanLabels?.on || "Checked"
     return column.booleanLabels?.off || "Unchecked"
   }
   return _stringifyValue(value)
@@ -449,8 +473,10 @@ const _applyFormulaColumns = (row, columns = []) => {
 }
 
 // Write one cell and recalculate the row. Typing into a formula cell marks it
-// overridden (unless the typed value is the calculation itself).
-const _writeCellAndRecalculate = (row, column, value, columns = []) => {
+// overridden (unless the typed value is the calculation itself). `formData`
+// (the form's answers) is where column visibility rules naming a non-column
+// controller look.
+const _writeCellAndRecalculate = (row, column, value, columns = [], formData) => {
   _setValueAtPath(row, column.dataPath || column.id, value)
   if (column.textContinuation?.firstPath && column.textContinuation?.secondPath) {
     const [first, second] = _splitContinuationText(value, column.textContinuation.firstSegmentMaxChars)
@@ -470,7 +496,7 @@ const _writeCellAndRecalculate = (row, column, value, columns = []) => {
     const calculated = _computeFormulaCellValue(row, column, columns)
     _setFormulaOverride(row, column, typed !== "" && typed !== calculated)
   }
-  return _clearHiddenColumnAnswers(_applyFormulaColumns(row, columns), columns)
+  return _clearHiddenColumnAnswers(_applyFormulaColumns(row, columns), columns, formData)
 }
 
 const _resetFormulaCell = (row, column, columns = []) => {
@@ -670,11 +696,17 @@ const _normalizeValidationMessage = (result) => {
   return null
 }
 
-const _validateRowWithConfig = (row, validationConfig, columns = []) => {
-  if (!row || !validationConfig || typeof validationConfig !== "object") return null
+// Why a row about to be saved is not ready, or null. Legacy validationConfig
+// checks (requireAnyGroups, requiredPaths) run first, one at a time; then
+// every required column shown in the row (and in the row editor) must be
+// answered, with or without a validationConfig, all missing ones named in one
+// message.
+const _validateRowWithConfig = (row, validationConfig, columns = [], formData) => {
+  if (!row) return null
+  const config = validationConfig && typeof validationConfig === "object" ? validationConfig : {}
 
-  const requireAnyGroups = Array.isArray(validationConfig.requireAnyGroups)
-    ? validationConfig.requireAnyGroups
+  const requireAnyGroups = Array.isArray(config.requireAnyGroups)
+    ? config.requireAnyGroups
     : []
 
   for (const group of requireAnyGroups) {
@@ -693,8 +725,8 @@ const _validateRowWithConfig = (row, validationConfig, columns = []) => {
     return message
   }
 
-  const requiredPaths = Array.isArray(validationConfig.requiredPaths)
-    ? validationConfig.requiredPaths
+  const requiredPaths = Array.isArray(config.requiredPaths)
+    ? config.requiredPaths
     : []
 
   for (const requiredEntry of requiredPaths) {
@@ -716,13 +748,21 @@ const _validateRowWithConfig = (row, validationConfig, columns = []) => {
     }
   }
 
-  for (const column of columns) {
-    if (column.requiredWhenVisible !== true || !_evaluateColumnVisibility(column, row)) continue
-    if (_isMeaningfulValue(_getValueAtPath(row, column.dataPath || column.id))) continue
-    return `${column.title || column.label || column.id} is required.`
+  // A column the row editor does not show cannot be answered there.
+  const missing = columns.filter((column) =>
+    _isRequiredColumn(column) &&
+    column.showInModal !== false &&
+    _evaluateColumnVisibility(column, row, columns, formData) &&
+    !_isMeaningfulValue(_getValueAtPath(row, column.dataPath || column.id)))
+  if (missing.length === 0) return null
+  const title = (column) => String(column.title || column.label || column.id)
+  if (missing.length === 1) {
+    const message = typeof missing[0].requiredMessage === "string" ? missing[0].requiredMessage.trim() : ""
+    return message || `${title(missing[0])} is required.`
   }
-
-  return null
+  // Several at once: "Dose, Route and Time are required." (SubformScoring's wording).
+  const titles = missing.map(title)
+  return `${titles.slice(0, -1).join(", ")} and ${titles[titles.length - 1]} are required.`
 }
 
 const _toFiniteNumber = (value) => {
@@ -842,6 +882,12 @@ const _applyRowProcessingConfig = (row, processingConfig, columns = []) => {
   return nextRow
 }
 
+// One SubformScoring data-entry field for a column (the default row editor).
+// Required is required-while-shown (EditableTable validates the row on Save
+// and skips hidden columns); text prefills are already in the new row, so
+// only a checkbox prefill becomes a defaultValue (SubformScoring re-applies a
+// default whenever the answer is blank, which would stop the filler clearing
+// a text prefill).
 const _buildSubformFieldFromColumn = (column) => {
   const fieldId = column.dataPath || column.id
   const label = column.title || column.label || column.id
@@ -850,6 +896,10 @@ const _buildSubformFieldFromColumn = (column) => {
     : null
   const withCommon = (field) => ({
     ...field,
+    placeholder: field.placeholder ?? column.placeholder ?? undefined,
+    helpText: typeof column.helpText === "string" && column.helpText.trim() ? column.helpText : undefined,
+    required: _isRequiredColumn(column),
+    requiredMessage: typeof column.requiredMessage === "string" && column.requiredMessage.trim() ? column.requiredMessage : undefined,
     visibility: visibility || undefined,
   })
 
@@ -867,23 +917,18 @@ const _buildSubformFieldFromColumn = (column) => {
         suffix: numberConfig.suffix,
         buttonControls: numberConfig.buttonControls,
         storeAsNumber: numberConfig.storeAsNumber,
-        required: column.required === true,
       })
     case "date":
       return withCommon({
         id: fieldId,
         label,
         type: column.withTime ? "datetime" : "date",
-        placeholder: column.placeholder,
-        required: column.required === true,
       })
     case "time":
       return withCommon({
         id: fieldId,
         label,
         type: "time",
-        placeholder: column.placeholder,
-        required: column.required === true,
       })
     case "dropdown":
       return withCommon({
@@ -892,29 +937,27 @@ const _buildSubformFieldFromColumn = (column) => {
         type: "choice",
         choiceStyle: column.choiceStyle || "dropdown",
         options: _normalizeChoiceOptions(column.options),
-        required: column.required === true,
       })
     case "checkbox":
+      // Options keyed "true"/"false" so the stored boolean reads back as the
+      // checked option; the row stores a boolean (see _subformCellValue).
       return withCommon({
         id: fieldId,
         label,
         type: "booleanYesNo",
         renderStyle: "checkbox",
         useToggleSwitch: column.useToggleSwitch === true,
-        defaultValue: column.prefill === true ? column.booleanLabels?.on || "Checked" : undefined,
+        defaultValue: column.prefill === true ? true : undefined,
         options: [
-          column.booleanLabels?.on || "Checked",
-          column.booleanLabels?.off || "Unchecked",
+          { key: "true", value: 1, text: column.booleanLabels?.on || "Checked" },
+          { key: "false", value: 0, text: column.booleanLabels?.off || "Unchecked" },
         ],
-        required: column.required === true,
       })
     case "stampButton":
       return withCommon({
         id: fieldId,
         label,
         type: "text",
-        placeholder: column.placeholder,
-        required: column.required === true,
       })
     case "text":
     default:
@@ -923,18 +966,36 @@ const _buildSubformFieldFromColumn = (column) => {
         label,
         type: "textarea",
         rows: column.rows || 3,
-        placeholder: column.placeholder,
-        required: column.required === true,
       })
   }
 }
 
-const _evaluateColumnVisibility = (column, row = {}) => {
+// A value the default subform row editor reports, in the shape the inline
+// cells store: a boolean for checkbox columns and the option code (or codes)
+// for choice columns, never SubformScoring's { selectedKey, ... } object.
+const _subformCellValue = (value, column = {}) => {
+  if (column.type === "checkbox") return _toCheckboxValue(value, column)
+  if (column.type === "dropdown") {
+    const code = (entry) => (entry && typeof entry === "object" && !Array.isArray(entry) && entry.selectedKey !== undefined && entry.selectedKey !== null
+      ? String(entry.selectedKey)
+      : entry)
+    return Array.isArray(value) ? value.map(code) : code(value)
+  }
+  return value
+}
+
+// Whether a column is shown in one row. The rule is a BuilderVisibilityRule
+// evaluated by FormLogicKit (form-model semantics): its controllerId names a
+// sibling column by row path, else a row path, else a form answer
+// (`formData`). The legacy evaluator only runs where FormLogicKit is not in
+// scope (older test harnesses that load this file alone).
+const _evaluateColumnVisibility = (column, row = {}, columns = [], formData) => {
   const rule = column?.visibility
-  if (!rule || typeof rule !== "object" || rule.type === "always") return true
-  const controllerId = rule.controllerId
-  if (!controllerId) return true
-  const value = _getValueAtPath(row, controllerId)
+  if (!rule || typeof rule !== "object" || rule.type === "always" || !rule.controllerId) return true
+  if (typeof FormLogicKit !== "undefined" && FormLogicKit && typeof FormLogicKit.isTableColumnVisible === "function") {
+    return FormLogicKit.isTableColumnVisible(column, row || {}, { columns, formData })
+  }
+  const value = _getValueAtPath(row, rule.controllerId)
   if (rule.type === "filled") return _isMeaningfulValue(value)
   if (rule.type === "equals") return String(value ?? "") === String(rule.value ?? "")
   if (rule.type === "gt" || rule.type === "lt") {
@@ -946,10 +1007,17 @@ const _evaluateColumnVisibility = (column, row = {}) => {
   return true
 }
 
-const _clearHiddenColumnAnswers = (row, columns = []) => {
+// Blank hidden columns whose rule says hiddenAnswerPolicy "clear"
+// ("preserve"/"keep"/absent keep the answer). FormLogicKit repeats until
+// settled, since a cleared answer can hide another column; the single-pass
+// fallback is the legacy behaviour for scopes without the kit.
+const _clearHiddenColumnAnswers = (row, columns = [], formData) => {
   if (!row) return row
+  if (typeof FormLogicKit !== "undefined" && FormLogicKit && typeof FormLogicKit.clearHiddenTableAnswers === "function") {
+    return FormLogicKit.clearHiddenTableAnswers(row, columns, { formData })
+  }
   columns.forEach((column) => {
-    if (column.visibility?.hiddenAnswerPolicy !== "clear" || _evaluateColumnVisibility(column, row)) return
+    if (column.visibility?.hiddenAnswerPolicy !== "clear" || _evaluateColumnVisibility(column, row, columns, formData)) return
     _setValueAtPath(row, column.dataPath || column.id, column.type === "checkbox" ? false : "")
     Object.values(column.choiceBooleanTargets || {}).forEach((targetPath) => {
       _setValueAtPath(row, targetPath, false)
@@ -1047,7 +1115,9 @@ EditableTable = ({
   const modalEditorConfig = props.modalEditorConfig || null
   const processingConfig = props.processingConfig || modalEditorConfig?.processingConfig || null
   const validationConfig = props.validationConfig || modalEditorConfig?.validationConfig || null
-  const isRequiredModalColumn = (column) => column.requiredWhenVisible === true ||
+  // The form's answers, for column visibility rules naming a non-column controller.
+  const formData = fd?.field?.data || undefined
+  const isRequiredModalColumn = (column) => _isRequiredColumn(column) ||
     (Array.isArray(validationConfig?.requiredPaths) ? validationConfig.requiredPaths : []).some((entry) =>
       (typeof entry === "string" ? entry : entry?.path) === (column.dataPath || column.id))
   const onBeforeSaveRow = props.onBeforeSaveRow
@@ -1301,7 +1371,7 @@ EditableTable = ({
     }
     const nextRow = _cloneRow(nextRows[rowIndex], columns)
     const column = columns.find((item) => item.id === columnId) || { id: columnId, dataPath: columnId }
-    _writeCellAndRecalculate(nextRow, column, value, columns)
+    _writeCellAndRecalculate(nextRow, column, value, columns, formData)
     nextRows[rowIndex] = nextRow
     commitRows(nextRows, {
       reason: "update",
@@ -1372,7 +1442,7 @@ EditableTable = ({
     if (_getLocalStampLock(draftRow || {}, columns).locked) return
     const nextDraft = _cloneRow(draftRow || _makeEmptyRow(columns, currentRows.length), columns)
     const column = columns.find((item) => item.id === columnId) || { id: columnId, dataPath: columnId }
-    _writeCellAndRecalculate(nextDraft, column, value, columns)
+    _writeCellAndRecalculate(nextDraft, column, value, columns, formData)
     setDraftRow(nextDraft)
   }
 
@@ -1436,17 +1506,21 @@ EditableTable = ({
     setDraftRow(nextDraft)
   }
 
+  const usesGeneratedSubformFields = !modalEditorConfig?.dataEntryConfig
   const updateDraftValueAtPath = useCallback((fieldPath, value) => {
     const nextDraft = _cloneRow(draftRow || _makeEmptyRow(columns, currentRows.length), columns)
     const column = columns.find((item) => (item.dataPath || item.id) === fieldPath)
     if (column) {
-      _writeCellAndRecalculate(nextDraft, column, value, columns)
+      // The generated editor's fields report SubformScoring shapes; store
+      // what the inline cells store. An authored dataEntryConfig owns its values.
+      const cellValue = usesGeneratedSubformFields ? _subformCellValue(value, column) : value
+      _writeCellAndRecalculate(nextDraft, column, cellValue, columns, formData)
     } else {
       _setValueAtPath(nextDraft, fieldPath, value)
       _applyFormulaColumns(nextDraft, columns)
     }
     setDraftRow(nextDraft)
-  }, [draftRow, columns, currentRows.length])
+  }, [draftRow, columns, currentRows.length, usesGeneratedSubformFields, formData])
 
   const removeRowAt = (rowIndex) => {
     if (isLocked || !allowDeleteRows) return
@@ -1480,7 +1554,7 @@ EditableTable = ({
       if (customMessage) return customMessage
     }
 
-    const configMessage = _validateRowWithConfig(candidateRow, validationConfig, columns)
+    const configMessage = _validateRowWithConfig(candidateRow, validationConfig, columns, formData)
     if (configMessage) return configMessage
 
     if (!Array.isArray(uniqueBy) || uniqueBy.length === 0) return null
@@ -1533,7 +1607,7 @@ EditableTable = ({
       return null
     }
 
-    _clearHiddenColumnAnswers(resolvedRow, columns)
+    _clearHiddenColumnAnswers(resolvedRow, columns, formData)
     const validationError = validateResolvedRow(resolvedRow)
     if (validationError) {
       setErrorMessage(validationError)
@@ -1680,6 +1754,9 @@ EditableTable = ({
       return renderFormulaControl(row, rowIndex, column, value, onValueChange, inline, onResetFormula)
     }
 
+    // Required while shown: the MOIS controls tint an empty required input.
+    const required = _isRequiredColumn(column) && _evaluateColumnVisibility(column, row, columns, formData)
+
     switch (column.type) {
       case "number":
         const numberConfig = _normalizeNumberConfig(column)
@@ -1697,6 +1774,8 @@ EditableTable = ({
             spinButtonProps={spinButtonProps}
             textFieldProps={numberConfig.suffix ? { suffix: numberConfig.suffix } : undefined}
             storeAsNumber={numberConfig.storeAsNumber !== false}
+            placeholder={column.placeholder || undefined}
+            required={required}
             readOnly={effectiveReadOnly}
             disabled={effectiveReadOnly}
           />
@@ -1712,6 +1791,7 @@ EditableTable = ({
               value={value || ""}
               onChange={(newValue) => onValueChange(rowIndex, column.id, newValue || "")}
               placeholder={column.placeholder || "Select date and time"}
+              required={required}
               readOnly={effectiveReadOnly}
               disabled={effectiveReadOnly}
             />
@@ -1724,6 +1804,7 @@ EditableTable = ({
             value={value || ""}
             onChange={(newValue) => onValueChange(rowIndex, column.id, _normalizeDateCellValue(newValue))}
             placeholder={column.placeholder || "Select date"}
+            required={required}
             readOnly={effectiveReadOnly}
             disabled={effectiveReadOnly}
           />
@@ -1757,6 +1838,7 @@ EditableTable = ({
             <ChoiceGroup
               options={dropdownOptions}
               selectedKey={value ? String(value) : undefined}
+              required={required}
               disabled={effectiveReadOnly}
               onChange={(_event, option) => onValueChange(rowIndex, column.id, option?.key || "")}
             />
@@ -1780,6 +1862,7 @@ EditableTable = ({
             )}
             placeholder={column.placeholder || "Select..."}
             showOther={column.showOtherOption === true}
+            required={required}
             readOnly={effectiveReadOnly}
             disabled={effectiveReadOnly}
           />
@@ -1792,6 +1875,7 @@ EditableTable = ({
             value={value || ""}
             onChange={(event, newValue) => onValueChange(rowIndex, column.id, newValue || "")}
             placeholder={column.placeholder || "HH:mm"}
+            required={required}
             readOnly={effectiveReadOnly}
             disabled={effectiveReadOnly}
           />
@@ -1804,6 +1888,7 @@ EditableTable = ({
             displayStyle="checkmark"
             value={value}
             onChange={(event, checked) => onValueChange(rowIndex, column.id, !!checked)}
+            required={required}
             readOnly={effectiveReadOnly}
             disabled={effectiveReadOnly}
           />
@@ -1864,6 +1949,7 @@ EditableTable = ({
             value={value || ""}
             onChange={(event, newValue) => onValueChange(rowIndex, column.id, newValue || "")}
             placeholder={column.placeholder || ""}
+            required={required}
             readOnly={effectiveReadOnly}
             disabled={effectiveReadOnly}
           />
@@ -1940,6 +2026,8 @@ EditableTable = ({
   // hidden when a host page ships no print stylesheet; the print rule's
   // `!important` overrides it. Dialog editors (inline === false) never print.
   const renderEditorInput = (row, rowIndex, column, onValueChange, inline, rowReadOnly = false, onStampColumn = null, rowLockState = null, onResetFormula = null) => {
+    // A column hidden in this row (its visibility rule) has nothing to answer.
+    if (inline && !_evaluateColumnVisibility(column, row, columns, formData)) return null
     const control = renderEditorControl(row, rowIndex, column, onValueChange, inline, rowReadOnly, onStampColumn, rowLockState, onResetFormula)
     if (!inline) return control
     return (
@@ -1951,6 +2039,27 @@ EditableTable = ({
       </>
     )
   }
+
+  // A summary (modal-mode) cell: blank where the column is hidden in the row.
+  const renderSummaryCell = (row, column) => (
+    <div>{_evaluateColumnVisibility(column, row, columns, formData) ? _formatCellValue(row, column) : ""}</div>
+  )
+
+  const mutedTextColor = isDarkMode ? "#a0a0a0" : "#605e5c"
+  const requiredMarkColor = isDarkMode ? "#ff8a80" : "#a4262c"
+  // Inline tables mark required columns and show their help text in the
+  // heading; modal tables show both in the row editor instead.
+  const renderColumnHeading = (column) => (
+    <>
+      {column.title || column.id}
+      {!isModalMode && _isRequiredColumn(column) ? (
+        <span aria-hidden="true" style={{ color: requiredMarkColor, marginLeft: "4px" }}>*</span>
+      ) : null}
+      {!isModalMode && column.helpText ? (
+        <div style={{ fontWeight: 400, fontSize: "12px", marginTop: "2px", color: mutedTextColor }}>{column.helpText}</div>
+      ) : null}
+    </>
+  )
 
   const containerStyle = showBackground ? {
     padding: "16px",
@@ -2054,7 +2163,7 @@ EditableTable = ({
                 style={verticalLabelCellStyle}
                 data-source-field-id={sourceFieldIds[col.id] || undefined}
               >
-                {col.title || col.id}
+                {renderColumnHeading(col)}
               </th>
               {rowsForVerticalLayout.map(({ row, rowIndex, isEmptyPlaceholder }, displayIndex) => {
                 const rowLock = isEmptyPlaceholder ? { locked: false } : getRowLock(row)
@@ -2077,7 +2186,7 @@ EditableTable = ({
                       : isModalMode
                         ? col.type === "stampButton"
                           ? renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell, rowLockState, resetFormulaCell)
-                          : <div>{_formatCellValue(row, col)}</div>
+                          : renderSummaryCell(row, col)
                         : renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell, rowLockState, resetFormulaCell)}
                   </td>
                 )
@@ -2119,7 +2228,7 @@ EditableTable = ({
                   }}
                   data-source-field-id={sourceFieldIds[col.id] || undefined}
                 >
-                  {col.title || col.id}
+                  {renderColumnHeading(col)}
                 </th>
               ))}
               {showRowAuthorshipColumn && (
@@ -2198,7 +2307,7 @@ EditableTable = ({
                         {isModalMode
                           ? col.type === "stampButton"
                             ? renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell, rowLockState, resetFormulaCell)
-                            : <div>{_formatCellValue(row, col)}</div>
+                            : renderSummaryCell(row, col)
                           : renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell, rowLockState, resetFormulaCell)}
                       </td>
                     ))}
@@ -2267,6 +2376,8 @@ EditableTable = ({
         </Stack>
       )}
 
+      {/* Save validates the row here; a failure keeps the dialog open and its
+          reason shows inside it (errorMessage). */}
       {isModalMode && isDialogOpen && draftRow && usesSubformEditor && (
         <SubformScoring
           id={`${id}__rowEditor`}
@@ -2296,6 +2407,8 @@ EditableTable = ({
           dataEntryConfig={modalEditorConfig?.dataEntryConfig || defaultSubformDataEntryConfig}
           summaryConfig={modalEditorConfig?.summaryConfig || { showItems: [] }}
           modalConfig={subformModalConfig}
+          errorMessage={errorMessage || null}
+          readOnly={isLocked}
         />
       )}
 
@@ -2316,12 +2429,17 @@ EditableTable = ({
           <Stack tokens={{ childrenGap: 12 }}>
             {/* Two columns when the dialog has room; choices and long text take a full row. */}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "12px 16px" }}>
-            {modalColumns.filter((column) => _evaluateColumnVisibility(column, draftRow)).flatMap((column, index, visibleColumns) => [
+            {modalColumns.filter((column) => _evaluateColumnVisibility(column, draftRow, columns, formData)).flatMap((column, index, visibleColumns) => [
               ...(column.modalSection && (index === 0 || visibleColumns[index - 1]?.modalSection !== column.modalSection)
                 ? [<div key={`section-${column.id}`} style={{ gridColumn: "1 / -1", fontWeight: 600, borderBottom: `1px solid ${isDarkMode ? "#505050" : "#d1d5db"}`, paddingTop: "8px", paddingBottom: "4px" }}>{column.modalSection}</div>]
                 : []),
               <div key={column.id} style={column.type === "dropdown" || column.type === "text" ? { gridColumn: "1 / -1" } : undefined}>
-                <Label>{column.title || column.id}{isRequiredModalColumn(column) ? " *" : ""}</Label>
+                <Label required={isRequiredModalColumn(column)}>{column.title || column.id}</Label>
+                {column.helpText ? (
+                  <Text variant="small" styles={{ root: { display: "block", marginBottom: "4px", color: mutedTextColor } }}>
+                    {column.helpText}
+                  </Text>
+                ) : null}
                 {renderEditorInput(
                   draftRow,
                   editingRowIndex ?? currentRows.length,
@@ -2375,6 +2493,10 @@ const createTableColumns = (columnDefs) => {
     showInTable: def.showInTable,
     showInModal: def.showInModal,
     visibility: def.visibility,
+    required: def.required,
+    requiredWhenVisible: def.requiredWhenVisible,
+    requiredMessage: def.requiredMessage,
+    helpText: def.helpText,
     width: def.width,
     placeholder: def.placeholder,
     options: def.options,

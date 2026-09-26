@@ -16,7 +16,27 @@ const normalizeLayoutTableOptionList = (optionList) => {
     .filter(Boolean)
 }
 
-const isCheckedValue = (value) => value === true || value === "true" || value === "Y" || value === "yes" || value === 1
+// Yes/no answers arrive as booleans (Checkbox), MOIS-YESNO codes, or the
+// Coding SimpleCodeSelect stores ({ code: "Y", display: "Yes" }).
+const layoutTableScalarAnswer = (value) => (
+  value && typeof value === "object" && !Array.isArray(value)
+    ? (value.code ?? value.value ?? value.key ?? value.display ?? value.text ?? null)
+    : value
+)
+
+const isCheckedValue = (value) => {
+  const raw = layoutTableScalarAnswer(value)
+  if (raw === true || raw === 1) return true
+  return typeof raw === "string" && ["true", "y", "yes", "1"].includes(raw.trim().toLowerCase())
+}
+
+// A calendar date in the user's timezone (yyyy-MM-dd), matching the export
+// pipeline's formatLocalDate — toISOString() is UTC, so late in the day it
+// already reads as tomorrow west of UTC.
+const formatLayoutTableLocalDate = (date) => {
+  const pad = (part) => String(part).padStart(2, "0")
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+}
 
 const getPathValue = (root, path) => {
   if (!root || !path) return undefined
@@ -95,7 +115,7 @@ const resolveLayoutTableSourceValue = (cell, data, sourceData) => {
   const paths = getLayoutTableSourcePaths(cell)
   let sourceValue
   for (const path of paths) {
-    const candidate = path === "system.currentDate" ? new Date().toISOString() : getPathValue(root, path)
+    const candidate = path === "system.currentDate" ? formatLayoutTableLocalDate(new Date()) : getPathValue(root, path)
     if (hasLayoutTableSourceValue(candidate)) {
       sourceValue = candidate
       break
@@ -141,7 +161,12 @@ const formatLayoutTableFieldDisplayValue = (cell, data) => {
   if (value == null || value === "") return ""
 
   if (cell.inputType === "booleanSingle" || cell.inputType === "booleanYesNo") {
-    return isCheckedValue(value) ? "Yes" : "No"
+    const raw = layoutTableScalarAnswer(value)
+    if (raw == null || raw === "") return ""
+    if (isCheckedValue(value)) return "Yes"
+    if (isNoLikeValue(value)) return "No"
+    // Another code on the yes/no list (e.g. unknown): show its own wording.
+    return String((value && typeof value === "object" ? value.display ?? value.text : null) ?? raw)
   }
 
   const optionList = normalizeLayoutTableOptionList(cell.optionList ?? cell.options)
@@ -181,13 +206,44 @@ const renderLayoutTableReadOnlyField = (cell, data) => {
   )
 }
 
+// One token pattern for both reading refs and rewriting them: a bracketed id
+// ([field-1]) or a bare identifier. Rewriting in a single pass matters — a
+// second pass over already-rewritten `__values["a"]` would rewrite the `a`
+// inside the quotes again and break the expression.
+const LAYOUT_TABLE_FORMULA_TOKEN = /\[([^\]]+)\]|\b[A-Za-z_][A-Za-z0-9_]*\b/g
+const LAYOUT_TABLE_FORMULA_BUILTINS = ["sum", "Math", "min", "max"]
+
+// Missing answers count as 0 throughout, like the sum(...) shorthand.
+const layoutTableFormulaNumber = (value) => (Number.isFinite(Number(value)) ? Number(value) : 0)
+const LAYOUT_TABLE_FORMULA_FUNCTIONS = {
+  sum: (...args) => args.flat().reduce((total, value) => total + layoutTableFormulaNumber(value), 0),
+  min: (...args) => Math.min(...args.flat().map(layoutTableFormulaNumber)),
+  max: (...args) => Math.max(...args.flat().map(layoutTableFormulaNumber)),
+}
+
+// Tokens after a "." are property names (Math.round), never field ids.
+const isLayoutTableFormulaProperty = (formula, offset) => formula[offset - 1] === "."
+
+// `sum(a, b, [c-d])` — a flat list of field ids, which may be unbracketed even
+// when they contain hyphens. Anything else (nested expressions) returns null
+// and goes through the general evaluator, where sum() is a function.
+const parseLayoutTableSumIds = (formula) => {
+  const sumMatch = String(formula || "").trim().match(/^sum\((.*)\)$/i)
+  if (!sumMatch) return null
+  const ids = sumMatch[1].split(",").map((part) => part.trim().replace(/^\[([^\]]+)\]$/, "$1").trim())
+  return ids.length > 0 && ids.every((id) => /^[A-Za-z_][A-Za-z0-9_.-]*$/.test(id)) ? ids : null
+}
+
 const extractLayoutTableFormulaRefs = (expression) => {
-  const bracketedRefs = Array.from(String(expression || "").matchAll(/\[([^\]]+)\]/g)).map((match) => match[1]).filter(Boolean)
-  const unwrappedExpression = String(expression || "").replace(/\[([^\]]+)\]/g, " ")
-  const bareRefs = Array.from(unwrappedExpression.matchAll(/\b[A-Za-z_][A-Za-z0-9_]*\b/g))
-    .map((match) => match[0])
-    .filter((token) => !["sum", "Math", "min", "max"].includes(token))
-  return Array.from(new Set([...bracketedRefs, ...bareRefs]))
+  const formula = String(expression || "")
+  const sumIds = parseLayoutTableSumIds(formula)
+  if (sumIds) return Array.from(new Set(sumIds))
+  const refs = []
+  for (const match of formula.matchAll(LAYOUT_TABLE_FORMULA_TOKEN)) {
+    if (match[1] !== undefined) refs.push(match[1])
+    else if (!LAYOUT_TABLE_FORMULA_BUILTINS.includes(match[0]) && !isLayoutTableFormulaProperty(formula, match.index)) refs.push(match[0])
+  }
+  return Array.from(new Set(refs.filter(Boolean)))
 }
 
 const isSafeLayoutTableFormula = (expression) => {
@@ -199,11 +255,9 @@ const evaluateLayoutTableFormula = (expression, data, currentFieldId) => {
   const formula = typeof expression === "string" ? expression.trim() : ""
   if (!formula) return null
 
-  const sumMatch = formula.match(/^sum\((.*)\)$/i)
-  if (sumMatch) {
-    const ids = sumMatch[1].split(",").map((part) => part.trim()).filter(Boolean)
-    if (ids.length === 0) return null
-    return ids.reduce((sum, fieldId) => sum + (getNumericFieldValue(data, fieldId) ?? 0), 0)
+  const sumIds = parseLayoutTableSumIds(formula)
+  if (sumIds) {
+    return sumIds.reduce((sum, fieldId) => sum + (fieldId === currentFieldId ? 0 : getNumericFieldValue(data, fieldId) ?? 0), 0)
   }
 
   if (!isSafeLayoutTableFormula(formula)) return null
@@ -213,15 +267,16 @@ const evaluateLayoutTableFormula = (expression, data, currentFieldId) => {
     values[fieldId] = getNumericFieldValue(data, fieldId) ?? 0
   })
 
-  const jsExpression = formula
-    .replace(/\[([^\]]+)\]/g, (_, fieldId) => `__values[${JSON.stringify(fieldId)}]`)
-    .replace(/\b[A-Za-z_][A-Za-z0-9_]*\b/g, (token) => {
-      if (["Math", "min", "max"].includes(token)) return token
-      return Object.prototype.hasOwnProperty.call(values, token) ? `__values[${JSON.stringify(token)}]` : token
-    })
+  const jsExpression = formula.replace(LAYOUT_TABLE_FORMULA_TOKEN, (token, bracketedId, offset) => {
+    if (bracketedId !== undefined) return `__values[${JSON.stringify(bracketedId)}]`
+    if (LAYOUT_TABLE_FORMULA_BUILTINS.includes(token) || isLayoutTableFormulaProperty(formula, offset)) return token
+    // A self-reference stays a bare (undefined) identifier and fails below.
+    return Object.prototype.hasOwnProperty.call(values, token) ? `__values[${JSON.stringify(token)}]` : token
+  })
 
   try {
-    const value = Function("__values", `"use strict"; return (${jsExpression});`)(values)
+    const { sum, min, max } = LAYOUT_TABLE_FORMULA_FUNCTIONS
+    const value = Function("__values", "sum", "min", "max", `"use strict"; return (${jsExpression});`)(values, sum, min, max)
     return Number.isFinite(value) ? value : null
   } catch (error) {
     return null
@@ -306,8 +361,8 @@ const renderLayoutTableField = (cell, readOnly, data, setFieldValue) => {
   }
 }
 
-const renderLayoutTableFieldList = (cell, readOnly, data, setFieldValue) => {
-  const fields = Array.isArray(cell.fields) ? cell.fields : []
+const renderLayoutTableFieldList = (cell, readOnly, data, setFieldValue, visibility) => {
+  const fields = (Array.isArray(cell.fields) ? cell.fields : []).filter((field) => layoutTableCellIsVisible(field, visibility))
   if (fields.length === 0) return null
 
   return (
@@ -367,10 +422,13 @@ const renderLayoutTableStampButton = (cell, readOnly) => {
   )
 }
 
-const renderLayoutTableCellContent = (cell, readOnly, data, sourceData, setFieldValue) => {
+// Hidden cells keep their <td> (so colSpan/rowSpan geometry holds) but render
+// no content.
+const renderLayoutTableCellContent = (cell, readOnly, data, sourceData, setFieldValue, visibility) => {
   if (cell.hidden === true) return null
+  if (!layoutTableCellIsVisible(cell, visibility)) return null
   if (cell.kind === "field") return renderLayoutTableField(cell, readOnly, data, setFieldValue)
-  if (cell.kind === "fieldList") return renderLayoutTableFieldList(cell, readOnly, data, setFieldValue)
+  if (cell.kind === "fieldList") return renderLayoutTableFieldList(cell, readOnly, data, setFieldValue, visibility)
   if (cell.kind === "resources") return renderLayoutTableResources(cell)
   if (cell.kind === "stampButton") return renderLayoutTableStampButton(cell, readOnly)
   if (cell.kind === "computed") return computeLayoutTableCellValue(cell, data)
@@ -431,6 +489,46 @@ const rowIsVisible = (row, data) => {
   }
 }
 
+const LAYOUT_TABLE_CONTROLLER_KINDS = {
+  booleanSingle: "boolean",
+  booleanYesNo: "boolean",
+  choice: "choice",
+  choiceMulti: "choice",
+  number: "number",
+}
+
+// Answer kinds of the fields this table owns, so a cell visibility rule
+// compares its controller the way the builder does. Controllers outside the
+// table are left to FormLogicKit's own inference.
+const collectLayoutTableControllerKinds = (rows) => {
+  const kinds = {}
+  rows.forEach((row) => {
+    ;(Array.isArray(row?.cells) ? row.cells : []).forEach((cell) => {
+      if (!cell) return
+      if (cell.kind === "computed" && cell.fieldId) {
+        kinds[cell.fieldId] = cell.resultType === "text" ? "text" : "number"
+        return
+      }
+      const fields = cell.kind === "field" ? [cell] : cell.kind === "fieldList" && Array.isArray(cell.fields) ? cell.fields : []
+      fields.forEach((field) => {
+        const fieldId = field?.fieldId || field?.id
+        if (fieldId) kinds[fieldId] = LAYOUT_TABLE_CONTROLLER_KINDS[field.inputType] || "text"
+      })
+    })
+  })
+  return kinds
+}
+
+// A cell (or a field inside a fieldList cell) with a builder visibility rule
+// shows only while the rule passes. Rules are evaluated by FormLogicKit; a
+// runtime without the kit keeps every cell visible, as before.
+const layoutTableCellIsVisible = (target, visibility) => {
+  const rule = target?.visibility
+  if (!rule || typeof rule !== "object" || !visibility) return true
+  if (typeof FormLogicKit === "undefined" || typeof FormLogicKit.evaluateVisibilityRule !== "function") return true
+  return FormLogicKit.evaluateVisibilityRule(rule, visibility.getValue, visibility.options) !== false
+}
+
 function LayoutTable({
   id,
   label,
@@ -458,6 +556,11 @@ function LayoutTable({
     }
   })
   const visibleRows = tableRows.filter((row) => rowIsVisible(row, activeData))
+  const controllerKinds = collectLayoutTableControllerKinds(tableRows)
+  const cellVisibility = {
+    getValue: (controllerId) => tableData[controllerId],
+    options: { controllerKind: (controllerId) => controllerKinds[controllerId] },
+  }
   const setFieldValue = (fieldId, value) => {
     if (typeof setActiveData !== "function") return
     setActiveData((draft) => {
@@ -522,7 +625,7 @@ function LayoutTable({
                     rowSpan={Math.max(1, Number(cell.rowSpan) || 1)}
                     style={cellStyle(cell, config)}
                   >
-                    {renderLayoutTableCellContent(cell, readOnly, tableData, sd, setFieldValue)}
+                    {renderLayoutTableCellContent(cell, readOnly, tableData, sd, setFieldValue, cellVisibility)}
                   </Tag>
                 )
               })}

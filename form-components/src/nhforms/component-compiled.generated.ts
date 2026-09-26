@@ -7891,6 +7891,9 @@ const DentalWeightConverterSchema = {
  * - Row add/edit/delete actions
  * - Empty row detection and row-level uniqueness checks
  * - Configurable column types
+ * - Per-row column visibility (column.visibility, a BuilderVisibilityRule
+ *   evaluated by FormLogicKit) and required-while-shown columns
+ *   (column.required / requiredWhenVisible, requiredMessage) checked on row Save
  */
 
 const {
@@ -7919,6 +7922,27 @@ const _getDefaultCellValue = (column = {}) => {
   // A starting value the filler can change (e.g. 7.5 hours per shift).
   if (typeof column.prefill === "string" || typeof column.prefill === "number") return String(column.prefill);
   return "";
+};
+
+// Required while the column is shown in the row (requiredWhenVisible is the
+// older name for the same thing); a hidden column is never required.
+const _isRequiredColumn = (column = {}) => column?.required === true || column?.requiredWhenVisible === true;
+
+// Checkbox cells store a boolean. The subform row editor reports its
+// checkbox as a selected option ({ selectedKey: "true" }) and older rows
+// stored the label ("Checked"), so read those as booleans too.
+const _CHECKBOX_TRUE_TEXT = ["true", "yes", "y", "1", "on", "checked"];
+const _toCheckboxValue = (value, column = {}) => {
+  if (typeof value === "boolean") return value;
+  if (value === null || value === undefined) return false;
+  if (typeof value === "number") return Number.isFinite(value) && value !== 0;
+  if (Array.isArray(value)) return value.some(entry => _toCheckboxValue(entry, column));
+  if (typeof value === "object") {
+    return _toCheckboxValue(value.selectedKey ?? value.code ?? value.value ?? value.key ?? null, column);
+  }
+  const text = String(value).trim().toLowerCase();
+  const onLabel = String(column?.booleanLabels?.on || "").trim().toLowerCase();
+  return _CHECKBOX_TRUE_TEXT.includes(text) || onLabel !== "" && text === onLabel;
 };
 const _formatLocalDate = date => {
   const pad2 = value => String(value).padStart(2, "0");
@@ -8179,7 +8203,7 @@ const _formatCellValue = (row, column) => {
   }
   if (column.type === "checkbox") {
     if (value === undefined || value === null || value === "") return "";
-    if (value) return column.booleanLabels?.on || "Checked";
+    if (_toCheckboxValue(value, column)) return column.booleanLabels?.on || "Checked";
     return column.booleanLabels?.off || "Unchecked";
   }
   return _stringifyValue(value);
@@ -8271,8 +8295,10 @@ const _applyFormulaColumns = (row, columns = []) => {
 };
 
 // Write one cell and recalculate the row. Typing into a formula cell marks it
-// overridden (unless the typed value is the calculation itself).
-const _writeCellAndRecalculate = (row, column, value, columns = []) => {
+// overridden (unless the typed value is the calculation itself). \`formData\`
+// (the form's answers) is where column visibility rules naming a non-column
+// controller look.
+const _writeCellAndRecalculate = (row, column, value, columns = [], formData) => {
   _setValueAtPath(row, column.dataPath || column.id, value);
   if (column.textContinuation?.firstPath && column.textContinuation?.secondPath) {
     const [first, second] = _splitContinuationText(value, column.textContinuation.firstSegmentMaxChars);
@@ -8290,7 +8316,7 @@ const _writeCellAndRecalculate = (row, column, value, columns = []) => {
     const calculated = _computeFormulaCellValue(row, column, columns);
     _setFormulaOverride(row, column, typed !== "" && typed !== calculated);
   }
-  return _clearHiddenColumnAnswers(_applyFormulaColumns(row, columns), columns);
+  return _clearHiddenColumnAnswers(_applyFormulaColumns(row, columns), columns, formData);
 };
 const _resetFormulaCell = (row, column, columns = []) => {
   _setFormulaOverride(row, column, false);
@@ -8460,9 +8486,16 @@ const _normalizeValidationMessage = result => {
   }
   return null;
 };
-const _validateRowWithConfig = (row, validationConfig, columns = []) => {
-  if (!row || !validationConfig || typeof validationConfig !== "object") return null;
-  const requireAnyGroups = Array.isArray(validationConfig.requireAnyGroups) ? validationConfig.requireAnyGroups : [];
+
+// Why a row about to be saved is not ready, or null. Legacy validationConfig
+// checks (requireAnyGroups, requiredPaths) run first, one at a time; then
+// every required column shown in the row (and in the row editor) must be
+// answered, with or without a validationConfig, all missing ones named in one
+// message.
+const _validateRowWithConfig = (row, validationConfig, columns = [], formData) => {
+  if (!row) return null;
+  const config = validationConfig && typeof validationConfig === "object" ? validationConfig : {};
+  const requireAnyGroups = Array.isArray(config.requireAnyGroups) ? config.requireAnyGroups : [];
   for (const group of requireAnyGroups) {
     const paths = Array.isArray(group?.paths) ? group.paths.filter(Boolean) : [];
     if (paths.length === 0) continue;
@@ -8471,7 +8504,7 @@ const _validateRowWithConfig = (row, validationConfig, columns = []) => {
     const message = typeof group?.message === "string" && group.message.trim() ? group.message.trim() : typeof group?.label === "string" && group.label.trim() ? \`Enter at least one value for \${group.label.trim()}.\` : "Enter at least one value before saving this row.";
     return message;
   }
-  const requiredPaths = Array.isArray(validationConfig.requiredPaths) ? validationConfig.requiredPaths : [];
+  const requiredPaths = Array.isArray(config.requiredPaths) ? config.requiredPaths : [];
   for (const requiredEntry of requiredPaths) {
     if (typeof requiredEntry === "string") {
       if (_isMeaningfulValue(_getValueAtPath(row, requiredEntry))) continue;
@@ -8489,12 +8522,18 @@ const _validateRowWithConfig = (row, validationConfig, columns = []) => {
       return \`\${column?.title || column?.label || path} is required.\`;
     }
   }
-  for (const column of columns) {
-    if (column.requiredWhenVisible !== true || !_evaluateColumnVisibility(column, row)) continue;
-    if (_isMeaningfulValue(_getValueAtPath(row, column.dataPath || column.id))) continue;
-    return \`\${column.title || column.label || column.id} is required.\`;
+
+  // A column the row editor does not show cannot be answered there.
+  const missing = columns.filter(column => _isRequiredColumn(column) && column.showInModal !== false && _evaluateColumnVisibility(column, row, columns, formData) && !_isMeaningfulValue(_getValueAtPath(row, column.dataPath || column.id)));
+  if (missing.length === 0) return null;
+  const title = column => String(column.title || column.label || column.id);
+  if (missing.length === 1) {
+    const message = typeof missing[0].requiredMessage === "string" ? missing[0].requiredMessage.trim() : "";
+    return message || \`\${title(missing[0])} is required.\`;
   }
-  return null;
+  // Several at once: "Dose, Route and Time are required." (SubformScoring's wording).
+  const titles = missing.map(title);
+  return \`\${titles.slice(0, -1).join(", ")} and \${titles[titles.length - 1]} are required.\`;
 };
 const _toFiniteNumber = value => {
   if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -8577,12 +8616,23 @@ const _applyRowProcessingConfig = (row, processingConfig, columns = []) => {
   });
   return nextRow;
 };
+
+// One SubformScoring data-entry field for a column (the default row editor).
+// Required is required-while-shown (EditableTable validates the row on Save
+// and skips hidden columns); text prefills are already in the new row, so
+// only a checkbox prefill becomes a defaultValue (SubformScoring re-applies a
+// default whenever the answer is blank, which would stop the filler clearing
+// a text prefill).
 const _buildSubformFieldFromColumn = column => {
   const fieldId = column.dataPath || column.id;
   const label = column.title || column.label || column.id;
   const visibility = column.visibility && typeof column.visibility === "object" ? column.visibility : null;
   const withCommon = field => ({
     ...field,
+    placeholder: field.placeholder ?? column.placeholder ?? undefined,
+    helpText: typeof column.helpText === "string" && column.helpText.trim() ? column.helpText : undefined,
+    required: _isRequiredColumn(column),
+    requiredMessage: typeof column.requiredMessage === "string" && column.requiredMessage.trim() ? column.requiredMessage : undefined,
     visibility: visibility || undefined
   });
   switch (column.type) {
@@ -8598,24 +8648,19 @@ const _buildSubformFieldFromColumn = column => {
         typeNumber: numberConfig.typeNumber,
         suffix: numberConfig.suffix,
         buttonControls: numberConfig.buttonControls,
-        storeAsNumber: numberConfig.storeAsNumber,
-        required: column.required === true
+        storeAsNumber: numberConfig.storeAsNumber
       });
     case "date":
       return withCommon({
         id: fieldId,
         label,
-        type: column.withTime ? "datetime" : "date",
-        placeholder: column.placeholder,
-        required: column.required === true
+        type: column.withTime ? "datetime" : "date"
       });
     case "time":
       return withCommon({
         id: fieldId,
         label,
-        type: "time",
-        placeholder: column.placeholder,
-        required: column.required === true
+        type: "time"
       });
     case "dropdown":
       return withCommon({
@@ -8623,27 +8668,33 @@ const _buildSubformFieldFromColumn = column => {
         label,
         type: "choice",
         choiceStyle: column.choiceStyle || "dropdown",
-        options: _normalizeChoiceOptions(column.options),
-        required: column.required === true
+        options: _normalizeChoiceOptions(column.options)
       });
     case "checkbox":
+      // Options keyed "true"/"false" so the stored boolean reads back as the
+      // checked option; the row stores a boolean (see _subformCellValue).
       return withCommon({
         id: fieldId,
         label,
         type: "booleanYesNo",
         renderStyle: "checkbox",
         useToggleSwitch: column.useToggleSwitch === true,
-        defaultValue: column.prefill === true ? column.booleanLabels?.on || "Checked" : undefined,
-        options: [column.booleanLabels?.on || "Checked", column.booleanLabels?.off || "Unchecked"],
-        required: column.required === true
+        defaultValue: column.prefill === true ? true : undefined,
+        options: [{
+          key: "true",
+          value: 1,
+          text: column.booleanLabels?.on || "Checked"
+        }, {
+          key: "false",
+          value: 0,
+          text: column.booleanLabels?.off || "Unchecked"
+        }]
       });
     case "stampButton":
       return withCommon({
         id: fieldId,
         label,
-        type: "text",
-        placeholder: column.placeholder,
-        required: column.required === true
+        type: "text"
       });
     case "text":
     default:
@@ -8651,18 +8702,38 @@ const _buildSubformFieldFromColumn = column => {
         id: fieldId,
         label,
         type: "textarea",
-        rows: column.rows || 3,
-        placeholder: column.placeholder,
-        required: column.required === true
+        rows: column.rows || 3
       });
   }
 };
-const _evaluateColumnVisibility = (column, row = {}) => {
+
+// A value the default subform row editor reports, in the shape the inline
+// cells store: a boolean for checkbox columns and the option code (or codes)
+// for choice columns, never SubformScoring's { selectedKey, ... } object.
+const _subformCellValue = (value, column = {}) => {
+  if (column.type === "checkbox") return _toCheckboxValue(value, column);
+  if (column.type === "dropdown") {
+    const code = entry => entry && typeof entry === "object" && !Array.isArray(entry) && entry.selectedKey !== undefined && entry.selectedKey !== null ? String(entry.selectedKey) : entry;
+    return Array.isArray(value) ? value.map(code) : code(value);
+  }
+  return value;
+};
+
+// Whether a column is shown in one row. The rule is a BuilderVisibilityRule
+// evaluated by FormLogicKit (form-model semantics): its controllerId names a
+// sibling column by row path, else a row path, else a form answer
+// (\`formData\`). The legacy evaluator only runs where FormLogicKit is not in
+// scope (older test harnesses that load this file alone).
+const _evaluateColumnVisibility = (column, row = {}, columns = [], formData) => {
   const rule = column?.visibility;
-  if (!rule || typeof rule !== "object" || rule.type === "always") return true;
-  const controllerId = rule.controllerId;
-  if (!controllerId) return true;
-  const value = _getValueAtPath(row, controllerId);
+  if (!rule || typeof rule !== "object" || rule.type === "always" || !rule.controllerId) return true;
+  if (typeof FormLogicKit !== "undefined" && FormLogicKit && typeof FormLogicKit.isTableColumnVisible === "function") {
+    return FormLogicKit.isTableColumnVisible(column, row || {}, {
+      columns,
+      formData
+    });
+  }
+  const value = _getValueAtPath(row, rule.controllerId);
   if (rule.type === "filled") return _isMeaningfulValue(value);
   if (rule.type === "equals") return String(value ?? "") === String(rule.value ?? "");
   if (rule.type === "gt" || rule.type === "lt") {
@@ -8673,10 +8744,20 @@ const _evaluateColumnVisibility = (column, row = {}) => {
   }
   return true;
 };
-const _clearHiddenColumnAnswers = (row, columns = []) => {
+
+// Blank hidden columns whose rule says hiddenAnswerPolicy "clear"
+// ("preserve"/"keep"/absent keep the answer). FormLogicKit repeats until
+// settled, since a cleared answer can hide another column; the single-pass
+// fallback is the legacy behaviour for scopes without the kit.
+const _clearHiddenColumnAnswers = (row, columns = [], formData) => {
   if (!row) return row;
+  if (typeof FormLogicKit !== "undefined" && FormLogicKit && typeof FormLogicKit.clearHiddenTableAnswers === "function") {
+    return FormLogicKit.clearHiddenTableAnswers(row, columns, {
+      formData
+    });
+  }
   columns.forEach(column => {
-    if (column.visibility?.hiddenAnswerPolicy !== "clear" || _evaluateColumnVisibility(column, row)) return;
+    if (column.visibility?.hiddenAnswerPolicy !== "clear" || _evaluateColumnVisibility(column, row, columns, formData)) return;
     _setValueAtPath(row, column.dataPath || column.id, column.type === "checkbox" ? false : "");
     Object.values(column.choiceBooleanTargets || {}).forEach(targetPath => {
       _setValueAtPath(row, targetPath, false);
@@ -8792,7 +8873,9 @@ EditableTable = ({
   const modalEditorConfig = props.modalEditorConfig || null;
   const processingConfig = props.processingConfig || modalEditorConfig?.processingConfig || null;
   const validationConfig = props.validationConfig || modalEditorConfig?.validationConfig || null;
-  const isRequiredModalColumn = column => column.requiredWhenVisible === true || (Array.isArray(validationConfig?.requiredPaths) ? validationConfig.requiredPaths : []).some(entry => (typeof entry === "string" ? entry : entry?.path) === (column.dataPath || column.id));
+  // The form's answers, for column visibility rules naming a non-column controller.
+  const formData = fd?.field?.data || undefined;
+  const isRequiredModalColumn = column => _isRequiredColumn(column) || (Array.isArray(validationConfig?.requiredPaths) ? validationConfig.requiredPaths : []).some(entry => (typeof entry === "string" ? entry : entry?.path) === (column.dataPath || column.id));
   const onBeforeSaveRow = props.onBeforeSaveRow;
   const validateRow = props.validateRow;
   const onRowsChange = props.onRowsChange;
@@ -9003,7 +9086,7 @@ EditableTable = ({
       id: columnId,
       dataPath: columnId
     };
-    _writeCellAndRecalculate(nextRow, column, value, columns);
+    _writeCellAndRecalculate(nextRow, column, value, columns, formData);
     nextRows[rowIndex] = nextRow;
     commitRows(nextRows, {
       reason: "update",
@@ -9079,7 +9162,7 @@ EditableTable = ({
       id: columnId,
       dataPath: columnId
     };
-    _writeCellAndRecalculate(nextDraft, column, value, columns);
+    _writeCellAndRecalculate(nextDraft, column, value, columns, formData);
     setDraftRow(nextDraft);
   };
   const resetFormulaCell = (rowIndex, column) => {
@@ -9137,17 +9220,21 @@ EditableTable = ({
     }
     setDraftRow(nextDraft);
   };
+  const usesGeneratedSubformFields = !modalEditorConfig?.dataEntryConfig;
   const updateDraftValueAtPath = useCallback((fieldPath, value) => {
     const nextDraft = _cloneRow(draftRow || _makeEmptyRow(columns, currentRows.length), columns);
     const column = columns.find(item => (item.dataPath || item.id) === fieldPath);
     if (column) {
-      _writeCellAndRecalculate(nextDraft, column, value, columns);
+      // The generated editor's fields report SubformScoring shapes; store
+      // what the inline cells store. An authored dataEntryConfig owns its values.
+      const cellValue = usesGeneratedSubformFields ? _subformCellValue(value, column) : value;
+      _writeCellAndRecalculate(nextDraft, column, cellValue, columns, formData);
     } else {
       _setValueAtPath(nextDraft, fieldPath, value);
       _applyFormulaColumns(nextDraft, columns);
     }
     setDraftRow(nextDraft);
-  }, [draftRow, columns, currentRows.length]);
+  }, [draftRow, columns, currentRows.length, usesGeneratedSubformFields, formData]);
   const removeRowAt = rowIndex => {
     if (isLocked || !allowDeleteRows) return;
     const deletedRow = currentRows[rowIndex];
@@ -9177,7 +9264,7 @@ EditableTable = ({
       const customMessage = _normalizeValidationMessage(customResult);
       if (customMessage) return customMessage;
     }
-    const configMessage = _validateRowWithConfig(candidateRow, validationConfig, columns);
+    const configMessage = _validateRowWithConfig(candidateRow, validationConfig, columns, formData);
     if (configMessage) return configMessage;
     if (!Array.isArray(uniqueBy) || uniqueBy.length === 0) return null;
     for (const columnId of uniqueBy) {
@@ -9219,7 +9306,7 @@ EditableTable = ({
       setErrorMessage("Row save failed because the row data was invalid.");
       return null;
     }
-    _clearHiddenColumnAnswers(resolvedRow, columns);
+    _clearHiddenColumnAnswers(resolvedRow, columns, formData);
     const validationError = validateResolvedRow(resolvedRow);
     if (validationError) {
       setErrorMessage(validationError);
@@ -9355,6 +9442,9 @@ EditableTable = ({
     if (_isFormulaColumn(column)) {
       return renderFormulaControl(row, rowIndex, column, value, onValueChange, inline, onResetFormula);
     }
+
+    // Required while shown: the MOIS controls tint an empty required input.
+    const required = _isRequiredColumn(column) && _evaluateColumnVisibility(column, row, columns, formData);
     switch (column.type) {
       case "number":
         const numberConfig = _normalizeNumberConfig(column);
@@ -9373,6 +9463,8 @@ EditableTable = ({
             suffix: numberConfig.suffix
           } : undefined,
           storeAsNumber: numberConfig.storeAsNumber !== false,
+          placeholder: column.placeholder || undefined,
+          required: required,
           readOnly: effectiveReadOnly,
           disabled: effectiveReadOnly
         });
@@ -9385,6 +9477,7 @@ EditableTable = ({
             value: value || "",
             onChange: newValue => onValueChange(rowIndex, column.id, newValue || ""),
             placeholder: column.placeholder || "Select date and time",
+            required: required,
             readOnly: effectiveReadOnly,
             disabled: effectiveReadOnly
           });
@@ -9395,6 +9488,7 @@ EditableTable = ({
           value: value || "",
           onChange: newValue => onValueChange(rowIndex, column.id, _normalizeDateCellValue(newValue)),
           placeholder: column.placeholder || "Select date",
+          required: required,
           readOnly: effectiveReadOnly,
           disabled: effectiveReadOnly
         });
@@ -9422,6 +9516,7 @@ EditableTable = ({
           return /*#__PURE__*/React.createElement(ChoiceGroup, {
             options: dropdownOptions,
             selectedKey: value ? String(value) : undefined,
+            required: required,
             disabled: effectiveReadOnly,
             onChange: (_event, option) => onValueChange(rowIndex, column.id, option?.key || "")
           });
@@ -9436,6 +9531,7 @@ EditableTable = ({
           onChange: (coding, codings) => onValueChange(rowIndex, column.id, _choiceValueForStorage(coding, codings, selectionType)),
           placeholder: column.placeholder || "Select...",
           showOther: column.showOtherOption === true,
+          required: required,
           readOnly: effectiveReadOnly,
           disabled: effectiveReadOnly
         });
@@ -9445,6 +9541,7 @@ EditableTable = ({
           value: value || "",
           onChange: (event, newValue) => onValueChange(rowIndex, column.id, newValue || ""),
           placeholder: column.placeholder || "HH:mm",
+          required: required,
           readOnly: effectiveReadOnly,
           disabled: effectiveReadOnly
         });
@@ -9454,6 +9551,7 @@ EditableTable = ({
           displayStyle: "checkmark",
           value: value,
           onChange: (event, checked) => onValueChange(rowIndex, column.id, !!checked),
+          required: required,
           readOnly: effectiveReadOnly,
           disabled: effectiveReadOnly
         });
@@ -9514,6 +9612,7 @@ EditableTable = ({
           value: value || "",
           onChange: (event, newValue) => onValueChange(rowIndex, column.id, newValue || ""),
           placeholder: column.placeholder || "",
+          required: required,
           readOnly: effectiveReadOnly,
           disabled: effectiveReadOnly
         });
@@ -9603,6 +9702,8 @@ EditableTable = ({
   // hidden when a host page ships no print stylesheet; the print rule's
   // \`!important\` overrides it. Dialog editors (inline === false) never print.
   const renderEditorInput = (row, rowIndex, column, onValueChange, inline, rowReadOnly = false, onStampColumn = null, rowLockState = null, onResetFormula = null) => {
+    // A column hidden in this row (its visibility rule) has nothing to answer.
+    if (inline && !_evaluateColumnVisibility(column, row, columns, formData)) return null;
     const control = renderEditorControl(row, rowIndex, column, onValueChange, inline, rowReadOnly, onStampColumn, rowLockState, onResetFormula);
     if (!inline) return control;
     return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("span", {
@@ -9615,6 +9716,27 @@ EditableTable = ({
       className: "hideonprint"
     }, control));
   };
+
+  // A summary (modal-mode) cell: blank where the column is hidden in the row.
+  const renderSummaryCell = (row, column) => /*#__PURE__*/React.createElement("div", null, _evaluateColumnVisibility(column, row, columns, formData) ? _formatCellValue(row, column) : "");
+  const mutedTextColor = isDarkMode ? "#a0a0a0" : "#605e5c";
+  const requiredMarkColor = isDarkMode ? "#ff8a80" : "#a4262c";
+  // Inline tables mark required columns and show their help text in the
+  // heading; modal tables show both in the row editor instead.
+  const renderColumnHeading = column => /*#__PURE__*/React.createElement(React.Fragment, null, column.title || column.id, !isModalMode && _isRequiredColumn(column) ? /*#__PURE__*/React.createElement("span", {
+    "aria-hidden": "true",
+    style: {
+      color: requiredMarkColor,
+      marginLeft: "4px"
+    }
+  }, "*") : null, !isModalMode && column.helpText ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 400,
+      fontSize: "12px",
+      marginTop: "2px",
+      color: mutedTextColor
+    }
+  }, column.helpText) : null);
   const containerStyle = showBackground ? {
     padding: "16px",
     border: \`1px solid \${isDarkMode ? "#404040" : "#e0e0e0"}\`,
@@ -9703,7 +9825,7 @@ EditableTable = ({
     }, /*#__PURE__*/React.createElement("th", {
       style: verticalLabelCellStyle,
       "data-source-field-id": sourceFieldIds[col.id] || undefined
-    }, col.title || col.id), rowsForVerticalLayout.map(({
+    }, renderColumnHeading(col)), rowsForVerticalLayout.map(({
       row,
       rowIndex,
       isEmptyPlaceholder
@@ -9725,7 +9847,7 @@ EditableTable = ({
         style: verticalBodyCellStyle,
         "data-source-field-id": isEmptyPlaceholder ? undefined : getSourceFieldId(rowIndex, col.id),
         title: rowReadOnly ? rowLock.note || localStampLock.note : undefined
-      }, isEmptyPlaceholder ? emptyStateText : isModalMode ? col.type === "stampButton" ? renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell, rowLockState, resetFormulaCell) : /*#__PURE__*/React.createElement("div", null, _formatCellValue(row, col)) : renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell, rowLockState, resetFormulaCell));
+      }, isEmptyPlaceholder ? emptyStateText : isModalMode ? col.type === "stampButton" ? renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell, rowLockState, resetFormulaCell) : renderSummaryCell(row, col) : renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell, rowLockState, resetFormulaCell));
     })))));
   };
   const draftLocalStampLock = draftRow ? _getLocalStampLock(draftRow, columns) : {
@@ -9767,7 +9889,7 @@ EditableTable = ({
       minWidth: col.width || "auto"
     },
     "data-source-field-id": sourceFieldIds[col.id] || undefined
-  }, col.title || col.id)), showRowAuthorshipColumn && /*#__PURE__*/React.createElement("th", {
+  }, renderColumnHeading(col))), showRowAuthorshipColumn && /*#__PURE__*/React.createElement("th", {
     key: "authorship",
     style: authorshipHeaderCellStyle
   }, authorshipColumnLabel), isModalMode && shouldShowActions && /*#__PURE__*/React.createElement("th", {
@@ -9840,7 +9962,7 @@ EditableTable = ({
       key: col.id,
       style: bodyCellStyle,
       "data-source-field-id": getSourceFieldId(rowIndex, col.id)
-    }, isModalMode ? col.type === "stampButton" ? renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell, rowLockState, resetFormulaCell) : /*#__PURE__*/React.createElement("div", null, _formatCellValue(row, col)) : renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell, rowLockState, resetFormulaCell))), showRowAuthorshipColumn && /*#__PURE__*/React.createElement("td", {
+    }, isModalMode ? col.type === "stampButton" ? renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell, rowLockState, resetFormulaCell) : renderSummaryCell(row, col) : renderEditorInput(row, rowIndex, col, updateCell, true, rowReadOnly, stampCell, rowLockState, resetFormulaCell))), showRowAuthorshipColumn && /*#__PURE__*/React.createElement("td", {
       key: "authorship",
       style: bodyCellStyle,
       title: rowLock.note || undefined
@@ -9936,7 +10058,9 @@ EditableTable = ({
     summaryConfig: modalEditorConfig?.summaryConfig || {
       showItems: []
     },
-    modalConfig: subformModalConfig
+    modalConfig: subformModalConfig,
+    errorMessage: errorMessage || null,
+    readOnly: isLocked
   }), isModalMode && isDialogOpen && draftRow && !usesSubformEditor && /*#__PURE__*/React.createElement(Dialog, {
     hidden: !isDialogOpen,
     dialogContentProps: {
@@ -9959,7 +10083,7 @@ EditableTable = ({
       gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
       gap: "12px 16px"
     }
-  }, modalColumns.filter(column => _evaluateColumnVisibility(column, draftRow)).flatMap((column, index, visibleColumns) => [...(column.modalSection && (index === 0 || visibleColumns[index - 1]?.modalSection !== column.modalSection) ? [/*#__PURE__*/React.createElement("div", {
+  }, modalColumns.filter(column => _evaluateColumnVisibility(column, draftRow, columns, formData)).flatMap((column, index, visibleColumns) => [...(column.modalSection && (index === 0 || visibleColumns[index - 1]?.modalSection !== column.modalSection) ? [/*#__PURE__*/React.createElement("div", {
     key: \`section-\${column.id}\`,
     style: {
       gridColumn: "1 / -1",
@@ -9973,7 +10097,18 @@ EditableTable = ({
     style: column.type === "dropdown" || column.type === "text" ? {
       gridColumn: "1 / -1"
     } : undefined
-  }, /*#__PURE__*/React.createElement(Label, null, column.title || column.id, isRequiredModalColumn(column) ? " *" : ""), renderEditorInput(draftRow, editingRowIndex ?? currentRows.length, column, (rowIndex, columnId, value) => updateDraftCell(columnId, value), false, draftLocalStampLock.locked, (_rowIndex, stampColumn) => stampDraftCell(stampColumn), draftLockState, (_rowIndex, formulaColumn) => resetDraftFormulaCell(formulaColumn)))])), errorMessage && /*#__PURE__*/React.createElement(Text, {
+  }, /*#__PURE__*/React.createElement(Label, {
+    required: isRequiredModalColumn(column)
+  }, column.title || column.id), column.helpText ? /*#__PURE__*/React.createElement(Text, {
+    variant: "small",
+    styles: {
+      root: {
+        display: "block",
+        marginBottom: "4px",
+        color: mutedTextColor
+      }
+    }
+  }, column.helpText) : null, renderEditorInput(draftRow, editingRowIndex ?? currentRows.length, column, (rowIndex, columnId, value) => updateDraftCell(columnId, value), false, draftLocalStampLock.locked, (_rowIndex, stampColumn) => stampDraftCell(stampColumn), draftLockState, (_rowIndex, formulaColumn) => resetDraftFormulaCell(formulaColumn)))])), errorMessage && /*#__PURE__*/React.createElement(Text, {
     style: {
       color: isDarkMode ? "#ffb3b3" : "#b42318"
     }
@@ -10017,6 +10152,10 @@ const createTableColumns = columnDefs => {
     showInTable: def.showInTable,
     showInModal: def.showInModal,
     visibility: def.visibility,
+    required: def.required,
+    requiredWhenVisible: def.requiredWhenVisible,
+    requiredMessage: def.requiredMessage,
+    helpText: def.helpText,
     width: def.width,
     placeholder: def.placeholder,
     options: def.options,
@@ -13066,12 +13205,13 @@ const FormFlow = (() => {
   return FormFlowRoot;
 })();`,
   './FormLogicKit/index.jsx': `// FormLogicKit — shared runtime kernel for form-level logic: condition-group
-// evaluation, rule-aware field visibility, submit/page validation, value
-// formats, and focusing a field from an error summary. Consumed by FormFlow,
-// FormErrorSummary, RepeatForEachTable and inline code the MOIS exporter
-// emits. Non-rendering helper module in the ObservationKit pattern: it exports
-// a single namespace object so consumers keep one bare identifier in engine
-// scope.
+// evaluation, builder visibility rules (also per table column and row),
+// rule-aware field visibility, submit/page validation, value formats, and
+// focusing a field from an error summary. Consumed by FormFlow,
+// FormErrorSummary, EditableTable, RepeatForEachTable, SubformScoring,
+// LayoutTable and inline code the MOIS exporter emits. Non-rendering helper
+// module in the ObservationKit pattern: it exports a single namespace object
+// so consumers keep one bare identifier in engine scope.
 //
 // Consumers must reference FormLogicKit only inside function bodies —
 // component files load in no guaranteed order, so a top-level read of another
@@ -13243,6 +13383,99 @@ const FormLogicKit = (() => {
     return evaluateEntries(group.conditions, group.match, toGetter(getValue));
   };
 
+  // ---- Builder visibility rules (BuilderVisibilityRule) — begin ----
+  // { type, controllerId, value, additionalConditions?, match?, hiddenAnswerPolicy? }
+  // with type always/filled/not-filled/equals/not-equals/gt/gte/lt/lte. Each
+  // condition becomes a leaf of the same group evaluator the compiled rules
+  // use, converted exactly as visibilityToCondition in lib/logic/unified-rule.ts
+  // (and synthesizeInlineVisibilityRules in the exporter): equals on a boolean
+  // controller is boolean-yes/no, on a choice controller choice-selected.
+  const BOOLEAN_YES_TEXT = ["1", "true", "yes", "y", "on", "checked"];
+  const BOOLEAN_NO_TEXT = ["0", "false", "no", "n", "off", "unchecked"];
+
+  // A stored yes/no answer as true/false, or null when it is not one. Every
+  // value normalizeYesNo reads keeps its meaning; stored text is also read
+  // case-insensitively ("true", "y", a checkbox's "Checked") because table
+  // cells and older subform rows stored those.
+  const toBooleanAnswer = value => {
+    if (value === true || value === false) return value;
+    if (typeof value === "number") return value === 1 ? true : value === 0 ? false : null;
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      return toBooleanAnswer(value.code ?? value.display ?? value.value ?? value.text ?? value.label);
+    }
+    if (typeof value !== "string") return null;
+    const text = value.trim().toLowerCase();
+    if (BOOLEAN_YES_TEXT.includes(text)) return true;
+    if (BOOLEAN_NO_TEXT.includes(text)) return false;
+    return null;
+  };
+  const visibilityLeaf = (condition, kind) => {
+    const controllerFieldId = condition.controllerId;
+    const type = condition.type;
+    const value = condition.value === undefined || condition.value === null ? "" : condition.value;
+    if (type === "not-filled") return {
+      controllerFieldId,
+      type: "empty"
+    };
+    if (type === "gt" || type === "gte" || type === "lt" || type === "lte") {
+      return {
+        controllerFieldId,
+        type: "number-" + type,
+        value
+      };
+    }
+    if (type === "equals" || type === "not-equals") {
+      const negative = type === "not-equals";
+      if (kind === "boolean") {
+        const isNo = BOOLEAN_NO_TEXT.includes(String(value).trim().toLowerCase());
+        return {
+          controllerFieldId,
+          type: isNo !== negative ? "boolean-no" : "boolean-yes"
+        };
+      }
+      if (kind === "choice") {
+        return {
+          controllerFieldId,
+          type: negative ? "choice-not-selected" : "choice-selected",
+          optionValues: value === "" ? [] : [String(value)]
+        };
+      }
+      return {
+        controllerFieldId,
+        type,
+        value
+      };
+    }
+    return {
+      controllerFieldId,
+      type: "filled"
+    };
+  };
+
+  /**
+   * Whether a builder visibility rule shows its target. \`getValue(controllerId)\`
+   * returns the raw stored answer (a values object also works).
+   * options.controllerKind(controllerId) => "boolean" | "choice" | "number" |
+   * "text" | undefined picks the boolean/choice comparisons. No rule, "always"
+   * or no controller = shown; additional conditions combine by \`match\`
+   * ("all" default | "any"); one without a controller is ignored.
+   */
+  const evaluateVisibilityRule = (rule, getValue, options = {}) => {
+    if (!rule || typeof rule !== "object" || !rule.type || rule.type === "always" || !rule.controllerId) return true;
+    const get = toGetter(getValue);
+    const kindOf = options && typeof options.controllerKind === "function" ? options.controllerKind : () => undefined;
+    const leaves = [rule, ...(Array.isArray(rule.additionalConditions) ? rule.additionalConditions : [])].filter(condition => condition && condition.controllerId && condition.type !== "always").map(condition => visibilityLeaf(condition, kindOf(condition.controllerId)));
+    // Boolean controllers compare their answer as true/false.
+    const read = controllerId => {
+      const raw = get(controllerId);
+      if (kindOf(controllerId) !== "boolean") return raw;
+      const answer = toBooleanAnswer(raw);
+      return answer === null ? raw : answer;
+    };
+    return evaluateEntries(leaves, rule.match, read);
+  };
+  // ---- Builder visibility rules — end ----
+
   /**
    * Whether a field is hidden by its own compiled behaviour config
    * (compileFieldBehavior + gates): explicitly hidden, a failed subgroup gate,
@@ -13359,9 +13592,10 @@ const FormLogicKit = (() => {
   };
 
   // ---- Table row completion (repeat-for-each workstream) — begin ----
-  // config.table = { requiredColumnIds (row data paths), requireAllComplete }.
-  // Rows seeded from another table (_sourceKey) must be completed; manual rows
-  // only once started; rows flagged _sourceRemoved never block. Cell answers
+  // config.table = { requiredColumnIds (row data paths), requireAllComplete,
+  // columns? }. Rows seeded from another table (_sourceKey) must be completed;
+  // manual rows only once started; rows flagged _sourceRemoved never block; a
+  // column hidden in a row (its visibility rule) is not required there. Cell answers
   // use EditableTable's rules (an unchecked checkbox is not an answer), the
   // same as RepeatForEachTable's _complete flag.
   const tableCellAnswered = value => {
@@ -13373,9 +13607,89 @@ const FormLogicKit = (() => {
     if (typeof value === "object") return Object.keys(value).length > 0;
     return true;
   };
-  const tableRowIssues = (config, value, required, issue, translate) => {
+  const tableCell = (row, path) => String(path || "").split(".").filter(Boolean).reduce((current, key) => current && typeof current === "object" ? current[key] : undefined, row);
+  const setTableCell = (row, path, value) => {
+    const segments = String(path || "").split(".").map(part => part.trim()).filter(Boolean);
+    if (segments.length === 0) return;
+    let current = row;
+    for (let index = 0; index < segments.length - 1; index += 1) {
+      const key = segments[index];
+      if (!current[key] || typeof current[key] !== "object" || Array.isArray(current[key])) current[key] = {};
+      current = current[key];
+    }
+    current[segments[segments.length - 1]] = value;
+  };
+
+  // EditableTable columns: a column's row path is dataPath || id, and its
+  // type decides how a visibility rule naming it compares answers.
+  const tableColumnPath = column => column && (column.dataPath || column.fieldName || column.id) || "";
+  const tableColumnKind = column => {
+    const type = column && column.type;
+    if (!type) return undefined;
+    if (type === "checkbox" || type === "booleanYesNo" || type === "booleanSingle") return "boolean";
+    if (type === "dropdown" || type === "choice") return "choice";
+    if (type === "number") return "number";
+    return "text";
+  };
+
+  /**
+   * Whether a table column is shown in one row. Its visibility rule's
+   * controllerId (and each additional condition's) names a sibling column by
+   * row path (or id); anything else is read from the row, then from the form
+   * answers. options: { columns (the table's columns), formData }.
+   */
+  const isTableColumnVisible = (column, row, options = {}) => {
+    const rule = column && column.visibility;
+    if (!rule || typeof rule !== "object") return true;
+    const columns = Array.isArray(options.columns) ? options.columns : [];
+    const sibling = id => columns.find(entry => entry && (tableColumnPath(entry) === id || entry.id === id));
+    const getValue = id => {
+      const controller = sibling(id);
+      if (controller) return tableCell(row, tableColumnPath(controller));
+      const inRow = tableCell(row, id);
+      if (inRow !== undefined) return inRow;
+      return options.formData ? readValue(options.formData, id) : undefined;
+    };
+    return evaluateVisibilityRule(rule, getValue, {
+      controllerKind: id => tableColumnKind(sibling(id))
+    });
+  };
+
+  /**
+   * Blank the answers of columns hidden in this row whose rule asks for it
+   * (hiddenAnswerPolicy "clear"; "preserve"/"keep"/absent keep them), plus
+   * their choiceBooleanTargets. Repeats until settled, since a cleared answer
+   * can hide another column. Mutates and returns \`row\`.
+   */
+  const clearHiddenTableAnswers = (row, columns, options = {}) => {
+    if (!row || typeof row !== "object") return row;
+    const list = (Array.isArray(columns) ? columns : []).filter(Boolean);
+    const clearing = list.filter(column => column.visibility && column.visibility.hiddenAnswerPolicy === "clear");
+    for (let pass = 0; pass <= clearing.length; pass += 1) {
+      let changed = false;
+      clearing.forEach(column => {
+        if (isTableColumnVisible(column, row, {
+          columns: list,
+          formData: options.formData
+        })) return;
+        const blank = column.type === "checkbox" ? false : "";
+        const path = tableColumnPath(column);
+        if (tableCell(row, path) !== blank) {
+          setTableCell(row, path, blank);
+          changed = true;
+        }
+        Object.values(column.choiceBooleanTargets || {}).forEach(targetPath => {
+          if (tableCell(row, targetPath) === false) return;
+          setTableCell(row, targetPath, false);
+          changed = true;
+        });
+      });
+      if (!changed) break;
+    }
+    return row;
+  };
+  const tableRowIssues = (config, value, required, issue, translate, values) => {
     const rows = Array.isArray(value) ? value : Array.isArray(value?.rows) ? value.rows : [];
-    const cell = (row, path) => String(path || "").split(".").filter(Boolean).reduce((current, key) => current && typeof current === "object" ? current[key] : undefined, row);
     const started = row => !!row && typeof row === "object" && Object.keys(row).some(key => key.charAt(0) !== "_" && tableCellAnswered(row[key]));
     const counted = rows.filter(row => row && !row._sourceRemoved && (row._sourceKey || started(row)));
     if (counted.length === 0) {
@@ -13383,9 +13697,19 @@ const FormLogicKit = (() => {
     }
     const paths = config.table.requiredColumnIds || [];
     if (!config.table.requireAllComplete || paths.length === 0) return [];
+    // config.table.columns (optional, EditableTable column shape) carries the
+    // columns' visibility rules: a column hidden in a row is not required there.
+    const tableColumns = Array.isArray(config.table.columns) ? config.table.columns.filter(Boolean) : [];
+    const shown = (row, path) => {
+      const column = tableColumns.find(entry => tableColumnPath(entry) === path || entry.id === path);
+      return !column || isTableColumnVisible(column, row, {
+        columns: tableColumns,
+        formData: values
+      });
+    };
     // One issue per table (the error summary links once per field) naming
     // every incomplete row: "Adherence: complete Metformin, Atorvastatin and row 4".
-    const names = counted.filter(row => !paths.every(path => tableCellAnswered(cell(row, path)))).map(row => row._sourceLabel ? String(row._sourceLabel) : "row " + (rows.indexOf(row) + 1));
+    const names = counted.filter(row => !paths.every(path => !shown(row, path) || tableCellAnswered(tableCell(row, path)))).map(row => row._sourceLabel ? String(row._sourceLabel) : "row " + (rows.indexOf(row) + 1));
     if (names.length === 0) return [];
     const list = names.length === 1 ? names[0] : names.slice(0, -1).join(", ") + " and " + names[names.length - 1];
     return [issue("row-incomplete", translate(config.label + ": complete " + list))];
@@ -13469,7 +13793,7 @@ const FormLogicKit = (() => {
         }
       });
       const value = get(config.fieldId);
-      if (config.table) return tableRowIssues(config, value, required, issue, translate); // table rows (repeat-for-each)
+      if (config.table) return tableRowIssues(config, value, required, issue, translate, values); // table rows (repeat-for-each)
       if (!hasMeaningfulValue(value)) {
         return required ? [issue("required", translate(config.label + " is required"))] : [];
       }
@@ -13572,6 +13896,10 @@ const FormLogicKit = (() => {
     isEmptyValue,
     readValue,
     evaluateGroup,
+    evaluateVisibilityRule,
+    tableColumnKind,
+    isTableColumnVisible,
+    clearHiddenTableAnswers,
     isFieldHidden,
     resolveFieldCopies,
     validate,
@@ -21797,7 +22125,23 @@ const normalizeLayoutTableOptionList = optionList => {
     } : null;
   }).filter(Boolean);
 };
-const isCheckedValue = value => value === true || value === "true" || value === "Y" || value === "yes" || value === 1;
+
+// Yes/no answers arrive as booleans (Checkbox), MOIS-YESNO codes, or the
+// Coding SimpleCodeSelect stores ({ code: "Y", display: "Yes" }).
+const layoutTableScalarAnswer = value => value && typeof value === "object" && !Array.isArray(value) ? value.code ?? value.value ?? value.key ?? value.display ?? value.text ?? null : value;
+const isCheckedValue = value => {
+  const raw = layoutTableScalarAnswer(value);
+  if (raw === true || raw === 1) return true;
+  return typeof raw === "string" && ["true", "y", "yes", "1"].includes(raw.trim().toLowerCase());
+};
+
+// A calendar date in the user's timezone (yyyy-MM-dd), matching the export
+// pipeline's formatLocalDate — toISOString() is UTC, so late in the day it
+// already reads as tomorrow west of UTC.
+const formatLayoutTableLocalDate = date => {
+  const pad = part => String(part).padStart(2, "0");
+  return \`\${date.getFullYear()}-\${pad(date.getMonth() + 1)}-\${pad(date.getDate())}\`;
+};
 const getPathValue = (root, path) => {
   if (!root || !path) return undefined;
   return String(path).split(".").map(part => part.trim()).filter(Boolean).reduce((current, part) => current && typeof current === "object" ? current[part] : undefined, root);
@@ -21872,7 +22216,7 @@ const resolveLayoutTableSourceValue = (cell, data, sourceData) => {
   const paths = getLayoutTableSourcePaths(cell);
   let sourceValue;
   for (const path of paths) {
-    const candidate = path === "system.currentDate" ? new Date().toISOString() : getPathValue(root, path);
+    const candidate = path === "system.currentDate" ? formatLayoutTableLocalDate(new Date()) : getPathValue(root, path);
     if (hasLayoutTableSourceValue(candidate)) {
       sourceValue = candidate;
       break;
@@ -21909,7 +22253,12 @@ const formatLayoutTableFieldDisplayValue = (cell, data) => {
   const value = getLayoutTableFieldRawValue(cell, data);
   if (value == null || value === "") return "";
   if (cell.inputType === "booleanSingle" || cell.inputType === "booleanYesNo") {
-    return isCheckedValue(value) ? "Yes" : "No";
+    const raw = layoutTableScalarAnswer(value);
+    if (raw == null || raw === "") return "";
+    if (isCheckedValue(value)) return "Yes";
+    if (isNoLikeValue(value)) return "No";
+    // Another code on the yes/no list (e.g. unknown): show its own wording.
+    return String((value && typeof value === "object" ? value.display ?? value.text : null) ?? raw);
   }
   const optionList = normalizeLayoutTableOptionList(cell.optionList ?? cell.options);
   const formatOne = candidate => {
@@ -21941,11 +22290,43 @@ const renderLayoutTableReadOnlyField = (cell, data) => {
     }
   }, label) : null, /*#__PURE__*/React.createElement("div", null, displayValue));
 };
+
+// One token pattern for both reading refs and rewriting them: a bracketed id
+// ([field-1]) or a bare identifier. Rewriting in a single pass matters — a
+// second pass over already-rewritten \`__values["a"]\` would rewrite the \`a\`
+// inside the quotes again and break the expression.
+const LAYOUT_TABLE_FORMULA_TOKEN = /\\[([^\\]]+)\\]|\\b[A-Za-z_][A-Za-z0-9_]*\\b/g;
+const LAYOUT_TABLE_FORMULA_BUILTINS = ["sum", "Math", "min", "max"];
+
+// Missing answers count as 0 throughout, like the sum(...) shorthand.
+const layoutTableFormulaNumber = value => Number.isFinite(Number(value)) ? Number(value) : 0;
+const LAYOUT_TABLE_FORMULA_FUNCTIONS = {
+  sum: (...args) => args.flat().reduce((total, value) => total + layoutTableFormulaNumber(value), 0),
+  min: (...args) => Math.min(...args.flat().map(layoutTableFormulaNumber)),
+  max: (...args) => Math.max(...args.flat().map(layoutTableFormulaNumber))
+};
+
+// Tokens after a "." are property names (Math.round), never field ids.
+const isLayoutTableFormulaProperty = (formula, offset) => formula[offset - 1] === ".";
+
+// \`sum(a, b, [c-d])\` — a flat list of field ids, which may be unbracketed even
+// when they contain hyphens. Anything else (nested expressions) returns null
+// and goes through the general evaluator, where sum() is a function.
+const parseLayoutTableSumIds = formula => {
+  const sumMatch = String(formula || "").trim().match(/^sum\\((.*)\\)$/i);
+  if (!sumMatch) return null;
+  const ids = sumMatch[1].split(",").map(part => part.trim().replace(/^\\[([^\\]]+)\\]$/, "$1").trim());
+  return ids.length > 0 && ids.every(id => /^[A-Za-z_][A-Za-z0-9_.-]*$/.test(id)) ? ids : null;
+};
 const extractLayoutTableFormulaRefs = expression => {
-  const bracketedRefs = Array.from(String(expression || "").matchAll(/\\[([^\\]]+)\\]/g)).map(match => match[1]).filter(Boolean);
-  const unwrappedExpression = String(expression || "").replace(/\\[([^\\]]+)\\]/g, " ");
-  const bareRefs = Array.from(unwrappedExpression.matchAll(/\\b[A-Za-z_][A-Za-z0-9_]*\\b/g)).map(match => match[0]).filter(token => !["sum", "Math", "min", "max"].includes(token));
-  return Array.from(new Set([...bracketedRefs, ...bareRefs]));
+  const formula = String(expression || "");
+  const sumIds = parseLayoutTableSumIds(formula);
+  if (sumIds) return Array.from(new Set(sumIds));
+  const refs = [];
+  for (const match of formula.matchAll(LAYOUT_TABLE_FORMULA_TOKEN)) {
+    if (match[1] !== undefined) refs.push(match[1]);else if (!LAYOUT_TABLE_FORMULA_BUILTINS.includes(match[0]) && !isLayoutTableFormulaProperty(formula, match.index)) refs.push(match[0]);
+  }
+  return Array.from(new Set(refs.filter(Boolean)));
 };
 const isSafeLayoutTableFormula = expression => {
   const strippedExpression = String(expression || "").replace(/\\[([^\\]]+)\\]/g, " ");
@@ -21954,11 +22335,9 @@ const isSafeLayoutTableFormula = expression => {
 const evaluateLayoutTableFormula = (expression, data, currentFieldId) => {
   const formula = typeof expression === "string" ? expression.trim() : "";
   if (!formula) return null;
-  const sumMatch = formula.match(/^sum\\((.*)\\)$/i);
-  if (sumMatch) {
-    const ids = sumMatch[1].split(",").map(part => part.trim()).filter(Boolean);
-    if (ids.length === 0) return null;
-    return ids.reduce((sum, fieldId) => sum + (getNumericFieldValue(data, fieldId) ?? 0), 0);
+  const sumIds = parseLayoutTableSumIds(formula);
+  if (sumIds) {
+    return sumIds.reduce((sum, fieldId) => sum + (fieldId === currentFieldId ? 0 : getNumericFieldValue(data, fieldId) ?? 0), 0);
   }
   if (!isSafeLayoutTableFormula(formula)) return null;
   const refs = extractLayoutTableFormulaRefs(formula).filter(fieldId => fieldId !== currentFieldId);
@@ -21966,12 +22345,19 @@ const evaluateLayoutTableFormula = (expression, data, currentFieldId) => {
   refs.forEach(fieldId => {
     values[fieldId] = getNumericFieldValue(data, fieldId) ?? 0;
   });
-  const jsExpression = formula.replace(/\\[([^\\]]+)\\]/g, (_, fieldId) => \`__values[\${JSON.stringify(fieldId)}]\`).replace(/\\b[A-Za-z_][A-Za-z0-9_]*\\b/g, token => {
-    if (["Math", "min", "max"].includes(token)) return token;
+  const jsExpression = formula.replace(LAYOUT_TABLE_FORMULA_TOKEN, (token, bracketedId, offset) => {
+    if (bracketedId !== undefined) return \`__values[\${JSON.stringify(bracketedId)}]\`;
+    if (LAYOUT_TABLE_FORMULA_BUILTINS.includes(token) || isLayoutTableFormulaProperty(formula, offset)) return token;
+    // A self-reference stays a bare (undefined) identifier and fails below.
     return Object.prototype.hasOwnProperty.call(values, token) ? \`__values[\${JSON.stringify(token)}]\` : token;
   });
   try {
-    const value = Function("__values", \`"use strict"; return (\${jsExpression});\`)(values);
+    const {
+      sum,
+      min,
+      max
+    } = LAYOUT_TABLE_FORMULA_FUNCTIONS;
+    const value = Function("__values", "sum", "min", "max", \`"use strict"; return (\${jsExpression});\`)(values, sum, min, max);
     return Number.isFinite(value) ? value : null;
   } catch (error) {
     return null;
@@ -22087,8 +22473,8 @@ const renderLayoutTableField = (cell, readOnly, data, setFieldValue) => {
       return /*#__PURE__*/React.createElement(TextArea, _extends({}, sharedProps, labelProp));
   }
 };
-const renderLayoutTableFieldList = (cell, readOnly, data, setFieldValue) => {
-  const fields = Array.isArray(cell.fields) ? cell.fields : [];
+const renderLayoutTableFieldList = (cell, readOnly, data, setFieldValue, visibility) => {
+  const fields = (Array.isArray(cell.fields) ? cell.fields : []).filter(field => layoutTableCellIsVisible(field, visibility));
   if (fields.length === 0) return null;
   return /*#__PURE__*/React.createElement("div", {
     style: {
@@ -22146,10 +22532,14 @@ const renderLayoutTableStampButton = (cell, readOnly) => {
     readOnly: readOnly
   });
 };
-const renderLayoutTableCellContent = (cell, readOnly, data, sourceData, setFieldValue) => {
+
+// Hidden cells keep their <td> (so colSpan/rowSpan geometry holds) but render
+// no content.
+const renderLayoutTableCellContent = (cell, readOnly, data, sourceData, setFieldValue, visibility) => {
   if (cell.hidden === true) return null;
+  if (!layoutTableCellIsVisible(cell, visibility)) return null;
   if (cell.kind === "field") return renderLayoutTableField(cell, readOnly, data, setFieldValue);
-  if (cell.kind === "fieldList") return renderLayoutTableFieldList(cell, readOnly, data, setFieldValue);
+  if (cell.kind === "fieldList") return renderLayoutTableFieldList(cell, readOnly, data, setFieldValue, visibility);
   if (cell.kind === "resources") return renderLayoutTableResources(cell);
   if (cell.kind === "stampButton") return renderLayoutTableStampButton(cell, readOnly);
   if (cell.kind === "computed") return computeLayoutTableCellValue(cell, data);
@@ -22199,6 +22589,46 @@ const rowIsVisible = (row, data) => {
       return Boolean(comparableValue) && !isNoLikeValue(value);
   }
 };
+const LAYOUT_TABLE_CONTROLLER_KINDS = {
+  booleanSingle: "boolean",
+  booleanYesNo: "boolean",
+  choice: "choice",
+  choiceMulti: "choice",
+  number: "number"
+};
+
+// Answer kinds of the fields this table owns, so a cell visibility rule
+// compares its controller the way the builder does. Controllers outside the
+// table are left to FormLogicKit's own inference.
+const collectLayoutTableControllerKinds = rows => {
+  const kinds = {};
+  rows.forEach(row => {
+    ;
+    (Array.isArray(row?.cells) ? row.cells : []).forEach(cell => {
+      if (!cell) return;
+      if (cell.kind === "computed" && cell.fieldId) {
+        kinds[cell.fieldId] = cell.resultType === "text" ? "text" : "number";
+        return;
+      }
+      const fields = cell.kind === "field" ? [cell] : cell.kind === "fieldList" && Array.isArray(cell.fields) ? cell.fields : [];
+      fields.forEach(field => {
+        const fieldId = field?.fieldId || field?.id;
+        if (fieldId) kinds[fieldId] = LAYOUT_TABLE_CONTROLLER_KINDS[field.inputType] || "text";
+      });
+    });
+  });
+  return kinds;
+};
+
+// A cell (or a field inside a fieldList cell) with a builder visibility rule
+// shows only while the rule passes. Rules are evaluated by FormLogicKit; a
+// runtime without the kit keeps every cell visible, as before.
+const layoutTableCellIsVisible = (target, visibility) => {
+  const rule = target?.visibility;
+  if (!rule || typeof rule !== "object" || !visibility) return true;
+  if (typeof FormLogicKit === "undefined" || typeof FormLogicKit.evaluateVisibilityRule !== "function") return true;
+  return FormLogicKit.evaluateVisibilityRule(rule, visibility.getValue, visibility.options) !== false;
+};
 function LayoutTable({
   id,
   label,
@@ -22233,6 +22663,13 @@ function LayoutTable({
     }
   });
   const visibleRows = tableRows.filter(row => rowIsVisible(row, activeData));
+  const controllerKinds = collectLayoutTableControllerKinds(tableRows);
+  const cellVisibility = {
+    getValue: controllerId => tableData[controllerId],
+    options: {
+      controllerKind: controllerId => controllerKinds[controllerId]
+    }
+  };
   const setFieldValue = (fieldId, value) => {
     if (typeof setActiveData !== "function") return;
     setActiveData(draft => {
@@ -22299,7 +22736,7 @@ function LayoutTable({
       colSpan: Math.max(1, Number(cell.colSpan) || 1),
       rowSpan: Math.max(1, Number(cell.rowSpan) || 1),
       style: cellStyle(cell, config)
-    }, renderLayoutTableCellContent(cell, readOnly, tableData, sd, setFieldValue));
+    }, renderLayoutTableCellContent(cell, readOnly, tableData, sd, setFieldValue, cellVisibility));
   }))))));
 }`,
   './LongTermMedications/index.jsx': `function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
@@ -29102,6 +29539,18 @@ const setPanelGridPayload = (setFormData, componentId, payloadType, payload) => 
   }));
 };
 const getPanelGridAuth = () => typeof window !== "undefined" && window.__nhAuth || null;
+const panelGridRowIsScaleLike = (row, normalizedOptions) => {
+  const type = String(row.type ?? "text").toLowerCase();
+  return type === "scale" || type === "coded" && normalizedOptions.length > 0 && normalizedOptions.every(option => Number.isFinite(Number(option.value)));
+};
+// Before scale rows were controlled, an unanswered row left ScaleField
+// uncontrolled, so its answer landed in its own flat key instead of the
+// grid's nested value. Only a real selection is worth adopting.
+const panelGridLegacyScaleKey = (fieldId, rowId) => \`\${fieldId}_\${rowId}\`;
+const panelGridLegacyScaleAnswer = (data, fieldId, rowId) => {
+  const answer = data?.[panelGridLegacyScaleKey(fieldId, rowId)];
+  return answer && typeof answer === "object" && answer.selectedKey != null && answer.selectedKey !== "" ? answer : null;
+};
 const PANEL_GRID_TABLE_STYLE = {
   borderCollapse: "collapse",
   tableLayout: "fixed",
@@ -29257,16 +29706,40 @@ const PanelEntryGrid = ({
       }
     }));
   };
+
+  // Adopt answers a pre-fix grid left in ScaleField's flat keys, once, so a
+  // saved form keeps its scale answers (and now reaches totals and the panel).
+  useEffect(() => {
+    const data = fd?.field?.data;
+    const adoptable = rowDefs.filter(row => values[row.id] === undefined && panelGridRowIsScaleLike(row, kit.normalizeOptions(row.options)) && panelGridLegacyScaleAnswer(data, effectiveFieldId, row.id));
+    if (adoptable.length === 0) return;
+    setFormData(produce(draft => {
+      if (!draft.field?.data || typeof draft.field.data !== "object") return;
+      const current = draft.field.data[effectiveFieldId] && typeof draft.field.data[effectiveFieldId] === "object" ? draft.field.data[effectiveFieldId] : {};
+      const next = {
+        ...current
+      };
+      adoptable.forEach(row => {
+        const legacy = panelGridLegacyScaleAnswer(draft.field.data, effectiveFieldId, row.id);
+        if (next[row.id] === undefined && legacy) next[row.id] = {
+          ...legacy
+        };
+      });
+      draft.field.data[effectiveFieldId] = next;
+    }));
+  }, [effectiveFieldId, fd, kit, rowDefs, setFormData, values]);
   const renderCurrentValue = (row, value, readOnly) => {
     const type = String(row.type ?? "text").toLowerCase();
     const normalizedOptions = kit.normalizeOptions(row.options);
-    const scaleLike = type === "scale" || type === "coded" && normalizedOptions.length > 0 && normalizedOptions.every(option => Number.isFinite(Number(option.value)));
-    if (scaleLike) {
+    if (panelGridRowIsScaleLike(row, normalizedOptions)) {
+      // Always controlled: \`undefined\` would make ScaleField write its own
+      // flat key and never call onChange, so the grid, totals and the panel
+      // payload would stay empty. \`null\` is ScaleField's "no answer".
       return /*#__PURE__*/React.createElement(ScaleField, {
-        fieldId: \`\${effectiveFieldId}_\${row.id}\`,
+        fieldId: panelGridLegacyScaleKey(effectiveFieldId, row.id),
         label: row.label,
         options: normalizedOptions,
-        value: value,
+        value: value ?? null,
         onChange: nextValue => setRowValue(row.id, nextValue),
         hideLabel: true,
         disableHorizontalScroll: true,
@@ -34761,14 +35234,28 @@ const collectionItemMatches = (item, itemPath, operator = "notEmpty", matchValue
   return values.some(value => value === expected);
 };
 
+// A birth date is a calendar day. \`new Date("1960-06-23")\` is UTC midnight,
+// which west of UTC is the evening of the 22nd — the age would tick over a day
+// early — so date-only strings (yyyy-MM-dd, yyyy.MM.dd, yyyy/MM/dd) are built
+// as LOCAL dates. Anything else (date-times, Date objects) parses as before.
+const parsePatientBirthDate = raw => {
+  if (raw instanceof Date) return raw;
+  const match = /^(\\d{4})[-./](\\d{1,2})[-./](\\d{1,2})$/.exec(String(raw).trim());
+  if (!match) return new Date(raw);
+  const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  const date = new Date(year, month - 1, day);
+  const valid = date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day;
+  return valid ? date : new Date(Number.NaN);
+};
+
 // Whole years between a birth date and a reference date (default: today).
 // Returns a numeric string (so \`Number()\`-based field/option rules can compare
 // it) or "" when the input is missing/unparseable. \`reference\` is injectable so
 // the result is deterministically testable.
 const computeAgeYears = (birthValue, reference) => {
-  const raw = birthValue && typeof birthValue === "object" ? birthValue.value ?? birthValue.code ?? birthValue.display ?? "" : birthValue;
+  const raw = birthValue && typeof birthValue === "object" && !(birthValue instanceof Date) ? birthValue.value ?? birthValue.code ?? birthValue.display ?? "" : birthValue;
   if (raw == null || raw === "") return "";
-  const dob = new Date(raw);
+  const dob = parsePatientBirthDate(raw);
   if (Number.isNaN(dob.getTime())) return "";
   const now = reference || new Date();
   let age = now.getFullYear() - dob.getFullYear();
@@ -35823,9 +36310,10 @@ const RelationshipStatus = ({
 //
 // presentation "cards" renders each row as a card headed by its label (and a
 // "No longer listed" flag for kept orphans), its questions stacked with the
-// same MOIS controls and value shapes EditableTable's cells use, and a status
-// line. The data (the rows array), sync, completion and validation are the
-// same as the grid. Tables with a stamp column or per-row authorship locks
+// same controls (radio and checkbox-list choice styles included) and value
+// shapes EditableTable's cells use, only the questions visible in that row,
+// and a status line. The data (the rows array), sync, completion and
+// validation are the same as the grid. Tables with a stamp column or per-row authorship locks
 // keep the grid (those need EditableTable's own machinery).
 //
 // Row metadata (same underscore convention as EditableTable's _rowId, see
@@ -35891,11 +36379,14 @@ const RepeatForEachTable = props => {
   const sourceRows = repeatConfig ? helpers.readSourceRows(fieldData, repeatConfig) : [];
   // With the form's translateFormText the rows also carry _rowStatusText (the
   // translated status the grid shows); stored _rowStatus stays English.
+  // formData: the answers column visibility rules may read (row completion
+  // skips a column hidden in the row).
   const syncOptions = {
     repeatFor: repeatConfig,
     rowCompletion: completion,
     columns: baseColumns,
-    translate: typeof translate === "function" ? translate : null
+    translate: typeof translate === "function" ? translate : null,
+    formData: fieldData
   };
   const writer = (fd && typeof fd.setFormData === "function" ? fd.setFormData : null) || setFd;
 
@@ -35949,7 +36440,10 @@ const RepeatForEachTable = props => {
     }
     writeRowsRecipe((current, data) => {
       const liveSource = repeatConfig ? helpers.readSourceRows(data, repeatConfig) : [];
-      return helpers.syncRows(JSON.parse(JSON.stringify(liveSource)), current || [], syncOptions);
+      return helpers.syncRows(JSON.parse(JSON.stringify(liveSource)), current || [], {
+        ...syncOptions,
+        formData: data
+      });
     });
   }, [needsSync, sourceSignature, targetSignature, configSignature, locked]);
 
@@ -35998,7 +36492,9 @@ const RepeatForEachTable = props => {
     PrimaryButton,
     DefaultButton,
     Text,
-    Label
+    Label,
+    ChoiceGroup,
+    Checkbox
   } = Fluent;
 
   // Empty state: nothing in the source table matches, so there is nothing to
@@ -36022,7 +36518,7 @@ const RepeatForEachTable = props => {
   };
   const writeCardCell = (rowId, column, value) => {
     if (locked) return;
-    writeRowsRecipe(current => helpers.writeCell(current || [], rowId, column, value, baseColumns));
+    writeRowsRecipe((current, data) => helpers.writeCell(current || [], rowId, column, value, baseColumns, data));
     notifyRowsChange({
       tableId: id,
       reason: "update",
@@ -36070,6 +36566,8 @@ const RepeatForEachTable = props => {
       }, helpers.formatCell(row, column) || " ");
     }
     const onValue = next => writeCardCell(rowId, column, next);
+    // Cards only show the columns visible in the row, so required = the flag.
+    const required = helpers.isRequiredColumn(column);
     switch (column.type) {
       case "number":
         {
@@ -36088,7 +36586,9 @@ const RepeatForEachTable = props => {
             textFieldProps: settings.suffix ? {
               suffix: settings.suffix
             } : undefined,
-            storeAsNumber: settings.storeAsNumber !== false
+            storeAsNumber: settings.storeAsNumber !== false,
+            placeholder: column.placeholder || undefined,
+            required: required
           });
         }
       case "date":
@@ -36097,7 +36597,8 @@ const RepeatForEachTable = props => {
             inline: true,
             value: value || "",
             onChange: next => onValue(next || ""),
-            placeholder: column.placeholder || "Select date and time"
+            placeholder: column.placeholder || "Select date and time",
+            required: required
           });
         }
         return /*#__PURE__*/React.createElement(DateSelect, {
@@ -36105,18 +36606,51 @@ const RepeatForEachTable = props => {
           inline: true,
           value: value || "",
           onChange: next => onValue(helpers.dateCellValue(next)),
-          placeholder: column.placeholder || "Select date"
+          placeholder: column.placeholder || "Select date",
+          required: required
         });
       case "time":
         return /*#__PURE__*/React.createElement(TimeSelect, {
           inline: true,
           value: value || "",
           onChange: (event, next) => onValue(next || ""),
-          placeholder: column.placeholder || "HH:mm"
+          placeholder: column.placeholder || "HH:mm",
+          required: required
         });
       case "dropdown":
         {
           const options = helpers.choiceOptions(column.options);
+          // The authored radio / checkbox-list styles, as EditableTable's cells
+          // draw them (same stored values: a code, or a list of codes).
+          if (column.choiceStyle === "checkbox" && !column.codeSystem && Checkbox) {
+            const selected = new Set((Array.isArray(value) ? value : value ? [value] : []).map(String));
+            return /*#__PURE__*/React.createElement("div", {
+              role: "group",
+              "aria-label": column.title || column.label || column.id,
+              style: {
+                display: "flex",
+                flexDirection: "column",
+                gap: 4
+              }
+            }, options.map(option => /*#__PURE__*/React.createElement(Checkbox, {
+              key: option.key,
+              label: option.text,
+              checked: selected.has(option.key),
+              onChange: (_event, checked) => {
+                const next = new Set(selected);
+                if (checked) next.add(option.key);else next.delete(option.key);
+                onValue(options.map(entry => entry.key).filter(key => next.has(key)));
+              }
+            })));
+          }
+          if (column.choiceStyle === "radio" && !column.codeSystem && ChoiceGroup) {
+            return /*#__PURE__*/React.createElement(ChoiceGroup, {
+              options: options,
+              selectedKey: value ? String(value) : undefined,
+              required: required,
+              onChange: (_event, option) => onValue(option ? option.key : "")
+            });
+          }
           const multiple = column.choiceStyle === "multiselect" || column.choiceStyle === "checkbox";
           return /*#__PURE__*/React.createElement(SimpleCodeSelect, {
             inline: true,
@@ -36126,7 +36660,8 @@ const RepeatForEachTable = props => {
             value: helpers.choiceForControl(value, column, options),
             onChange: (coding, codings) => onValue(helpers.choiceForStorage(coding, codings, column)),
             placeholder: column.placeholder || "Select...",
-            showOther: column.showOtherOption === true
+            showOther: column.showOtherOption === true,
+            required: required
           });
         }
       case "checkbox":
@@ -36134,7 +36669,8 @@ const RepeatForEachTable = props => {
           inline: true,
           displayStyle: "checkmark",
           value: value,
-          onChange: (event, checked) => onValue(!!checked)
+          onChange: (event, checked) => onValue(!!checked),
+          required: required
         });
       case "text":
       default:
@@ -36147,7 +36683,8 @@ const RepeatForEachTable = props => {
           inline: true,
           value: value || "",
           onChange: (event, next) => onValue(next || ""),
-          placeholder: column.placeholder || ""
+          placeholder: column.placeholder || "",
+          required: required
         });
     }
   };
@@ -36215,12 +36752,22 @@ const RepeatForEachTable = props => {
         flexDirection: "column",
         gap: 10
       }
-    }, questionColumns.filter(column => helpers.columnVisible(column, row)).map(column => /*#__PURE__*/React.createElement("div", {
+    }, questionColumns.filter(column => helpers.columnVisible(column, row, baseColumns, fieldData)).map(column => /*#__PURE__*/React.createElement("div", {
       key: column.id,
       "data-repeat-for-question": column.id
     }, /*#__PURE__*/React.createElement(Label, {
-      required: column.required === true
-    }, column.title || column.label || column.id), /*#__PURE__*/React.createElement("span", {
+      required: helpers.isRequiredColumn(column)
+    }, column.title || column.label || column.id), column.helpText ? /*#__PURE__*/React.createElement(Text, {
+      "data-repeat-for-help": "",
+      variant: "small",
+      styles: {
+        root: {
+          display: "block",
+          marginBottom: 4,
+          color: mutedColor
+        }
+      }
+    }, column.helpText) : null, /*#__PURE__*/React.createElement("span", {
       className: "showonprint",
       style: {
         display: "none",
@@ -36415,7 +36962,10 @@ RepeatForEachTable.helpers = (() => {
     if (!ids || ids.length === 0) return answers;
     return (columns || []).filter(column => column && (ids.includes(column.id) || ids.includes(columnPath(column))));
   };
-  const rowComplete = (row, columns, repeatFor, rowCompletion) => requiredColumns(columns, repeatFor, rowCompletion).every(column => cellAnswered(row, column));
+
+  // A column hidden in the row (its visibility rule) is not required there,
+  // the same as FormLogicKit.validate's row check. formData: the form's answers.
+  const rowComplete = (row, columns, repeatFor, rowCompletion, formData) => requiredColumns(columns, repeatFor, rowCompletion).every(column => !columnVisible(column, row, columns, formData) || cellAnswered(row, column));
   const sourceRowHasContent = row => !!row && typeof row === "object" && Object.keys(row).some(key => key.charAt(0) !== "_" && isMeaningful(row[key]));
   const readSourceRows = (data, repeatFor) => {
     if (!data || !repeatFor || !repeatFor.sourceFieldId) return [];
@@ -36433,7 +36983,7 @@ RepeatForEachTable.helpers = (() => {
    * syncRows(source, syncRows(source, rows)) has the same signature.
    * options: { repeatFor, rowCompletion, translate? (sets _rowStatusText), columns (target, without the
    * injected label/status columns), makeRowId?, rowIds? (key -> _rowId for
-   * new rows) }
+   * new rows), formData? (the form's answers, for column visibility rules) }
    */
   const syncRows = (sourceRows, targetRows, options = {}) => {
     const repeatFor = options.repeatFor && options.repeatFor.sourceFieldId ? options.repeatFor : null;
@@ -36531,7 +37081,7 @@ RepeatForEachTable.helpers = (() => {
       let status = "";
       if (row._sourceRemoved) status = STATUS_TEXT.removed;
       if (completion) {
-        const complete = rowComplete(row, columns, repeatFor, completion);
+        const complete = rowComplete(row, columns, repeatFor, completion, options.formData);
         row._complete = complete;
         if (!status && !(manual && !rowAnswered(row, columns, repeatFor))) {
           status = complete ? STATUS_TEXT.complete : STATUS_TEXT.incomplete;
@@ -36628,21 +37178,16 @@ RepeatForEachTable.helpers = (() => {
   /** The columns a card asks, in order (not the label copy; modal tables: the modal's columns). */
   const cardColumns = (columns, repeatFor, isModalMode) => (columns || []).filter(column => column && !isInjectedColumn(column) && !(repeatFor && repeatFor.labelTargetColumnId && column.id === repeatFor.labelTargetColumnId) && !(isModalMode && column.showInModal === false));
 
-  // EditableTable's per-row column visibility rule.
-  const columnVisible = (column, row) => {
-    const rule = column && column.visibility;
-    if (!rule || typeof rule !== "object" || rule.type === "always" || !rule.controllerId) return true;
-    const value = getPath(row || {}, rule.controllerId);
-    if (rule.type === "filled") return isMeaningful(value);
-    if (rule.type === "equals") return String(value === undefined || value === null ? "" : value) === String(rule.value === undefined || rule.value === null ? "" : rule.value);
-    if (rule.type === "gt" || rule.type === "lt") {
-      const left = Number(value);
-      const right = Number(rule.value === undefined || rule.value === null ? 0 : rule.value);
-      if (!Number.isFinite(left) || !Number.isFinite(right)) return false;
-      return rule.type === "gt" ? left > right : left < right;
-    }
-    return true;
-  };
+  // EditableTable's per-row column visibility: the column's BuilderVisibilityRule
+  // through FormLogicKit (controllers are sibling columns by row path, else
+  // the row, else the form's answers in \`formData\`).
+  const columnVisible = (column, row, columns, formData) => FormLogicKit.isTableColumnVisible(column, row || {}, {
+    columns: columns || [],
+    formData
+  });
+
+  // Required while shown (requiredWhenVisible is the older name).
+  const isRequiredColumn = column => !!column && (column.required === true || column.requiredWhenVisible === true);
   const choiceOptions = options => (Array.isArray(options) ? options : []).map((option, index) => {
     if (typeof option === "string") {
       const trimmed = option.trim();
@@ -36788,12 +37333,18 @@ RepeatForEachTable.helpers = (() => {
     return row;
   };
 
-  /** The rows with one cell of one row (by _rowId) written and that row recalculated. */
-  const writeCell = (rows, rowId, column, value, columns) => (rows || []).map(row => {
+  /**
+   * The rows with one cell of one row (by _rowId) written and that row
+   * recalculated, then (as EditableTable does) answers of columns now hidden
+   * whose rule says hiddenAnswerPolicy "clear" blanked. formData: the form's answers.
+   */
+  const writeCell = (rows, rowId, column, value, columns, formData) => (rows || []).map(row => {
     if (!row || row._rowId !== rowId) return row;
     const next = JSON.parse(JSON.stringify(row));
     setPath(next, columnPath(column), value);
-    return applyComputed(next, columns);
+    return FormLogicKit.clearHiddenTableAnswers(applyComputed(next, columns), columns, {
+      formData
+    });
   });
 
   /** A blank manual row (EditableTable's empty row: default cell values). */
@@ -36875,7 +37426,8 @@ RepeatForEachTable.helpers = (() => {
       repeatFor,
       rowCompletion: spec.rowCompletion,
       columns,
-      rowIds: rowIdsFrom ? rowIdsByKey(normalizeRows(getPath(rowIdsFrom, rowsPath))) : null
+      rowIds: rowIdsFrom ? rowIdsByKey(normalizeRows(getPath(rowIdsFrom, rowsPath))) : null,
+      formData: data
     });
     // A never-shown table with nothing to seed stays absent (no churn).
     if (!currentRaw && next.length === 0) return false;
@@ -36931,6 +37483,7 @@ RepeatForEachTable.helpers = (() => {
     cardsUnsupportedReason,
     cardColumns,
     columnVisible,
+    isRequiredColumn,
     choiceOptions,
     choiceForControl,
     choiceForStorage,
@@ -42010,6 +42563,45 @@ const _evaluateDataEntryVisibility = (field, values = {}) => {
   }
   return true;
 };
+
+// How FormLogicKit should compare a controller's answer, from its entry type.
+const _dataEntryControllerKind = field => {
+  const type = field?.type;
+  if (type === "booleanYesNo") return "boolean";
+  if (type === "choice") return "choice";
+  if (type === "number" || type === "scale") return "number";
+  return "text";
+};
+
+/**
+ * Whether a data-entry field's visibility rule (a builder BuilderVisibilityRule
+ * lifted by lib/subform-data-entry.ts) shows it. FormLogicKit evaluates the
+ * full operator set (not-filled, gte, additional conditions, match any, ...)
+ * the same way regular fields do; the local evaluator is the fallback when the
+ * kit is not loaded. \`getValue(controllerId)\` returns the raw answer.
+ */
+const _isDataEntryFieldVisible = (field, getValue, fieldById) => {
+  const rule = field?.visibility;
+  if (!rule || typeof rule !== "object" || rule.type === "always") return true;
+  if (typeof FormLogicKit !== "undefined" && FormLogicKit && typeof FormLogicKit.evaluateVisibilityRule === "function") {
+    return FormLogicKit.evaluateVisibilityRule(rule, getValue, {
+      controllerKind: controllerId => _dataEntryControllerKind(fieldById?.get?.(controllerId))
+    }) !== false;
+  }
+  const controllerId = rule.controllerId;
+  return _evaluateDataEntryVisibility(field, controllerId ? {
+    [controllerId]: getValue(controllerId)
+  } : {});
+};
+
+// "Dose is required." / "Dose and Route are required." — the wording
+// EditableTable's row Save uses, naming every missing field at once.
+const _formatMissingRequiredMessage = fields => {
+  const labels = (fields || []).map(field => String(field?.label || field?.id || "").trim()).filter(Boolean);
+  if (labels.length === 0) return "";
+  if (labels.length === 1) return \`\${labels[0]} is required.\`;
+  return \`\${labels.slice(0, -1).join(", ")} and \${labels[labels.length - 1]} are required.\`;
+};
 const _toPathSegments = path => String(path || "").split(".").map(segment => segment.trim()).filter(Boolean);
 const _getValueAtPath = (root, path) => {
   const segments = _toPathSegments(path);
@@ -42334,12 +42926,16 @@ const _resolveFieldDefaultValue = (field, sd, allowObservationDefault = true) =>
   const observationDefault = allowObservationDefault ? _latestObservationDefault(field, sd) : undefined;
   const explicitDefault = observationDefault ?? field.defaultValue ?? field.default_value;
   if (explicitDefault === undefined) return undefined;
-  if (explicitDefault === "__today") {
+  if (explicitDefault === "__today" || explicitDefault === "__now") {
     const today = new Date();
     const year = today.getFullYear();
     const month = String(today.getMonth() + 1).padStart(2, "0");
     const day = String(today.getDate()).padStart(2, "0");
-    return \`\${year}-\${month}-\${day}\`;
+    if (explicitDefault === "__today") return \`\${year}-\${month}-\${day}\`;
+    // datetime-local value, the format the date-time input stores.
+    const hours = String(today.getHours()).padStart(2, "0");
+    const minutes = String(today.getMinutes()).padStart(2, "0");
+    return \`\${year}-\${month}-\${day}T\${hours}:\${minutes}\`;
   }
   if (field.type === "choice" || field.type === "booleanYesNo") {
     const fallbackOptions = field.type === "booleanYesNo" ? ["Yes", "No"] : [];
@@ -42744,9 +43340,20 @@ const SubformScoringInner = ({
   onDataEntryValueChange,
   observationOutputs = [],
   formDataOutputs = [],
+  // Locked (section complete / signed / host read-only): the modal still opens
+  // to show the answers, but nothing in it can change and Done cannot save.
+  readOnly = false,
+  disabled = false,
+  // A host-side validation message (e.g. EditableTable's row Save) shown
+  // inside the dialog above its buttons.
+  errorMessage = null,
   ...props
 }) => {
+  const isReadOnly = readOnly === true || disabled === true;
   const [internalIsOpen, setInternalIsOpen] = useState(false);
+  // Set by a Done that found missing required answers; the message then
+  // tracks the answers live until every required field is filled.
+  const [showRequiredErrors, setShowRequiredErrors] = useState(false);
   const [fd] = useFormSessionData();
   const sd = useSourceData();
   // One useMutation per supported write action. Iterating a module-constant
@@ -42772,6 +43379,7 @@ const SubformScoringInner = ({
     if (typeof controlledIsOpen !== "boolean") {
       setInternalIsOpen(nextValue);
     }
+    setShowRequiredErrors(false);
     onOpenChange?.(nextValue);
   }, [controlledIsOpen, onOpenChange]);
   const isDataEntryMode = useMemo(() => {
@@ -42995,7 +43603,8 @@ const SubformScoringInner = ({
     return result;
   }, [isDataEntryMode, isMorphineCalculatorMode, dataEntryCalculatorConfig, dataEntryFields, fd, hasExternalDataEntryStore, dataEntryValueRoot]);
   useEffect(() => {
-    if (!isDataEntryMode || !isDialogOpen) return;
+    // A locked record is shown as saved; defaults never write into it.
+    if (!isDataEntryMode || !isDialogOpen || isReadOnly) return;
     const pendingDefaults = [];
     for (const field of dataEntryFields) {
       if (!field?.id || _isMeaningfulValue(dataEntryValues[field.id])) continue;
@@ -43026,7 +43635,24 @@ const SubformScoringInner = ({
         draft.field.data[fieldId] = defaultValue;
       });
     }));
-  }, [bringForward, isDataEntryMode, isDialogOpen, dataEntryFields, dataEntryValues, fd, onDataEntryValueChange, sd]);
+  }, [bringForward, isDataEntryMode, isDialogOpen, isReadOnly, dataEntryFields, dataEntryValues, fd, onDataEntryValueChange, sd]);
+
+  // Visibility rules may name a sibling (the usual case) or a parent-form
+  // field, read from the same store the subform's answers live in.
+  const getVisibilityControllerValue = useCallback(controllerId => {
+    if (Object.prototype.hasOwnProperty.call(dataEntryValues, controllerId)) {
+      return dataEntryValues[controllerId];
+    }
+    return hasExternalDataEntryStore ? _getValueAtPath(dataEntryValueRoot, controllerId) : fd?.field?.data?.[controllerId];
+  }, [dataEntryValues, dataEntryValueRoot, fd, hasExternalDataEntryStore]);
+
+  // Hidden fields still collect their default answer but are never drawn,
+  // never required and never counted in progress.
+  const isDataEntryFieldShown = useCallback(field => field?.hidden !== true && _isDataEntryFieldVisible(field, getVisibilityControllerValue, dataEntryFieldById), [dataEntryFieldById, getVisibilityControllerValue]);
+  const missingRequiredFields = useMemo(() => {
+    if (!isDataEntryMode) return [];
+    return dataEntryFields.filter(field => field?.id && field.required === true && !_isHeadingField(field) && field.type !== "conversion" && isDataEntryFieldShown(field) && !_isMeaningfulValue(dataEntryValues[field.id]));
+  }, [isDataEntryMode, dataEntryFields, dataEntryValues, isDataEntryFieldShown]);
   const dataEntryCalculations = useMemo(() => {
     if (Array.isArray(dataEntryConfig?.calculatedValues) && dataEntryConfig.calculatedValues.length > 0) {
       return dataEntryConfig.calculatedValues;
@@ -43077,7 +43703,7 @@ const SubformScoringInner = ({
         id: row.inputFieldId,
         required: false
       }) : [];
-      const answerableFields = calculatorFields.length > 0 ? calculatorFields : dataEntryFields.filter(field => !_isHeadingField(field));
+      const answerableFields = calculatorFields.length > 0 ? calculatorFields : dataEntryFields.filter(field => !_isHeadingField(field) && isDataEntryFieldShown(field));
       const requiredFields = answerableFields.filter(field => field.required);
       const fieldsForProgress = requiredFields.length > 0 ? requiredFields : answerableFields;
       const total = fieldsForProgress.length;
@@ -43099,7 +43725,7 @@ const SubformScoringInner = ({
       total,
       percentage: total > 0 ? Math.round(answered / total * 100) : 0
     };
-  }, [isDataEntryMode, isMorphineCalculatorMode, dataEntryCalculatorConfig, dataEntryFieldById, dataEntryFields, dataEntryValues, config.questions, answers]);
+  }, [isDataEntryMode, isMorphineCalculatorMode, dataEntryCalculatorConfig, dataEntryFieldById, dataEntryFields, dataEntryValues, isDataEntryFieldShown, config.questions, answers]);
   const hasAnyAnswers = useMemo(() => {
     if (isDataEntryMode) {
       if (isMorphineCalculatorMode) {
@@ -43238,6 +43864,7 @@ const SubformScoringInner = ({
         convertOnBlur: field.convertOnBlur !== false,
         allowNegative: field.allowNegative === true,
         required: required,
+        readOnly: isReadOnly,
         valueRoot: hasExternalDataEntryStore ? dataEntryValueRoot : undefined,
         onValueChange: setDataEntryValue
       });
@@ -43282,7 +43909,8 @@ const SubformScoringInner = ({
         showEndpointLabels: field.showEndpointLabels === true || field.showEndpointLabels !== false && Boolean(field.minLabel || field.maxLabel),
         showTooltip: field.showTooltip === true,
         tooltipMode: field.tooltipMode === "option" ? "option" : "all",
-        disableHorizontalScroll: renderOptions.disableHorizontalScroll === true
+        disableHorizontalScroll: renderOptions.disableHorizontalScroll === true,
+        readOnly: isReadOnly
       });
     }
     if (field.type === "date") {
@@ -43298,7 +43926,26 @@ const SubformScoringInner = ({
         inline: true,
         placeholder: field.placeholder,
         value: dataEntryValues[field.id] ?? "",
-        onChange: value => setDataEntryValue(field.id, (value ?? "").replace(/\\./g, "-"))
+        onChange: value => setDataEntryValue(field.id, (value ?? "").replace(/\\./g, "-")),
+        readOnly: isReadOnly,
+        disabled: isReadOnly
+      }));
+    }
+    if (field.type === "time") {
+      // The MOIS masked HH:mm control, driven the same controlled way as the
+      // date branch (and EditableTable/RepeatForEachTable time cells): no
+      // fieldId, so the answer lands only in this subform's store.
+      return /*#__PURE__*/React.createElement("div", {
+        key: \`field-\${field.id}\`
+      }, /*#__PURE__*/React.createElement(Label, {
+        required: required
+      }, field.label), /*#__PURE__*/React.createElement(TimeSelect, {
+        inline: true,
+        placeholder: field.placeholder || "HH:mm",
+        value: dataEntryValues[field.id] ?? "",
+        onChange: (_event, value) => setDataEntryValue(field.id, value || ""),
+        readOnly: isReadOnly,
+        disabled: isReadOnly
       }));
     }
     if (field.type === "datetime") {
@@ -43332,6 +43979,7 @@ const SubformScoringInner = ({
           defaultValue: _resolveFieldDefaultValue(field, sd, bringForward),
           placeholder: field.placeholder || "Please search",
           required: required,
+          readOnly: isReadOnly,
           openOnFocus: true,
           showOtherOption: Boolean(field.showOtherOption || field.show_other_option),
           onChange: nextValue => setDataEntryValue(field.id, nextValue)
@@ -43518,7 +44166,8 @@ const SubformScoringInner = ({
         markerSize: field.markerSize,
         totalCountFieldId: field.totalCountFieldId,
         selectedIdsFieldId: field.selectedIdsFieldId,
-        selectedLabelsFieldId: field.selectedLabelsFieldId
+        selectedLabelsFieldId: field.selectedLabelsFieldId,
+        readOnly: isReadOnly
       }));
     }
     return /*#__PURE__*/React.createElement("div", {
@@ -43534,7 +44183,7 @@ const SubformScoringInner = ({
     }));
   };
   const renderDataEntryScaleStack = group => {
-    const fields = (Array.isArray(group?.fields) ? group.fields : []).filter(field => _evaluateDataEntryVisibility(field, dataEntryValues));
+    const fields = (Array.isArray(group?.fields) ? group.fields : []).filter(isDataEntryFieldShown);
     if (fields.length === 0) return null;
     const stackMinWidth = fields.reduce((widest, field) => {
       const optionCount = _buildScaleOptions(field).length;
@@ -43573,7 +44222,7 @@ const SubformScoringInner = ({
 
   const renderDataEntryScaleMatrix = group => {
     const options = Array.isArray(group?.options) ? group.options : [];
-    const fields = Array.isArray(group?.fields) ? group.fields : [];
+    const fields = (Array.isArray(group?.fields) ? group.fields : []).filter(isDataEntryFieldShown);
     if (options.length === 0 || fields.length === 0) return null;
     const columnTemplate = \`minmax(240px, 1.8fr) repeat(\${options.length}, minmax(56px, 1fr))\`;
     return /*#__PURE__*/React.createElement("div", {
@@ -44030,6 +44679,17 @@ const SubformScoringInner = ({
         return null;
     }
   };
+
+  // Done/Save & Add Next refuse to complete while a visible required field is
+  // empty, like EditableTable's row Save: the dialog stays open and names them.
+  const blockOnMissingRequired = () => {
+    if (missingRequiredFields.length === 0) return false;
+    setShowRequiredErrors(true);
+    return true;
+  };
+  const requiredErrorMessage = showRequiredErrors ? _formatMissingRequiredMessage(missingRequiredFields) : "";
+  const hostErrorMessage = typeof errorMessage === "string" ? errorMessage.trim() : "";
+  const dialogErrorMessage = requiredErrorMessage || hostErrorMessage;
   const containerStyle = {
     padding: "8px 0"
   };
@@ -44134,6 +44794,15 @@ const SubformScoringInner = ({
     dialogContentProps: dialogContentProps,
     modalProps: modalProps,
     minWidth: dialogMinWidth
+  }, /*#__PURE__*/React.createElement("fieldset", {
+    disabled: isReadOnly,
+    "data-subform-readonly": isReadOnly ? "true" : undefined,
+    style: {
+      border: 0,
+      margin: 0,
+      padding: 0,
+      minWidth: 0
+    }
   }, isDataEntryMode ? /*#__PURE__*/React.createElement("div", {
     style: {
       maxHeight: "65vh",
@@ -44167,7 +44836,7 @@ const SubformScoringInner = ({
       }, renderDataEntryScaleMatrix(entry));
     }
     const field = entry.field;
-    if (!_evaluateDataEntryVisibility(field, dataEntryValues)) return null;
+    if (!isDataEntryFieldShown(field)) return null;
     const isHeading = _isHeadingField(field);
     const basis = _resolveFieldWidthBasis(field);
     let showLegendForScale = undefined;
@@ -44248,7 +44917,7 @@ const SubformScoringInner = ({
       marginBottom: "16px"
     }
   }, dataEntryFields.map(field => {
-    if (!_evaluateDataEntryVisibility(field, dataEntryValues)) return null;
+    if (!isDataEntryFieldShown(field)) return null;
     const basis = _resolveFieldWidthBasis(field);
     return /*#__PURE__*/React.createElement("div", {
       key: \`supplemental-\${field.id}\`,
@@ -44259,7 +44928,15 @@ const SubformScoringInner = ({
     config: config,
     title: "",
     showProgress: showProgress
-  })), /*#__PURE__*/React.createElement("div", {
+  }))), dialogErrorMessage ? /*#__PURE__*/React.createElement("div", {
+    role: "alert",
+    "data-subform-error": "",
+    style: {
+      marginTop: "12px",
+      fontSize: "13px",
+      color: isDarkMode ? "#ffb3b3" : "#b42318"
+    }
+  }, dialogErrorMessage) : null, /*#__PURE__*/React.createElement("div", {
     style: {
       height: "16px"
     }
@@ -44271,7 +44948,9 @@ const SubformScoringInner = ({
     }
   }, typeof onSecondaryComplete === "function" ? /*#__PURE__*/React.createElement(DefaultButton, {
     text: secondaryCompleteButtonText || "Save & Add Next",
+    disabled: isReadOnly,
     onClick: () => {
+      if (isReadOnly) return;
       const shouldClose = onSecondaryComplete({
         mode: isDataEntryMode ? "data-entry" : "scoring",
         dataEntryValues,
@@ -44281,13 +44960,16 @@ const SubformScoringInner = ({
         calculatedTotals
       });
       if (shouldClose !== false) {
+        if (blockOnMissingRequired()) return;
         onCommitToParent?.(prepareCompletionState());
         setDialogOpen(false);
       }
     }
   }) : null, /*#__PURE__*/React.createElement(PrimaryButton, {
     text: completeButtonText,
+    disabled: isReadOnly,
     onClick: async () => {
+      if (isReadOnly) return;
       const shouldClose = onComplete?.({
         mode: isDataEntryMode ? "data-entry" : "scoring",
         dataEntryValues,
@@ -44297,6 +44979,10 @@ const SubformScoringInner = ({
         calculatedTotals
       });
       if (shouldClose !== false) {
+        // A host that keeps the dialog open (onComplete returning
+        // false, e.g. EditableTable's row editor) runs its own
+        // validation and reports it through errorMessage.
+        if (blockOnMissingRequired()) return;
         let actionPayload = null;
         if (isDataEntryMode && dataEntryAction) {
           const writeDefinition = MOIS_WRITE_MUTATIONS[dataEntryAction.writeKey];
@@ -44379,7 +45065,8 @@ const SubformScoring = props => {
     isOpen: controlledIsOpen,
     onOpenChange,
     formDataOutputs = [],
-    persistNestedFields = true
+    persistNestedFields = true,
+    onCommitToParent: hostCommitToParent
   } = props;
   const [parentFd] = useActiveData();
   const [internalIsOpen, setInternalIsOpen] = useState(false);
@@ -44395,7 +45082,7 @@ const SubformScoring = props => {
     }
     onOpenChange?.(nextValue);
   }, [controlledIsOpen, onOpenChange, parentFd]);
-  const handleCommitToParent = useCallback(sessionFd => {
+  const mergeSessionIntoParent = useCallback(sessionFd => {
     if (!parentFd?.setFormData) return;
     const sessionState = cloneFormSessionState(sessionFd);
     parentFd.setFormData(current => {
@@ -44424,6 +45111,15 @@ const SubformScoring = props => {
       return nextState;
     });
   }, [formDataOutputs, parentFd, persistNestedFields]);
+
+  // Merge the isolated session into the parent form, then hand the committed
+  // state to the host's own onCommitToParent (ChartRecordManager refreshes the
+  // chart there). The two compose: \`{...props}\` used to be overridden by this
+  // wrapper, so a host's callback silently never ran.
+  const handleCommitToParent = useCallback(sessionFd => {
+    mergeSessionIntoParent(sessionFd);
+    if (typeof hostCommitToParent === "function") hostCommitToParent(sessionFd);
+  }, [hostCommitToParent, mergeSessionIntoParent]);
   return /*#__PURE__*/React.createElement(FormSessionProvider, {
     initialFormData: effectiveInitialData
   }, /*#__PURE__*/React.createElement(SubformScoringInner, _extends({}, props, {
@@ -50090,7 +50786,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './CustomJsxBlock/index.jsx': ["CustomJsxBlock","displaySource","raw"],
   './DentalWeightConverter/index.jsx': ["DentalWeightConverter","DentalWeightConverterSchema","_positiveNumber","_readDentalField","_sanitizeDentalWeight","cellStyle","clearWeights","convertWeights","data","disabled","factor","fieldWrapperStyle","fixedPrecision","kgValue","kilograms","lastEdited","lastEditedRef","lbValue","nextValue","numeric","parsed","parts","pounds","setDentalValues","text","updateWeight"],
   './DocumentSignButton/index.jsx': ["DocumentSignButton","available","confirm","dismiss","note","prepared","running","sd","signed"],
-  './EditableTable/index.jsx': ["ButtonComponent","DEFAULT_WINDOW_HOURS","EditableTable","EditableTableSchema","_FORMULA_OVERRIDES_KEY","_addDaysToDateValue","_applyComputedColumns","_applyDefaultValuesToRow","_applyFormulaColumns","_applyRowProcessingConfig","_buildRowsFromSourceFields","_buildSubformFieldFromColumn","_choiceValueForControl","_choiceValueForStorage","_choiceValueToCoding","_clearHiddenColumnAnswers","_cloneRow","_coerceNumberCellValue","_combinedTextValue","_computeFormulaCellValue","_computeTemplateColumnValue","_evaluateColumnVisibility","_formatCellValue","_formatLocalDate","_formatProcessedNumber","_formulaPolicy","_getDefaultCellValue","_getLocalStampLock","_getValueAtPath","_hasPersistedAuthorshipClaim","_hasStampedLockValue","_isFormulaColumn","_isFormulaOverridden","_isMeaningfulValue","_isRowEmpty","_isRowEmptyWithMappedFields","_makeEmptyRow","_normalizeChoiceOptions","_normalizeDateCellValue","_normalizeInitialRowCount","_normalizeInitialRows","_normalizeMirroredCellValue","_normalizeNumberConfig","_normalizeRows","_normalizeSourceCellValue","_normalizeStampCellValue","_normalizeTableColumns","_normalizeUniqueToken","_normalizeValidationMessage","_normalizeZeroLikeValue","_resetFormulaCell","_resolveFieldDefaultValue","_resolveLiteralValue","_resolvePathValue","_resolveStampCellValue","_rowContentSignature","_rowFormulaValues","_setFormulaOverride","_setValueAtPath","_sortRowsByPath","_splitContinuationText","_stampColumnLocksRow","_stringifyValue","_toFiniteNumber","_toPathSegments","_todayDateValue","_validateRowWithConfig","_writeCellAndRecalculate","actor","actorFrom","addHoursIso","addInlineRow","authored","authorshipEnabled","authorshipHeaderCellStyle","authorshipPolicy","bodyCellStyle","buildKey","buildRowContext","c","cadNumber","cadPath","cadPrecision","calculated","canDeleteInline","canReset","canResign","canSaveAndAddNext","candidate","changed","ck","claim","claims","closeDialog","code","column","columns","commitRows","commitSave","computed","config","configMessage","containerStyle","control","controllerId","copy","count","createTableColumns","current","currentRowCount","currentRows","currentValue","customMessage","customResult","d","data","date","defaultSubformDataEntryConfig","deletedRow","disabledStamp","display","displayRows","displayValue","draftLocalStampLock","draftLockState","dropdownOptions","duplicateIndex","editableUntil","effectiveMaxRows","effectiveReadOnly","emptyRowIndex","euDate","existing","existingRows","expired","explicitRowIndexes","explicitRowMapping","factor","fallback","fieldData","fieldId","first","formatTimestamp","getRowLock","getRows","getSourceFieldId","hasMeaningfulRows","hasMeaningfulValue","hasStampedValue","hasValue","headerCellStyle","headerRowStyle","id","index","inferredRowCount","initialRowCount","initialSeedRows","isDarkMode","isEmpty","isLocked","isModalMode","isNonEmpty","isOwner","isRequiredModalColumn","isVertical","keepStatus","key","label","lastMeaningfulRowIndex","left","leftDate","leftValue","localStampLock","localStampLocked","lockColumns","lockExpired","lockInfo","lockOn","lockedUntil","makeDraftRow","match","maxChars","message","mirroredFieldIds","modalColumns","modalEditorConfig","modalEditorType","next","nextDate","nextDraft","nextRow","nextRows","nextStatus","nextValue","nhAuth","normalizeStore","normalized","normalizedConfig","normalizedRow","normalizedValue","now","nowIso","numberConfig","numeric","numericValue","omitEmptyLines","onBeforeSaveRow","onRowDeleted","onRowSaved","onRowsChange","openCreateDialog","openEditDialog","option","options","overrides","owner","ownerId","ownerName","ownerRefresh","pad2","pairCadPrecision","pairFactor","pairPrefer","pairUsPrecision","pairs","parsed","path","paths","pending","policy","policyAppliesToAction","precision","prefer","prepareSave","processingConfig","raw","rawCad","rawKey","rawUs","rawValue","readOnly","readStore","realRowReadOnly","release","remaining","removeRowAt","renderEditorControl","renderEditorInput","renderFormulaControl","renderRowAuthorshipStatus","renderSuffix","renderVerticalTable","rendered","requireAnyGroups","requiredPaths","resetDraftFormulaCell","resetFormulaCell","resolveNow","resolvedFactor","resolvedRow","result","right","rightDate","rightValue","row","rowIndex","rowLock","rowLockState","rowNumberCellStyle","rowNumberHeaderStyle","rowReadOnly","rows","rowsForVerticalLayout","rule","safeFactor","safePrecision","sameActor","saveAndAddNextConfig","saveAndAddNextLabel","saveDraftRow","saved","savedAt","savedRowIndex","sd","second","section","seededRows","segments","selected","selectedValues","selectionType","setRows","shouldShowActions","shouldToggleLocalLock","showRowAuthorshipColumn","sign","signedAt","sortedRows","sourceColumn","sourceFieldId","sourcePath","sourceSeedRows","spinButtonProps","splitAt","stampCanUnlockLocalRow","stampCell","stampConfig","stampDraftCell","stampPath","stampedValue","store","subformModalConfig","tableColumns","tableContainerStyle","tableStyle","text","textFieldProps","theme","thisStampLocksRow","tooltip","transformedRow","trimTrailingZero","trimmed","ts","typed","untilSelf","updateCell","updateDraftCell","updateDraftValueAtPath","usNumber","usPath","usPrecision","usesSubformEditor","validateResolvedRow","validateRow","validationConfig","validationError","value","values","verticalBodyCellStyle","verticalLabelCellStyle","visibility","windowHours","withCommon","wordBoundary","wording","zeroIsEmpty"],
+  './EditableTable/index.jsx': ["ButtonComponent","DEFAULT_WINDOW_HOURS","EditableTable","EditableTableSchema","_CHECKBOX_TRUE_TEXT","_FORMULA_OVERRIDES_KEY","_addDaysToDateValue","_applyComputedColumns","_applyDefaultValuesToRow","_applyFormulaColumns","_applyRowProcessingConfig","_buildRowsFromSourceFields","_buildSubformFieldFromColumn","_choiceValueForControl","_choiceValueForStorage","_choiceValueToCoding","_clearHiddenColumnAnswers","_cloneRow","_coerceNumberCellValue","_combinedTextValue","_computeFormulaCellValue","_computeTemplateColumnValue","_evaluateColumnVisibility","_formatCellValue","_formatLocalDate","_formatProcessedNumber","_formulaPolicy","_getDefaultCellValue","_getLocalStampLock","_getValueAtPath","_hasPersistedAuthorshipClaim","_hasStampedLockValue","_isFormulaColumn","_isFormulaOverridden","_isMeaningfulValue","_isRequiredColumn","_isRowEmpty","_isRowEmptyWithMappedFields","_makeEmptyRow","_normalizeChoiceOptions","_normalizeDateCellValue","_normalizeInitialRowCount","_normalizeInitialRows","_normalizeMirroredCellValue","_normalizeNumberConfig","_normalizeRows","_normalizeSourceCellValue","_normalizeStampCellValue","_normalizeTableColumns","_normalizeUniqueToken","_normalizeValidationMessage","_normalizeZeroLikeValue","_resetFormulaCell","_resolveFieldDefaultValue","_resolveLiteralValue","_resolvePathValue","_resolveStampCellValue","_rowContentSignature","_rowFormulaValues","_setFormulaOverride","_setValueAtPath","_sortRowsByPath","_splitContinuationText","_stampColumnLocksRow","_stringifyValue","_subformCellValue","_toCheckboxValue","_toFiniteNumber","_toPathSegments","_todayDateValue","_validateRowWithConfig","_writeCellAndRecalculate","actor","actorFrom","addHoursIso","addInlineRow","authored","authorshipEnabled","authorshipHeaderCellStyle","authorshipPolicy","bodyCellStyle","buildKey","buildRowContext","c","cadNumber","cadPath","cadPrecision","calculated","canDeleteInline","canReset","canResign","canSaveAndAddNext","candidate","cellValue","changed","ck","claim","claims","closeDialog","code","column","columns","commitRows","commitSave","computed","config","configMessage","containerStyle","control","copy","count","createTableColumns","current","currentRowCount","currentRows","currentValue","customMessage","customResult","d","data","date","defaultSubformDataEntryConfig","deletedRow","disabledStamp","display","displayRows","displayValue","draftLocalStampLock","draftLockState","dropdownOptions","duplicateIndex","editableUntil","effectiveMaxRows","effectiveReadOnly","emptyRowIndex","euDate","existing","existingRows","expired","explicitRowIndexes","explicitRowMapping","factor","fallback","fieldData","fieldId","first","formData","formatTimestamp","getRowLock","getRows","getSourceFieldId","hasMeaningfulRows","hasMeaningfulValue","hasStampedValue","hasValue","headerCellStyle","headerRowStyle","id","index","inferredRowCount","initialRowCount","initialSeedRows","isDarkMode","isEmpty","isLocked","isModalMode","isNonEmpty","isOwner","isRequiredModalColumn","isVertical","keepStatus","key","label","lastMeaningfulRowIndex","left","leftDate","leftValue","localStampLock","localStampLocked","lockColumns","lockExpired","lockInfo","lockOn","lockedUntil","makeDraftRow","match","maxChars","message","mirroredFieldIds","missing","modalColumns","modalEditorConfig","modalEditorType","mutedTextColor","next","nextDate","nextDraft","nextRow","nextRows","nextStatus","nextValue","nhAuth","normalizeStore","normalized","normalizedConfig","normalizedRow","normalizedValue","now","nowIso","numberConfig","numeric","numericValue","omitEmptyLines","onBeforeSaveRow","onLabel","onRowDeleted","onRowSaved","onRowsChange","openCreateDialog","openEditDialog","option","options","overrides","owner","ownerId","ownerName","ownerRefresh","pad2","pairCadPrecision","pairFactor","pairPrefer","pairUsPrecision","pairs","parsed","path","paths","pending","policy","policyAppliesToAction","precision","prefer","prepareSave","processingConfig","raw","rawCad","rawKey","rawUs","rawValue","readOnly","readStore","realRowReadOnly","release","remaining","removeRowAt","renderColumnHeading","renderEditorControl","renderEditorInput","renderFormulaControl","renderRowAuthorshipStatus","renderSuffix","renderSummaryCell","renderVerticalTable","rendered","requireAnyGroups","required","requiredMarkColor","requiredPaths","resetDraftFormulaCell","resetFormulaCell","resolveNow","resolvedFactor","resolvedRow","result","right","rightDate","rightValue","row","rowIndex","rowLock","rowLockState","rowNumberCellStyle","rowNumberHeaderStyle","rowReadOnly","rows","rowsForVerticalLayout","rule","safeFactor","safePrecision","sameActor","saveAndAddNextConfig","saveAndAddNextLabel","saveDraftRow","saved","savedAt","savedRowIndex","sd","second","section","seededRows","segments","selected","selectedValues","selectionType","setRows","shouldShowActions","shouldToggleLocalLock","showRowAuthorshipColumn","sign","signedAt","sortedRows","sourceColumn","sourceFieldId","sourcePath","sourceSeedRows","spinButtonProps","splitAt","stampCanUnlockLocalRow","stampCell","stampConfig","stampDraftCell","stampPath","stampedValue","store","subformModalConfig","tableColumns","tableContainerStyle","tableStyle","text","textFieldProps","theme","thisStampLocksRow","title","titles","tooltip","transformedRow","trimTrailingZero","trimmed","ts","typed","untilSelf","updateCell","updateDraftCell","updateDraftValueAtPath","usNumber","usPath","usPrecision","usesGeneratedSubformFields","usesSubformEditor","validateResolvedRow","validateRow","validationConfig","validationError","value","values","verticalBodyCellStyle","verticalLabelCellStyle","visibility","windowHours","withCommon","wordBoundary","wording","zeroIsEmpty"],
   './EducationHistory/index.jsx': ["EducationHistory","EducationHistoryFields"],
   './Ethnicity/index.jsx': ["Ethnicity","firstNationEthnicityCodes","firstNationsEthnicityReferenceSet"],
   './FieldStampButton/index.jsx': ["ButtonComponent","FieldStampButton","buildContext","clearStamp","context","effectiveStampFieldId","fallback","fieldData","fieldId","isDisabled","isSigned","normalizeStampTargets","normalizeStampValue","normalizedTargets","raw","resolveLiteralValue","resolvePathValue","sd","signedAt","signedAtText","sourcePath","stamp","stampRecord","statusText","value","written"],
@@ -50101,7 +50797,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './FormContextHeader/index.jsx': ["FormContextHeader","FormContextHeaderSchema","appointmentDateTime","code","date","display","encounter","legacyContextDate","legacyContextDateTime","legacyContextText","legacyContextVisitCode","legacyFieldWrap","legacySmallFieldWrap","legacyTextStyles","match","providerName","raw","renderReadOnlyField","sd","section","values"],
   './FormErrorSummary/index.jsx': ["ENTRY_PREFIX","FormErrorSummary","FormErrorSummaryView","MARK","bodies","control","current","currentPage","data","describe","element","entries","entryId","errors","failing","focusFieldSoon","focused","formatText","found","fresh","heading","headingId","issueText","issues","jump","key","known","label","later","locale","locateInput","message","names","node","other","remaining","rootRef","safeId","seen","setter","signature","stored","storedPage","t","text","touched","translated","uiState","undescribe","where"],
   './FormFlow/index.jsx': ["Confirmation","Finish","FlowContext","FormFlow","FormFlowRoot","Nav","Page","REVIEW_SKIP_KINDS","Review","Steps","active","activeSteps","afterMove","answers","back","blockWithIssues","bodies","branch","branches","burst","canGoBack","canSync","candidate","cell","cfg","clearIds","clearKey","columns","confirmation","count","ctx","current","currentValues","data","editText","element","empty","enabled","errors","evaluate","extra","first","flow","flowState","focusErrors","focusFieldSoon","focusSelector","focused","formatCell","formatScalar","formatText","formatValue","formatted","from","get","goTo","handler","hasItems","hasValue","heading","history","ids","inactivePages","isCurrent","isDraft","isForward","isPrinting","isUsableGroup","issues","jump","jumpRef","key","label","labelTarget","later","locale","meaningful","mode","modelPage","next","nextActiveAfter","normalizeKey","normalizeYesNo","normalized","noteSubmitAttempt","now","opts","page","pageCountOf","pageErrors","pageIndex","pageTitle","pages","paragraphs","parts","path","position","previous","previousDraftRef","progress","readCell","recordStep","ref","remaining","repeatSyncer","requestReview","resolveActivePages","resolveCurrent","resolveNextPage","resolvePagePath","resolvePreviousPage","resolveTarget","review","reviewSynced","rowAnswered","safeSetter","scrollToTop","sd","sections","setter","shouldValidate","shown","start","step","stepLabel","steps","submitAttemptedAt","syncBurstRef","syncRepeatTables","synced","syncer","tables","target","text","toKey","translated","uiState","useFlow","validatePage","value","values","visible","visited","write","writeRepeatSync","yesNo"],
-  './FormLogicKit/index.jsx': ["CONTROL","FOCUSABLE","FormLogicKit","PHN_WEIGHTS","before","byId","cell","checkChoiceMatch","checkComparisonMatch","checkYesNo","checked","compareFieldId","compareValue","container","control","copyResult","counted","data","digits","edited","entries","entry","escapeAttr","escaped","evaluateEntries","evaluateEntry","evaluateGroup","expected","fieldValue","filter","flatten","focusField","format","formatText","formats","found","get","hasFilter","hasMatch","hasMeaningfulValue","inactivePages","index","isAnsweredCell","isEmptyValue","isFieldHidden","isMeaningfulEntry","issue","issues","key","labelText","labels","left","list","locale","locateField","matches","mayCopy","names","nested","next","normalizeComparableValue","normalizeYesNo","normalized","optionBlocked","options","pageIndex","pass","paths","policy","protectedField","radios","raw","readValue","repeatItemCount","repeatKeyText","required","resolveFieldCopies","right","rows","rule","rules","same","scoped","selected","showRules","source","started","state","sum","tableCellAnswered","tableRowIssues","text","toFlatEntry","toGetter","toText","translate","type","uiTranslations","validate","value","values","wanted","wrapper"],
+  './FormLogicKit/index.jsx': ["BOOLEAN_NO_TEXT","BOOLEAN_YES_TEXT","CONTROL","FOCUSABLE","FormLogicKit","PHN_WEIGHTS","answer","before","blank","byId","cell","changed","checkChoiceMatch","checkComparisonMatch","checkYesNo","checked","clearHiddenTableAnswers","clearing","column","columns","compareFieldId","compareValue","container","control","controller","controllerFieldId","copyResult","counted","current","data","digits","edited","entries","entry","escapeAttr","escaped","evaluateEntries","evaluateEntry","evaluateGroup","evaluateVisibilityRule","expected","fieldValue","filter","flatten","focusField","format","formatText","formats","found","get","getValue","hasFilter","hasMatch","hasMeaningfulValue","inRow","inactivePages","index","isAnsweredCell","isEmptyValue","isFieldHidden","isMeaningfulEntry","isNo","isTableColumnVisible","issue","issues","key","kindOf","labelText","labels","leaves","left","list","locale","locateField","matches","mayCopy","names","negative","nested","next","normalizeComparableValue","normalizeYesNo","normalized","optionBlocked","options","pageIndex","pass","path","paths","policy","protectedField","radios","raw","read","readValue","repeatItemCount","repeatKeyText","required","resolveFieldCopies","right","rows","rule","rules","same","scoped","segments","selected","setTableCell","showRules","shown","sibling","source","started","state","sum","tableCell","tableCellAnswered","tableColumnKind","tableColumnPath","tableColumns","tableRowIssues","text","toBooleanAnswer","toFlatEntry","toGetter","toText","translate","type","uiTranslations","validate","value","values","visibilityLeaf","wanted","wrapper"],
   './FormSessionRuntime/index.jsx': ["FormSessionContext","FormSessionProvider","__cloneSessionValue","__getSessionContext","applySessionUpdate","cloneFormSessionState","contextValue","formData","mergeFormSessionState","normalizeSessionState","normalized","normalizedSessionData","result","root","selectedSessionData","selectedSessionDataWithSetter","sessionContext","sessionDataWithSetter","sessionScopedSetter","sessionSetFormData","setFormData","target","useFormSessionData"],
   './FormulaKit/index.jsx': ["FormulaKit","_COMPUTED_NON_FIELD_IDENTIFIERS","_COMPUTED_REF_PATTERN","_DATE_ONLY_FORMATS","_DURATION_UNIT_ALIASES","_MS_PER_DAY","_addCalendarDays","_addMonthsClamped","_calendarDayNumber","_coalesce","_contains","_countTrue","_daysSince","_durationBetween","_durationText","_escapeRegExp","_evaluateComputedExpression","_exactDaysBetween","_exp","_extractComputedReferences","_floor","_hasAllReferencedValues","_hasValue","_iif","_isDateOnlyValue","_isSafeComputedExpression","_ln","_max","_min","_mod","_monthsSince","_normalizeDurationUnit","_numericExtrema","_parseDateOnlyString","_power","_replaceBareReferencesOutsideQuotes","_resolveDurationEndpoints","_round","_roundComputedValue","_score","_stripQuotedStrings","_text","_toComparableValue","_toDateList","_toDateValue","_toNumericValue","_today","_weekdaysBetween","_wholeMonthsBetween","amount","anchor","bareRefs","bracketedRefs","candidate","count","cursor","date","dateOnly","day","days","digits","direct","end","endpoints","factor","firstDay","from","items","lastDay","match","monthIndex","monthLength","months","next","nextSegment","nonZero","normalizedUnit","now","numeric","numericDivisor","numericExponent","numericPrecision","numericValues","offset","orderedUnits","pad","parsed","parts","prepared","project","reference","refs","replaceInSegment","replaced","result","shown","skipped","start","stringPattern","strippedExpression","tail","to","trimmed","uniqueBareRefs","uniqueBracketedRefs","unwrappedExpression","valid","weekday","whole","wholeMonths"],
   './Goals/index.jsx': ["Goals","GoalsFields"],
@@ -50115,7 +50811,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './HotspotMapField/index.jsx': ["ANNOTATION_SYMBOL_LABELS","DEFAULT_ANNOTATION_COLOR","DEFAULT_ANNOTATION_SIZE_PERCENT","DEFAULT_ANNOTATION_SYMBOL","DEFAULT_ANNOTATION_SYMBOLS","DEFAULT_INTERACTION_MODE","DEFAULT_MAP_MARGIN_PX","DEFAULT_MAP_MAX_WIDTH","DEFAULT_MAP_MIN_HEIGHT","DEFAULT_MAP_PADDING_PX","DEFAULT_MAP_WIDTH_PERCENT","DEFAULT_MAP_ZOOM_PERCENT","DEFAULT_MARKER_RADIUS","DEFAULT_MARKER_SIZE","DEFAULT_NUMBER_FIELD_WIDTH_PERCENT","DEFAULT_SVG_VIEWBOX_MARGIN_PERCENT","HotspotMapField","annotationDefaultSymbol","annotationPointsToSvgString","annotationSymbols","annotations","append","assignedHotspotIds","baseId","bounds","buildCountsByGroup","buildFallbackPolygon","buildGroupSelectionSummary","buildMapValue","byHotspot","centroid","centroidFromPoints","circleAspectRatio","clampPercent","clampSvgViewBoxMarginPercent","clamped","color","commitMapState","commitSelection","compact","counterGroups","countsByGroup","createHotspotMapConfig","cx","cy","deltaX","deltaY","displayValue","doc","drawingPointerIdRef","drawingPointsRef","element","elements","ensureResponsiveSvg","ensuredDefault","fallbackList","fieldFillTextLayerIdSet","fieldFillValueMap","fieldId","fields","fill","getHotspotLabelAnchor","getNumberFieldValue","getPointFromEvent","group","groupId","groupLabel","groupsById","half","handleAddAnnotation","handleDrawPointerDown","handleDrawPointerMove","handleDrawPointerUp","handleHotspotKeyDown","handleNumberFieldChange","handleToggleHotspot","hasAnnotations","hasExplicitCounterGroups","hasMapData","hasSelections","hasSvgBackground","height","heightAttr","hotspotIdSet","hotspots","hotspotsById","id","ids","importSvgHotspots","injectFieldFillValuesIntoSvg","inlineStyle","input","interactionMode","isDarkMode","isDrawModeActive","isDrawingRef","isFieldFillMode","isSelected","isSymbolModeActive","labelAnchor","labels","labelsByGroup","map","mapFrameRef","mapFrameStyle","mapValue","marginPercent","markerSize","markup","match","max","min","names","next","nextAnnotations","nextAspectRatio","nextPoints","nextSymbol","nextValue","normalizeAnnotationPoints","normalizeAnnotationSymbol","normalizeAnnotationSymbols","normalizeAnnotationType","normalizeAnnotations","normalizeColor","normalizeCounterGroupId","normalizeCounterGroups","normalizeHotspotPoints","normalizeHotspots","normalizeMapInteractionMode","normalizeNumberFields","normalizeShape","normalizeString","normalized","normalizedAnnotations","normalizedCounterGroups","normalizedHotspot","normalizedHotspots","normalizedId","normalizedNumberFields","normalizedNumeric","normalizedRaw","numberFields","numeric","observer","overlayStyle","overlayViewBox","padX","padY","pair","panelStyle","parseAnnotationSymbol","parseList","parseSvgAspectRatio","parseSvgNumber","parsed","parsedPoints","parsedViewBox","parser","parts","point","points","pointsAttr","pointsToSvgString","previous","projectMapLengthToRenderPercent","projectMapPercentToRenderPercent","projectRenderPercentToMapPercent","r","radius","raw","rawId","rawLabel","rawValue","rect","renderAnnotationModeControls","renderMapFrame","renderSummary","renderedWidth","renderedX","renderedY","resolveAnnotationSymbol","resolveMapInteractionMode","resolved","resolvedAllowedSymbols","resolvedAnnotationDefaultColor","resolvedAnnotationDefaultSymbol","resolvedAnnotationSizePercent","resolvedAnnotationSymbols","resolvedInteractionMode","resolvedMapMarginPx","resolvedMapMaxWidth","resolvedMapMinHeight","resolvedMapPaddingPx","resolvedMapWidthPercent","resolvedMapZoomPercent","resolvedModalMinWidth","responsiveSvg","sanitizeHotspotIds","seen","selectedCount","selectedIds","selectedIdsCsv","selectedLabels","selectedLabelsCsv","serialized","shape","showSymbolPicker","showToolToggle","size","sourceHeight","sourceWidth","step","stroke","strokeWidth","suffix","summaryGroups","supportsAnnotations","supportsDrawAnnotations","supportsSelection","supportsSymbolAnnotations","svg","svgAspectRatio","svgViewBoxMarginPercent","svgViewBoxRenderSize","symbol","symbols","tagName","target","textLayerId","theme","toXPercent","toYPercent","total","trimmed","tspan","type","unique","updateAspectRatio","useSvgLayerTakeover","usedIds","value","vbHeight","vbWidth","vbX","vbY","viewBoxHeight","viewBoxParts","viewBoxRaw","viewBoxWidth","width","widthAttr","widthRaw","x","y","zoomFactor"],
   './HttpJsonTestPanel/index.jsx': ["AbortControllerClass","HTTP_JSON_RESULT_EVENT","HttpJsonTestPanel","aborted","body","controller","effectiveEndpointUrl","effectiveOutputId","fetchJson","formatHttpJsonTestResult","handler","key","nextResult","normalizeHttpJsonEndpointUrl","persistHttpJsonTestResult","previous","publishHttpJsonTestResult","readHttpJsonTestBody","requestBody","response","responseText","sd","sendTest","startedAt","statusColor","statusLabel","storedResult","text","timeout","trimmed","url"],
   './InvestigationTabs/index.jsx': ["INVESTIGATION_DEFAULT_TABS","InvestigationTab","InvestigationTabs","childArray","childById","childTabId","count","handleTabListKeyDown","id","isActive","label","next","normalizeInvestigationTabs","numeric","panelChildren","props","resolvedTabs","selected","source","tabRefs","target"],
-  './LayoutTable/index.jsx': ["LayoutTable","Tag","bareRefs","boundCells","bracketedRefs","candidate","cellStyle","checklistOptions","code","comparableValue","computeLayoutTableCellValue","computedCells","config","date","display","displayValue","effectiveReadOnly","evaluateLayoutTableFormula","extractLayoutTableFormulaRefs","fallback","fieldHasSavedValue","fieldId","fields","formatLayoutTableComputedValue","formatLayoutTableFieldDisplayValue","formatLayoutTableSourceValue","formatOne","formula","getCellDisplayValue","getLayoutTableFieldRawValue","getLayoutTableSourcePaths","getNumericFieldValue","getPathValue","hasLayoutTableSourceValue","id","ids","isCheckedValue","isNoLikeValue","isSafeLayoutTableFormula","isYesLikeValue","jsExpression","label","labelProp","layoutTableSourceText","match","matched","multiline","nextData","nextValue","normalizeComparableValue","normalizeLayoutTableOptionList","normalized","numeric","optionList","paths","raw","rawValue","refs","renderLayoutTableCellContent","renderLayoutTableField","renderLayoutTableFieldList","renderLayoutTableReadOnlyField","renderLayoutTableResources","renderLayoutTableStampButton","renderLink","resolveLayoutTableSourceValue","resources","root","rounded","rowIsVisible","rule","sd","section","setFieldValue","sharedProps","sourceBindingIsInitial","sourceBoundCells","sourceFieldIds","sourcePaths","strippedExpression","sumMatch","tableData","tableRows","targets","text","unwrappedExpression","value","values","visibleRows"],
+  './LayoutTable/index.jsx': ["LAYOUT_TABLE_CONTROLLER_KINDS","LAYOUT_TABLE_FORMULA_BUILTINS","LAYOUT_TABLE_FORMULA_FUNCTIONS","LAYOUT_TABLE_FORMULA_TOKEN","LayoutTable","Tag","boundCells","candidate","cellStyle","cellVisibility","checklistOptions","code","collectLayoutTableControllerKinds","comparableValue","computeLayoutTableCellValue","computedCells","config","controllerKinds","date","display","displayValue","effectiveReadOnly","evaluateLayoutTableFormula","extractLayoutTableFormulaRefs","fallback","fieldHasSavedValue","fieldId","fields","formatLayoutTableComputedValue","formatLayoutTableFieldDisplayValue","formatLayoutTableLocalDate","formatLayoutTableSourceValue","formatOne","formula","getCellDisplayValue","getLayoutTableFieldRawValue","getLayoutTableSourcePaths","getNumericFieldValue","getPathValue","hasLayoutTableSourceValue","id","ids","isCheckedValue","isLayoutTableFormulaProperty","isNoLikeValue","isSafeLayoutTableFormula","isYesLikeValue","jsExpression","kinds","label","labelProp","layoutTableCellIsVisible","layoutTableFormulaNumber","layoutTableScalarAnswer","layoutTableSourceText","match","matched","multiline","nextData","nextValue","normalizeComparableValue","normalizeLayoutTableOptionList","normalized","numeric","optionList","pad","parseLayoutTableSumIds","paths","raw","rawValue","refs","renderLayoutTableCellContent","renderLayoutTableField","renderLayoutTableFieldList","renderLayoutTableReadOnlyField","renderLayoutTableResources","renderLayoutTableStampButton","renderLink","resolveLayoutTableSourceValue","resources","root","rounded","rowIsVisible","rule","sd","section","setFieldValue","sharedProps","sourceBindingIsInitial","sourceBoundCells","sourceFieldIds","sourcePaths","strippedExpression","sumIds","sumMatch","tableData","tableRows","targets","text","value","values","visibleRows"],
   './LongTermMedications/index.jsx': ["LongTermMedications","LongTermMedicationsFields"],
   './MirthListenerUtility/index.jsx': ["AbortControllerClass","MIRTH_UTILITY_DEFAULT_SITES","MIRTH_UTILITY_PAYLOAD_MODES","MIRTH_UTILITY_SEND_METHODS","MirthListenerUtility","aborted","baseResult","body","canBeacon","controller","fetchJson","finishSend","form","initialSiteId","methodInfo","mirthUtilityBuildTemplate","mirthUtilityFormatBody","mirthUtilityNormalizeUrl","mirthUtilityParseBody","mirthUtilityPersistResult","mirthUtilitySelectStyle","parsed","payloadIssue","queued","resetPayload","response","responseText","sd","selectedSite","signAndSend","siteList","stampPayload","stamped","startedAt","statusColor","statusLabel","storedResult","targetUrl","text","timeout","timeoutMs","trimmed","url","xhr","xhrResult"],
   './MoisModuleLinkList/index.jsx': ["MoisModuleLinkList","label","moisModule","normalizeItems","normalizedItems","source"],
@@ -50131,18 +50827,18 @@ export const componentDefinedNames: Record<string, string[]> = {
   './ObservationValueDisplay/index.jsx': ["ObservationValueDisplay","body","candidate","collectObservationValues","commentFilter","cutoff","graph","hasCode","inline","items","limit","measurementSummary","parsedDate","rows","sd","showLabel","value","windowLabel"],
   './ObservationValueKit/index.jsx': ["ObservationValueKit","answer","buildDcoUpdates","buildObservation","buildPanelUpdate","existing","existingPanels","explicit","isEmpty","normalizeAnswer","normalizeOptions","normalizedName","nowString","numeric","observation","observations","oldObs","option","optionList","rawKey","rawValue","rowObservations","timestamp","toText","totalObservations","type","value","valueType"],
   './Occupations/index.jsx': ["Occupations","OccupationsFields"],
-  './PanelEntryGrid/index.jsx': ["DEFAULT_WINDOW_HOURS","PANEL_GRID_CELL_STYLE","PANEL_GRID_TABLE_STYLE","PanelEntryGrid","actor","actorFrom","addHoursIso","answer","answers","authorshipPolicy","buildKey","c","changed","ck","claim","claims","collectedBy","column","commitSave","componentId","computedTotals","container","current","d","data","date","definition","definitions","editableUntil","effectiveFieldId","euDate","existing","expired","fieldData","formatTimestamp","getPanelGridAuth","group","grouped","historyColumns","historyEnabled","isNonEmpty","isOwner","keepStatus","key","kit","label","lockExpired","lockInfo","lockOn","lockedUntil","maxHistory","next","nextStatus","nhAuth","normalizeStore","normalizedOptions","now","nowIso","numbers","observations","ownerId","ownerName","ownerRefresh","pad2","panelGridDateKey","panelGridPayloadsEqual","panelGridRows","panelGridTotals","panelUpdate","pending","policyAppliesToAction","prepareSave","raw","readStore","release","renderCurrentValue","requireComplete","resolveNow","rowDefs","sameActor","scaleLike","sd","section","selected","setPanelGridPayload","setRowValue","shouldWriteDcos","shouldWritePanel","sourceIds","store","stripPanelGridVolatileFields","totalDefs","ts","type","untilSelf","value","values","windowHours"],
+  './PanelEntryGrid/index.jsx': ["DEFAULT_WINDOW_HOURS","PANEL_GRID_CELL_STYLE","PANEL_GRID_TABLE_STYLE","PanelEntryGrid","actor","actorFrom","addHoursIso","adoptable","answer","answers","authorshipPolicy","buildKey","c","changed","ck","claim","claims","collectedBy","column","commitSave","componentId","computedTotals","container","current","d","data","date","definition","definitions","editableUntil","effectiveFieldId","euDate","existing","expired","fieldData","formatTimestamp","getPanelGridAuth","group","grouped","historyColumns","historyEnabled","isNonEmpty","isOwner","keepStatus","key","kit","label","legacy","lockExpired","lockInfo","lockOn","lockedUntil","maxHistory","next","nextStatus","nhAuth","normalizeStore","normalizedOptions","now","nowIso","numbers","observations","ownerId","ownerName","ownerRefresh","pad2","panelGridDateKey","panelGridLegacyScaleAnswer","panelGridLegacyScaleKey","panelGridPayloadsEqual","panelGridRowIsScaleLike","panelGridRows","panelGridTotals","panelUpdate","pending","policyAppliesToAction","prepareSave","raw","readStore","release","renderCurrentValue","requireComplete","resolveNow","rowDefs","sameActor","sd","section","selected","setPanelGridPayload","setRowValue","shouldWriteDcos","shouldWritePanel","sourceIds","store","stripPanelGridVolatileFields","totalDefs","ts","type","untilSelf","value","values","windowHours"],
   './PastMeasurementField/index.jsx': ["PastMeasurementField","abnormalFlag","abnormalHighValue","abnormalLowValue","canPullLatest","candidate","candidates","codeFilter","coercePositiveInt","commentFilter","componentId","container","createdBy","criticalHighValue","criticalLowValue","current","currentPayload","currentWebformId","currentWebformObservations","day","defaultSpinStep","direct","displayedCurrentValue","documentDate","effectiveFieldId","effectiveHistorySize","effectiveLabelPosition","effectiveMeasurementSize","entryCode","entryComment","entryDate","entryUnits","entryValue","explicitValue","fieldData","flagCode","flagDisplays","formHistoryItems","formatDate","fromPatient","fromQueryResult","handleValueChange","hasAbnormalHigh","hasAbnormalLow","hasExplicitValue","hasMeaningfulValue","hasNumericCurrentValue","hasRangeMetadata","hasStoredValue","historicalFormRowDate","historyItems","historySummary","index","inputSuffix","isAbnormal","isHistoricalFormValue","isNonEmptyString","isNumericInput","key","latestHistoryItem","legacyRangePayload","linkedObservationItem","linkedWebformId","matchingKey","measurementWidthBySize","month","nextGroup","normalizeObservationItems","normalizedDateOnly","normalizedPullTargets","numericCurrentValue","numericExplicitValue","numericTime","observationHistoryItems","observationWebformId","oldId","oldObs","optionalString","parseDateValue","parsed","parsedDate","parsedDateOnly","patientPath","payloadsEqual","pullLatestIntoTargets","raw","rawDate","recentHistoryText","resolveHistoricalFormRows","resolveMeasurementContainerStyle","resolveMoisValue","resolvePathValue","resolvedAbnormalHigh","resolvedAbnormalLow","resolvedCriticalHigh","resolvedCriticalLow","resolvedCurrentValue","resolvedUnits","role","roots","sd","segments","setNestedPayload","shouldReserveHistory","shouldShowHistory","storedValue","stringifyValue","stripVolatilePayloadFields","targetFieldId","text","toObservationList","toPathSegments","updatedValue","value","valueFromHistoricalFormRow","valueIsDate","valueKeys","valuePart","valueText","width","year"],
   './PatientContextDiagnostics/index.jsx': ["PatientContextDiagnostics","availability","capability","cellStyle","collections","compact","direct","isArray","isRecord","labels","limit","patient","queried","registry","sampleText","sd","seen","source","textValue","value","visible"],
   './PatientContextQueryTest/index.jsx': ["PATIENT_CONTEXT_QUERY_TEST_VERSION","PatientContextQueryTest","a","absent","active","actualIds","adapters","added","after","allowed","answers","apiInventory","appointmentStatus","arg","argName","args","argsUsed","assignee","attachment","auth","baseline","before","beforeIds","binary","bindings","body","busy","byId","cache","call","candidate","candidates","canonical","capture","caseId","cases","catalog","catalogs","change","changed","chart","charts","check","child","chosen","clone","coding","codingSource","collect","collection","collectionByType","commit","confirmed","contact","content","context","contextId","copyInput","correspondenceUpdate","created","createdIds","ctx","current","currentRecordId","cursor","customResults","data","date","dateEquivalent","decl","declarations","defaults","deferredChecks","definition","definitionId","defs","deleteSpec","deletion","demographic","depth","detail","differs","diffs","discovered","discovery","docs","done","dose","download","downloadReport","draft","earlierLoad","encounter","endpoint","enqueue","entry","episode","episodeFields","episodes","epoch","error","event","eventBaseline","eventChildBaselineIds","eventChildren","eventFields","eventRead","events","evidenceBytes","evidenceTruncated","exact","exchanges","executePhase","exercised","existing","existingId","expected","expectedId","expectedIds","fail","field","fieldMap","fields","fieldsForMutation","first","firstId","fixture","flags","formLifecycle","forms","found","fullReport","hasA","hop","hostQuery","i","id","idKey","ids","inaccessibleParent","index","info","init","input","inputArg","inputFields","inputIds","inputMap","inputPaths","inspect","isCorrespondence","isList","issue","item","key","keys","labels","last","leaf","leafNull","leafType","ledgerKey","limits","link","listType","lock","marked","marker","match","matchEventChildren","matched","matches","matchesField","matchesValue","me","membershipMatches","metadata","metadataFirst","missing","missingExploration","mutArgs","mutation","mutationCount","mutations","name","nameText","named","namedType","need","negativeIdDelete","nested","nestedDelete","nestedDosage","next","nickName","normalize","notification","notify","now","object","observation","oldIds","op","ordered","origin","original","otherPreserved","othersPreserved","outcome","ownId","ownKeys","pairs","parentType","parents","path","pathsByCollection","patient","patientCheck","patientId","pending","pendingWrites","persistLedger","phaseResult","phaseResults","phases","positive","preferred","preserveChildren","preserved","prior","profileId","profiles","progress","queries","query","queue","ran","rank","read","readData","readForm","readId","readLedger","readQuery","readRecords","readSelection","readableError","ready","recipes","record","recordIds","recordType","records","redact","refValue","refs","related","report","request","requestedEncounter","requiredArgs","resolve","responseText","result","resultType","results","returned","returnedEpisodes","returnedId","returnedMatches","revision","root","rootForType","rootName","rootOp","rootRank","rootResults","roots","row","rows","run","runId","runPatientContextVariantSuite","runSummary","safe","same","sameChildren","scalar","scalarFields","scalarMarkers","scalarSelection","schema","schemaFields","schemaQuery","scopedByPatient","scopedByRecord","sd","seedMatch","selected","selection","sent","sentBefore","sequence","serviceEpisodeId","serviceMrpId","sessionRows","sessionStep","sessionTests","settings","singles","small","source","spec","startedAt","status","statusCounts","statuses","step","steps","stop","sub","submitted","subset","suite","suiteCases","suitePhase","suitePrescription","suiteResults","supplied","t","target","targetType","targetTypes","targets","taskMetadata","templateId","testPatient","text","today","tools","top","transport","type","typeCache","typeRef","typeText","types","uncertainWrite","update","uploadAttachment","url","urlApi","used","validName","validResponse","validate","value","valueFor","valueKeys","values","variables","variant","vars","varsByRoot","verifierOps","verifierRows","want","webformId","windowRole","withoutAudit","withoutValues","wrapped","write","writeLedger","writeResults","yes","zeroNestedIds"],
   './PatientFileSections/index.jsx': ["PatientFileSections","activeText","addressText","cityLine","compactLines","contactText","countryLine","createdDate","editButtonStyle","encounter","fieldWrapStyle","formatAddress","formatContact","formatDate","getPatientFromData","gridStyle","healthNumber","insuranceBy","insuranceNumber","insuranceText","lines","match","mergeObjects","nextPatient","optionCode","optionDisplay","patient","preferredCode","preferredPhoneOptions","providerName","queryPatient","raw","renderClientDemographics","renderDocumentDetails","renderEncounterDetails","renderTitle","requested","sd","section","sectionTitleStyle","textValue","updateContactText","visibleSections","whiteDropdownStyles","whiteFlexTextFieldStyles","whiteTextFieldStyles","writePatientUpdates"],
-  './PatientValueField/index.jsx': ["PatientValueField","age","applyPatientTransform","candidates","coercePatientValue","collectionCandidateValues","collectionItemMatches","computeAgeYears","dob","effectiveFieldId","expected","items","monthDelta","normalizedExpected","now","raw","resolveCollectionItemPath","resolvePatientContextPath","resolved","root","sd","stored","values"],
+  './PatientValueField/index.jsx': ["PatientValueField","age","applyPatientTransform","candidates","coercePatientValue","collectionCandidateValues","collectionItemMatches","computeAgeYears","date","dob","effectiveFieldId","expected","items","match","monthDelta","normalizedExpected","now","parsePatientBirthDate","raw","resolveCollectionItemPath","resolvePatientContextPath","resolved","root","sd","stored","valid","values"],
   './PdfRegenerator/index.jsx': ["$","$Array","$BigInt","$DOMException","$Error","$Infinity","$NaN","$Object","$RangeError","$String","$Symbol","$SyntaxError","$TypeError","$ceil","$defineProperty","$floor","$fromBase64","$fromHex","$getOwnPropertyDescriptor","$i","$includes","$iterator","$n","$parse","$parseInt","$propertyIsEnumerable","$stringify","A","ACCEPT_ARGUMENTS","ACCESS_DESCRIPTIONS","ACCESS_LOCATION","ACCESS_METHOD","ACCURACY","ACINFO","ACINFO$1","AES128Handler","AES256Handler","ALGORITHM","ALGORITHM$1","ALGORITHM$2","ALGORITHM_ID","ALGORITHM_PARAMS","ALT_NAMES","ANONYMOUS","ARRAY_BUFFER_NAME","ASCII85Filter","ASCIIHexFilter","ASCII_MARKER","AS_ENTRIES","ATTRIBUTES","ATTRIBUTES$1","ATTRIBUTES$2","ATTRIBUTES$3","ATTRIBUTES$4","ATTRIBUTES$5","ATTR_CERT_VALIDITY_PERIOD","ATTR_CERT_VALIDITY_PERIOD$1","AUTHORITY_CERT_ISSUER","AUTHORITY_CERT_SERIAL_NUMBER","AUTH_SAFE","Aa","AbortException","AbstractCryptoEngine","AbstractSecurityHandler","AccessDescription","Accuracy","AcroForm","Ah","Ai","Al","AlgorithmIdentifier","All","AltName","AltText","An","AnnotationBorderStyleType","AnnotationEditor","AnnotationEditorLayer","AnnotationEditorParamsType","AnnotationEditorPrefix","AnnotationEditorType","AnnotationEditorUIManager","AnnotationElement","AnnotationElementFactory","AnnotationFlattener","AnnotationLayer","AnnotationMode","AnnotationPrefix","AnnotationStorage","AnnotationType","Any","AppearanceGenerator","ArgumentError","ArrayBuffer2","ArrayBufferViewCore","ArrayPrototype","As","AsnError","AttCertValidityPeriod","Attribute","AttributeCertificateInfoV1","AttributeCertificateInfoV2","AttributeCertificateV1","AttributeCertificateV2","AttributeTypeAndValue","AuthenticatedSafe","AuthorityKeyIdentifier","B","BAD","BAD$1","BAG_ATTRIBUTES","BAG_ID","BAG_VALUE","BASE","BASE64URL_REGEX","BASE64_REGEX","BASE_CERTIFICATE_ID","BASE_CERTIFICATE_ID$1","BASE_CERTIFICATE_ID$2","BASE_HEADER_LENGTH","BASIC_OCSP_RESPONSE","BASIC_OCSP_RESPONSE_CERTS","BASIC_OCSP_RESPONSE_SIGNATURE","BASIC_OCSP_RESPONSE_SIGNATURE_ALGORITHM","BASIC_OCSP_RESPONSE_TBS_RESPONSE_DATA","BBOX_INIT","BBoxReader","BINARY_MARKER","BIT_STRING_NAME","BLOCK_SIZE","BL_CODES","BL_CODES$1","BORDER_SIZE","BORDER_STYLE_MAP","BORDER_STYLE_REVERSE_MAP","BROKEN_ON_SPARSE","BROKEN_ON_SPARSE_WITH_FROM_INDEX","BS_BLOCK_DONE","BS_FINISH_DONE","BS_FINISH_STARTED","BS_NEED_MORE","BUGGY_DESCRIPTOR","BUGGY_SAFARI_ITERATORS","BUSY_STATE","BYTE_RANGE_VALUE_PLACEHOLDER","Ba","BaseBinaryDataFactory","BaseBlock","BaseCanvasFactory","BaseException","BaseException2","BaseExceptionClosure","BaseFilterFactory","BasePDFStream","BasePDFStreamRangeReader","BasePDFStreamReader","BaseSVGFactory","BaseShadingPattern","BaseStringBlock","BasicColorPicker","BasicConstraints","BasicOCSPResponse","Bf","Bi","BigIntArrayConstructorsList","BinaryDataFactory","BinaryScanner","BinaryWriter","BitString","BmpString","Bn","Boolean","BruteForceParser","Buf_size","BufferCtor","BufferSourceConverter4","BuiltInEncoding","ButtonField","ByteStream","ByteWriter","C","C1","C1_LOW","CA","CAVersion","CAdESDetachedBuilder","CCITTFaxFilter","CD","CERTIFICATES","CERTIFICATES$1","CERTIFICATE_INDEX","CERTIFICATE_POLICIES","CERTS","CERTS$1","CERTS$2","CERTS$3","CERT_ID","CERT_ID$1","CERT_REQ","CERT_STATUS","CERT_VALUE","CFFCIDFontProgram","CFFCharsetCID","CFFCharsetType1","CFFEncodingBase","CFFParser","CFFSubsetter","CFFType1FontProgram","CFF_CHECKSUM_OFFSET","CHARSTRING_KEY","CHAR_TO_GLYPH","CHAR_f","CHAR_n","CHECK","CHECK_DATE","CHIh","CHIl","CIDFont","CIDWidthMap","CLEAR_PROPS","CLEAR_PROPS$$","CLEAR_PROPS$1","CLEAR_PROPS$10","CLEAR_PROPS$11","CLEAR_PROPS$12","CLEAR_PROPS$13","CLEAR_PROPS$14","CLEAR_PROPS$15","CLEAR_PROPS$16","CLEAR_PROPS$17","CLEAR_PROPS$18","CLEAR_PROPS$19","CLEAR_PROPS$1a","CLEAR_PROPS$1b","CLEAR_PROPS$1c","CLEAR_PROPS$1d","CLEAR_PROPS$1e","CLEAR_PROPS$1f","CLEAR_PROPS$1g","CLEAR_PROPS$1h","CLEAR_PROPS$1i","CLEAR_PROPS$1j","CLEAR_PROPS$1k","CLEAR_PROPS$1l","CLEAR_PROPS$1m","CLEAR_PROPS$1n","CLEAR_PROPS$1o","CLEAR_PROPS$1p","CLEAR_PROPS$1q","CLEAR_PROPS$1r","CLEAR_PROPS$1s","CLEAR_PROPS$1t","CLEAR_PROPS$1u","CLEAR_PROPS$1v","CLEAR_PROPS$2","CLEAR_PROPS$3","CLEAR_PROPS$4","CLEAR_PROPS$5","CLEAR_PROPS$6","CLEAR_PROPS$7","CLEAR_PROPS$8","CLEAR_PROPS$9","CLEAR_PROPS$A","CLEAR_PROPS$B","CLEAR_PROPS$C","CLEAR_PROPS$D","CLEAR_PROPS$E","CLEAR_PROPS$F","CLEAR_PROPS$G","CLEAR_PROPS$H","CLEAR_PROPS$I","CLEAR_PROPS$J","CLEAR_PROPS$K","CLEAR_PROPS$L","CLEAR_PROPS$M","CLEAR_PROPS$N","CLEAR_PROPS$O","CLEAR_PROPS$P","CLEAR_PROPS$Q","CLEAR_PROPS$R","CLEAR_PROPS$S","CLEAR_PROPS$T","CLEAR_PROPS$U","CLEAR_PROPS$V","CLEAR_PROPS$W","CLEAR_PROPS$X","CLEAR_PROPS$Y","CLEAR_PROPS$Z","CLEAR_PROPS$_","CLEAR_PROPS$a","CLEAR_PROPS$b","CLEAR_PROPS$c","CLEAR_PROPS$d","CLEAR_PROPS$e","CLEAR_PROPS$f","CLEAR_PROPS$g","CLEAR_PROPS$h","CLEAR_PROPS$i","CLEAR_PROPS$j","CLEAR_PROPS$k","CLEAR_PROPS$l","CLEAR_PROPS$m","CLEAR_PROPS$n","CLEAR_PROPS$o","CLEAR_PROPS$p","CLEAR_PROPS$q","CLEAR_PROPS$r","CLEAR_PROPS$s","CLEAR_PROPS$t","CLEAR_PROPS$u","CLEAR_PROPS$v","CLEAR_PROPS$w","CLEAR_PROPS$x","CLEAR_PROPS$y","CLEAR_PROPS$z","CLERA_PROPS","CLOSED","CMap","CODELENS","CODES","CODES$1","COEFFICIENT","COEFFICIENT$1","COMMAND_PARAMS","COMMENT","COMMENT_OFFSET","COMMENT_STATE","CONFIGURABLE","CONFIGURABLE_FUNCTION_NAME","CONFIGURABLE_LENGTH","CONSTRUCTOR","CONTENT","CONTENT_ENCRYPTION_ALGORITHM","CONTENT_INFOS","CONTENT_TYPE","CONTENT_TYPE$1","CONTROL_CHAR_REGEXP","COPY","COPY_","CORRECT_ARGUMENTS","CORRECT_PROTOTYPE_GETTER","CORRECT_SETTER","CRITICAL","CRLBag","CRLDistributionPoints","CRLS","CRLS$1","CRLS$2","CRLS$3","CRL_ENTRY_EXTENSIONS","CRL_EXTENSIONS","CRL_ID","CRL_ISSUER","CRL_ISSUER_NAMES","CRL_VALUE","CSR_INFO","CSR_INFO_ATTRS","CSR_INFO_SPKI","CSR_INFO_SUBJECT","CSR_INFO_VERSION","CSSConstants","CSS_FONT_INFO","CallbackKind","CanvasBBoxTracker","CanvasDependencyTracker","CanvasExtraState","CanvasFactory","CanvasGraphics","CanvasImagesTracker","CanvasNestedDependencyTracker","CaretAnnotationElement","CertBag","CertID","Certificate","CertificateChainError","CertificateChainValidationEngine","CertificatePolicies","CertificateRevocationList","CertificateSet","CertificateTemplate","CertificationRequest","CertificationRequestInfo","ChainValidationError","CharacterString","CheckboxField","CheckboxWidgetAnnotationElement","Chi","Chi2","Choice","ChoiceWidgetAnnotationElement","ChunkedStreamSubstream","CircleAnnotationElement","Cl","ColorConverters","ColorManager","ColorPicker","ColorScheme","ColorSpace","CommandManager","Comment","CompositeFont","Config","Constructed","ContentInfo","ContentStreamBuilder","ContentStreamParser","ContentStreamSerializer","ContentTokenizer","Context","ContourDrawOutline","Convert3","CryptoEngine","CryptoEngine2","CssFontInfo","CurrentPointers","D","DATE","DATE$1","DATE2","DBL_CLICK_THRESHOLD","DCTFilter","DEFAULT_COMPRESSION_THRESHOLD","DEFAULT_FONT_SIZE","DEFAULT_HIGHLIGHT_COLOR","DEFAULT_MAX_CONTENT_LENGTH","DEFAULT_MAX_DEPTH","DEFAULT_MAX_NODES","DEFAULT_PERMISSIONS","DEFAULT_PLACEHOLDER_SIZE","DEFAULT_POPUP_HEIGHT","DEFAULT_POPUP_WIDTH","DEFAULT_REF_CACHE_SIZE","DEFAULT_VERSION","DEF_MEM_LEVEL","DEF_WBITS","DELAY_TO_SHOW_TOOLTIP","DELIMITERS","DESCRIPTORS","DICT","DICTID","DIGEST","DIGESTED_OBJECT_TYPE","DIGEST_ALGORITHM","DIGEST_ALGORITHM$1","DIGEST_ALGORITHM$2","DIGEST_ALGORITHMS","DIST","DISTEXT","DISTRIBUTION_POINT","DISTRIBUTION_POINT$1","DISTRIBUTION_POINTS","DISTRIBUTION_POINT_NAMES","DISTRIBUTION_POINT_NAMES$1","DISTS","DISTS$1","DIST_CODE_LEN","DOMBinaryDataFactory","DOMCanvasFactory","DOMException","DOMExceptionConstants","DOMExceptionPrototype","DOMFilterFactory","DOMSVGFactory","DOM_EXCEPTION","DOM_EXCEPTION_HAS_STACK","DONE","DROP_WITHOUT_THROWING_ON_INVALID_ITERATOR","DSA","DSSBuilder","DYN_TREES","D_CODES","D_CODES$1","Da","DamagedFontError","DataView2","DateTime","DefaultRevocationProvider","Deflate$1","DeflateState","Deflate_1","Deflate_1$1","Deno","Dependencies","Df","DifferencesEncoding","DigestInfo","DistributionPoint","DocumentDateRuntime","DocumentFillRuntime","DocumentParser","DrawLayer","DrawOPS","DrawingEditor","DrawingOptions","DrawnSignatureOptions","DropdownField","DummyShadingPattern","Duration","E","E$1","ECCCMSSharedInfo","ECDSA","ECNamedCurves","ECPrivateKey","ECPublicKey","EEXEC_KEY","EMPTY_BBOX","EMPTY_BUFFER","EMPTY_BUFFER2","EMPTY_STRING","EMPTY_STRING2","EMPTY_VIEW","ENCAP_CONTENT_INFO","ENCODED_VALUE","ENCODING_MAP","ENCRYPTED_CONTENT","ENCRYPTED_CONTENT_INFO","ENCRYPTED_CONTENT_INFO$1","ENCRYPTED_DATA","ENCRYPTED_KEY","ENCRYPTED_KEY$1","ENCRYPTED_KEY$2","ENCRYPTED_KEY$3","ENCRYPTED_KEYS","ENCRYPTION_ALGORITHM","ENCRYPTION_SCHEME","END_BLOCK","END_MARK","END_OF_CONTENT_NAME","ENOUGH_DISTS","ENOUGH_DISTS$1","ENOUGH_LENS","ENOUGH_LENS$1","ENTITY_NAME","ENTITY_U_INFO","ENUMERABLE","EOF_MARKER","EOL_PATTERN","EO_CLIP","EPSILON","ERROR_HAS_STACK","EXCLUDED_SUBTREES","EXECUTION_STEPS","EXECUTION_TIME","EXISTS","EXLEN","EXPECTED_SCALE","EXPONENT","EXPONENT1","EXPONENT2","EXTENSIONS","EXTENSIONS$1","EXTENSIONS$2","EXTENSIONS$3","EXTENSIONS$4","EXTENSIONS$5","EXTENSIONS$6","EXTN_ID","EXTN_VALUE","EXTRA","EXTRA_STATE","E_CONTENT","E_CONTENT_TYPE","EditorAnnotationElement","EditorToolbar","Ef","Ei","EmbeddedFont","EmptyConstructor","EncapsulatedContentInfo","EncryptedContentInfo","EncryptedData","EncryptionDictError","EndOfContent","Enumerated","EnvelopedData","Error2","ExistingFont","ExpertCharset","ExpertEncoding","ExpertSubsetCharset","ExtKeyUsage","Extension","ExtensionValueFactory","Extensions","F","F32_BBOX_INIT","FAIL_INFO","FILTER_WITHOUT_THROWING_ON_INVALID_ITERATOR","FIND_ISSUER","FIND_ORIGIN","FINISH_STATE","FINITE","FLAGS","FLAT_MAP_WITHOUT_THROWING_ON_INVALID_ITERATOR","FONT_BASIC_METRICS","FONT_GLYPH_WIDTHS","FONT_IDENTITY_MATRIX","FONT_INFO","FORCED","FORCED_CONSTRUCTOR","FORCED_DEPENDENCY_LABEL","FROM_BER","FULL_CHUNK_HEIGHT","FULL_EMBED_UNICODE_RANGES","FakeEditor","FeatureTest","Ff","Fi","FieldFlags","FieldTree","FileAttachmentAnnotationElement","FilterFactory","FilterPipeline","FlateFilter","FloatingToolbar","FontDescriptor","FontFaceObject","FontFlags","FontInfo","FontLoader","FontPathInfo","FormField","FormFlattener","FormatError","FreeDrawOutline","FreeDrawOutliner","FreeHighlightDrawer","FreeHighlightOutline","FreeHighlightOutliner","FreeTextAnnotationElement","FreeTextEditor","FunctionPrototype","G","G2","GENERAL_NAMES","GENERAL_TIME_NAME","GEN_TIME","GLOBAL","GLYPH_TO_UNICODE","GT","GT2","GZIP_STATE","GZheader","GeneralName","GeneralNames","GeneralString","GeneralSubtree","GeneralizedTime","GetElementsByNameSet","GlobalWorkerOptions","GraphicString","H","HASH","HASHED_MESSAGE","HASH_ALGORITHM","HASH_ALGORITHM$1","HASH_ALGORITHM$2","HASH_ALGORITHM$3","HASH_ALGORITHM$4","HCRC","HCRC_STATE","HEAD","HEADER_SEARCH_LIMIT","HEAP_SIZE","HEAP_SIZE$1","HELVETICA_ASCII","HELVETICA_EXTRA","HELVETICA_FALLBACK","HEX_REGEX","HEX_TABLE","HOLDER","HORIZONTAL_SPACE_AFTER_ANNOTATION","HSLToRGB","Hash","HashMD","HashMD2","HexBlock","HighlightAnnotationElement","HighlightDrawingOptions","HighlightEditor","HighlightOutline","HighlightOutliner","Holder","I","I2","I3","IA5String","ID","IDAT","ID_BLOCK","IE8_DOM_DEFINE","IEND","IE_PROTO","IHDR","ILL_FORMED_UNICODE","INCORRECT","INCORRECT_BEHAVIOR_OR_DOESNT_EXISTS","INCORRECT_TO_LENGTH","INDIRECT_CRL","INHERITABLE_PAGE_ATTRS","INHIBIT_POLICY_MAPPING","INITIAL_DATA","INIT_STATE","INSERT_STRING","INTERNAL","INTERNAL_EVT","INTERRUPTED","INVALID_SIZE","IP","IP_INV","ISOAdobeCharset","ISSUER","ISSUER$1","ISSUER$2","ISSUER$3","ISSUER$4","ISSUER$5","ISSUER_DOMAIN_POLICY","ISSUER_KEY_HASH","ISSUER_NAME","ISSUER_NAME_HASH","ISSUER_UID","ISSUER_UNIQUE_ID","ISSUER_UNIQUE_ID$1","ISSUER_UNIQUE_ID$2","IS_4_HEX_DIGITS","IS_C0_CONTROL_CODE","IS_CONSTRUCTED","IS_DIGIT","IS_HEX_ONLY","IS_ITERATOR","IS_NON_ZERO_DIGIT","IS_NUMBER_START","IS_PURE","IS_RECORD","IS_V8_OR_CHAKRA_STACK","IS_WHITESPACE","ITERATIONS","ITERATION_COUNT","ITERATOR","ITERATOR_HELPER","Ia","IdManager","IdentityHandler","If","ImageBitmapCtor","ImageKind","ImageManager","In","IndexedObject","IndirectObjectParser","Inflate$1","InflateState","Inflate_1","Inflate_1$1","InfoAccess","InfoUtils","InkAnnotationElement","InkDrawOutline","InkDrawOutliner","InkDrawingOptions","InkEditor","InputStream","Int8Array2","Int8ArrayPrototype","Integer","InternalRenderTask","InternalStateModule","InvalidPDFException","IssuerAndSerialNumber","IssuerSerial","IssuingDistributionPoint","Iterator","Iterator2","IteratorConstructor","IteratorHelperPrototype","IteratorPrototype","IteratorProxy","Iterators","JBIG2Filter","JBig2","JPXFilter","JS","JSON2","Ji","K","K2","K512","KAPPA","KEKIdentifier","KEKRecipientInfo","KEK_ID","KEY_ATTR","KEY_ATTR_ID","KEY_DERIVATION_ALGORITHM","KEY_DERIVATION_FUNC","KEY_ENCRYPTION_ALGORITHM","KEY_ENCRYPTION_ALGORITHM$1","KEY_ENCRYPTION_ALGORITHM$2","KEY_ENCRYPTION_ALGORITHM$3","KEY_IDENTIFIER","KEY_IDENTIFIER$1","KEY_INDEX","KEY_INFO","KEY_LENGTH","KEY_MARK","KEY_MARK_LENGTH","KEY_PURPOSES","KNOWN_OPERATORS","KeyAgreeRecipientIdentifier","KeyAgreeRecipientInfo","KeyTransRecipientInfo","KeyboardManager","L","L2","LANGUAGE_WINDOWS_EN_US","LEGACY_PBE_OIDS","LEN","LENEXT","LENGTH","LENGTH_CODES","LENGTH_CODES$1","LENLENS","LENS","LENS$1","LEN_","LETTER","LINE_CAP_STYLES","LINE_JOIN_STYLES","LIT","LITERALS","LITERALS$1","LOCAL","LOG_ID","LONG_OFFSETS","LT","LZWFilter","L_CODES","L_CODES$1","La","LineAnnotationElement","LinkAnnotationElement","ListBoxField","LocalBaseBlock","LocalBitStringValueBlock","LocalBmpStringValueBlock","LocalBooleanValueBlock","LocalConstructedValueBlock","LocalEndOfContentValueBlock","LocalIdentificationBlock","LocalIntegerValueBlock","LocalLengthBlock","LocalObjectIdentifierValueBlock","LocalOctetStringValueBlock","LocalPrimitiveValueBlock","LocalRelativeObjectIdentifierValueBlock","LocalRelativeSidValueBlock","LocalSidValueBlock","LocalSimpleStringBlock","LocalSimpleStringValueBlock","LocalStringValueBlock","LocalUniversalStringValueBlock","LocalUtf8StringValueBlock","LoopbackPort","LtvDataGatherer","M","M2","MAC","MAC_DATA","MAC_GLYPH_NAMES","MAC_GLYPH_NAME_TO_INDEX","MAC_ROMAN_TO_UNICODE","MAC_SALT","MAJh","MAJl","MAPPINGS","MAP_WITHOUT_THROWING_ON_INVALID_ITERATOR","MARKER_SOF0","MARKER_SOF1","MARKER_SOF10","MARKER_SOF11","MARKER_SOF13","MARKER_SOF14","MARKER_SOF15","MARKER_SOF2","MARKER_SOF3","MARKER_SOF5","MARKER_SOF6","MARKER_SOF7","MARKER_SOF9","MARKER_SOI","MASK_GEN_ALGORITHM","MASK_GEN_ALGORITHM$1","MASK_HIGH","MASK_LOW","MATCH","MAXBITS","MAXIMUM","MAX_ARGUMENT_COUNT","MAX_BITS","MAX_BITS$1","MAX_BL_BITS","MAX_CONTENT_LENGTH_EXCEEDED_ERROR","MAX_DEPTH","MAX_DEPTH_EXCEEDED_ERROR","MAX_DOUBLE","MAX_FIELD_WIDTH","MAX_FONT_SIZE","MAX_GEN_NUM","MAX_MATCH","MAX_MATCH$1","MAX_MEM_LEVEL","MAX_NODES_EXCEEDED_ERROR","MAX_OBJ_NUM","MAX_PATTERN_SIZE","MAX_PIXELS","MAX_RATIO","MAX_SAFE_INTEGER","MAX_TEXT_DIVS_TO_RENDER","MAX_ULP","MAX_WBITS","MAX_WBITS$1","MD5","MD5_IV","MD5_SHIFTS","MD5_W","MEM","MESH_WGSL","MESSAGE_IMPRINT","MESSAGE_IMPRINT$1","MICROS","MILLIS","MIME_TYPES","MINIMUM","MINUS_INFINITY","MINUS_ZERO","MIN_FONT_SIZE","MIN_LOOKAHEAD","MIN_MATCH","MIN_MATCH$1","MIN_TOUCH_SPAN","MODULUS","MODULUS$1","MONTHS","MacData","MacRomanEncoding","Maj","Maj2","MapHelpers","MapPrototype","MathClamp","Matrix","MediaAnnotationElement","MeshShadingPattern","MessageHandler","MessageImprint","Metadata","Mf","MurmurHash3_64","N","NAME","NAME2","NAMED_CURVE","NAMED_CURVE$1","NAMES","NAME_NEEDS_ESCAPE","NAME_STATE","NASHORN_BUG","NATIVE","NATIVE_ARRAY_BUFFER","NATIVE_ARRAY_BUFFER_VIEWS","NATIVE_BIND","NATIVE_RAW_JSON","NATIVE_SYMBOL","NATIVE_WEAK_MAP","NEWLINE","NEWLINE$1","NEW_ITERATOR_PROTOTYPE","NEXT_UPDATE","NEXT_UPDATE$1","NONCE","NONCE$1","NONE","NON_FLATTENABLE_TYPES","NORMAL","NORMAL_CLIP","NOT_AFTER","NOT_AFTER$1","NOT_AFTER_TIME","NOT_A_NUMBER","NOT_BEFORE","NOT_BEFORE$1","NOT_BEFORE_TIME","NO_SOURCE_SUPPORT","NUMBER_OF_DIGITS","NUMBER_START","Na","NameConstraints","NameTree","NativeDOMException","NativeIterator","NetworkStream","Nf","Nk","Node2","NodeBinaryDataFactory","NodeCanvasFactory","NodeFilterFactory","NonTerminalField","NormalizationMap","NormalizeRegex","Null","NullProtoObject","NullProtoObjectViaActiveX","NullProtoObjectViaIFrame","Number2","NumericString","O","O2","OBJECT","OBJECT_ALREADY_INITIALIZED","OBJECT_DIGEST","OBJECT_DIGEST_INFO","OBJECT_DIGEST_INFO$1","OCSPRequest","OCSPResponse","OCSPS","OCSPS$1","OCTET_STRING_NAME","OID_AUTHORITY_INFO_ACCESS","OID_CMS_ALGORITHM_PROTECTION","OID_CONTENT_TYPE","OID_CRL_DISTRIBUTION_POINTS","OID_DATA","OID_ECDSA_WITH_SHA256","OID_ECDSA_WITH_SHA384","OID_ECDSA_WITH_SHA512","OID_MESSAGE_DIGEST","OID_SHA1","OID_SHA256","OID_SHA256_WITH_RSA","OID_SHA384","OID_SHA384_WITH_RSA","OID_SHA512","OID_SHA512_WITH_RSA","OID_SIGNED_DATA","OID_SIGNING_CERTIFICATE_V2","OID_SIGNING_TIME","OID_TIMESTAMP_TOKEN","OK_RESPONSE","ONLY_CONTAINS_ATTRIBUTE_CERTS","ONLY_CONTAINS_CA_CERTS","ONLY_CONTAINS_USER_CERTS","ONLY_SOME_REASON","OPS","OPTIONAL_SIGNATURE","ORDERING","ORIGINATOR","ORIGINATOR_INFO","ORI_TYPE","ORI_VALUE","OS","OS_CODE","OTF_MAGIC","OTHER","OTHER$1","OTHER_CERT","OTHER_CERT_FORMAT","OTHER_OBJECT_TYPE_ID","OTHER_PRIME_INFOS","OTHER_REVOCATION_INFOS","OTHER_REV_INFO","OTHER_REV_INFO_FORMAT","ObjectCopier","ObjectDigestInfo","ObjectIdentifier","ObjectParseError","ObjectParser","ObjectPrototype","ObjectRegistry","ObjectStreamParser","OctetString","Of","Oi","On","Op","OpenJPEG","Operator","OptionalContentConfig","OptionalContentGroup","OriginatorIdentifierOrKey","OriginatorInfo","OriginatorPublicKey","OtherCertificateFormat","OtherKeyAttribute","OtherPrimeInfo","OtherRecipientInfo","OtherRevocationInfoFormat","Outline","OutputScale","P","P12Signer","P2","P3","PAD_BUF","PAGE_SIZES","PARAMS","PARSED_KEY","PARSED_VALUE","PARSED_VALUE$1","PARSED_VALUE$2","PARSED_VALUE$3","PARSED_VALUE$4","PARSED_VALUE$5","PARTIAL_CONTENT_RESPONSE","PASSWORD","PASSWORD_PADDING","PATH_LENGTH_CONSTRAINT","PATTERN_INFO","PBES2Params","PBKDF2Params","PC1","PC2","PDF","PDFAnnotation","PDFAttachments","PDFCaretAnnotation","PDFCatalog","PDFCircleAnnotation","PDFContext","PDFDataRangeTransport","PDFDataTransportStream","PDFDataTransportStreamRangeReader","PDFDataTransportStreamReader","PDFDateString","PDFDocumentLoadingTask","PDFDocumentProxy","PDFEmbeddedPage","PDFExtGState","PDFFetchStream","PDFFetchStreamRangeReader","PDFFetchStreamReader","PDFFileAttachmentAnnotation","PDFFonts","PDFForm","PDFFormXObject","PDFFreeTextAnnotation","PDFHighlightAnnotation","PDFImage","PDFInkAnnotation","PDFLib","PDFLineAnnotation","PDFLinkAnnotation","PDFMarkupAnnotation","PDFNetworkStream","PDFNetworkStreamRangeReader","PDFNetworkStreamReader","PDFNodeStream","PDFNodeStreamRangeReader","PDFNodeStreamReader","PDFObjects","PDFPage","PDFPageProxy","PDFPageTree","PDFPolyAnnotation","PDFPolygonAnnotation","PDFPolylineAnnotation","PDFPopupAnnotation","PDFShading","PDFShadingPattern","PDFShapeAnnotation","PDFSignature","PDFSquareAnnotation","PDFSquigglyAnnotation","PDFStampAnnotation","PDFStrikeOutAnnotation","PDFTextAnnotation","PDFTextMarkupAnnotation","PDFTilingPattern","PDFUnderlineAnnotation","PDFUnknownAnnotation","PDFWorker","PDF_DOC_HIGH","PDF_DOC_LOW","PDF_HEADER","PDF_LIB_URL","PDF_TARGET_PREFIX","PDF_TEXT_FLOW_TRUNCATION_MARK","PERMITTED_SUBTREES","PER_DEFINED_KEK","PFB_HEADER_LENGTH","PFX","PIECE_SIZE","PITABLE","PKCS12KDF","PKCS7DetachedBuilder","PKCS8ShroudedKeyBag","PKIStatusInfo","PLTE","PLUS_INFINITY","PNG_SIGNATURE","POINTS_PROPERTIES_NUMBER","POLICY","POLICY_IDENTIFIER","POLICY_QUALIFIERS","POLICY_QUALIFIER_ID","POLY","POLYFILL","POW_2_1023","PRECISION","PRESET_DICT","PRF","PRIME","PRIME1","PRIME2","PRIMITIVE","PRIVATE_EXPONENT","PRIVATE_KEY","PRIVATE_KEY$1","PRIVATE_KEY_ALGORITHM","PRODUCED_AT","PROPER","PROPER_BASE_PARSE","PROPER_ORDER","PROTOTYPE","PUBLIC_EXPONENT","PUBLIC_EXPONENT$1","PUBLIC_KEY","PUBLIC_KEY$1","P_SOURCE_ALGORITHM","PageViewport","PagesMapper","PaintType","ParameterError","PasswordException","PasswordRecipientinfo","PasswordResponses","PathBuilder","PathTokenizer","PathType","PatternInfo","PdfArray","PdfBool","PdfDict","PdfFont","PdfName","PdfNull","PdfNumber","PdfRaw","PdfRef","PdfRegenerator","PdfSigningRuntime","PdfStream","PdfString","PdfTextFlowLayout","PermissionBits","PermissionDeniedError","PermissionFlag","PfbParser","PixelsPerInch","PkiObject","PlaceholderError","Pn","PolicyConstraints","PolicyInformation","PolicyMapping","PolicyMappings","PolicyQualifierInfo","PolyfilledDOMException","PolyfilledDOMExceptionPrototype","PolygonAnnotationElement","PolylineAnnotationElement","PopupAnnotationElement","PopupElement","Primitive","PrintAnnotationStorage","PrintableString","PrivateKeyInfo","PrivateKeyUsagePeriod","Promise2","PromiseCapability","PublicKeyInfo","PushButtonWidgetAnnotationElement","QCStatement","QCStatements","QC_STATEMENTS_CLEAR_PROPS","QC_STATEMENT_CLEAR_PROPS","QStream","QUALIFIER","R","R2","RAW_MARK","RAW_MARK_LENGTH","RC2","RC4Cipher","RC4Handler","RDN","REASONS","RECIPIENT_CERTIFICATE","RECIPIENT_CERTIFICATE$1","RECIPIENT_ENCRYPTED_KEY","RECIPIENT_ENCRYPTED_KEYS","RECIPIENT_INFOS","RECIPIENT_PUBLIC_KEY","RENDERING_CANCELLED_TIMEOUT","REPZ_11_138","REPZ_3_10","REP_3_6","REQUESTOR_NAME","REQUEST_EXTENSIONS","REQUEST_LIST","REQUIRE_EXPLICIT_POLICY","REQ_CERT","REQ_POLICY","RESPONDER_ID","RESPONSE","RESPONSES","RESPONSE_BYTES","RESPONSE_DATA","RESPONSE_DATA_PRODUCED_AT","RESPONSE_DATA_RESPONDER_ID","RESPONSE_DATA_RESPONSES","RESPONSE_DATA_RESPONSE_EXTENSIONS","RESPONSE_DATA_VERSION","RESPONSE_EXTENSIONS","RESPONSE_STATUS","RESPONSE_TYPE","REVOCATION_DATE","REVOKED_CERTIFICATES","RGBToHSL","RID","RID$1","RL","RSA","RSAESOAEPParams","RSAPrivateKey","RSAPublicKey","RSASSAPSSParams","RTL_PLACED_THRESHOLD","RadialAxialShadingPattern","RadioButtonWidgetAnnotationElement","RadioField","RangeMappedCharset","RawData","RecipientEncryptedKey","RecipientEncryptedKeys","RecipientIdentifier","RecipientInfo","RecipientKeyIdentifier","RecoverableParseError","RecoveredXRef","RelativeDistinguishedNames","RelativeObjectIdentifier","RenderTask","RenderingCancelledException","RenderingIntentFlag","Repeated","Request","ResponseBytes","ResponseData","ResponseException","Result","ResultPrototype","RevocationError","RevocationInfoChoices","RevokedCertificate","Rf","Rl","Rn","RunLengthFilter","S","S2","SAFE_BUGS","SAFE_CONTENTS","SALT","SALT_LENGTH","SBOXES","SCALE","SCALE_MATRIX","SCRIPT","SECONDS","SECRET_TYPE_ID","SECRET_VALUE","SEED","SERIAL_NUMBER","SERIAL_NUMBER$1","SERIAL_NUMBER$2","SERIAL_NUMBER$3","SERIAL_NUMBER$4","SERIAL_NUMBER$5","SERIAL_NUMBER$6","SET_LIKE_INCORRECT_BEHAVIOR","SHA1","SHA12","SHA1_IV","SHA1_IV2","SHA1_W","SHA1_W2","SHA224","SHA256","SHA2562","SHA256_IV","SHA256_IV2","SHA256_K","SHA256_K2","SHA256_W","SHA256_W2","SHA2_32B","SHA2_64B","SHA384","SHA3842","SHA384_IV","SHA512","SHA5122","SHA512_IV","SHA512_Kh","SHA512_Kl","SHA512_W_H","SHA512_W_H2","SHA512_W_L","SHA512_W_L2","SHARED","SHIFTS","SHORT_OFFSETS","SID","SIGNATURE","SIGNATURE$1","SIGNATURE$2","SIGNATURE$3","SIGNATURE$4","SIGNATURE$5","SIGNATURE$6","SIGNATURE$7","SIGNATURE_ALGORITHM","SIGNATURE_ALGORITHM$1","SIGNATURE_ALGORITHM$2","SIGNATURE_ALGORITHM$3","SIGNATURE_ALGORITHM$4","SIGNATURE_ALGORITHM$5","SIGNATURE_ALGORITHM$6","SIGNATURE_ALGORITHM$7","SIGNATURE_ALGORITHM$8","SIGNATURE_VALUE","SIGNATURE_VALUE$1","SIGNATURE_VALUE$2","SIGNATURE_VALUE$3","SIGNATURE_VALUE$4","SIGNED_ATTRS","SIGNED_DATA","SIGNED_DATA_CERTIFICATES","SIGNED_DATA_CRLS","SIGNED_DATA_DIGEST_ALGORITHMS","SIGNED_DATA_ENCAP_CONTENT_INFO","SIGNED_DATA_SIGNER_INFOS","SIGNED_DATA_VERSION","SIGNER_INFO","SIGNER_INFOS","SIGNER_INFO_DIGEST_ALGORITHM","SIGNER_INFO_SID","SIGNER_INFO_SIGNATURE","SIGNER_INFO_SIGNATURE_ALGORITHM","SIGNER_INFO_SIGNED_ATTRS","SIGNER_INFO_UNSIGNED_ATTRS","SIGNER_INFO_VERSION","SILENT_ON_NON_WRITABLE_LENGTH_SET","SINGLE_EXTENSIONS","SINGLE_REQUEST_EXTENSIONS","SMASK_LAYER_TO_MASK_AREA_RATIO","SOFT_HYPHEN","SPACE","SPACE$1","SPKI","STANDARD_14_FONTS","STANDARD_ENCODING","STANDARD_STAMPS","STANDARD_STRINGS","STANDARD_TO_UNICODE","START_MARKER","STATE","STATIC","STATIC_TREES","STATUS","STATUS$1","STATUS_STRINGS","STORED","STORED_BLOCK","STRING_TYPE","STR_APPLY_UIA_OK","SUBJECT","SUBJECT$1","SUBJECT_DOMAIN_POLICY","SUBJECT_KEY_IDENTIFIER","SUBJECT_NAME","SUBJECT_PUBLIC_KEY","SUBJECT_PUBLIC_KEY_INFO","SUBJECT_UNIQUE_ID","SUMh","SUMl","SUPP_PUB_INFO","SVG_NS","SYMBOL_TO_UNICODE","SYNC","SYSTEM_FONT_INFO","SafeBag","SafeBagValueFactory","SafeContents","Scanner","SecretBag","SecurityError","SeqStream","Sequence","SerializableEmpty","Set2","Set3","SetHelpers","SetPrototype","SetRecord","Signature","SignatureEditor","SignatureError","SignatureExtractor","SignatureField","SignatureOptions","SignatureWidgetAnnotationElement","SignedAndUnsignedAttributes","SignedCertificateTimestamp","SignedCertificateTimestampList","SignedData","SignedDataVerifyError","SignerError","SignerInfo","SimpleEncoding","SimpleFont","SingleResponse","Sn","SquareAnnotationElement","SquigglyAnnotationElement","Ss","StampAnnotationElement","StampEditor","StandardEncoding","StandardEncoding$1","StandardEncoding$2","StandardSecurityHandler","StatTimer","State","StaticTreeDesc","StreamKind","StrikeOutAnnotationElement","StructureError","StyleSheet","SubKEKRecipientInfo","SubKeyAgreeRecipientInfo","SubKeyTransRecipientInfo","SubPasswordRecipientinfo","SubjectDirectoryAttributes","SupportedImageMimeTypes","Symbol2","SymbolEncoding","SyntaxError2","SystemFontInfo","T","T0","T01","T1","T1h","T1l","T1ll","T2","T23","T3","T8","TABLE","TAG_CLASS","TAG_NUMBER","TAKE_WITHOUT_THROWING_ON_INVALID_ITERATOR","TARGET","TBS","TBS$1","TBS$2","TBS$3","TBS$4","TBSRequest","TBS_CERTIFICATE","TBS_CERTIFICATE_EXTENSIONS","TBS_CERTIFICATE_ISSUER","TBS_CERTIFICATE_ISSUER_UNIQUE_ID","TBS_CERTIFICATE_NOT_AFTER","TBS_CERTIFICATE_NOT_BEFORE","TBS_CERTIFICATE_SERIAL_NUMBER","TBS_CERTIFICATE_SIGNATURE","TBS_CERTIFICATE_SUBJECT","TBS_CERTIFICATE_SUBJECT_PUBLIC_KEY","TBS_CERTIFICATE_SUBJECT_UNIQUE_ID","TBS_CERTIFICATE_VERSION","TBS_CERT_LIST","TBS_CERT_LIST_EXTENSIONS","TBS_CERT_LIST_ISSUER","TBS_CERT_LIST_NEXT_UPDATE","TBS_CERT_LIST_REVOKED_CERTIFICATES","TBS_CERT_LIST_SIGNATURE","TBS_CERT_LIST_THIS_UPDATE","TBS_CERT_LIST_VERSION","TBS_REQUEST","TBS_REQUEST$1","TBS_REQUEST_REQUESTOR_NAME","TBS_REQUEST_REQUESTS","TBS_REQUEST_REQUEST_EXTENSIONS","TBS_REQUEST_VERSION","TBS_RESPONSE_DATA","TEMPLATE","TEMPLATE_ID","TEMPLATE_MAJOR_VERSION","TEMPLATE_MINOR_VERSION","TEST","TEXT_ALIGNMENT","TEXT_CONTENT_CHUNK_SIZE","TEXT_KEYS","THIS_UPDATE","THIS_UPDATE$1","THROW","THROWS_ON_ITERATOR_WITHOUT_RETURN","THROW_ON_NEGATIVE_FRACTIONAL_INDEX","TILDE","TIME","TIME2","TIMESTAMP","TIMESTAMPS","TIMEZONE_OFFSET","TIME_STAMP_REQ","TIME_STAMP_REQ_CERT_REQ","TIME_STAMP_REQ_EXTENSIONS","TIME_STAMP_REQ_MESSAGE_IMPRINT","TIME_STAMP_REQ_NONCE","TIME_STAMP_REQ_POLICY","TIME_STAMP_REQ_VERSION","TIME_STAMP_RESP","TIME_STAMP_RESP_STATUS","TIME_STAMP_RESP_TOKEN","TIME_STAMP_TOKEN","TIME_TO_WAIT","TM","TO_BER","TO_PRIMITIVE","TO_STRING_TAG","TO_STRING_TAG_SUPPORT","TRAILER_FIELD","TRAILING_ZERO_REGEX","TRUSTED_CERTS","TSA","TSTInfo","TST_INFO","TST_INFO_ACCURACY","TST_INFO_EXTENSIONS","TST_INFO_GEN_TIME","TST_INFO_MESSAGE_IMPRINT","TST_INFO_NONCE","TST_INFO_ORDERING","TST_INFO_POLICY","TST_INFO_SERIAL_NUMBER","TST_INFO_TSA","TST_INFO_VERSION","TTC_MAGIC","TTFSubsetter","TTF_MAGIC","TTF_TRUE_MAGIC","TYPE","TYPE$1","TYPE$12","TYPE$2","TYPE$3","TYPE$4","TYPE$5","TYPE2","TYPEDO","TYPED_ARRAY_CONSTRUCTOR","TYPED_ARRAY_TAG","TYPED_ARRAY_TAG_REQUIRED","TYPE_AND_VALUES","TYPICAL_TEXT","TeletexString","TerminalField","TextAnnotationElement","TextExtractor","TextField","TextLayer","TextLayerImages","TextRenderingMode","TextState","TextWidgetAnnotationElement","Tf","TilingPattern","Time","TimeOfDay","TimeStampReq","TimeStampResp","Tn","ToUnicodeMap","Token","TokenReader","TouchManager","Transforms","TreeDesc","TripleDES","TrueTypeFont","TrueTypeFontProgram","Type1Font","Type1FontProgram","Type1Lexer","Type1Parser","TypeError2","TypedArray","TypedArray2","TypedArrayConstructor","TypedArrayConstructorsList","TypedArrayPrototype","U","U32_MASK64","U32_MASK642","UKM","UNICODE_TO_GLYPH","UNICODE_TO_PDF_DOC","UNIT_WORD","UNPROTECTED_ATTRS","UNPROTECTED_ATTRS$1","UNSCOPABLES","UNSIGNED_ATTRS","URL2","USER_CERTIFICATE","USE_NATIVE_URL","USE_SYMBOL_AS_UID","UTCTime","UTC_TIME_NAME","Ua","Uint8Array2","Uint8ClampedArray2","Uint8ClampedArrayPrototype","UnderlineAnnotationElement","UniversalString","UnknownErrorException","UnknownField","UnrecoverableParseError","UnsupportedEncryptionError","Utf16Converter","Utf8Converter","Utf8String","Util","V2Form","V8_OR_CHAKRA_STACK_ENTRY","V8_PROTOTYPE_DEFINE_BUG","V8_VERSION","VALUE","VALUE$1","VALUE$2","VALUE$3","VALUE$4","VALUE$5","VALUE$6","VALUES","VALUES$1","VALUE_BEFORE_DECODE","VALUE_HEX_VIEW","VARIANT","VARIANT$1","VARIANT$2","VARIANT$3","VERSION","VERSION$1","VERSION$2","VERSION$3","VERSION$4","VERSION$5","VERSION$6","VERSION$7","VERSION$8","VERSION$9","VERSION$a","VERSION$b","VERSION$c","VERSION$d","VERSION$e","VERSION$f","VERSION$g","VERSION$h","VERSION$i","VERSION$j","VERSION$k","VERSION$l","VERSION_PATTERN","ValueBlock","VerbosityLevel","VideotexString","ViewWriter","VisibleString","Vn","W","W15","W15h","W15l","W2","W2h","W2l","WELL_KNOWN_EXTENSIONS","WHITESPACE","WIN_ANSI_TO_UNICODE","WRAP_FOR_VALID_ITERATOR","WRAP_LOSS_CHARS","WRITABLE","WRONG_SYMBOLS_CONVERSION","Wa","WeakMap2","WeakMapHelpers","WeakMapPrototype","WebGPU","WellKnownSymbolsStore","WidgetAnnotation","WidgetAnnotationElement","WinAnsiEncoding","WorkerTransport","WrapForValidIteratorPrototype","X","XRefParseError","XRefParser","XXXX_VALUE","XY","Xa","XfaLayer","XfaText","Xi","Y","ZAPF_CHECKMARK","ZAPF_CIRCLE","ZAPF_DINGBATS_TO_UNICODE","ZStream","Z_BINARY","Z_FIXED$1","Z_TEXT","Z_UNKNOWN$1","ZapfDingbatsEncoding","_","_32n","_32n2","_32n3","_MD5","_SHA1","_SHA256","_SHA384","_SHA512","__commonJS","__copyProps","__create","__defProp","__export","__getOwnPropDesc","__getOwnPropNames","__getProtoOf","__hasOwnProp","__require","__toCommonJS","__toESM","__wbg_finalize_init","__wbg_get_imports","__webpack_module_cache__","__webpack_modules__","__webpack_require__","_applyPdfCalculations","_array","_base64ToBytes","_binaryValueType","_blurListener","_buildChoiceComponentIndex","_buildDateComponentIndex","_buildTableReverseIndex","_buildTextFlowValues","_choiceItemMatches","_choiceItems","_collectCandidates","_collectJS","_copy_pixels_1","_copy_pixels_3","_copy_pixels_4","_createImageData","_decodePdfHex","_dist_code","_downloadBytes","_drawGeometryOverlays","_engine","_evalBinaryConst","_evalUnaryConst","_fd_seek","_fieldHasValue","_fillField","_flattenForm","_geometryChoiceSelected","_geometryClamp","_geometrySignatureDataUrl","_geometryTextLines","_getCheckboxOnStates","_getPdfSigningRuntime","_gray_to_rgba","_graya_to_rgba","_has","_inferBooleanState","_installPdfLibFromSource","_isNonEmptyString","_isValidExplicitDest","_isValidProtocol","_iv","_jsPrintWarning","_length_code","_loadPdfLib","_loadPdfLibFromCdn","_m2","_makeWrapper","_matchMultipleOptions","_matchSingleOption","_n","_n2","_nodesEqual","_normalizeFieldMap","_normalizeToken","_object","_optional","_parseVisibilityExpression","_pdfCalculation","_pdfLibPromise","_pdfNumber","_pdfSigningSource","_printBytes","_resolveChoiceComponentValue","_resolveDateComponentValue","_resolveTableCellValue","_resolveValueByPath","_result","_rgb_to_rgba","_schema","_setCheckboxByState","_setImageData","_setLineData","_setValue","_splitCanonicalDateParts","_stampSignatureField","_status","_statusColor","_storeErrorMessage","_toBooleanLike","_toCandidateList","_toText","_tr_align$1","_tr_align_1","_tr_flush_block$1","_tr_flush_block_1","_tr_init$1","_tr_init_1","_tr_stored_block$1","_tr_stored_block_1","_tr_tally$1","_tr_tally_1","_u32_max","_unaryValueType","_updateTextAppearancePreservingUnderline","_utf8len","_view","_w_size","_webGPU","_widgetHasAppearance","_win","_writer","a","a0","a1","a2","a3","aCallable","aFunction","aPossiblePrototype","aSet","aString","aTypedArray","aTypedArrayConstructor","aView","aWeakKey","aWeakMap","aa","aadStart","abort","abortEx","abs","absDet","absScaleX","absXStep","absYStep","absoluteUrl","abx","aby","abytes","abytes2","ac","accent","achVendId","acro","acroForm","acroFormDict","acroFormRef","action","actionType","actions","activeImage","activeLayer","activeTextLayers","actualIndex","actualScale","actualWaveLength","actuallyUsedPartials","adapter","add","add2","add3","add3H","add3H2","add3L","add3L2","add4H","add4H2","add4L","add4L2","add5H","add5H2","add5L","add5L2","addAnEmptyEntry","addCachedImageOps","addChildren","addFakeSpaces","addGlyphMapping","addHTML","addHex","addPageDict","addPageError","addState","addToUnscopables","addVertex","addVisibleSignature","added","addedKeys","additionalCerts","adjustMapping","adjustTrueTypeToUnicode","adjustType1ToUnicode","adjustWidths","adjusted","adjustedFdArrayIndex","adjustedFontDict","adjustedFontDictData","adjustedTarget","adjustedTopDict","adjustedTopDictData","adjustedTopDictIndex","adler32","adler32_1","admission","adobeSid","advanceWidth","advanceWidthMax","advanceWidths","aesDecrypt","aesDecryptWithIv","aesEcbDecrypt","aesEcbEncrypt","aesEncrypt","aesEncryptWithIv","aesKW","aesKWAlgorithm","aesKWoid","aesKwKey","aesKwKey2","aescbc","aesecb","aexists2","after","agree","agreeCheckbox","ah","aiaAsn1","aiaExtension","alg","algOid","algorithm","algorithmId","algorithmId2","algorithmObject","algorithmOid","algorithmParameters","algorithmParams","algorithmParamsChecked","aliases","aligned","alignment","alignmentToQuadding","allCerts","allChars","allComments","allEdges","allFields","allIds","allPolicies","allSame","allText","allowNull","allowedStyles","alpha","alphaHex","alphaMask","alphaScale","alphabet","altText","amendFallbackToUnicode","anInstance","anObject","anObjectOrUndefined","anUint8Array","anchorBeforeFocus","anchorElement","anchorLayer","angle","angleBetween","annot","annotDict","annotRef","annotation","annotationElementIds","annotationId","annotationIds","annotationLayer","annotationOptions","annotationStorage","annotationStorageSerializable","annotation_layer_DEFAULT_FONT_SIZE","annotations","annots","annotsArray","annotsEntry","answer","anumber","anumber2","anyPolicyArray","anyPolicyFound","aobject","aopts","aoutput","ap","appearance","appearanceRef","appearances","appendEOL","appendIfJavaScriptDict","appendOverflowAddendum","apply","apply0123","applyAssist","applyBoundingBox","applyDocumentFillPreparers","applyGrayTransparency","applyInverseRotation","applyKDF","applyNumberedFieldPattern","applyOpacity","applyPNGOptimumFilter","applyPredictor","applyRgbTransparency","applySMaskInPlace","applySbox","applyStandardFontGlyphMap","ar","arcSegmentToBezier","arcToBezier","areContours","area","argCount","args","argsArray","argsArrayLen","argsLen","argumentsLength","ariaLabel","arr","array","arrayBuffer","arrayBufferByteLength","arrayBufferToString","arrayBuffersToBytes","arrayFromConstructorAndList","arrayMatch","arrayRoot","arrowChecker","as","asConditionValue","ascender","ascent","asciiLength","asn","asn1","asn1Basic","asn1View","asnValue","assert","assertBigInt","assign","assign2","assignRefs","assignWasmExports","at","atitle","atitle2","atom","attachDictionaryChunk","attachments","attrs","authConstrPolicies","authEvent","authSafeContent","authenticate","authenticatedAs","authenticatedSafe","authorityCertIssuer","authorityCertSerialNumber","authorityCertSerialNumberEqual","avail","availableOptions","average","averageCharWidth","avgBaseline","awsKW","ax","axes","axesArrayOffset","axisCount","axisIndex","axisNameId","axisOrdering","axisSegmentMaps","axisSize","axisStart","axisValue","axisValueCount","axisValueMaps","axisValues","ay","b","b0","b1","b2","b3","bView","backdropCtx","backdropEntry","background","badge","bagType","bakedBackdrop","base","base64Alphabet","base64Map","base64Template","base64UrlAlphabet","base64UrlTemplate","baseArea","baseArray","baseBlock","baseCID","baseCode","baseColor","baseEncoding","baseEncodingName","baseFont","baseFontName","baseFormat","baseHSL","baseMap","baseName","baseSet","baseState","baseTransform","baseUrl","base_dist","base_length","baseline","baselinePoint","baselineTolerance","bases","basicAsn1","basicCheck","basicResp","basicResponse","basis","bbox","bboxArray","bboxHeight","bboxTracker","bboxWidth","bc","before","beforeElement","beforeLength","beg","beginMarkedContent","beginText","ber1","ber2","best","best_len","bezierBbox","bezierCurveTo","bf","bg","bgBorderOps","bgColor","bgGray","bgRGB","bi_flush","bi_reverse","bi_windup","bidi","big","bigInt","bigIntBuffer","bigIntValue","bigIntValueOf","bigIntView","biggest","binary","binaryLength","bind","bindEvents","bindGroup","binding","bit","bitDepth","bitIdx","bitIndex","bitNumber","bitOffset","bitPos","bitShift","bitmap","bits","bitsAvailable","bitsNeeded","bitsPerComponent","bitsStr","bitsToRead","blX","blY","bl_count","bl_order","black","black2","blackIs1","blackMakeup","blackTerminating","blend","blob","block","blockCounts","blockLength","blockName","blockSequence","block_mask","blocker","blue","blurListener","bn","bodyRowsOnPage","bold","boldFont","boolValue","booleanStates","booleanValueOf","border","borderColor","borderWidth","bot1","bot2","bottom","bottomY1","bottomY2","boundResizerBlur","boundResizerKeydown","boundarySubstituted","bounds","boundsHeight","boundsWidth","box","boxDim","boxDimHeight","boxDimWidth","boxes","bpc","br","brX","brY","breakInside","browserFontSize","bs","bstate","buf","buf2","buf2binstring","buf2string","buffer","buffer8","bufferAfter","bufferB","bufferBefore","bufferG","bufferR","bufferToHexCodes","bufferType","build","buildCMSAlgorithmProtection","buildCertificateChain","buildCidToGidMapStream","buildComponentData","buildFontResources","buildFormXObject","buildFullToUnicodeCMap","buildFullWidthsArray","buildHuffmanTable","buildIndexArray","buildMatch","buildMeshVertexData","buildMsg","buildNameTree","buildPath","buildPathResult","buildPostScriptJsFunction","buildPostScriptWasmFunction","buildReverseMap","buildSpan","buildTextContentItem","buildTextToCharMap","buildToFontChar","buildToUnicodeCMapFromGids","buildTrailerDict","buildWidthsArrayFromGids","buildZapfDingbatsResources","build_bl_tree","build_tree","builder","builtInDomainDefinedAttributes","builtInStandardAttributes","button","buttonDisabled","buttons","bw","by","byRow","byte","byteIdx","byteIndex","byteNumber","byteOffset","byteRange","byteRangeEnd","byteRangeKey","byteRangeKeyPos","byteRangeLength","byteRangeStart","byteSwap","byteSwap32","bytes","bytes2","bytes3","bytesPerPixel","bytesPerRow","bytesRead","bytesToHex","bytesToLatin1","bytesToLatin1$1","bytesToNibbles","bytesToString","c","c1","c1r","c2","c2r","c3r","cMapPacked","cMapUrl","cRLSign","c_len","caCert","caIssuersUrl","cache","cacheKey","cacheKeyBuf","cached","cachedAscent","cachedImage","cachedModule","cachedName","cachedPort","cachedPromise","cachedValue","calculateAppearanceMatrix","calculateAutoFontSize","calculateAverageBaseline","calculateByteRange","calculateDistanceAlphabetLimit","calculateDistanceAlphabetSize","calculateDistanceLut","calculateFence","calculateFieldWidths","calculateMD5","calculateSHA256","calculateSHA384","calculateSHA512","calculateXPosition","calculate_sha256_ch","calculate_sha256_littleSigma","calculate_sha256_littleSigmaPrime","calculate_sha256_maj","calculate_sha256_sigma","calculate_sha256_sigmaPrime","call","callFn","callWithSafeIterationClosing","callback","callbackId","called","canEncodePdfDoc","cancelCapability","cancelDrag","cancelPointerDown","candidate","candidateBases","candidateKeys","candidates","canvas","canvasBounds","canvasContext","canvasGraphicsFactory","canvasHeight","canvasMaxAreaInBytes","canvasWidth","canvases","capability","capacity","caption","caretOffset","caretSlopeRise","caretSlopeRun","carry","catalog","catalogDict","catalogRef","cbc","ceil2","cell","cellWidth","cells","center","centerX","centerX1","centerX2","centerY","cert","certArray","certBag","certChain","certDer","certExcludedSubtrees","certHash","certHashes","certID","certIDs","certIndex","certIssuerDer","certObj","certPermittedSubtrees","certPolicies","certRefs","certRefsForVri","certSerialDer","certValueHex","certificate","certificateIndexBuffer","certificateIndexView","certificateIndexView16","certificateIndexView8","certificatePath","certificateSet","certificateSetSchema","certificates","certs","cfDict","cff","cffData","cffFonts","cfm","ch","chain","chainCertsDer","chainEngine","chainParams","chain_length","change","changed","changedAnnotations","changedBuffer","changedView","changes","char","charAt","charBoxes","charCode","charCodeAt","charIndex","charMappings","charSpacing","charStrings","charStringsIndex","charStringsOffset","charToGlyph","charWidth","charX","character","characterScaleX","chars","charset","charsetEntry","charsetId","charsetOffset","charstring","check","checkBufferParams","checkCA","checkCertificate","checkContentLengthLimit","checkDimensions","checkDupes","checkFollowingBytesAreAscii","checkForCA","checkHealth","checkIncrementalSaveBlocker","checkInvalidFunctions","checkIsTerminalField","checkLen","checkNodesLimit","checkOpts","checkOutput","checkStyle","checkUnique","checked","checksum","checksumAdjustment","child","childDepth","childHtml","childKids","children","choiceComponentIndex","choiceComponentValue","choiceEntry","chooseAppearanceFont","chr","chr1","chr2","chr3","chunk","chunk1","chunk2","chunkBytes","chunkEnd","chunkImgData","chunkLength","chunkOperations","chunkSize","chunks","cid","cidCount","cidFont","cidFontDict","cidFontObj","cidFontRef","cidSystemInfo","cidToGidMap","cidToGidValue","cipher","cipherTransformDecryptStream","ciphertext","circle","clamped","classes","classof","classofRaw","clean","clean2","clean3","cleanName","cleaned","cleanup","cleanupState","cleanupSuccessful","clearAllDirtyFlags","clearDirtyFlags","clearErrorStack","clearGlobalCaches","clearPatternCaches","clearPrimitiveCaches","clearProps","clearUnicodeCaches","clearValue","cleartomarkSegment","clientRect","clip","clip2","clipBox","clipEvenOdd","clipH","clipHeight","clipPath","clipPathId","clipPathUse","clipW","clipWidth","clipX","clipY","clipboardData","clippedBBox","clone","cloned","clonedDict","close","closeInput","closePath","closePendingMarkedContentItems","closePendingMarkedContentOPS","closePendingRestoreOPS","closed","cmap","cmapName","cmd","cmp","cmsAlgProtection","cmsEncrypted","cmsEnveloped","cmsSigned","cmyk","cmykMatch","co","coalesced","code","codeBuf","codeLength","codePoint","codePoints","codeToName","codeUnits","codeView","codes","codespaceRanges","coef","col","colBuffer","collect","collectActions","collectChanges","collectReachableRefs","color","colorArray","colorComponents","colorCtx","colorEntry","colorListbox","colorName","colorSpace","colorToArray","colorType","colors","columnWidths","columns","combWidth","combine","combinedBuffer","combinedView","combinedXRef","command","commandEncoder","commands","commitKey","common","commonActions","commonAlphabet","commonObjs","compareDNSName","compareDirectoryName","compareFieldId","compareIPAddress","compareKeys","compareLength","compareRFC822Name","compareSchema","compareTextLayers","compareUniformResourceIdentifier","compareWithLastPosition","comparisonResult","compile","compileCharString","compileCssFontInfo","compileFontInfo","compileFontPathInfo","compileGlyf","compilePatternInfo","compilePostScriptToWasm","compileSystemFontInfo","compileType3Glyph","complete","completeRequest","complexOverlapBytes","component","componentGid","componentGlyph","components","compress","compress_block","compressed","compressedAlpha","compressedEntries","compressedPixels","compressedStream","compressionMethod","computeBbox","computeEncryptionKeyR2R4","computeFlags","computeHash2A","computeHash2B","computeHashForRevision","computeIDs","computeLuminance","computeMD5","computeSha1Hex","computeUserHash","computeVriKey","computedColor","computedU","concat","concat2","concatBytes2","concatMatrix","concatenateChunks","condition1","condition2","conditionCollectionEntries","conditionMet","configuration_table","consoleError","constant","constantName","constantTimeCompare","constantTimeCompare$1","constants","constants$1","constants$2","constants_1","constrGroups","constrLen","constrString","constraintPrepared","constraintSplitted","constraintView","constructInterpolatedFn","constructSampledFn","constructStichedFn","constructor","consumed","container","content","contentBuffer","contentBytes","contentData","contentDisposition","contentEncoding","contentEncryptionAlgorithm","contentEncryptionAlgorithm2","contentEncryptionOID","contentHeight","contentInfo","contentLength","contentLengthError","contentPadding","contentStr","contentToEncrypt","contentView","contentWidth","contentWithGS","contentWithNewline","contentX","contents","contentsEnd","contentsKey","contentsKeyPos","contentsLength","contentsObj","contentsSize","contentsStart","context","continuation","continuedTitle","contour","contourCount","contourList","contours","contrastCache","contrastRatio","controller","convertBlackAndWhiteToRGBA","convertBuffer","convertBufferView","convertCidString","convertRGBToRGBA","convertToRGBA","coordinateLength","coordinates","coords","copied","copiedArr","copiedDict","copiedPage","copiedPageRef","copiedPages","copiedRefs","copiedStream","copier","copy","copyBuffer","copyBytes","copyConstructorProperties","copyCtxState","copyFromCompoundDictionary","copyLevel","copyLevels","copyRawBytes","copyRgbaImage","copyUncompressedData","copy_result","corners","correctedFirstObjNum","cos","cos1","cos2","cosPhi","cosSin","count","countObj","counter","counterBuffer","counterView","counters","countryDropdown","counts","cp","cp1x","cp1y","cp2x","cp2y","cr","crc32","crc32_1","crcTable","create","createAnnotation","createBidiText","createBuiltInCMap","createByteRangePlaceholderObject","createCIDFontDict","createCMSECDSASignature","createCharCode","createCmapTable","createCommand","createContentsPlaceholder","createContentsPlaceholderObject","createDataNode","createDefaultAppearance","createDefaultCIDFont","createECDSASignatureFromCMS","createElement","createElementHolder","createEmbeddedFileStream","createEmptyDescription","createErrorResult","createExponentialFunction","createFileSpec","createFontDescriptor","createFontObjects","createFontObjectsFull","createFormField","createFromBerContext","createGradientFunction","createHandlerForAlgorithm","createHandlerForFilter","createHandlers","createHasher","createHeaders","createImage","createImageDict","createIterResultObject","createIteratorProxy","createIteratorProxyPrototype","createLine","createMethod","createNameTable","createNonEnumerableProperty","createOS2Table","createOrderedObject","createPNGLikeImage","createPostTable","createPostscriptName","createProperty","createPropertyDescriptor","createRawImage","createResponseError","createSanitizer","createSetLike","createSetLikeWithInfinitySize","createSpaceChar","createStitchingFunction","createText","createTextMarkupDict","createType0Dict","createValidAbsoluteUrl","createView2","createView3","createWasm","createWellKnownSymbol","createWrapper","created","createdAt","creationDate","credential","crl","crlAsn1","crlDPs","crlExtension","crlHashes","crlRefs","crlRefsForVri","crlResult","crlSchema","crlUrls","crls","crlsAndCertificates","cropBox","crypto2","cryptoArg","cryptoObj","cs","css","cssFontInfoData","cssFontInfoLength","ctmScale","ctx","ctx2","curChecked","curRow","curToken","curView","curr","currGapX","currGapY","current","currentActive","currentAngle","currentBlockName","currentCert","currentCharIndex","currentCode","currentCommand","currentCounter","currentCtx","currentDict","currentFontName","currentFontSize","currentKey","currentLength","currentLine","currentMode","currentMtx","currentOffset","currentParameters","currentPos","currentPosition","currentPositionLeft","currentRow","currentSid","currentSpan","currentTextIndex","currentTransform","currentValue","currentVersion","currentWidth","currentY","curve","curveLengthByName","curveOID","curveObject","curveOid","curveTo","curves","customIndex","customNames","cut","cutResult","cx","cxp","cy","cyp","d","d1","d22","d3","dTheta","d_code","da","daFont","daInfo","dashArr","dashes","data","dataBuffer","dataEnd","dataLength","dataObj","dataOffset","dataReason","dataSize","dataUint32","dataUrl","dataView","date","dateComponentIndex","dateComponentValue","dateEntry","dateStr","dateTimeString","day","days","daysInMonth","dbase","declaredSize","decode","decodeACFirst","decodeACSuccessive","decodeASCII","decodeAverageRow","decodeBase64Chunk","decodeBaseline","decodeBlock","decodeBlockTypeAndLength","decodeCommandBlockSwitch","decodeContextMap","decodeDCFirst","decodeDCSuccessive","decodeDistanceBlockSwitch","decodeFilename","decodeHuffman","decodeHuffmanTreeGroup","decodeLatin1","decodeLiteralBlockSwitch","decodeMcu","decodeMetaBlockLength","decodePaethRow","decodePdfDocEncoding","decodePngPredictor","decodeRunLength","decodeScan","decodeString","decodeSubRow","decodeText","decodeTextString","decodeTiffPredictor","decodeUTF16BE","decodeUpRow","decodeUtf16BE","decodeVarLenUnsignedByte","decodeWindowBits","decoded","decodedData","decodedOffset","decodedPassword","decodedString","decoder","decompress","decompressed","decreasingCount","decrypt","decryptAscii","decryptBlock","decryptEncryptionKey","decryptLegacyPbe","decryptObject","decryptParams","decrypted","decryptedData","decryptedDict","decryptedItems","decryptedValue","decryptionParameters","deepCompare","defaultConfig","defaultEncryptionParams","defaultFont","defaultLabel","defaultOptions","defaultOptions$1","defaultOrigin","defaultVMetrics","defaultValue","defaultWidth","defineBuiltIn","defineBuiltInAccessor","defineBuiltIns","defineGlobalProperty","defineIteratorPrototypeAccessor","defineProperties","definePropertiesModule","defineProperty","definePropertyModule","deflate","deflate$1","deflate$2","deflateEnd","deflateEnd_1","deflateInfo","deflateInit","deflateInit2","deflateInit2_1","deflateInit_1","deflateRaw$1","deflateRaw_1","deflateRaw_1$1","deflateReset","deflateResetKeep","deflateResetKeep_1","deflateReset_1","deflateSetDictionary","deflateSetDictionary_1","deflateSetHeader","deflateSetHeader_1","deflateStateCheck","deflate_1","deflate_1$1","deflate_1$2","deflate_2","deflate_2$1","deflate_fast","deflate_huff","deflate_rle","deflate_slow","deflate_stored","deflator","defs","delay","delta","deltaX","deltaY","denom","dependencyTracker","deps","depth","derivationKey","deriveObjectKey","derivedBits","derivedKey","derivedKeyRaw","desBlock","desc","descendants","descendantsArray","descender","descenderScaled","descent","descriptor","descriptorDict","descriptorRef","deserializedEditor","designAxes","designAxesOffset","designAxisCount","designAxisSize","desiredGid","desiredMaxLength","dest","destArray","destIndex","destPos","destRef","destRef2","destination","destinationPage","destinationPageRef","destinationPageToRef","destinations","detect_data_type","determineAlgorithm","device","dext","df","di","diagnosticsText","dialog","dict","dictEntries","dictLength","dictionary","didDraw","didFill","dif","diffCode","diffD","diffMarginX","diffMarginY","diffUnicode","diffX","diffY","difference","differencePosition","differenceString","differences","differencesArray","diffs","diffsOffset","digest","digestAlgIdentifier","digestAlgorithm","digit","digits","digitsStart","digitsString","dims","dimx","dimx2","dimy","dimy2","direct","direction","dirtyBox","disableAutoFetch","disableFontFace","disableRange","disableStream","disabled","disallowedEventHandlerAttrRegExp","disallowedRichTextStyleRegExp","displayText","displayVal","dist","distance","div","divStyle","divider","dmax","doRun","doUseDictionary","doc","docBaseUrl","docParams","docTsLtvData","document2","documentAll","documentCreateElement","documentHash","documentValueText","document_date_format_exports","doesNotExceedSafeInteger","domElement","domMatrix","done","dots","dr","drDict","draw","drawCellLines","drawCircle","drawCircleOps","drawDiv","drawEllipseOps","drawId","drawImageAtIntegerCoords","drawLayer","drawLineOps","drawMeshWithGPU","drawOutlines","drawRectangleOps","drawRowFrame","drawTriangle","drawXObject","drawingEditor","drawnHeight","drawnWidth","drop","dropWithoutClosingOnEarlyError","dropdown","dropped","dss","dssBuilder","dssRef","dstHex","dstPos","dstUnicode","dummyTopDict","dummyTopDictData","dv","dx","dy","e","eContent","earlyChange","ecb","eccInfo","ecdhAlgorithm","ecdhKeys","ecdhOID","ecdhPublicKey","ed","edge","edge1","edge2","edges","editToolbar","editToolbarDiv","editableAnnotation","editor","editorId","editorStats","editorType","editorTypes","editors","ef","effectiveEnd","effectiveOptions","effectiveQuery","effectiveSweepFlag","el","elem","elem2","element","elementData","elementIds","elementParams","elementSequence","elementToJSON","elements","elementsLength","elems","elemsInThisChunk","ellipsePathOps","embedded","embeddedFileStream","embeddedFiles","embeddedProgram","embeddedTimestamps","empty","emptyGlyph","enableHWA","enableLinkOwnership","enableWebGPU","enableXfa","enabled","enc","enc1","enc2","enc3","enc4","encInfo","encKey","encode","encodeASCIIString","encodeNumber","encodePdfDocEncoding","encodePermissions","encodeSignedAttributesForSigning","encodeTextForFont","encodeTextString","encodeToXmlString","encodeUtf16BE","encodeXRefStreamData","encoded","encodedBuf","encodedByteAlign","encodedData","encodedId","encodedInfo","encodedMime","encodedPassword","encodedString","encodedStrings","encodedText","encodedView","encoder","encoder2","encoding","encodingEntry","encodingId","encodingRecords","encodingValue","encodingend","encrypt","encryptDict","encryptDictObj","encryptMetadata","encryptObject","encryptParams","encryptRef","encryptStreamDict","encrypted","encryptedContent","encryptedData","encryptedKey","encryptedStream","encryptedValue","encryption","encryptionAlgorithm","encryptionDict","encryptionParameters","end","endCID","endCid","endCode","endCodes","endGID","endIndex","endLength","endMarkedContent","endMissing","endObjToken","endOfBlock","endPath","endPtsOfContours","endRequests","endText","endTextLayer","endTime","endX","endY","enforce","enforceInternalState","engine","engine2","engineName","enqueueChunk","ensureDebugMetadata","ensureNotTerminated","ensureResponseOrigin","ensureResponseStatus","ensureTextContentItem","entries","entry","entryCount","entryDict","entrySelector","entrySize","entryType","entryVal","enumBugKeys","enumerableOwnProperties","envelopedData","epoch1904","eq","equal","equalStart","err","error","errorFont","errorTarget","es_array_includes","es_array_push","es_iterator_constructor","es_iterator_drop","es_iterator_every","es_iterator_filter","es_iterator_find","es_iterator_flat_map","es_iterator_for_each","es_iterator_map","es_iterator_some","es_iterator_take","es_iterator_to_array","es_json_parse","es_json_stringify","es_map_get_or_insert","es_map_get_or_insert_computed","es_math_sum_precise","es_promise_try","es_set_difference_v2","es_set_intersection_v2","es_set_is_disjoint_from_v2","es_set_is_subset_of_v2","es_set_is_superset_of_v2","es_set_symmetric_difference_v2","es_set_union_v2","es_typed_array_with","es_uint8_array_from_base64","es_uint8_array_set_from_base64","es_uint8_array_set_from_hex","es_uint8_array_to_base64","es_uint8_array_to_hex","es_weak_map_get_or_insert","es_weak_map_get_or_insert_computed","escapeCount","escapeLiteralString","escapeName","escapeName$1","escapePDFName","escapePdfString","escapeRegExp","escapeString","escaped","essCertIdV2Parts","estimatePdfTextFlowCapacity","estimatedSize","estimatedTopDictIndexSize","evaluate","evaluateConditionGroup","evaluateFieldCondition","evaluateNumericCondition","evenOdd","event","eventModifiers","eventProxy","every","everyWithoutClosingOnEarlyError","evtOpts","excluded","excludedSubtrees","exec","executeArc","executeClose","executeCommand","executeCubicCurve","executeHorizontalLine","executeLineTo","executeMoveTo","executeQuadratic","executeSmoothCubic","executeSmoothQuadratic","executeSvgPath","executeSvgPathString","executeVerticalLine","executeonly","executorOptions","existed","existing","existingAppearance","existingAttachments","existingContents","existingFont","existingNames","existingPages","existingStyle","exists","exoticToPrim","expandBBox","expandIndexed","expandKey","expandKeyDecLE","expandKeyLE","expandNumberedRowFields","expandTableSourceMaps","expanded","expectElement","expectInt","expectKeypair","expectString","expectedDelta","explicitPolicyIndicator","explicitPolicyPending","explicitPolicyStart","explicitWidth","exponentStartIndex","exportTypedArrayMethod","exportTypedArrayStaticMethod","exportVal","exportValue","exportedECDHPublicKey","exportedError","exportedKey","exportedSessionKey","expr","extGState","extend","extendCMap","extension","extensionAttributes","extensionFound","extensionStart","extensionsLength","extra","extraBytes","extra_blbits","extra_dbits","extra_lbits","extractAppearanceStyle","extractFilenameFromHeader","extractInlineImageData","extractKey","extractOcspResponderCerts","extractParams","extractSignedBytes","f","factor","fails","fakeEditor","fallback","familyClass","fdArrayIndex","fdArrayOffset","fdIndex","fdSelect","fdSelectOffset","fds","feColorMatrix","feComponentTransfer","feFunc","feFuncA","feistel","fetchBinaryData","fetchCertificate","fetchData","fetchDest","fetchFn","fetchRemoteDest","fetchSync","fetchUrl","ff","fgGray","fgRGB","field","field1","field2","field3","fieldDict","fieldFont","fieldFormattedValues","fieldId","fieldIds","fieldObj","fieldRef","fieldType","fieldWidth","fields","fieldsArray","fieldsToFlatten","fieldsToProcess","file","fileEncryptionKey","fileId","fileReader","fileSpec","fileSpecRef","filename","filenameStart","fill","fillAndStroke","fillAndStrokeEvenOdd","fillCanvas","fillColor","fillCtx","fillEvenOdd","fillItems","fillPatternName","fillRun","fillStrokeMode","fillTableMaps","fill_window","filled","filledFieldCount","filter","filterApplied","filterByte","filterDict","filterEntry","filterList","filterMethod","filterName","filterSpec","filterSpecs","filterType","filterWithoutClosingOnEarlyError","filteredRecords","filters","finalBBox","finalBBoxHeight","finalBBoxWidth","finalValue","find","findASCII85DecodeEnd","findASCIIHexDecodeEnd","findBlock","findBytes","findBytesReverse","findCRL","findContrastColor","findDCTDecodeEnd","findDefaultInlineStreamEnd","findIssuerResult","findNextFileMarker","findOCSP","findPlaceholders","findRegexMatches","findStringMatches","findUnequal","findWithoutClosingOnEarlyError","finish","finishWorkerTask","first","first3","firstBad","firstBit","firstByte","firstCanvas","firstCh","firstChar","firstCharIndex","firstCode","firstCodePoint","firstDescendant","firstId","firstIn","firstInt","firstKid","firstKidDict","firstLineTop","firstNode","firstNotIn","firstNum","firstObj","firstObjNum","firstOctet","firstPageNumber","firstPageRef","firstPoint","firstPointX","firstPointY","firstPosition","firstRow","firstSize","firstTrailer","firstView","firstViewCopy","firstViewCopyLength","firstWidth","firstX","firstY","fitLines","fits","fitsOn","fixDestination","fixDimensions","fixDisplayValue","fixIllFormedJSON","fixTextIndent","fixURL","fixed","fixedHSL","fixedtables","fixupEncoding","flag","flag1","flag2","flagIndex","flags","flat","flatMap","flatMapWithoutClosingOnEarlyError","flatQuadPoints","flattenChars","flattenChunks","flattenLayers","flattenedCount","flattener","floor2","flush","flushHTML","flushTextContentItem","flush_block_only","flush_pending","fn","fnArray","focusLayer","focused","foldTTTable","font","fontAscent","fontBBox","fontBytes","fontCache","fontChanged","fontChar","fontData","fontDescriptor","fontDict","fontDictData","fontDictDataTemp","fontDictTemp","fontDicts","fontDirection","fontExtraProperties","fontFace","fontFamily","fontFile","fontFile2","fontFile2Result","fontFile3","fontFile3Result","fontFileResult","fontHeight","fontItemDecode","fontItemDecodeLong","fontItemEncode","fontItemEncodeLong","fontMatch","fontMatrix","fontName","fontObj","fontProgram","fontRef","fontSize","fontSizeScale","fontStream","fontStreamDict","fontStreamRef","fontSubfamily","fontTableHead","fontTableHhea","fontTableHmtx","fontTableMaxp","fontTypeResult","fonts","fontsDict","fonts_getMetrics","footerSize","forEach","forEachWithoutClosingOnEarlyError","forceRegen","forceSplit","fork","form","formData","formFields","formFound","formKeys","formXObject","format","formatDateWithPattern","formatDocumentDate","formatNumber","formatNumber$1","formatNumber$2","formatNumber$3","formatNumber2","formatPdfDate","formatPdfNumber","formatType","formatXRefTableEntry","formatted","found","foundContentType","foundEOI","foundGroup","foundImageMaskGroup","foundIndex","foundInlineImageGroup","foundMessageDigest","fourHexDigits","fraction","fractionPart","fractionPartCheck","fractionPointPosition","fractionResult","fractionStartIndex","fragment","free","freshPageLines","fromBER","fromBase64","fromBase642","fromBig","fromBig2","fromCharCode","fromData","fromNumH","fromNumL","fromPath","fromRaw","fs","fsSelection","fsType","ft","full","fullChain","fullChunks","fullName","fullRequestXhr","func","functionDict","functionToString","functions","fuzzy","g","gatherer","genNum","genNumToken","genTtable","gen_bitlen","gen_codes","generalName","generalNames","generateBackgroundAndBorder","generateButtonAppearance","generateCheckboxAppearance","generateCombAppearance","generateDropdownAppearance","generateEncryption","generateFont","generateHighlightAppearance","generateListBoxAppearance","generateMultilineAppearance","generateOwnerEntries","generatePermsEntry","generateRadioAppearance","generateRandomPassword","generateSingleLineAppearance","generateSquigglyAppearance","generateStrikeOutAppearance","generateSubkeys","generateSubsetTag","generateTextAppearance","generateUnderlineAppearance","generateUniqueName","generateUserEntries","generation","generationWidth","generator","geometryResult","get","getAlphabetOption","getArrayBuffer","getAvailableSpace","getB","getBBox","getBaseFontName","getBit","getBlockBufferOffset","getBorderDims","getBuiltIn","getCaIssuersUrl","getCatalog","getCharCodes","getCharUnicodeCategory","getColor","getColorConversionBatchSize","getColorOperators","getColorValues","getCompositeGlyphIds","getCrypto","getCrypto2","getCryptoEngine","getCurrentPara","getCurrentTextTransform","getCurrentTransform","getCurrentTransformInverse","getDataProp","getDescriptor","getDigestAlgorithmOid$1","getDocument","getEexecBlock","getEmbeddedFileStream","getEncoding","getEncodingByName","getEncodingForStandard14","getEngine","getEnglishName","getFactoryUrlProp","getFamilyName","getFilename","getFilenameFromContentDispositionHeader","getFilenameFromUrl","getFloat","getFloat214","getFontFileType","getFontMetrics","getFontResourceName","getFontSubstitution","getGlyph","getGlyphName","getHeaderBlock","getHighlightFocusSVGProperties","getHighlightSVGProperties","getHints","getImageSmoothingEnabled","getIndexes","getInheritableFieldName","getInheritableFieldNumber","getInheritableProperty","getInlineImageCacheKey","getInt","getInteger","getInternalState","getItems","getIterator","getIteratorDirect","getIteratorFlattenable","getIteratorMethod","getKeyLengthBytes","getKeyPrefix","getKeyword","getLast","getLayers","getLookupTableFactory","getMacGlyphIndex","getMeasurement","getMethod","getMimeType","getModificationDate","getName","getNetworkStream","getNewAnnotationsMap","getNextKey","getObject","getOperator","getOperator2","getOrInsert","getOrInsertComputed","getOutput","getOwnPropertyDescriptor","getOwnPropertyDescriptorModule","getOwnPropertyNames","getOwnPropertyNamesModule","getOwnPropertySymbols","getOwnPropertySymbolsModule","getPageCount","getPageDict","getPages","getPaintOp","getPaintOpWithWinding","getParametersValue","getParentToUpdate","getPassword","getPdfColor","getPdfColorArray","getPdfFilenameFromUrl","getPdfManager","getPlainText","getPredefinedCharset","getPredefinedEncoding","getPropertyList","getPrototypeOf","getQuadPoints","getRGB","getRGB2","getRGBA","getRanges","getRatio","getReadableStream","getRelevant","getResponseOrigin","getRgbColor","getRotationMatrix","getSerialKey","getSetRecord","getShadingPattern","getSignatureAlgorithmOid","getSizeInBytes","getSoundFormat","getStandard14BasicMetrics","getStandard14DefaultWidth","getStandard14GlyphWidth","getStandardFontName","getStandardString","getSteps","getStreamSubtype","getStringFromWasm0","getStringOption","getStyleToAppend","getSubroutineBias","getTextLayer","getTilingPatternIR","getTrailerDict","getTransformMatrix","getTransformedBBox","getTypedArrayConstructor","getURL","getUint8ArrayMemory0","getUnicodeForGlyph","getUnicodeRangeFor","getUrlProp","getUuid","getValue","getVerbosityLevel","getWasmImports","getXRefStreamTable","getXRefTable","getXfaFontDict","getXfaFontName","getXfaFontWidths","getterFor","gf","gid","gidHex","gidToCodePoint","gidWidths","gids","globalSubrIndex","globalThis2","glued","glyf","glyfData","glyph","glyphCache","glyphData","glyphHeightScaled","glyphId","glyphIndex","glyphName","glyphNameIndex","glyphNames","glyphOffset","glyphToChars","glyphToUnicode","glyphWidthScaled","glyphsLength","gn","got","gpuCtx","gpuPromise","gr","grad","gradient","gradientPattern","graphics","gray","grayImage","grayMatch","grayToRGBA","grayscale","green","group","groupByBaseline","groupCharsIntoLines","groupCtx","groupEnd","groupIntoSpans","groupIntoSubsections","groupLength","groupMeta","groupPermitted","groupStart","groupState","groups","gs","gsName","gzhead_extra","gzheader","gzip$1","gzip_1","gzip_1$1","h","h1","hView","ha","hadChanges","halfAvailable","halfLen","halfSize","handleBreak","handleGeneratePdf","handleOverflow","handleSetFont","handler","has","hasAlpha","hasAltTextStats","hasBBox","hasBackground","hasBit","hasBitmap","hasCFF","hasChanged","hasChanges","hasCommentManager","hasContent","hasDateOrTime","hasDecimal","hasDescendantFonts","hasDescriptionStats","hasDigit","hasDigits","hasDirtyDescendant","hasDraggingStarted","hasEscape","hasExponent","hasFill","hasFilter","hasFonts","hasGlyph","hasHCM","hasInnerBackdrop","hasInnerCutout","hasInternalSlot","hasKey","hasLayers","hasMacOverride","hasMargin","hasMatchingState","hasMk","hasOOBAlpha","hasOwn","hasOwnButton","hasOwnProperty","hasPostScriptNameId","hasSecurityChanges","hasSeenTextShowOp","hasStroke","hasSupplement","hasUtf16BOM","hasValue","hasVisibleWidgets","has_stree","hash","hashAlgo","hashAlgorithm","hashAlgorithmOID","hashC","hashData","hashInput","hashIssuerKey","hashIssuerName","hashLength","hashOID","hash_head","hashedMessage","hashes","hashesObject","hbuf","hcmFilterId","hdrSize","head","headRecord","header","headerCells","headerFill","headerHeight","headerLength","headerPos","headerSize","headers","height","heightScale","helveticaDict","here","hex","hex1","hex2","hexBytes","hexChars","hexLength","hexMap","hexMatches","hexSignature","hexToBytes","hexToCodeUnits","hexToInt","hexToStr","hexToUnicode","hexValue","hhea","hi","hi2","hidden","hiddenKeys","hidePopup","high","highlight","highlightY","highlights","histogram","hmacAlgorithm","hmacHashAlgorithm","hmacKey","hmacOID","hmetrics","hmtx","hn","ho","horizontalRadius","hour","hourDifference","hovered","html","httpHeaders","huff","huffmanTreeGroupAllocSize","i","i1","i2","i3","i4","iRound","ia","icComponents","iccUrl","id","id1","id2","idArray","idBlockBuf","idDeltas","idRangeOffsetPos","idRangeOffsets","idToPageNumber","id_AnyPolicy","id_AuthorityInfoAccess","id_AuthorityKeyIdentifier","id_BaseCRLNumber","id_BasicConstraints","id_CRLBag_X509CRL","id_CRLDistributionPoints","id_CRLNumber","id_CRLReason","id_CertBag_AttributeCertificate","id_CertBag_SDSICertificate","id_CertBag_X509Certificate","id_CertificateIssuer","id_CertificatePolicies","id_ContentType_Data","id_ContentType_EncryptedData","id_ContentType_EnvelopedData","id_ContentType_SignedData","id_ExtKeyUsage","id_FreshestCRL","id_InhibitAnyPolicy","id_InvalidityDate","id_IssuerAltName","id_IssuingDistributionPoint","id_KeyUsage","id_MicrosoftAppPolicies","id_MicrosoftCaVersion","id_MicrosoftCertTemplateV2","id_NameConstraints","id_PKIX_OCSP_Basic","id_PolicyConstraints","id_PolicyMappings","id_PrivateKeyUsagePeriod","id_QCStatements","id_SignedCertificateTimestampList","id_SubjectAltName","id_SubjectDirectoryAttributes","id_SubjectInfoAccess","id_SubjectKeyIdentifier","id_ad","id_ad_caIssuers","id_ad_ocsp","id_eContentType_TSTInfo","id_pkix","idatChunks","identitySid","ids","idsIndices","idx","iframe","ignoreErrors","ii","ij","ij3","image","imageData","imageElement","imageName","imagePromise","imageX1","imageX2","imageY1","imageY2","img","imgData","imgElement","importAesKwKey","import_meta","import_pvtsutils","importedKey","inSMaskMode","inTextBlock","incHex","includeSet","includes","incomingOffset","incomingResult","incrementCodeUnits","incremental","incrementalUpdate","index","indexArray","indexOf","indices","indicesBuf","indicesToRemove","indicesView","indirectObj","individual","inf","inferredState","inffast","inflate$1","inflate$2","inflateEnd","inflateEnd_1","inflateGetHeader","inflateGetHeader_1","inflateInfo","inflateInit","inflateInit2","inflateInit2_1","inflateInit_1","inflateRaw$1","inflateRaw_1","inflateRaw_1$1","inflateReset","inflateReset2","inflateReset2_1","inflateResetKeep","inflateResetKeep_1","inflateReset_1","inflateSetDictionary","inflateSetDictionary_1","inflateStateCheck","inflate_1","inflate_1$1","inflate_1$2","inflate_2","inflate_2$1","inflate_fast","inflate_table","inflator","info","info2","infoAccess","infoDict","infoRef","infos","inftrees","inheritIfRequired","inherited","inhibitAnyPolicyIndicator","inhibitAnyPolicyPending","initBitReader","initCryptoEngine","initGPU","initRuntime","initState","initSync","init_block","initialData","initialExcludedSubtreesSet","initialExplicitPolicy","initialInhibitPolicy","initialInput","initialOutputX","initialOutputY","initialPermittedSubtreesSet","initialPolicyMappingInhibit","initialPolicySet","initialRequiredNameForms","initialSize","initialTagNumber","initializeCompoundDictionary","initializeCompoundDictionaryCopy","inkList","inlineImage","inlineImgCanvas","inlineSource","inner","input","input2","inputAlpha","inputLength","inputOffset","inputRowSize","inputView","insertIndex","inset","inspectFont","inspectSource","installed","instance","instance2","instanceCount","instanceSize","instanceStart","instances","instructionLength","instructions","int1","int16","int2","int32","intBuffer","intMicros","intMillis","intSize","intTagNumberBuffer","integer","intent","intentArgs","intentObj","intentPrint","intentState","interlaceMethod","internalObjectKeys","internalOpt","internalRenderTask","internalReserved","internalValue","internalize","internalizeProperty","interpolate","intersect","intersection","inv","invPatternTransform","invRotationMatrix","invS","invSbox","invTransf","inverse","inverseMoveToFrontTransform","inverseTransform","ip","irt","isAddToPathSet","isAligned32","isAnnotationSubtype","isArc","isArray","isArrayEqual","isArrayIteratorMethod","isAscii","isAudio","isAuthEvent","isBigIntArray","isBooleanArray","isBound","isBoxedPrimitive","isBytes","isBytes2","isBytes3","isCA","isCFFCIDFontProgram","isCFFFile","isCFFType1FontProgram","isCIDFont","isCIDFontSubtype","isCSSString","isCallable","isCertificateCA","isCertificateRevoked","isChecked","isCidKeyedType1File","isCmd","isCommandLetter","isConditionCellAnswered","isConditionEntryMeaningful","isConditionValueEmpty","isCryptFilterMethod","isCryptoEngine","isDataScheme","isDefaultDecodeHelper","isDelimiter","isDestinationType","isDetached","isDiagonal","isDict","isDigit","isDigit$1","isDisjointFrom","isEmbedded","isEmbeddedFont","isEmpty","isEncrypted","isEncryptedTrailer","isEncryptionRevision","isEncryptionVersion","isEqual","isEqualBuffer","isEven","isExistingFont","isFileAttachmentIcon","isFirstInSequence","isFixedColorDark","isFixedPitch","isFontReady","isForced","isGPUReady","isHTMLAnchorElement","isHexDigit","isHexOnly","isHole","isHorizontal","isIdentity","isImageDecoderSupported","isInPrivateArea","isInlineImageOperation","isJpeg","isKnownFontName","isLE","isLE2","isLast","isLegacyPbeOid","isLetter","isLinearizationDict","isLinearized","isMacKey","isMacNameRecord","isName","isNameForHCM","isNameProxy","isNegative","isNodeJS","isNoneMode","isNotForRichText","isNullOrUndefined","isNumberArray","isNumberStart","isNumberStart$1","isObject","isOdd","isOffscreenCanvasSupported","isOn","isOpenType","isOpenTypeFile","isPDFFunction","isParsedOperation","isPasswordCredential","isPatternFill","isPdfFile","isPdfTarget","isPng","isPointBefore","isPopupAnnotation","isPopupAnnotation2","isPossiblePrototype","isPostScript","isPrintOnly","isPrototypeOf","isRawJSON","isRawJSONValue","isRefProxy","isRefsEqual","isRegularChar","isRemovedObjr","isRenderable","isRequired","isRtlPlaced","isSOFMarker","isSameAltText","isSamePageIndex","isSelfSigned","isSerializedAsObject","isSimpleAsciiName","isSimpleFontSubtype","isSpace","isSpecial","isStandard14Font","isString","isStringPair","isStructElement","isSubsetOf","isSupersetOf","isSymbol","isTextAnnotationIcon","isTextAnnotationState","isTextAnnotationStateModel","isTextInvisible","isTooBig","isTrueTypeCollectionFile","isTrueTypeFile","isTrueTypeFontProgram","isTrusted","isTwoByteOperator","isType1File","isTypedArray","isUTC","isUsablePattern","isValid","isValidExplicitDest","isValidFetchUrl","isValidJP2","isVersion1","isView","isView2","isVisible","isWhite","isWhiteSpace","isWhitespace","isWhitespace$1","isWhitespaceString","isWidgetAnnotation","isWinAnsiStandard14","isWinNameRecord","isWordBoundary","issuer","issuerCertificate","issuerCertificates","issuerDer","issuerDomainPolicyIndex","issuerKey","issuerKeyBuffer","issuerKeyHash","issuerNameHash","issuerObj","issuerSerial","issuerView","isteps","italic","italicAngle","item","itemResolved","items","iter","iterKey","iterValue","iterate","iterateImageGroup","iterateImageMaskGroup","iterateInlineImageGroup","iterateSet","iterateShowTextGroup","iterateSimple","iterationCount","iterations","iterator","iteratorClose","iteratorCloseAll","iteratorHelperThrowsOnInvalidIterator","iteratorHelperWithoutClosingOnEarlyError","iteratorMethod","iv","ivBuffer","ivView","j","j1","j2","j22","j3","j4","jf","jj","jn","join","joined","joinedChars","js","jsName","json","jumpToByteBoundary","jwk","k","k1","k2","k3","k32","kResolved","kdf","kdf2","kdfResult","kdfResult2","kdfWithCounter","kekAlgorithm","kekKey","kekOID","kept","kernel","key","key2","keyBag","keyCrypto","keyId","keyIdentifier","keyIdentifierBuffer","keyIdentifierView","keyIndex","keyIndexBuffer","keyIndexView","keyIndexView16","keyIndexView8","keyInfo","keyInfoAlgorithm","keyLength","keyLengthBits","keyObj","keyPart","keyPrefix","keySalt","keyToken","keyUsagePresent","keys","keysIter","keystreamByte","keyword","keywordsStr","kf","kid","kidKeys","kidRef","kids","kind","kk","klass","knockoutAlpha","knockoutFilter","knockoutMaskEntry","knownOptions","kr","kwAlgorithm","kwLength","kwLengthBuffer","kwLengthView","kx","ky","l","label","labels","lambda","langvalue","last","lastBottom","lastByte","lastCanvas","lastCertInChain","lastChar","lastCharIndex","lastChunkHandling","lastDesiredSize","lastDot","lastEdge","lastElement","lastEndPt","lastLineBottom","lastMetricGid","lastNode","lastPoint","lastPointX","lastPointY","lastPointerDownTimestamp","lastPrinted","lastRow","lastSave","lastSlash","lastTextNode","lastTop","lastX","lastY","layer","layerCount","layerHeight","layerOffsetX","layerOffsetY","layerResult","layerWidth","layers","layout","layoutClass","layoutJustifiedLine","layoutNode","layoutPdfTextFlow","layoutText","lbase","le","leadingSurrogates","leafCert","left","leftDate","leftIsFormId","leftPatterns","leftSideBearings","legacy","len","len1","len2","len32","lenBlockBuf","lenIV","lenOffset","length","length1","lengthBufferView","lengthByte","lengthObj","lengthOfArrayLike","lengthResolver","lengths","lenient","level","level_flags","lext","lf","lib","limit","limits","line","lineAttributes","lineBbox","lineBreaks","lineCapToNumber","lineGap","lineGroups","lineHeight","lineIdx","lineJoinToNumber","lineLength","lineSpan","lineText","lineTo","lineWidth","lineX","lineY","linearized","lines","linesAndPoints","link","linkElement","linkService","list","listener","literalLength","literalStart","littleSigma","littleSigmaPrime","lm_init","ln","lo","lo2","loadDocument","loadMeshShader","loadTestFontId","loaded","loadedPages","loader","loading","loca","localCerts","localChangeType","localFromBER","localFromBERWithChildContext","localNotAfter","localNotBefore","localResult","location","locked","lockedArray","log2","log2floor","logId","logo","longTermValidation","longest","longest_match","lookahead","looksLikeUnsigned16BitNegative","lookup","lookupCmap","lookupMap","lookupMatrix","lookupNormalRect","lookupRect","low","lsb","ltrCallback","ltvData","lum1","lum2","m","m0","m1","m1r0","m1r2","m2","m2r1","m2r3","m3","m4","m5","ma","macIndex","macSeconds","mainKey","maj","major","majorVersion","makeArr","makeBuiltIn","makeColorComp","makeError","makeMap","makeObj","makePKCS12B2Key","makePathFromDrawOPS","makeSet","makeTable","makeupTable","map","mapBfRange","mapColumnIds","mapData","mapR2","mapSpecialUnicodeValues","mapStyle","mapToStandardFont","mapValue","mapWithoutClosingOnEarlyError","mapped","mappedGid","mappedPagesToMove","mapper","mapping","margin","mark","marked","marker","markerLength","mashInverse","mask","maskArea","maskCanvas","maskCtx","maskData","maskEntry","maskToCanvas","match","matchNumberedFieldBase","matchText","matches","matches2","matches3","matrix","matrixArray","max","max2","maxAreaScale","maxChainLength","maxComponentDepth","maxComponentElements","maxCompositeContours","maxCompositePoints","maxContours","maxCounter","maxDiff","maxDim","maxFunctionDefs","maxGeneration","maxImageSize","maxIndex","maxInstructionDefs","maxKey","maxLen","maxLength","maxLines","maxMemType1","maxMemType42","maxObjNum","maxObjectNumber","maxOffset","maxOldGid","maxPoints","maxScale","maxSize","maxSizeOfInstructions","maxStackElements","maxStorage","maxTwilightPoints","maxValue","maxWidth","maxX","maxY","maxZones","max_blindex","max_code","max_count","max_length","maxp","mayHaveChildren","maybe","maybeDate","maybeEIPos","maybeReallocateRingBuffer","maybeTime","md5","mdpWarning","measure","measureFont","measureHelvetica","measureStandard14Text","measureText","measureToString","measuredWidth","media","mediaBox","mergeBboxes","merged","meshPackData","meshUpdateBounds","message","messageDigest","messageDigestValue","messageHandler","messages","metadata","method","metrics","mf","mid","mid1","mid2","midX","midY","midY1","midY2","middle","mimeType","min","min2","minContrast","minDiff","minDistance","minHeight","minKey","minLeftSideBearing","minMax","minMemType1","minMemType42","minRightSideBearing","minValue","minWidth","minX","minY","min_block","min_count","minimum","minor","minorVersion","minute","minuteDifference","mirrorContextOperations","missingCanvas","mixInverse","mk","mn","modDate","modValue","model","modificationDate","modified","modifiedAt","modifier","modifiers","module","mon","month","monthName","move","moveText","moveTo","moveToFront","movedCount","mt","mul","mul2","multiplier","multiply","mustBeAddedInUndoStack","mustBeCA","mustBeSelected","mustRemoveAspectRatioPromise","muted","n","n1","n2","n32","nCodes","nColor","nCoord","nCopy","nEntry","nLeft","nRanges","nStop","nSups","nX","nXFirst","nXLast","nY","nYFirst","nYLast","na","nabx","naby","name","nameBuf","nameField","nameIndex","nameLen","nameMatch","nameObj","namePrepared","nameSplitted","nameStart","nameStr","nameValue","nameView","namedCurve","names","namesArray","nativeFontFace","nativeParse","navigator2","nbd","nearestPowerOf2","need","needFakeAnnotation","needLastWidth","needRestore","needed","needle","needsAlphaScaling","needsBackdropCopy","needsCleanup","needsEncodingFixup","needsFill","needsPathUpdate","needsSpace","needsStroke","negative","neighbour","network_getArrayBuffer","newASN1Type","newArray","newBuffer","newBytes","newComponentGid","newContent","newCoords","newCurves","newEditors","newEntry","newGID","newGid","newHeight","newId","newLines","newLoca","newMatrix","newN","newNameTree","newNum","newObject","newObjectNumber","newOffset","newPageIndex","newPageNumberToId","newPath","newPoints","newPromiseCapability","newPromiseCapabilityModule","newR","newRange","newRef","newSize","newStart","newStep","newStream","newText","newToOld","newTransfCenterPoint","newURL","newValue","newView","newWidth","newX","newY","next","nextAngle","nextChar","nextCode","nextFileName","nextFirstPosition","nextIteration","nextNum","nextPage","nextPeek","nextRunLength","nextTableBitSize","next_code","next_out_utf8","nextlen","nibble","nibbles","nice_match","noContextMenu","node","nodeCrypto","nodeIsArray","nodeToSerializable","node_utils_fetchData","nodes","nodesLimitError","nonHorizontalLeftSideBearings","nonSerializable","nonTerminal","nonZeroPosition","nonZeroStart","nonce","noneOptionElement","norm","normX","normY","normalize","normalizeBlendMode","normalizeCSSFontFamily","normalizeConditionBoolean","normalizeConditionChoiceValues","normalizeConditionComparable","normalizeCredential","normalizeEdgeBoundary","normalizeFontName","normalizeName","normalizeStringArgument","normalizeUnicode","normalized","normalizedAction","normalizedAlgorithm","normalizedCandidate","normalizedEnd","normalizedOption","normalizedOptionMap","normalizedOwnerHash","normalizedRect","normalizedRequested","normalizedStart","normalizedUserHash","notANaN","notDetached","now","ns","nsPort","nullRef","num","num2","numArgs","numBytes","numComponents","numCustomNames","numEntries","numGlyphs","numGlyphsBuf","numGroups","numHMetrics","numInstr","numLengthBytes","numLongs","numNonHorizontal","numPairs","numRecords","numSegments","numSize","numStr","numTables","numWaves","number","numberOfContours","numberOfDeletedComments","numberOfDrawings","numberOfEditedComments","numberOfLines","numberToPDFString","numberToString","numbers","numericText","numericValue","nums","nw","o","obj","obj2","objId","objKeyword","objNum","objNumToken","objStreamParser","object","objectKeys","objectParser","objectStreamCache","objectStreamParser","objs","objsPool","ocPropsDict","ocg","ocgsArray","ocsp","ocspHashes","ocspRefs","ocspRefsForVri","ocspRequest","ocspResp","ocspResponderCerts","ocspResponse","ocspResponses","ocspResult","ocspUrl","oddPages","of","ofLen","offArray","offContent","offSize","offState","offs","offscreen","offscreen2","offscreenCtx","offset","offset1","offset2","offsetArrayStart","offsetHour","offsetMinute","offsetToAxisValueOffsets","offsetToken","offsetWidth","offsetX","offsetX2","offsetY","offsetY2","offsets","oidNist","ok","old","oldDiag","oldPositions","oldRotation","oldToNew","oldToNewGidMap","old_flush","omitPadding","on","onAbort","onArray","onClick","onContent","onEditorsRendered","onFailure","onFn","onSuccess","onText","onTouchEnd","onValue","oobAlpha","op","opInfo","opacity","opacityName","openArray","openAttachment","openIters","openObjects","openProc","operands","operations","operator","operatorList","operatorListChanged","operatorMap","oppositePoint","oppositeX","oppositeY","ops","opt","optArray","optIdx","optValues","optimizeWidthsArray","option","optionElement","optionValue","options","opts","order","orderLineChars","ordered","orderedEntries","orderedTextLayers","ordering","ordinaryToPrimitive","organization","origin","original","originalBitmap","originalMethods","originalPassword","originator","os2","other","otherClickAction","otherItem","otherRaw","otherRec","otherRequest","out","outBitIdx","outByteIdx","outCpX","outCpY","outLen","outRow","outX","outX1","outX2","outY","outY1","outY2","outerExtraSize","outline","outlineData","outlineVerticalEdges","outliner","outlines","outlinesLength","output","output2","outputArray","outputBytes","outputLength","outputOffset","outputRow","outputScale","overallLength","overflow","overflowAt","overflowPlans","overlapBytes","oview","ownKeys","ownerBBox","ownerDocument","ownerHash","ownerPassword","ownerResult","p","p0","p0x","p0y","p1","p1Keys","p1x","p1y","p32","pCtx","pDistance","pI","pI1","pa","pad","pad2","padCount","padLen","padNumber","padPCKS","padPassword","padded","paddedHeight","paddedHex","paddedPassword","paddedTimestampBytes","paddedWidth","padding","paddingByte","paddingEdge","paddingString","paethPredictor","paethPredictor$1","page","pageCanvas","pageCount","pageDict","pageEntry","pageIndex","pageNum","pageNumber","pageNumberOfField","pageNumberToId","pageNumbers","pageProxy","pageRef","pageRefs","pageText","pageWidgets","pages","pagesDict","pagesMapper","pagesNumber","pagesRef","pagesToSearch","paintWidth","paintXObject","pair","pako","palette","panX","panY","panose","paragraph","paragraphs","paramCount","parameters","params","params2","paramsAsn1","paramsEntries","paramsObject","paramsSeq","parenDepth","parent","parentContainer","parentDimensions","parentGroupMeta","parentOrdered","parentRef","parentTree","parentWidth","parmsEntry","parse","parseAppearanceStream","parseAvarTable","parseAxisValue","parseBfChar","parseBfCharContent","parseBfCharSections","parseBfRange","parseBfRangeContent","parseBfRangeSections","parseCFF","parseCIDFont","parseCIDFontFromDescendants","parseCIDWidths","parseCMap","parseCMapFromEncoding","parseCMapName","parseCertificate","parseCertificate$1","parseCff","parseChoiceOptions","parseCidChar","parseCidCharContent","parseCidCharSections","parseCidRange","parseCidRangeContent","parseCidRangeSections","parseCmap","parseCmapTable","parseCodespaceContent","parseCodespaceRange","parseCodespaceRanges","parseColorArray","parseCompositeFont","parseCompositeGlyph","parseContext","parseCryptFilter","parseDAString","parseDefaultAppearance","parseDefaultConfig","parseDocBaseUrl","parseEmbeddedProgram","parseEncoding","parseEncodingDict","parseEncryptionDict","parseExistingFont","parseExpression","parseFileSpec","parseFloatOperand","parseFont","parseFontProgram","parseFormat0","parseFormat12","parseFormat4","parseFormat6","parseFvarTable","parseGlyfTable","parseGlyphData","parseHeadTable","parseHheaTable","parseHmtxTable","parseIHDR","parseIndex","parseJSONString","parseJpegHeader","parseLocaTable","parseMarkedContentProps","parseMaxpTable","parseNameTable","parseNestedOrder","parseOS2Table","parseOnOff","parseOperand","parseOrder","parsePdfDate","parsePermissions","parsePfb","parsePng","parsePostScriptFunction","parsePostTable","parseRBGroups","parseRevision","parseSimpleFont","parseSimpleGlyph","parseStatTable","parseSubtable","parseSvgPath","parseTTF","parseToUnicode","parseToUnicodeMap","parseType1","parseVersion","parseVersion2","parseWMode","parseXFAPath","parsed","parsedEntries","parsedKey","parsedSID","parsedValue","parser","parserArray","partialChunkHeight","partialName","partialPhi","partials","parts","passArray8ToWasm0","passedWhenNotRevValues","password","passwordBuffer","passwordBytes","passwordString","passwordTransformed","passwordUtf8","passwordView","paste","pasteEnd","patchByteRange","patchContents","path","pathArr","pathByColumnId","pathById","pathDepth","pathElement","pathEntry","pathId","paths","pattern","patternArray","patternCtx","patternDifference","patternFill","patternFound","patternLength","patternName","patternStroke","payload","paymentRadio","pb","pbeParams","pbes2Parameters","pbkdf2Key","pbkdf2OID","pbkdf2Params","pbkdfKey","pc","pc1","pdf","pdfBug","pdfButtonValue","pdfBytes","pdfCatalog","pdfDoc","pdfFieldByName","pdfFieldId","pdfFieldName","pdfFieldNames","pdfFields","pdfFont","pdfManagerReady","pdfRegex","pdfSigningInfo","pdfString","pdfValues","pdf_signing_dialog_exports","pdf_signing_worker_generated_default","pdf_text_flow_exports","peekBits","peekToken","pendingAction","pendingConstraints","pendingDependencies","pendingNibble","pendingRequest","percentage","perform","permanent","permissions","permissionsRaw","permittedSubtrees","perms","permute","pf","pfbdata","pfx","phi","pieceView","pix","pixels","pkcs5","pkcs8Asn1","pkcsKey","pki","placeWord","placeholders","placements","plain","plainBytes","planRows","planTableOverflow","plans","plural","plus","point","pointCount","pointerDownAC","pointerUpCallback","pointerup","points","policiesAndCerts","policyId","policyIndex","policyMappingInhibitIndicator","policyMappingInhibitPending","policyMappings","policyResult","poly","polyline","pop","popGraphicsState","popup","popupAnnotations","popupContent","popupDict","popupLeft","popupLines","popupRef","popupToElements","popupTop","popups","port","pos","pos1","pos2","posBuffer","position","positionMapCount","positioned","positiveOnly","post","postRun","postScriptName","postfix","potentialR","pow","pow2_24","power2","powers2","pqdownheap","preRun","precision","predefined","predicate","predictor","prefix","prefixBytes","prefixRef","prefixStream","prefs","prepare","prepareAlgorithm","prepareBlockEncrypt","prepareComponents","prepareIndefiniteForm","prepareObjectForWrite","prepared","preparedEntry","preparedTouched","preset","prev","prevBlock","prevChar","prevChild","prevData","prevEntry","prevGapX","prevGapY","prevHeight","prevIdToPageNumber","prevLength","prevPageNumbers","prevRow","prevWidth","prevX","preventDefault","preview","previewButton","previous","previousData","previousFocus","previousNode","previousWorker","prevlen","prfAlgorithm","prim","printWindow","printable","printed","printedRows","privateDict","privateDictData","privateDictOffset","privateDicts","privateEntry","privateKey","privateKeyASN1","privateKeyInfo","privateKeyJSON","privateOffset","privateSize","process2","processed","program","promise","promiseBody","promiseCapability","promiseResolve","promises","properErrorOnNonWritableLength","properties","propertyIsEnumerable","propertyIsEnumerableModule","propertyList","propertyName","props","proto","provider","pruneCompositeGlyphCycles","pruneNumberTree","pruneObjrKids","ps","ps0","pssParameters","publicKey","publicKeyASN1","publicKeyAlgorithm","publicKeyAlgorithmParams","publicKeyBase64","publicKeyData","publicKeyInfo","publicKeyInfoBuffer","publicKeyJSON","publicKeyJWK","pullCapability","pump","push","pushGraphicsState","pushWhitespace","putBinaryImageData","putBinaryImageMask","putShortMSB","put_byte","put_short","pvtsutils","pvtsutils2","px","py","q","qStream","qa","qcms_convert_array","qcms_convert_four","qcms_convert_one","qcms_convert_three","qcms_drop_transformer","qcms_transformer_from_memory","qp","quadPoints","quaddingToAlignment","quadraticCurveTo","quads","quantizeAndInverse","queue","quote","quoted","quotient","quotindex","r","r0","r1","r2","r3","rBuffer","rHeight","rInteger","rTlX","rTlY","rValueView","rView","rWidth","ra","rab","rad","radial","radians","radius","radix","random","randomBytes","range","rangeChunkSize","rangeEnd","rangeHeader","rangeMappings","rangeMatch","rangeOffset","rangeReader","rangeShift","rangeStart","rangeTransport","rangeValues","ranges","rank","ratio","ratioX","ratioY","raw","rawLength","rawResponseHeaders","rawStrings","rawValue","rc4","rc4Key","rd","reachableKeys","read","readBit","readBits","readBlockLength","readCmapTable","readCode","readComplexHuffmanCode","readData","readDataBlock","readEntry","readFewBits","readHuffmanCode","readHuffmanCodeLengths","readInput","readManyBits","readMetablockHuffmanCodesAndContextMaps","readMetablockPartition","readMoreInput","readNameTable","readNextMetablockHeader","readOpenTypeHeader","readPostScriptTable","readSimpleHuffmanCode","readStream","readSupplement","readSymbol","readTableEntry","readTables","readToken","readTrueTypeCollectionData","readTrueTypeCollectionHeader","readUint","readUint32BE","readValuePath","read_buf","readableStream","reader","receive","receiveAndExtend","receiveInstance","recipientCertificate","recipientCurveLength","recipientIdentifier","recipientInfo","recipientInfoParams","recipientKey","reconstructEncryptDict","reconstructedDict","record","recordForDebugger","recordType","recordedBBoxes","records","recordsData","recoverGlyphName","recoverJsURL","recoverSigned16BitBBox","recoveryOptions","rect","rectHeight","rectPathOps","rectToArray","rectToQuadPoints","rectWidth","rectangle","rectsToQuadPoints","red","reducedPoints","ref","refKey","refKey2","refRow","refStr","refs","refsToRemove","regex","region","registerFontObjects","registry","regular","reject","relation","relativeIndex","reload","remainder","remaining","remainingAttachments","remainingBytes","remainingChars","remainingKeys","remainingLen","remapped","rememberToken","remove","removeAnnotationsFromStructTree","removeEmptyEntry","removeMatchingEntry","removed","removedBeforeTarget","removedKeys","removedWidgetRefs","renderActionButton","renderButton","renderPass","renderRichText","renderRowTemplate","renderSigningPreview","renderTask","rendered","renderingIntent","renumberMap","renumberRef","renumberRefs","renumbered","renumberedEncrypt","renumberedInfo","renumberedRoot","repeatCount","replace","replaceBackdrop","replacePreview","replaced","replacement","replacerFunction","replicateValue","request","requested","require2","requireObjectCoercible","require_build","requiredNameForms","requiredSize","res","reservePageSlot","resetAnnotations","resetCtxToDefault","resetLastChars","resize","resizeRgbImage","resizeRgbaImage","resolve","resolveAppearanceFont","resolveCompositeTextFlowSlots","resolvePageSize","resolvePath","resolvePdfTextFlowSlot","resolveRotationOrigin","resolved","resolvedPdfSource","resolver","resources","resourcesDict","responderCerts","response","responseHeaders","responseOrigin","restoreNeeded","result","result2","resultBuffer","resultOffset","resultString","resultView","results","ret","retBuf","retBuf2","retBuffers","retView","retView2","returnMethod","returnObject","reverseValues","reversedStops","reviewAndSignPdf","revision","rfc2047decode","rfc2231getparam","rfc2616unquote","rfc5987decode","rgb","rgb2","rgbMatch","rgba","rhs","richText","right","rightDate","rightIsFormId","rightPatterns","rmAbort","ro","root","rootClass","rootDiv","rootHtml","rootRef","rosOperands","rotate","rotateDegrees","rotateLeft28","rotateOriginX","rotateOriginY","rotation","rotationAngle","rotationMatrix","rotator","rotators","rotl","rotl2","rotl32_8","rotlBH","rotlBL","rotlSH","rotlSL","rotr","rotr2","rotr32H","rotr32L","rotr32_8","rotrBH","rotrBH2","rotrBL","rotrBL2","rotrSH","rotrSH2","rotrSL","rotrSL2","round","roundToOneDecimal","roundWithTwoDigits","rounded","roundedRectPathOps","rounds","row","rowBytes","rowCount","rowData","rowIndex","rowLabel","rowMapping","rowStart","rowWidth","rows","rowsPrinted","rowsText","rsaOAEPParams","rsaPssPublicKeyJSON","rsaPublicKeyJSON","rule","run","run1","run2","runBidiTransform","runLength","runValue","runner","runs","runtime_entry_exports","rv","rx2","ry2","s","s0","s0h","s0l","s1","s1h","s1l","s1x","s1y","s2x","s2y","sBuffer","sCtx","sInteger","sValueView","sView","sa","safe","safeContent","safeContents","safeContentsCount","safeContentsParams","salt","saltBuffer","saltLength","saltValue","saltView","sample","sanitize","sanitizeGlyph","sanitizeGlyphLocations","sanitizeHead","sanitizeMetrics","sanitizeTTProgram","sanitizeTTPrograms","saslPrep","save","saveEditor","saveLastChar","saved","savedColor","savedCtx","savedCursor","savedDisplay","savedDraggable","savedEditorsByPage","savedFillStyle","savedFilter","savedFontsize","savedHeight","savedKnockoutLevel","savedOpacity","savedParentCursor","savedPos","savedPosition","savedSMaskCtx","savedText","savedValue","savedVisibility","savedWidth","savedX","savedY","sb","sbox","sbox22","sboxOut","sboxVal","scale","scale01","scale10","scaleAndClamp","scaleCharBBox","scaleResult","scaleSteps","scaleX","scaleY","scaled","scaledAccentX","scaledAccentY","scaledEntry","scaledHeight","scaledLineWidth","scaledPath","scaledRx","scaledRy","scaledWidth","scaledXLineWidth","scaledYLineWidth","scan","scan_end","scan_end1","scan_tree","scanner","schema","schemaView","scratchCanvas","screenPanX","screenPanY","script","scriptTag","scripts","sd","searchAnyPolicy","searchLimit","searchNode","searchPage","searchRange","searchStart","searchText","second","secondInt","secondNum","secondPoint","secondView","secondViewCopy","secondViewCopyLength","secondX","secondY","seconds","section","security","securityHandler","seen","seenSerials","seg","segCount","segDelta","segEnd","segStart","segmentAngle","segmentLength","segmentRangeOffset","segments","selStart","selectChild","selectElement","selectFont","selected","selectedContent","selectedCount","selectedIndices","selectedTextLayers","selectedValue","selectedValues","selection","selectionStyle","self","self2","sendTest","send_all_trees","send_bits","send_code","send_tree","sentinel","separateGrayAlpha","separateRgbAlpha","seq","seqStream","sequenceLengthBlock","sequenceUnit","sequenceValue","serial","serialDer","serializeFontFamily","serializeOperators","serialized","serializedLines","serializedPoints","sessionKey","set","setAccess","setArrayLength","setBigUint64","setCanvasName","setColor","setCombOffset","setDash","setDashPattern","setData","setEngine","setFillColor","setFillColor$1","setFirstUnsplittable","setFont","setFontFamily","setFontsize","setFromBase64","setFromHex","setGraphicsState","setInternalState","setLayerDimensions","setLeading","setLike","setLineCap","setLineJoin","setLineWidth","setMethodAcceptSetLike","setMethodGetKeysBeforeCloning","setMinMaxDimensions","setMiterLimit","setNonStrokingCMYK","setNonStrokingColorN","setNonStrokingColorSpace","setNonStrokingGray","setNonStrokingRGB","setPara","setPrototypeOf","setStrokeColor","setStrokeColor$1","setStrokingCMYK","setStrokingColorN","setStrokingColorSpace","setStrokingGray","setStrokingRGB","setTabIndex","setText","setTextMatrix","setU64FromNum","setVerbosityLevel","setter","setupDoc","sf","sha1","sha12","sha256","sha2562","sha384","sha3842","sha512","sha5122","shaAlgorithm","shaderModule","shadingName","shadingType","shadow","shapeMaskEntry","shared","sharedKey","sharedSecret","sharedTextDecoder","shift","shiftI","shiftJ","shiftX","shiftY","shiftedMinX","shiftedMinY","shortcut","shortcuts","shortestIndex","shortestLength","shouldAddWhitepsace","shouldCheck","shouldRecordImages","shouldRecordOperations","shouldScaleText","showPopup","showText","shownFontName","shownFontSize","shownTextColor","shrSH","shrSH2","shrSL","shrSL2","sid","sidBlock","sidStr","sidValue","sig","sigAlgOid","sigDict","sigField","sigFields","sigLen","sigRefs","sigma","sigma0","sigma0h","sigma0l","sigma1","sigma1h","sigma1l","sigmaPrime","sigmaR2","sigmaS2","sign","signChar","signPdfWithCertificate","signal","signature","signatureAlgorithm","signatureCount","signatureDict","signatureFields","signatureHash","signatureLength","signatureParameters","signatureParams","signatureRef","signatureValue","signed","signedAttr","signedAttrs","signedAttrsForSigning","signedData","signedFields","signedInt16","signer","signerCert","signerInfo","signerInfoHashAlgorithm","signingCert","signingCertDer","signingCertV2","simple","simpleFillText","simpleFont","sin","sin1","sin2","sinPhi","single","size","sizeDiff","skipAsciiWhitespace","skipData","skipSignatures","skipToEI","skipUntil","skipWs","skipped","skippedFieldCount","slice","slide_hash","slope","slots","slowDownFactor","small","smallInt","smallIntBuffer","smallIntView","smaller","smask","smaskStream","snapshotBox","some","someWithoutClosingOnEarlyError","something","sorted","sortedCids","sortedGids","sortedStops","sortedTables","soundStreamToWav","source","sourceAlpha","sourceCompositeOperation","sourceData","sourceFieldId","sourceFilter","sourceId","sourceIdx","sourceIndex","sourceLines","sourceName","sourcePage","sourcePages","sourcePixels","sourceValue","sourceValues","sourceWasEncrypted","sources","space","spacePerGap","spaceThreshold","spaceWidth","spacing","spacingDir","span","spans","spliceString","split","split2","split3","spos","sq","sqrtDelta","sqrtLambda","square","squiggly","sr","src","src32","srcCode","srcEntry","srcLength","srcObj","srcPage","srcPos","srcResources","srcX","srcY","stack","stamp","standardFontDataUrl","start","startCapability","startCell","startCharIndex","startCid","startCode","startCodes","startGlyph","startIndex","startMissing","startPage","startPos","startTextLayer","startWorkerTask","startX","startXRef","startY","started","started2","startxrefPos","state","stateEntry","stateKey","stateStack","states","static_dtree","static_init_done","static_ltree","stats","status","statusElement","step","steps","stmData","stop","stopEvent","stopTouchEvent","stops","storage","store","storedData","storedHash","storedValue","str","strBuf","strLen","strLength","strToInt","strategy","stream","streamController","streamEntries","streamEntry","streamId","streamKeywordPosition","streamObj","streamOrder","streamParser","streamRef","streamResult","streamSink","streamType","streamViewLength","stree","strend","stride","strikeout","strikeoutPosition","strikeoutSize","string","string2buf","string32","stringBlockNames","stringBytes","stringDataSize","stringIndex","stringLength","stringMatch","stringOffset","stringPrep","stringSlice","stringStorageStart","stringToArrayBuffer","stringToAsciiOrUTF16BE","stringToBytes","stringToPDFString","stringToUTF16HexString","stringToUTF16String","stringToUTF8String","stringToken","stringValueOf","stringify","stringifyWithProperSymbolsConversion","strings","stringsLength","stripPath","stripQuotes","stripSoftHyphens","stripe","strippedCms","strm","stroke","strokeColor","strokePatternName","structParent","structTreeRoot","style","styleElement","styleLength","styleSheet","subByte","subFilter","subRange","subarrayView","subdict","subfamilyNameId","subject","subjectAltNames","subjectDomainPolicyIndex","subjectView","subkeys","submit","subrsOffset","subscriptXOffset","subscriptXSize","subscriptYOffset","subscriptYSize","subsections","subsetFont","subsetResult","subsetTag","subsetter","subtable","subtableLength","subtables","subtitle","subtleArg","subtype","subtypeName","success","suffixBytes","suffixRef","suffixStream","sum","sumPrecise","superscriptXOffset","superscriptXSize","superscriptYOffset","superscriptYSize","supplement","surrogates","suspendedCtx","svg","swap32IfBE","swatch","sx","sy","sym","symbol","symmetricDifference","sysInfoDict","systemFontInfoData","systemFontInfoLength","t","t0","t02","t0x","t0y","t1","t12","t1x","t1y","t2","t22","t3","t32","tRNS","table","tableChecksums","tableData","tableDecoding","tableEncoding","tableEnd","tableEntry","tableId","tableIndex","tableLength","tableRecords","tableRowCount","tableStart","tableTag","tables","tag","tagByteIndex","tagBytes","tagClassMask","tagNumberMask","tagl","tail","tailLength","take","takeWithoutClosingOnEarlyError","target","targetAction","targetColor","targetState","targetStateName","targetWidget","targets","task","tbs","tbsCertList","tbsCertificate","temp","tempBuf","tempCtx","tempDate","tempEntry","tempValue","tempValueView","tempView","template","temporaryPatternCanvas","termTable","terminateEarly","terminated","test","testFont","testLine","testObj","testWidth","text","textBlockFillColor","textBlockFontName","textBlockFontSize","textColor","textContent","textDiv","textDivProperties","textDivs","textEncoder","textFlowValues","textHScale","textIndex","textInputChecker","textLayer","textLayerData","textMatch","textRenderingMode","textSinkWrapper","textToCharMap","textWidth","textX","textY","textdecode","texture","thX","thY","that","theta1","thickness","third","thisName","thisNumberValue","thisRaw","threshold","throwsOnLengthTrackingView","tildePos","tileHeight","tileIdx","tileWidth","tilingDims","timeBuffer","timeString","timeView","timeout","timeoutId","timestamp","timestampCerts","timestampDict","timestampRef","timestampSerial","timestampStream","timestampToken","timestampsData","tipX","tipY","title","titleLines","titleSize","tlX","tlY","tmRotated","tmScale","tmax","tmp","tmp32","tmpCanvas","tmpCanvas2","tmpCtx","tmpCtx2","tmpDict","toAbsoluteIndex","toAdd","toArray","toArrayBuffer","toBase64","toBase642","toBeSigned","toBig","toBigInt","toBytes","toClean","toCopy","toHex","toHex4","toHexDigit","toIndexedObject","toIntegerOrInfinity","toLength","toNameSet","toNameSet2","toNumberArray","toObject","toOrderedPair","toParamRegExp","toPositiveInteger","toPrimitive","toPropertyKey","toRaw","toRemove","toRomanNumerals","toStr","toString","toString$1","toString2","toStyle","toUnicode","toUnicodeData","toUnicodeHex","toUnicodeMap","toUnicodeRef","toUnicodeStream","toUsAsciiBytes","toUtf8Runes","togglePopup","token","tokenStart","tokenizer","tokens","tooltip","top","top1","top2","topDict","topDictData","topDictIndex","topIndex","topY1","topY2","total","totalByteLength","totalChunks","totalFlattened","totalLen","totalLength","totalLength2","totalLines","totalOut","totalPairs","totalPixels","totalSize","totalWidth","totalWordWidth","touchIds","touchInfo","touched","touches","tr","trX","trY","tr_static_init","trailer","trailerLength","trailingSurrogates","trans","transf","transfCenterPoint","transfOppositePoint","transform","transformDictionaryWord","transformX","transformY","transformedBBox","transformedCorners","translateX","translateY","translation","transparency","transparentCanvas","transport","transportFactory","transportParams","transport_stream_getArrayBuffer","trapped","tree","treeRef","trees","triggers","trimHeadersEnd","trimmed","tripleDesBlock","triplet","trunc","truncatePassword","truncatePdfTextFlow","truncatedPassword","trustedCerts","tryAutoDetectFontFile3","tryEmptyPassword","tryGet","tryParseFontFile","tryParseFontFile2","tryParseFontFile3","tryToString","tsToken","tsVriKey","tsa","tsaCerts","tsaSignerCert","tt","ttf","ttt","tuVal","twoChars","twosum","tx","tx2","ty","ty2","type","type1FontGlyphMapping","typeByte","typeEntry","typeName","typeNames","typeStore","typeToEditor","typeWidth","typeface","types","typical","typicalCharWidth","typoAscender","typoDescender","typoLineGap","tzChar","tzHour","tzMin","tzOffset","u","u32","u64","u64_default","ua","uf","uid","uint8Buf","uintArray","ukmBuffer","ukmView","unconfirmed","uncurryThis","uncurryThisAccessor","uncurryThisWithBind","underline","underlinePosition","underlineThickness","undo","unencodable","unfilterAndExtract","unfilterRow","unfiltered","ungzip$1","ungzip_1","unicode","unicodeHex","unicodeRange1","unicodeRange2","unicodeRange3","unicodeRange4","unicodeToCharCodeMap","unicodeToGlyphName","unicodes","uniformBuffer","union","unique","units","unitsHeight","universalTimeRelation","unixSeconds","unmodified","unpackCommandLookupTable","unpackDictionaryData","unpackLookupTable","unpackTransforms","unprotectedBytes","unreachable","unsafeInt","unsetFirstUnsplittable","unsignedLEB128","unterminated","unwrapSessionKey","up","upLeft","update","updateAcroform","updateAdvanceScale","updateControls","updateMemoryViews","updatePassword","updateUrlHash","updateXFA","updatedView","updatewindow","upper","uri","url","url2","urlString","urls","use","use1","use2","useIncremental","useLayerSize","useParentRect","useSystemFonts","useWasm","useWorkerFetch","useXRefStream","used","usedIds","usedLines","usedPageNumbers","userAgent","userConstrPolicies","userHash","userKey","userKeyData","userPassword","userResult","usesXRefStreams","utcDate","utf16buf","utf8PasswordToBytes","utf8StringToString","utf8ToBytes","utf8border","utf8str","utilConcatBuf","utilConcatView","utilDecodeTC","utilEncodeTC","utilFromBase","utilToBase","ux","uy","v","v8","val","valid","validDefaults","validate","validateAesKey","validateArgumentsLength","validateBlockDecrypt","validateBlockEncrypt","validateCSSFont","validateFollowingOperator","validateFontName","validateKeyLength","validateOS2Table","validatePKCS","validateRangeRequestCapabilities","validateTables","validateVersionRevision","validation","validationSalt","value","value1","value2","valueBER","valueBlock","valueBlockBuf","valueBuf","valueExists","valueHex","valueHexView","valueIndex","valueLength","valueMaximum","valueMinimum","valueNameId","valueResult","valueToHtml","valueToken","valueView","values","valuesByField","vec","vendorBytes","verbosity","verbosity2","verificationResult","verifyOwnerPassword","verifyOwnerPasswordR56","verifyPermsEntry","verifyResult","verifyUserPassword","verifyUserPasswordR56","version","version2","versionStart","versions","vertical","verticalRadius","verts","vi","view","view1","view2","view32","viewAdd","viewHex","viewSub","viewerAlert","viewport","virgin","visible","visibleRow","visited","vmetric","vri","vriEntry","vriKey","vx","vy","w","w0","w1","w1Val","w2","w2Val","w3","wArray","waitOn","walk","walkNode","wantsIncremental","warn","warningCount","warnings","wasIndirect","wasOwned","wasTracking","wasmUrl","watermark","waveHeight","waveLength","weakmap","web_dom_exception_stack","web_url_parse","weight","weightClass","weightLength","weights","wellKnownSymbol","wf","wh","white","white2","whiteMakeup","whiteTerminating","whole","widest","widget","widgetDict","widgetRef","widgetRefKeys","widgetRefs","widgets","width","width2","widthAdvanceScale","widthArray","widthClass","widthEntriesToPdfArray","widthInSource","widthItem","widthRemainder","widthScale","widthStr","widths","widthsArray","winAscent","winDescent","winName","winPixels","withCredentials","withoutSlash","wl","wmask","wmodeMatch","word","wordBytes","wordCharPattern","wordSpacing","wordStart","wordWidth","words","worker","workerHandler","workerIdPromise","workerUrl","wrCipher","wrap","wrapCipher","wrapConstructor","wrapPathOps","wrapReason","wrapText","wrapTextToWidth","wrappedCipher","wrappedKey","wrapper","write","writeArray","writeBytes","writeChanges","writeComplete","writeDict","writeEntry","writeIncremental","writeIndirectObject","writeInt","writeLineToCurveToAppearance","writeObject","writeOperand","writeRingBuffer","writeSignedInt16","writeStream","writeString","writeUint32","writeValue","writeXFADataForAcroform","writeXRefStream","writeXRefTable","writer","writer2","written","ws","wsize","x","x0","x1","x1_","x1p","x1p2","x2","x22","x2_","x3","x4","xConvertBuffer","xCoordinates","xHigh","xLow","xMax","xMaxExtent","xMin","xObjectIndex","xObjectName","xObjects","xPowers","xScale","xSize","xStrokePad","xTranslate","xa","xhr","xhrStatus","xk","xn","xobjectName","xobjects","xorMask","xref","xrefData","xrefObjNum","xrefOffset","xrefParser","xrefStmOffset","xs","y","y0","y1","y1p","y1p2","y2","y3","y4","yConvertBuffer","yCoordinates","yFlip","yHigh","yLow","yMax","yMin","yScale","ySize","yStrokePad","yTranslate","year","yf","yr","ys","z","zapfDingbatsDict","zero","zero$1","zl","zoom","zstream","zswap32"],
   './PdfTextFlowField/index.jsx': ["HELVETICA_ASCII","HELVETICA_EXTRA","HELVETICA_FALLBACK","NUMBER_START","PDF_TEXT_FLOW_TRUNCATION_MARK","PdfTextFlowField","PdfTextFlowFieldLayout","SOFT_HYPHEN","TYPICAL_TEXT","UNIT_WORD","WRAP_LOSS_CHARS","__copyProps","__defProp","__export","__getOwnPropDesc","__getOwnPropNames","__hasOwnProp","__toCommonJS","before","best","box","breakInside","chars","code","color","consumed","count","current","cut","dropped","estimatePdfTextFlowCapacity","fits","fitsOn","fontSize","forceSplit","full","glued","hasText","head","hideOnPrint","i","index","isLetter","joined","last","layout","layoutPdfTextFlow","lineBreaks","lines","measureHelvetica","message","notPrinted","offset","over","overflowAt","p","paragraph","paragraphs","pattern","pdf_text_flow_exports","placeWord","prefix","previous","printed","raw","remainingChars","resolveCompositeTextFlowSlots","resolvePdfTextFlowSlot","runs","seen","slots","snapshotBox","source","space","stripSoftHyphens","text","tokens","truncate","truncatePdfTextFlow","typicalCharWidth","units","used","usedLines","whole","width","word","wordStart"],
   './PlannedActions/index.jsx': ["PlannedActions","PlannedActionsFields","plannedActionsActiveOnly","plannedActionsColumns"],
   './ReferralSource/index.jsx': ["ReferralSource","codeSystem","defaultValue","optionList","referralValueSet","sd"],
   './RelationshipStatus/index.jsx': ["RelationshipStatus"],
-  './RepeatForEachTable/index.jsx': ["DEFAULT_WINDOW_HOURS","LABEL_COLUMN_ID","LABEL_KEY","RepeatForEachTable","STATUS_COLUMN_ID","STATUS_KEY","STATUS_TEXT","STATUS_TEXT_KEY","actor","actorFrom","addCard","addHoursIso","allowDeleteRows","allowManualRows","answerColumns","answers","applyComputed","authorshipActive","authorshipPolicy","base","baseColumns","baseKey","blankRow","bodies","buildColumns","buildKey","burst","burstRef","byKey","byRow","c","canAddCard","canDelete","candidate","cardColumns","cardsUnsupportedReason","cellAnswered","changed","choiceCoding","choiceForControl","choiceForStorage","choiceOptions","ck","claim","claimed","claims","code","coerceNumber","columnPath","columnVisible","columns","commitSave","complete","completion","computed","config","configSignature","confirmPendingDelete","copy","countPath","counter","current","currentPlain","currentRaw","d","data","dateCellValue","defaultCellValue","deleteCard","direct","displayColumn","displayTextKey","editableUntil","emptyText","euDate","existing","expired","fieldData","fieldId","filterPasses","flat","formatCell","formatText","formatTimestamp","formulaPolicy","formulaValue","getPath","handleRowsChange","hasRowMeta","heading","helpers","id","ids","index","isComputedColumn","isDarkMode","isFormulaColumn","isInjectedColumn","isMeaningful","isModalMode","isMultipleChoice","isNonEmpty","isOwner","keepStatus","key","label","labelTarget","labels","left","list","live","liveKeys","liveSource","lockExpired","lockInfo","lockOn","locked","lockedUntil","makeRowId","manual","maxRows","mirrorRows","mirrorValue","multiple","mutedColor","needsSync","next","nextStatus","noItems","normalizeRows","normalizeStore","notifyRowsChange","now","nowIso","numberSettings","numeric","onValue","option","options","orphanPolicy","ownerId","ownerName","ownerRefresh","pad2","pass","path","pending","pick","policy","policyAppliesToAction","precision","prepareSave","previousRows","questionColumns","raw","readSourceRows","readStore","release","removed","renderCard","renderCardControl","renderCards","rendered","repeatConfig","repeatFor","requiredColumns","resolveNow","result","reused","right","row","rowAnswered","rowComplete","rowId","rowIdsByKey","rows","rowsPath","rule","sameActor","section","seen","segments","setPath","setter","settings","showCards","showGrid","showLabel","showStatus","signature","source","sourceDriven","sourceRowHasContent","sourceRows","sourceSignature","spin","spinButtonProps","stableStringify","status","statusColor","statusColumnShown","statusPath","store","syncOptions","syncRows","syncTableInPlace","syncTablesInPlace","synced","t","target","targetRows","targetSignature","templateValue","text","textColor","theme","toSegments","toText","translate","translated","trimmed","ts","untilSelf","value","values","windowHours","wording","writeCardCell","writeCell","writeRowsRecipe","writer","wrote"],
+  './RepeatForEachTable/index.jsx': ["DEFAULT_WINDOW_HOURS","LABEL_COLUMN_ID","LABEL_KEY","RepeatForEachTable","STATUS_COLUMN_ID","STATUS_KEY","STATUS_TEXT","STATUS_TEXT_KEY","actor","actorFrom","addCard","addHoursIso","allowDeleteRows","allowManualRows","answerColumns","answers","applyComputed","authorshipActive","authorshipPolicy","base","baseColumns","baseKey","blankRow","bodies","buildColumns","buildKey","burst","burstRef","byKey","byRow","c","canAddCard","canDelete","candidate","cardColumns","cardsUnsupportedReason","cellAnswered","changed","choiceCoding","choiceForControl","choiceForStorage","choiceOptions","ck","claim","claimed","claims","code","coerceNumber","columnPath","columnVisible","columns","commitSave","complete","completion","computed","config","configSignature","confirmPendingDelete","copy","countPath","counter","current","currentPlain","currentRaw","d","data","dateCellValue","defaultCellValue","deleteCard","direct","displayColumn","displayTextKey","editableUntil","emptyText","euDate","existing","expired","fieldData","fieldId","filterPasses","flat","formatCell","formatText","formatTimestamp","formulaPolicy","formulaValue","getPath","handleRowsChange","hasRowMeta","heading","helpers","id","ids","index","isComputedColumn","isDarkMode","isFormulaColumn","isInjectedColumn","isMeaningful","isModalMode","isMultipleChoice","isNonEmpty","isOwner","isRequiredColumn","keepStatus","key","label","labelTarget","labels","list","live","liveKeys","liveSource","lockExpired","lockInfo","lockOn","locked","lockedUntil","makeRowId","manual","maxRows","mirrorRows","mirrorValue","multiple","mutedColor","needsSync","next","nextStatus","noItems","normalizeRows","normalizeStore","notifyRowsChange","now","nowIso","numberSettings","numeric","onValue","option","options","orphanPolicy","ownerId","ownerName","ownerRefresh","pad2","pass","path","pending","pick","policy","policyAppliesToAction","precision","prepareSave","previousRows","questionColumns","raw","readSourceRows","readStore","release","removed","renderCard","renderCardControl","renderCards","rendered","repeatConfig","repeatFor","required","requiredColumns","resolveNow","result","reused","row","rowAnswered","rowComplete","rowId","rowIdsByKey","rows","rowsPath","sameActor","section","seen","segments","selected","setPath","setter","settings","showCards","showGrid","showLabel","showStatus","signature","source","sourceDriven","sourceRowHasContent","sourceRows","sourceSignature","spin","spinButtonProps","stableStringify","status","statusColor","statusColumnShown","statusPath","store","syncOptions","syncRows","syncTableInPlace","syncTablesInPlace","synced","t","target","targetRows","targetSignature","templateValue","text","textColor","theme","toSegments","toText","translate","translated","trimmed","ts","untilSelf","value","values","windowHours","wording","writeCardCell","writeCell","writeRowsRecipe","writer","wrote"],
   './RichMarkdownBlock/index.jsx': ["HAS_REACT_MARKDOWN","HAS_REHYPE_RAW","HAS_REMARK_GFM","INLINE_PATTERN","MarkdownSegment","PreviewMarkdownRenderer","RichMarkdownBlock","TEXT_COLOR_SPAN_PATTERN","align","asset","baseComponents","buffer","cellAlignment","cells","char","content","current","cursor","defaultRehypePlugins","defaultRemarkPlugins","effectiveFieldId","endsWithColon","escapeMarkdownLinkLabel","extra","extraPlugins","flush","fullWidthStyle","hasVisibleChildren","header","i","imageById","imageId","inFence","index","isTableDelimiterRow","key","lastIndex","line","lines","linkStyle","marginTop","match","mergedMarkdownProps","mois","moisLinkWrapperStyle","moisModule","next","nodes","normalizeMoisLinks","normalizeTextColors","numericWidth","parseMoisHref","parseRichImageId","parseTextColorHref","parsedId","rawContent","renderInlineMarkdown","renderMoisLink","renderTableSegment","result","richImageStyle","rowLine","rows","safeRichImageSource","safeSrc","segments","source","splitMarkdownSegments","splitTableRow","src","startsWithColon","tableStyle","tableWrapperStyle","tdStyle","textColor","thStyle","theadStyle","trStyle","trimmed","width"],
   './SaveOnClose/index.jsx': ["DEFAULT_WINDOW_HOURS","SaveOnClose","_buildDefaultSavePayload","_nhAuthPrepareSave","_normalizeSaveOnCloseOptions","_stripComponentPayloads","_useChangeAwareDirtyState","actor","actorFrom","addHoursIso","baselineRef","buildKey","c","changed","ck","claim","claims","commitSave","current","d","data","dirtyRef","disabled","editableUntil","euDate","existing","expired","fieldData","formatTimestamp","isDirty","isNonEmpty","isOwner","keepStatus","key","label","lockExpired","lockInfo","lockOn","lockedUntil","markSaved","nextStatus","normalizeStore","normalizedOptions","now","nowIso","ownerId","ownerName","ownerRefresh","pad2","pending","policyAppliesToAction","prepareSave","prepared","raw","readStore","release","renderCountRef","resolveNow","sameActor","saveData","sd","store","trackedValue","ts","untilSelf","useSaveOnClose","windowHours"],
   './ScaleField/index.jsx': ["CHOICE_FIELD_STYLE","LABEL_COLUMN_STYLE","LABEL_STYLE","ScaleField","ScaleFieldEndpointLabels","ScaleFieldLegend","ScaleFieldTooltip","_getInlineMinWidth","_renderOptionTooltipContent","choiceGroupStyles","choiceOptions","containerStyle","currentData","fieldContent","firstDescription","handleChange","hasDescriptions","inlineMinWidth","isControlled","label","lastDescription","legendItemStyle","legendRowStyle","nextValue","normalizeControlledValue","normalizedTooltipMode","readOnly","scaleOptions","selectedKey","selectedOption","shouldShowAllTooltip","theme"],
@@ -50150,7 +50846,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './ServiceEpisodes/index.jsx': ["ServiceEpisodes","ServiceEpisodesFields","activeServiceEpisodes","startDateDesc"],
   './ServiceRequests/index.jsx': ["ServiceRequests","ServiceRequestsFields","activeServiceRequests","orderDateDesc"],
   './SignaturePad/index.jsx': ["B","D","L","O","SignaturePad","SignaturePadLib","T","U","W","_","__exports","a","c","canvas","canvasRef","container","containerRef","containerStyle","dataUrl","define","e","exports","f","h","handleClear","handleEndStroke","i","k","l","m","module","o","p","pad","padRef","r","ratio","readOnly","readOnlyImageStyle","resizeCanvas","s","savedDataUrl","t","theme","u","width","y"],
-  './SubformScoring/index.jsx': ["AnswerSummaryItem","CalculationSummaryItem","DataFieldSummaryItem","DataInterpretationSummaryItem","FormSessionProvider","InterpretationSummaryItem","MOIS_WRITE_ID_FALLBACK_PATHS","MOIS_WRITE_MUTATIONS","MOIS_WRITE_MUTATION_KEYS","ProgressSummaryItem","ScoreSummaryItem","SubformScoring","SubformScoringInner","_LOCAL_INPUT_STYLE","_LOCAL_RADIO_GROUP_STYLE","_LOCAL_TEXTAREA_STYLE","_REPORT_ITEM_FORMATS","__SubformScoringSessionContext","__cloneSubformScoringSessionValue","_applyMoisRecordShape","_buildDataEntryRenderGroups","_buildDataEntrySnapshot","_buildFormattedObservationReport","_buildMappedPayload","_buildScaleLegendSignature","_buildScaleOptions","_buildScoreMap","_buildSubformFormDataWrites","_buildSubformObservationReport","_buildSubformObservationUpdates","_calculationIncompleteBehavior","_calculationIncompleteText","_calculationPresentationValue","_clampDataEntryNumberValue","_collectScoreCandidates","_computeMorphineEquivalent","_createPreparedSessionSetter","_dataEntryFieldContainerStyle","_evaluateDataEntryVisibility","_evaluateExpression","_findQuestionOptionForAnswer","_formatBounds","_formatCalculatorDisplayValue","_formatNumericValue","_getInterpretation","_getScoreFromValue","_getSelectableOptionNumericValue","_getValueAtPath","_isHeadingField","_isInRange","_isLoincDataEntryField","_isMeaningfulValue","_isScaleChoiceSelected","_isSelectableOptionSelected","_latestObservationDefault","_moisLocalToday","_normalizeChartPreferenceValue","_normalizeScoreToken","_normalizeSelectableOptions","_optionMatchesValue","_recordSubformActionPayload","_resolveChecklistOptions","_resolveDataEntryDisplayValue","_resolveFieldDefaultValue","_resolveFieldEmptyNumericValue","_resolveFieldWidthBasis","_resolveObservationTemplate","_resolvePathValue","_resolveQuestionOptions","_resolveSelectableBinaryOptions","_resolveWriteActionId","_serializeSelectableValue","_setSubformFormDataOutputs","_setSubformObservationPayloads","_setValueAtPath","_shouldShowDataEntryHelpText","_stringifyObservationValue","_toDisplayValue","_toNumericValue","_toPathSegments","_usesStructuredSelectableOptions","abs","action","actionPayload","adjusted","aliases","allValues","allVars","answer","answerScore","answerableFields","answered","answers","aspect","barBg","barFill","base","baseDose","baseEquivalentDoseMg","baseEquivalentDoseRaw","basis","binding","blank","boundedPrecision","buttonRowStyle","cadFieldId","calc","calculatedExpressions","calculatedTotals","calculation","calculatorFields","candidate","candidateKeys","candidatePaths","candidates","ceil","checked","checkedFromConfig","checkedOption","checklist","cloneFormSessionState","code","codings","columnTemplate","commentsField","commonProps","componentPayloads","computedFallback","configuredDialogMinWidth","configuredField","configuredMatrixGroupId","configuredMax","configuredMin","container","containerStyle","contextRoot","contextSources","contextValues","controlLabel","controllerId","conversions","createdBy","ctx","current","currentSignature","cursor","dataEntryAction","dataEntryCalculations","dataEntryCalculatorConfig","dataEntryFieldById","dataEntryFields","dataEntryRenderGroups","dataEntrySnapshot","dataEntryValues","dateField","day","defaultValue","defaults","description","desiredDialogMinWidth","dialogContentProps","dialogMinWidth","dialogTitle","direct","displayText","displayValue","dose","doseColumnLabel","effectiveInitialData","entry","equivalentColumnLabel","equivalentDose","equivalentDoseMg","evaluated","existing","explicitDefault","expressionVars","extracted","factor","fallbackOptions","field","fieldExists","fields","fieldsForProgress","floor","flushMatrixBuffer","flushScaleStack","formDataWrites","formatted","fromCalculation","fromContext","functionNames","generatedIndex","generatedVars","getCalculationConfig","getDataEntryFieldConfig","getQuestionConfig","getTotalConfig","groups","handleCommitToParent","handleOpenChange","hasAnyAnswers","hasAnyRowValue","hasExternalDataEntryStore","hasRequiredId","heading","history","id","iif","input","inputFieldId","inputType","inputValue","interpretation","isComplete","isDarkMode","isDataEntryMode","isDialogOpen","isHeading","isMatrixCandidate","isMorphineCalculatorMode","isPrompt","isUpdate","key","label","labelStyle","latest","left","leftDate","lines","map","match","matched","matchedOption","matrixBuffer","matrixGroupId","max","meetsMax","meetsMin","meqCalculationId","meqDisplay","meqValue","mergeFormSessionState","min","minSymbol","missing","mod","modalProps","month","next","nextGroup","nextKey","nextOption","nextRaw","nextState","nextValue","normalize","normalized","normalizedButtonIconName","normalizedOptionMap","normalizedOptions","normalizedSessionData","normalizedType","normalizedValues","now","numeric","numericValue","numericValues","observationDefault","observationRows","observations","oldId","oldObservation","option","optionCount","optionList","optionMap","optionMatch","optionScoreMap","optionTokens","optionValue","options","parsed","payload","payloadMap","pendingDefaults","places","precision","precisionRaw","prepareCompletionState","prepared","preparedSession","prevIndex","previousEntry","previousField","previousScaleSignature","printScore","printed","progress","providedOptions","question","questionOptions","questionsById","raw","rawConfig","rawOptions","rawRows","rawType","rawValue","record","renderBloodGlucoseReadingEditor","renderDataEntryField","renderDataEntryScaleMatrix","renderDataEntryScaleStack","renderMorphineCalculator","renderNumberInput","renderStyle","renderSummaryItem","replacement","report","required","requiredFields","resolved","resolvedId","resolvedScore","response","result","resultColumnLabel","results","right","rightDate","root","round","rowId","rowLabels","rowValues","rows","rule","runMutation","runtime","scaleMatch","scaleOptions","scaleStack","scopedSetter","score","scoreMap","sd","segments","selected","selectedOption","selectedWithSetter","sessionContext","sessionSetFormData","sessionState","setDataEntryValue","setDialogOpen","setFormData","shaped","shouldClose","shouldHideButtonIcon","shouldUseDefaultButtonIcon","showCalculationsInModal","showItems","showLegend","showLegendForScale","showRequiredHint","signature","snapshot","source","sourceRoot","spec","stackMinWidth","stackedGroups","step","style","subformIncomplete","summaryContainerStyle","summaryItemsStyle","summaryLayout","target","termQuestionId","text","theme","titleCase","toCoding","toNumber","today","token","tokenMatches","total","totalCalculationId","totalFallback","totalFromCalculation","totalLabel","totalValue","totals","triggerButtonIconProps","trimmed","uncheckedFromConfig","uncheckedOption","uniqueTokens","usFieldId","useBloodGlucoseReadingLayout","useFormSessionData","useRadio","useToggleSwitch","value","values","variableFieldIds","variables","vars","widestScaleMinWidth","writeDefinition","writeKey","writeMutationRunners","year"],
+  './SubformScoring/index.jsx': ["AnswerSummaryItem","CalculationSummaryItem","DataFieldSummaryItem","DataInterpretationSummaryItem","FormSessionProvider","InterpretationSummaryItem","MOIS_WRITE_ID_FALLBACK_PATHS","MOIS_WRITE_MUTATIONS","MOIS_WRITE_MUTATION_KEYS","ProgressSummaryItem","ScoreSummaryItem","SubformScoring","SubformScoringInner","_LOCAL_INPUT_STYLE","_LOCAL_RADIO_GROUP_STYLE","_LOCAL_TEXTAREA_STYLE","_REPORT_ITEM_FORMATS","__SubformScoringSessionContext","__cloneSubformScoringSessionValue","_applyMoisRecordShape","_buildDataEntryRenderGroups","_buildDataEntrySnapshot","_buildFormattedObservationReport","_buildMappedPayload","_buildScaleLegendSignature","_buildScaleOptions","_buildScoreMap","_buildSubformFormDataWrites","_buildSubformObservationReport","_buildSubformObservationUpdates","_calculationIncompleteBehavior","_calculationIncompleteText","_calculationPresentationValue","_clampDataEntryNumberValue","_collectScoreCandidates","_computeMorphineEquivalent","_createPreparedSessionSetter","_dataEntryControllerKind","_dataEntryFieldContainerStyle","_evaluateDataEntryVisibility","_evaluateExpression","_findQuestionOptionForAnswer","_formatBounds","_formatCalculatorDisplayValue","_formatMissingRequiredMessage","_formatNumericValue","_getInterpretation","_getScoreFromValue","_getSelectableOptionNumericValue","_getValueAtPath","_isDataEntryFieldVisible","_isHeadingField","_isInRange","_isLoincDataEntryField","_isMeaningfulValue","_isScaleChoiceSelected","_isSelectableOptionSelected","_latestObservationDefault","_moisLocalToday","_normalizeChartPreferenceValue","_normalizeScoreToken","_normalizeSelectableOptions","_optionMatchesValue","_recordSubformActionPayload","_resolveChecklistOptions","_resolveDataEntryDisplayValue","_resolveFieldDefaultValue","_resolveFieldEmptyNumericValue","_resolveFieldWidthBasis","_resolveObservationTemplate","_resolvePathValue","_resolveQuestionOptions","_resolveSelectableBinaryOptions","_resolveWriteActionId","_serializeSelectableValue","_setSubformFormDataOutputs","_setSubformObservationPayloads","_setValueAtPath","_shouldShowDataEntryHelpText","_stringifyObservationValue","_toDisplayValue","_toNumericValue","_toPathSegments","_usesStructuredSelectableOptions","abs","action","actionPayload","adjusted","aliases","allValues","allVars","answer","answerScore","answerableFields","answered","answers","aspect","barBg","barFill","base","baseDose","baseEquivalentDoseMg","baseEquivalentDoseRaw","basis","binding","blank","blockOnMissingRequired","boundedPrecision","buttonRowStyle","cadFieldId","calc","calculatedExpressions","calculatedTotals","calculation","calculatorFields","candidate","candidateKeys","candidatePaths","candidates","ceil","checked","checkedFromConfig","checkedOption","checklist","cloneFormSessionState","code","codings","columnTemplate","commentsField","commonProps","componentPayloads","computedFallback","configuredDialogMinWidth","configuredField","configuredMatrixGroupId","configuredMax","configuredMin","container","containerStyle","contextRoot","contextSources","contextValues","controlLabel","controllerId","conversions","createdBy","ctx","current","currentSignature","cursor","dataEntryAction","dataEntryCalculations","dataEntryCalculatorConfig","dataEntryFieldById","dataEntryFields","dataEntryRenderGroups","dataEntrySnapshot","dataEntryValues","dateField","day","defaultValue","defaults","description","desiredDialogMinWidth","dialogContentProps","dialogErrorMessage","dialogMinWidth","dialogTitle","direct","displayText","displayValue","dose","doseColumnLabel","effectiveInitialData","entry","equivalentColumnLabel","equivalentDose","equivalentDoseMg","evaluated","existing","explicitDefault","expressionVars","extracted","factor","fallbackOptions","field","fieldExists","fields","fieldsForProgress","floor","flushMatrixBuffer","flushScaleStack","formDataWrites","formatted","fromCalculation","fromContext","functionNames","generatedIndex","generatedVars","getCalculationConfig","getDataEntryFieldConfig","getQuestionConfig","getTotalConfig","getVisibilityControllerValue","groups","handleCommitToParent","handleOpenChange","hasAnyAnswers","hasAnyRowValue","hasExternalDataEntryStore","hasRequiredId","heading","history","hostErrorMessage","hours","id","iif","input","inputFieldId","inputType","inputValue","interpretation","isComplete","isDarkMode","isDataEntryFieldShown","isDataEntryMode","isDialogOpen","isHeading","isMatrixCandidate","isMorphineCalculatorMode","isPrompt","isReadOnly","isUpdate","key","label","labelStyle","labels","latest","left","leftDate","lines","map","match","matched","matchedOption","matrixBuffer","matrixGroupId","max","meetsMax","meetsMin","meqCalculationId","meqDisplay","meqValue","mergeFormSessionState","mergeSessionIntoParent","min","minSymbol","minutes","missing","missingRequiredFields","mod","modalProps","month","next","nextGroup","nextKey","nextOption","nextRaw","nextState","nextValue","normalize","normalized","normalizedButtonIconName","normalizedOptionMap","normalizedOptions","normalizedSessionData","normalizedType","normalizedValues","now","numeric","numericValue","numericValues","observationDefault","observationRows","observations","oldId","oldObservation","option","optionCount","optionList","optionMap","optionMatch","optionScoreMap","optionTokens","optionValue","options","parsed","payload","payloadMap","pendingDefaults","places","precision","precisionRaw","prepareCompletionState","prepared","preparedSession","prevIndex","previousEntry","previousField","previousScaleSignature","printScore","printed","progress","providedOptions","question","questionOptions","questionsById","raw","rawConfig","rawOptions","rawRows","rawType","rawValue","record","renderBloodGlucoseReadingEditor","renderDataEntryField","renderDataEntryScaleMatrix","renderDataEntryScaleStack","renderMorphineCalculator","renderNumberInput","renderStyle","renderSummaryItem","replacement","report","required","requiredErrorMessage","requiredFields","resolved","resolvedId","resolvedScore","response","result","resultColumnLabel","results","right","rightDate","root","round","rowId","rowLabels","rowValues","rows","rule","runMutation","runtime","scaleMatch","scaleOptions","scaleStack","scopedSetter","score","scoreMap","sd","segments","selected","selectedOption","selectedWithSetter","sessionContext","sessionSetFormData","sessionState","setDataEntryValue","setDialogOpen","setFormData","shaped","shouldClose","shouldHideButtonIcon","shouldUseDefaultButtonIcon","showCalculationsInModal","showItems","showLegend","showLegendForScale","showRequiredHint","signature","snapshot","source","sourceRoot","spec","stackMinWidth","stackedGroups","step","style","subformIncomplete","summaryContainerStyle","summaryItemsStyle","summaryLayout","target","termQuestionId","text","theme","titleCase","toCoding","toNumber","today","token","tokenMatches","total","totalCalculationId","totalFallback","totalFromCalculation","totalLabel","totalValue","totals","triggerButtonIconProps","trimmed","type","uncheckedFromConfig","uncheckedOption","uniqueTokens","usFieldId","useBloodGlucoseReadingLayout","useFormSessionData","useRadio","useToggleSwitch","value","values","variableFieldIds","variables","vars","widestScaleMinWidth","writeDefinition","writeKey","writeMutationRunners","year"],
   './UnsavedChangesGuard/index.jsx': ["ButtonComponent","DCOUpdates","DEFAULT_WINDOW_HOURS","UnsavedChangesGuard","actionItems","actor","actorFrom","addHoursIso","baselineRef","buildDefaultSavePayload","buildDefaultSubmitPayload","buildKey","c","changed","ck","claim","claims","closeWindow","collectComponentPayloads","collectDomFieldValues","commitPreparedState","commitSave","componentPayload","confirmUnloadActive","current","d","data","dcoGroups","disabled","domFieldValues","editableUntil","encounterNotesSaved","euDate","existing","expired","field","fieldData","fieldId","footerActionItems","footerActions","formData","formatTimestamp","guardSkipsWhenSigned","handleAction","handler","hasLifecycleSignals","host","inputType","isNonEmpty","isOwner","isSettling","isSigned","isSubmitAction","keepStatus","key","label","lifecycle","linkedPanels","lockExpired","lockInfo","lockOn","lockedUntil","markSaved","mergeFieldValuesIntoState","narratives","nextStatus","nextValue","normalizeFooterActions","normalizeGuardActions","normalizeGuardValue","normalizeStore","now","nowIso","ownerId","ownerName","ownerRefresh","pad2","panelUpdates","panels","payload","payloads","pending","persistAction","persistFd","policyAppliesToAction","prepareSave","prepareStateForPersist","prepared","primaryAction","promptText","raw","readStore","release","renderFooterAction","resolveNow","sameActor","saveSettleRef","savedWebform","sd","secondaryActions","serializeGuardValue","store","stripComponentPayloads","submitSd","success","tagName","trackedSnapshot","trackedValue","ts","untilSelf","useHostConfirmUnload","values","warmupRef","webformGroups","webformUpdate","windowHours"],
   './UseChangeWatch/index.jsx': ["_defaultCompare","_normalizeWatchOptions","baselineRef","compare","delayCount","dirtyRef","disabled","forcedDirtyRef","isDirty","normalizedOptions","onDirtyChange","renderCountRef","setChanged","useChangeWatch"],
   './ValueSetObservationField/index.jsx': ["RuntimeCodedChoice","ValueSetObservationField"],
@@ -50191,7 +50887,7 @@ export const componentDependencies: Record<string, string[]> = {
   './CustomJsxBlock/index.jsx': [],
   './DentalWeightConverter/index.jsx': [],
   './DocumentSignButton/index.jsx': [],
-  './EditableTable/index.jsx': ["FormulaKit","SubformScoring"],
+  './EditableTable/index.jsx': ["FormLogicKit","FormulaKit","SubformScoring"],
   './EducationHistory/index.jsx': [],
   './Ethnicity/index.jsx': [],
   './FieldStampButton/index.jsx': [],
@@ -50216,7 +50912,7 @@ export const componentDependencies: Record<string, string[]> = {
   './HotspotMapField/index.jsx': [],
   './HttpJsonTestPanel/index.jsx': [],
   './InvestigationTabs/index.jsx': [],
-  './LayoutTable/index.jsx': ["FieldStampButton"],
+  './LayoutTable/index.jsx': ["FieldStampButton","FormLogicKit"],
   './LongTermMedications/index.jsx': [],
   './MirthListenerUtility/index.jsx': [],
   './MoisModuleLinkList/index.jsx': [],
@@ -50251,7 +50947,7 @@ export const componentDependencies: Record<string, string[]> = {
   './ServiceEpisodes/index.jsx': [],
   './ServiceRequests/index.jsx': [],
   './SignaturePad/index.jsx': [],
-  './SubformScoring/index.jsx': ["ConversionField","ComputedField","FormSessionRuntime","HotspotMapField","ScoringModule","ScaleField","FindCodeSelect"],
+  './SubformScoring/index.jsx': ["ConversionField","ComputedField","FormSessionRuntime","HotspotMapField","ScoringModule","ScaleField","FindCodeSelect","FormLogicKit"],
   './UnsavedChangesGuard/index.jsx': ["DocumentSignButton"],
   './UseChangeWatch/index.jsx': [],
   './ValueSetObservationField/index.jsx': ["CodedObservationChoiceField"],

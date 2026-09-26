@@ -25,8 +25,11 @@ import { getOptionLabel, getOptionScore, getOptionValue, withOptionScore } from 
 // Matches a two-argument `score([field-id], { ...flat json map... })` call.
 const scoreCallWithMap = () => /score\(\s*\[([^\]]+)\]\s*,\s*(\{[^{}]*\})\s*\)/g;
 
+// A computed field's formula is its calculatedValue's when it has one, else
+// its computedConfig's: the rule of the app's lib/computed-field-config.ts,
+// which this package cannot import.
 function expressionOf(field: BuilderField): string | undefined {
-  return field.computedConfig?.expression ?? field.calculatedValue?.expression ?? undefined;
+  return field.calculatedValue?.expression ?? field.computedConfig?.expression ?? undefined;
 }
 
 export function backfillOptionScoresFromFormula(fields: BuilderField[]): BuilderField[] {
@@ -98,16 +101,19 @@ export function backfillOptionScoresFromFormula(fields: BuilderField[]): Builder
     const patchedOptions = patchedOptionsById.get(field.id);
     if (patchedOptions) next = { ...next, options: patchedOptions };
 
-    const expression = expressionOf(next);
-    if (typeof expression === "string" && expression.includes("score(")) {
+    // Clean both stores so they keep agreeing after the rewrite.
+    const cleanedIn = (expression: string | undefined): string | null => {
+      if (typeof expression !== "string" || !expression.includes("score(")) return null;
       const cleaned = cleanExpression(expression);
-      if (cleaned !== expression) {
-        if (next.computedConfig?.expression === expression) {
-          next = { ...next, computedConfig: { ...next.computedConfig, expression: cleaned } };
-        } else if (next.calculatedValue?.expression === expression) {
-          next = { ...next, calculatedValue: { ...next.calculatedValue, expression: cleaned } };
-        }
-      }
+      return cleaned !== expression ? cleaned : null;
+    };
+    const cleanedConfig = cleanedIn(next.computedConfig?.expression);
+    if (next.computedConfig && cleanedConfig !== null) {
+      next = { ...next, computedConfig: { ...next.computedConfig, expression: cleanedConfig } };
+    }
+    const cleanedValue = cleanedIn(next.calculatedValue?.expression);
+    if (next.calculatedValue && cleanedValue !== null) {
+      next = { ...next, calculatedValue: { ...next.calculatedValue, expression: cleanedValue } };
     }
     return next;
   });

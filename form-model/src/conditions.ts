@@ -289,6 +289,99 @@ export function evaluateFieldCondition(
   }
 }
 
+// ---------- Field-level visibility rules ----------
+
+/** One comparison of a field's inline show-when rule (BuilderVisibilityRule / ParsedFieldVisibility). */
+export interface VisibilityConditionSource {
+  type: string;
+  controllerId?: string;
+  value?: string | number | boolean | null;
+}
+
+export interface VisibilityRuleSource extends VisibilityConditionSource {
+  match?: "all" | "any";
+  additionalConditions?: ReadonlyArray<VisibilityConditionSource & { controllerId: string }>;
+}
+
+/** The controller's field kind ("boolean", "choice", ...), or undefined when unknown. */
+export type VisibilityControllerKindLookup = (controllerId: string) => string | null | undefined;
+
+/** Authored `equals` values that mean "No" on a Yes/No controller. */
+const VISIBILITY_BOOLEAN_NO_VALUES = new Set(["0", "false", "no", "n", "off", "unchecked"]);
+
+function visibilityConditionToFieldLinkCondition(
+  condition: VisibilityConditionSource,
+  controllerKind: string | null | undefined,
+): FieldLinkCondition {
+  const value = condition.value ?? null;
+  switch (condition.type) {
+    case "filled":
+      return { type: "filled" };
+    case "not-filled":
+      return { type: "empty" };
+    case "gt":
+      return { type: "number-gt", value };
+    case "gte":
+      return { type: "number-gte", value };
+    case "lt":
+      return { type: "number-lt", value };
+    case "lte":
+      return { type: "number-lte", value };
+    case "equals":
+    case "not-equals":
+      break;
+    default:
+      // Not a visibility type (corrupt or future data): answered at all.
+      return { type: "filled" };
+  }
+  const negative = condition.type === "not-equals";
+  // A Yes/No answer is stored as true/false (or a Y/N code), so a literal
+  // `equals "Yes"` never matches; the boolean operators normalize the answer.
+  if (controllerKind === "boolean") {
+    const isNo = VISIBILITY_BOOLEAN_NO_VALUES.has(String(value ?? "").trim().toLowerCase());
+    return { type: negative === isNo ? "boolean-yes" : "boolean-no" };
+  }
+  // Coded choices store {code, display} objects; option matching normalizes
+  // them. With no value yet the rule stays a choice rule (no options), so an
+  // editor still offers the controller's options.
+  if (controllerKind === "choice") {
+    const text = value === null ? "" : String(value);
+    return { type: negative ? "choice-not-selected" : "choice-selected", optionValues: text ? [text] : [] };
+  }
+  return { type: negative ? "not-equals" : "equals", value };
+}
+
+/**
+ * Convert a field-level visibility rule (the builder's inline show-when editor:
+ * type, controllerId, value, additionalConditions, match) into the field-link
+ * condition fields of a FieldLinkRule. The one conversion shared by the Logic
+ * tab, the MOIS export's synthesized inline rules and the section visibility
+ * fallback. `controllerKind` picks the Yes/No and choice operators, which
+ * normalize stored answers; unknown controllers keep the literal comparison.
+ * Returns null for "always", a missing rule, or a rule with no controller.
+ * `getFieldLinkConditionGroup` turns the result into a FieldConditionGroup.
+ */
+export function visibilityRuleToFieldLinkConditions(
+  visibility: VisibilityRuleSource | null | undefined,
+  controllerKind: VisibilityControllerKindLookup = () => undefined,
+): Pick<FieldLinkRule, "controllerFieldId" | "condition" | "additionalConditions" | "conditionMatch"> | null {
+  if (!visibility || visibility.type === "always" || !visibility.controllerId) return null;
+  const additional = visibility.additionalConditions ?? [];
+  return {
+    controllerFieldId: visibility.controllerId,
+    condition: visibilityConditionToFieldLinkCondition(visibility, controllerKind(visibility.controllerId)),
+    ...(additional.length
+      ? {
+          additionalConditions: additional.map((entry) => ({
+            controllerFieldId: entry.controllerId,
+            condition: visibilityConditionToFieldLinkCondition(entry, controllerKind(entry.controllerId)),
+          })),
+          conditionMatch: visibility.match ?? "all",
+        }
+      : {}),
+  };
+}
+
 function asConditionValue(value: unknown): string | number | boolean | null {
   const normalized = normalizeConditionComparable(value);
   if (normalized === null || normalized === undefined) return null;

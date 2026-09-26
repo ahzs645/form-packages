@@ -1,10 +1,11 @@
 // FormLogicKit — shared runtime kernel for form-level logic: condition-group
-// evaluation, rule-aware field visibility, submit/page validation, value
-// formats, and focusing a field from an error summary. Consumed by FormFlow,
-// FormErrorSummary, RepeatForEachTable and inline code the MOIS exporter
-// emits. Non-rendering helper module in the ObservationKit pattern: it exports
-// a single namespace object so consumers keep one bare identifier in engine
-// scope.
+// evaluation, builder visibility rules (also per table column and row),
+// rule-aware field visibility, submit/page validation, value formats, and
+// focusing a field from an error summary. Consumed by FormFlow,
+// FormErrorSummary, EditableTable, RepeatForEachTable, SubformScoring,
+// LayoutTable and inline code the MOIS exporter emits. Non-rendering helper
+// module in the ObservationKit pattern: it exports a single namespace object
+// so consumers keep one bare identifier in engine scope.
 //
 // Consumers must reference FormLogicKit only inside function bodies —
 // component files load in no guaranteed order, so a top-level read of another
@@ -191,6 +192,81 @@ const FormLogicKit = (() => {
     return evaluateEntries(group.conditions, group.match, toGetter(getValue))
   }
 
+  // ---- Builder visibility rules (BuilderVisibilityRule) — begin ----
+  // { type, controllerId, value, additionalConditions?, match?, hiddenAnswerPolicy? }
+  // with type always/filled/not-filled/equals/not-equals/gt/gte/lt/lte. Each
+  // condition becomes a leaf of the same group evaluator the compiled rules
+  // use, converted exactly as visibilityToCondition in lib/logic/unified-rule.ts
+  // (and synthesizeInlineVisibilityRules in the exporter): equals on a boolean
+  // controller is boolean-yes/no, on a choice controller choice-selected.
+  const BOOLEAN_YES_TEXT = ["1", "true", "yes", "y", "on", "checked"]
+  const BOOLEAN_NO_TEXT = ["0", "false", "no", "n", "off", "unchecked"]
+
+  // A stored yes/no answer as true/false, or null when it is not one. Every
+  // value normalizeYesNo reads keeps its meaning; stored text is also read
+  // case-insensitively ("true", "y", a checkbox's "Checked") because table
+  // cells and older subform rows stored those.
+  const toBooleanAnswer = (value) => {
+    if (value === true || value === false) return value
+    if (typeof value === "number") return value === 1 ? true : value === 0 ? false : null
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      return toBooleanAnswer(value.code ?? value.display ?? value.value ?? value.text ?? value.label)
+    }
+    if (typeof value !== "string") return null
+    const text = value.trim().toLowerCase()
+    if (BOOLEAN_YES_TEXT.includes(text)) return true
+    if (BOOLEAN_NO_TEXT.includes(text)) return false
+    return null
+  }
+
+  const visibilityLeaf = (condition, kind) => {
+    const controllerFieldId = condition.controllerId
+    const type = condition.type
+    const value = condition.value === undefined || condition.value === null ? "" : condition.value
+    if (type === "not-filled") return { controllerFieldId, type: "empty" }
+    if (type === "gt" || type === "gte" || type === "lt" || type === "lte") {
+      return { controllerFieldId, type: "number-" + type, value }
+    }
+    if (type === "equals" || type === "not-equals") {
+      const negative = type === "not-equals"
+      if (kind === "boolean") {
+        const isNo = BOOLEAN_NO_TEXT.includes(String(value).trim().toLowerCase())
+        return { controllerFieldId, type: isNo !== negative ? "boolean-no" : "boolean-yes" }
+      }
+      if (kind === "choice") {
+        return { controllerFieldId, type: negative ? "choice-not-selected" : "choice-selected", optionValues: value === "" ? [] : [String(value)] }
+      }
+      return { controllerFieldId, type, value }
+    }
+    return { controllerFieldId, type: "filled" }
+  }
+
+  /**
+   * Whether a builder visibility rule shows its target. `getValue(controllerId)`
+   * returns the raw stored answer (a values object also works).
+   * options.controllerKind(controllerId) => "boolean" | "choice" | "number" |
+   * "text" | undefined picks the boolean/choice comparisons. No rule, "always"
+   * or no controller = shown; additional conditions combine by `match`
+   * ("all" default | "any"); one without a controller is ignored.
+   */
+  const evaluateVisibilityRule = (rule, getValue, options = {}) => {
+    if (!rule || typeof rule !== "object" || !rule.type || rule.type === "always" || !rule.controllerId) return true
+    const get = toGetter(getValue)
+    const kindOf = options && typeof options.controllerKind === "function" ? options.controllerKind : () => undefined
+    const leaves = [rule, ...(Array.isArray(rule.additionalConditions) ? rule.additionalConditions : [])]
+      .filter((condition) => condition && condition.controllerId && condition.type !== "always")
+      .map((condition) => visibilityLeaf(condition, kindOf(condition.controllerId)))
+    // Boolean controllers compare their answer as true/false.
+    const read = (controllerId) => {
+      const raw = get(controllerId)
+      if (kindOf(controllerId) !== "boolean") return raw
+      const answer = toBooleanAnswer(raw)
+      return answer === null ? raw : answer
+    }
+    return evaluateEntries(leaves, rule.match, read)
+  }
+  // ---- Builder visibility rules — end ----
+
   /**
    * Whether a field is hidden by its own compiled behaviour config
    * (compileFieldBehavior + gates): explicitly hidden, a failed subgroup gate,
@@ -295,9 +371,10 @@ const FormLogicKit = (() => {
   }
 
   // ---- Table row completion (repeat-for-each workstream) — begin ----
-  // config.table = { requiredColumnIds (row data paths), requireAllComplete }.
-  // Rows seeded from another table (_sourceKey) must be completed; manual rows
-  // only once started; rows flagged _sourceRemoved never block. Cell answers
+  // config.table = { requiredColumnIds (row data paths), requireAllComplete,
+  // columns? }. Rows seeded from another table (_sourceKey) must be completed;
+  // manual rows only once started; rows flagged _sourceRemoved never block; a
+  // column hidden in a row (its visibility rule) is not required there. Cell answers
   // use EditableTable's rules (an unchecked checkbox is not an answer), the
   // same as RepeatForEachTable's _complete flag.
   const tableCellAnswered = (value) => {
@@ -309,10 +386,86 @@ const FormLogicKit = (() => {
     if (typeof value === "object") return Object.keys(value).length > 0
     return true
   }
-  const tableRowIssues = (config, value, required, issue, translate) => {
+  const tableCell = (row, path) => String(path || "").split(".").filter(Boolean)
+    .reduce((current, key) => (current && typeof current === "object" ? current[key] : undefined), row)
+  const setTableCell = (row, path, value) => {
+    const segments = String(path || "").split(".").map((part) => part.trim()).filter(Boolean)
+    if (segments.length === 0) return
+    let current = row
+    for (let index = 0; index < segments.length - 1; index += 1) {
+      const key = segments[index]
+      if (!current[key] || typeof current[key] !== "object" || Array.isArray(current[key])) current[key] = {}
+      current = current[key]
+    }
+    current[segments[segments.length - 1]] = value
+  }
+
+  // EditableTable columns: a column's row path is dataPath || id, and its
+  // type decides how a visibility rule naming it compares answers.
+  const tableColumnPath = (column) => (column && (column.dataPath || column.fieldName || column.id)) || ""
+  const tableColumnKind = (column) => {
+    const type = column && column.type
+    if (!type) return undefined
+    if (type === "checkbox" || type === "booleanYesNo" || type === "booleanSingle") return "boolean"
+    if (type === "dropdown" || type === "choice") return "choice"
+    if (type === "number") return "number"
+    return "text"
+  }
+
+  /**
+   * Whether a table column is shown in one row. Its visibility rule's
+   * controllerId (and each additional condition's) names a sibling column by
+   * row path (or id); anything else is read from the row, then from the form
+   * answers. options: { columns (the table's columns), formData }.
+   */
+  const isTableColumnVisible = (column, row, options = {}) => {
+    const rule = column && column.visibility
+    if (!rule || typeof rule !== "object") return true
+    const columns = Array.isArray(options.columns) ? options.columns : []
+    const sibling = (id) => columns.find((entry) => entry && (tableColumnPath(entry) === id || entry.id === id))
+    const getValue = (id) => {
+      const controller = sibling(id)
+      if (controller) return tableCell(row, tableColumnPath(controller))
+      const inRow = tableCell(row, id)
+      if (inRow !== undefined) return inRow
+      return options.formData ? readValue(options.formData, id) : undefined
+    }
+    return evaluateVisibilityRule(rule, getValue, { controllerKind: (id) => tableColumnKind(sibling(id)) })
+  }
+
+  /**
+   * Blank the answers of columns hidden in this row whose rule asks for it
+   * (hiddenAnswerPolicy "clear"; "preserve"/"keep"/absent keep them), plus
+   * their choiceBooleanTargets. Repeats until settled, since a cleared answer
+   * can hide another column. Mutates and returns `row`.
+   */
+  const clearHiddenTableAnswers = (row, columns, options = {}) => {
+    if (!row || typeof row !== "object") return row
+    const list = (Array.isArray(columns) ? columns : []).filter(Boolean)
+    const clearing = list.filter((column) => column.visibility && column.visibility.hiddenAnswerPolicy === "clear")
+    for (let pass = 0; pass <= clearing.length; pass += 1) {
+      let changed = false
+      clearing.forEach((column) => {
+        if (isTableColumnVisible(column, row, { columns: list, formData: options.formData })) return
+        const blank = column.type === "checkbox" ? false : ""
+        const path = tableColumnPath(column)
+        if (tableCell(row, path) !== blank) {
+          setTableCell(row, path, blank)
+          changed = true
+        }
+        Object.values(column.choiceBooleanTargets || {}).forEach((targetPath) => {
+          if (tableCell(row, targetPath) === false) return
+          setTableCell(row, targetPath, false)
+          changed = true
+        })
+      })
+      if (!changed) break
+    }
+    return row
+  }
+
+  const tableRowIssues = (config, value, required, issue, translate, values) => {
     const rows = Array.isArray(value) ? value : Array.isArray(value?.rows) ? value.rows : []
-    const cell = (row, path) => String(path || "").split(".").filter(Boolean)
-      .reduce((current, key) => (current && typeof current === "object" ? current[key] : undefined), row)
     const started = (row) => !!row && typeof row === "object" &&
       Object.keys(row).some((key) => key.charAt(0) !== "_" && tableCellAnswered(row[key]))
     const counted = rows.filter((row) => row && !row._sourceRemoved && (row._sourceKey || started(row)))
@@ -321,10 +474,17 @@ const FormLogicKit = (() => {
     }
     const paths = config.table.requiredColumnIds || []
     if (!config.table.requireAllComplete || paths.length === 0) return []
+    // config.table.columns (optional, EditableTable column shape) carries the
+    // columns' visibility rules: a column hidden in a row is not required there.
+    const tableColumns = Array.isArray(config.table.columns) ? config.table.columns.filter(Boolean) : []
+    const shown = (row, path) => {
+      const column = tableColumns.find((entry) => tableColumnPath(entry) === path || entry.id === path)
+      return !column || isTableColumnVisible(column, row, { columns: tableColumns, formData: values })
+    }
     // One issue per table (the error summary links once per field) naming
     // every incomplete row: "Adherence: complete Metformin, Atorvastatin and row 4".
     const names = counted
-      .filter((row) => !paths.every((path) => tableCellAnswered(cell(row, path))))
+      .filter((row) => !paths.every((path) => !shown(row, path) || tableCellAnswered(tableCell(row, path))))
       .map((row) => (row._sourceLabel ? String(row._sourceLabel) : "row " + (rows.indexOf(row) + 1)))
     if (names.length === 0) return []
     const list = names.length === 1 ? names[0] : names.slice(0, -1).join(", ") + " and " + names[names.length - 1]
@@ -410,7 +570,7 @@ const FormLogicKit = (() => {
         }
       })
       const value = get(config.fieldId)
-      if (config.table) return tableRowIssues(config, value, required, issue, translate) // table rows (repeat-for-each)
+      if (config.table) return tableRowIssues(config, value, required, issue, translate, values) // table rows (repeat-for-each)
       if (!hasMeaningfulValue(value)) {
         return required ? [issue("required", translate(config.label + " is required"))] : []
       }
@@ -508,6 +668,10 @@ const FormLogicKit = (() => {
     isEmptyValue,
     readValue,
     evaluateGroup,
+    evaluateVisibilityRule,
+    tableColumnKind,
+    isTableColumnVisible,
+    clearHiddenTableAnswers,
     isFieldHidden,
     resolveFieldCopies,
     validate,

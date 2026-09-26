@@ -29,6 +29,7 @@
     "HotspotMapField",
     "ScoringModule",
     "ScaleField",
-    "FindCodeSelect"
+    "FindCodeSelect",
+    "FormLogicKit"
   ]
 }

@@ -42,6 +42,19 @@ const setPanelGridPayload = (setFormData, componentId, payloadType, payload) => 
 }
 const getPanelGridAuth = () => (typeof window !== "undefined" && window.__nhAuth) || null
 
+const panelGridRowIsScaleLike = (row, normalizedOptions) => {
+  const type = String(row.type ?? "text").toLowerCase()
+  return type === "scale" || (type === "coded" && normalizedOptions.length > 0 && normalizedOptions.every((option) => Number.isFinite(Number(option.value))))
+}
+// Before scale rows were controlled, an unanswered row left ScaleField
+// uncontrolled, so its answer landed in its own flat key instead of the
+// grid's nested value. Only a real selection is worth adopting.
+const panelGridLegacyScaleKey = (fieldId, rowId) => `${fieldId}_${rowId}`
+const panelGridLegacyScaleAnswer = (data, fieldId, rowId) => {
+  const answer = data?.[panelGridLegacyScaleKey(fieldId, rowId)]
+  return answer && typeof answer === "object" && answer.selectedKey != null && answer.selectedKey !== "" ? answer : null
+}
+
 const PANEL_GRID_TABLE_STYLE = {
   borderCollapse: "collapse",
   tableLayout: "fixed",
@@ -195,17 +208,43 @@ const PanelEntryGrid = ({
     }))
   }
 
+  // Adopt answers a pre-fix grid left in ScaleField's flat keys, once, so a
+  // saved form keeps its scale answers (and now reaches totals and the panel).
+  useEffect(() => {
+    const data = fd?.field?.data
+    const adoptable = rowDefs.filter((row) => (
+      values[row.id] === undefined &&
+      panelGridRowIsScaleLike(row, kit.normalizeOptions(row.options)) &&
+      panelGridLegacyScaleAnswer(data, effectiveFieldId, row.id)
+    ))
+    if (adoptable.length === 0) return
+    setFormData(produce((draft) => {
+      if (!draft.field?.data || typeof draft.field.data !== "object") return
+      const current = draft.field.data[effectiveFieldId] && typeof draft.field.data[effectiveFieldId] === "object"
+        ? draft.field.data[effectiveFieldId]
+        : {}
+      const next = { ...current }
+      adoptable.forEach((row) => {
+        const legacy = panelGridLegacyScaleAnswer(draft.field.data, effectiveFieldId, row.id)
+        if (next[row.id] === undefined && legacy) next[row.id] = { ...legacy }
+      })
+      draft.field.data[effectiveFieldId] = next
+    }))
+  }, [effectiveFieldId, fd, kit, rowDefs, setFormData, values])
+
   const renderCurrentValue = (row, value, readOnly) => {
     const type = String(row.type ?? "text").toLowerCase()
     const normalizedOptions = kit.normalizeOptions(row.options)
-    const scaleLike = type === "scale" || (type === "coded" && normalizedOptions.length > 0 && normalizedOptions.every((option) => Number.isFinite(Number(option.value))))
-    if (scaleLike) {
+    if (panelGridRowIsScaleLike(row, normalizedOptions)) {
+      // Always controlled: `undefined` would make ScaleField write its own
+      // flat key and never call onChange, so the grid, totals and the panel
+      // payload would stay empty. `null` is ScaleField's "no answer".
       return (
         <ScaleField
-          fieldId={`${effectiveFieldId}_${row.id}`}
+          fieldId={panelGridLegacyScaleKey(effectiveFieldId, row.id)}
           label={row.label}
           options={normalizedOptions}
-          value={value}
+          value={value ?? null}
           onChange={(nextValue) => setRowValue(row.id, nextValue)}
           hideLabel
           disableHorizontalScroll

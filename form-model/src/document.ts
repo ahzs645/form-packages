@@ -116,7 +116,14 @@ export interface TableColumn {
   showInModal?: boolean;
   /** Optional heading that groups adjacent fields in the MOIS row modal. */
   modalSection?: string;
-  /** Require this column when its visibility rule currently shows it. */
+  /** The row cannot be saved while this column is shown and empty (hidden columns are never required). */
+  required?: boolean;
+  /** Row-save message when a required column is empty (default "<label> is required."). */
+  requiredMessage?: string;
+  /** Hint shown with the column's input in the row editor. */
+  helpText?: string;
+  placeholder?: string;
+  /** Legacy alias of `required` (same meaning); still exported for older runtimes. */
   requiredWhenVisible?: boolean;
   computedValue?: {
     mode: "template";
@@ -128,6 +135,7 @@ export interface TableColumn {
       | { id?: string; kind: "answer"; path: string }
     >;
   } | BuilderTableFormulaColumn | null;
+  /** Row-level rule: controller ids name sibling columns by row path (`dataPath || id`). */
   visibility?: ParsedFieldVisibility | null;
   moisTargetId?: string | null;
   stampConfig?: {

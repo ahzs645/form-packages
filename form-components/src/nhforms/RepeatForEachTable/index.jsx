@@ -21,9 +21,10 @@
 //
 // presentation "cards" renders each row as a card headed by its label (and a
 // "No longer listed" flag for kept orphans), its questions stacked with the
-// same MOIS controls and value shapes EditableTable's cells use, and a status
-// line. The data (the rows array), sync, completion and validation are the
-// same as the grid. Tables with a stamp column or per-row authorship locks
+// same controls (radio and checkbox-list choice styles included) and value
+// shapes EditableTable's cells use, only the questions visible in that row,
+// and a status line. The data (the rows array), sync, completion and
+// validation are the same as the grid. Tables with a stamp column or per-row authorship locks
 // keep the grid (those need EditableTable's own machinery).
 //
 // Row metadata (same underscore convention as EditableTable's _rowId, see
@@ -95,7 +96,9 @@ const RepeatForEachTable = (props) => {
   const sourceRows = repeatConfig ? helpers.readSourceRows(fieldData, repeatConfig) : []
   // With the form's translateFormText the rows also carry _rowStatusText (the
   // translated status the grid shows); stored _rowStatus stays English.
-  const syncOptions = { repeatFor: repeatConfig, rowCompletion: completion, columns: baseColumns, translate: typeof translate === "function" ? translate : null }
+  // formData: the answers column visibility rules may read (row completion
+  // skips a column hidden in the row).
+  const syncOptions = { repeatFor: repeatConfig, rowCompletion: completion, columns: baseColumns, translate: typeof translate === "function" ? translate : null, formData: fieldData }
 
   const writer = (fd && typeof fd.setFormData === "function" ? fd.setFormData : null) || setFd
 
@@ -147,7 +150,7 @@ const RepeatForEachTable = (props) => {
     }
     writeRowsRecipe((current, data) => {
       const liveSource = repeatConfig ? helpers.readSourceRows(data, repeatConfig) : []
-      return helpers.syncRows(JSON.parse(JSON.stringify(liveSource)), current || [], syncOptions)
+      return helpers.syncRows(JSON.parse(JSON.stringify(liveSource)), current || [], { ...syncOptions, formData: data })
     })
   }, [needsSync, sourceSignature, targetSignature, configSignature, locked])
 
@@ -187,7 +190,7 @@ const RepeatForEachTable = (props) => {
   const orphanPolicy = repeatConfig ? repeatConfig.orphanPolicy || "remove-if-unanswered" : "remove"
   const allowDeleteRows = tableProps.allowDeleteRows !== false &&
     (allowManualRows || orphanPolicy !== "remove")
-  const { Dialog, DialogType, DialogFooter, PrimaryButton, DefaultButton, Text, Label } = Fluent
+  const { Dialog, DialogType, DialogFooter, PrimaryButton, DefaultButton, Text, Label, ChoiceGroup, Checkbox } = Fluent
 
   // Empty state: nothing in the source table matches, so there is nothing to
   // answer. The grid is dropped too unless people may add their own rows or
@@ -215,7 +218,7 @@ const RepeatForEachTable = (props) => {
 
   const writeCardCell = (rowId, column, value) => {
     if (locked) return
-    writeRowsRecipe((current) => helpers.writeCell(current || [], rowId, column, value, baseColumns))
+    writeRowsRecipe((current, data) => helpers.writeCell(current || [], rowId, column, value, baseColumns, data))
     notifyRowsChange({ tableId: id, reason: "update", rowId, columnId: column.id })
   }
 
@@ -248,6 +251,8 @@ const RepeatForEachTable = (props) => {
       )
     }
     const onValue = (next) => writeCardCell(rowId, column, next)
+    // Cards only show the columns visible in the row, so required = the flag.
+    const required = helpers.isRequiredColumn(column)
     switch (column.type) {
       case "number": {
         const settings = helpers.numberSettings(column)
@@ -265,6 +270,8 @@ const RepeatForEachTable = (props) => {
             spinButtonProps={spinButtonProps}
             textFieldProps={settings.suffix ? { suffix: settings.suffix } : undefined}
             storeAsNumber={settings.storeAsNumber !== false}
+            placeholder={column.placeholder || undefined}
+            required={required}
           />
         )
       }
@@ -276,6 +283,7 @@ const RepeatForEachTable = (props) => {
               value={value || ""}
               onChange={(next) => onValue(next || "")}
               placeholder={column.placeholder || "Select date and time"}
+              required={required}
             />
           )
         }
@@ -286,6 +294,7 @@ const RepeatForEachTable = (props) => {
             value={value || ""}
             onChange={(next) => onValue(helpers.dateCellValue(next))}
             placeholder={column.placeholder || "Select date"}
+            required={required}
           />
         )
       case "time":
@@ -295,10 +304,43 @@ const RepeatForEachTable = (props) => {
             value={value || ""}
             onChange={(event, next) => onValue(next || "")}
             placeholder={column.placeholder || "HH:mm"}
+            required={required}
           />
         )
       case "dropdown": {
         const options = helpers.choiceOptions(column.options)
+        // The authored radio / checkbox-list styles, as EditableTable's cells
+        // draw them (same stored values: a code, or a list of codes).
+        if (column.choiceStyle === "checkbox" && !column.codeSystem && Checkbox) {
+          const selected = new Set((Array.isArray(value) ? value : value ? [value] : []).map(String))
+          return (
+            <div role="group" aria-label={column.title || column.label || column.id} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              {options.map((option) => (
+                <Checkbox
+                  key={option.key}
+                  label={option.text}
+                  checked={selected.has(option.key)}
+                  onChange={(_event, checked) => {
+                    const next = new Set(selected)
+                    if (checked) next.add(option.key)
+                    else next.delete(option.key)
+                    onValue(options.map((entry) => entry.key).filter((key) => next.has(key)))
+                  }}
+                />
+              ))}
+            </div>
+          )
+        }
+        if (column.choiceStyle === "radio" && !column.codeSystem && ChoiceGroup) {
+          return (
+            <ChoiceGroup
+              options={options}
+              selectedKey={value ? String(value) : undefined}
+              required={required}
+              onChange={(_event, option) => onValue(option ? option.key : "")}
+            />
+          )
+        }
         const multiple = column.choiceStyle === "multiselect" || column.choiceStyle === "checkbox"
         return (
           <SimpleCodeSelect
@@ -310,6 +352,7 @@ const RepeatForEachTable = (props) => {
             onChange={(coding, codings) => onValue(helpers.choiceForStorage(coding, codings, column))}
             placeholder={column.placeholder || "Select..."}
             showOther={column.showOtherOption === true}
+            required={required}
           />
         )
       }
@@ -320,6 +363,7 @@ const RepeatForEachTable = (props) => {
             displayStyle="checkmark"
             value={value}
             onChange={(event, checked) => onValue(!!checked)}
+            required={required}
           />
         )
       case "text":
@@ -332,6 +376,7 @@ const RepeatForEachTable = (props) => {
             value={value || ""}
             onChange={(event, next) => onValue(next || "")}
             placeholder={column.placeholder || ""}
+            required={required}
           />
         )
     }
@@ -384,9 +429,14 @@ const RepeatForEachTable = (props) => {
           ) : null}
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {questionColumns.filter((column) => helpers.columnVisible(column, row)).map((column) => (
+          {questionColumns.filter((column) => helpers.columnVisible(column, row, baseColumns, fieldData)).map((column) => (
             <div key={column.id} data-repeat-for-question={column.id}>
-              <Label required={column.required === true}>{column.title || column.label || column.id}</Label>
+              <Label required={helpers.isRequiredColumn(column)}>{column.title || column.label || column.id}</Label>
+              {column.helpText ? (
+                <Text data-repeat-for-help="" variant="small" styles={{ root: { display: "block", marginBottom: 4, color: mutedColor } }}>
+                  {column.helpText}
+                </Text>
+              ) : null}
               <span className="showonprint" style={{ display: "none", whiteSpace: "pre-wrap" }}>
                 {helpers.formatCell(row, column) || " "}
               </span>
@@ -580,8 +630,11 @@ RepeatForEachTable.helpers = (() => {
     return (columns || []).filter((column) => column && (ids.includes(column.id) || ids.includes(columnPath(column))))
   }
 
-  const rowComplete = (row, columns, repeatFor, rowCompletion) =>
-    requiredColumns(columns, repeatFor, rowCompletion).every((column) => cellAnswered(row, column))
+  // A column hidden in the row (its visibility rule) is not required there,
+  // the same as FormLogicKit.validate's row check. formData: the form's answers.
+  const rowComplete = (row, columns, repeatFor, rowCompletion, formData) =>
+    requiredColumns(columns, repeatFor, rowCompletion).every((column) =>
+      !columnVisible(column, row, columns, formData) || cellAnswered(row, column))
 
   const sourceRowHasContent = (row) => !!row && typeof row === "object" &&
     Object.keys(row).some((key) => key.charAt(0) !== "_" && isMeaningful(row[key]))
@@ -607,7 +660,7 @@ RepeatForEachTable.helpers = (() => {
    * syncRows(source, syncRows(source, rows)) has the same signature.
    * options: { repeatFor, rowCompletion, translate? (sets _rowStatusText), columns (target, without the
    * injected label/status columns), makeRowId?, rowIds? (key -> _rowId for
-   * new rows) }
+   * new rows), formData? (the form's answers, for column visibility rules) }
    */
   const syncRows = (sourceRows, targetRows, options = {}) => {
     const repeatFor = options.repeatFor && options.repeatFor.sourceFieldId ? options.repeatFor : null
@@ -701,7 +754,7 @@ RepeatForEachTable.helpers = (() => {
       let status = ""
       if (row._sourceRemoved) status = STATUS_TEXT.removed
       if (completion) {
-        const complete = rowComplete(row, columns, repeatFor, completion)
+        const complete = rowComplete(row, columns, repeatFor, completion, options.formData)
         row._complete = complete
         if (!status && !(manual && !rowAnswered(row, columns, repeatFor))) {
           status = complete ? STATUS_TEXT.complete : STATUS_TEXT.incomplete
@@ -789,21 +842,14 @@ RepeatForEachTable.helpers = (() => {
     !(isModalMode && column.showInModal === false)
   )
 
-  // EditableTable's per-row column visibility rule.
-  const columnVisible = (column, row) => {
-    const rule = column && column.visibility
-    if (!rule || typeof rule !== "object" || rule.type === "always" || !rule.controllerId) return true
-    const value = getPath(row || {}, rule.controllerId)
-    if (rule.type === "filled") return isMeaningful(value)
-    if (rule.type === "equals") return String(value === undefined || value === null ? "" : value) === String(rule.value === undefined || rule.value === null ? "" : rule.value)
-    if (rule.type === "gt" || rule.type === "lt") {
-      const left = Number(value)
-      const right = Number(rule.value === undefined || rule.value === null ? 0 : rule.value)
-      if (!Number.isFinite(left) || !Number.isFinite(right)) return false
-      return rule.type === "gt" ? left > right : left < right
-    }
-    return true
-  }
+  // EditableTable's per-row column visibility: the column's BuilderVisibilityRule
+  // through FormLogicKit (controllers are sibling columns by row path, else
+  // the row, else the form's answers in `formData`).
+  const columnVisible = (column, row, columns, formData) =>
+    FormLogicKit.isTableColumnVisible(column, row || {}, { columns: columns || [], formData })
+
+  // Required while shown (requiredWhenVisible is the older name).
+  const isRequiredColumn = (column) => !!column && (column.required === true || column.requiredWhenVisible === true)
 
   const choiceOptions = (options) => (Array.isArray(options) ? options : [])
     .map((option, index) => {
@@ -950,12 +996,16 @@ RepeatForEachTable.helpers = (() => {
     return row
   }
 
-  /** The rows with one cell of one row (by _rowId) written and that row recalculated. */
-  const writeCell = (rows, rowId, column, value, columns) => (rows || []).map((row) => {
+  /**
+   * The rows with one cell of one row (by _rowId) written and that row
+   * recalculated, then (as EditableTable does) answers of columns now hidden
+   * whose rule says hiddenAnswerPolicy "clear" blanked. formData: the form's answers.
+   */
+  const writeCell = (rows, rowId, column, value, columns, formData) => (rows || []).map((row) => {
     if (!row || row._rowId !== rowId) return row
     const next = JSON.parse(JSON.stringify(row))
     setPath(next, columnPath(column), value)
-    return applyComputed(next, columns)
+    return FormLogicKit.clearHiddenTableAnswers(applyComputed(next, columns), columns, { formData })
   })
 
   /** A blank manual row (EditableTable's empty row: default cell values). */
@@ -1031,6 +1081,7 @@ RepeatForEachTable.helpers = (() => {
       rowCompletion: spec.rowCompletion,
       columns,
       rowIds: rowIdsFrom ? rowIdsByKey(normalizeRows(getPath(rowIdsFrom, rowsPath))) : null,
+      formData: data,
     })
     // A never-shown table with nothing to seed stays absent (no churn).
     if (!currentRaw && next.length === 0) return false
@@ -1087,6 +1138,7 @@ RepeatForEachTable.helpers = (() => {
     cardsUnsupportedReason,
     cardColumns,
     columnVisible,
+    isRequiredColumn,
     choiceOptions,
     choiceForControl,
     choiceForStorage,

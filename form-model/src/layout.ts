@@ -1038,7 +1038,7 @@ export interface SubformScoringConfig {
 export interface SubformDataEntryFieldConfig {
   id: string;
   label: string;
-  type: "text" | "textarea" | "number" | "date" | "datetime" | "choice" | "booleanYesNo" | "heading" | "hotspotMap" | "scale";
+  type: "text" | "textarea" | "number" | "date" | "datetime" | "time" | "choice" | "booleanYesNo" | "heading" | "hotspotMap" | "scale";
   /**
    * Presentation for `heading` items: "section" (default) shouts a band header,
    * "prompt" keeps a questionnaire stem question in sentence case.
@@ -1063,7 +1063,17 @@ export interface SubformDataEntryFieldConfig {
   showOtherOption?: boolean;
   choiceStyle?: "dropdown" | "radio";
   renderStyle?: "checkbox" | "checklist-row";
+  /**
+   * Answer written when the modal opens on an empty field: an option value,
+   * number, text, or the tokens "__today" (date) / "__now" (date-time).
+   */
   defaultValue?: unknown;
+  /** Show/hide rule evaluated against sibling answers; hidden fields are never required. */
+  visibility?: BuilderField["visibility"];
+  /** Never rendered, but still collects its default answer. */
+  hidden?: boolean;
+  /** Export-only passthrough for the FHIR Questionnaire; the runtime only checks it for LOINC codes. */
+  fhirConfig?: BuilderField["fhirConfig"];
   /** Fill an empty data-entry field from the latest matching patient observation when the modal opens. */
   defaultFromObservation?: {
     observationCode: string;

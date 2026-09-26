@@ -70,16 +70,30 @@ const collectionItemMatches = (item, itemPath, operator = "notEmpty", matchValue
   return values.some((value) => value === expected)
 }
 
+// A birth date is a calendar day. `new Date("1960-06-23")` is UTC midnight,
+// which west of UTC is the evening of the 22nd — the age would tick over a day
+// early — so date-only strings (yyyy-MM-dd, yyyy.MM.dd, yyyy/MM/dd) are built
+// as LOCAL dates. Anything else (date-times, Date objects) parses as before.
+const parsePatientBirthDate = (raw) => {
+  if (raw instanceof Date) return raw
+  const match = /^(\d{4})[-./](\d{1,2})[-./](\d{1,2})$/.exec(String(raw).trim())
+  if (!match) return new Date(raw)
+  const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])]
+  const date = new Date(year, month - 1, day)
+  const valid = date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day
+  return valid ? date : new Date(Number.NaN)
+}
+
 // Whole years between a birth date and a reference date (default: today).
 // Returns a numeric string (so `Number()`-based field/option rules can compare
 // it) or "" when the input is missing/unparseable. `reference` is injectable so
 // the result is deterministically testable.
 const computeAgeYears = (birthValue, reference) => {
-  const raw = birthValue && typeof birthValue === "object"
+  const raw = birthValue && typeof birthValue === "object" && !(birthValue instanceof Date)
     ? (birthValue.value ?? birthValue.code ?? birthValue.display ?? "")
     : birthValue
   if (raw == null || raw === "") return ""
-  const dob = new Date(raw)
+  const dob = parsePatientBirthDate(raw)
   if (Number.isNaN(dob.getTime())) return ""
   const now = reference || new Date()
   let age = now.getFullYear() - dob.getFullYear()

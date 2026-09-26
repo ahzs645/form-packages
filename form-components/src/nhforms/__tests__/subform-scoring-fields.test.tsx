@@ -1,0 +1,335 @@
+// @vitest-environment happy-dom
+/**
+ * SubformScoring data-entry behaviour that builder settings depend on:
+ * visibility through FormLogicKit (with the local fallback), time fields,
+ * required-field blocking on Done, the read-only/errorMessage contract hosts
+ * such as EditableTable and the exporter rely on, and the public wrapper
+ * composing a host's onCommitToParent (ChartRecordManager's chart refresh).
+ *
+ * The component source is compiled on its own with a minimal engine scope,
+ * like lib/__tests__/subform-scoring-characterization.test.ts, but backed by
+ * React state so edits re-render.
+ */
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+import * as Babel from "@babel/standalone";
+import { produce } from "immer";
+import React, { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+const NH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const SOURCE = fs.readFileSync(path.join(NH, "SubformScoring", "index.jsx"), "utf8");
+
+type State = { field: { data: Record<string, unknown>; status: Record<string, unknown>; history: unknown[] } };
+type Updater = ((current: State) => State | void) | Partial<State>;
+/** Injected as the engine-scope FormLogicKit; only evaluateVisibilityRule is used. */
+type Kit = { evaluateVisibilityRule: unknown };
+type Runtime = {
+  SubformScoring: React.ComponentType<Record<string, unknown>>;
+  SubformScoringInner: React.ComponentType<Record<string, unknown>>;
+};
+
+const h = React.createElement;
+const StoreContext = React.createContext<{ state: State; set: (updater: Updater) => void } | null>(null);
+let latestState: State | null = null;
+
+function useActiveData() {
+  const store = React.useContext(StoreContext)!;
+  return [{ ...store.state, setFormData: store.set }, store.set];
+}
+
+function Store({ initial, children }: React.PropsWithChildren<{ initial: Record<string, unknown> }>) {
+  const [state, setState] = React.useState<State>({ field: { data: initial, status: {}, history: [] } });
+  latestState = state;
+  const set = React.useCallback((updater: Updater) => {
+    setState((current) => {
+      if (typeof updater === "function") {
+        const draft = JSON.parse(JSON.stringify(current)) as State;
+        return (updater(draft) as State | undefined) ?? draft;
+      }
+      return { ...current, ...updater };
+    });
+  }, []);
+  return h(StoreContext.Provider, { value: { state, set } }, children);
+}
+
+function loadRuntime(kit?: Kit): Runtime {
+  const compiled = Babel.transform(SOURCE, { presets: ["react"], filename: "SubformScoring/index.jsx" }).code ?? "";
+  const Box = ({ children }: React.PropsWithChildren) => h("div", null, children);
+  const Text = ({ children }: React.PropsWithChildren) => h("span", null, children);
+  const Label = ({ children, required }: React.PropsWithChildren<{ required?: boolean }>) =>
+    h("label", null, children, required ? " *" : null);
+  const Button = ({ text, onClick, disabled }: { text?: string; onClick?: () => void; disabled?: boolean }) =>
+    h("button", { type: "button", onClick, disabled }, text);
+  const Dialog = ({ hidden, children }: React.PropsWithChildren<{ hidden?: boolean }>) =>
+    hidden ? null : h("div", { role: "dialog" }, children);
+  const control = (kind: string, emit: (props: Record<string, unknown>, value: string, event: unknown) => void) =>
+    (props: Record<string, unknown>) =>
+      h("input", {
+        "data-control": kind,
+        "data-readonly": props.readOnly ? "true" : "false",
+        placeholder: props.placeholder as string | undefined,
+        value: (props.value as string | undefined) ?? "",
+        onChange: (event: React.ChangeEvent<HTMLInputElement>) => emit(props, event.target.value, event),
+      });
+  const scope: Record<string, unknown> = {
+    React,
+    Fluent: {
+      Stack: Box, Label, Text, PrimaryButton: Button, DefaultButton: Button, Dialog,
+      DialogType: { largeHeader: "largeHeader" }, Toggle: () => null,
+    },
+    useActiveData,
+    useSourceData: () => ({}),
+    useMutation: () => [async () => undefined],
+    useTheme: () => ({}),
+    produce,
+    ScoringModule: () => null,
+    DateSelect: control("date", (props, value) => (props.onChange as (v: string) => void)?.(value)),
+    // TimeSelect reports (event, value) like the MOIS control.
+    TimeSelect: control("time", (props, value, event) => (props.onChange as (e: unknown, v: string) => void)?.(event, value)),
+    FormLogicKit: kit,
+  };
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func
+  return new Function(...Object.keys(scope), `${compiled};\nreturn { SubformScoring, SubformScoringInner };`)(
+    ...Object.values(scope),
+  ) as Runtime;
+}
+
+let root: Root | null = null;
+let container: HTMLDivElement | null = null;
+
+function mount(component: React.ComponentType<Record<string, unknown>>, props: Record<string, unknown>, data: Record<string, unknown> = {}) {
+  container = document.createElement("div");
+  document.body.appendChild(container);
+  root = createRoot(container);
+  act(() => {
+    root!.render(h(Store, { initial: data }, h(component, {
+      id: "subform",
+      mode: "data-entry",
+      isOpen: true,
+      hideTriggerButton: true,
+      showSummary: false,
+      ...props,
+    })));
+  });
+}
+
+function input(selector: string): HTMLInputElement {
+  const element = container!.querySelector(selector);
+  if (!element) throw new Error(`no element for ${selector}`);
+  return element as HTMLInputElement;
+}
+
+function typeInto(element: HTMLInputElement, value: string) {
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+  act(() => {
+    setter.call(element, value);
+    element.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
+function button(text: string): HTMLButtonElement {
+  const match = Array.from(container!.querySelectorAll("button")).find((entry) => entry.textContent === text);
+  if (!match) throw new Error(`no button "${text}"`);
+  return match as HTMLButtonElement;
+}
+
+function click(element: HTMLElement) {
+  act(() => {
+    element.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+}
+
+afterEach(() => {
+  if (root) act(() => root?.unmount());
+  container?.remove();
+  root = null;
+  container = null;
+  latestState = null;
+});
+
+const gatedFields = [
+  { id: "gate", label: "Gate", type: "text", placeholder: "gate" },
+  {
+    id: "detail",
+    label: "Detail",
+    type: "text",
+    placeholder: "detail",
+    visibility: { type: "not-equals", controllerId: "gate", value: "hide", match: "all" },
+  },
+];
+
+describe("visibility", () => {
+  it("evaluates rules through FormLogicKit with raw sibling answers and controller kinds", () => {
+    const evaluateVisibilityRule = vi.fn((rule: { controllerId: string; value: string }, getValue: (id: string) => unknown) =>
+      getValue(rule.controllerId) !== rule.value);
+    const runtime = loadRuntime({ evaluateVisibilityRule });
+    mount(runtime.SubformScoringInner, { dataEntryConfig: { fields: gatedFields, calculations: [] } }, { gate: "hide" });
+
+    expect(container!.querySelector("input[placeholder=detail]")).toBeNull();
+    const [rule, getValue, options] = evaluateVisibilityRule.mock.calls.at(-1)! as unknown as [
+      unknown, (id: string) => unknown, { controllerKind: (id: string) => string },
+    ];
+    expect(rule).toEqual(gatedFields[1].visibility);
+    expect(getValue("gate")).toBe("hide");
+    expect(options.controllerKind("gate")).toBe("text");
+
+    typeInto(input("input[placeholder=gate]"), "show");
+    expect(container!.querySelector("input[placeholder=detail]")).not.toBeNull();
+  });
+
+  it("falls back to the local evaluator when FormLogicKit is not loaded", () => {
+    const runtime = loadRuntime();
+    mount(runtime.SubformScoringInner, {
+      dataEntryConfig: {
+        fields: [
+          gatedFields[0],
+          { id: "detail", label: "Detail", type: "text", placeholder: "detail", visibility: { type: "filled", controllerId: "gate" } },
+        ],
+        calculations: [],
+      },
+    });
+    expect(container!.querySelector("input[placeholder=detail]")).toBeNull();
+    typeInto(input("input[placeholder=gate]"), "x");
+    expect(container!.querySelector("input[placeholder=detail]")).not.toBeNull();
+  });
+
+  it("never draws a hidden field", () => {
+    const runtime = loadRuntime();
+    mount(runtime.SubformScoringInner, {
+      dataEntryConfig: { fields: [{ id: "secret", label: "Secret", type: "text", placeholder: "secret", hidden: true }], calculations: [] },
+    });
+    expect(container!.querySelector("input[placeholder=secret]")).toBeNull();
+  });
+});
+
+describe("time fields", () => {
+  it("render the MOIS TimeSelect control instead of a plain text box", () => {
+    const runtime = loadRuntime();
+    mount(runtime.SubformScoringInner, {
+      dataEntryConfig: { fields: [{ id: "given_at", label: "Given at", type: "time" }], calculations: [] },
+    }, { given_at: "08:30" });
+
+    const time = input("input[data-control=time]");
+    expect(time.value).toBe("08:30");
+    expect(time.placeholder).toBe("HH:mm");
+    typeInto(time, "09:15");
+    expect(latestState?.field.data.given_at).toBe("09:15");
+  });
+
+  it("fills a date-time default of now in the date-time input format", () => {
+    const runtime = loadRuntime();
+    mount(runtime.SubformScoringInner, {
+      dataEntryConfig: { fields: [{ id: "at", label: "At", type: "datetime", defaultValue: "__now" }], calculations: [] },
+    });
+    expect(latestState?.field.data.at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/);
+  });
+});
+
+describe("required fields on Done", () => {
+  const fields = [
+    { id: "gate", label: "Gate", type: "text", placeholder: "gate" },
+    { id: "dose", label: "Dose", type: "text", placeholder: "dose", required: true },
+    { id: "route", label: "Route", type: "text", placeholder: "route", required: true },
+    // Required, but hidden until the gate says so: never blocks while hidden.
+    { id: "reason", label: "Reason", type: "text", required: true, visibility: { type: "equals", controllerId: "gate", value: "yes" } },
+  ];
+
+  it("blocks completion, names the missing visible fields, and clears once filled", () => {
+    const runtime = loadRuntime();
+    const onCommitToParent = vi.fn();
+    const onOpenChange = vi.fn();
+    mount(runtime.SubformScoringInner, {
+      dataEntryConfig: { fields, calculations: [] },
+      onCommitToParent,
+      onOpenChange,
+    });
+
+    click(button("Done"));
+    expect(container!.querySelector("[role=alert]")?.textContent).toBe("Dose and Route are required.");
+    expect(onCommitToParent).not.toHaveBeenCalled();
+    expect(onOpenChange).not.toHaveBeenCalledWith(false);
+
+    typeInto(input("input[placeholder=dose]"), "5 mg");
+    expect(container!.querySelector("[role=alert]")?.textContent).toBe("Route is required.");
+    typeInto(input("input[placeholder=route]"), "PO");
+    expect(container!.querySelector("[role=alert]")).toBeNull();
+
+    click(button("Done"));
+    expect(onCommitToParent).toHaveBeenCalledTimes(1);
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("leaves validation to a host that keeps the dialog open itself", () => {
+    const runtime = loadRuntime();
+    const onComplete = vi.fn(() => false);
+    mount(runtime.SubformScoringInner, { dataEntryConfig: { fields, calculations: [] }, onComplete });
+    click(button("Done"));
+    expect(onComplete).toHaveBeenCalledTimes(1);
+    expect(container!.querySelector("[role=alert]")).toBeNull();
+  });
+});
+
+describe("read-only and host error messages", () => {
+  it("disables every input and Done, and never writes defaults into a locked record", () => {
+    const runtime = loadRuntime();
+    const onCommitToParent = vi.fn();
+    mount(runtime.SubformScoringInner, {
+      readOnly: true,
+      onCommitToParent,
+      dataEntryConfig: {
+        fields: [
+          { id: "note", label: "Note", type: "text", placeholder: "note", defaultValue: "prefilled" },
+          { id: "given_at", label: "Given at", type: "time" },
+        ],
+        calculations: [],
+      },
+    });
+
+    const fieldset = container!.querySelector("fieldset")!;
+    expect(fieldset.disabled).toBe(true);
+    expect(fieldset.contains(input("input[placeholder=note]"))).toBe(true);
+    expect(input("input[data-control=time]").dataset.readonly).toBe("true");
+    expect(latestState?.field.data.note).toBeUndefined();
+
+    const done = button("Done");
+    expect(done.disabled).toBe(true);
+    click(done);
+    expect(onCommitToParent).not.toHaveBeenCalled();
+    // Cancel still closes a read-only dialog.
+    expect(button("Cancel").disabled).toBe(false);
+  });
+
+  it("shows a host errorMessage inside the dialog", () => {
+    const runtime = loadRuntime();
+    mount(runtime.SubformScoringInner, {
+      errorMessage: "Dose is required.",
+      dataEntryConfig: { fields: [{ id: "dose", label: "Dose", type: "text" }], calculations: [] },
+    });
+    expect(container!.querySelector("[role=dialog] [role=alert]")?.textContent).toBe("Dose is required.");
+  });
+});
+
+describe("public wrapper", () => {
+  it("merges the session into the parent and still runs the host's onCommitToParent", () => {
+    const runtime = loadRuntime();
+    const onCommitToParent = vi.fn();
+    mount(runtime.SubformScoring, {
+      onCommitToParent,
+      onOpenChange: () => undefined,
+      dataEntryConfig: { fields: [{ id: "note", label: "Note", type: "text", placeholder: "note" }], calculations: [] },
+    });
+
+    typeInto(input("input[placeholder=note]"), "hello");
+    click(button("Done"));
+
+    expect(onCommitToParent).toHaveBeenCalledTimes(1);
+    expect((onCommitToParent.mock.calls[0][0] as State).field.data.note).toBe("hello");
+    expect(latestState?.field.data.note).toBe("hello");
+  });
+});
