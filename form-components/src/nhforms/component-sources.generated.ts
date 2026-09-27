@@ -33031,6 +33031,22 @@ const _geometryTextLines = (text, font, fontSize, maxWidth, multiline) => {
 }
 
 /**
+ * The mark OSCAR prints in a ticked box: a bold "X" centred on the box. The
+ * glyph is centred on its cap height (not the font size), which otherwise
+ * leaves every mark about a seventh of its size low.
+ */
+const _drawGeometryMark = (page, box, font) => {
+  const size = _geometryClamp(Math.min(box.width, box.height) * 0.85, 7, 16)
+  const capHeight = font.heightAtSize(size, { descender: false })
+  page.drawText("X", {
+    x: box.x + (box.width - font.widthOfTextAtSize("X", size)) / 2,
+    y: box.y + (box.height - capHeight) / 2,
+    size,
+    font,
+  })
+}
+
+/**
  * Stamp answers using imported OSCAR geometry when the source PDF is only a
  * raster-background projection and therefore has no AcroForm fields.
  */
@@ -33090,13 +33106,7 @@ const _drawGeometryOverlays = async ({
           const page = pages[(Number(widget?.page || field.page || 1)) - 1]
           const box = widget?.bbox || field.bbox
           if (page && box) {
-            const size = _geometryClamp(Math.min(box.width, box.height) * 0.85, 7, 16)
-            page.drawText("X", {
-              x: box.x + Math.max(0, (box.width - boldFont.widthOfTextAtSize("X", size)) / 2),
-              y: box.y + Math.max(0, (box.height - size) / 2),
-              size,
-              font: boldFont,
-            })
+            _drawGeometryMark(page, box, boldFont)
             didDraw = true
           }
         }
@@ -33111,13 +33121,7 @@ const _drawGeometryOverlays = async ({
           const page = pages[(Number(widget?.page || field.page || 1)) - 1]
           const box = widget?.bbox
           if (!page || !box) return
-          const size = _geometryClamp(Math.min(box.width, box.height) * 0.85, 7, 16)
-          page.drawText("X", {
-            x: box.x + Math.max(0, (box.width - boldFont.widthOfTextAtSize("X", size)) / 2),
-            y: box.y + Math.max(0, (box.height - size) / 2),
-            size,
-            font: boldFont,
-          })
+          _drawGeometryMark(page, box, boldFont)
           didDraw = true
         })
       } else {

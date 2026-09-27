@@ -1990,7 +1990,10 @@ export interface BuilderOscarImportMapping {
   /** Stable row in the explicitly reviewed OSCAR → MOIS measurement catalog. */
   measurementCrosswalkId?: string;
   measurementReviewStatus?: "pending" | "approved" | "rejected" | "ambiguous";
-  /** The author's explicit observation choice; never inferred from an abbreviation. */
+  /**
+   * The linked MOIS observation: the author's choice, an approved crosswalk
+   * row, or the crosswalk candidate linked when the eForm was imported.
+   */
   measurementSelection?: {
     observationCode: string;
     /** Universal clinical concept selected with the local MOIS observation. */
@@ -1999,7 +2002,7 @@ export interface BuilderOscarImportMapping {
     description?: string;
     units?: string;
     valueType?: "TEXT" | "NUMERIC";
-    basis: "author-selected" | "approved-crosswalk";
+    basis: "author-selected" | "approved-crosswalk" | "import-crosswalk";
   } | null;
 }
 
