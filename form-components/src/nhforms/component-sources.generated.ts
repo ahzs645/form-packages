@@ -11,8 +11,23 @@ export const componentModules: Record<string, string> = {
   './ActionButtonGroup/index.jsx': `// Fluent is a NAMESPACE in the real engine's form scope — bare Fluent
 // identifiers are a ReferenceError in production even though preview
 // injects them. Destructure everything this component renders.
-const { ComboBox, DefaultButton, Dialog, DialogFooter, DialogType, Dropdown, Label, PrimaryButton, TextField } = Fluent
+//
+// Each action opens DialogKit's RowDialog (the MOIS SubForm: blocking,
+// titled by the action, min(<dialogMinWidth>px, calc(100vw - 48px)) wide)
+// showing the action's form fields — drawn by FieldKit with the MOIS
+// control the exporter chooses (dropdown: SimpleCodeSelect, combo:
+// FindCodeSelect with a typed answer allowed, date: DateSelect, textarea and
+// text: TextArea) — or its configured payload.
+//
+// OK writes nothing. It closes the dialog and discards what was typed,
+// exactly like Cancel: whether OK should save the values, and where, is not
+// decided yet (Neutral form model, "Decisions needed"). OK_DISCARDS_VALUES
+// makes that explicit; change it only together with that decision.
+// FieldKit and DialogKit are referenced only inside function bodies.
+const { DefaultButton } = Fluent
 const { useMemo, useState } = React
+
+const OK_DISCARDS_VALUES = true
 
 function ActionButtonGroup({
   id = "legacyButtonGroup",
@@ -55,12 +70,21 @@ function ActionButtonGroup({
     setDraftValues((current) => ({ ...current, [fieldId]: value }))
   }
 
+  const closeAction = () => {
+    setActiveAction(null)
+    setDraftValues({})
+  }
+
+  // OK: see OK_DISCARDS_VALUES above.
+  const confirmAction = () => {
+    if (OK_DISCARDS_VALUES) closeAction()
+  }
+
   const formattedPayload = activeAction?.payload
     ? JSON.stringify(activeAction.payload, null, 2)
     : "No payload configured."
 
   const renderField = (field) => {
-    const value = draftValues[field.id] ?? ""
     const commonStyle = {
       breakInside: "avoid",
       margin: "0px 10px",
@@ -68,74 +92,25 @@ function ActionButtonGroup({
       ...(field.maxWidth ? { maxWidth: field.maxWidth } : {}),
       ...(field.minWidth ? { minWidth: field.minWidth } : {}),
     }
-    const inputStyle = {
-      width: field.width || (field.type === "date" ? 160 : "100%"),
-      maxWidth: field.maxWidth || (field.type === "date" ? 160 : "100%"),
-    }
-
-    let control = null
-    if (field.type === "dropdown") {
-      const options = Array.isArray(field.options)
-        ? field.options.map((option) => ({
-            key: option.key ?? option.value ?? option,
-            text: option.text ?? option.label ?? option.value ?? option,
-          }))
-        : []
-      control = (
-        <Dropdown
-          selectedKey={value}
-          placeholder={field.placeholder || "Please select"}
-          options={options}
-          styles={{ root: inputStyle }}
-          onChange={(_, option) => setValue(field.id, option?.key ?? "")}
-        />
-      )
-    } else if (field.type === "combo") {
-      const options = Array.isArray(field.options)
-        ? field.options.map((option) => ({
-            key: option.key ?? option.value ?? option,
-            text: option.text ?? option.label ?? option.value ?? option,
-          }))
-        : []
-      control = (
-        <ComboBox
-          id={field.id}
-          selectedKey={value}
-          text={value}
-          placeholder={field.placeholder || "Please select an option"}
-          options={options}
-          styles={{ root: inputStyle }}
-          allowFreeform
-          autoComplete="on"
-          onChange={(_, option, __, inputValue) => setValue(field.id, option?.key ?? inputValue ?? "")}
-        />
-      )
-    } else {
-      control = (
-        <TextField
-          value={value}
-          multiline={field.type === "textarea"}
-          rows={field.rows || (field.type === "textarea" ? 3 : undefined)}
-          placeholder={field.placeholder || (field.type === "date" ? "YYYY.MM.DD" : undefined)}
-          styles={{ root: inputStyle }}
-          onChange={(_, nextValue) => setValue(field.id, nextValue || "")}
-        />
-      )
-    }
-
+    const descriptor = FieldKit.fromActionField(field)
+    const width = field.width || (field.type === "date" ? 160 : undefined)
     return (
-      <div key={field.id} style={commonStyle}>
-        <Label>{field.label}</Label>
-        <div style={{ display: "flex", flexFlow: "column", minWidth: field.minWidth || 160, width: "100%", alignItems: "flex-start" }}>
-          {control}
-        </div>
-        <div style={{ clear: "both" }} />
+      <div key={field.id} data-action-field={field.id} style={commonStyle}>
+        {FieldKit.renderControl(descriptor, {
+          value: draftValues[field.id] ?? "",
+          onChange: (stored) => setValue(field.id, stored),
+          storage: FieldKit.storage.text(descriptor),
+          label: field.label,
+          labelPosition: "top",
+          readOnly: false,
+          placeholder: field.placeholder || undefined,
+          size: width ? { width, maxWidth: field.maxWidth || width } : { minWidth: field.minWidth || 160, flex: "1 1 0px" },
+        })}
       </div>
     )
   }
 
   const hasFormFields = Array.isArray(activeAction?.fields) && activeAction.fields.length > 0
-  const formDialogWidth = "min(760px, calc(100vw - 48px))"
 
   return (
     <div data-field-id={id} data-action-button-group>
@@ -159,29 +134,17 @@ function ActionButtonGroup({
         ))}
       </div>
 
-      <Dialog
+      <DialogKit.RowDialog
         hidden={!activeAction}
-        onDismiss={() => setActiveAction(null)}
-        minWidth={dialogMinWidth}
-        dialogContentProps={{
-          type: DialogType.normal,
-          title: activeAction?.dialogTitle || activeAction?.label || dialogTitle,
-        }}
-        modalProps={{
-          isBlocking: false,
-          styles: hasFormFields
-            ? {
-                main: {
-                  width: formDialogWidth,
-                  minWidth: formDialogWidth,
-                  maxWidth: formDialogWidth,
-                },
-              }
-            : undefined,
-        }}
+        title={activeAction?.dialogTitle || activeAction?.label || dialogTitle}
+        width={dialogMinWidth}
+        onSave={confirmAction}
+        onCancel={closeAction}
+        saveText={okText}
+        cancelText={cancelText}
       >
         {hasFormFields ? (
-          <div data-component="SubForm" style={{ width: "100%", minWidth: 0, boxSizing: "border-box" }}>
+          <div style={{ width: "100%", minWidth: 0, boxSizing: "border-box" }}>
             <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>
               {activeAction.fields.map(renderField)}
             </div>
@@ -201,23 +164,7 @@ function ActionButtonGroup({
             {formattedPayload}
           </pre>
         )}
-        <DialogFooter>
-          <PrimaryButton
-            text={okText}
-            onClick={() => {
-              setActiveAction(null)
-              setDraftValues({})
-            }}
-          />
-          <DefaultButton
-            text={cancelText}
-            onClick={() => {
-              setActiveAction(null)
-              setDraftValues({})
-            }}
-          />
-        </DialogFooter>
-      </Dialog>
+      </DialogKit.RowDialog>
     </div>
   )
 }
@@ -2566,24 +2513,19 @@ ChartRecordEditor = ({
       ) : null}
 
       {pendingDelete ? (
+        // DialogKit's ConfirmDialog (the MOIS SubForm, blocking, 450px wide).
         // Mounted only while pending (not hidden-toggled): a closed-but-
         // mounted blocking Dialog leaves its focus trap eating outside
         // clicks until the close animation completes.
-        <Fluent.Dialog
-          hidden={false}
-          onDismiss={() => setPendingDelete(null)}
-          dialogContentProps={{
-            type: Fluent.DialogType.normal,
-            title: confirmDeleteTitle,
-            subText: confirmDeleteText,
-          }}
-          modalProps={{ isBlocking: true, styles: { main: { maxWidth: "450px" } } }}
-        >
-          <Fluent.DialogFooter>
-            <Fluent.PrimaryButton text="Confirm" onClick={handleConfirmDelete} />
-            <Fluent.DefaultButton text="Cancel" onClick={() => setPendingDelete(null)} />
-          </Fluent.DialogFooter>
-        </Fluent.Dialog>
+        <DialogKit.ConfirmDialog
+          title={confirmDeleteTitle}
+          message={confirmDeleteText}
+          confirmText="Confirm"
+          cancelText="Cancel"
+          width={450}
+          onConfirm={handleConfirmDelete}
+          onCancel={() => setPendingDelete(null)}
+        />
       ) : null}
     </>
   )
@@ -4825,17 +4767,43 @@ const CompactChoiceFieldMultiSchema = {
 `,
   './ComputedField/index.jsx': `const { useEffect, useMemo } = React
 
-// The formula engine lives in FormulaKit (shared with EditableTable formula
-// columns). Read it only at call time: component files load in no fixed order.
+// The formula engine lives in FormulaKit, generated from @webforms/form-model's
+// reference evaluator (shared with table formula columns and subform
+// calculations). Read it only at call time: component files load in no fixed
+// order.
 const _toNumericValue = (value) => FormulaKit.toNumericValue(value)
 const _toComparableValue = (value) => FormulaKit.toComparableValue(value)
-const _hasValue = (value) => FormulaKit.hasValue(value)
-const _extractComputedReferences = (expression) => FormulaKit.extractReferences(expression)
 const _roundComputedValue = (value, precision) => FormulaKit.roundValue(value, precision)
+// Formula text over answers by field id; kept for callers that only have text.
 const _evaluateComputedExpression = (expression, valuesByFieldId, currentFieldId) =>
   FormulaKit.evaluate(expression, valuesByFieldId, currentFieldId)
-const _hasAllReferencedValues = (expression, valuesByFieldId) =>
-  FormulaKit.hasAllReferencedValues(expression, valuesByFieldId)
+
+// The formula to run: the stored tree the exporter emits (\`formulaTree\`), or
+// the legacy \`expression\` text parsed once. Null when neither is usable.
+const _resolveComputedFormula = (formulaTree, expression) => {
+  if (formulaTree && typeof formulaTree === "object" && formulaTree.v === 1 && formulaTree.expr) return formulaTree
+  if (typeof expression !== "string" || !expression.trim()) return null
+  return typeof FormulaKit.parse === "function" ? FormulaKit.parse(expression).formula : null
+}
+
+// "Calculate from what is answered" counts a missing input as 0; every other
+// incomplete behaviour keeps the reference rule (a missing input blanks it).
+const _formulaIncompleteMode = (incompleteBehavior) =>
+  incompleteBehavior === "compute-anyway" ? "compute-anyway" : "blank"
+
+// A computed answer stores a number, text or yes/no; anything else is blank.
+const _evaluateComputedFormula = (formula, expression, valuesByFieldId, options) => {
+  if (typeof FormulaKit.evaluateTree !== "function") {
+    return _evaluateComputedExpression(expression, valuesByFieldId, options.selfId)
+  }
+  if (!formula) return null
+  const result = FormulaKit.evaluateTree(formula, valuesByFieldId, options)
+  if (typeof result === "number") return Number.isFinite(result) ? result : null
+  return typeof result === "string" || typeof result === "boolean" ? result : null
+}
+
+const _hasAllReferencedValues = (formula, valuesByFieldId, fieldKinds) =>
+  formula ? FormulaKit.hasAllReferencedValues(formula, valuesByFieldId, { fieldKinds }) : true
 
 const _toDisplayValue = (value, precision, resultType) => {
   if (typeof value === "string") return value
@@ -5015,7 +4983,13 @@ const ComputedValuePresentation = ({
 const ComputedField = ({
   fieldId,
   label,
+  // The stored formula tree (@webforms/form-model StoredFormula), emitted by
+  // the MOIS exporter. \`expression\` is its text and the fallback when absent.
+  formulaTree,
   expression,
+  // Builder field types of the referenced fields that change how an answer
+  // reads (dates, yes/no, single checkboxes): { fieldId: type }.
+  fieldKinds,
   precision,
   resultType = "number",
   displayStyle = "field",
@@ -5032,7 +5006,8 @@ const ComputedField = ({
   // Legacy calculators (BPI Severity/Interference/Relief, PEG, DLQI) pair
   //   IF (IsNull(...), 'Incomplete', '')
   // with mirrored visible expressions so a partial total never shows and never
-  // persists. "compute-anyway" is the default so existing forms are unchanged.
+  // persists. "compute-anyway" is the default so existing forms are unchanged:
+  // it counts a missing input as 0, so a score total grows as items are answered.
   incompleteBehavior = "compute-anyway",
   incompleteText = "Incomplete",
   resolvedValue,
@@ -5057,11 +5032,20 @@ const ComputedField = ({
   const policy = _normalizeCalculationPolicy(calculationPolicy)
   const isOverridden = _computedFieldIsOverridden(valuesByFieldId, fieldId)
 
+  const formula = useMemo(
+    () => _resolveComputedFormula(formulaTree, expression),
+    [expression, formulaTree]
+  )
+
   const computedValue = useMemo(
     () => presentationOnly
       ? resolvedValue
-      : _evaluateComputedExpression(expression, valuesByFieldId, fieldId),
-    [expression, fieldId, presentationOnly, resolvedValue, valuesByFieldId]
+      : _evaluateComputedFormula(formula, expression, valuesByFieldId, {
+          selfId: fieldId,
+          incomplete: _formulaIncompleteMode(incompleteBehavior),
+          fieldKinds,
+        }),
+    [expression, fieldId, fieldKinds, formula, incompleteBehavior, presentationOnly, resolvedValue, valuesByFieldId]
   )
 
   const roundedValue = useMemo(
@@ -5072,9 +5056,9 @@ const ComputedField = ({
   const isIncomplete = useMemo(
     () => (
       incompleteBehavior !== "compute-anyway" &&
-      !_hasAllReferencedValues(expression, valuesByFieldId)
+      !_hasAllReferencedValues(formula, valuesByFieldId, fieldKinds)
     ),
-    [expression, incompleteBehavior, valuesByFieldId]
+    [fieldKinds, formula, incompleteBehavior, valuesByFieldId]
   )
 
   const storedValue = useMemo(() => {
@@ -5115,8 +5099,8 @@ const ComputedField = ({
       : \`calc(\${labelColumnWidth} + 10px)\`
 
   const canShowInterpretation = useMemo(
-    () => Boolean(showInterpretation && _hasAllReferencedValues(expression, valuesByFieldId)),
-    [expression, showInterpretation, valuesByFieldId]
+    () => Boolean(showInterpretation && _hasAllReferencedValues(formula, valuesByFieldId, fieldKinds)),
+    [fieldKinds, formula, showInterpretation, valuesByFieldId]
   )
 
   const interpretationValue = policy === "always-calculated"
@@ -6042,7 +6026,20 @@ const ConditionalField = ({
       return parentContext.isGroupVisible(parentId)
     })
   }
-  const wasVisibleRef = useRef(isVisible)
+
+  // The one hidden-answer rule (FormLogicKit.shouldClearHiddenAnswer): with
+  // hiddenAnswerPolicy 'clear' the answer is removed when this field BECOMES
+  // hidden by its rules (it was shown on the previous check); otherwise it is
+  // kept. A field that mounts hidden (a draft reopening, a chart-filled
+  // controller that resolves after mount, a page shown again) keeps its
+  // answer; the save and submit payloads leave it out while it is hidden
+  // (FormLogicKit.dropHiddenAnswers). The inline fallback is the same rule
+  // for a runtime without the kit.
+  const shouldClearHiddenAnswer = typeof FormLogicKit !== 'undefined' && FormLogicKit && typeof FormLogicKit.shouldClearHiddenAnswer === 'function'
+    ? FormLogicKit.shouldClearHiddenAnswer
+    : (policy, hidden, value, wasHidden) => policy === 'clear' && hidden === true && wasHidden === false && value !== undefined && value !== null && value !== ''
+  // Visibility at the previous check: undefined until the first effect runs.
+  const wasVisibleRef = useRef(undefined)
 
   // Hiding a field must also withdraw its STAGED chart writes. Observation /
   // narrative components stage payloads in __componentPayloads keyed by field
@@ -6055,16 +6052,14 @@ const ConditionalField = ({
   // Previously-SAVED chart observations stay untouched — hiding withdraws the
   // pending write, it does not delete history (legacy parity).
   useEffect(() => {
-    const becameHidden = wasVisibleRef.current && !isVisible
+    const wasVisible = wasVisibleRef.current
     wasVisibleRef.current = isVisible
     if (isVisible || !fieldId) return
+    const wasHidden = wasVisible === undefined ? undefined : !wasVisible
 
     const activeFieldData = fd?.field?.data
     const activePayloads = activeFieldData?.__componentPayloads
-    const shouldClearAnswer =
-      becameHidden &&
-      hiddenAnswerPolicy === 'clear' &&
-      activeFieldData?.[fieldId] !== undefined
+    const shouldClearAnswer = shouldClearHiddenAnswer(hiddenAnswerPolicy, true, activeFieldData?.[fieldId], wasHidden)
     const hasStagedDco =
       activePayloads?.dcoUpdatesByComponent?.[fieldId] !== undefined
     const hasStagedWebformUpdate =
@@ -6077,7 +6072,7 @@ const ConditionalField = ({
     if (!shouldClearAnswer && !hasStagedDco && !hasStagedWebformUpdate) return
 
     setFormData(produce((draft) => {
-      if (becameHidden && hiddenAnswerPolicy === 'clear' && draft?.field?.data) {
+      if (draft?.field?.data && shouldClearHiddenAnswer(hiddenAnswerPolicy, true, draft.field.data[fieldId], wasHidden)) {
         delete draft.field.data[fieldId]
       }
       const payloads = draft?.field?.data?.__componentPayloads
@@ -6925,6 +6920,401 @@ function CustomJsxBlock({
 }
 
 `,
+  './DefaultsKit/index.jsx': `// DefaultsKit — default answers in the exported form: reads a field's,
+// column's, cell's or subform entry's default in every saved shape and
+// resolves it to the value to seed. Non-rendering helper module in the
+// FormulaKit pattern: one namespace object, so consumers keep a single bare
+// identifier in engine scope and reference it only inside function bodies
+// (component files load in no guaranteed order).
+//
+//   DefaultsKit.readDefaultAnswer(fieldLike, { shape, bringForward })
+//                     -> { kind: "literal" | "today" | "now" | "chart" | "lastObservation", ... } | null
+//   DefaultsKit.resolveDefaultAnswer(answer, { now, fieldType, readChart, readLastObservation })
+//                     -> the value to seed, or undefined
+//   DefaultsKit.temporalKindOf(fieldLike) / isBlankAnswer(value)
+//
+// A default is seeded only into an empty answer on a new form or a new row.
+//
+// Generated by scripts/generate-defaults-kit.mjs from packages/form-model/src/defaults.ts.
+// Do not edit: change defaults.ts and run \`pnpm generate:nhforms\`. The shared
+// case table (defaults.cases.ts) holds both implementations to the same results.
+
+const DefaultsKit = (() => {
+  var DEFAULT_ANSWER_KINDS = ["literal", "today", "now", "chart", "lastObservation"];
+  var isRecord = (value) => Boolean(value) && typeof value === "object" && !Array.isArray(value);
+  var hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
+  function cloneValue(value) {
+    if (Array.isArray(value)) return value.map((entry) => cloneValue(entry));
+    if (isRecord(value)) {
+      const out = {};
+      for (const key of Object.keys(value)) out[key] = cloneValue(value[key]);
+      return out;
+    }
+    return value;
+  }
+  function stableJson(value) {
+    if (Array.isArray(value)) return \`[\${value.map(stableJson).join(",")}]\`;
+    if (isRecord(value)) {
+      return \`{\${Object.keys(value).filter((key) => value[key] !== void 0).sort().map((key) => \`\${JSON.stringify(key)}:\${stableJson(value[key])}\`).join(",")}}\`;
+    }
+    return value === void 0 ? "null" : JSON.stringify(value);
+  }
+  function isBlankAnswer(value) {
+    if (value === void 0 || value === null) return true;
+    if (typeof value === "string") return value.trim() === "";
+    if (Array.isArray(value)) return value.length === 0;
+    if (isRecord(value)) return Object.keys(value).length === 0;
+    return false;
+  }
+  var isBlankStoredDefault = (value) => value === void 0 || value === null || value === "" || Array.isArray(value) && value.length === 0;
+  var nonEmptyString = (value) => typeof value === "string" && value.trim() ? value.trim() : void 0;
+  function isDefaultAnswer(value) {
+    if (!isRecord(value)) return false;
+    switch (value.kind) {
+      case "literal":
+        return hasOwn(value, "value") && value.value !== void 0;
+      case "today":
+      case "now":
+        return true;
+      case "chart":
+        return Boolean(nonEmptyString(value.concept)) || Array.isArray(value.paths) && value.paths.some((path) => Boolean(nonEmptyString(path)));
+      case "lastObservation":
+        return Boolean(nonEmptyString(value.code)) && (value.system === void 0 || typeof value.system === "string") && (value.lookbackDays === void 0 || typeof value.lookbackDays === "number" && Number.isFinite(value.lookbackDays));
+      default:
+        return false;
+    }
+  }
+  function normalizeDefaultAnswer(value) {
+    if (!isDefaultAnswer(value)) return null;
+    switch (value.kind) {
+      case "literal":
+        return isBlankStoredDefault(value.value) ? null : { kind: "literal", value: cloneValue(value.value) };
+      case "today":
+        return { kind: "today" };
+      case "now":
+        return { kind: "now" };
+      case "chart": {
+        const concept = nonEmptyString(value.concept);
+        const paths = (value.paths ?? []).map((path) => nonEmptyString(path)).filter((path) => Boolean(path));
+        return { kind: "chart", ...concept ? { concept } : {}, ...paths.length ? { paths } : {} };
+      }
+      case "lastObservation": {
+        const system = nonEmptyString(value.system);
+        const lookbackDays = typeof value.lookbackDays === "number" && value.lookbackDays > 0 ? value.lookbackDays : void 0;
+        return {
+          kind: "lastObservation",
+          code: nonEmptyString(value.code),
+          ...system ? { system } : {},
+          ...lookbackDays !== void 0 ? { lookbackDays } : {}
+        };
+      }
+    }
+  }
+  function sameDefaultAnswer(left, right) {
+    return stableJson(normalizeDefaultAnswer(left) ?? null) === stableJson(normalizeDefaultAnswer(right) ?? null);
+  }
+  var TABLE_COLUMN_ONLY_TYPES = ["checkbox", "stampButton"];
+  var LAYOUT_DISPLAY_CELL_KINDS = ["text", "resources", "computed", "stampButton", "fieldList"];
+  function inferDefaultAnswerShape(fieldLike) {
+    if (!isRecord(fieldLike)) return "field";
+    if (hasOwn(fieldLike, "defaultFromObservation") || hasOwn(fieldLike, "default_from_observation") || hasOwn(fieldLike, "builderField")) {
+      return "subformEntry";
+    }
+    if (typeof fieldLike.type === "string") {
+      if (!hasOwn(fieldLike, "prefill") && (hasOwn(fieldLike, "defaultValue") || hasOwn(fieldLike, "default_value"))) return "subformEntry";
+      if (TABLE_COLUMN_ONLY_TYPES.includes(fieldLike.type) || hasOwn(fieldLike, "dataPath") || hasOwn(fieldLike, "showInTable") || hasOwn(fieldLike, "withTime")) return "tableColumn";
+      return "field";
+    }
+    if (typeof fieldLike.rawType === "string") return "field";
+    if (hasOwn(fieldLike, "inputType") || hasOwn(fieldLike, "fieldId") || typeof fieldLike.kind === "string") return "layoutCell";
+    return "field";
+  }
+  function isLayoutDisplayCell(cell) {
+    return typeof cell.kind === "string" && LAYOUT_DISPLAY_CELL_KINDS.includes(cell.kind);
+  }
+  var DISPLAY_FIELD_TYPES = ["richText", "heading", "section", "hyperlink"];
+  function isDisplayField(field) {
+    const type = typeof field.type === "string" ? field.type : typeof field.rawType === "string" ? field.rawType : "";
+    if (type === "richText") return !(isRecord(field.richTextConfig) && field.richTextConfig.readOnly === false);
+    return DISPLAY_FIELD_TYPES.includes(type);
+  }
+  function temporalKindOf(fieldLike) {
+    if (!isRecord(fieldLike)) return null;
+    const type = typeof fieldLike.type === "string" ? fieldLike.type : "";
+    const inputType = typeof fieldLike.inputType === "string" ? fieldLike.inputType : "";
+    const rawType = typeof fieldLike.rawType === "string" ? fieldLike.rawType : "";
+    if (type === "datetime" || rawType === "datetime") return "dateTime";
+    if (type === "time" || inputType === "time" || rawType === "time") return "time";
+    if (type === "date" || inputType === "date" || rawType === "date") {
+      const dateConfig = isRecord(fieldLike.dateConfig) ? fieldLike.dateConfig : null;
+      return fieldLike.withTime === true || dateConfig?.withTime === true || fieldLike.dateWithTime === true ? "dateTime" : "date";
+    }
+    return null;
+  }
+  function normalizeTemporalKind(fieldType) {
+    if (fieldType === "date") return "date";
+    if (fieldType === "dateTime" || fieldType === "datetime") return "dateTime";
+    if (fieldType === "time") return "time";
+    return null;
+  }
+  var TOKEN_KINDS = ["today", "now", "nextDateAfterLastRow"];
+  var TODAY_SOURCE_PATHS = ["system.currentDate", "system.currentDateTime"];
+  function sourcePathsOf(cell) {
+    const paths = [cell.sourcePath, ...Array.isArray(cell.sourcePaths) ? cell.sourcePaths : []].map((path) => nonEmptyString(path)).filter((path) => Boolean(path));
+    return paths.filter((path, index) => paths.indexOf(path) === index);
+  }
+  function todayBindingOf(cell) {
+    const paths = sourcePathsOf(cell);
+    if (paths.length === 0 || cell.sourceMode !== "initial") return null;
+    if (!paths.every((path) => TODAY_SOURCE_PATHS.includes(path))) return null;
+    return paths[0] === "system.currentDateTime" ? { kind: "now" } : { kind: "today" };
+  }
+  function hasTodayFlag(fieldLike) {
+    const dateConfig = isRecord(fieldLike.dateConfig) ? fieldLike.dateConfig : null;
+    return dateConfig?.prefillToday === true || fieldLike.prefillToday === true;
+  }
+  function yesNoOptionTokens(entry) {
+    const options = Array.isArray(entry.options) && entry.options.length > 0 ? entry.options : ["Yes", "No"];
+    return [options[0], options[1]];
+  }
+  function optionTokens(option) {
+    if (option === void 0 || option === null) return [];
+    if (!isRecord(option)) return [String(option)];
+    return [option.value, option.key, option.id, option.code, option.label, option.text, option.display].filter((token) => token !== void 0 && token !== null).map((token) => String(token));
+  }
+  function optionStoredToken(option) {
+    if (!isRecord(option)) return option === void 0 || option === null ? null : option;
+    const token = option.value ?? option.key ?? option.id ?? option.label ?? option.text;
+    return token === void 0 || token === null ? null : token;
+  }
+  var sameToken = (left, right) => String(left).trim().toLowerCase() === right.trim().toLowerCase();
+  function descriptorFromStoredValue(value, { underscoreTokens, entry }) {
+    if (isBlankStoredDefault(value)) return null;
+    if (underscoreTokens && value === "__today") return { kind: "today" };
+    if (underscoreTokens && value === "__now") return { kind: "now" };
+    if (isRecord(value) && typeof value.kind === "string" && TOKEN_KINDS.includes(value.kind)) {
+      if (value.kind === "today") return { kind: "today" };
+      if (value.kind === "now") return { kind: "now" };
+      return null;
+    }
+    if (entry && entry.type === "booleanYesNo" && (typeof value === "string" || typeof value === "number")) {
+      const [on, off] = yesNoOptionTokens(entry);
+      if (optionTokens(on).some((token) => sameToken(value, token))) return { kind: "literal", value: true };
+      if (optionTokens(off).some((token) => sameToken(value, token))) return { kind: "literal", value: false };
+    }
+    return { kind: "literal", value: cloneValue(value) };
+  }
+  function observationBindingOf(entry) {
+    const binding = entry.defaultFromObservation ?? entry.default_from_observation;
+    if (!isRecord(binding)) return null;
+    const code = nonEmptyString(binding.observationCode ?? binding.observation_code ?? binding.code);
+    if (!code) return null;
+    const system = nonEmptyString(binding.system);
+    const lookbackDays = typeof binding.lookbackDays === "number" && Number.isFinite(binding.lookbackDays) && binding.lookbackDays > 0 ? binding.lookbackDays : void 0;
+    return {
+      kind: "lastObservation",
+      code,
+      ...system ? { system } : {},
+      ...lookbackDays !== void 0 ? { lookbackDays } : {}
+    };
+  }
+  function readLegacyDefault(fieldLike, shape, bringForward) {
+    if (shape === "subformEntry") {
+      if (bringForward !== false) {
+        const observation = observationBindingOf(fieldLike);
+        if (observation) return observation;
+      }
+      const stored = hasOwn(fieldLike, "defaultValue") ? fieldLike.defaultValue : fieldLike.default_value;
+      return descriptorFromStoredValue(stored, { underscoreTokens: true, entry: fieldLike });
+    }
+    if (!isBlankStoredDefault(fieldLike.prefill)) {
+      return descriptorFromStoredValue(fieldLike.prefill, { underscoreTokens: false });
+    }
+    if (hasTodayFlag(fieldLike)) {
+      const temporal = temporalKindOf(fieldLike);
+      if (temporal === "date") return { kind: "today" };
+      if (temporal === "dateTime") return { kind: "now" };
+    }
+    if (shape === "layoutCell") {
+      if (sourcePathsOf(fieldLike).length > 0) return todayBindingOf(fieldLike);
+      return descriptorFromStoredValue(fieldLike.defaultValue, { underscoreTokens: false });
+    }
+    return null;
+  }
+  function hasLegacyDefaultKey(fieldLike, shape) {
+    const present = (record, key) => record[key] !== void 0;
+    if (shape === "subformEntry") {
+      return ["defaultValue", "default_value", "defaultFromObservation", "default_from_observation"].some((key) => present(fieldLike, key));
+    }
+    if (present(fieldLike, "prefill") || present(fieldLike, "prefillToday")) return true;
+    if (isRecord(fieldLike.dateConfig) && present(fieldLike.dateConfig, "prefillToday")) return true;
+    if (shape === "layoutCell") {
+      if (todayBindingOf(fieldLike)) return true;
+      if (sourcePathsOf(fieldLike).length === 0 && present(fieldLike, "defaultValue")) return true;
+    }
+    return false;
+  }
+  function withoutLegacyDefault(fieldLike, shape) {
+    const next = { ...fieldLike };
+    if (shape === "subformEntry") {
+      delete next.defaultValue;
+      delete next.default_value;
+      delete next.defaultFromObservation;
+      delete next.default_from_observation;
+      return next;
+    }
+    delete next.prefill;
+    delete next.prefillToday;
+    if (isRecord(next.dateConfig) && hasOwn(next.dateConfig, "prefillToday")) {
+      const { prefillToday: _prefillToday, ...dateConfig } = next.dateConfig;
+      next.dateConfig = dateConfig;
+    }
+    if (shape === "layoutCell" && !isLayoutDisplayCell(next)) {
+      if (todayBindingOf(next)) {
+        delete next.sourcePath;
+        delete next.sourcePaths;
+        delete next.sourceMode;
+        delete next.sourceFormat;
+        delete next.sourceFallback;
+        delete next.defaultValue;
+      } else if (sourcePathsOf(next).length === 0) {
+        delete next.defaultValue;
+      }
+    }
+    return next;
+  }
+  function applyLegacyMirror(next, answer, shape, original) {
+    if (!answer) return;
+    if (shape === "subformEntry") {
+      if (answer.kind === "literal") {
+        if (next.type === "booleanYesNo" && typeof answer.value === "boolean") {
+          const [on, off] = yesNoOptionTokens(next);
+          next.defaultValue = optionStoredToken(answer.value ? on : off);
+        } else {
+          next.defaultValue = cloneValue(answer.value);
+        }
+      } else if (answer.kind === "today") {
+        next.defaultValue = "__today";
+      } else if (answer.kind === "now") {
+        next.defaultValue = "__now";
+      } else if (answer.kind === "lastObservation") {
+        const previous = original.defaultFromObservation ?? original.default_from_observation;
+        const aspect = isRecord(previous) && nonEmptyString(previous.observationCode ?? previous.observation_code) === answer.code && typeof previous.aspect === "string" ? previous.aspect : void 0;
+        next.defaultFromObservation = {
+          observationCode: answer.code,
+          ...answer.system ? { system: answer.system } : {},
+          ...answer.lookbackDays !== void 0 ? { lookbackDays: answer.lookbackDays } : {},
+          ...aspect ? { aspect } : {}
+        };
+      }
+      return;
+    }
+    if (answer.kind === "literal") {
+      next.prefill = cloneValue(answer.value);
+    } else if (answer.kind === "today" || answer.kind === "now") {
+      const temporal = temporalKindOf(original);
+      if (temporal === "date" || temporal === "dateTime") {
+        next.dateConfig = { ...isRecord(next.dateConfig) ? next.dateConfig : {}, prefillToday: true };
+      }
+    }
+  }
+  function readDefaultAnswer(fieldLike, options = {}) {
+    if (!isRecord(fieldLike)) return null;
+    const shape = options.shape ?? inferDefaultAnswerShape(fieldLike);
+    if (shape === "layoutCell" && isLayoutDisplayCell(fieldLike)) return null;
+    if (shape === "field" && isDisplayField(fieldLike)) return null;
+    const legacy = readLegacyDefault(fieldLike, shape, options.bringForward);
+    const stored = normalizeDefaultAnswer(fieldLike.defaultAnswer);
+    let answer = legacy;
+    if (stored && !hasLegacyDefaultKey(fieldLike, shape)) {
+      answer = stored;
+    } else if (stored) {
+      const mirrored = withoutLegacyDefault(fieldLike, shape);
+      applyLegacyMirror(mirrored, stored, shape, fieldLike);
+      const expected = readLegacyDefault(mirrored, shape, options.bringForward);
+      if (sameDefaultAnswer(expected, legacy)) answer = stored;
+    }
+    if (answer && answer.kind === "lastObservation" && options.bringForward === false) {
+      answer = readLegacyDefault(fieldLike, shape, false);
+    }
+    return answer ? cloneValue(answer) : null;
+  }
+  function writeDefaultAnswer(fieldLike, answer, options = {}) {
+    const original = fieldLike;
+    const shape = options.shape ?? inferDefaultAnswerShape(original);
+    const normalized = normalizeDefaultAnswer(answer);
+    const next = withoutLegacyDefault(original, shape);
+    applyLegacyMirror(next, normalized, shape, original);
+    if (normalized) next.defaultAnswer = normalized;
+    else delete next.defaultAnswer;
+    return next;
+  }
+  function defaultAnswerPatch(fieldLike, answer, options = {}) {
+    const before = fieldLike;
+    const after = writeDefaultAnswer(fieldLike, answer, options);
+    const patch = {};
+    const keys = Object.keys(before).concat(Object.keys(after).filter((key) => !hasOwn(before, key)));
+    for (const key of keys) {
+      if (stableJson(before[key]) === stableJson(after[key]) && hasOwn(before, key) === hasOwn(after, key)) continue;
+      if (hasOwn(after, key)) patch[key] = after[key];
+      else patch[key] = key === "prefill" || key === "defaultAnswer" ? null : void 0;
+    }
+    return patch;
+  }
+  var pad2 = (value) => String(value).padStart(2, "0");
+  function formatLocalDate(date) {
+    return \`\${date.getFullYear()}-\${pad2(date.getMonth() + 1)}-\${pad2(date.getDate())}\`;
+  }
+  function formatLocalDateTime(date) {
+    return \`\${formatLocalDate(date)}T\${pad2(date.getHours())}:\${pad2(date.getMinutes())}\`;
+  }
+  function resolveDefaultAnswer(answer, context) {
+    const normalized = normalizeDefaultAnswer(answer);
+    if (!normalized) return void 0;
+    const now = context && context.now instanceof Date && !Number.isNaN(context.now.getTime()) ? context.now : /* @__PURE__ */ new Date();
+    const temporal = normalizeTemporalKind(context?.fieldType ?? null);
+    switch (normalized.kind) {
+      case "literal":
+        return cloneValue(normalized.value);
+      case "today":
+        return temporal === "time" ? void 0 : formatLocalDate(now);
+      case "now":
+        if (temporal === "date") return formatLocalDate(now);
+        if (temporal === "time") return \`\${pad2(now.getHours())}:\${pad2(now.getMinutes())}\`;
+        return formatLocalDateTime(now);
+      case "chart": {
+        if (typeof context?.readChart !== "function") return void 0;
+        const value = context.readChart({
+          ...normalized.concept ? { concept: normalized.concept } : {},
+          ...normalized.paths ? { paths: [...normalized.paths] } : {}
+        });
+        return isBlankAnswer(value) ? void 0 : value;
+      }
+      case "lastObservation": {
+        if (typeof context?.readLastObservation !== "function") return void 0;
+        const value = context.readLastObservation(normalized.code, normalized.system, normalized.lookbackDays);
+        return isBlankAnswer(value) ? void 0 : value;
+      }
+    }
+    return void 0;
+  }
+
+  return {
+    DEFAULT_ANSWER_KINDS,
+    defaultAnswerPatch,
+    formatLocalDate,
+    formatLocalDateTime,
+    inferDefaultAnswerShape,
+    isBlankAnswer,
+    isDefaultAnswer,
+    readDefaultAnswer,
+    resolveDefaultAnswer,
+    sameDefaultAnswer,
+    temporalKindOf,
+    writeDefaultAnswer,
+  }
+})()
+`,
   './DentalWeightConverter/index.jsx': `// Fluent is a NAMESPACE in the real engine's form scope — bare Fluent
 // identifiers are a ReferenceError in production even though preview
 // injects them. Destructure everything this component renders.
@@ -7108,6 +7498,233 @@ const DentalWeightConverterSchema = {
   cWeightlb: { type: "string" },
 }
 `,
+  './DialogKit/index.jsx': `// DialogKit — one row dialog and one confirmation, both drawn with the MOIS
+// SubForm (blocking Dialog, the label as its title, other props to the
+// Dialog), plus the width rule every NHForms dialog uses.
+//
+//   DialogKit.width(px, fallback?)  -> "min(<px>px, calc(100vw - 48px))"
+//                                      (a RowDialog / ConfirmDialog is exactly
+//                                      this wide: its min and max width)
+//   DialogKit.maxWidth              -> "calc(100vw - 48px)" (viewers that may
+//                                      grow with their content)
+//   <DialogKit.RowDialog
+//      hidden | open, title, width, onSave, onCancel, saveText, cancelText,
+//      saveDisabled, extraActions=[{ text, onClick, disabled }], errorMessage,
+//      readOnly, lockPolicy, dirty, confirmDiscard, discardTitle, discardText,
+//      discardConfirmText, discardCancelText, moisModule>
+//     ...questions...
+//   </DialogKit.RowDialog>
+//   <DialogKit.ConfirmDialog
+//      hidden | open, title, message, confirmText, cancelText, onConfirm,
+//      onCancel, confirmDisabled, busy, errorMessage, width,
+//      extraActions=[{ text, onClick, disabled }], showCancel>
+//     ...optional extra body (a reason field)...
+//   </DialogKit.ConfirmDialog>
+//
+// Because the SubForm is blocking, a click outside never dismisses it. The
+// close button and Escape call onCancel; a RowDialog with confirmDiscard asks
+// before discarding a dirty draft. A read-only RowDialog disables its body and
+// its save actions and holds no lock. The body renders in a fresh section
+// (\`section={{}}\`: linear layout, no field placement), so the questions show
+// even when the table sits in a placed Grid.
+//
+// Viewers (FlowSheet, HealthMaintenanceReview, HotspotMapField) keep their
+// non-blocking dialogs and use DialogKit.width only. Consumers reference
+// DialogKit only inside function bodies (component files load in no
+// guaranteed order).
+
+const DialogKit = (() => {
+  const VIEWPORT_GUTTER_PX = 48
+  const maxWidth = \`calc(100vw - \${VIEWPORT_GUTTER_PX}px)\`
+
+  const width = (px, fallback = 640) => {
+    const requested = Number(px)
+    const value = Number.isFinite(requested) && requested > 0 ? requested : fallback
+    return \`min(\${Math.round(value)}px, calc(100vw - \${VIEWPORT_GUTTER_PX}px))\`
+  }
+
+  const errorStyle = { marginTop: 12, fontSize: 13, color: "#a4262c" }
+
+  const ConfirmDialog = ({
+    hidden = false,
+    open,
+    title,
+    message,
+    children,
+    confirmText = "Confirm",
+    cancelText = "Cancel",
+    onConfirm,
+    onCancel,
+    confirmDisabled = false,
+    busy = false,
+    errorMessage,
+    width: widthPx = 440,
+    extraActions = [],
+    showCancel = true,
+  }) => {
+    const isHidden = open === undefined ? hidden : !open
+    const cancel = () => {
+      if (busy) return
+      if (typeof onCancel === "function") onCancel()
+    }
+    const actions = Array.isArray(extraActions) ? extraActions.filter(Boolean) : []
+    return (
+      <SubForm
+        hidden={isHidden}
+        label={title}
+        minWidth={width(widthPx, 440)}
+        maxWidth={width(widthPx, 440)}
+        onCancel={cancel}
+        section={{}}
+      >
+        <div data-dialog-kit="confirm">
+          {message ? (
+            <Fluent.Text block styles={{ root: { marginBottom: 8, whiteSpace: "pre-wrap" } }}>{message}</Fluent.Text>
+          ) : null}
+          {children}
+          {errorMessage ? (
+            <div role="alert" data-dialog-kit-error="" style={errorStyle}>{errorMessage}</div>
+          ) : null}
+          <ButtonBar horizontalAlign="end" paddingBottom={0}>
+            <Fluent.PrimaryButton
+              text={confirmText}
+              disabled={confirmDisabled || busy}
+              onClick={() => {
+                if (confirmDisabled || busy) return
+                if (typeof onConfirm === "function") onConfirm()
+              }}
+            />
+            {actions.map((action, index) => (
+              <Fluent.DefaultButton
+                key={action.key || action.text || index}
+                text={action.text}
+                disabled={busy || action.disabled === true}
+                onClick={() => {
+                  if (busy || action.disabled === true) return
+                  if (typeof action.onClick === "function") action.onClick()
+                }}
+              />
+            ))}
+            {showCancel ? <Fluent.DefaultButton text={cancelText} disabled={busy} onClick={cancel} /> : null}
+          </ButtonBar>
+        </div>
+      </SubForm>
+    )
+  }
+
+  const RowDialog = ({
+    hidden = false,
+    open,
+    title,
+    width: widthPx = 640,
+    children,
+    onSave,
+    onCancel,
+    saveText = "Save",
+    cancelText = "Cancel",
+    saveDisabled = false,
+    extraActions = [],
+    errorMessage,
+    readOnly = false,
+    lockPolicy = null,
+    dirty = false,
+    confirmDiscard = false,
+    discardTitle = "Discard changes?",
+    discardText = "The changes in this dialog have not been saved.",
+    discardConfirmText = "Discard",
+    discardCancelText = "Keep editing",
+    moisModule,
+  }) => {
+    const [confirmingDiscard, setConfirmingDiscard] = React.useState(false)
+    const isHidden = open === undefined ? hidden : !open
+
+    React.useEffect(() => {
+      if (isHidden) setConfirmingDiscard(false)
+    }, [isHidden])
+
+    const requestCancel = () => {
+      if (confirmDiscard && dirty && !readOnly) {
+        setConfirmingDiscard(true)
+        return
+      }
+      if (typeof onCancel === "function") onCancel()
+    }
+
+    const actions = Array.isArray(extraActions) ? extraActions.filter(Boolean) : []
+
+    return (
+      <>
+        <SubForm
+          hidden={isHidden}
+          label={title}
+          moisModule={moisModule}
+          minWidth={width(widthPx, 640)}
+          maxWidth={width(widthPx, 640)}
+          lockPolicy={readOnly ? null : lockPolicy}
+          onCancel={requestCancel}
+          section={{}}
+        >
+          <div data-dialog-kit="row">
+            {/* A disabled fieldset keeps every native control inside inert
+                while read-only; the footer stays outside it. */}
+            <fieldset
+              disabled={readOnly}
+              data-dialog-kit-readonly={readOnly ? "true" : undefined}
+              style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}
+            >
+              {children}
+            </fieldset>
+            {errorMessage ? (
+              <div role="alert" data-dialog-kit-error="" style={errorStyle}>{errorMessage}</div>
+            ) : null}
+            <ButtonBar horizontalAlign="end" paddingBottom={0}>
+              <Fluent.PrimaryButton
+                text={saveText}
+                disabled={readOnly || saveDisabled}
+                onClick={() => {
+                  if (readOnly || saveDisabled) return
+                  if (typeof onSave === "function") onSave()
+                }}
+              />
+              {actions.map((action, index) => (
+                <Fluent.DefaultButton
+                  key={action.key || action.text || index}
+                  text={action.text}
+                  disabled={readOnly || action.disabled === true}
+                  onClick={() => {
+                    if (readOnly || action.disabled === true) return
+                    if (typeof action.onClick === "function") action.onClick()
+                  }}
+                />
+              ))}
+              <Fluent.DefaultButton text={cancelText} onClick={requestCancel} />
+            </ButtonBar>
+          </div>
+        </SubForm>
+        <ConfirmDialog
+          hidden={isHidden || !confirmingDiscard}
+          title={discardTitle}
+          message={discardText}
+          confirmText={discardConfirmText}
+          cancelText={discardCancelText}
+          onConfirm={() => {
+            setConfirmingDiscard(false)
+            if (typeof onCancel === "function") onCancel()
+          }}
+          onCancel={() => setConfirmingDiscard(false)}
+        />
+      </>
+    )
+  }
+
+  return {
+    width,
+    maxWidth,
+    RowDialog,
+    ConfirmDialog,
+  }
+})()
+`,
   './DocumentSignButton/index.jsx': `const DocumentSignButton = ({ disabled = false, preparePersist, getSaveData }) => {
   const sd = useSourceData();
   const [fd, setFormData] = useActiveData();
@@ -7167,9 +7784,12 @@ const DentalWeightConverterSchema = {
     <Fluent.DefaultButton text={signed ? "Unsign" : "Sign"}
       disabled={disabled || busy || !available || !sd?.formParams?.documentId}
       onClick={() => { setReason(""); setError(""); setOpen(true); }} />
-    <Fluent.Dialog hidden={!open} onDismiss={dismiss}
-      dialogContentProps={{ title: signed ? "Unsign current record" : "Sign current record" }}
-      modalProps={{ isBlocking: true }}>
+    {/* DialogKit's ConfirmDialog (the MOIS SubForm, blocking) with the
+        reason field as its body; busy disables both buttons and the close. */}
+    <DialogKit.ConfirmDialog hidden={!open} onCancel={dismiss}
+      title={signed ? "Unsign current record" : "Sign current record"}
+      confirmText={signed ? "Unsign" : "Sign"} onConfirm={confirm}
+      confirmDisabled={signed && !reason.trim()} busy={busy} errorMessage={error || undefined}>
       <Fluent.Stack tokens={{ childrenGap: 12 }}>
         <Fluent.Text>{sd?.userProfile?.identity?.fullName || "Current user"}</Fluent.Text>
         <Fluent.Text>{signed
@@ -7178,14 +7798,8 @@ const DentalWeightConverterSchema = {
         <Fluent.TextField label={signed ? "Reason for unsigning" : "Reason (optional)"}
           required={signed} multiline rows={3} value={reason} disabled={busy}
           onChange={(_, value) => setReason(value || "")} />
-        {error ? <div role="alert">{error}</div> : null}
       </Fluent.Stack>
-      <Fluent.DialogFooter>
-        <Fluent.PrimaryButton text={signed ? "Unsign" : "Sign"} onClick={confirm}
-          disabled={busy || (signed && !reason.trim())} />
-        <Fluent.DefaultButton text="Cancel" onClick={dismiss} disabled={busy} />
-      </Fluent.DialogFooter>
-    </Fluent.Dialog>
+    </DialogKit.ConfirmDialog>
   </>;
 };
 `,
@@ -7550,6 +8164,15 @@ const DentalWeightConverterSchema = {
  * - Per-row column visibility (column.visibility, a BuilderVisibilityRule
  *   evaluated by FormLogicKit) and required-while-shown columns
  *   (column.required / requiredWhenVisible, requiredMessage) checked on row Save
+ * - Formula columns evaluated by FormulaKit from their stored tree
+ *
+ * ValueKit reads column options and stored answers (yes/no, choices);
+ * DefaultsKit reads and resolves each column's default answer for a new row;
+ * FieldKit draws each cell and dialog question with the MOIS control the
+ * exporter chooses; DialogKit draws the row dialog (RowDialog on SubForm).
+ * FormulaKit, FormLogicKit, ValueKit, DefaultsKit, FieldKit and DialogKit are
+ * referenced only inside function bodies (component files load in no
+ * guaranteed order).
  */
 
 const { useState, useEffect, useMemo, useCallback } = React
@@ -7559,21 +8182,31 @@ const {
   IconButton,
   DefaultButton,
   PrimaryButton,
-  Dialog,
-  DialogType,
   Text,
-  Checkbox,
-  ChoiceGroup,
 } = Fluent
 
 if (typeof EditableTable === "undefined") {
   window.EditableTable = null
 }
 
+// DefaultsKit (generated from form-model defaults.ts) reads a default answer in
+// every saved shape and resolves it; referenced only inside function bodies.
+// A runtime without the kit keeps the older prefill-only reading.
+const _defaultsKit = () => (typeof DefaultsKit !== "undefined" && DefaultsKit ? DefaultsKit : null)
+
+// A column's starting value in a new row: its default answer (a fixed value
+// such as 7.5 hours per shift, today or now), or blank. A cell stores text, so
+// a number becomes text; a checkbox starts unchecked unless its default is on.
 const _getDefaultCellValue = (column = {}) => {
-  if (column.type === "checkbox") return column.prefill === true ? true : false
-  // A starting value the filler can change (e.g. 7.5 hours per shift).
-  if (typeof column.prefill === "string" || typeof column.prefill === "number") return String(column.prefill)
+  const kit = _defaultsKit()
+  const value = kit
+    ? kit.resolveDefaultAnswer(kit.readDefaultAnswer(column, { shape: "tableColumn" }), {
+      now: new Date(),
+      fieldType: kit.temporalKindOf(column),
+    })
+    : column.prefill
+  if (column.type === "checkbox") return value === true
+  if (typeof value === "string" || typeof value === "number") return String(value)
   return ""
 }
 
@@ -7582,34 +8215,24 @@ const _getDefaultCellValue = (column = {}) => {
 const _isRequiredColumn = (column = {}) => column?.required === true || column?.requiredWhenVisible === true
 
 // Checkbox cells store a boolean. The subform row editor reports its
-// checkbox as a selected option ({ selectedKey: "true" }) and older rows
-// stored the label ("Checked"), so read those as booleans too.
-const _CHECKBOX_TRUE_TEXT = ["true", "yes", "y", "1", "on", "checked"]
-const _toCheckboxValue = (value, column = {}) => {
-  if (typeof value === "boolean") return value
-  if (value === null || value === undefined) return false
-  if (typeof value === "number") return Number.isFinite(value) && value !== 0
-  if (Array.isArray(value)) return value.some((entry) => _toCheckboxValue(entry, column))
-  if (typeof value === "object") {
-    return _toCheckboxValue(value.selectedKey ?? value.code ?? value.value ?? value.key ?? null, column)
-  }
-  const text = String(value).trim().toLowerCase()
-  const onLabel = String(column?.booleanLabels?.on || "").trim().toLowerCase()
-  return _CHECKBOX_TRUE_TEXT.includes(text) || (onLabel !== "" && text === onLabel)
+// checkbox as a selected option ({ selectedKey: "true" }), older rows stored
+// the label ("Checked") and MOIS yes/no answers are codings; ValueKit reads
+// every shape (the column's own on/off labels included). Unknown reads as
+// unchecked.
+const _toCheckboxValue = (value, column = {}) =>
+  ValueKit.readBoolean(value, column?.booleanLabels) === true
+
+// A yes/no read of a value mirrored to or from a document field: ValueKit's
+// reading when it knows the value ("Off", "No", false, a MOIS-YESNO coding),
+// else any other non-empty value (a PDF check box's own on-state name) is on.
+const _toDocumentCheckboxValue = (value) => {
+  const read = ValueKit.readBoolean(value)
+  return read === null ? Boolean(value) : read
 }
 
 const _formatLocalDate = (date) => {
   const pad2 = (value) => String(value).padStart(2, "0")
   return \`\${date.getFullYear()}-\${pad2(date.getMonth() + 1)}-\${pad2(date.getDate())}\`
-}
-
-// SMOIS DateSelect calls onChange with a Date; preview supplies a date string.
-// Store the local calendar day, avoiding an implicit UTC conversion.
-const _normalizeDateCellValue = (value) => {
-  if (value && typeof value.getFullYear === "function") {
-    return Number.isNaN(value.getTime()) ? "" : _formatLocalDate(value)
-  }
-  return typeof value === "string" ? value : ""
 }
 
 const _todayDateValue = () => _formatLocalDate(new Date())
@@ -7635,15 +8258,34 @@ const _makeEmptyRow = (columns = [], rowIndex = 0) => {
   return row
 }
 
+// The default of one row-editor (data-entry) field for a new row, or
+// undefined for none. The row-relative "next date after the last row" belongs
+// to this table; every other shape is read and resolved by DefaultsKit.
+const _resolveRowEditorDefault = (field, context = {}) => {
+  const defaultValue = field.defaultValue
+  if (defaultValue && typeof defaultValue === "object" && defaultValue.kind === "nextDateAfterLastRow") {
+    return _resolveFieldDefaultValue(defaultValue, context)
+  }
+  const kit = _defaultsKit()
+  if (!kit) return typeof defaultValue === "undefined" ? undefined : _resolveFieldDefaultValue(defaultValue, context)
+  return kit.resolveDefaultAnswer(kit.readDefaultAnswer(field, { shape: "subformEntry" }), {
+    now: new Date(),
+    fieldType: kit.temporalKindOf(field),
+  })
+}
+
+// A default never overwrites an answer: only empty cells of a new row are filled.
 const _applyDefaultValuesToRow = (row, fields = [], context = {}) => {
   if (!row || !Array.isArray(fields)) return row
   fields.forEach((field) => {
-    if (!field || typeof field !== "object" || typeof field.defaultValue === "undefined") return
+    if (!field || typeof field !== "object") return
     const fieldId = field.id
     if (!fieldId) return
     const currentValue = _getValueAtPath(row, fieldId)
     if (_isMeaningfulValue(currentValue)) return
-    _setValueAtPath(row, fieldId, _resolveFieldDefaultValue(field.defaultValue, context))
+    const value = _resolveRowEditorDefault(field, context)
+    if (typeof value === "undefined") return
+    _setValueAtPath(row, fieldId, value)
   })
   return row
 }
@@ -7845,7 +8487,10 @@ const _isRowEmpty = (row, columns = []) => {
     // Calculated cells and untouched starting values are not answers.
     if (col?.computedValue?.mode === "formula") return true
     const value = _getValueAtPath(row, col.dataPath || col.id)
-    if (col.type !== "checkbox" && col.prefill !== undefined && col.prefill !== null && _stringifyValue(value) === String(col.prefill)) return true
+    if (col.type !== "checkbox") {
+      const startingValue = _getDefaultCellValue(col)
+      if (startingValue !== "" && _stringifyValue(value) === startingValue) return true
+    }
     return !_isMeaningfulValue(value)
   })
 }
@@ -7900,9 +8545,8 @@ const _formatCellValue = (row, column) => {
     : _getValueAtPath(row, column.dataPath || column.id)
   // Choice cells store the option's code; show its wording.
   if (column.type === "dropdown" && !column.codeSystem && (typeof value === "string" || Array.isArray(value))) {
-    const options = _normalizeChoiceOptions(column.options)
-    const wording = (code) => options.find((option) => String(option.key) === String(code))?.text ?? code
-    return _stringifyValue(Array.isArray(value) ? value.map(wording) : wording(value))
+    const wording = ValueKit.readChoice(value, _choiceOptionList(column.options)).map((entry) => entry.display ?? entry.code)
+    return _stringifyValue(wording)
   }
   if (column.type === "checkbox") {
     if (value === undefined || value === null || value === "") return ""
@@ -7937,10 +8581,13 @@ const _applyComputedColumns = (row, columns = []) => {
   return _applyFormulaColumns(nextRow, columns)
 }
 
-// Formula columns: \`computedValue: { mode: "formula", expression, calculationPolicy?,
-// precision?, incompleteBehavior? }\`. The expression uses ComputedField's syntax
-// (FormulaKit) and reads the same row: \`[columnId]\` is that row's cell, e.g.
-// \`weekdaysBetween([from], [to]) * [hoursPerShift]\`.
+// Formula columns: \`computedValue: { mode: "formula", expression, formulaTree?,
+// calculationPolicy?, precision?, incompleteBehavior? }\`. The formula reads the
+// same row: \`[columnId]\` is that row's cell, e.g.
+// \`weekdaysBetween([from], [to]) * [hoursPerShift]\`. The exported tree (else
+// the text, parsed) is evaluated by FormulaKit.evaluateTree with the reference
+// semantics (docs/.../architecture/formula-semantics.md); a kit without tree
+// support evaluates the text as before.
 //
 // calculationPolicy (ComputedField's names):
 // - "always-calculated": read-only, recalculated on every change;
@@ -7981,14 +8628,111 @@ const _rowFormulaValues = (row, columns = []) => {
   return values
 }
 
+// The builder field type of a column's cells, so the formula kit reads date
+// cells as dates, tick boxes as yes/no and choices as codes.
+const _editableTableFormulaFieldType = (column = {}) => {
+  switch (column.type) {
+    case "number": return "number"
+    case "date": return column.withTime ? "datetime" : "date"
+    case "time": return "time"
+    case "dropdown": return column.choiceStyle === "multiselect" || column.choiceStyle === "checkbox" ? "multiselect" : "choice"
+    case "checkbox": return "booleanSingle"
+    case "text": return "text"
+    default: return undefined
+  }
+}
+
+// What a formula over this table's rows may read, per columns array: every
+// column by id and by save key, its field type, and choice options' scores
+// (for score([column])).
+const _editableTableFormulaScopes = new WeakMap()
+const _editableTableFormulaScope = (columns = []) => {
+  const cached = _editableTableFormulaScopes.get(columns)
+  if (cached) return cached
+  const fieldIds = []
+  const fieldTypes = {}
+  const scoreMaps = {}
+  columns.forEach((column) => {
+    const type = _editableTableFormulaFieldType(column)
+    const scores = {}
+    if (column.type === "dropdown" && Array.isArray(column.options)) {
+      column.options.forEach((option) => {
+        const normalized = ValueKit.normalizeOption(option)
+        if (!Number.isFinite(normalized.score)) return
+        if (normalized.code) scores[normalized.code] = normalized.score
+        if (normalized.display) scores[normalized.display] = normalized.score
+      })
+    }
+    ;[column.id, column.dataPath].forEach((id) => {
+      if (!id || fieldIds.includes(id)) return
+      fieldIds.push(id)
+      if (type) fieldTypes[id] = type
+      if (Object.keys(scores).length > 0) scoreMaps[id] = scores
+    })
+  })
+  const scope = { fieldIds, fieldTypes, scoreMaps }
+  if (columns && typeof columns === "object") _editableTableFormulaScopes.set(columns, scope)
+  return scope
+}
+
+// The formula as a stored tree (neutral form model): the column's exported
+// \`formulaTree\`, else its text parsed by FormulaKit (cached per text). Null
+// when the kit predates trees or the text does not parse; the cell then uses
+// FormulaKit.evaluate on the text, as before.
+const _editableTableFormulaTrees = new Map()
+const _editableTableFormulaTree = (config, scope) => {
+  if (typeof FormulaKit === "undefined" || !FormulaKit || typeof FormulaKit.evaluateTree !== "function") return null
+  const stored = config?.formulaTree
+  if (stored && stored.v === 1 && stored.expr && typeof stored.expr === "object") return stored
+  const text = typeof config?.expression === "string" ? config.expression : ""
+  if (!text.trim() || typeof FormulaKit.parse !== "function") return null
+  const key = text + "\\u0000" + scope.fieldIds.join("\\u0001") + "\\u0000" + JSON.stringify(scope.fieldTypes)
+  if (_editableTableFormulaTrees.has(key)) return _editableTableFormulaTrees.get(key)
+  let tree = null
+  try {
+    const parsed = FormulaKit.parse(text, { fieldIds: scope.fieldIds, fieldType: (id) => scope.fieldTypes[id] })
+    if (parsed && parsed.v === 1 && parsed.expr) tree = parsed
+    else if (parsed && parsed.formula && !(parsed.errors && parsed.errors.length)) tree = parsed.formula
+  } catch (error) {
+    tree = null
+  }
+  _editableTableFormulaTrees.set(key, tree)
+  return tree
+}
+
 // The calculated value for one cell, as stored text ("" when the formula's
-// inputs are incomplete or it cannot be evaluated).
+// inputs are incomplete or it cannot be evaluated). The formula reads its own
+// row, never its own cell by column id (selfId, FormulaKit.evaluate's rule; a
+// RepeatForEachTable label column reads its own save key on purpose).
 const _computeFormulaCellValue = (row, column, columns = []) => {
   const config = column.computedValue
   const values = _rowFormulaValues(row, columns)
-  if (config.incompleteBehavior !== "compute-anyway" && !FormulaKit.hasAllReferencedValues(config.expression, values)) return ""
   const precision = Number(config.precision)
-  const result = FormulaKit.roundValue(FormulaKit.evaluate(config.expression, values, column.id), Number.isFinite(precision) ? precision : 2)
+  const scope = _editableTableFormulaScope(columns)
+  const tree = _editableTableFormulaTree(config, scope)
+  let raw
+  if (tree) {
+    const getValue = (fieldId) => values[fieldId]
+    const fieldKind = (fieldId) => scope.fieldTypes[fieldId]
+    // Default: blank until every referenced cell has a value; "compute-anyway"
+    // evaluates with a missing cell counting as 0.
+    const computeAnyway = config.incompleteBehavior === "compute-anyway"
+    if (!computeAnyway && typeof FormulaKit.hasAllReferencedValues === "function"
+      && !FormulaKit.hasAllReferencedValues(tree, getValue, { fieldKind })) return ""
+    raw = FormulaKit.evaluateTree(tree, getValue, {
+      incomplete: computeAnyway ? "compute-anyway" : "blank",
+      fieldKind,
+      scoreMaps: scope.scoreMaps,
+      selfId: column.id,
+    })
+  } else {
+    // A kit without trees (or text it cannot parse): the text engine, with the
+    // same incomplete mode (a generated kit's evaluate defaults to "blank").
+    const computeAnyway = config.incompleteBehavior === "compute-anyway"
+    if (!computeAnyway && !FormulaKit.hasAllReferencedValues(config.expression, values)) return ""
+    raw = FormulaKit.evaluate(config.expression, values, column.id, { incomplete: computeAnyway ? "compute-anyway" : "blank" })
+  }
+  const result = FormulaKit.roundValue(raw, Number.isFinite(precision) ? precision : 2)
   if (result === null || result === undefined || result === "") return ""
   if (typeof result === "boolean") return result ? "true" : "false"
   return String(result)
@@ -8047,7 +8791,7 @@ const _resetFormulaCell = (row, column, columns = []) => {
 
 const _normalizeMirroredCellValue = (value, column) => {
   if (column?.type === "checkbox") {
-    return Boolean(value)
+    return _toDocumentCheckboxValue(value)
   }
 
   if (value === undefined || value === null) {
@@ -8064,7 +8808,7 @@ const _normalizeMirroredCellValue = (value, column) => {
 
 const _normalizeSourceCellValue = (value, column) => {
   if (column?.type === "checkbox") {
-    return Boolean(value)
+    return _toDocumentCheckboxValue(value)
   }
 
   if (value === undefined || value === null) {
@@ -8073,13 +8817,9 @@ const _normalizeSourceCellValue = (value, column) => {
 
   if (column?.type === "dropdown") {
     if (typeof value === "string") return value
-    if (Array.isArray(value)) {
-      const first = value[0]
-      if (typeof first === "string") return first
-      return _stringifyValue(first)
-    }
-    if (typeof value === "object") {
-      return _stringifyValue(value.code ?? value.display ?? value.value ?? value.key ?? value.text ?? "")
+    // A coding, a subform selection or a list: the (first) chosen code.
+    if (Array.isArray(value) || typeof value === "object") {
+      return ValueKit.readChoice(value)[0]?.code ?? ""
     }
   }
 
@@ -8175,53 +8915,30 @@ const _normalizeUniqueToken = (row, columnId, columns = []) => {
   return _stringifyValue(raw).toLowerCase()
 }
 
-const _normalizeChoiceOptions = (options = []) => {
+// A column's options as the { code, display } list ValueKit reads, one per
+// option: ValueKit.normalizeOption, except that an option's explicit \`key\`
+// (or \`id\`) stays its code, because that is what the cell stores.
+const _choiceOptionList = (options = []) => {
   if (!Array.isArray(options)) return []
-
   return options
-    .map((option, index) => {
-      if (typeof option === "string") {
-        const trimmed = option.trim()
-        if (!trimmed) return null
-        return { key: trimmed || \`option_\${index + 1}\`, text: trimmed }
-      }
-      if (option && typeof option === "object") {
-        const candidate = option.text || option.display || option.label || option.code || option.key || option.value
-        const trimmed = typeof candidate === "string" ? candidate.trim() : ""
-        if (!trimmed) return null
-        const rawKey = option.key || option.code || option.value || option.id || trimmed
-        return { key: String(rawKey), text: trimmed }
-      }
-      return null
+    .map((option) => {
+      const normalized = ValueKit.normalizeOption(option)
+      const explicitKey = option && typeof option === "object" ? option.key ?? option.id : undefined
+      const code = explicitKey !== undefined && explicitKey !== null && String(explicitKey).trim()
+        ? String(explicitKey)
+        : String(normalized.code).trim()
+      const display = String(normalized.display).trim()
+      return code || display ? { code: code || display, display: display || code } : null
     })
     .filter(Boolean)
 }
 
-const _choiceValueToCoding = (value, options = []) => {
-  if (value === undefined || value === null || value === "") return null
-  if (value && typeof value === "object" && !Array.isArray(value)) {
-    const code = value.code ?? value.value ?? value.key ?? value.selectedKey
-    if (code === undefined || code === null || code === "") return null
-    const display = value.display ?? value.text ?? value.label ?? value.response ?? code
-    return { code: String(code), display: String(display) }
-  }
-  const code = String(value)
-  const option = options.find((entry) => String(entry.key) === code)
-  return { code, display: option?.text || code }
-}
+// The { key, text } list the choice controls draw.
+const _normalizeChoiceOptions = (options = []) =>
+  _choiceOptionList(options).map((option) => ({ key: option.code, text: option.display }))
 
-const _choiceValueForControl = (value, selectionType, options = []) => {
-  if (selectionType === "multiple") {
-    const values = Array.isArray(value) ? value : value ? [value] : []
-    return values.map((entry) => _choiceValueToCoding(entry, options)).filter(Boolean)
-  }
-  return _choiceValueToCoding(value, options) || undefined
-}
-
-const _choiceValueForStorage = (coding, codings, selectionType) =>
-  selectionType === "multiple"
-    ? (codings || []).map((entry) => entry?.code).filter(Boolean)
-    : coding?.code || ""
+// A choice cell's control value and stored code(s) are converted by
+// FieldKit.storage.cell (ValueKit reads every stored shape).
 
 const _normalizeValidationMessage = (result) => {
   if (!result) return null
@@ -8462,7 +9179,7 @@ const _buildSubformFieldFromColumn = (column) => {
       return withCommon({
         id: fieldId,
         label,
-        type: column.withTime ? "datetime" : "date",
+        type: column.withTime || column.dateConfig?.withTime ? "datetime" : "date",
       })
     case "time":
       return withCommon({
@@ -8487,7 +9204,7 @@ const _buildSubformFieldFromColumn = (column) => {
         type: "booleanYesNo",
         renderStyle: "checkbox",
         useToggleSwitch: column.useToggleSwitch === true,
-        defaultValue: column.prefill === true ? true : undefined,
+        defaultValue: _getDefaultCellValue(column) === true ? true : undefined,
         options: [
           { key: "true", value: 1, text: column.booleanLabels?.on || "Checked" },
           { key: "false", value: 0, text: column.booleanLabels?.off || "Unchecked" },
@@ -9295,145 +10012,38 @@ EditableTable = ({
     }
 
     // Required while shown: the MOIS controls tint an empty required input.
-    const required = _isRequiredColumn(column) && _evaluateColumnVisibility(column, row, columns, formData)
+    // The row dialog also marks legacy requiredPaths entries.
+    const required = inline
+      ? _isRequiredColumn(column) && _evaluateColumnVisibility(column, row, columns, formData)
+      : isRequiredModalColumn(column)
+
+    if (column.type !== "stampButton") {
+      // Every other column is a question drawn by FieldKit with the control
+      // the exporter chooses for the same field (FieldKit.fromTableColumn: a
+      // dropdown is a SimpleCodeSelect, radio and checkbox styles a
+      // SimpleCodeChecklist, multiselect a FindCodeSelect, a tick box a
+      // CompactBooleanField check box). The cell keeps its stored shape
+      // (FieldKit.storage.cell): an option code or list of codes, a boolean,
+      // text, a number per numberConfig, a date "YYYY-MM-DD" and a date-time
+      // "YYYY-MM-DDTHH:mm". Cells draw no label of their own (the column
+      // heading is the label); the row dialog's questions do.
+      const descriptor = FieldKit.fromTableColumn(column)
+      return FieldKit.renderControl(descriptor, {
+        value,
+        onChange: (stored) => onValueChange(rowIndex, column.id, stored),
+        storage: FieldKit.storage.cell(descriptor, {
+          coerceNumber: (next) => _coerceNumberCellValue(next, column),
+        }),
+        label: column.title || column.id,
+        labelPosition: inline ? "none" : "top",
+        required,
+        readOnly: effectiveReadOnly,
+        inline,
+        placeholder: column.placeholder || undefined,
+      })
+    }
 
     switch (column.type) {
-      case "number":
-        const numberConfig = _normalizeNumberConfig(column)
-        const spinButtonProps = {}
-        if (numberConfig.spinButtonProps.min !== undefined) spinButtonProps.min = numberConfig.spinButtonProps.min
-        if (numberConfig.spinButtonProps.max !== undefined) spinButtonProps.max = numberConfig.spinButtonProps.max
-        if (numberConfig.spinButtonProps.step !== undefined) spinButtonProps.step = numberConfig.spinButtonProps.step
-        return (
-          <Numeric
-            inline={inline}
-            typeNumber={numberConfig.typeNumber}
-            buttonControls={numberConfig.buttonControls}
-            value={value?.toString() || ""}
-            onChange={(valueOrEvent, nextValue) => onValueChange(rowIndex, column.id, _coerceNumberCellValue(nextValue === undefined ? valueOrEvent : nextValue, column))}
-            spinButtonProps={spinButtonProps}
-            textFieldProps={numberConfig.suffix ? { suffix: numberConfig.suffix } : undefined}
-            storeAsNumber={numberConfig.storeAsNumber !== false}
-            placeholder={column.placeholder || undefined}
-            required={required}
-            readOnly={effectiveReadOnly}
-            disabled={effectiveReadOnly}
-          />
-        )
-
-      case "date":
-        // withTime columns persist the engine's getDateTimeString shape
-        // (YYYY-MM-DDTHH:mm) rather than a bare date.
-        if (column.withTime) {
-          return (
-            <DateTimeSelect
-              inline={inline}
-              value={value || ""}
-              onChange={(newValue) => onValueChange(rowIndex, column.id, newValue || "")}
-              placeholder={column.placeholder || "Select date and time"}
-              required={required}
-              readOnly={effectiveReadOnly}
-              disabled={effectiveReadOnly}
-            />
-          )
-        }
-        return (
-          <DateSelect
-            dateFormat={column.dateConfig?.dateFormat}
-            inline={inline}
-            value={value || ""}
-            onChange={(newValue) => onValueChange(rowIndex, column.id, _normalizeDateCellValue(newValue))}
-            placeholder={column.placeholder || "Select date"}
-            required={required}
-            readOnly={effectiveReadOnly}
-            disabled={effectiveReadOnly}
-          />
-        )
-
-      case "dropdown":
-        const dropdownOptions = _normalizeChoiceOptions(column.options)
-        if (column.choiceStyle === "checkbox") {
-          const selected = new Set((Array.isArray(value) ? value : value ? [value] : []).map(String))
-          return (
-            <Stack tokens={{ childrenGap: 4 }}>
-              {dropdownOptions.map((option) => (
-                <Checkbox
-                  key={option.key}
-                  label={option.text}
-                  checked={selected.has(option.key)}
-                  disabled={effectiveReadOnly}
-                  onChange={(_event, checked) => {
-                    const next = new Set(selected)
-                    if (checked) next.add(option.key)
-                    else next.delete(option.key)
-                    onValueChange(rowIndex, column.id, Array.from(next))
-                  }}
-                />
-              ))}
-            </Stack>
-          )
-        }
-        if (column.choiceStyle === "radio") {
-          return (
-            <ChoiceGroup
-              options={dropdownOptions}
-              selectedKey={value ? String(value) : undefined}
-              required={required}
-              disabled={effectiveReadOnly}
-              onChange={(_event, option) => onValueChange(rowIndex, column.id, option?.key || "")}
-            />
-          )
-        }
-        const selectionType =
-          column.choiceStyle === "multiselect" || column.choiceStyle === "checkbox"
-            ? "multiple"
-            : "single"
-        return (
-          <SimpleCodeSelect
-            inline={inline}
-            optionList={column.codeSystem ? undefined : dropdownOptions}
-            codeSystem={column.codeSystem || undefined}
-            selectionType={selectionType}
-            value={_choiceValueForControl(value, selectionType, dropdownOptions)}
-            onChange={(coding, codings) => onValueChange(
-              rowIndex,
-              column.id,
-              _choiceValueForStorage(coding, codings, selectionType)
-            )}
-            placeholder={column.placeholder || "Select..."}
-            showOther={column.showOtherOption === true}
-            required={required}
-            readOnly={effectiveReadOnly}
-            disabled={effectiveReadOnly}
-          />
-        )
-
-      case "time":
-        return (
-          <TimeSelect
-            inline={inline}
-            value={value || ""}
-            onChange={(event, newValue) => onValueChange(rowIndex, column.id, newValue || "")}
-            placeholder={column.placeholder || "HH:mm"}
-            required={required}
-            readOnly={effectiveReadOnly}
-            disabled={effectiveReadOnly}
-          />
-        )
-
-      case "checkbox":
-        return (
-          <OptionChoice
-            inline={inline}
-            displayStyle="checkmark"
-            value={value}
-            onChange={(event, checked) => onValueChange(rowIndex, column.id, !!checked)}
-            required={required}
-            readOnly={effectiveReadOnly}
-            disabled={effectiveReadOnly}
-          />
-        )
-
       case "stampButton":
         const stampConfig = column.stampConfig || {}
         const stampedValue = _stringifyValue(value)
@@ -9478,22 +10088,8 @@ EditableTable = ({
             ) : null}
           </Stack>
         )
-
-      case "text":
       default:
-        return (
-          <TextArea
-            multiline={column.textareaConfig?.multiline}
-            textFieldProps={column.textareaConfig ? { rows: column.textareaConfig.rows, resizable: column.textareaConfig.resizable } : undefined}
-            inline={inline}
-            value={value || ""}
-            onChange={(event, newValue) => onValueChange(rowIndex, column.id, newValue || "")}
-            placeholder={column.placeholder || ""}
-            required={required}
-            readOnly={effectiveReadOnly}
-            disabled={effectiveReadOnly}
-          />
-        )
+        return null
     }
   }
 
@@ -9952,34 +10548,40 @@ EditableTable = ({
         />
       )}
 
+      {/* The row dialog is DialogKit's RowDialog on the MOIS SubForm:
+          blocking (a click outside never closes it), titled by the table's
+          modal title, min(<modalWidth>px, calc(100vw - 48px)) wide, Save /
+          Save & Add Next / Cancel in its button bar. The close button,
+          Escape and Cancel discard the draft, as before. */}
       {isModalMode && isDialogOpen && draftRow && !usesSubformEditor && (
-        <Dialog
+        <DialogKit.RowDialog
           hidden={!isDialogOpen}
-          dialogContentProps={{
-            type: DialogType.largeHeader,
-            title: modalTitle || label || "Row Details",
-          }}
-          modalProps={{
-            isBlocking: true,
-          }}
-          minWidth={Math.min(Math.max(340, Number(modalWidth) || 640), typeof window !== "undefined" ? window.innerWidth - 48 : 640)}
-          maxWidth="96vw"
-          onDismiss={closeDialog}
+          title={modalTitle || label || "Row Details"}
+          width={Math.max(340, Number(modalWidth) || 640)}
+          onSave={saveDraftRow}
+          onCancel={closeDialog}
+          saveText="Save"
+          cancelText="Cancel"
+          extraActions={canSaveAndAddNext
+            ? [{ text: saveAndAddNextLabel, onClick: () => commitSave({ addNext: true }) }]
+            : []}
+          errorMessage={errorMessage || undefined}
         >
-          <Stack tokens={{ childrenGap: 12 }}>
-            {/* Two columns when the dialog has room; choices and long text take a full row. */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "12px 16px" }}>
-            {modalColumns.filter((column) => _evaluateColumnVisibility(column, draftRow, columns, formData)).flatMap((column, index, visibleColumns) => [
+          {/* Two columns when the dialog has room; choices and long text take a full row. */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "12px 16px" }}>
+          {modalColumns.filter((column) => _evaluateColumnVisibility(column, draftRow, columns, formData)).flatMap((column, index, visibleColumns) => {
+            // FieldKit questions draw their own label; a stamp, a formula or a
+            // locked cell does not, so the dialog labels those.
+            const cellReadOnly = isLocked || draftLocalStampLock.locked
+            const drawsOwnLabel = column.type !== "stampButton" && !_isFormulaColumn(column) && !cellReadOnly
+            return [
               ...(column.modalSection && (index === 0 || visibleColumns[index - 1]?.modalSection !== column.modalSection)
                 ? [<div key={\`section-\${column.id}\`} style={{ gridColumn: "1 / -1", fontWeight: 600, borderBottom: \`1px solid \${isDarkMode ? "#505050" : "#d1d5db"}\`, paddingTop: "8px", paddingBottom: "4px" }}>{column.modalSection}</div>]
                 : []),
-              <div key={column.id} style={column.type === "dropdown" || column.type === "text" ? { gridColumn: "1 / -1" } : undefined}>
-                <Label required={isRequiredModalColumn(column)}>{column.title || column.id}</Label>
-                {column.helpText ? (
-                  <Text variant="small" styles={{ root: { display: "block", marginBottom: "4px", color: mutedTextColor } }}>
-                    {column.helpText}
-                  </Text>
-                ) : null}
+              <div key={column.id} data-table-dialog-question={column.id} style={column.type === "dropdown" || column.type === "text" ? { gridColumn: "1 / -1" } : undefined}>
+                {drawsOwnLabel ? null : (
+                  <Label required={isRequiredModalColumn(column)}>{column.title || column.id}</Label>
+                )}
                 {renderEditorInput(
                   draftRow,
                   editingRowIndex ?? currentRows.length,
@@ -9991,23 +10593,16 @@ EditableTable = ({
                   draftLockState,
                   (_rowIndex, formulaColumn) => resetDraftFormulaCell(formulaColumn)
                 )}
+                {column.helpText ? (
+                  <Text variant="small" styles={{ root: { display: "block", marginTop: "4px", color: mutedTextColor } }}>
+                    {column.helpText}
+                  </Text>
+                ) : null}
               </div>,
-            ])}
-            </div>
-            {errorMessage && (
-              <Text style={{ color: isDarkMode ? "#ffb3b3" : "#b42318" }}>
-                {errorMessage}
-              </Text>
-            )}
-            <Stack horizontal horizontalAlign="end" tokens={{ childrenGap: 8 }}>
-              <DefaultButton text="Cancel" onClick={closeDialog} />
-              {canSaveAndAddNext ? (
-                <DefaultButton text={saveAndAddNextLabel} onClick={() => commitSave({ addNext: true })} />
-              ) : null}
-              <PrimaryButton text="Save" onClick={saveDraftRow} />
-            </Stack>
-          </Stack>
-        </Dialog>
+            ]
+          })}
+          </div>
+        </DialogKit.RowDialog>
       )}
     </div>
   )
@@ -10045,6 +10640,9 @@ const createTableColumns = (columnDefs) => {
     step: def.step,
     booleanLabels: def.booleanLabels,
     prefill: def.prefill,
+    defaultAnswer: def.defaultAnswer,
+    dateConfig: def.dateConfig,
+    withTime: def.withTime,
     useToggleSwitch: def.useToggleSwitch,
     stampConfig: def.stampConfig,
   }))
@@ -10123,6 +10721,1066 @@ const firstNationsEthnicityReferenceSet = [
 ]
 
 const firstNationEthnicityCodes = firstNationsEthnicityReferenceSet.map(e=>e.code)
+`,
+  './FieldKit/index.jsx': `// FieldKit — draws a builder-field-shaped question with the MOIS control the
+// exporter chooses for it (lib/mois-export/renderers/field-renderer.ts
+// renderField, fed by lib/builder-parsed-field.ts), always passing label,
+// required and read-only. Used by the containers that draw their own
+// questions: EditableTable, RepeatForEachTable, SubformScoring, PanelEntryGrid
+// and ActionButtonGroup. A parity test holds controlFor to the exporter.
+//
+//   FieldKit.controlFor(descriptor)
+//     -> { control, selectionType?, displayStyle?, multiline?, supported }
+//   FieldKit.renderControl(descriptor, {
+//     value, onChange,   // controlled mode: the container keeps the answer
+//     fieldId,           // bound mode (no onChange): the control reads and
+//                        // writes its section's store, as an exported field does
+//     readOnly, disabled, inline, label, labelPosition, required, placeholder,
+//     size, key,
+//     storage,           // controlled mode: { toControl(stored), fromControl(value) }
+//   })
+//   FieldKit.storage.{cell,entry,coding,text}(descriptor, extra) — adapters that
+//     keep each container's stored answer shapes (read with ValueKit)
+//   FieldKit.fromTableColumn / fromSubformEntry / fromPanelRow / fromActionField
+//     — builder-field-shaped descriptors for each container's own entries
+//
+// Controlled values reach storage in one canonical shape per control: text and
+// number as text, a date "YYYY-MM-DD", a date-time "YYYY-MM-DDTHH:mm", a time
+// "HH:mm", a single choice as a Coding (or null), a multiple choice as a
+// Coding list, a yes/no as true / false / null, and a scale as ScaleField's
+// answer object.
+//
+// Engine notes (SMOIS main.a75cc6b1.chunk.js): TextArea, Numeric, DateSelect,
+// TimeSelect, SimpleCodeSelect and OptionChoice take \`value\`/\`onChange\`, and
+// DateSelect calls onChange with a Date. SimpleCodeChecklist and
+// DateTimeSelect read and write only their section's store, so in controlled
+// mode they are bound to a one-field "value box" through \`section\`
+// (activeSelector), which reports each write to onChange. A write through the
+// box lands in the box only, in the engine and in the preview's section
+// writer (mois-contract writeSectionActiveFieldValue) alike.
+//
+// Non-rendering consumers must reference FieldKit only inside function bodies
+// (component files load in no guaranteed order); FieldKit itself reads the
+// MOIS controls, ValueKit, ScaleField, FindCodeSelect, CompactBooleanField
+// and YesNoButtons only while rendering.
+
+const FieldKit = (() => {
+  const MOIS_MEMORY_CODE_SYSTEM = /^[A-Za-z0-9 _:.()-]+$/
+  const BOX_FIELD_ID = "__fieldKitValue"
+
+  const toText = (value) => (value === null || value === undefined ? "" : String(value))
+  const pad2 = (value) => String(value).padStart(2, "0")
+  const isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value) && !(value instanceof Date)
+
+  const validCodeSystem = (value) =>
+    typeof value === "string" && value.trim() && MOIS_MEMORY_CODE_SYSTEM.test(value.trim()) ? value.trim() : undefined
+
+  // -------------------------------------------------------------------------
+  // Options
+  // -------------------------------------------------------------------------
+
+  // Each option's stored code and wording: an explicit key or id wins (the
+  // code a cell or selection stores), else ValueKit's reading.
+  const optionsOf = (descriptor) => {
+    const raw = Array.isArray(descriptor?.options) ? descriptor.options : []
+    const system = validCodeSystem(descriptor?.codeSystem)
+    return raw
+      .map((option, index) => {
+        const normalized = ValueKit.normalizeOption(option)
+        const explicitKey = isRecord(option) ? option.key ?? option.id : undefined
+        const code = explicitKey !== undefined && explicitKey !== null && String(explicitKey).trim()
+          ? String(explicitKey)
+          : String(normalized.code).trim()
+        const display = String(normalized.display).trim()
+        if (!code && !display) return null
+        return {
+          code: code || display,
+          display: display || code,
+          system: (isRecord(option) && option.system) || normalized.system || system,
+          order: index,
+          ...(isRecord(option) && option.hotKey ? { hotKey: option.hotKey } : {}),
+        }
+      })
+      .filter(Boolean)
+  }
+
+  // The builder turns a choice without options into two placeholder options
+  // (builder-parsed-field); an explicit empty list has none.
+  const hasOptions = (descriptor) =>
+    descriptor?.options === undefined || descriptor?.options === null || optionsOf(descriptor).length > 0
+
+  const codingsOf = (value, descriptor) =>
+    ValueKit.readChoice(value, optionsOf(descriptor).map((option) => ({ code: option.code, display: option.display })))
+      .map((entry) => {
+        const coding = { code: entry.code, display: entry.display ?? entry.code }
+        const system = entry.system ?? validCodeSystem(descriptor?.codeSystem)
+        if (system) coding.system = system
+        return coding
+      })
+
+  // -------------------------------------------------------------------------
+  // Control choice (parity with the exporter)
+  // -------------------------------------------------------------------------
+
+  const TEXT_TYPES = ["text", "email", "phone", "url", "password", "barcode", "file"]
+  const EXPORTER_ONLY = {
+    computed: "ComputedField",
+    signature: "SignaturePad",
+    hyperlink: "GuidelineLink",
+    richText: "Markdown",
+    matrix: "matrix",
+    table: "EditableTable",
+    layoutTable: "LayoutTable",
+    component: "component",
+    heading: "Heading",
+    section: "Section",
+  }
+
+  const measurementActive = (descriptor) => {
+    const config = descriptor?.measurementConfig
+    return Boolean(config && config.enabled !== false && toText(config.observationCode).trim())
+  }
+
+  const controlFor = (descriptor = {}) => {
+    const type = descriptor.type || "text"
+    if (EXPORTER_ONLY[type]) return { control: EXPORTER_ONLY[type], supported: false }
+
+    if (type === "date" || type === "datetime") {
+      if (type === "datetime" || descriptor.dateConfig?.withTime) return { control: "DateTimeSelect", supported: true }
+      if (descriptor.dateConfig?.fillTodayOnCalendarOpen) return { control: "CalendarTodayDate", supported: false }
+      return { control: "DateSelect", supported: true }
+    }
+    if (type === "time") return { control: "TimeSelect", supported: true }
+
+    if ((type === "number" || TEXT_TYPES.includes(type)) && measurementActive(descriptor)) {
+      return { control: "PastMeasurementField", supported: false }
+    }
+    if (type === "number" || type === "rating" || type === "slider") return { control: "Numeric", supported: true }
+    if (type === "scale") {
+      return descriptor.scaleConfig?.style === "numeric"
+        ? { control: "Numeric", supported: true }
+        : { control: "ScaleField", supported: true }
+    }
+
+    if (type === "booleanYesNo" || type === "booleanSingle") {
+      return {
+        control: "CompactBooleanField",
+        displayStyle: descriptor.presentation === "checkbox" ? "checkbox" : "buttons",
+        supported: true,
+      }
+    }
+
+    if (type === "choice") {
+      const style = descriptor.choiceStyle || "findCode"
+      const findCode = style === "findCode"
+      const searchableMultiple = style === "multiselect"
+      const checklist = style === "checkbox" || style === "radio"
+      const multiple = style === "multiselect" || style === "checkbox"
+      const selectionType = multiple ? "multiple" : "single"
+      if (validCodeSystem(descriptor.codeSystem) || hasOptions(descriptor)) {
+        if (!validCodeSystem(descriptor.codeSystem) && checklist && descriptor.presentation === "buttons") {
+          return { control: "CompactChoiceField", supported: false }
+        }
+        if (findCode || searchableMultiple) {
+          return { control: "FindCodeSelect", selectionType: searchableMultiple ? "multiple" : "single", supported: true }
+        }
+        if (checklist) return { control: "SimpleCodeChecklist", selectionType, supported: true }
+        return { control: "SimpleCodeSelect", selectionType, supported: true }
+      }
+      if (findCode) return { control: "FindCodeSelect", selectionType: "single", supported: true }
+      if (checklist) return { control: "SimpleCodeChecklist", selectionType, supported: true }
+      return { control: "SimpleCodeSelect", selectionType, supported: true }
+    }
+
+    if (type === "textarea") return { control: "TextArea", multiline: true, supported: true }
+    return {
+      control: "TextArea",
+      multiline: descriptor.presentation === "longText",
+      supported: true,
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Canonical values
+  // -------------------------------------------------------------------------
+
+  const localDate = (date) => \`\${date.getFullYear()}-\${pad2(date.getMonth() + 1)}-\${pad2(date.getDate())}\`
+  const localDateTime = (date) => \`\${localDate(date)}T\${pad2(date.getHours())}:\${pad2(date.getMinutes())}\`
+
+  // DateSelect reports a Date in the engine and "YYYY.MM.DD" in the preview.
+  const toDateText = (value) => {
+    if (value === null || value === undefined || value === "") return ""
+    if (value instanceof Date || (value && typeof value.getFullYear === "function")) {
+      return Number.isNaN(value.getTime()) ? "" : localDate(value)
+    }
+    const text = toText(value).trim()
+    const dotted = text.match(/^(\\d{4})[./-](\\d{1,2})[./-](\\d{1,2})$/)
+    if (dotted) return \`\${dotted[1]}-\${pad2(dotted[2])}-\${pad2(dotted[3])}\`
+    const read = ValueKit.readDate(text)
+    return read ? localDate(read) : text
+  }
+
+  // The engine stores getDateTimeString ("YYYY-MM-DDTHH:mm"); the preview an ISO instant.
+  const toDateTimeText = (value) => {
+    if (value === null || value === undefined || value === "") return ""
+    if (typeof value === "string" && /^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}$/.test(value.trim())) return value.trim()
+    const read = ValueKit.readDateTime(value)
+    return read ? localDateTime(read.date) : toText(value)
+  }
+
+  // Numeric/TextArea/TimeSelect report (event, value) in the engine and some
+  // preview controls a bare value.
+  const reportedValue = (first, second) => {
+    if (second !== undefined) return second
+    if (first && typeof first === "object" && first.target && "value" in first.target) return first.target.value
+    return first
+  }
+
+  const emptyFor = (choice) => {
+    switch (choice.control) {
+      case "SimpleCodeSelect":
+      case "SimpleCodeChecklist":
+      case "FindCodeSelect":
+        return choice.selectionType === "multiple" ? [] : null
+      case "CompactBooleanField":
+      case "ScaleField":
+        return null
+      default:
+        return ""
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Storage adapters: stored answer <-> canonical control value
+  // -------------------------------------------------------------------------
+
+  const codingForStorage = (coding) => (coding && coding.code !== undefined && coding.code !== null ? coding : null)
+
+  // EditableTable / RepeatForEachTable cells: a choice stores its option code
+  // (a list of codes when multiple), a yes/no a boolean, text as typed, a
+  // number per the column (coerceNumber), dates as canonical text.
+  const cellStorage = (descriptor, extra = {}) => {
+    const choice = controlFor(descriptor)
+    return {
+      toControl(stored) {
+        switch (choice.control) {
+          case "SimpleCodeSelect":
+          case "SimpleCodeChecklist":
+          case "FindCodeSelect": {
+            const codings = codingsOf(stored, descriptor)
+            return choice.selectionType === "multiple" ? codings : codings[0] || null
+          }
+          case "CompactBooleanField":
+            if (stored === undefined || stored === null || stored === "") return null
+            return ValueKit.readBoolean(stored, descriptor.booleanLabels) === true
+          case "DateSelect":
+            return toDateText(stored)
+          case "DateTimeSelect":
+            return toDateTimeText(stored)
+          case "ScaleField":
+            return stored ?? null
+          default:
+            return stored === null || stored === undefined ? "" : toText(stored)
+        }
+      },
+      fromControl(value) {
+        switch (choice.control) {
+          case "SimpleCodeSelect":
+          case "SimpleCodeChecklist":
+          case "FindCodeSelect":
+            if (choice.selectionType === "multiple") {
+              // Codes in option order (as cells always stored them), whatever
+              // order the control reports them in.
+              const order = optionsOf(descriptor).map((option) => option.code)
+              const rank = (code) => (order.indexOf(code) < 0 ? order.length : order.indexOf(code))
+              const codes = (Array.isArray(value) ? value : value ? [value] : [])
+                .map((entry) => (entry?.code === undefined || entry?.code === null ? "" : String(entry.code)))
+                .filter(Boolean)
+              return Array.from(new Set(codes)).sort((left, right) => rank(left) - rank(right))
+            }
+            return (Array.isArray(value) ? value[0] : value)?.code || ""
+          case "CompactBooleanField":
+            return value === true
+          case "Numeric":
+            return typeof extra.coerceNumber === "function" ? extra.coerceNumber(value) : value
+          default:
+            return value ?? ""
+        }
+      },
+    }
+  }
+
+  // SubformScoring entries: a choice or yes/no stores the selected option's
+  // key (or { selectedKey, value, response, detailResponse } for structured
+  // options, extra.serialize), a number a clamped number or null, text as typed.
+  const entryStorage = (descriptor, extra = {}) => {
+    const choice = controlFor(descriptor)
+    const options = Array.isArray(extra.options) ? extra.options : []
+    const serialize = typeof extra.serialize === "function" ? extra.serialize : (option) => option?.key ?? null
+    const isSelected = typeof extra.isSelected === "function"
+      ? extra.isSelected
+      : (stored, option) => String(stored ?? "") === String(option?.key ?? "")
+    return {
+      toControl(stored) {
+        switch (choice.control) {
+          case "SimpleCodeSelect":
+          case "SimpleCodeChecklist":
+          case "FindCodeSelect": {
+            if (options.length > 0) {
+              const selected = options.filter((option) => isSelected(stored, option))
+              const codings = selected.map((option) => ({ code: String(option.key), display: option.text, ...(option.system ? { system: option.system } : {}) }))
+              return choice.selectionType === "multiple" ? codings : codings[0] || null
+            }
+            const codings = codingsOf(stored, descriptor)
+            return choice.selectionType === "multiple" ? codings : codings[0] || (isRecord(stored) && stored.code !== undefined ? stored : null)
+          }
+          case "CompactBooleanField": {
+            if (stored === undefined || stored === null || stored === "") return null
+            if (extra.checkedOption && isSelected(stored, extra.checkedOption)) return true
+            if (extra.uncheckedOption && isSelected(stored, extra.uncheckedOption)) return false
+            return ValueKit.readBoolean(stored, descriptor.booleanLabels)
+          }
+          case "DateSelect":
+            return toDateText(stored)
+          case "DateTimeSelect":
+            return toDateTimeText(stored)
+          case "ScaleField":
+            return stored ?? null
+          case "Numeric":
+            return stored === null || stored === undefined ? "" : toText(stored)
+          default:
+            return stored === null || stored === undefined ? "" : toText(stored)
+        }
+      },
+      fromControl(value) {
+        switch (choice.control) {
+          case "SimpleCodeSelect":
+          case "SimpleCodeChecklist":
+          case "FindCodeSelect": {
+            const first = Array.isArray(value) ? value[value.length - 1] : value
+            if (!first || first.code === null || first.code === undefined || first.code === "") return null
+            if (options.length > 0) {
+              const option = options.find((candidate) => String(candidate.key) === String(first.code))
+              return option ? serialize(option) : first.code
+            }
+            return codingForStorage(first)
+          }
+          case "CompactBooleanField":
+            if (value === true) return extra.checkedOption ? serialize(extra.checkedOption) : true
+            if (value === false) {
+              if (extra.falseIsEmpty) return null
+              return extra.uncheckedOption ? serialize(extra.uncheckedOption) : false
+            }
+            return null
+          case "Numeric": {
+            if (typeof extra.coerceNumber === "function") return extra.coerceNumber(value)
+            const text = toText(value).trim()
+            if (!text) return null
+            const parsed = Number(text)
+            return Number.isFinite(parsed) ? parsed : text
+          }
+          default:
+            return value ?? ""
+        }
+      },
+    }
+  }
+
+  // PanelEntryGrid rows: a choice stores a Coding, a number a Number (or ""), text as typed.
+  const codingStorage = (descriptor, extra = {}) => {
+    const choice = controlFor(descriptor)
+    return {
+      toControl(stored) {
+        switch (choice.control) {
+          case "SimpleCodeSelect":
+          case "SimpleCodeChecklist":
+          case "FindCodeSelect": {
+            const codings = codingsOf(stored, descriptor)
+            return choice.selectionType === "multiple" ? codings : codings[0] || null
+          }
+          case "ScaleField":
+            return stored ?? null
+          case "DateSelect":
+            return toDateText(stored)
+          case "DateTimeSelect":
+            return toDateTimeText(stored)
+          default:
+            if (typeof extra.display === "function") return extra.display(stored)
+            return stored === null || stored === undefined ? "" : toText(stored)
+        }
+      },
+      fromControl(value) {
+        switch (choice.control) {
+          case "SimpleCodeSelect":
+          case "SimpleCodeChecklist":
+          case "FindCodeSelect": {
+            if (choice.selectionType === "multiple") return (Array.isArray(value) ? value : []).map(codingForStorage).filter(Boolean)
+            const coding = codingForStorage(Array.isArray(value) ? value[0] : value)
+            if (!coding) return null
+            const option = optionsOf(descriptor).find((candidate) => candidate.code === String(coding.code))
+            return {
+              code: String(coding.code),
+              display: option?.display ?? coding.display ?? String(coding.code),
+              system: descriptor.system ?? option?.system ?? coding.system,
+            }
+          }
+          case "Numeric": {
+            const text = toText(value).trim()
+            if (!text) return ""
+            const parsed = Number(text)
+            return Number.isFinite(parsed) ? parsed : ""
+          }
+          default:
+            return value ?? ""
+        }
+      },
+    }
+  }
+
+  // ActionButtonGroup: a choice stores its option key, everything else text.
+  const textStorage = (descriptor) => {
+    const choice = controlFor(descriptor)
+    return {
+      toControl(stored) {
+        switch (choice.control) {
+          case "SimpleCodeSelect":
+          case "SimpleCodeChecklist":
+          case "FindCodeSelect": {
+            const codings = codingsOf(stored, descriptor)
+            if (codings.length === 0 && toText(stored).trim()) return { code: toText(stored), display: toText(stored) }
+            return choice.selectionType === "multiple" ? codings : codings[0] || null
+          }
+          case "DateSelect":
+            return toDateText(stored)
+          default:
+            return stored === null || stored === undefined ? "" : toText(stored)
+        }
+      },
+      fromControl(value) {
+        switch (choice.control) {
+          case "SimpleCodeSelect":
+          case "SimpleCodeChecklist":
+          case "FindCodeSelect": {
+            const first = Array.isArray(value) ? value[0] : value
+            return first?.code ?? first?.display ?? ""
+          }
+          default:
+            return value ?? ""
+        }
+      },
+    }
+  }
+
+  const passThroughStorage = () => ({ toControl: (stored) => stored, fromControl: (value) => value })
+
+  // -------------------------------------------------------------------------
+  // Controlled value box for store-only controls
+  // -------------------------------------------------------------------------
+
+  // Each box has its own field id: the engine derives a checklist's radio
+  // group name and element ids from it (name=<fieldId>, id=<fieldId>-<code>),
+  // so a shared id would join every row's radios into one group.
+  let boxCount = 0
+
+  const BoxedControl = ({ Control, controlProps, value, onChange }) => {
+    const boxIdRef = React.useRef(null)
+    if (boxIdRef.current === null) {
+      boxCount += 1
+      boxIdRef.current = \`\${BOX_FIELD_ID}_\${boxCount}\`
+    }
+    const boxId = boxIdRef.current
+    const valueRef = React.useRef(value)
+    valueRef.current = value
+    const onChangeRef = React.useRef(onChange)
+    onChangeRef.current = onChange
+    const pendingRef = React.useRef(null)
+
+    const box = React.useMemo(() => {
+      let cache = { source: undefined, proxy: undefined }
+      const current = () => (pendingRef.current ? pendingRef.current.value : valueRef.current)
+      const commit = (next) => {
+        pendingRef.current = { value: next }
+        Promise.resolve().then(() => {
+          const queued = pendingRef.current
+          pendingRef.current = null
+          if (queued && typeof onChangeRef.current === "function") onChangeRef.current(queued.value)
+        })
+      }
+      // The engine's multiple-select writers push into and filter the list
+      // they read, so a list reads as a proxy that reports its own changes.
+      const read = () => {
+        const next = current()
+        if (!Array.isArray(next)) return next
+        if (cache.source !== next) {
+          const copy = next.slice()
+          cache = {
+            source: next,
+            proxy: new Proxy(copy, {
+              set(target, property, item) {
+                target[property] = item
+                commit(target.slice())
+                return true
+              },
+            }),
+          }
+        }
+        return cache.proxy
+      }
+      return new Proxy({}, {
+        get: (_target, property) => (property === boxId ? read() : undefined),
+        set: (_target, property, next) => {
+          if (property === boxId) commit(Array.isArray(next) ? next.slice() : next)
+          return true
+        },
+        has: (_target, property) => property === boxId,
+        ownKeys: () => [boxId],
+        getOwnPropertyDescriptor: (_target, property) =>
+          property === boxId ? { configurable: true, enumerable: true, writable: true, value: read() } : undefined,
+      })
+    }, [boxId])
+
+    const section = React.useMemo(() => ({ activeSelector: () => box }), [box])
+
+    // createElement, not <Control>: Control is a prop (the engine control
+    // chosen by the caller), and the export's engine-scope check reads every
+    // capitalised JSX tag as a bare identifier the engine must provide.
+    return React.createElement(Control, { ...controlProps, fieldId: boxId, section })
+  }
+
+  // -------------------------------------------------------------------------
+  // Rendering
+  // -------------------------------------------------------------------------
+
+  const valueSignature = (value) => {
+    try {
+      return JSON.stringify(value === undefined ? null : value)
+    } catch (_error) {
+      return String(value)
+    }
+  }
+
+  const selectOptionList = (descriptor) =>
+    optionsOf(descriptor).map((option) => ({
+      key: option.code,
+      text: option.display,
+      order: option.order,
+      ...(option.hotKey ? { hotKey: option.hotKey } : {}),
+    }))
+
+  const findCodeOptionList = (descriptor) =>
+    optionsOf(descriptor).map((option) => ({
+      code: option.code,
+      display: option.display,
+      system: option.system ?? validCodeSystem(descriptor.codeSystem) ?? "",
+      order: option.order,
+    }))
+
+  const numberProps = (descriptor) => {
+    const type = descriptor.type
+    const config = descriptor.numberConfig || {}
+    const range = type === "slider"
+      ? { min: descriptor.sliderConfig?.min ?? 0, max: descriptor.sliderConfig?.max ?? 100, step: descriptor.sliderConfig?.step ?? 1 }
+      : type === "rating"
+        ? { min: 1, max: descriptor.ratingConfig?.maxStars ?? 5, step: 1 }
+        : null
+    const spin = {}
+    const source = range || config.spinButtonProps || {}
+    ;["min", "max", "step"].forEach((key) => {
+      if (source[key] !== undefined && source[key] !== null && source[key] !== "") spin[key] = source[key]
+    })
+    const decimal = range && !Object.values(range).every((value) => Number.isInteger(value))
+    return {
+      typeNumber: decimal ? "decimal" : config.typeNumber || "number",
+      buttonControls: Boolean(config.buttonControls || range),
+      spinButtonProps: Object.keys(spin).length > 0 ? spin : undefined,
+      textFieldProps: config.suffix ? { suffix: config.suffix } : undefined,
+    }
+  }
+
+  const scaleOptions = (descriptor) => {
+    const config = descriptor.scaleConfig || {}
+    if (Array.isArray(config.options) && config.options.length > 0) return config.options
+    const min = Number.isFinite(Number(config.min)) ? Number(config.min) : 1
+    const max = Number.isFinite(Number(config.max)) ? Number(config.max) : 5
+    const step = Number(config.step) > 0 ? Number(config.step) : 1
+    const options = []
+    for (let value = min; value <= max; value += step) {
+      options.push({
+        value,
+        label: String(value),
+        description: value === min ? config.minLabel || "" : value === max ? config.maxLabel || "" : "",
+      })
+    }
+    return options
+  }
+
+  const FieldKitControl = (props) => {
+    const {
+      descriptor = {},
+      value,
+      onChange,
+      fieldId,
+      readOnly = false,
+      disabled,
+      inline,
+      labelPosition,
+      placeholder,
+      size,
+      section,
+      storage,
+    } = props
+    const choice = controlFor(descriptor)
+    const label = props.label !== undefined ? props.label : descriptor.label
+    const required = props.required !== undefined ? props.required === true : descriptor.required === true
+    const controlled = typeof onChange === "function"
+    const adapter = storage || passThroughStorage()
+    const signature = valueSignature(value)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const controlValue = React.useMemo(() => {
+      if (!controlled) return undefined
+      const converted = adapter.toControl(value)
+      return converted === undefined ? emptyFor(choice) : converted
+    }, [controlled, signature, choice.control, choice.selectionType])
+    const emit = (canonical) => {
+      if (!controlled || readOnly) return
+      onChange(adapter.fromControl(canonical))
+    }
+
+    const common = {
+      label,
+      required,
+      readOnly,
+      ...(disabled !== undefined ? { disabled } : readOnly && controlled ? { disabled: true } : {}),
+      ...(labelPosition ? { labelPosition } : {}),
+      ...(inline !== undefined ? { inline } : {}),
+      ...(size !== undefined ? { size } : {}),
+      ...(section && !controlled ? { section } : {}),
+    }
+    const effectivePlaceholder = placeholder !== undefined ? placeholder : descriptor.placeholder
+    const placeholderProp = effectivePlaceholder ? { placeholder: effectivePlaceholder } : {}
+    const bound = !controlled && fieldId ? { fieldId } : {}
+    const codeSystem = validCodeSystem(descriptor.codeSystem)
+
+    switch (choice.control) {
+      case "TextArea": {
+        const multilineProps = choice.multiline
+          ? {
+              multiline: true,
+              ...(descriptor.type === "textarea"
+                ? { rows: descriptor.textareaConfig?.rows ?? 4 }
+                : {}),
+              ...(descriptor.textareaConfig?.resizable === false ? { textFieldProps: { resizable: false } } : {}),
+            }
+          : {}
+        return (
+          <TextArea
+            {...common}
+            {...bound}
+            {...placeholderProp}
+            {...multilineProps}
+            {...(controlled
+              ? { value: controlValue ?? "", onChange: (first, second) => emit(toText(reportedValue(first, second))) }
+              : {})}
+          />
+        )
+      }
+      case "Numeric": {
+        const numeric = numberProps(descriptor)
+        return (
+          <Numeric
+            {...common}
+            {...bound}
+            {...placeholderProp}
+            typeNumber={numeric.typeNumber}
+            buttonControls={numeric.buttonControls}
+            {...(numeric.spinButtonProps ? { spinButtonProps: numeric.spinButtonProps } : {})}
+            {...(numeric.textFieldProps ? { textFieldProps: numeric.textFieldProps } : {})}
+            {...(controlled
+              ? {
+                  value: controlValue === null || controlValue === undefined ? "" : toText(controlValue),
+                  // Controlled numbers report text; the storage adapter coerces.
+                  storeAsNumber: false,
+                  onChange: (first, second) => emit(toText(reportedValue(first, second))),
+                }
+              : { storeAsNumber: descriptor.numberConfig?.storeAsNumber !== false })}
+          />
+        )
+      }
+      case "DateSelect":
+        return (
+          <DateSelect
+            {...common}
+            {...bound}
+            {...placeholderProp}
+            {...(descriptor.dateConfig?.dateFormat ? { dateFormat: descriptor.dateConfig.dateFormat } : {})}
+            {...(controlled ? { value: controlValue || "", onChange: (next) => emit(toDateText(next)) } : {})}
+          />
+        )
+      case "TimeSelect":
+        return (
+          <TimeSelect
+            {...common}
+            {...bound}
+            {...placeholderProp}
+            {...(controlled ? { value: controlValue || "", onChange: (first, second) => emit(toText(reportedValue(first, second))) } : {})}
+          />
+        )
+      case "DateTimeSelect": {
+        const dateTimeProps = {
+          ...common,
+          ...placeholderProp,
+          ...(descriptor.dateConfig?.dateFormat ? { dateFormat: descriptor.dateConfig.dateFormat } : {}),
+        }
+        if (!controlled) return <DateTimeSelect {...dateTimeProps} {...bound} />
+        return (
+          <BoxedControl
+            Control={DateTimeSelect}
+            controlProps={dateTimeProps}
+            value={controlValue || ""}
+            onChange={(next) => emit(toDateTimeText(next))}
+          />
+        )
+      }
+      case "SimpleCodeSelect": {
+        const optionProps = {
+          selectionType: choice.selectionType,
+          ...(codeSystem ? { codeSystem } : {}),
+          ...(hasOptions(descriptor) && optionsOf(descriptor).length > 0 ? { optionList: selectOptionList(descriptor) } : {}),
+          ...(descriptor.autoHotKey ? { autoHotKey: true } : {}),
+          ...(descriptor.showOtherOption ? { showOtherOption: true } : {}),
+        }
+        return (
+          <SimpleCodeSelect
+            {...common}
+            {...bound}
+            {...placeholderProp}
+            {...optionProps}
+            {...(controlled
+              ? {
+                  value: controlValue ?? (choice.selectionType === "multiple" ? [] : undefined),
+                  onChange: (coding, codings) => emit(choice.selectionType === "multiple" ? (codings || []) : coding || null),
+                }
+              : {})}
+          />
+        )
+      }
+      case "SimpleCodeChecklist": {
+        const checklistProps = {
+          ...common,
+          selectionType: choice.selectionType,
+          ...(codeSystem ? { codeSystem } : {}),
+          ...(optionsOf(descriptor).length > 0 ? { optionList: selectOptionList(descriptor) } : {}),
+          ...(descriptor.choiceAnswerLayout === "vertical" || descriptor.presentation === "vertical" ? { multiline: true } : {}),
+          ...(descriptor.autoHotKey ? { autoHotKey: true } : {}),
+          ...(descriptor.showOtherOption ? { showOtherOption: true } : {}),
+        }
+        if (!controlled) return <SimpleCodeChecklist {...checklistProps} {...bound} />
+        return (
+          <BoxedControl
+            Control={SimpleCodeChecklist}
+            controlProps={checklistProps}
+            value={controlValue ?? (choice.selectionType === "multiple" ? [] : null)}
+            onChange={(next) => emit(next)}
+          />
+        )
+      }
+      case "FindCodeSelect": {
+        const optionList = optionsOf(descriptor).length > 0 ? findCodeOptionList(descriptor) : undefined
+        return (
+          <FindCodeSelect
+            {...common}
+            {...bound}
+            {...placeholderProp}
+            openOnFocus
+            {...(codeSystem ? { codeSystem } : {})}
+            {...(optionList ? { optionList } : {})}
+            {...(choice.selectionType === "multiple" ? { selectionType: "multiple" } : {})}
+            {...(descriptor.showOtherOption ? { showOtherOption: true } : {})}
+            {...(controlled
+              ? {
+                  value: controlValue ?? (choice.selectionType === "multiple" ? [] : null),
+                  onChange: (next) => emit(next ?? (choice.selectionType === "multiple" ? [] : null)),
+                }
+              : {})}
+          />
+        )
+      }
+      case "ScaleField":
+        return (
+          <ScaleField
+            {...common}
+            {...(controlled ? {} : bound)}
+            options={scaleOptions(descriptor)}
+            {...(labelPosition === "none" ? { hideLabel: true } : {})}
+            {...(descriptor.scaleConfig?.disableHorizontalScroll ? { disableHorizontalScroll: true } : {})}
+            showLegend={descriptor.scaleConfig?.showLegend === true}
+            showInlineLabels={descriptor.scaleConfig?.showInlineLabels !== false}
+            showTooltip={descriptor.scaleConfig?.showTooltip === true}
+            {...(controlled ? { value: controlValue ?? null, onChange: (next) => emit(next ?? null) } : {})}
+          />
+        )
+      case "CompactBooleanField": {
+        const labels = { on: descriptor.booleanLabels?.on || "Yes", off: descriptor.booleanLabels?.off || "No" }
+        if (!controlled) {
+          return (
+            <CompactBooleanField
+              {...common}
+              {...bound}
+              booleanLabels={labels}
+              {...(choice.displayStyle === "checkbox" ? { displayStyle: "checkbox" } : {})}
+            />
+          )
+        }
+        // CompactBooleanField reads field.data itself, so a controlled yes/no
+        // draws its parts: the same Yes/No buttons, or its single checkbox.
+        const inactive = Boolean(readOnly || disabled)
+        const showLabel = label && labelPosition !== "none"
+        if (choice.displayStyle === "checkbox") {
+          return (
+            <Fluent.Checkbox
+              label={showLabel ? \`\${label}\${required ? " *" : ""}\` : undefined}
+              ariaLabel={!showLabel && label ? String(label) : undefined}
+              checked={controlValue === true}
+              indeterminate={descriptor.allowNeutral === true && controlValue === null}
+              disabled={inactive}
+              onChange={(_event, checked) => emit(Boolean(checked))}
+            />
+          )
+        }
+        return (
+          <div style={{ display: "flex", flexFlow: labelPosition === "top" ? "column" : "row wrap", alignItems: labelPosition === "top" ? "flex-start" : "center", gap: 4 }}>
+            {showLabel ? (
+              <Fluent.Label required={required} styles={{ root: { fontWeight: 600, marginRight: 10 } }}>{label}</Fluent.Label>
+            ) : null}
+            {/* YesNoButtons is an export of the bundled CompactBooleanField
+                module (COMPONENT_MODULE_EXPORTS), declared at package scope,
+                which the export's engine-scope check accepts. */}
+            <YesNoButtons
+              yesLabel={labels.on}
+              noLabel={labels.off}
+              value={controlValue === true ? "yes" : controlValue === false ? "no" : null}
+              onChange={(next) => emit(next === "yes" ? true : next === "no" ? false : null)}
+              disabled={inactive}
+              allowDeselect={descriptor.booleanNeutralMode !== "none" && descriptor.booleanNeutralMode !== "initial"}
+            />
+          </div>
+        )
+      }
+      default:
+        return null
+    }
+  }
+
+  const renderControl = (descriptor, options = {}) => {
+    const { key, ...rest } = options
+    return React.createElement(FieldKitControl, { key, descriptor, ...rest })
+  }
+
+  // -------------------------------------------------------------------------
+  // Descriptor projections
+  // -------------------------------------------------------------------------
+
+  // An EditableTable / RepeatForEachTable runtime column (EDITABLE_TABLE_COLUMN_TYPES).
+  const fromTableColumn = (column = {}) => {
+    const base = {
+      id: column.dataPath || column.id,
+      label: column.title || column.label || column.id,
+      required: column.required === true || column.requiredWhenVisible === true,
+      placeholder: column.placeholder || undefined,
+      helpText: column.helpText,
+    }
+    switch (column.type) {
+      case "number":
+        return {
+          ...base,
+          type: "number",
+          numberConfig: {
+            typeNumber: column.numberConfig?.typeNumber || column.typeNumber || "number",
+            suffix: column.numberConfig?.suffix ?? column.suffix,
+            buttonControls: column.numberConfig?.buttonControls ?? column.buttonControls ?? false,
+            storeAsNumber: column.numberConfig?.storeAsNumber ?? column.storeAsNumber ?? true,
+            spinButtonProps: {
+              min: column.numberConfig?.spinButtonProps?.min ?? column.min,
+              max: column.numberConfig?.spinButtonProps?.max ?? column.max,
+              step: column.numberConfig?.spinButtonProps?.step ?? column.step,
+            },
+          },
+        }
+      case "date": {
+        // The builder stores a date-time column's time as dateConfig.withTime
+        // (older runtime columns carried withTime at the top).
+        const withTime = column.withTime === true || column.dateConfig?.withTime === true
+        return {
+          ...base,
+          type: withTime ? "datetime" : "date",
+          dateConfig: { withTime, dateFormat: column.dateConfig?.dateFormat },
+        }
+      }
+      case "time":
+        return { ...base, type: "time" }
+      case "dropdown":
+      case "choice":
+        return {
+          ...base,
+          type: "choice",
+          // A column without a style is a dropdown (DEFAULT_CHOICE_STYLE.tableColumn).
+          choiceStyle: column.choiceStyle || "dropdown",
+          options: Array.isArray(column.options) ? column.options : [],
+          codeSystem: column.codeSystem || undefined,
+          showOtherOption: column.showOtherOption === true,
+        }
+      case "checkbox":
+      case "booleanYesNo":
+        return {
+          ...base,
+          type: "booleanSingle",
+          presentation: "checkbox",
+          booleanLabels: column.booleanLabels,
+        }
+      case "text":
+      default:
+        return column.textareaConfig?.multiline
+          ? { ...base, type: "textarea", textareaConfig: { rows: column.textareaConfig.rows, resizable: column.textareaConfig.resizable } }
+          : { ...base, type: "text" }
+    }
+  }
+
+  // A SubformScoring data-entry field (SUBFORM_ENTRY_TYPES plus legacy spellings).
+  const fromSubformEntry = (field = {}) => {
+    const base = {
+      id: field.id,
+      label: field.label,
+      required: field.required === true,
+      placeholder: field.placeholder,
+      helpText: field.helpText,
+    }
+    switch (field.type) {
+      case "number":
+        return {
+          ...base,
+          type: "number",
+          numberConfig: {
+            typeNumber: field.typeNumber || (Number.isInteger(Number(field.step ?? 1)) ? "number" : "decimal"),
+            suffix: field.suffix,
+            buttonControls: field.buttonControls === true,
+            storeAsNumber: field.storeAsNumber !== false,
+            spinButtonProps: { min: field.min, max: field.max, step: field.step },
+          },
+        }
+      case "date":
+        return { ...base, type: "date" }
+      case "datetime":
+        return { ...base, type: "datetime" }
+      case "time":
+        return { ...base, type: "time" }
+      case "choice":
+        return {
+          ...base,
+          type: "choice",
+          // A subform entry holds one answer: radio, dropdown (the default,
+          // DEFAULT_CHOICE_STYLE.subformEntry) or, from older configurations,
+          // a searchable findCode; multiple styles draw their single twin.
+          choiceStyle: field.choiceStyle === "radio" || field.choiceStyle === "checkbox"
+            ? "radio"
+            : field.choiceStyle === "findCode" || field.choiceStyle === "multiselect"
+              ? "findCode"
+              : "dropdown",
+          options: Array.isArray(field.options) ? field.options : [],
+          codeSystem: field.codeSystem,
+          showOtherOption: Boolean(field.showOtherOption || field.show_other_option),
+        }
+      case "booleanYesNo": {
+        const renderStyle = String(field.renderStyle || field.render_style || "").trim().toLowerCase()
+        return {
+          ...base,
+          type: "booleanYesNo",
+          presentation: renderStyle === "checkbox" || renderStyle === "checklist-row" ? "checkbox" : "buttons",
+        }
+      }
+      case "scale":
+        return {
+          ...base,
+          type: "scale",
+          scaleConfig: {
+            min: field.min,
+            max: field.max,
+            minLabel: field.minLabel,
+            maxLabel: field.maxLabel,
+            options: field.options,
+            showLegend: field.showLegend === true,
+            showInlineLabels: field.showInlineLabels !== false,
+            showTooltip: field.showTooltip === true,
+          },
+        }
+      case "textarea":
+        return { ...base, type: "textarea", textareaConfig: { rows: field.rows || 4 } }
+      case "heading":
+        return { ...base, type: "heading" }
+      default:
+        return { ...base, type: "text" }
+    }
+  }
+
+  // A PanelEntryGrid row (scale/coded, numeric/number, text, choice).
+  const fromPanelRow = (row = {}, { scaleLike = false } = {}) => {
+    const type = String(row.type ?? "text").toLowerCase()
+    const base = { id: row.id, label: row.label, required: row.required === true }
+    if (scaleLike) return { ...base, type: "scale", scaleConfig: { options: row.options } }
+    if (type === "choice" || type === "coded") {
+      return { ...base, type: "choice", choiceStyle: "dropdown", options: Array.isArray(row.options) ? row.options : [], system: row.system }
+    }
+    if (type === "numeric" || type === "number") {
+      return {
+        ...base,
+        type: "number",
+        numberConfig: { typeNumber: "decimal", spinButtonProps: { min: row.min, max: row.max, step: row.step } },
+      }
+    }
+    return row.multiline === false ? { ...base, type: "text" } : { ...base, type: "textarea", textareaConfig: { rows: row.rows || 3 } }
+  }
+
+  // An ActionButtonGroup dialog field (dropdown, combo, date, textarea, text).
+  const fromActionField = (field = {}) => {
+    const base = { id: field.id, label: field.label, placeholder: field.placeholder, required: field.required === true }
+    const options = Array.isArray(field.options)
+      ? field.options.map((option) => (isRecord(option)
+        ? { key: option.key ?? option.value, label: option.text ?? option.label ?? option.value }
+        : { key: option, label: option }))
+      : []
+    switch (field.type) {
+      case "dropdown":
+        return { ...base, type: "choice", choiceStyle: "dropdown", options }
+      case "combo":
+        return { ...base, type: "choice", choiceStyle: "findCode", options, showOtherOption: true }
+      case "date":
+        return { ...base, type: "date" }
+      case "textarea":
+        return { ...base, type: "textarea", textareaConfig: { rows: field.rows || 3 } }
+      default:
+        return { ...base, type: "text" }
+    }
+  }
+
+  return {
+    BOX_FIELD_ID,
+    controlFor,
+    renderControl,
+    optionsOf,
+    codingsOf,
+    toDateText,
+    toDateTimeText,
+    storage: {
+      cell: cellStorage,
+      entry: entryStorage,
+      coding: codingStorage,
+      text: textStorage,
+    },
+    fromTableColumn,
+    fromSubformEntry,
+    fromPanelRow,
+    fromActionField,
+  }
+})()
 `,
   './FieldStampButton/index.jsx': `const { useMemo } = React
 const { DefaultButton, PrimaryButton, Stack, Text } = Fluent
@@ -11599,8 +13257,9 @@ const FlowSheet = ({
             type: DialogType.largeHeader,
             title: modalTitle || title || "Flow Sheet",
           }}
-          minWidth={Math.min(resolvedMinWidth, typeof window !== "undefined" ? window.innerWidth - 48 : resolvedMinWidth)}
-          maxWidth="96vw"
+          // A viewer: non-blocking, with the NHForms dialog width rule.
+          minWidth={DialogKit.width(resolvedMinWidth, 980)}
+          maxWidth={DialogKit.maxWidth}
           modalProps={{ isBlocking: false }}
         >
           <Stack tokens={{ childrenGap: 6 }}>
@@ -12700,22 +14359,43 @@ const FormFlow = (() => {
       return () => window.removeEventListener("webforms:preview-select-page", handler)
     }, [])
 
-    // hiddenAnswerPolicy "clear": drop answers of fields on inactive pages.
-    // Converges: once cleared, nothing is left to clear.
+    // The one hidden-answer rule (FormLogicKit.shouldClearHiddenAnswer): a
+    // page whose hiddenAnswerPolicy is "clear" drops its fields' answers when
+    // it BECOMES inactive (it was active at the previous render); otherwise
+    // they are kept. A page that is inactive when the form opens keeps them
+    // (a chart-filled answer may only resolve after mount); the save and
+    // submit payloads leave them out (dropInactiveAnswers). The inline
+    // fallback is the same rule.
+    const kit = typeof FormLogicKit !== "undefined" && FormLogicKit && typeof FormLogicKit.shouldClearHiddenAnswer === "function" ? FormLogicKit : null
+    const shouldClear = kit
+      ? kit.shouldClearHiddenAnswer
+      : (policy, hidden, value, wasHidden) => policy === "clear" && hidden === true && wasHidden === false && value !== undefined && value !== null && value !== ""
+    // Page activity at the previous render (null on the first one).
+    const previousActiveRef = React.useRef(null)
+    const previousActive = previousActiveRef.current
     const clearIds = []
     ;(cfg.pages || []).forEach((page, index) => {
-      if (!page || !page.clearWhenInactive || active[index]) return
+      if (!page || active[index]) return
+      const policy = page.clearWhenInactive || page.hiddenAnswerPolicy === "clear" ? "clear" : "preserve"
+      const wasHidden = previousActive ? !previousActive[index] : undefined
       const modelPage = (cfg.model || []).find((entry) => entry.pageIndex === index)
       ;((modelPage && modelPage.fields) || []).forEach((field) => {
-        if (data[field.id] !== undefined && data[field.id] !== null && data[field.id] !== "") clearIds.push(field.id)
+        if (shouldClear(policy, true, data[field.id], wasHidden)) clearIds.push(field.id)
       })
     })
     const clearKey = clearIds.join("\\u0000")
+    React.useEffect(() => {
+      previousActiveRef.current = active
+    })
     React.useEffect(() => {
       if (!clearKey) return
       const ids = clearKey.split("\\u0000")
       write((draft) => {
         if (!draft.field || !draft.field.data) return
+        if (kit && typeof kit.clearHiddenAnswers === "function") {
+          kit.clearHiddenAnswers(draft.field.data, ids)
+          return
+        }
         ids.forEach((id) => {
           delete draft.field.data[id]
         })
@@ -13023,6 +14703,34 @@ const FormFlow = (() => {
     submitAttemptedAt = Date.now()
   }
 
+  /**
+   * The save and submit half of the hidden-answer rule (emitted
+   * dropHiddenAnswers): the answers without those of fields on inactive pages
+   * whose hiddenAnswerPolicy is "clear", also when the page has been inactive
+   * since the form opened. Never mutates: returns a copy when something is
+   * dropped, otherwise \`values\` itself.
+   */
+  const dropInactiveAnswers = (config, values) => {
+    if (!config || !values || typeof values !== "object") return values
+    const kit = typeof FormLogicKit !== "undefined" && FormLogicKit && typeof FormLogicKit.shouldDropHiddenAnswer === "function" ? FormLogicKit : null
+    const shouldDrop = kit
+      ? kit.shouldDropHiddenAnswer
+      : (policy, hidden, value) => policy === "clear" && hidden === true && value !== undefined && value !== null && value !== ""
+    const active = resolveActivePages(config, values)
+    let next = values
+    ;(config.pages || []).forEach((page, index) => {
+      if (!page || active[index]) return
+      const policy = page.clearWhenInactive || page.hiddenAnswerPolicy === "clear" ? "clear" : "preserve"
+      const modelPage = (config.model || []).find((entry) => entry.pageIndex === index)
+      ;((modelPage && modelPage.fields) || []).forEach((field) => {
+        if (!shouldDrop(policy, true, next[field.id])) return
+        if (next === values) next = { ...values }
+        delete next[field.id]
+      })
+    })
+    return next
+  }
+
   FormFlowRoot.Nav = Nav
   FormFlowRoot.Page = Page
   FormFlowRoot.Steps = Steps
@@ -13039,6 +14747,7 @@ const FormFlow = (() => {
   FormFlowRoot.requestReview = requestReview
   FormFlowRoot.formatText = formatText
   FormFlowRoot.noteSubmitAttempt = noteSubmitAttempt
+  FormFlowRoot.dropInactiveAnswers = dropInactiveAnswers
   return FormFlowRoot
 })()
 `,
@@ -13311,10 +15020,62 @@ const FormLogicKit = (() => {
   }
   // ---- Builder visibility rules — end ----
 
+  // ---- Layout-table rows — begin ----
+  // A row's \`visibleWhen\` ({ fieldId, operator?, value? }) read exactly as
+  // LayoutTable's rowIsVisible reads it, through ValueKit: "truthy" (default)
+  // is answered and not a no, "yes" is a yes, "equals" / "notEquals" match a
+  // code or wording (a boolean value as yes/no). Parity: isLayoutRowVisible in
+  // @webforms/form-model. Without ValueKit the row counts as shown.
+  const layoutRowAnswerEquals = (value, expected) => {
+    if (value === expected) return true
+    if (typeof expected === "boolean") return ValueKit.readBoolean(value) === expected
+    if (expected === null || expected === undefined) return false
+    const wanted = String(expected)
+    return ValueKit.readChoice(value).some((entry) => entry.code === wanted || entry.display === wanted)
+  }
+  const isLayoutRowVisible = (visibleWhen, getValue) => {
+    const fieldId = visibleWhen && visibleWhen.fieldId
+    if (!fieldId) return true
+    if (typeof ValueKit === "undefined" || !ValueKit || typeof ValueKit.readBoolean !== "function") return true
+    const value = toGetter(getValue)(fieldId)
+    switch (visibleWhen.operator || "truthy") {
+      case "yes":
+        return ValueKit.readBoolean(value) === true
+      case "equals":
+        return layoutRowAnswerEquals(value, visibleWhen.value)
+      case "notEquals":
+        return !layoutRowAnswerEquals(value, visibleWhen.value)
+      default:
+        return ValueKit.readBoolean(value) !== false && ValueKit.readChoice(value).length > 0
+    }
+  }
+  // ---- Layout-table rows — end ----
+
+  /**
+   * Whether one gate passes. A gate is a compiled condition group (a subgroup
+   * gate: { conditions, match }) or a nested entry's own show condition read
+   * the way its container reads it: { layoutRow: visibleWhen } (LayoutTable's
+   * row rule) or { visibility: rule, controllerKinds } (a cell's or subform
+   * field's show-when rule, evaluateVisibilityRule with the container's own
+   * answer kinds). A controller outside the container has no kind, as on screen.
+   */
+  const gatePasses = (gate, getValue) => {
+    if (!gate || typeof gate !== "object") return true
+    const get = toGetter(getValue)
+    if (gate.layoutRow) return isLayoutRowVisible(gate.layoutRow, get)
+    if (gate.visibility) {
+      const kinds = gate.controllerKinds || {}
+      return evaluateVisibilityRule(gate.visibility, get, {
+        controllerKind: (id) => (Object.prototype.hasOwnProperty.call(kinds, id) ? kinds[id] : undefined),
+      })
+    }
+    return evaluateEntries(gate.conditions, gate.match, get)
+  }
+
   /**
    * Whether a field is hidden by its own compiled behaviour config
-   * (compileFieldBehavior + gates): explicitly hidden, a failed subgroup gate,
-   * no matching show rule, or a matching hide rule.
+   * (compileFieldBehavior + gates): explicitly hidden, a failed gate, no
+   * matching show rule, or a matching hide rule.
    */
   const isFieldHidden = (config, getValue) => {
     if (!config) return false
@@ -13324,11 +15085,140 @@ const FormLogicKit = (() => {
     const showRules = rules.filter((rule) => rule.action === "show")
     return Boolean(
       config.hidden ||
-      (config.gates || []).some((gate) => !matches(gate)) ||
+      (config.gates || []).some((gate) => !gatePasses(gate, get)) ||
       (showRules.length > 0 && !showRules.some(matches)) ||
       rules.some((rule) => rule.action === "hide" && matches(rule))
     )
   }
+
+  // ---- Hidden answers — begin ----
+  // The one hidden-answer rule, shared by ConditionalField, FormFlow's
+  // inactive pages and EditableTable's columns (parity: hiddenAnswerPolicyOf /
+  // shouldClearHiddenAnswer / shouldDropHiddenAnswer in @webforms/form-model).
+  // An answer on a field hidden by its show/hide logic is kept unless the
+  // rule's hiddenAnswerPolicy is "clear". With "clear" it is removed when the
+  // field BECOMES hidden while the form is filled, and left out of the saved
+  // answers at save and submit (dropHiddenAnswers) while it is hidden. A form
+  // that opens with the field hidden never clears it (a chart-filled
+  // controller may resolve after mount). The static Hidden flag never clears.
+
+  /** "clear" when any show/hide rule (or a rule without an action: a field rule, a page) asks to clear. */
+  const hiddenAnswerPolicyOf = (rules) => {
+    const list = Array.isArray(rules) ? rules : rules ? [rules] : []
+    return list.some((rule) => (
+      rule && rule.hiddenAnswerPolicy === "clear" &&
+      (rule.action === undefined || rule.action === null || rule.action === "show" || rule.action === "hide")
+    )) ? "clear" : "preserve"
+  }
+
+  /** Whether there is a stored answer to remove (null, undefined and "" are already empty). */
+  const hasHiddenAnswer = (value) => value !== undefined && value !== null && value !== ""
+
+  /**
+   * Whether a stored answer is removed now: policy "clear", the field has just
+   * become hidden by its rules (wasHidden false: shown before this change),
+   * something stored. wasHidden undefined/null (just opened) never clears.
+   */
+  const shouldClearHiddenAnswer = (policy, hidden, value, wasHidden) => (
+    policy === "clear" && hidden === true && wasHidden === false && hasHiddenAnswer(value)
+  )
+
+  /** Whether an answer is left out of the saved answers: policy "clear", hidden by its rules now, something stored. */
+  const shouldDropHiddenAnswer = (policy, hidden, value) => (
+    policy === "clear" && hidden === true && hasHiddenAnswer(value)
+  )
+
+  /**
+   * Remove the stored answers of \`fieldIds\` from a data object (an Immer
+   * draft of fd.field.data). Mutates; returns the ids it removed.
+   */
+  const clearHiddenAnswers = (data, fieldIds) => {
+    if (!data || typeof data !== "object") return []
+    return (Array.isArray(fieldIds) ? fieldIds : []).filter((id) => {
+      if (!hasHiddenAnswer(data[id])) return false
+      delete data[id]
+      return true
+    })
+  }
+
+  /** \`data\` with the value at a dotted path replaced, copying each level (never mutates). */
+  const withValueAtPath = (data, path, value) => {
+    const segments = String(path || "").split(".").map((part) => part.trim()).filter(Boolean)
+    if (segments.length === 0) return data
+    const write = (node, index) => {
+      const copy = node && typeof node === "object" && !Array.isArray(node) ? { ...node } : {}
+      copy[segments[index]] = index === segments.length - 1 ? value : write(copy[segments[index]], index + 1)
+      return copy
+    }
+    return write(data, 0)
+  }
+
+  /**
+   * The table half of the save and submit rule, for an entry with \`table\`
+   * ({ rowsPath?, columns }, the columns as EditableTable and
+   * RepeatForEachTable get them): in each saved row, the answers of columns
+   * hidden in that row whose rule says "clear" are blanked, as editing the row
+   * would (clearHiddenTableAnswers), so a row loaded with a hidden answer and
+   * never edited no longer keeps it. Rows are copied, never changed in place;
+   * returns \`data\` itself when nothing changes.
+   */
+  const dropHiddenTableAnswers = (data, entry) => {
+    const table = entry.table
+    const path = (table && table.rowsPath) || entry.fieldId
+    const stored = tableCell(data, path)
+    const rows = Array.isArray(stored) ? stored : stored && Array.isArray(stored.rows) ? stored.rows : null
+    if (!rows || rows.length === 0) return data
+    let changed = false
+    const nextRows = rows.map((row) => {
+      if (!row || typeof row !== "object") return row
+      const before = JSON.stringify(row)
+      const copy = clearHiddenTableAnswers(JSON.parse(before), table.columns, { formData: data })
+      if (JSON.stringify(copy) === before) return row
+      changed = true
+      return copy
+    })
+    if (!changed) return data
+    return withValueAtPath(data, path, Array.isArray(stored) ? nextRows : { ...stored, rows: nextRows })
+  }
+
+  /**
+   * The answers to save without those of hidden "clear" fields (the save and
+   * submit half of the rule). entries: [{ fieldId, rules, gates?, table? }]
+   * where rules are the field's compiled show/hide rules ({ action,
+   * conditions, match, hiddenAnswerPolicy? }); an answer is left out while
+   * those rules hide the field and hiddenAnswerPolicyOf(rules) is "clear"
+   * (entry.hiddenAnswerPolicy overrides). A table entry (\`table\`) also blanks,
+   * row by row, the answers of its hidden "clear" columns
+   * (dropHiddenTableAnswers). Repeats until settled, since a dropped answer
+   * can hide another field. Never mutates: returns a copy when something is
+   * dropped, otherwise \`data\` itself.
+   */
+  const dropHiddenAnswers = (data, entries) => {
+    if (!data || typeof data !== "object") return data
+    const list = (Array.isArray(entries) ? entries : []).filter((entry) => entry && entry.fieldId)
+    let next = data
+    for (let pass = 0; pass <= list.length; pass += 1) {
+      let changed = false
+      list.forEach((entry) => {
+        const policy = entry.hiddenAnswerPolicy || hiddenAnswerPolicyOf(entry.rules)
+        const hidden = isFieldHidden({ rules: entry.rules || [], gates: entry.gates || [] }, next)
+        if (shouldDropHiddenAnswer(policy, hidden, next[entry.fieldId])) {
+          if (next === data) next = { ...data }
+          delete next[entry.fieldId]
+          changed = true
+          return
+        }
+        if (!entry.table) return
+        const kept = dropHiddenTableAnswers(next, entry)
+        if (kept === next) return
+        next = kept
+        changed = true
+      })
+      if (!changed) break
+    }
+    return next
+  }
+  // ---- Hidden answers — end ----
 
   // Copy rules resolve together (targets may sit on unmounted pages); a copy
   // cycle is reported as a form-level problem. Port of ConditionalGroup's
@@ -13412,7 +15302,175 @@ const FormLogicKit = (() => {
         return typeof value === "string" && /^\\$?\\s?(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d{1,2})?$/.test(value.trim())
       },
     },
+    // The answer types' own formats (matchesValueFormat in
+    // @webforms/form-model validation.ts): only text and number answers are
+    // checked, other shapes pass.
+    email: {
+      message: "Please enter a valid email address",
+      test: (value) => { const text = formatText(value); return text === null || /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(text) },
+    },
+    phone: {
+      message: "Please enter a valid phone number",
+      test: (value) => { const text = formatText(value); return text === null || /^[+]?[(]?[0-9]{1,4}[)]?[-\\s./0-9]*$/.test(text) },
+    },
+    url: {
+      message: "Please enter a valid web address",
+      test: (value) => { const text = formatText(value); return text === null || /^(?:https?:\\/\\/)?[^\\s/?#]+\\.[^\\s/?#]+(?:[/?#]\\S*)?$/i.test(text) },
+    },
   }
+
+  // ---- Neutral answer checks — begin ----
+  // config.checks is a field's NeutralFieldValidation (readFieldValidation in
+  // @webforms/form-model validation.ts) compiled by the exporter
+  // (compileFieldValidationChecks): { requiredMessage?, formats?, length?,
+  // number?, date?, patterns?, list?, crossField? }. answerIssues is the twin
+  // of validateAnswer there, held to the shared cases in validation.cases.ts:
+  // same checks, same order (format, length, number, date, pattern, list,
+  // cross-field), same default messages.
+  const checkedText = (value) => {
+    if (typeof value === "string") return value.trim()
+    if (typeof value === "number" && Number.isFinite(value)) return String(value)
+    return null
+  }
+  const readNumberAnswer = (value) => {
+    if (typeof value === "number") return Number.isFinite(value) ? value : null
+    if (typeof value !== "string") return null
+    const cleaned = value.trim().replace(/[$,\\s]/g, "")
+    if (!cleaned || !/^[-+]?(?:\\d+\\.?\\d*|\\.\\d+)(?:e[-+]?\\d+)?$/i.test(cleaned)) return null
+    const parsed = Number(cleaned)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+  const readDateAnswer = (value) => (
+    typeof ValueKit !== "undefined" && ValueKit && typeof ValueKit.readDate === "function" ? ValueKit.readDate(value) : null
+  )
+  const startOfDay = (date) => new Date(date.getFullYear(), date.getMonth(), date.getDate())
+  const addCalendar = (date, amount, unit) => {
+    if (unit === "days" || unit === "weeks") {
+      const result = new Date(date)
+      result.setDate(result.getDate() + amount * (unit === "weeks" ? 7 : 1))
+      return result
+    }
+    const months = unit === "years" ? amount * 12 : amount
+    const target = date.getMonth() + months
+    const year = date.getFullYear() + Math.floor(target / 12)
+    const month = ((target % 12) + 12) % 12
+    const lastDay = new Date(year, month + 1, 0).getDate()
+    return new Date(year, month, Math.min(date.getDate(), lastDay))
+  }
+  const resolveDateBound = (bound, today) => {
+    if (!bound) return null
+    if (bound.kind === "date") {
+      const date = readDateAnswer(bound.date)
+      return date ? startOfDay(date) : null
+    }
+    const anchor = startOfDay(today)
+    if (bound.direction === "exact" || !bound.value) return anchor
+    return addCalendar(anchor, bound.direction === "before" ? -bound.value : bound.value, bound.unit || "days")
+  }
+  const isoDay = (date) => {
+    const pad = (value) => String(value).padStart(2, "0")
+    return date.getFullYear() + "-" + pad(date.getMonth() + 1) + "-" + pad(date.getDate())
+  }
+  const anchoredPattern = (pattern) => {
+    try {
+      return new RegExp("^(?:" + pattern + ")$")
+    } catch (error) {
+      return null
+    }
+  }
+  const listMessage = (list) => {
+    if (list.match === "email-address") return list.mode === "allow" ? "Please use an approved email address" : "This email address is not allowed"
+    if (list.match === "email-domain") return list.mode === "allow" ? "Please use an approved email domain" : "This email domain is not allowed"
+    return list.mode === "allow" ? "Choose one of the allowed answers" : "This answer is not allowed"
+  }
+
+  // Cross-field checks of \`kinds\` ("valid-when" / "invalid-when"). A
+  // behavior validation ("valid-when") keeps the issue kind "rule" the error
+  // summary re-checks live; a Logic-tab invalid rule is "cross-field".
+  const crossFieldIssues = (checks, kinds, get, issue, locale) => (
+    (Array.isArray(checks.crossField) ? checks.crossField : [])
+      .filter((check) => check && kinds.includes(check.kind))
+      .filter((check) => {
+        const holds = evaluateEntries(check.condition && check.condition.conditions, check.condition && check.condition.match, get)
+        return check.kind === "valid-when" ? !holds : holds
+      })
+      .map((check) => {
+        const translated = locale && check.translations && typeof check.translations[locale] === "string" && check.translations[locale].trim()
+          ? check.translations[locale].trim()
+          : null
+        return issue(check.kind === "valid-when" ? "rule" : "cross-field", translated || check.message)
+      })
+  )
+
+  /** Problems with a non-empty answer, in validateAnswer's order. */
+  const answerIssues = (checks, value, get, issue, context) => {
+    const translate = context.translate
+    const issues = []
+    let formatFailed = false
+    ;(Array.isArray(checks.formats) ? checks.formats : []).forEach((check) => {
+      const format = check && formats[check.format]
+      if (!format || format.test(value)) return
+      formatFailed = true
+      issues.push(issue("format", check.message || translate(format.message)))
+    })
+    const text = checkedText(value)
+    const length = checks.length
+    if (length && text !== null) {
+      const messages = length.messages || {}
+      if (typeof length.min === "number" && text.length < length.min) issues.push(issue("length", messages.min || translate("Enter at least " + length.min + " characters")))
+      if (typeof length.max === "number" && text.length > length.max) issues.push(issue("length", messages.max || translate("Enter at most " + length.max + " characters")))
+    }
+    const limit = checks.number
+    if (limit && (typeof value === "number" || typeof value === "string")) {
+      const number = readNumberAnswer(value)
+      const messages = limit.messages || {}
+      if (number === null) {
+        issues.push(issue("number", translate("Please enter a number")))
+      } else {
+        if (limit.year && !(Number.isInteger(number) && number >= 1900 && number <= 2099)) {
+          issues.push(issue("number", translate("Please enter a 4-digit year")))
+        } else if (limit.wholeNumber && !Number.isInteger(number)) {
+          issues.push(issue("number", translate("Please enter a whole number")))
+        }
+        if (typeof limit.min === "number" && number < limit.min) issues.push(issue("number", messages.min || translate("Enter a number of at least " + limit.min)))
+        if (typeof limit.max === "number" && number > limit.max) issues.push(issue("number", messages.max || translate("Enter a number of at most " + limit.max)))
+      }
+    }
+    const dateLimit = checks.date
+    if (dateLimit) {
+      const date = readDateAnswer(value)
+      if (!date) {
+        issues.push(issue("date", translate("Please enter a valid date")))
+      } else {
+        const day = startOfDay(date).getTime()
+        const today = context.today instanceof Date ? context.today : (readDateAnswer(context.today) || new Date())
+        ;(dateLimit.earliest || []).forEach((bound) => {
+          const resolved = resolveDateBound(bound, today)
+          if (resolved && day < resolved.getTime()) issues.push(issue("date", translate("Enter a date on or after " + isoDay(resolved))))
+        })
+        ;(dateLimit.latest || []).forEach((bound) => {
+          const resolved = resolveDateBound(bound, today)
+          if (resolved && day > resolved.getTime()) issues.push(issue("date", translate("Enter a date on or before " + isoDay(resolved))))
+        })
+      }
+    }
+    if (text !== null) {
+      ;(Array.isArray(checks.patterns) ? checks.patterns : []).forEach((check) => {
+        const pattern = check && anchoredPattern(check.pattern)
+        if (pattern && !pattern.test(text)) issues.push(issue("pattern", check.message || translate("Enter the answer in the expected format")))
+      })
+    }
+    // An answer that is not an email at all only gets the format message.
+    const list = checks.list
+    if (list && Array.isArray(list.values) && text !== null && !formatFailed) {
+      const normalized = text.toLowerCase()
+      const candidate = list.match === "email-domain" ? normalized.split("@")[1] || "" : normalized
+      const listed = list.values.includes(candidate)
+      if (list.mode === "allow" ? !listed : listed) issues.push(issue("list", list.message || translate(listMessage(list))))
+    }
+    return issues.concat(crossFieldIssues(checks, ["valid-when", "invalid-when"], get, issue, context.locale))
+  }
+  // ---- Neutral answer checks — end ----
 
   // ---- Table row completion (repeat-for-each workstream) — begin ----
   // config.table = { requiredColumnIds (row data paths), requireAllComplete,
@@ -13574,8 +15632,12 @@ const FormLogicKit = (() => {
   /**
    * Validate answers against compiled field configs
    * (CompiledFieldValidationConfig in lib/mois-export/types.ts).
-   * options: { pageIndex?, inactivePages?, locale?, uiTranslations?, translate? }
+   * options: { pageIndex?, inactivePages?, locale?, uiTranslations?, translate?, today? }
    * \`translate\` (the form's translateFormText) wins over uiTranslations.
+   * A config with \`checks\` (the neutral model) is checked like validateAnswer
+   * in @webforms/form-model: an empty answer only meets the required check
+   * and Logic-tab invalid rules; a non-empty one every value check. Without
+   * \`checks\` the older keys (\`validations\`, \`format\`) apply.
    * Returns FormValidationIssue[]: { fieldId, label, message, pageIndex?, kind }.
    */
   const validate = (configs, values, options = {}) => {
@@ -13615,15 +15677,24 @@ const FormLogicKit = (() => {
       })
       const value = get(config.fieldId)
       if (config.table) return tableRowIssues(config, value, required, issue, translate, values) // table rows (repeat-for-each)
+      const checks = config.checks && typeof config.checks === "object" ? config.checks : null
       if (!hasMeaningfulValue(value)) {
-        return required ? [issue("required", translate(config.label + " is required"))] : []
+        const missing = required
+          ? [issue("required", translate(checks && checks.requiredMessage ? checks.requiredMessage : config.label + " is required"))]
+          : []
+        return checks ? missing.concat(crossFieldIssues(checks, ["invalid-when"], get, issue, locale)) : missing
       }
-      const issues = (config.validations || [])
-        .filter((rule) => !matches(rule.validWhen))
-        .map((rule) => issue("rule", rule.translations?.[locale] || rule.message))
-      const format = config.format ? formats[config.format] : null
-      if (format && typeof format.test === "function" && !format.test(value)) {
-        issues.push(issue("format", config.formatMessage || translate(format.message || (config.label + " is not valid"))))
+      let issues
+      if (checks) {
+        issues = answerIssues(checks, value, get, issue, { translate, locale, today: options.today })
+      } else {
+        issues = (config.validations || [])
+          .filter((rule) => !matches(rule.validWhen))
+          .map((rule) => issue("rule", rule.translations?.[locale] || rule.message))
+        const format = config.format ? formats[config.format] : null
+        if (format && typeof format.test === "function" && !format.test(value)) {
+          issues.push(issue("format", config.formatMessage || translate(format.message || (config.label + " is not valid"))))
+        }
       }
       const selected = Array.isArray(value) ? value : [value]
       const optionBlocked = (config.optionRules || []).some((rule) =>
@@ -13713,9 +15784,18 @@ const FormLogicKit = (() => {
     readValue,
     evaluateGroup,
     evaluateVisibilityRule,
+    isLayoutRowVisible,
+    gatePasses,
+    hiddenAnswerPolicyOf,
+    hasHiddenAnswer,
+    shouldClearHiddenAnswer,
+    shouldDropHiddenAnswer,
+    clearHiddenAnswers,
+    dropHiddenAnswers,
     tableColumnKind,
     isTableColumnVisible,
     clearHiddenTableAnswers,
+    dropHiddenTableAnswers,
     isFieldHidden,
     resolveFieldCopies,
     validate,
@@ -13920,518 +16000,2397 @@ const useFormSessionData = (selector) => {
   return [selectedSessionDataWithSetter, sessionScopedSetter]
 }
 `,
-  './FormulaKit/index.jsx': `// FormulaKit — the formula engine shared by NHForms components: ComputedField
-// fields and EditableTable formula columns. Non-rendering helper module in the
-// ObservationKit pattern: one namespace object, so consumers keep a single
-// bare identifier in engine scope.
+  './FormulaKit/index.jsx': `// FormulaKit — the formula engine of the exported form: ComputedField,
+// EditableTable and RepeatForEachTable formula columns, subform and layout
+// calculations. Non-rendering helper module: one namespace object, so
+// consumers keep a single bare identifier in engine scope and reference it
+// only inside function bodies (component files load in no guaranteed order).
 //
-// Consumers must reference FormulaKit only inside function bodies — component
-// files load in no guaranteed order, so a top-level read of another module's
-// export can run before that module has been evaluated.
+//   FormulaKit.evaluateTree(formula, getValue, { scoreMaps, now, incomplete,
+//     fieldKind | fieldKinds, selfId })   the stored formula tree
+//   FormulaKit.parse(text)                 formula text -> { formula, errors }
+//   FormulaKit.evaluate / extractReferences / hasAllReferencedValues /
+//   toNumericValue / toComparableValue / hasValue / roundValue
+//                                          the names used before generation
 //
-// Semantics are documented in docs/.../architecture/expressions.md and kept in
-// step with lib/expressions (the builder engine); shared cases live in
-// lib/__tests__/fixtures/*-cases.ts.
+// Generated by scripts/generate-formula-kit.mjs from packages/form-model/src/formula/kit.ts.
+// Do not edit: change packages/form-model/src/formula and run
+// \`pnpm generate:nhforms\`. The semantic case table
+// (packages/form-model/src/formula/semantic-cases.ts) runs against both.
 
 const FormulaKit = (() => {
-  const _escapeRegExp = (value) => String(value).replace(/[.*+?^\${}()|[\\]\\\\]/g, "\\\\$&")
+  var __defProp = Object.defineProperty;
+  var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
+  var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "symbol" ? key + "" : key, value);
 
-  const _toNumericValue = (value) => {
-    if (value === undefined || value === null || value === "") return null
-    if (typeof value === "number") {
-      return Number.isFinite(value) ? value : null
+  var FORMULA_VALUE_TYPES = [
+    "number",
+    "text",
+    "boolean",
+    "date",
+    "datetime",
+    "duration",
+    "coded",
+    "list",
+    "unknown"
+  ];
+  var FORMULA_ARITHMETIC_OPS = ["+", "-", "*", "/", "%", "^"];
+  function isStoredFormula(value) {
+    return Boolean(
+      value && typeof value === "object" && value.v === 1 && value.expr && typeof value.expr === "object"
+    );
+  }
+  function formulaExpr(formula) {
+    return isStoredFormula(formula) ? formula.expr : formula;
+  }
+  function formulaChildren(node) {
+    switch (node.kind) {
+      case "list":
+        return node.items;
+      case "map":
+        return node.entries.map((entry) => entry.value);
+      case "unary":
+        return [node.operand];
+      case "binary":
+        return [node.left, node.right];
+      case "call":
+        return node.args;
+      case "if":
+        return [node.test, node.then, node.else];
+      default:
+        return [];
     }
-    if (typeof value === "boolean") {
-      return value ? 1 : 0
+  }
+  function walkFormula(formula, visit) {
+    const stack = [formulaExpr(formula)];
+    while (stack.length > 0) {
+      const node = stack.pop();
+      visit(node);
+      const children = formulaChildren(node);
+      for (let index = children.length - 1; index >= 0; index -= 1) stack.push(children[index]);
     }
+  }
+  function formulaReferences(formula) {
+    const ids = [];
+    walkFormula(formula, (node) => {
+      if (node.kind === "ref" && !ids.includes(node.id)) ids.push(node.id);
+    });
+    return ids;
+  }
+
+  function isRecord(value) {
+    return value !== null && typeof value === "object" && !Array.isArray(value) && !(value instanceof Date);
+  }
+  function scalarText(value) {
+    if (typeof value === "string") return value.trim() ? value : void 0;
+    if (typeof value === "number") return Number.isFinite(value) ? String(value) : void 0;
+    if (typeof value === "boolean") return String(value);
+    return void 0;
+  }
+  function firstText(record, keys) {
+    for (const key of keys) {
+      const text = scalarText(record[key]);
+      if (text !== void 0) return text;
+    }
+    return void 0;
+  }
+  function finiteNumber(value) {
+    if (typeof value === "number") return Number.isFinite(value) ? value : void 0;
+    if (typeof value === "string" && value.trim()) {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : void 0;
+    }
+    return void 0;
+  }
+  var FHIR_SCORE_EXTENSION = /\\/(ordinalValue|itemWeight)$/;
+  function fhirExtensionScore(extensions) {
+    if (!Array.isArray(extensions)) return void 0;
+    for (const extension of extensions) {
+      if (!isRecord(extension) || typeof extension.url !== "string" || !FHIR_SCORE_EXTENSION.test(extension.url)) continue;
+      const score = finiteNumber(extension.valueDecimal ?? extension.valueInteger);
+      if (score !== void 0) return score;
+    }
+    return void 0;
+  }
+  var FHIR_ANSWER_KEYS = ["valueCoding", "valueString", "valueInteger", "valueDecimal", "valueDate", "valueTime"];
+  function fhirAnswerValue(record) {
+    for (const key of FHIR_ANSWER_KEYS) {
+      if (record[key] !== void 0 && record[key] !== null) return record[key];
+    }
+    return void 0;
+  }
+  var OPTION_CODE_KEYS = ["value", "code", "key", "id", "state"];
+  var ORDINAL_OPTION_CODE_KEYS = ["code", "key", "id", "state", "value"];
+  var OPTION_DISPLAY_KEYS = ["label", "display", "text"];
+  function withOptional(option, system, score) {
+    if (system !== void 0) option.system = system;
+    if (score !== void 0) option.score = score;
+    return option;
+  }
+  function normalizeOption(raw) {
+    if (raw === null || raw === void 0) return { code: "", display: "" };
+    if (!isRecord(raw)) {
+      const text = scalarText(raw) ?? "";
+      return { code: text, display: text };
+    }
+    const fhirValue = fhirAnswerValue(raw);
+    if (fhirValue !== void 0 && raw.value === void 0 && raw.code === void 0 && raw.label === void 0) {
+      const inner = normalizeOption(fhirValue);
+      return withOptional({ code: inner.code, display: inner.display }, inner.system, inner.score ?? fhirExtensionScore(raw.extension));
+    }
+    const ordinal = typeof raw.value === "number" && Number.isFinite(raw.value) ? raw.value : void 0;
+    const code = firstText(raw, ordinal === void 0 ? OPTION_CODE_KEYS : ORDINAL_OPTION_CODE_KEYS);
+    const display = firstText(raw, OPTION_DISPLAY_KEYS);
+    return withOptional(
+      { code: code ?? display ?? "", display: display ?? code ?? "" },
+      scalarText(raw.system),
+      finiteNumber(raw.score) ?? ordinal
+    );
+  }
+  var BOOLEAN_TRUE_TEXT = ["true", "t", "yes", "y", "on", "1", "checked", "selected", "x"];
+  var BOOLEAN_FALSE_TEXT = ["false", "f", "no", "n", "off", "0", "unchecked", "unselected"];
+  var BOOLEAN_OBJECT_KEYS = ["code", "selectedKey", "value", "key", "display", "response", "text", "label"];
+  function normalizedLabel(value) {
+    return typeof value === "string" ? value.trim().toLowerCase() : "";
+  }
+  function readBoolean(value, labels) {
+    if (value === true || value === false) return value;
+    if (value === null || value === void 0) return null;
+    if (typeof value === "number") return value === 1 ? true : value === 0 ? false : null;
     if (typeof value === "string") {
-      const trimmed = value.trim()
-      if (!trimmed) return null
-      const parsed = Number(trimmed)
-      return Number.isFinite(parsed) ? parsed : null
+      const text = value.trim().toLowerCase();
+      if (!text) return null;
+      const on = normalizedLabel(labels?.on);
+      const off = normalizedLabel(labels?.off);
+      if (on && text === on) return true;
+      if (off && text === off) return false;
+      if (BOOLEAN_TRUE_TEXT.includes(text)) return true;
+      if (BOOLEAN_FALSE_TEXT.includes(text)) return false;
+      return null;
     }
-    if (Array.isArray(value)) {
-      return value.length
-    }
-    if (typeof value === "object") {
-      if (Number.isFinite(value.selectedCount)) {
-        return Number(value.selectedCount)
+    if (Array.isArray(value)) return value.length === 1 ? readBoolean(value[0], labels) : null;
+    if (isRecord(value)) {
+      for (const key of BOOLEAN_OBJECT_KEYS) {
+        const result = readBoolean(value[key], labels);
+        if (result !== null) return result;
       }
-      const candidate = value.value ?? value.selectedKey ?? value.display ?? value.text ?? value.code ?? value.key ?? value.response
-      return _toNumericValue(candidate)
     }
-    return null
+    return null;
   }
-
-  const _toComparableValue = (value) => {
-    if (value === undefined || value === null) return ""
-    if (typeof value === "number" || typeof value === "boolean" || typeof value === "string") return value
-    if (Array.isArray(value)) return value.map(_toComparableValue)
-    if (value instanceof Date) return Number.isFinite(value.getTime()) ? value.toISOString() : ""
-    if (typeof value === "object") {
-      return value.value ?? value.selectedKey ?? value.date ?? value.display ?? value.text ?? value.code ?? value.key ?? value.response ?? ""
-    }
-    return String(value)
+  var CHOICE_CODE_KEYS = ["code", "value", "key", "id"];
+  var CHOICE_DISPLAY_KEYS = ["display", "response", "label", "text"];
+  function choiceValue(code, display, system) {
+    const entry = { code };
+    if (display !== void 0) entry.display = display;
+    if (system !== void 0) entry.system = system;
+    return entry;
   }
-
-  // DateSelect stores the *formatted* display string, not ISO, so every builder
-  // dateFormat option must parse explicitly. dd/MM/yyyy and MM-dd-yyyy are
-  // distinguishable by separator (slash vs dash); MM-dd-yyyy cannot collide with
-  // ISO because ISO leads with a 4-digit year. Date-only strings parse as LOCAL
-  // calendar dates (not UTC midnight) so local getters read the intended day.
-  const _DATE_ONLY_FORMATS = [
-    { pattern: /^(\\d{4})-(\\d{1,2})-(\\d{1,2})$/, order: [1, 2, 3] }, // yyyy-MM-dd (ISO)
-    { pattern: /^(\\d{4})\\.(\\d{1,2})\\.(\\d{1,2})$/, order: [1, 2, 3] }, // yyyy.MM.dd (DateSelect default)
-    { pattern: /^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})$/, order: [3, 2, 1] }, // dd/MM/yyyy
-    { pattern: /^(\\d{1,2})-(\\d{1,2})-(\\d{4})$/, order: [3, 1, 2] }, // MM-dd-yyyy
-  ]
-
-  // null = matched but invalid (e.g. 31/04); undefined = not a date-only string.
-  const _parseDateOnlyString = (text) => {
-    for (const format of _DATE_ONLY_FORMATS) {
-      const match = format.pattern.exec(text)
-      if (!match) continue
-      const [year, month, day] = format.order.map((index) => Number(match[index]))
-      const date = new Date(year, month - 1, day)
-      const valid = date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day
-      return valid ? date : null
+  function readChoiceEntries(value) {
+    if (value === null || value === void 0) return [];
+    if (Array.isArray(value)) return value.flatMap(readChoiceEntries);
+    if (!isRecord(value)) {
+      const code2 = scalarText(value);
+      return code2 === void 0 ? [] : [{ code: code2 }];
     }
-    return undefined
+    if (Array.isArray(value.coding)) return readChoiceEntries(value.coding[0]);
+    if (isRecord(value.valueCoding)) return readChoiceEntries(value.valueCoding);
+    if (Array.isArray(value.selectedItems)) return value.selectedItems.flatMap(readChoiceEntries);
+    if ("selectedItem" in value) return readChoiceEntries(value.selectedItem);
+    if ("selectedKey" in value) {
+      const code2 = scalarText(value.selectedKey);
+      if (code2 === void 0) return [];
+      return [choiceValue(code2, firstText(value, ["response", "display", "text", "label"]), scalarText(value.system))];
+    }
+    if (Array.isArray(value.selectedIds) || Array.isArray(value.selectedLabels)) {
+      const ids = Array.isArray(value.selectedIds) ? value.selectedIds : [];
+      const labels = Array.isArray(value.selectedLabels) ? value.selectedLabels : [];
+      const entries = [];
+      for (let index = 0; index < Math.max(ids.length, labels.length); index += 1) {
+        const label = scalarText(labels[index]);
+        const code2 = scalarText(ids[index]) ?? label;
+        if (code2 !== void 0) entries.push(choiceValue(code2, label, void 0));
+      }
+      return entries;
+    }
+    if (value.value !== null && typeof value.value === "object") return readChoiceEntries(value.value);
+    const display = firstText(value, CHOICE_DISPLAY_KEYS);
+    const code = firstText(value, CHOICE_CODE_KEYS) ?? display;
+    return code === void 0 ? [] : [choiceValue(code, display, scalarText(value.system))];
   }
-
-  const _toDateValue = (value) => {
-    if (value === undefined || value === null || value === "") return null
-    if (value instanceof Date) {
-      return Number.isFinite(value.getTime()) ? value : null
+  function sameText(left, right) {
+    return left !== void 0 && right !== void 0 && left.trim().toLowerCase() === right.trim().toLowerCase();
+  }
+  function resolveAgainstOptions(entry, options) {
+    const match = options.find((option) => option.code === entry.code) ?? options.find((option) => sameText(option.code, entry.code)) ?? options.find((option) => sameText(option.display, entry.code) || sameText(option.display, entry.display));
+    if (!match) return entry;
+    return choiceValue(match.code, match.display, entry.system ?? match.system);
+  }
+  function readChoice(value, options) {
+    const entries = readChoiceEntries(value);
+    if (!Array.isArray(options) || options.length === 0 || entries.length === 0) return entries;
+    const normalized = options.map(normalizeOption).filter((option) => option.code !== "" || option.display !== "");
+    return entries.map((entry) => resolveAgainstOptions(entry, normalized));
+  }
+  var DATE_FORMATS = [
+    { pattern: /^(\\d{4})-(\\d{1,2})-(\\d{1,2})/, order: [1, 2, 3] },
+    // yyyy-MM-dd
+    { pattern: /^(\\d{4})\\.(\\d{1,2})\\.(\\d{1,2})/, order: [1, 2, 3] },
+    // yyyy.MM.dd (DateSelect default)
+    { pattern: /^(\\d{4})\\/(\\d{1,2})\\/(\\d{1,2})/, order: [1, 2, 3] },
+    // yyyy/MM/dd
+    { pattern: /^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})/, order: [3, 2, 1] },
+    // dd/MM/yyyy
+    { pattern: /^(\\d{1,2})-(\\d{1,2})-(\\d{4})/, order: [3, 1, 2] }
+    // MM-dd-yyyy
+  ];
+  var TIME_SUFFIX = /^(?:[T ]|\\s+)(\\d{1,2}):(\\d{2})(?::(\\d{2})(?:\\.(\\d{1,9}))?)?\\s*(Z|[+-]\\d{2}:?\\d{2})?$/i;
+  function parseDateText(text) {
+    const trimmed = text.trim();
+    for (const format of DATE_FORMATS) {
+      const match = format.pattern.exec(trimmed);
+      if (!match) continue;
+      const [year, month, day] = format.order.map((index) => Number(match[index]));
+      const midnight = new Date(year, month - 1, day);
+      if (midnight.getFullYear() !== year || midnight.getMonth() !== month - 1 || midnight.getDate() !== day) return null;
+      const rest = trimmed.slice(match[0].length);
+      if (rest === "") return { date: midnight, dateOnly: true };
+      const time = TIME_SUFFIX.exec(rest);
+      if (!time) return null;
+      const hours = Number(time[1]);
+      const minutes = Number(time[2]);
+      const seconds = time[3] ? Number(time[3]) : 0;
+      const millis = time[4] ? Number(time[4].slice(0, 3).padEnd(3, "0")) : 0;
+      if (hours > 23 || minutes > 59 || seconds > 59) return null;
+      if (!time[5]) return { date: new Date(year, month - 1, day, hours, minutes, seconds, millis), dateOnly: false };
+      const zone = time[5].toUpperCase();
+      let offsetMinutes = 0;
+      if (zone !== "Z") {
+        const digits = zone.replace(":", "");
+        offsetMinutes = (Number(digits.slice(1, 3)) * 60 + Number(digits.slice(3, 5))) * (digits[0] === "-" ? -1 : 1);
+      }
+      return { date: new Date(Date.UTC(year, month - 1, day, hours, minutes, seconds, millis) - offsetMinutes * 6e4), dateOnly: false };
     }
+    return null;
+  }
+  var DATE_OBJECT_KEYS = ["value", "date", "text", "display"];
+  function readDateTime(value) {
+    if (value === null || value === void 0 || value === "") return null;
+    if (value instanceof Date) return Number.isFinite(value.getTime()) ? { date: new Date(value.getTime()), dateOnly: false } : null;
     if (typeof value === "number") {
-      if (!Number.isFinite(value)) return null
-      const date = new Date(value)
-      return Number.isFinite(date.getTime()) ? date : null
+      if (!Number.isFinite(value)) return null;
+      const date = new Date(value);
+      return Number.isFinite(date.getTime()) ? { date, dateOnly: false } : null;
     }
-    if (typeof value === "string") {
-      const trimmed = value.trim()
-      if (!trimmed) return null
-      const dateOnly = _parseDateOnlyString(trimmed)
-      if (dateOnly !== undefined) return dateOnly
-      const date = new Date(trimmed)
-      return Number.isFinite(date.getTime()) ? date : null
-    }
-    if (typeof value === "object") {
-      for (const key of ["value", "date", "text", "display"]) {
-        const date = _toDateValue(value[key])
-        if (date) return date
+    if (typeof value === "string") return value.trim() ? parseDateText(value) : null;
+    if (isRecord(value)) {
+      for (const key of DATE_OBJECT_KEYS) {
+        const date = readDateTime(value[key]);
+        if (date) return date;
       }
     }
-    return null
+    return null;
   }
 
-  const _score = (value, scoreMap) => {
-    const candidate = _toComparableValue(value)
-    if (Array.isArray(candidate)) {
-      return candidate.reduce((sum, entry) => sum + _score(entry, scoreMap), 0)
-    }
-    const direct = scoreMap?.[String(candidate)]
-    if (Number.isFinite(direct)) return Number(direct)
-    const numeric = _toNumericValue(value)
-    return Number.isFinite(numeric) ? numeric : 0
+  var MISSING_INPUT = { $missing: true };
+  var MS_PER_DAY = 864e5;
+  var MAX_DEPTH = 400;
+  var DURATION_UNITS = {
+    day: "days",
+    days: "days",
+    week: "weeks",
+    weeks: "weeks",
+    month: "months",
+    months: "months",
+    year: "years",
+    years: "years"
+  };
+  var isDate = (value) => Boolean(value && typeof value === "object" && value.$date === true);
+  var isCoded = (value) => Boolean(value && typeof value === "object" && value.$coded === true);
+  var isMap = (value) => Boolean(value && typeof value === "object" && !Array.isArray(value) && "$map" in value);
+  var isList = (value) => Array.isArray(value);
+  function isMissing(value) {
+    if (value === null || value === MISSING_INPUT) return true;
+    if (typeof value === "string") return value.trim() === "";
+    if (Array.isArray(value)) return value.length === 0;
+    return false;
   }
-
-  const _contains = (values, value) => {
-    if (!Array.isArray(values)) return false
-    const candidate = _toComparableValue(value)
-    if (Array.isArray(candidate)) {
-      return candidate.some((entry) => _contains(values, entry))
-    }
-    return values.map(String).includes(String(candidate))
-  }
-
-  const _hasValue = (value) => {
-    if (value === undefined || value === null || value === "") return false
-    if (Array.isArray(value)) return value.length > 0
-    return true
-  }
-
-  const _iif = (condition, whenTrue, whenFalse) => (condition ? whenTrue : whenFalse)
-  const _countTrue = (...values) => values.flat().filter((value) => value === true || value === "true" || value === "Y" || value === "Yes" || value === 1).length
-  const _floor = (value) => {
-    const numeric = _toNumericValue(value)
-    return Number.isFinite(numeric) ? Math.floor(numeric) : null
-  }
-  const _mod = (value, divisor) => {
-    const numeric = _toNumericValue(value)
-    const numericDivisor = _toNumericValue(divisor)
-    if (!Number.isFinite(numeric) || !Number.isFinite(numericDivisor) || numericDivisor === 0) return null
-    return numeric % numericDivisor
-  }
-  const _round = (value, precision = 0) => {
-    const numeric = _toNumericValue(value)
-    const numericPrecision = _toNumericValue(precision)
-    if (!Number.isFinite(numeric) || !Number.isFinite(numericPrecision)) return null
-    const digits = Math.round(numericPrecision)
-    const factor = 10 ** digits
-    if (!Number.isFinite(factor) || factor === 0) return null
-    return Math.round(numeric * factor) / factor
-  }
-  const _power = (value, exponent) => {
-    const numeric = _toNumericValue(value)
-    const numericExponent = _toNumericValue(exponent)
-    if (!Number.isFinite(numeric) || !Number.isFinite(numericExponent)) return null
-    const result = numeric ** numericExponent
-    return Number.isFinite(result) ? result : null
-  }
-  const _ln = (value) => {
-    const numeric = _toNumericValue(value)
-    if (!Number.isFinite(numeric) || numeric <= 0) return null
-    const result = Math.log(numeric)
-    return Number.isFinite(result) ? result : null
-  }
-  const _exp = (value) => {
-    const numeric = _toNumericValue(value)
-    if (!Number.isFinite(numeric)) return null
-    const result = Math.exp(numeric)
-    return Number.isFinite(result) ? result : null
-  }
-  const _coalesce = (...values) => values.find((value) => value !== undefined && value !== null && value !== "") ?? null
-  const _text = (value) => value == null ? "" : String(value)
-  const _numericExtrema = (values, select) => {
-    const numericValues = values.flat().map(_toNumericValue)
-    if (numericValues.length === 0 || numericValues.some((value) => !Number.isFinite(value))) return null
-    return select(...numericValues)
-  }
-  const _min = (...values) => _numericExtrema(values, Math.min)
-  const _max = (...values) => _numericExtrema(values, Math.max)
-  const _MS_PER_DAY = 24 * 60 * 60 * 1000
-
-  const _isDateOnlyValue = (value) => {
+  var DATE_KINDS = /* @__PURE__ */ new Set(["date"]);
+  var DATETIME_KINDS = /* @__PURE__ */ new Set(["datetime", "dateTime"]);
+  var BOOLEAN_KINDS = /* @__PURE__ */ new Set(["boolean", "booleanYesNo", "booleanSingle"]);
+  var CODED_KEYS = ["code", "key", "id", "display", "response", "label", "text"];
+  var ANSWER_KEYS = [
+    ...CODED_KEYS,
+    "value",
+    "selectedKey",
+    "selectedIds",
+    "selectedLabels",
+    "coding",
+    "valueCoding",
+    "system",
+    "date",
+    "detailResponse"
+  ];
+  var FHIR_VALUE_KEYS = ["valueString", "valueInteger", "valueDecimal", "valueBoolean", "valueDate", "valueDateTime", "valueTime"];
+  function scalarOf(value) {
     if (typeof value === "string") {
-      const trimmed = value.trim()
-      return _DATE_ONLY_FORMATS.some((format) => format.pattern.test(trimmed))
+      const trimmed = value.trim();
+      return trimmed === "" ? void 0 : trimmed;
     }
-    if (!value || typeof value !== "object" || value instanceof Date) return false
-    return ["value", "date", "text", "display"].some((key) => _isDateOnlyValue(value[key]))
+    if (typeof value === "number") return Number.isFinite(value) ? value : void 0;
+    if (typeof value === "boolean") return value;
+    return void 0;
   }
-
-  const _calendarDayNumber = (date) => Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / _MS_PER_DAY
-
-  const _daysSince = (value, ref) => {
-    const date = _toDateValue(value)
-    if (!date) return null
-    const reference = ref === undefined ? new Date() : _toDateValue(ref)
-    if (!reference) return null
-    if (_isDateOnlyValue(value) && _isDateOnlyValue(ref)) {
-      return _calendarDayNumber(reference) - _calendarDayNumber(date)
+  function yesNoWord(value) {
+    if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") return void 0;
+    return readBoolean(value) ?? void 0;
+  }
+  var codedOf = (entry, value) => {
+    const coded = { $coded: true, code: entry.code.trim() };
+    if (value !== void 0) coded.value = value;
+    if (entry.display !== void 0) coded.display = entry.display.trim();
+    return coded;
+  };
+  function readStored(raw, kind) {
+    if (kind === "booleanSingle" && (raw === void 0 || raw === null || raw === "")) return false;
+    if (raw === void 0 || raw === null) return null;
+    if (typeof raw === "number") return Number.isFinite(raw) ? raw : null;
+    if (typeof raw === "boolean") return raw;
+    if (typeof raw === "string") {
+      const trimmed = raw.trim();
+      if (!trimmed) return null;
+      if (kind && (DATE_KINDS.has(kind) || DATETIME_KINDS.has(kind))) {
+        const date = parseDateText2(trimmed);
+        if (date) return DATE_KINDS.has(kind) ? asDateOnly(date) : date;
+      }
+      if (kind && BOOLEAN_KINDS.has(kind)) {
+        const yesNo = yesNoWord(trimmed);
+        if (yesNo !== void 0) return yesNo;
+      }
+      return trimmed;
     }
-    return Math.floor((reference.getTime() - date.getTime()) / _MS_PER_DAY)
-  }
-
-  const _monthsSince = (value, ref) => {
-    const date = _toDateValue(value)
-    if (!date) return null
-    const reference = ref === undefined ? new Date() : _toDateValue(ref)
-    if (!reference) return null
-    let months = (reference.getFullYear() - date.getFullYear()) * 12 + (reference.getMonth() - date.getMonth())
-    if (reference.getDate() < date.getDate()) months -= 1
-    return months
-  }
-
-  // Local calendar date, matching the local-calendar parse of date-only strings.
-  const _today = () => {
-    const now = new Date()
-    const pad = (part) => String(part).padStart(2, "0")
-    return \`\${now.getFullYear()}-\${pad(now.getMonth() + 1)}-\${pad(now.getDate())}\`
-  }
-
-  const _DURATION_UNIT_ALIASES = {
-    day: "days", days: "days",
-    week: "weeks", weeks: "weeks",
-    month: "months", months: "months",
-    year: "years", years: "years",
-  }
-
-  const _normalizeDurationUnit = (unit) =>
-    typeof unit === "string" ? _DURATION_UNIT_ALIASES[unit.trim().toLowerCase()] ?? null : null
-
-  // Exact day difference projected through local calendar components, so results
-  // are DST-safe and date-only vs date-only arithmetic stays a whole number
-  // (matching _daysSince's calendar-day semantics).
-  const _exactDaysBetween = (from, to) => {
-    const project = (date) => Date.UTC(
-      date.getFullYear(), date.getMonth(), date.getDate(),
-      date.getHours(), date.getMinutes(), date.getSeconds(), date.getMilliseconds()
-    )
-    return (project(to) - project(from)) / _MS_PER_DAY
-  }
-
-  // Whole calendar months, matching _monthsSince's day-of-month rule.
-  const _wholeMonthsBetween = (from, to) => {
-    let months = (to.getFullYear() - from.getFullYear()) * 12 + (to.getMonth() - from.getMonth())
-    if (to.getDate() < from.getDate()) months -= 1
-    return months
-  }
-
-  // Month arithmetic clamps to the target month's last day (Jan 31 + 1 month =
-  // Feb 28/29), so a duration anchor never overshoots into the following month.
-  const _addMonthsClamped = (date, months) => {
-    const monthIndex = date.getMonth() + months
-    const lastDay = new Date(date.getFullYear(), monthIndex + 1, 0).getDate()
-    return new Date(
-      date.getFullYear(), monthIndex, Math.min(date.getDate(), lastDay),
-      date.getHours(), date.getMinutes(), date.getSeconds(), date.getMilliseconds()
-    )
-  }
-
-  const _addCalendarDays = (date, days) => new Date(
-    date.getFullYear(), date.getMonth(), date.getDate() + days,
-    date.getHours(), date.getMinutes(), date.getSeconds(), date.getMilliseconds()
-  )
-
-  const _resolveDurationEndpoints = (value, ref) => {
-    const from = _toDateValue(value)
-    if (!from) return null
-    const to = ref === undefined || ref === null || ref === "" ? new Date() : _toDateValue(ref)
-    if (!to) return null
-    return { from, to }
-  }
-
-  // Exact (fractional) elapsed amount between two dates in the requested unit.
-  // \`ref\` defaults to now; rounding is the caller's job (floor/round).
-  const _durationBetween = (value, ref, unit) => {
-    const endpoints = _resolveDurationEndpoints(value, ref)
-    const normalizedUnit = _normalizeDurationUnit(unit)
-    if (!endpoints || !normalizedUnit) return null
-    if (normalizedUnit === "days") return _exactDaysBetween(endpoints.from, endpoints.to)
-    if (normalizedUnit === "weeks") return _exactDaysBetween(endpoints.from, endpoints.to) / 7
-    // Fractional months: whole calendar months plus the remaining days as a
-    // fraction of the actual length of the month being crossed.
-    const whole = _wholeMonthsBetween(endpoints.from, endpoints.to)
-    const anchor = _addMonthsClamped(endpoints.from, whole)
-    const next = _addMonthsClamped(endpoints.from, whole + 1)
-    const monthLength = _exactDaysBetween(anchor, next)
-    const months = whole + (monthLength > 0 ? _exactDaysBetween(anchor, endpoints.to) / monthLength : 0)
-    return normalizedUnit === "months" ? months : months / 12
-  }
-
-  const _toDateList = (value) => {
-    const items = Array.isArray(value)
-      ? value
-      : typeof value === "string" ? value.split(/[,;\\n]/) : value == null ? [] : [value]
-    return items
-      .map((item) => (typeof item === "string" ? item.trim() : item))
-      .filter((item) => item !== "" && item != null)
-      .map(_toDateValue)
-      .filter(Boolean)
-  }
-
-  // Monday-Friday days from \`value\` to \`ref\`, counting both ends (Mon..Fri is 5).
-  // \`skip\` lists further dates to leave out (stat holidays): an array or a
-  // comma-separated string; weekend entries are ignored. Null when a date is
-  // missing or the range runs backwards, so the field shows no suggestion.
-  const _weekdaysBetween = (value, ref, skip) => {
-    const from = _toDateValue(value)
-    const to = _toDateValue(ref)
-    if (!from || !to) return null
-    const firstDay = _calendarDayNumber(from)
-    const lastDay = _calendarDayNumber(to)
-    const days = lastDay - firstDay
-    if (days < 0) return null
-    // Whole weeks contribute 5 each; walk the remaining (< 7) days.
-    let count = Math.floor((days + 1) / 7) * 5
-    for (let offset = 0; offset < (days + 1) % 7; offset += 1) {
-      const weekday = (from.getDay() + offset) % 7
-      if (weekday !== 0 && weekday !== 6) count += 1
+    if (raw instanceof Date) {
+      const date = dateValueOf(readDateTime(raw));
+      if (!date) return null;
+      return kind && DATE_KINDS.has(kind) ? asDateOnly(date) : date;
     }
-    const skipped = new Set()
-    for (const date of _toDateList(skip)) {
-      const day = _calendarDayNumber(date)
-      const weekday = date.getDay()
-      if (day >= firstDay && day <= lastDay && weekday !== 0 && weekday !== 6) skipped.add(day)
+    if (Array.isArray(raw)) {
+      const items = raw.map((item) => readStored(item, kind)).filter((item) => !isMissing(item));
+      return items.length > 0 ? items : null;
     }
-    return count - skipped.size
+    if (typeof raw === "object") return readRecord(raw, kind);
+    return null;
   }
-
-  // Cascading duration breakdown, e.g. "2 months, 3 weeks" for
-  // durationText([dob], today(), "months,weeks"). Each listed unit (descending)
-  // is floored and its remainder carried into the next; zero components are
-  // omitted except the last unit when everything is zero ("0 days").
-  const _durationText = (value, ref, units) => {
-    const endpoints = _resolveDurationEndpoints(value, ref)
-    if (!endpoints) return ""
-    const orderedUnits = String(units ?? "")
-      .split(",")
-      .map(_normalizeDurationUnit)
-      .filter(Boolean)
-      .filter((unit, index, all) => all.indexOf(unit) === index)
-    if (orderedUnits.length === 0) return ""
-
-    // Ages never read as negative: an end date before the start collapses to zero.
-    const end = _exactDaysBetween(endpoints.from, endpoints.to) < 0 ? endpoints.from : endpoints.to
-    let cursor = endpoints.from
-    const parts = orderedUnits.map((unit) => {
-      let amount = 0
+  function readRecord(record, kind) {
+    if (Array.isArray(record.selectedItems)) return readStored(record.selectedItems, kind);
+    if ("selectedItem" in record) return readStored(record.selectedItem, kind);
+    if (Array.isArray(record.selectedIds) || Array.isArray(record.selectedLabels)) {
+      const items = readChoice(record).map((entry2) => codedOf(entry2, void 0));
+      return items.length > 0 ? items : null;
+    }
+    const selection = "selectedKey" in record || Array.isArray(record.coding) || Boolean(record.valueCoding && typeof record.valueCoding === "object");
+    if (!ANSWER_KEYS.some((key) => key in record)) {
+      if (Object.keys(record).length === 0) return null;
+      const fhirKey = FHIR_VALUE_KEYS.find((key) => record[key] !== void 0 && record[key] !== null);
+      if (fhirKey) return readStored(record[fhirKey], kind);
+      const map = {};
+      for (const key of Object.keys(record)) map[key] = readStored(record[key], void 0);
+      return { $map: map };
+    }
+    if (!selection) {
+      if (record.value !== null && typeof record.value === "object") return readStored(record.value, kind);
+      if (scalarOf(record.value) !== void 0 && !CODED_KEYS.some((key) => scalarOf(record[key]) !== void 0)) {
+        return readStored(record.value, kind);
+      }
+    }
+    const [entry] = readChoice(record);
+    if (!entry) {
+      if (!selection && record.date !== void 0) return readStored(record.date, kind && DATETIME_KINDS.has(kind) ? kind : "date");
+      return null;
+    }
+    if (kind && (DATE_KINDS.has(kind) || DATETIME_KINDS.has(kind))) {
+      const date = dateValueOf(readDateTime(record));
+      if (date) return DATE_KINDS.has(kind) ? asDateOnly(date) : date;
+    }
+    if (kind && BOOLEAN_KINDS.has(kind)) {
+      const yesNo = readBoolean(record);
+      if (yesNo !== null) return yesNo;
+    }
+    return codedOf(entry, scalarOf(record.value));
+  }
+  function dateValueOf(reading) {
+    if (!reading) return null;
+    const ms = reading.date.getTime();
+    return Number.isFinite(ms) ? { $date: true, ms, dateOnly: reading.dateOnly } : null;
+  }
+  function parseDateText2(text) {
+    return dateValueOf(readDateTime(text));
+  }
+  function asDateOnly(date) {
+    if (date.dateOnly) return date;
+    const local = new Date(date.ms);
+    return { $date: true, ms: new Date(local.getFullYear(), local.getMonth(), local.getDate()).getTime(), dateOnly: true };
+  }
+  function toDate(value) {
+    if (value === null) return null;
+    if (isDate(value)) return value;
+    if (typeof value === "string") return parseDateText2(value);
+    if (isCoded(value)) {
+      for (const candidate of [value.value, value.display, value.code]) {
+        if (typeof candidate === "string") {
+          const date = parseDateText2(candidate);
+          if (date) return date;
+        }
+      }
+      return null;
+    }
+    if (isList(value) && value.length === 1) return toDate(value[0]);
+    return null;
+  }
+  var partsOf = (date) => {
+    const local = new Date(date.ms);
+    return {
+      year: local.getFullYear(),
+      month: local.getMonth(),
+      day: local.getDate(),
+      hours: local.getHours(),
+      minutes: local.getMinutes(),
+      seconds: local.getSeconds(),
+      millis: local.getMilliseconds(),
+      weekday: local.getDay()
+    };
+  };
+  var wallClock = (date) => {
+    const p = partsOf(date);
+    return Date.UTC(p.year, p.month, p.day, p.hours, p.minutes, p.seconds, p.millis);
+  };
+  var dayNumber = (date) => {
+    const p = partsOf(date);
+    return Date.UTC(p.year, p.month, p.day) / MS_PER_DAY;
+  };
+  var calendarDays = (from, to) => dayNumber(to) - dayNumber(from);
+  var elapsedDays = (from, to) => from.dateOnly && to.dateOnly ? calendarDays(from, to) : (wallClock(to) - wallClock(from)) / MS_PER_DAY;
+  function wholeMonths(from, to) {
+    const a = partsOf(from);
+    const b = partsOf(to);
+    let months = (b.year - a.year) * 12 + (b.month - a.month);
+    if (b.day < a.day) months -= 1;
+    return months;
+  }
+  function addMonthsClamped(date, months) {
+    const p = partsOf(date);
+    const monthIndex = p.month + months;
+    const lastDay = new Date(p.year, monthIndex + 1, 0).getDate();
+    const ms = new Date(p.year, monthIndex, Math.min(p.day, lastDay), p.hours, p.minutes, p.seconds, p.millis).getTime();
+    return { $date: true, ms, dateOnly: date.dateOnly };
+  }
+  function addDays(date, days) {
+    const p = partsOf(date);
+    const ms = new Date(p.year, p.month, p.day + days, p.hours, p.minutes, p.seconds, p.millis).getTime();
+    return { $date: true, ms, dateOnly: date.dateOnly };
+  }
+  function fractionalMonths(from, to) {
+    const whole = wholeMonths(from, to);
+    const anchor = addMonthsClamped(from, whole);
+    const next = addMonthsClamped(from, whole + 1);
+    const monthLength = elapsedDays(anchor, next);
+    return whole + (monthLength > 0 ? elapsedDays(anchor, to) / monthLength : 0);
+  }
+  function todayValue(env) {
+    return asDateOnly(nowValue(env));
+  }
+  function nowValue(env) {
+    const now = env.now instanceof Date && Number.isFinite(env.now.getTime()) ? env.now : /* @__PURE__ */ new Date();
+    return { $date: true, ms: now.getTime(), dateOnly: false };
+  }
+  var pad = (value, width = 2) => String(value).padStart(width, "0");
+  function formatDate(date) {
+    if (!date.dateOnly) return new Date(date.ms).toISOString();
+    const p = partsOf(date);
+    return \`\${pad(p.year, 4)}-\${pad(p.month + 1)}-\${pad(p.day)}\`;
+  }
+  function normalizeUnit(value) {
+    const text = typeof value === "string" ? value : isCoded(value) ? value.code : void 0;
+    return text ? DURATION_UNITS[text.trim().toLowerCase()] ?? null : null;
+  }
+  var NUMERIC_TEXT = /^[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?$/;
+  function numberFromText(text) {
+    const trimmed = text.trim();
+    if (!NUMERIC_TEXT.test(trimmed)) return null;
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  function toNumber(value) {
+    if (value === null) return null;
+    if (value === MISSING_INPUT) return 0;
+    if (typeof value === "number") return Number.isFinite(value) ? value : null;
+    if (typeof value === "boolean") return value ? 1 : 0;
+    if (typeof value === "string") return numberFromText(value);
+    if (isCoded(value)) {
+      for (const candidate of [value.code, value.value, value.display]) {
+        if (candidate === void 0) continue;
+        const numeric = typeof candidate === "number" ? candidate : typeof candidate === "boolean" ? null : numberFromText(candidate);
+        if (numeric !== null) return numeric;
+      }
+      return null;
+    }
+    if (isList(value) && value.length === 1) return toNumber(value[0]);
+    return null;
+  }
+  function toText(value) {
+    if (value === null || value === MISSING_INPUT) return "";
+    if (typeof value === "string") return value;
+    if (typeof value === "number" || typeof value === "boolean") return String(value);
+    if (isDate(value)) return formatDate(value);
+    if (isCoded(value)) return value.display ?? value.code ?? (value.value === void 0 ? "" : String(value.value));
+    if (isList(value)) return value.map(toText).filter((text) => text !== "").join(", ");
+    return "";
+  }
+  function truth(value) {
+    if (value === MISSING_INPUT) return false;
+    if (isMissing(value)) return null;
+    if (typeof value === "boolean") return value;
+    if (typeof value === "number") return value !== 0;
+    if (typeof value === "string") return yesNoWord(value) ?? true;
+    if (isCoded(value)) return yesNoWord(value.code) ?? yesNoWord(value.value) ?? yesNoWord(value.display) ?? true;
+    return true;
+  }
+  function isYes(value) {
+    if (value === true || value === 1) return true;
+    if (typeof value === "string") return yesNoWord(value) === true;
+    if (isCoded(value)) return [value.code, value.value, value.display].some((candidate) => candidate !== void 0 && isYes(candidate));
+    return false;
+  }
+  function matchKeys(value) {
+    if (isCoded(value)) {
+      return [value.code, value.value, value.display].filter((candidate) => candidate !== void 0);
+    }
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return [value];
+    return [];
+  }
+  function scalarEquals(left, right) {
+    if (typeof left === "boolean" || typeof right === "boolean") {
+      const a = typeof left === "boolean" ? left : yesNoWord(left);
+      const b = typeof right === "boolean" ? right : yesNoWord(right);
+      return a !== void 0 && a === b;
+    }
+    if (typeof left === "number" || typeof right === "number") {
+      const a = typeof left === "number" ? left : numberFromText(left);
+      const b = typeof right === "number" ? right : numberFromText(right);
+      return a !== null && a === b;
+    }
+    return left === right;
+  }
+  function equals(left, right) {
+    const leftMissing = isMissing(left);
+    const rightMissing = isMissing(right);
+    if (leftMissing || rightMissing) return leftMissing && rightMissing;
+    if (isList(left) || isList(right)) {
+      if (isList(left) && isList(right)) {
+        return left.every((item) => right.some((other2) => equals(item, other2))) && right.every((item) => left.some((other2) => equals(item, other2)));
+      }
+      const list = isList(left) ? left : right;
+      const other = isList(left) ? right : left;
+      return list.length === 1 && equals(list[0], other);
+    }
+    if (isMap(left) || isMap(right)) return false;
+    if (isDate(left) || isDate(right)) {
+      const a = toDate(left);
+      const b = toDate(right);
+      if (!a || !b) return false;
+      return a.dateOnly || b.dateOnly ? dayNumber(a) === dayNumber(b) : a.ms === b.ms;
+    }
+    if (isCoded(left) && isCoded(right) && left.code !== void 0 && right.code !== void 0) return left.code === right.code;
+    const leftKeys = matchKeys(left);
+    const rightKeys = matchKeys(right);
+    return leftKeys.some((a) => rightKeys.some((b) => scalarEquals(a, b)));
+  }
+  function compare(left, right) {
+    if (left === MISSING_INPUT || right === MISSING_INPUT) {
+      const a2 = toNumber(left);
+      const b2 = toNumber(right);
+      return a2 === null || b2 === null ? null : a2 - b2;
+    }
+    if (isMissing(left) || isMissing(right)) return null;
+    if (isDate(left) || isDate(right)) {
+      const a2 = toDate(left);
+      const b2 = toDate(right);
+      if (!a2 || !b2) return null;
+      return a2.dateOnly || b2.dateOnly ? dayNumber(a2) - dayNumber(b2) : a2.ms - b2.ms;
+    }
+    const a = toNumber(left);
+    const b = toNumber(right);
+    if (a !== null && b !== null) return a - b;
+    if (typeof left === "string" && typeof right === "string") {
+      const leftDate = parseDateText2(left);
+      const rightDate = parseDateText2(right);
+      if (leftDate && rightDate) return compare(leftDate, rightDate);
+      return left < right ? -1 : left > right ? 1 : 0;
+    }
+    return null;
+  }
+  var finite = (value) => Number.isFinite(value) ? value === 0 ? 0 : value : null;
+  function roundTo(value, digits) {
+    const places = Math.round(digits);
+    if (!Number.isFinite(places) || Math.abs(places) > 100) return null;
+    const shifted = Math.round(Number(\`\${value}e\${places}\`));
+    if (!Number.isFinite(shifted)) return finite(Math.round(value * 10 ** places) / 10 ** places);
+    return finite(Number(\`\${shifted}e\${-places}\`));
+  }
+  function flatten(values) {
+    const out = [];
+    for (const value of values) {
+      if (isList(value)) out.push(...flatten(value));
+      else out.push(value);
+    }
+    return out;
+  }
+  function answeredNumbers(values) {
+    const numbers = [];
+    for (const value of flatten(values)) {
+      if (isMissing(value)) continue;
+      const numeric = toNumber(value);
+      if (numeric === null) return void 0;
+      numbers.push(numeric);
+    }
+    return numbers;
+  }
+  function toOutput(value) {
+    if (value === null || value === MISSING_INPUT) return null;
+    if (typeof value === "number") return Number.isFinite(value) ? value : null;
+    if (typeof value === "string" || typeof value === "boolean") return value;
+    if (isDate(value)) return formatDate(value);
+    if (isCoded(value)) return value.code ?? value.value ?? value.display ?? null;
+    if (isList(value)) return value.map(toOutput);
+    if (isMap(value)) {
+      const out = {};
+      for (const key of Object.keys(value.$map)) out[key] = toOutput(value.$map[key]);
+      return out;
+    }
+    return null;
+  }
+  function evaluateNode(node, scope) {
+    if (scope.depth > MAX_DEPTH) return null;
+    const inner = { env: scope.env, depth: scope.depth + 1 };
+    switch (node.kind) {
+      case "number":
+        return Number.isFinite(node.value) ? node.value : null;
+      case "text":
+        return node.value;
+      case "boolean":
+        return node.value;
+      case "null":
+        return null;
+      case "ref": {
+        const value = readStored(scope.env.getValue(node.id), scope.env.fieldKind?.(node.id));
+        return value === null && scope.env.incomplete === "compute-anyway" ? MISSING_INPUT : value;
+      }
+      case "param":
+        return readStored(scope.env.getParam ? scope.env.getParam(node.name) : void 0, void 0);
+      case "list": {
+        const items = node.items.map((item) => evaluateNode(item, inner)).filter((item) => !isMissing(item));
+        return items.length > 0 ? items : null;
+      }
+      case "map": {
+        const map = {};
+        for (const entry of node.entries) map[entry.key] = evaluateNode(entry.value, inner);
+        return { $map: map };
+      }
+      case "unary":
+        return evaluateUnary(node.op, evaluateNode(node.operand, inner));
+      case "binary":
+        return evaluateBinary(node, inner);
+      case "if": {
+        const test = truth(evaluateNode(node.test, inner));
+        if (test === null) return null;
+        return evaluateNode(test ? node.then : node.else, inner);
+      }
+      case "call":
+        return evaluateCall(node, inner);
+      default:
+        return null;
+    }
+  }
+  function evaluateUnary(op, operand) {
+    if (op === "!") {
+      const value = truth(operand);
+      return value === null ? null : !value;
+    }
+    const numeric = toNumber(operand);
+    if (numeric === null) return null;
+    return op === "-" ? finite(-numeric || 0) : numeric;
+  }
+  function arithmetic(op, left, right) {
+    switch (op) {
+      case "+":
+        return finite(left + right);
+      case "-":
+        return finite(left - right);
+      case "*":
+        return finite(left * right);
+      case "/":
+        return right === 0 ? null : finite(left / right);
+      case "%":
+        return right === 0 ? null : finite(left % right);
+      case "^":
+        return finite(left ** right);
+      default:
+        return null;
+    }
+  }
+  function evaluateBinary(node, scope) {
+    if (node.op === "&&" || node.op === "||") {
+      const stop = node.op === "||";
+      const left2 = truth(evaluateNode(node.left, scope));
+      if (left2 === stop) return stop;
+      const right2 = truth(evaluateNode(node.right, scope));
+      if (right2 === stop) return stop;
+      return left2 === null || right2 === null ? null : !stop;
+    }
+    const left = evaluateNode(node.left, scope);
+    const right = evaluateNode(node.right, scope);
+    switch (node.op) {
+      case "==":
+        return equals(left, right);
+      case "!=":
+        return !equals(left, right);
+      case "<":
+      case "<=":
+      case ">":
+      case ">=": {
+        const order = compare(left, right);
+        if (order === null) return null;
+        return node.op === "<" ? order < 0 : node.op === "<=" ? order <= 0 : node.op === ">" ? order > 0 : order >= 0;
+      }
+      default: {
+        const a = toNumber(left);
+        const b = toNumber(right);
+        if (a === null || b === null) return null;
+        return arithmetic(node.op, a, b);
+      }
+    }
+  }
+  function numberArg(args, index) {
+    return index < args.length ? toNumber(args[index]()) : null;
+  }
+  function mathFunction(args, apply) {
+    const value = numberArg(args, 0);
+    if (value === null) return null;
+    const result = apply(value);
+    return result === null ? null : finite(result);
+  }
+  function endDate(args, index, fallback, blank) {
+    if (index >= args.length) return fallback();
+    const value = args[index]();
+    if (isMissing(value)) return blank === "default" ? fallback() : null;
+    return toDate(value);
+  }
+  function scoreOf(answer, scores, fieldMap) {
+    if (answer === MISSING_INPUT) return 0;
+    if (isMissing(answer)) return null;
+    if (isList(answer)) {
+      let total = 0;
+      for (const item of answer) {
+        const itemScore = scoreOf(item, scores, fieldMap);
+        if (itemScore !== null) total += itemScore;
+      }
+      return total;
+    }
+    if (typeof scores === "number") {
+      const checked = truth(answer);
+      return checked ? scores : 0;
+    }
+    const map = isMap(scores) ? scores.$map : fieldMap;
+    if (map) {
+      const keys = matchKeys(answer).map(String);
+      if (typeof answer === "boolean") keys.push(answer ? "Yes" : "No", answer ? "Y" : "N");
+      const lookup = (key) => {
+        if (!Object.prototype.hasOwnProperty.call(map, key)) return null;
+        const entry = map[key];
+        return typeof entry === "number" ? finite(entry) : toNumber(entry);
+      };
+      for (const key of keys) {
+        const found = lookup(key);
+        if (found !== null) return found;
+      }
+      const lowered = keys.map((key) => key.trim().toLowerCase());
+      for (const mapKey of Object.keys(map)) {
+        if (!lowered.includes(mapKey.trim().toLowerCase())) continue;
+        const found = lookup(mapKey);
+        if (found !== null) return found;
+      }
+    }
+    if (typeof answer === "boolean") return answer ? 1 : 0;
+    return toNumber(answer) ?? 0;
+  }
+  function contains(collection, needle) {
+    if (isMissing(collection) || isMissing(needle)) return false;
+    if (isList(needle)) return needle.some((item) => contains(collection, item));
+    if (isList(collection)) return collection.some((item) => equals(item, needle));
+    if (isMap(collection)) {
+      return matchKeys(needle).some((key) => Object.prototype.hasOwnProperty.call(collection.$map, String(key)));
+    }
+    if (typeof collection === "string") return collection.toLowerCase().includes(toText(needle).toLowerCase());
+    return equals(collection, needle);
+  }
+  function durationText(from, to, units) {
+    const ordered = [];
+    for (const part of toText(units).split(",")) {
+      const unit = DURATION_UNITS[part.trim().toLowerCase()];
+      if (unit && !ordered.includes(unit)) ordered.push(unit);
+    }
+    if (ordered.length === 0) return "";
+    const end = elapsedDays(from, to) < 0 ? from : to;
+    let cursor = from;
+    const parts = ordered.map((unit) => {
+      let amount = 0;
       if (unit === "years" || unit === "months") {
-        const wholeMonths = Math.max(0, _wholeMonthsBetween(cursor, end))
-        amount = unit === "years" ? Math.floor(wholeMonths / 12) : wholeMonths
-        cursor = _addMonthsClamped(cursor, unit === "years" ? amount * 12 : amount)
+        const months = Math.max(0, wholeMonths(cursor, end));
+        amount = unit === "years" ? Math.floor(months / 12) : months;
+        cursor = addMonthsClamped(cursor, unit === "years" ? amount * 12 : amount);
       } else {
-        const days = Math.max(0, _exactDaysBetween(cursor, end))
-        amount = Math.floor(unit === "weeks" ? days / 7 : days)
-        cursor = _addCalendarDays(cursor, unit === "weeks" ? amount * 7 : amount)
+        const days = Math.max(0, elapsedDays(cursor, end));
+        amount = Math.floor(unit === "weeks" ? days / 7 : days);
+        cursor = addDays(cursor, unit === "weeks" ? amount * 7 : amount);
       }
-      return { unit, amount }
-    })
-
-    const nonZero = parts.filter((part) => part.amount > 0)
-    const shown = nonZero.length > 0 ? nonZero : [parts[parts.length - 1]]
-    return shown
-      .map((part) => \`\${part.amount} \${part.amount === 1 ? part.unit.slice(0, -1) : part.unit}\`)
-      .join(", ")
+      return { unit, amount };
+    });
+    const nonZero = parts.filter((part) => part.amount > 0);
+    const shown = nonZero.length > 0 ? nonZero : [parts[parts.length - 1]];
+    return shown.map((part) => \`\${part.amount} \${part.amount === 1 ? part.unit.slice(0, -1) : part.unit}\`).join(", ");
   }
-
-  // A field reference is \`[field-id]\`, and ids are slugified to id-safe
-  // characters. Restricting the class (rather than \`[^\\]]+\`) keeps JSON array
-  // literals like \`["often","very-often"]\` — which appear as arguments to
-  // \`contains(...)\` — from being mistaken for field references.
-  const _COMPUTED_REF_PATTERN = /\\[([A-Za-z0-9_.-]+)\\]/g
-
-  const _extractComputedReferences = (expression) => {
-    const bracketedRefs = Array.from(expression.matchAll(_COMPUTED_REF_PATTERN))
-      .map((match) => match[1]?.trim() ?? "")
-      .filter(Boolean)
-    const unwrappedExpression = _stripQuotedStrings(expression.replace(/\\[([^\\]]+)\\]/g, " "))
-    const bareRefs = unwrappedExpression.match(/[A-Za-z_][A-Za-z0-9_]*/g) || []
-    return Array.from(new Set([...bracketedRefs, ...bareRefs]))
-  }
-
-  const _stripQuotedStrings = (expression) =>
-    String(expression).replace(/"([^"\\\\]|\\\\.)*"|'([^'\\\\]|\\\\.)*'/g, " ")
-
-  const _COMPUTED_NON_FIELD_IDENTIFIERS = new Set([
-    "iif", "score", "contains", "hasValue", "countTrue", "daysSince", "monthsSince",
-    "today", "durationBetween", "durationText", "weekdaysBetween",
-    "floor", "mod", "round", "power", "ln", "exp", "coalesce", "text", "min", "max",
-    "Math", "Number", "String", "null", "true", "false",
-  ])
-
-  const _replaceBareReferencesOutsideQuotes = (expression, refs, valuesByFieldId) => {
-    let prepared = ""
-    let cursor = 0
-    const stringPattern = /"([^"\\\\]|\\\\.)*"|'([^'\\\\]|\\\\.)*'/g
-    const replaceInSegment = (segment) => {
-      let nextSegment = segment
-      for (const ref of refs) {
-        if (_COMPUTED_NON_FIELD_IDENTIFIERS.has(ref)) continue
-        const numeric = _toNumericValue(valuesByFieldId?.[ref])
-        if (!Number.isFinite(numeric)) return null
-        nextSegment = nextSegment.replace(new RegExp(\`\\\\b\${_escapeRegExp(ref)}\\\\b\`, "g"), String(numeric))
-      }
-      return nextSegment
+  function skippedDates(value) {
+    const items = isList(value) ? flatten(value) : typeof value === "string" ? value.split(/[,;\\n]/) : [value];
+    const dates = [];
+    for (const item of items) {
+      if (isMissing(item)) continue;
+      const date = toDate(typeof item === "string" ? item.trim() : item);
+      if (date) dates.push(date);
     }
-
-    for (const match of expression.matchAll(stringPattern)) {
-      const start = match.index ?? 0
-      const replaced = replaceInSegment(expression.slice(cursor, start))
-      if (replaced === null) return null
-      prepared += replaced + match[0]
-      cursor = start + match[0].length
-    }
-
-    const tail = replaceInSegment(expression.slice(cursor))
-    if (tail === null) return null
-    return prepared + tail
+    return dates;
   }
-
-  const _isSafeComputedExpression = (expression) => {
-    const strippedExpression = _stripQuotedStrings(expression).replace(/\\[([^\\]]+)\\]/g, " ")
-    return /^[0-9+\\-*/().,?:<>=!&|{}\\[\\]'"":\\s_a-zA-Z]+$/.test(strippedExpression)
-  }
-
-  const _roundComputedValue = (value, precision) => {
-    if (typeof value === "string" || typeof value === "boolean") return value
-    if (!Number.isFinite(value)) return null
-    if (!Number.isFinite(precision) || precision < 0) return value
-    return Number(value.toFixed(Math.round(precision)))
-  }
-
-  const _evaluateComputedExpression = (expression, valuesByFieldId, currentFieldId) => {
-    if (typeof expression !== "string") return null
-    const trimmed = expression.trim()
-    if (!trimmed) return null
-    if (!_isSafeComputedExpression(trimmed)) return null
-
-    const refs = _extractComputedReferences(trimmed)
-    if (currentFieldId && refs.includes(currentFieldId)) {
-      return null
+  function weekdaysBetween(from, to, skip) {
+    const first = dayNumber(from);
+    const last = dayNumber(to);
+    const days = last - first;
+    if (days < 0) return null;
+    const startWeekday = partsOf(from).weekday;
+    let count = Math.floor((days + 1) / 7) * 5;
+    for (let offset = 0; offset < (days + 1) % 7; offset += 1) {
+      const weekday = (startWeekday + offset) % 7;
+      if (weekday !== 0 && weekday !== 6) count += 1;
     }
-
-    let prepared = trimmed
-
-    const bracketedRefs = Array.from(trimmed.matchAll(_COMPUTED_REF_PATTERN))
-      .map((match) => match[1]?.trim() ?? "")
-      .filter(Boolean)
-    const uniqueBracketedRefs = Array.from(new Set(bracketedRefs)).sort((a, b) => b.length - a.length)
-    for (const ref of uniqueBracketedRefs) {
-      prepared = prepared.replace(new RegExp(\`\\\\[\${_escapeRegExp(ref)}\\\\]\`, "g"), JSON.stringify(_toComparableValue(valuesByFieldId?.[ref])))
+    const skipped = /* @__PURE__ */ new Set();
+    for (const date of skippedDates(skip)) {
+      const day = dayNumber(date);
+      const weekday = partsOf(date).weekday;
+      if (day >= first && day <= last && weekday !== 0 && weekday !== 6) skipped.add(day);
     }
-
-    const bareRefs = _stripQuotedStrings(prepared).match(/[A-Za-z_][A-Za-z0-9_]*/g) || []
-    const uniqueBareRefs = Array.from(new Set(bareRefs)).sort((a, b) => b.length - a.length)
-    prepared = _replaceBareReferencesOutsideQuotes(prepared, uniqueBareRefs, valuesByFieldId)
-    if (prepared === null) return null
-
+    return count - skipped.size;
+  }
+  function hostFunction(name, args, env) {
+    const implementation = env.functions?.[name];
+    if (typeof implementation !== "function") return null;
     try {
-      const result = Function("iif", "score", "contains", "hasValue", "countTrue", "daysSince", "monthsSince", "today", "durationBetween", "durationText", "weekdaysBetween", "floor", "mod", "round", "power", "ln", "exp", "coalesce", "text", "min", "max", \`"use strict"; return (\${prepared});\`)(
-        _iif,
-        _score,
-        _contains,
-        _hasValue,
-        _countTrue,
-        _daysSince,
-        _monthsSince,
-        _today,
-        _durationBetween,
-        _durationText,
-        _weekdaysBetween,
-        _floor,
-        _mod,
-        _round,
-        _power,
-        _ln,
-        _exp,
-        _coalesce,
-        _text,
-        _min,
-        _max
-      )
-      if (typeof result === "number") return Number.isFinite(result) ? result : null
-      if (typeof result === "string" || typeof result === "boolean") return result
-      return null
+      return readStored(implementation(...args.map((arg) => toOutput(arg()))), void 0);
+    } catch {
+      return null;
+    }
+  }
+  function evaluateCall(node, scope) {
+    const env = scope.env;
+    const cache = /* @__PURE__ */ new Map();
+    const args = node.args.map((arg, index) => () => {
+      if (!cache.has(index)) cache.set(index, evaluateNode(arg, scope));
+      return cache.get(index);
+    });
+    const all = () => args.map((arg) => arg());
+    switch (node.fn) {
+      // Logic and missing values
+      case "iif": {
+        if (args.length < 2) return null;
+        const test = truth(args[0]());
+        if (test === null) return null;
+        return test ? args[1]() : args.length > 2 ? args[2]() : null;
+      }
+      case "coalesce": {
+        for (const arg of args) {
+          const value = arg();
+          if (!isMissing(value)) return value;
+        }
+        return null;
+      }
+      case "hasValue":
+        return args.length > 0 && !isMissing(args[0]());
+      case "ifPresent": {
+        if (args.length < 2) return null;
+        if (!isMissing(args[0]())) return args[1]();
+        return args.length > 2 ? args[2]() : null;
+      }
+      case "countTrue":
+        return flatten(all()).filter(isYes).length;
+      // Choices
+      case "score": {
+        if (args.length === 0) return null;
+        const first = node.args[0];
+        const fieldMap = args.length < 2 && first.kind === "ref" ? env.scoreMaps?.[first.id] : void 0;
+        let answer = args[0]();
+        if (isMap(answer)) answer = readStored(toOutput(answer), void 0);
+        return scoreOf(answer, args.length > 1 ? args[1]() : null, fieldMap);
+      }
+      case "contains":
+        return args.length < 2 ? false : contains(args[0](), args[1]());
+      // Aggregates
+      case "sum": {
+        const numbers = answeredNumbers(all());
+        if (!numbers || numbers.length === 0) return null;
+        return finite(numbers.reduce((total, value) => total + value, 0));
+      }
+      case "min":
+      case "max": {
+        const numbers = answeredNumbers(all());
+        if (!numbers || numbers.length === 0) return null;
+        return node.fn === "min" ? Math.min(...numbers) : Math.max(...numbers);
+      }
+      // Numbers
+      case "round": {
+        const value = numberArg(args, 0);
+        if (value === null) return null;
+        const digits = args.length > 1 ? numberArg(args, 1) : 0;
+        return digits === null ? null : roundTo(value, digits);
+      }
+      case "floor":
+        return mathFunction(args, Math.floor);
+      case "ceil":
+        return mathFunction(args, Math.ceil);
+      case "trunc":
+        return mathFunction(args, (value) => Math.trunc(value) || 0);
+      case "abs":
+        return mathFunction(args, Math.abs);
+      case "mod": {
+        const value = numberArg(args, 0);
+        const divisor = numberArg(args, 1);
+        return value === null || divisor === null ? null : arithmetic("%", value, divisor);
+      }
+      case "power": {
+        const base = numberArg(args, 0);
+        const exponent = numberArg(args, 1);
+        return base === null || exponent === null ? null : arithmetic("^", base, exponent);
+      }
+      case "sqrt":
+        return mathFunction(args, (value) => value < 0 ? null : Math.sqrt(value));
+      case "ln":
+        return mathFunction(args, (value) => value <= 0 ? null : finite(Math.log(value)));
+      case "log10":
+        return mathFunction(args, (value) => value <= 0 ? null : finite(Math.log10(value)));
+      case "exp":
+        return mathFunction(args, (value) => finite(Math.exp(value)));
+      case "number":
+        return args.length > 0 ? toNumber(args[0]()) : null;
+      // Text
+      case "text":
+        return args.length > 0 ? toText(args[0]()) : "";
+      case "concat": {
+        const values = all();
+        if (values.every(isMissing)) return null;
+        return values.map((value) => value === null ? "" : toText(value)).join("");
+      }
+      // Dates
+      case "today":
+        return todayValue(env);
+      case "now":
+        return nowValue(env);
+      case "durationBetween": {
+        const from = args.length > 0 ? toDate(args[0]()) : null;
+        if (!from) return null;
+        const to = endDate(args, 1, () => todayValue(env), "default");
+        if (!to) return null;
+        const unit = args.length > 2 ? normalizeUnit(args[2]()) : "days";
+        if (!unit) return null;
+        const days = elapsedDays(from, to);
+        if (unit === "days") return days;
+        if (unit === "weeks") return days / 7;
+        const months = fractionalMonths(from, to);
+        return unit === "months" ? months : months / 12;
+      }
+      case "durationText": {
+        const from = args.length > 0 ? toDate(args[0]()) : null;
+        if (!from) return "";
+        const to = endDate(args, 1, () => todayValue(env), "default");
+        if (!to) return "";
+        return durationText(from, to, args.length > 2 ? args[2]() : "years,months");
+      }
+      case "daysBetween":
+      case "monthsBetween": {
+        const from = args.length > 0 ? toDate(args[0]()) : null;
+        if (!from) return null;
+        const to = endDate(args, 1, () => todayValue(env), "null");
+        if (!to) return null;
+        return node.fn === "daysBetween" ? calendarDays(from, to) : wholeMonths(from, to);
+      }
+      case "daysSince":
+      case "monthsSince": {
+        const date = args.length > 0 ? toDate(args[0]()) : null;
+        if (!date) return null;
+        const reference = endDate(args, 1, () => nowValue(env), "null");
+        if (!reference) return null;
+        if (node.fn === "monthsSince") return wholeMonths(date, reference);
+        return date.dateOnly && reference.dateOnly ? calendarDays(date, reference) : Math.floor((wallClock(reference) - wallClock(date)) / MS_PER_DAY);
+      }
+      case "weekdaysBetween": {
+        const from = args.length > 0 ? toDate(args[0]()) : null;
+        const to = args.length > 1 ? toDate(args[1]()) : null;
+        if (!from || !to) return null;
+        return weekdaysBetween(from, to, args.length > 2 ? args[2]() : null);
+      }
+      case "ageYears": {
+        const birth = args.length > 0 ? toDate(args[0]()) : null;
+        if (!birth) return null;
+        const asOf = endDate(args, 1, () => todayValue(env), "default");
+        if (!asOf) return null;
+        return Math.floor(wholeMonths(birth, asOf) / 12);
+      }
+      // Clinical
+      case "bmi": {
+        const weight = numberArg(args, 0);
+        const height = numberArg(args, 1);
+        if (weight === null || height === null || weight <= 0 || height <= 0) return null;
+        return finite(weight / (height / 100) ** 2);
+      }
+      default:
+        return hostFunction(node.fn, args, env);
+    }
+  }
+  function evaluateFormula(formula, env) {
+    const expr = formula && typeof formula === "object" && formula.v === 1 && formula.expr ? formula.expr : formula;
+    try {
+      return toOutput(evaluateNode(expr, { env, depth: 0 }));
+    } catch {
+      return null;
+    }
+  }
+  function isBlankFormulaAnswer(raw, fieldKind) {
+    return isMissing(readStored(raw, fieldKind));
+  }
+  function formulaAnswerNumber(raw, fieldKind) {
+    return toNumber(readStored(raw, fieldKind));
+  }
+  function formulaAnswerOutput(raw, fieldKind) {
+    return toOutput(readStored(raw, fieldKind));
+  }
+  function roundFormulaNumber(value, digits) {
+    if (!Number.isFinite(value) || !Number.isFinite(digits)) return null;
+    return roundTo(value, digits);
+  }
+
+  var support = (mois, cerner, alayacare, fhir, docmosis, documents = "native") => ({ mois, cerner, alayacare, fhir, docmosis, documents });
+  var n = (name, extra = {}) => ({ name, type: "number", ...extra });
+  var d = (name, extra = {}) => ({ name, type: "date", ...extra });
+  var any = (name, extra = {}) => ({ name, type: "any", ...extra });
+  var U = "unsupported";
+  var C = "changed";
+  var N = "native";
+  var FORMULA_FUNCTIONS = [
+    // ── Logic and missing values ────────────────────────────────────────────
+    {
+      name: "iif",
+      aliases: [],
+      category: "logic",
+      params: [{ name: "test", type: "boolean" }, any("then"), any("else", { optional: true })],
+      minArgs: 2,
+      maxArgs: 3,
+      result: "branches",
+      lazy: true,
+      missing: "handles",
+      description: "\`then\` when the test holds, \`else\` (blank when omitted) when it does not, blank when the test is unknown. Parses to the conditional node, like \`test ? then : else\`.",
+      engines: ["lib/expressions", "FormulaKit", "SubformScoring"],
+      targets: support(N, C, C, N, C)
+    },
+    {
+      name: "coalesce",
+      aliases: [],
+      category: "missing",
+      params: [any("values", { rest: true })],
+      minArgs: 1,
+      maxArgs: null,
+      result: "branches",
+      lazy: true,
+      missing: "handles",
+      description: "The first argument that has a value, or blank.",
+      engines: ["lib/expressions", "FormulaKit"],
+      targets: support(N, C, C, N, C)
+    },
+    {
+      name: "hasValue",
+      aliases: [],
+      category: "missing",
+      params: [any("value")],
+      minArgs: 1,
+      maxArgs: 1,
+      result: "boolean",
+      missing: "handles",
+      description: "Whether the value is answered: false for blank, whitespace-only text and empty lists; true for \`false\` and \`0\`.",
+      engines: ["lib/expressions", "FormulaKit"],
+      targets: support(N, U, C, N, C)
+    },
+    {
+      name: "ifPresent",
+      aliases: [],
+      category: "missing",
+      params: [any("value"), any("then"), any("else", { optional: true })],
+      minArgs: 2,
+      maxArgs: 3,
+      result: "branches",
+      lazy: true,
+      missing: "handles",
+      description: "\`then\` when the value is answered, otherwise \`else\` (blank when omitted). From chart value formulas.",
+      engines: ["chart-value"],
+      targets: support(N, U, U, N, N)
+    },
+    {
+      name: "countTrue",
+      aliases: [],
+      category: "logic",
+      params: [any("values", { rest: true })],
+      minArgs: 1,
+      maxArgs: null,
+      result: "number",
+      missing: "handles",
+      description: "How many values are yes: \`true\`, 1, and the text or codes true / Y / Yes (any case). Blank values count as not yes; lists are flattened.",
+      engines: ["FormulaKit"],
+      targets: support(N, U, U, N, U)
+    },
+    // ── Choices ─────────────────────────────────────────────────────────────
+    {
+      name: "score",
+      aliases: [],
+      category: "choice",
+      params: [any("answer"), { name: "scores", type: "scoreMap", optional: true }],
+      minArgs: 1,
+      maxArgs: 2,
+      result: "number",
+      missing: "propagate",
+      description: "The score of a choice answer: looked up by code, then value, then label in the option score map (the field's own options when the map is omitted). A multi-select sums its choices; a checkbox scores 1 (or the given points) when checked and 0 when not; an answer with no score reads as its number, else 0.",
+      engines: ["lib/expressions", "FormulaKit", "cerner-equation"],
+      targets: support(N, N, N, N, U)
+    },
+    {
+      name: "contains",
+      aliases: [],
+      category: "choice",
+      params: [any("collection"), any("value")],
+      minArgs: 2,
+      maxArgs: 2,
+      result: "boolean",
+      missing: "handles",
+      description: "List membership for lists and multi-select answers (coded answers match by code, value or label); case-insensitive substring for text. False when either side is blank.",
+      engines: ["lib/expressions", "FormulaKit"],
+      targets: support(N, U, U, N, U)
+    },
+    // ── Aggregates ──────────────────────────────────────────────────────────
+    {
+      name: "sum",
+      aliases: [],
+      category: "aggregate",
+      params: [{ name: "values", type: "numbers", rest: true }],
+      minArgs: 1,
+      maxArgs: null,
+      result: "number",
+      missing: "handles",
+      description: "The total of the answered values; lists are flattened, blanks are skipped, blank when nothing is answered.",
+      engines: ["LayoutTable"],
+      targets: support(N, C, N, N, U)
+    },
+    {
+      name: "min",
+      aliases: ["Math.min"],
+      category: "aggregate",
+      params: [{ name: "values", type: "numbers", rest: true }],
+      minArgs: 1,
+      maxArgs: null,
+      result: "number",
+      missing: "handles",
+      description: "The smallest answered value; blanks are skipped, blank when nothing is answered.",
+      engines: ["FormulaKit", "SubformScoring", "LayoutTable"],
+      targets: support(N, U, U, N, U)
+    },
+    {
+      name: "max",
+      aliases: ["Math.max"],
+      category: "aggregate",
+      params: [{ name: "values", type: "numbers", rest: true }],
+      minArgs: 1,
+      maxArgs: null,
+      result: "number",
+      missing: "handles",
+      description: "The largest answered value; blanks are skipped, blank when nothing is answered.",
+      engines: ["FormulaKit", "SubformScoring", "LayoutTable"],
+      targets: support(N, U, U, N, U)
+    },
+    // ── Numbers ─────────────────────────────────────────────────────────────
+    {
+      name: "round",
+      aliases: ["Math.round"],
+      category: "math",
+      params: [n("value"), n("digits", { optional: true })],
+      minArgs: 1,
+      maxArgs: 2,
+      result: "number",
+      missing: "propagate",
+      description: "Rounds to \`digits\` decimal places (0 when omitted; negative rounds to tens, hundreds…). Halves round up (towards +∞), decimal-exact: round(1.005, 2) is 1.01.",
+      engines: ["lib/expressions", "FormulaKit", "SubformScoring", "LayoutTable"],
+      targets: support(N, U, U, N, U)
+    },
+    {
+      name: "floor",
+      aliases: ["Math.floor"],
+      category: "math",
+      params: [n("value")],
+      minArgs: 1,
+      maxArgs: 1,
+      result: "number",
+      missing: "propagate",
+      description: "The largest whole number not above the value.",
+      engines: ["lib/expressions", "FormulaKit", "SubformScoring", "LayoutTable"],
+      targets: support(N, C, U, N, C)
+    },
+    {
+      name: "ceil",
+      aliases: ["Math.ceil", "ceiling"],
+      category: "math",
+      params: [n("value")],
+      minArgs: 1,
+      maxArgs: 1,
+      result: "number",
+      missing: "propagate",
+      description: "The smallest whole number not below the value.",
+      engines: ["SubformScoring", "LayoutTable"],
+      targets: support(N, U, U, N, U)
+    },
+    {
+      name: "trunc",
+      aliases: ["Math.trunc", "truncate"],
+      category: "math",
+      params: [n("value")],
+      minArgs: 1,
+      maxArgs: 1,
+      result: "number",
+      missing: "propagate",
+      description: "The whole-number part, dropping the fraction towards zero.",
+      engines: ["LayoutTable"],
+      targets: support(N, U, U, N, U)
+    },
+    {
+      name: "abs",
+      aliases: ["Math.abs"],
+      category: "math",
+      params: [n("value")],
+      minArgs: 1,
+      maxArgs: 1,
+      result: "number",
+      missing: "propagate",
+      description: "The absolute value.",
+      engines: ["SubformScoring", "LayoutTable"],
+      targets: support(N, C, U, N, U)
+    },
+    {
+      name: "mod",
+      aliases: [],
+      category: "math",
+      params: [n("value"), n("divisor")],
+      minArgs: 2,
+      maxArgs: 2,
+      result: "number",
+      missing: "propagate",
+      description: "The remainder of value ÷ divisor, with the sign of the value (the \`%\` operator). Blank for a zero divisor.",
+      engines: ["FormulaKit", "SubformScoring"],
+      targets: support(N, U, U, N, U)
+    },
+    {
+      name: "power",
+      aliases: ["Math.pow", "pow"],
+      category: "math",
+      params: [n("base"), n("exponent")],
+      minArgs: 2,
+      maxArgs: 2,
+      result: "number",
+      missing: "propagate",
+      description: "base raised to exponent (the \`^\` operator). Blank when the result is not a real number.",
+      engines: ["lib/expressions", "FormulaKit", "LayoutTable", "cerner-equation"],
+      targets: support(N, N, U, N, U)
+    },
+    {
+      name: "sqrt",
+      aliases: ["Math.sqrt", "SQR"],
+      category: "math",
+      params: [n("value")],
+      minArgs: 1,
+      maxArgs: 1,
+      result: "number",
+      missing: "propagate",
+      description: "The square root; blank for a negative value. Cerner Equation Tool spells it SQR.",
+      engines: ["LayoutTable", "cerner-equation"],
+      targets: support(N, N, U, N, U)
+    },
+    {
+      name: "ln",
+      aliases: ["Math.log", "LOG", "log"],
+      category: "math",
+      params: [n("value")],
+      minArgs: 1,
+      maxArgs: 1,
+      result: "number",
+      missing: "propagate",
+      description: "The natural logarithm; blank for zero or a negative value. Cerner Equation Tool spells it Log.",
+      engines: ["lib/expressions", "FormulaKit", "LayoutTable", "cerner-equation"],
+      targets: support(N, N, U, N, U)
+    },
+    {
+      name: "log10",
+      aliases: ["Math.log10", "LOG10"],
+      category: "math",
+      params: [n("value")],
+      minArgs: 1,
+      maxArgs: 1,
+      result: "number",
+      missing: "propagate",
+      description: "The base-10 logarithm; blank for zero or a negative value.",
+      engines: ["LayoutTable", "cerner-equation"],
+      targets: support(N, N, U, N, U)
+    },
+    {
+      name: "exp",
+      aliases: ["Math.exp"],
+      category: "math",
+      params: [n("value")],
+      minArgs: 1,
+      maxArgs: 1,
+      result: "number",
+      missing: "propagate",
+      description: "e raised to the value.",
+      engines: ["lib/expressions", "FormulaKit", "LayoutTable"],
+      targets: support(N, U, U, N, U)
+    },
+    {
+      name: "number",
+      aliases: ["Number", "parseFloat", "toNumber"],
+      category: "math",
+      params: [any("value")],
+      minArgs: 1,
+      maxArgs: 1,
+      result: "number",
+      missing: "propagate",
+      description: "The value read as a number (numeric text, a choice's numeric code, yes/no as 1/0); blank when it is not numeric.",
+      engines: ["new"],
+      targets: support(N, U, U, N, U)
+    },
+    // ── Text ────────────────────────────────────────────────────────────────
+    {
+      name: "text",
+      aliases: ["String", "toString"],
+      category: "text",
+      params: [any("value")],
+      minArgs: 1,
+      maxArgs: 1,
+      result: "text",
+      missing: "handles",
+      description: \`The value as text: a choice's label, a date as YYYY-MM-DD, a list joined with ", ". Empty text when blank.\`,
+      engines: ["lib/expressions", "FormulaKit"],
+      targets: support(N, U, U, N, N)
+    },
+    {
+      name: "concat",
+      aliases: [],
+      category: "text",
+      params: [any("parts", { rest: true })],
+      minArgs: 1,
+      maxArgs: null,
+      result: "text",
+      missing: "handles",
+      description: 'Joins the parts as text (read like text()); blank parts add nothing, blank when every part is blank. Legacy \`"a" + [x]\` text joins parse to this.',
+      engines: ["chart-value"],
+      targets: support(N, U, U, N, N)
+    },
+    // ── Dates ───────────────────────────────────────────────────────────────
+    {
+      name: "today",
+      aliases: [],
+      category: "date",
+      params: [],
+      minArgs: 0,
+      maxArgs: 0,
+      result: "date",
+      missing: "handles",
+      description: "Today's local calendar date.",
+      engines: ["lib/expressions", "FormulaKit"],
+      targets: support(N, C, U, N, C)
+    },
+    {
+      name: "now",
+      aliases: [],
+      category: "date",
+      params: [],
+      minArgs: 0,
+      maxArgs: 0,
+      result: "datetime",
+      missing: "handles",
+      description: "The current date and time.",
+      engines: ["new"],
+      targets: support(N, C, U, N, U)
+    },
+    {
+      name: "durationBetween",
+      aliases: [],
+      category: "date",
+      params: [d("from"), d("to", { optional: true }), { name: "unit", type: "unit", optional: true }],
+      minArgs: 1,
+      maxArgs: 3,
+      result: "duration",
+      missing: "handles",
+      description: "Elapsed time from \`from\` to \`to\` (today when omitted or blank) in days, weeks, months or years (days when omitted). Date-only inputs count whole calendar days; a time on either side counts exact time. Weeks, months and years are exact fractions; floor() or round() them.",
+      engines: ["lib/expressions", "FormulaKit"],
+      targets: support(N, C, U, U, C)
+    },
+    {
+      name: "durationText",
+      aliases: [],
+      category: "date",
+      params: [d("from"), d("to", { optional: true }), { name: "units", type: "units", optional: true }],
+      minArgs: 1,
+      maxArgs: 3,
+      result: "text",
+      missing: "handles",
+      description: 'A cascading breakdown such as "2 months, 3 weeks" over the listed units ("years,months" when omitted); \`to\` defaults to today. Empty text when a date is invalid.',
+      engines: ["lib/expressions", "FormulaKit"],
+      targets: support(N, U, U, U, U)
+    },
+    {
+      name: "daysBetween",
+      aliases: [],
+      category: "date",
+      params: [d("from"), d("to", { optional: true })],
+      minArgs: 1,
+      maxArgs: 2,
+      result: "number",
+      missing: "propagate",
+      description: "Whole calendar days from \`from\` to \`to\` (today when omitted); times of day are ignored.",
+      engines: ["lib/expressions"],
+      targets: support(N, C, U, U, U)
+    },
+    {
+      name: "monthsBetween",
+      aliases: [],
+      category: "date",
+      params: [d("from"), d("to", { optional: true })],
+      minArgs: 1,
+      maxArgs: 2,
+      result: "number",
+      missing: "propagate",
+      description: "Whole calendar months from \`from\` to \`to\` (today when omitted).",
+      engines: ["lib/expressions"],
+      targets: support(N, C, U, U, U)
+    },
+    {
+      name: "daysSince",
+      aliases: [],
+      category: "date",
+      params: [d("date"), d("reference", { optional: true })],
+      minArgs: 1,
+      maxArgs: 2,
+      result: "number",
+      missing: "propagate",
+      description: "Whole days from the date to the reference (now when omitted): calendar days when both are dates, else completed 24-hour days.",
+      engines: ["FormulaKit"],
+      targets: support(N, C, U, U, U)
+    },
+    {
+      name: "monthsSince",
+      aliases: [],
+      category: "date",
+      params: [d("date"), d("reference", { optional: true })],
+      minArgs: 1,
+      maxArgs: 2,
+      result: "number",
+      missing: "propagate",
+      description: "Whole calendar months from the date to the reference (now when omitted).",
+      engines: ["FormulaKit"],
+      targets: support(N, U, U, U, U)
+    },
+    {
+      name: "weekdaysBetween",
+      aliases: [],
+      category: "date",
+      params: [d("from"), d("to"), { name: "skip", type: "any", optional: true }],
+      minArgs: 2,
+      maxArgs: 3,
+      result: "number",
+      missing: "propagate",
+      description: "Monday–Friday days from \`from\` to \`to\`, counting both ends, less the weekday dates in \`skip\` (a list or comma-separated text). Blank when a date is missing or the range runs backwards.",
+      engines: ["lib/expressions", "FormulaKit"],
+      targets: support(N, U, U, U, U)
+    },
+    {
+      name: "ageYears",
+      aliases: [],
+      category: "date",
+      params: [d("birthDate"), d("asOf", { optional: true })],
+      minArgs: 1,
+      maxArgs: 2,
+      result: "number",
+      missing: "propagate",
+      description: "Completed years from the birth date to \`asOf\` (today when omitted or blank).",
+      engines: ["new"],
+      targets: support(N, C, U, U, C)
+    },
+    // ── Clinical ────────────────────────────────────────────────────────────
+    {
+      name: "bmi",
+      aliases: [],
+      category: "clinical",
+      params: [n("weightKg"), n("heightCm")],
+      minArgs: 2,
+      maxArgs: 2,
+      result: "number",
+      missing: "propagate",
+      description: "Body mass index: weight (kg) ÷ height (m)²; blank unless both are positive.",
+      engines: ["lib/expressions"],
+      targets: support(N, C, U, N, U)
+    },
+    {
+      name: "zScore",
+      aliases: [],
+      category: "clinical",
+      params: [any("measurement")],
+      minArgs: 1,
+      maxArgs: 1,
+      result: "number",
+      missing: "propagate",
+      description: "A WHO/CDC growth z-score. Needs the growth reference tables, so the host supplies it through the evaluator's \`functions\`; blank without it.",
+      engines: ["lib/expressions"],
+      targets: support(U, U, U, U, U, "changed")
+    }
+  ];
+  var BY_NAME = /* @__PURE__ */ new Map();
+  var BY_ALIAS = /* @__PURE__ */ new Map();
+  var BY_LOWER = /* @__PURE__ */ new Map();
+  for (const spec of FORMULA_FUNCTIONS) {
+    BY_NAME.set(spec.name, spec);
+    for (const alias of spec.aliases) BY_ALIAS.set(alias, spec);
+  }
+  for (const spec of FORMULA_FUNCTIONS) {
+    for (const name of [spec.name, ...spec.aliases]) {
+      const lower = name.toLowerCase();
+      if (!BY_LOWER.has(lower)) BY_LOWER.set(lower, spec);
+    }
+  }
+  function findFormulaFunction(name) {
+    return BY_NAME.get(name) ?? BY_ALIAS.get(name) ?? BY_LOWER.get(name.toLowerCase());
+  }
+  function formulaArityError(spec, count) {
+    if (count >= spec.minArgs && (spec.maxArgs === null || count <= spec.maxArgs)) return null;
+    const expected = spec.maxArgs === null ? \`at least \${spec.minArgs}\` : spec.minArgs === spec.maxArgs ? \`\${spec.minArgs}\` : \`\${spec.minArgs} to \${spec.maxArgs}\`;
+    return \`\${spec.name}() takes \${expected} argument\${expected === "1" ? "" : "s"}, not \${count}.\`;
+  }
+  var FORMULA_OPERATORS = [
+    { op: "+", arity: 2, description: "Addition (numbers only; join text with concat()).", targets: support(N, N, N, N, U) },
+    { op: "-", arity: 2, description: "Subtraction.", targets: support(N, N, U, N, U) },
+    { op: "*", arity: 2, description: "Multiplication.", targets: support(N, N, C, N, U) },
+    { op: "/", arity: 2, description: "Division; blank for a zero divisor.", targets: support(N, N, U, N, U) },
+    { op: "%", arity: 2, description: "Remainder, like mod(); blank for a zero divisor.", targets: support(N, U, U, N, U) },
+    { op: "^", arity: 2, description: "Power, like power().", targets: support(N, N, U, C, U) },
+    { op: "==", arity: 2, description: "Equal (coded answers match by code, value or label; numeric text equals its number).", targets: support(N, N, U, N, C) },
+    { op: "!=", arity: 2, description: "Not equal.", targets: support(N, C, U, N, C) },
+    { op: "<", arity: 2, description: "Less than (numbers, dates, or text); unknown when a side is blank.", targets: support(N, N, U, N, U) },
+    { op: "<=", arity: 2, description: "Less than or equal.", targets: support(N, N, U, N, U) },
+    { op: ">", arity: 2, description: "Greater than.", targets: support(N, N, U, N, U) },
+    { op: ">=", arity: 2, description: "Greater than or equal.", targets: support(N, N, U, N, U) },
+    { op: "&&", arity: 2, description: "And (three-valued: false wins over unknown).", targets: support(N, N, C, N, U) },
+    { op: "||", arity: 2, description: "Or (three-valued: true wins over unknown).", targets: support(N, N, C, N, U) },
+    { op: "!", arity: 1, description: "Not; unknown stays unknown.", targets: support(N, U, U, N, C) },
+    { op: "-", arity: 1, description: "Negation.", targets: support(N, N, C, N, U) },
+    { op: "+", arity: 1, description: "Read as a number.", targets: support(N, C, U, C, U) },
+    { op: "?:", arity: 3, description: "Conditional, like iif().", targets: support(N, C, C, N, C) }
+  ];
+
+  var FIELD_TYPE_TO_VALUE_TYPE = {
+    number: "number",
+    slider: "number",
+    rating: "number",
+    text: "text",
+    textarea: "text",
+    email: "text",
+    phone: "text",
+    url: "text",
+    hyperlink: "text",
+    password: "text",
+    richText: "text",
+    barcode: "text",
+    time: "text",
+    booleanYesNo: "boolean",
+    booleanSingle: "boolean",
+    date: "date",
+    datetime: "datetime",
+    dateTime: "datetime",
+    choice: "coded",
+    scale: "coded",
+    multiselect: "list",
+    checklist: "list"
+  };
+  function formulaValueTypeForFieldType(fieldType) {
+    if (!fieldType) return "unknown";
+    if (FORMULA_VALUE_TYPES.includes(fieldType)) return fieldType;
+    return FIELD_TYPE_TO_VALUE_TYPE[fieldType] ?? "unknown";
+  }
+  function unifyTypes(types) {
+    const known = types.filter((type) => type !== "unknown");
+    if (known.length === 0) return "unknown";
+    const first = known[0];
+    if (known.every((type) => type === first)) return first;
+    if (known.every((type) => type === "number" || type === "duration")) return "number";
+    if (known.every((type) => type === "date" || type === "datetime")) return "datetime";
+    return "unknown";
+  }
+  function typeOfNode(node, env) {
+    switch (node.kind) {
+      case "number":
+        return "number";
+      case "text":
+        return "text";
+      case "boolean":
+        return "boolean";
+      case "null":
+        return "unknown";
+      case "ref":
+        return formulaValueTypeForFieldType(env.fieldType?.(node.id));
+      case "param":
+        return formulaValueTypeForFieldType(env.paramType?.(node.name));
+      case "list":
+        return "list";
+      case "map":
+        return "unknown";
+      case "unary":
+        return node.op === "!" ? "boolean" : "number";
+      case "binary":
+        return FORMULA_ARITHMETIC_OPS.includes(node.op) ? "number" : "boolean";
+      case "if":
+        return unifyTypes([typeOfNode(node.then, env), typeOfNode(node.else, env)]);
+      case "call": {
+        const spec = findFormulaFunction(node.fn);
+        if (!spec) return "unknown";
+        if (spec.result !== "branches") return spec.result;
+        const valueArgs = node.fn === "iif" ? node.args.slice(1) : node.fn === "ifPresent" ? node.args.slice(1) : node.args;
+        return unifyTypes(valueArgs.map((arg) => typeOfNode(arg, env)));
+      }
+      default:
+        return "unknown";
+    }
+  }
+  function inferFormulaType(formula, env = {}) {
+    return typeOfNode(formulaExpr(formula), env);
+  }
+  function isTimeReference(node, env = {}) {
+    if (node.kind === "ref") return env.fieldType?.(node.id) === "time";
+    if (node.kind === "param") return env.paramType?.(node.name) === "time";
+    return false;
+  }
+
+  var FormulaSyntaxError = class extends Error {
+    constructor(message, start, end, code = "syntax") {
+      super(message);
+      __publicField(this, "start", start);
+      __publicField(this, "end", end);
+      __publicField(this, "code", code);
+    }
+  };
+  var FORMULA_REF_CHAR = /[\\p{L}\\p{N}_.:-]/u;
+  var FORMULA_PARAM_CHAR = /[\\p{L}\\p{N}_.-]/u;
+  var OPERATORS = ["===", "!==", "**", "==", "!=", "<=", ">=", "<>", "&&", "||", "=", "<", ">", "+", "-", "*", "/", "%", "^", "!", "?", ":", "(", ")", ",", "[", "]", "{", "}"];
+  var NUMBER = /^(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?/;
+  var IDENT = /^[A-Za-z_$][A-Za-z0-9_$]*(?:\\.[A-Za-z_$][A-Za-z0-9_$]*)*/;
+  var SIMPLE_ESCAPES = { n: "\\n", t: "	", r: "\\r", b: "\\b", f: "\\f", v: "\\v", "0": "\\0" };
+  function scanBracketed(text, open, close, charTest, allowEscapes) {
+    let index = open + 1;
+    while (index < text.length && /\\s/.test(text[index])) index += 1;
+    let value = "";
+    while (index < text.length) {
+      const char = text[index];
+      if (allowEscapes && char === "\\\\" && index + 1 < text.length) {
+        value += text[index + 1];
+        index += 2;
+        continue;
+      }
+      if (!charTest.test(char)) break;
+      value += char;
+      index += 1;
+    }
+    while (index < text.length && /\\s/.test(text[index])) index += 1;
+    if (value === "" || text[index] !== close) return null;
+    return { value, end: index + 1 };
+  }
+  function readString(text, start) {
+    const quote = text[start];
+    let index = start + 1;
+    let value = "";
+    while (index < text.length) {
+      const char = text[index];
+      if (char === quote) return { type: "str", value, start, end: index + 1 };
+      if (char === "\\\\") {
+        const next = text[index + 1];
+        if (next === void 0) break;
+        if (next === "u") {
+          const braced = /^\\{([0-9a-fA-F]{1,6})\\}/.exec(text.slice(index + 2));
+          const plain = /^[0-9a-fA-F]{4}/.exec(text.slice(index + 2));
+          if (braced) {
+            value += String.fromCodePoint(parseInt(braced[1], 16));
+            index += 2 + braced[0].length;
+            continue;
+          }
+          if (plain) {
+            value += String.fromCharCode(parseInt(plain[0], 16));
+            index += 6;
+            continue;
+          }
+          throw new FormulaSyntaxError("Invalid \\\\u escape in text.", index, index + 2);
+        }
+        if (next === "x") {
+          const hex = /^[0-9a-fA-F]{2}/.exec(text.slice(index + 2));
+          if (!hex) throw new FormulaSyntaxError("Invalid \\\\x escape in text.", index, index + 2);
+          value += String.fromCharCode(parseInt(hex[0], 16));
+          index += 4;
+          continue;
+        }
+        value += SIMPLE_ESCAPES[next] ?? next;
+        index += 2;
+        continue;
+      }
+      value += char;
+      index += 1;
+    }
+    throw new FormulaSyntaxError("The text is missing its closing quote.", start, text.length);
+  }
+  function tokenize(text) {
+    const tokens = [];
+    let index = 0;
+    while (index < text.length) {
+      const char = text[index];
+      if (/\\s/.test(char)) {
+        index += 1;
+        continue;
+      }
+      if (char === '"' || char === "'") {
+        const token = readString(text, index);
+        tokens.push(token);
+        index = token.end;
+        continue;
+      }
+      if (char === "[") {
+        const ref = scanBracketed(text, index, "]", FORMULA_REF_CHAR, true);
+        if (ref) {
+          tokens.push({ type: "ref", value: ref.value, start: index, end: ref.end });
+          index = ref.end;
+          continue;
+        }
+      }
+      if (char === "{") {
+        const param = scanBracketed(text, index, "}", FORMULA_PARAM_CHAR, false);
+        if (param) {
+          tokens.push({ type: "param", value: param.value, start: index, end: param.end });
+          index = param.end;
+          continue;
+        }
+      }
+      const rest = text.slice(index);
+      const number = /\\d|\\./.test(char) ? NUMBER.exec(rest) : null;
+      if (number) {
+        const value = Number(number[0]);
+        if (!Number.isFinite(value)) throw new FormulaSyntaxError(\`\${number[0]} is too large.\`, index, index + number[0].length);
+        const end = index + number[0].length;
+        if (end < text.length && /[A-Za-z_$]/.test(text[end])) {
+          throw new FormulaSyntaxError(\`Missing an operator after \${number[0]}.\`, index, end + 1);
+        }
+        tokens.push({ type: "num", value: number[0], number: value, start: index, end });
+        index = end;
+        continue;
+      }
+      const ident = IDENT.exec(rest);
+      if (ident) {
+        tokens.push({ type: "ident", value: ident[0], start: index, end: index + ident[0].length });
+        index += ident[0].length;
+        continue;
+      }
+      const operator = OPERATORS.find((op) => rest.startsWith(op));
+      if (operator) {
+        tokens.push({ type: "op", value: operator, start: index, end: index + operator.length });
+        index += operator.length;
+        continue;
+      }
+      if (char === ";") throw new FormulaSyntaxError("A formula is a single expression; remove the “;”.", index, index + 1);
+      if (char === "&" || char === "|") {
+        throw new FormulaSyntaxError(\`Use “\${char}\${char}” for \${char === "&" ? "and" : "or"}, or concat() to join text.\`, index, index + 1);
+      }
+      throw new FormulaSyntaxError(\`Unexpected “\${char}”.\`, index, index + 1);
+    }
+    tokens.push({ type: "eof", value: "", start: text.length, end: text.length });
+    return tokens;
+  }
+  var BINARY_ALIASES = {
+    "===": "==",
+    "=": "==",
+    "!==": "!=",
+    "<>": "!=",
+    "**": "^"
+  };
+  var isWord = (token, word) => token.type === "ident" && token.value.toLowerCase() === word;
+  var LAYOUT_SUM_ID = /^[A-Za-z_][A-Za-z0-9_.-]*$/;
+  var Parser = class {
+    constructor(tokens, options) {
+      __publicField(this, "tokens", tokens);
+      __publicField(this, "options", options);
+      __publicField(this, "index", 0);
+      __publicField(this, "warnings", []);
+      __publicField(this, "knownIds");
+      __publicField(this, "hostFunctions");
+      __publicField(this, "typeEnv");
+      this.knownIds = options.fieldIds ? new Set(options.fieldIds) : null;
+      this.hostFunctions = options.hostFunctions ? new Set(options.hostFunctions) : null;
+      this.typeEnv = {
+        fieldType: options.fieldType,
+        paramType: options.dialect === "chartValue" ? () => "text" : void 0
+      };
+    }
+    peek(offset = 0) {
+      return this.tokens[Math.min(this.index + offset, this.tokens.length - 1)];
+    }
+    next() {
+      const token = this.peek();
+      if (this.index < this.tokens.length - 1) this.index += 1;
+      return token;
+    }
+    isOp(value, offset = 0) {
+      const token = this.peek(offset);
+      return token.type === "op" && token.value === value;
+    }
+    expectOp(value, context) {
+      const token = this.peek();
+      if (token.type === "op" && token.value === value) return this.next();
+      throw new FormulaSyntaxError(\`Expected “\${value}” \${context}, found \${describeToken(token)}.\`, token.start, token.end);
+    }
+    warn(code, message, token, extra = {}) {
+      if (this.warnings.some((entry) => entry.code === code && entry.message === message)) return;
+      this.warnings.push({ severity: "warning", code, message, ...token ? { start: token.start, end: token.end } : {}, ...extra });
+    }
+    parse() {
+      const node = this.parseConditional();
+      const token = this.peek();
+      if (token.type !== "eof") throw new FormulaSyntaxError(\`Unexpected \${describeToken(token)}.\`, token.start, token.end);
+      return node;
+    }
+    parseConditional() {
+      const test = this.parseOr();
+      if (!this.isOp("?")) return test;
+      this.next();
+      const then = this.parseConditional();
+      this.expectOp(":", "in “test ? then : else”");
+      const otherwise = this.parseConditional();
+      return { kind: "if", test, then, else: otherwise };
+    }
+    parseOr() {
+      let left = this.parseAnd();
+      for (; ; ) {
+        const token = this.peek();
+        if (!(token.type === "op" && token.value === "||") && !isWord(token, "or")) return left;
+        this.next();
+        const right = this.parseAnd();
+        if (token.value === "OR" && !this.isBooleanish(left) && !this.isBooleanish(right)) {
+          this.warn("or-coalesce", "OR between two values reads as coalesce(): the first that has a value.", token);
+          left = { kind: "call", fn: "coalesce", args: [left, right] };
+        } else {
+          left = { kind: "binary", op: "||", left, right };
+        }
+      }
+    }
+    parseAnd() {
+      let left = this.parseEquality();
+      for (; ; ) {
+        const token = this.peek();
+        if (!(token.type === "op" && token.value === "&&") && !isWord(token, "and")) return left;
+        this.next();
+        left = { kind: "binary", op: "&&", left, right: this.parseEquality() };
+      }
+    }
+    parseEquality() {
+      let left = this.parseRelational();
+      for (; ; ) {
+        const token = this.peek();
+        if (token.type !== "op" || !["==", "!=", "===", "!==", "=", "<>"].includes(token.value)) return left;
+        this.next();
+        const op = BINARY_ALIASES[token.value] ?? token.value;
+        left = { kind: "binary", op, left, right: this.parseRelational() };
+      }
+    }
+    parseRelational() {
+      let left = this.parseAdditive();
+      for (; ; ) {
+        const token = this.peek();
+        if (token.type !== "op" || !["<", "<=", ">", ">="].includes(token.value)) return left;
+        this.next();
+        left = { kind: "binary", op: token.value, left, right: this.parseAdditive() };
+      }
+    }
+    parseAdditive() {
+      let left = this.parseMultiplicative();
+      for (; ; ) {
+        const token = this.peek();
+        if (token.type !== "op" || token.value !== "+" && token.value !== "-") return left;
+        this.next();
+        const right = this.parseMultiplicative();
+        if (token.value === "+" && (this.isTextual(left) || this.isTextual(right))) {
+          this.warn("text-join", "“+” with text joins text; it is stored as concat() because “+” adds numbers only.", token);
+          const parts = [left, right].flatMap((part) => part.kind === "call" && part.fn === "concat" ? part.args : [part]);
+          left = { kind: "call", fn: "concat", args: parts };
+        } else {
+          left = { kind: "binary", op: token.value, left, right };
+        }
+      }
+    }
+    parseMultiplicative() {
+      let left = this.parseUnary();
+      for (; ; ) {
+        const token = this.peek();
+        if (token.type !== "op" || !["*", "/", "%"].includes(token.value)) return left;
+        this.next();
+        left = { kind: "binary", op: token.value, left, right: this.parseUnary() };
+      }
+    }
+    startsOperand(offset) {
+      const token = this.peek(offset);
+      if (token.type === "eof") return false;
+      if (token.type === "op") return ["(", "[", "{", "!", "-", "+"].includes(token.value);
+      if (token.type === "ident") return !isWord(token, "and") && !isWord(token, "or");
+      return true;
+    }
+    parseUnary() {
+      const token = this.peek();
+      const notWord = isWord(token, "not") && !this.knownIds?.has(token.value) && this.startsOperand(1);
+      if (token.type === "op" && ["-", "+", "!"].includes(token.value) || notWord) {
+        this.next();
+        const operand = this.parseUnary();
+        if (notWord || token.value === "!") return { kind: "unary", op: "!", operand };
+        if (operand.kind === "number") {
+          return { kind: "number", value: token.value === "-" && operand.value !== 0 ? -operand.value : operand.value };
+        }
+        return { kind: "unary", op: token.value, operand };
+      }
+      return this.parsePower();
+    }
+    parsePower() {
+      const base = this.parsePrimary();
+      const token = this.peek();
+      if (token.type === "op" && (token.value === "^" || token.value === "**")) {
+        this.next();
+        return { kind: "binary", op: "^", left: base, right: this.parseUnary() };
+      }
+      return base;
+    }
+    parsePrimary() {
+      const token = this.next();
+      switch (token.type) {
+        case "num":
+          return { kind: "number", value: token.number };
+        case "str":
+          return { kind: "text", value: token.value };
+        case "ref":
+          if (this.knownIds && !this.knownIds.has(token.value)) {
+            this.warn("unknown-reference", \`There is no field [\${token.value}] on this form.\`, token, { ref: token.value });
+          }
+          return { kind: "ref", id: token.value };
+        case "param":
+          return { kind: "param", name: token.value };
+        case "ident":
+          return this.parseIdentifier(token);
+        case "op":
+          if (token.value === "(") {
+            const inner = this.parseConditional();
+            this.expectOp(")", "to close “(”");
+            return inner;
+          }
+          if (token.value === "[") return this.parseList(token);
+          if (token.value === "{") return this.parseMap(token);
+          break;
+        default:
+          break;
+      }
+      throw new FormulaSyntaxError(
+        token.type === "eof" ? "The formula ends too early." : \`Unexpected \${describeToken(token)}.\`,
+        token.start,
+        token.end
+      );
+    }
+    parseList(open) {
+      const items = [];
+      while (!this.isOp("]")) {
+        items.push(this.parseConditional());
+        if (this.isOp(",")) {
+          this.next();
+          continue;
+        }
+        if (!this.isOp("]")) {
+          const token = this.peek();
+          throw new FormulaSyntaxError(\`Expected “,” or “]” in the list opened at \${open.start}, found \${describeToken(token)}.\`, token.start, token.end);
+        }
+      }
+      this.next();
+      return { kind: "list", items };
+    }
+    parseMap(open) {
+      const entries = [];
+      while (!this.isOp("}")) {
+        const keyToken = this.next();
+        if (keyToken.type !== "str" && keyToken.type !== "ident" && keyToken.type !== "num") {
+          throw new FormulaSyntaxError(\`Expected a key in the map opened at \${open.start}, found \${describeToken(keyToken)}.\`, keyToken.start, keyToken.end);
+        }
+        this.expectOp(":", \`after the key \${JSON.stringify(keyToken.value)}\`);
+        const key = keyToken.type === "num" ? String(keyToken.number) : keyToken.value;
+        const value = this.parseConditional();
+        const existing = entries.findIndex((entry) => entry.key === key);
+        if (existing >= 0) entries.splice(existing, 1);
+        entries.push({ key, value });
+        if (this.isOp(",")) {
+          this.next();
+          continue;
+        }
+        if (!this.isOp("}")) {
+          const token = this.peek();
+          throw new FormulaSyntaxError(\`Expected “,” or “}” in the map opened at \${open.start}, found \${describeToken(token)}.\`, token.start, token.end);
+        }
+      }
+      this.next();
+      return { kind: "map", entries };
+    }
+    parseIdentifier(token) {
+      const name = token.value;
+      if (this.isOp("(")) return this.parseCall(token);
+      if (name === "true" || name === "false") return { kind: "boolean", value: name === "true" };
+      if (name === "null") return { kind: "null" };
+      if (name === "undefined") {
+        this.warn("undefined-literal", "undefined reads as null (blank).", token);
+        return { kind: "null" };
+      }
+      if (name === "Math.PI") return { kind: "number", value: Math.PI };
+      if (name === "Math.E") return { kind: "number", value: Math.E };
+      if (this.knownIds) {
+        if (this.knownIds.has(name)) return { kind: "ref", id: name };
+        if (findFormulaFunction(name)) {
+          throw new FormulaSyntaxError(\`\${name} is a function; write \${name}(…).\`, token.start, token.end, "unknown-reference");
+        }
+        throw new FormulaSyntaxError(\`There is no field “\${name}” on this form.\`, token.start, token.end, "unknown-reference");
+      }
+      if (name.startsWith("Math.") || findFormulaFunction(name) || ["and", "or", "not"].includes(name.toLowerCase())) {
+        throw new FormulaSyntaxError(\`\${name} cannot be read as a field; write fields as [\${name}].\`, token.start, token.end);
+      }
+      this.warn("bare-reference", "Bare identifiers are read as field references; write them as [fieldId].", token);
+      return { kind: "ref", id: name };
+    }
+    parseCall(nameToken) {
+      const spec = findFormulaFunction(nameToken.value);
+      const host = !spec && this.hostFunctions?.has(nameToken.value);
+      if (!spec && !host) {
+        throw new FormulaSyntaxError(\`\${nameToken.value}() is not a formula function.\`, nameToken.start, nameToken.end, "unknown-function");
+      }
+      this.expectOp("(", \`after \${nameToken.value}\`);
+      const args = [];
+      while (!this.isOp(")")) {
+        args.push(this.parseConditional());
+        if (this.isOp(",")) {
+          this.next();
+          continue;
+        }
+        if (!this.isOp(")")) {
+          const token = this.peek();
+          throw new FormulaSyntaxError(\`Expected “,” or “)” in \${nameToken.value}(…), found \${describeToken(token)}.\`, token.start, token.end);
+        }
+      }
+      const close = this.next();
+      if (!spec) return { kind: "call", fn: nameToken.value, args };
+      const arity = formulaArityError(spec, args.length);
+      if (arity) throw new FormulaSyntaxError(arity, nameToken.start, close.end, "arity");
+      if (spec.name === "iif") return { kind: "if", test: args[0], then: args[1], else: args[2] ?? { kind: "null" } };
+      return { kind: "call", fn: spec.name, args };
+    }
+    isTextual(node) {
+      if (node.kind === "text") return true;
+      if (node.kind === "ref" && !this.options.fieldType) return false;
+      if (isTimeReference(node, this.typeEnv)) return false;
+      return inferFormulaType(node, this.typeEnv) === "text";
+    }
+    isBooleanish(node) {
+      return inferFormulaType(node, this.typeEnv) === "boolean";
+    }
+  };
+  function describeToken(token) {
+    if (token.type === "eof") return "the end of the formula";
+    if (token.type === "str") return \`the text \${JSON.stringify(token.value)}\`;
+    if (token.type === "ref") return \`[\${token.value}]\`;
+    if (token.type === "param") return \`{\${token.value}}\`;
+    return \`“\${token.value}”\`;
+  }
+  function layoutSumShorthand(text, options) {
+    const match = /^\\s*sum\\s*\\(([\\s\\S]*)\\)\\s*$/i.exec(text);
+    if (!match) return null;
+    const ids = match[1].split(",").map((part) => part.trim().replace(/^\\[([^\\]]+)\\]$/, "$1").trim());
+    if (ids.length === 0 || !ids.every((id) => LAYOUT_SUM_ID.test(id))) return null;
+    const known = options.fieldIds ? new Set(options.fieldIds) : null;
+    const compound = ids.filter((id) => /[-.]/.test(id));
+    if (options.dialect !== "layoutTable" && (compound.length === 0 || !known || !compound.every((id) => known.has(id)))) return null;
+    return { kind: "call", fn: "sum", args: ids.map((id) => ({ kind: "ref", id })) };
+  }
+  function missingAsZero(node) {
+    const wrap2 = (current, insideSum) => {
+      if (current.kind === "ref") {
+        return insideSum ? current : { kind: "call", fn: "coalesce", args: [current, { kind: "number", value: 0 }] };
+      }
+      if (current.kind === "call") {
+        const sum = current.fn === "sum";
+        return { kind: "call", fn: current.fn, args: current.args.map((arg) => wrap2(arg, sum)) };
+      }
+      return mapFormulaChildren(current, (child) => wrap2(child, false));
+    };
+    return wrap2(node, false);
+  }
+  function mapFormulaChildren(node, transform) {
+    switch (node.kind) {
+      case "list":
+        return { kind: "list", items: node.items.map(transform) };
+      case "map":
+        return { kind: "map", entries: node.entries.map((entry) => ({ key: entry.key, value: transform(entry.value) })) };
+      case "unary":
+        return { kind: "unary", op: node.op, operand: transform(node.operand) };
+      case "binary":
+        return { kind: "binary", op: node.op, left: transform(node.left), right: transform(node.right) };
+      case "call":
+        return { kind: "call", fn: node.fn, args: node.args.map(transform) };
+      case "if":
+        return { kind: "if", test: transform(node.test), then: transform(node.then), else: transform(node.else) };
+      default:
+        return node;
+    }
+  }
+  function parseFormula(text, options = {}) {
+    const source = typeof text === "string" ? text : "";
+    if (!source.trim()) {
+      return { formula: null, errors: [{ severity: "error", code: "empty", message: "Enter a formula." }], warnings: [] };
+    }
+    const warnings = [];
+    try {
+      let expr = layoutSumShorthand(source, options);
+      if (!expr) {
+        const parser = new Parser(tokenize(source), options);
+        expr = parser.parse();
+        warnings.push(...parser.warnings);
+      }
+      if (options.dialect === "layoutTable") {
+        const wrapped = missingAsZero(expr);
+        if (JSON.stringify(wrapped) !== JSON.stringify(expr)) {
+          warnings.push({
+            severity: "warning",
+            code: "missing-as-zero",
+            message: "LayoutTable reads a missing answer as 0; the references are wrapped in coalesce(…, 0). Non-numeric text, which LayoutTable also read as 0, is blank instead."
+          });
+        }
+        expr = wrapped;
+      }
+      const formula = { v: 1, expr };
+      if (options.resultType) formula.resultType = options.resultType;
+      return { formula, errors: [], warnings };
     } catch (error) {
-      return null
+      if (error instanceof FormulaSyntaxError) {
+        return {
+          formula: null,
+          errors: [{ severity: "error", code: error.code, message: error.message, start: error.start, end: error.end }],
+          warnings
+        };
+      }
+      return { formula: null, errors: [{ severity: "error", code: "syntax", message: String(error?.message ?? error) }], warnings };
     }
   }
 
-  const _hasAllReferencedValues = (expression, valuesByFieldId) => {
-    const refs = _extractComputedReferences(String(expression || ""))
-      .filter((ref) => !_COMPUTED_NON_FIELD_IDENTIFIERS.has(ref))
-    if (refs.length === 0) return true
-    // Controls such as ScaleField initialize an object-shaped value before the
-    // user selects an answer. Check the object's comparable value so an empty
-    // { selectedKey: null, value: null, response: null } is still incomplete,
-    // while valid zero-valued answers count as answered.
-    return Array.from(new Set(refs)).every((ref) =>
-      _hasValue(_toComparableValue(valuesByFieldId?.[ref]))
-    )
+  var FORMULA_REF_CHAR2 = /[\\p{L}\\p{N}_.:-]/u;
+  var PRECEDENCE = {
+    "||": 2,
+    "&&": 3,
+    "==": 4,
+    "!=": 4,
+    "<": 5,
+    "<=": 5,
+    ">": 5,
+    ">=": 5,
+    "+": 6,
+    "-": 6,
+    "*": 7,
+    "/": 7,
+    "%": 7,
+    "^": 9
+  };
+  var UNARY = 8;
+  var POWER = 9;
+  var PRIMARY = 10;
+  function precedence(node) {
+    if (node.kind === "binary") return PRECEDENCE[node.op];
+    if (node.kind === "unary") return UNARY;
+    if (node.kind === "number" && (node.value < 0 || Object.is(node.value, -0))) return UNARY;
+    return PRIMARY;
+  }
+  function printNumber(value) {
+    if (!Number.isFinite(value)) return "null";
+    return String(value);
+  }
+  function escapeRef(id) {
+    let out = "";
+    for (const char of id) out += FORMULA_REF_CHAR2.test(char) ? char : \`\\\\\${char}\`;
+    return out;
+  }
+  var REF_LIKE = /^[\\p{L}\\p{N}_.:-]+$/u;
+  function wrap(text, needed) {
+    return needed ? \`(\${text})\` : text;
+  }
+  function printNode(node) {
+    switch (node.kind) {
+      case "number":
+        return printNumber(node.value);
+      case "text":
+        return JSON.stringify(node.value);
+      case "boolean":
+        return node.value ? "true" : "false";
+      case "null":
+        return "null";
+      case "ref":
+        return \`[\${escapeRef(node.id)}]\`;
+      case "param":
+        return \`{\${node.name}}\`;
+      case "list": {
+        const items = node.items.map(printNode);
+        if (items.length === 1 && REF_LIKE.test(items[0])) return \`[(\${items[0]})]\`;
+        return \`[\${items.join(", ")}]\`;
+      }
+      case "map":
+        return \`{\${node.entries.map((entry) => \`\${JSON.stringify(entry.key)}: \${printNode(entry.value)}\`).join(", ")}}\`;
+      case "unary": {
+        const operand = node.operand;
+        const needs = precedence(operand) < UNARY || operand.kind === "number" && node.op !== "!" || operand.kind === "unary" && operand.op !== "!" && node.op !== "!";
+        return \`\${node.op}\${wrap(printNode(operand), needs)}\`;
+      }
+      case "binary": {
+        const own = PRECEDENCE[node.op];
+        const leftPrecedence = precedence(node.left);
+        const rightPrecedence = precedence(node.right);
+        const leftNeeds = node.op === "^" ? leftPrecedence <= POWER : leftPrecedence < own;
+        const rightNeeds = node.op === "^" ? rightPrecedence < UNARY : rightPrecedence <= own;
+        return \`\${wrap(printNode(node.left), leftNeeds)} \${node.op} \${wrap(printNode(node.right), rightNeeds)}\`;
+      }
+      case "if":
+        return \`iif(\${printNode(node.test)}, \${printNode(node.then)}, \${printNode(node.else)})\`;
+      case "call":
+        return \`\${node.fn}(\${node.args.map(printNode).join(", ")})\`;
+      default:
+        return "null";
+    }
+  }
+  function printFormula(formula) {
+    return printNode(formulaExpr(formula));
+  }
+
+  var isNode = (value) => Boolean(value && typeof value === "object" && typeof value.kind === "string");
+  function valueGetter(values) {
+    if (typeof values === "function") return values;
+    if (!values || typeof values !== "object") return () => void 0;
+    return (fieldId) => Object.prototype.hasOwnProperty.call(values, fieldId) ? values[fieldId] : void 0;
+  }
+  function kindGetter(options) {
+    if (typeof options.fieldKind === "function") return options.fieldKind;
+    const kinds = options.fieldKinds;
+    if (!kinds || typeof kinds !== "object") return void 0;
+    return (fieldId) => Object.prototype.hasOwnProperty.call(kinds, fieldId) ? kinds[fieldId] : void 0;
+  }
+  var PARSE_CACHE = /* @__PURE__ */ new Map();
+  var PARSE_CACHE_LIMIT = 500;
+  function parse(text, options) {
+    const source = typeof text === "string" ? text : "";
+    if (options) return parseFormula(source, options);
+    const cached = PARSE_CACHE.get(source);
+    if (cached) return cached;
+    const result = parseFormula(source);
+    if (PARSE_CACHE.size >= PARSE_CACHE_LIMIT) PARSE_CACHE.clear();
+    PARSE_CACHE.set(source, result);
+    return result;
+  }
+  function toFormula(formula) {
+    if (isStoredFormula(formula) || isNode(formula)) return formula;
+    if (typeof formula === "string") return parse(formula).formula;
+    return null;
+  }
+  function print(formula) {
+    return printFormula(formula);
+  }
+  function references(formula) {
+    const resolved = toFormula(formula);
+    return resolved ? formulaReferences(resolved) : [];
+  }
+  function evaluateTree(formula, getValue, options = {}) {
+    const resolved = isStoredFormula(formula) || isNode(formula) ? formula : null;
+    if (!resolved) return null;
+    if (options.selfId && formulaReferences(resolved).includes(options.selfId)) return null;
+    return evaluateFormula(resolved, {
+      getValue: valueGetter(getValue),
+      getParam: options.getParam,
+      scoreMaps: options.scoreMaps,
+      now: options.now,
+      fieldKind: kindGetter(options),
+      functions: options.functions,
+      incomplete: options.incomplete
+    });
+  }
+  function hasAllReferencedValues(formula, values, options = {}) {
+    const get = valueGetter(values);
+    const kind = kindGetter(options);
+    return references(formula).every((fieldId) => !isBlankFormulaAnswer(get(fieldId), kind?.(fieldId)));
+  }
+  function evaluate(expression, valuesByFieldId, currentFieldId, options = {}) {
+    const formula = toFormula(expression);
+    if (!formula) return null;
+    const result = evaluateTree(formula, valuesByFieldId, { ...options, selfId: currentFieldId ?? options.selfId });
+    if (typeof result === "number") return Number.isFinite(result) ? result : null;
+    return typeof result === "string" || typeof result === "boolean" ? result : null;
+  }
+  function extractReferences(formula) {
+    return references(formula);
+  }
+  function toNumericValue(value) {
+    return formulaAnswerNumber(value);
+  }
+  function toComparableValue(value) {
+    return formulaAnswerOutput(value) ?? "";
+  }
+  function hasValue(value) {
+    return !isBlankFormulaAnswer(value);
+  }
+  function roundValue(value, precision) {
+    if (typeof value === "string" || typeof value === "boolean") return value;
+    if (typeof value !== "number" || !Number.isFinite(value)) return null;
+    if (typeof precision !== "number" || !Number.isFinite(precision) || precision < 0) return value;
+    return roundFormulaNumber(value, Math.round(precision));
   }
 
   return {
-    evaluate: _evaluateComputedExpression,
-    extractReferences: _extractComputedReferences,
-    hasAllReferencedValues: _hasAllReferencedValues,
-    toNumericValue: _toNumericValue,
-    toComparableValue: _toComparableValue,
-    hasValue: _hasValue,
-    roundValue: _roundComputedValue,
+    evaluate,
+    evaluateTree,
+    extractReferences,
+    hasAllReferencedValues,
+    hasValue,
+    parse,
+    print,
+    references,
+    roundValue,
+    toComparableValue,
+    toNumericValue,
   }
 })()
 `,
@@ -19139,8 +23098,9 @@ const HealthMaintenanceReview = ({
       <Dialog
         hidden={!isOpen}
         onDismiss={() => setIsOpen(false)}
-        minWidth='min(96vw, 920px)'
-        maxWidth='min(96vw, 1180px)'
+        // A viewer: non-blocking, with the NHForms dialog width rule.
+        minWidth={DialogKit.width(920)}
+        maxWidth={DialogKit.maxWidth}
         dialogContentProps={{
           type: DialogType.largeHeader,
           title: modalTitle,
@@ -22042,15 +26002,10 @@ const HotspotMapField = ({
               type: DialogType.largeHeader,
               title: modalTitle || label || "Map Selection",
             }}
-            modalProps={{
-              isBlocking: false,
-              styles: {
-                main: {
-                  minWidth: \`\${resolvedModalMinWidth}px\`,
-                  maxWidth: "92vw",
-                },
-              },
-            }}
+            // A viewer: non-blocking, with the NHForms dialog width rule.
+            minWidth={DialogKit.width(resolvedModalMinWidth, 760)}
+            maxWidth={DialogKit.maxWidth}
+            modalProps={{ isBlocking: false }}
           >
             <Stack tokens={{ childrenGap: 10 }}>
               {renderAnnotationModeControls()}
@@ -22484,34 +26439,33 @@ const InvestigationTabs = ({
   './LayoutTable/index.jsx': `// Fluent is a NAMESPACE in the real engine's form scope — bare Fluent
 // identifiers are a ReferenceError in production even though preview
 // injects them. Destructure everything this component renders.
+//
+// ValueKit (options, yes/no and choice answers), FormulaKit (computed cells),
+// FormLogicKit (cell visibility) and DefaultsKit (default answers seeded on
+// first load) are referenced only inside function bodies: component files
+// load in no guaranteed order.
 const { Checkbox } = Fluent
 
+// A cell's options as the { code, display } list SimpleCodeSelect draws, read
+// by ValueKit.normalizeOption; an option's explicit \`code\` or \`key\` stays its
+// code, because that is what the answer stores.
 const normalizeLayoutTableOptionList = (optionList) => {
   if (!Array.isArray(optionList)) return []
   return optionList
     .map((option) => {
-      if (typeof option === "string") return { code: option, display: option }
-      if (!option || typeof option !== "object") return null
-      const code = option.code ?? option.key ?? option.value ?? option.display ?? option.text ?? option.label
-      const display = option.display ?? option.text ?? option.label ?? option.code ?? option.key ?? option.value
-      return code || display ? { code: String(code ?? display), display: String(display ?? code) } : null
+      const normalized = ValueKit.normalizeOption(option)
+      const explicit = option && typeof option === "object" ? option.code ?? option.key : undefined
+      const code = explicit !== undefined && explicit !== null && String(explicit) !== "" ? String(explicit) : normalized.code
+      const display = normalized.display
+      return code || display ? { code: String(code || display), display: String(display || code) } : null
     })
     .filter(Boolean)
 }
 
-// Yes/no answers arrive as booleans (Checkbox), MOIS-YESNO codes, or the
-// Coding SimpleCodeSelect stores ({ code: "Y", display: "Yes" }).
-const layoutTableScalarAnswer = (value) => (
-  value && typeof value === "object" && !Array.isArray(value)
-    ? (value.code ?? value.value ?? value.key ?? value.display ?? value.text ?? null)
-    : value
-)
-
-const isCheckedValue = (value) => {
-  const raw = layoutTableScalarAnswer(value)
-  if (raw === true || raw === 1) return true
-  return typeof raw === "string" && ["true", "y", "yes", "1"].includes(raw.trim().toLowerCase())
-}
+// Yes/no answers arrive as booleans (Checkbox), MOIS-YESNO codes, the Coding
+// SimpleCodeSelect stores ({ code: "Y", display: "Yes" }) or legacy text;
+// ValueKit.readBoolean reads them all (null: not a yes/no answer).
+const isCheckedValue = (value) => ValueKit.readBoolean(value) === true
 
 // A calendar date in the user's timezone (yyyy-MM-dd), matching the export
 // pipeline's formatLocalDate — toISOString() is UTC, so late in the day it
@@ -22612,6 +26566,85 @@ const sourceBindingIsInitial = (cell) => cell?.sourceMode === "initial"
 const fieldHasSavedValue = (data, fieldId) =>
   Boolean(data && fieldId && Object.prototype.hasOwnProperty.call(data, fieldId))
 
+// A default answer in the shape the cell's control saves: a Coding for a
+// choice (matched by option code, then wording; dropped when it is not one of
+// the options), a list of Codings for a multiple choice, a MOIS-YESNO Coding
+// for yes/no, a boolean for a tick box, a number for a number cell and text
+// otherwise. Undefined when nothing fits.
+const layoutTableDefaultToStored = (cell, value) => {
+  if (value === undefined || value === null) return undefined
+  switch (cell.inputType) {
+    case "booleanSingle": {
+      const answer = ValueKit.readBoolean(value)
+      return answer === null ? undefined : answer
+    }
+    case "booleanYesNo": {
+      const answer = ValueKit.readBoolean(value)
+      if (answer === null) return undefined
+      return answer
+        ? { code: "Y", display: "Yes", system: "MOIS-YESNO" }
+        : { code: "N", display: "No", system: "MOIS-YESNO" }
+    }
+    case "number": {
+      if (cell.numberConfig?.storeAsNumber === false) return typeof value === "string" || typeof value === "number" ? String(value) : undefined
+      const number = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : NaN
+      return Number.isFinite(number) ? number : undefined
+    }
+    case "choice":
+    case "choiceMulti": {
+      const options = normalizeLayoutTableOptionList(cell.optionList ?? cell.options)
+      const toCoding = (entry) => {
+        const key = entry && typeof entry === "object" ? entry.code ?? entry.value : entry
+        if (key === undefined || key === null || String(key).trim() === "") return null
+        const text = String(key).trim()
+        const lower = text.toLowerCase()
+        const option = options.find((candidate) => candidate.code === text)
+          || options.find((candidate) => candidate.code.toLowerCase() === lower)
+          || options.find((candidate) => candidate.display.toLowerCase() === lower)
+        // A code-list cell (no inline options) cannot be checked here.
+        if (!option && options.length > 0) return null
+        return { code: option ? option.code : text, display: option ? option.display : text, ...(cell.codeSystem ? { system: cell.codeSystem } : {}) }
+      }
+      const codings = (Array.isArray(value) ? value : [value]).map(toCoding).filter(Boolean)
+      if (cell.inputType === "choiceMulti") return codings.length > 0 ? codings : undefined
+      return codings[0] || undefined
+    }
+    default:
+      return typeof value === "string" || typeof value === "number" ? String(value) : undefined
+  }
+}
+
+// The answer cells (field cells and the fields of a field-list cell) that
+// start with a default answer, read by DefaultsKit in every saved shape
+// (defaultAnswer, prefill, dateConfig.prefillToday, a field cell's legacy
+// defaultValue). Source-bound cells are filled from their source instead (the
+// clock binding included). Empty without the kit.
+const collectLayoutTableDefaultCells = (rows) => {
+  if (typeof DefaultsKit === "undefined" || !DefaultsKit) return []
+  const cells = []
+  ;(Array.isArray(rows) ? rows : []).forEach((row) => {
+    ;(Array.isArray(row?.cells) ? row.cells : []).forEach((cell) => {
+      if (!cell) return
+      const fields = cell.kind === "field" ? [cell] : cell.kind === "fieldList" && Array.isArray(cell.fields) ? cell.fields : []
+      fields.forEach((field) => {
+        const fieldId = field?.fieldId || field?.id
+        if (!fieldId || getLayoutTableSourcePaths(field).length > 0) return
+        const answer = DefaultsKit.readDefaultAnswer(field, { shape: "layoutCell" })
+        if (answer) cells.push({ fieldId, cell: field, answer })
+      })
+    })
+  })
+  return cells
+}
+
+// A default is seeded only into an answer the section has never saved (a new
+// form), never over an answer, the same rule as an initial-mode source binding.
+const resolveLayoutTableDefault = (entry, now) =>
+  layoutTableDefaultToStored(entry.cell, DefaultsKit.resolveDefaultAnswer(entry.answer, {
+    now,
+    fieldType: DefaultsKit.temporalKindOf(entry.cell),
+  }))
+
 const getCellDisplayValue = (cell, data, sourceData) => {
   const sourcePaths = getLayoutTableSourcePaths(cell)
   const value = sourcePaths.length > 0
@@ -22644,26 +26677,20 @@ const formatLayoutTableFieldDisplayValue = (cell, data) => {
   if (value == null || value === "") return ""
 
   if (cell.inputType === "booleanSingle" || cell.inputType === "booleanYesNo") {
-    const raw = layoutTableScalarAnswer(value)
-    if (raw == null || raw === "") return ""
-    if (isCheckedValue(value)) return "Yes"
-    if (isNoLikeValue(value)) return "No"
+    const answer = ValueKit.readBoolean(value)
+    if (answer === true) return "Yes"
+    if (answer === false) return "No"
     // Another code on the yes/no list (e.g. unknown): show its own wording.
-    return String((value && typeof value === "object" ? value.display ?? value.text : null) ?? raw)
+    const [entry] = ValueKit.readChoice(value)
+    return entry ? String(entry.display ?? entry.code) : ""
   }
 
+  // Codes (or codings) worded from the cell's options, several joined.
   const optionList = normalizeLayoutTableOptionList(cell.optionList ?? cell.options)
-  const formatOne = (candidate) => {
-    if (candidate == null || candidate === "") return ""
-    if (typeof candidate === "object") {
-      return String(candidate.display ?? candidate.text ?? candidate.label ?? candidate.value ?? candidate.code ?? "")
-    }
-    const matched = optionList.find((option) => String(option.code) === String(candidate) || String(option.display) === String(candidate))
-    return matched ? matched.display : String(candidate)
-  }
-
-  if (Array.isArray(value)) return value.map(formatOne).filter(Boolean).join(", ")
-  return formatOne(value)
+  return ValueKit.readChoice(value, optionList)
+    .map((entry) => String(entry.display ?? entry.code))
+    .filter(Boolean)
+    .join(", ")
 }
 
 const renderLayoutTableReadOnlyField = (cell, data) => {
@@ -22777,14 +26804,87 @@ const formatLayoutTableComputedValue = (value, precision, resultType) => {
   return String(numeric)
 }
 
-const computeLayoutTableCellValue = (cell, data) => {
+// A computed cell's formula as a stored tree (neutral form model): the
+// exported \`formulaTree\`, else its text parsed by FormulaKit in the LayoutTable
+// dialect (cached per text), where a missing answer counts as 0 through
+// coalesce(…, 0). Null when the kit predates trees or the text does not parse;
+// the cell then uses evaluateLayoutTableFormula, as before.
+const layoutTableFormulaTrees = new Map()
+const layoutTableFormulaTree = (cell) => {
+  if (typeof FormulaKit === "undefined" || !FormulaKit || typeof FormulaKit.evaluateTree !== "function") return null
+  const stored = cell?.formulaTree
+  if (stored && stored.v === 1 && stored.expr && typeof stored.expr === "object") return stored
+  const text = typeof cell?.formula === "string" ? cell.formula : ""
+  if (!text.trim() || typeof FormulaKit.parse !== "function") return null
+  if (layoutTableFormulaTrees.has(text)) return layoutTableFormulaTrees.get(text)
+  let tree = null
+  try {
+    const parsed = FormulaKit.parse(text, { dialect: "layoutTable" })
+    if (parsed && parsed.v === 1 && parsed.expr) tree = parsed
+    else if (parsed && parsed.formula && !(parsed.errors && parsed.errors.length)) tree = parsed.formula
+  } catch (error) {
+    tree = null
+  }
+  layoutTableFormulaTrees.set(text, tree)
+  return tree
+}
+
+// The builder field type of each answer the table owns (see
+// collectLayoutTableControllerKinds), so the formula kit reads yes/no answers
+// as yes/no and dates as dates.
+const LAYOUT_TABLE_FORMULA_FIELD_TYPES = {
+  text: "text",
+  textarea: "textarea",
+  number: "number",
+  date: "date",
+  time: "time",
+  choice: "choice",
+  choiceMulti: "multiselect",
+  booleanYesNo: "booleanYesNo",
+  booleanSingle: "booleanSingle",
+}
+const collectLayoutTableFormulaFieldTypes = (rows) => {
+  const types = {}
+  ;(Array.isArray(rows) ? rows : []).forEach((row) => {
+    ;(Array.isArray(row?.cells) ? row.cells : []).forEach((cell) => {
+      if (!cell) return
+      if (cell.kind === "computed" && cell.fieldId) {
+        types[cell.fieldId] = cell.resultType === "text" ? "text" : "number"
+        return
+      }
+      const fields = cell.kind === "field" ? [cell] : cell.kind === "fieldList" && Array.isArray(cell.fields) ? cell.fields : []
+      fields.forEach((field) => {
+        const fieldId = field?.fieldId || field?.id
+        if (fieldId) types[fieldId] = LAYOUT_TABLE_FORMULA_FIELD_TYPES[field.inputType] || "text"
+      })
+    })
+  })
+  return types
+}
+
+// \`fieldTypes\` (optional): the table's answer types, from
+// collectLayoutTableFormulaFieldTypes.
+const computeLayoutTableCellValue = (cell, data, fieldTypes) => {
   const sourceFieldIds = Array.isArray(cell.sourceFieldIds) && cell.sourceFieldIds.length > 0
     ? cell.sourceFieldIds
     : extractLayoutTableFormulaRefs(cell.formula).filter((fieldId) => fieldId !== cell.fieldId)
   if (cell.blankWhenEmpty === true && sourceFieldIds.every((fieldId) => getNumericFieldValue(data, fieldId) == null)) {
     return ""
   }
-  const rawValue = evaluateLayoutTableFormula(cell.formula, data, cell.fieldId) ?? cell.defaultValue ?? ""
+  const tree = layoutTableFormulaTree(cell)
+  const evaluated = tree
+    ? FormulaKit.evaluateTree(
+      tree,
+      // A cell never reads its own result.
+      (fieldId) => (fieldId === cell.fieldId ? undefined : data?.[fieldId]),
+      {
+        // The dialect already reads a missing answer as 0.
+        incomplete: "compute-anyway",
+        fieldKind: (fieldId) => (fieldTypes ? fieldTypes[fieldId] : undefined),
+      }
+    )
+    : evaluateLayoutTableFormula(cell.formula, data, cell.fieldId)
+  const rawValue = evaluated ?? cell.defaultValue ?? ""
   return formatLayoutTableComputedValue(rawValue, cell.precision, cell.resultType)
 }
 
@@ -22907,14 +27007,14 @@ const renderLayoutTableStampButton = (cell, readOnly) => {
 
 // Hidden cells keep their <td> (so colSpan/rowSpan geometry holds) but render
 // no content.
-const renderLayoutTableCellContent = (cell, readOnly, data, sourceData, setFieldValue, visibility) => {
+const renderLayoutTableCellContent = (cell, readOnly, data, sourceData, setFieldValue, visibility, formulaFieldTypes) => {
   if (cell.hidden === true) return null
   if (!layoutTableCellIsVisible(cell, visibility)) return null
   if (cell.kind === "field") return renderLayoutTableField(cell, readOnly, data, setFieldValue)
   if (cell.kind === "fieldList") return renderLayoutTableFieldList(cell, readOnly, data, setFieldValue, visibility)
   if (cell.kind === "resources") return renderLayoutTableResources(cell)
   if (cell.kind === "stampButton") return renderLayoutTableStampButton(cell, readOnly)
-  if (cell.kind === "computed") return computeLayoutTableCellValue(cell, data)
+  if (cell.kind === "computed") return computeLayoutTableCellValue(cell, data, formulaFieldTypes)
   return getCellDisplayValue(cell, data, sourceData)
 }
 
@@ -22930,46 +27030,18 @@ const cellStyle = (cell, config) => ({
   whiteSpace: cell.kind === "text" ? "pre-wrap" : undefined,
 })
 
-const normalizeComparableValue = (value) => {
-  if (value && typeof value === "object") {
-    return value.value ?? value.code ?? value.key ?? value.text ?? value.display ?? value.label ?? ""
-  }
-
-  return value
-}
-
-const isYesLikeValue = (value) => {
-  const normalized = normalizeComparableValue(value)
-  if (value === true || normalized === true || value === 1 || normalized === 1) return true
-
-  return ["y", "yes", "true", "1"].includes(String(normalized ?? "").trim().toLowerCase())
-}
-
-const isNoLikeValue = (value) => {
-  const normalized = normalizeComparableValue(value)
-  if (value === false || normalized === false || value === 0 || normalized === 0) return true
-
-  return ["n", "no", "false", "0"].includes(String(normalized ?? "").trim().toLowerCase())
-}
-
+// A row's \`visibleWhen\` ({ fieldId, operator, value }), read by the one
+// implementation, FormLogicKit.isLayoutRowVisible (parity:
+// isLayoutRowVisible in @webforms/form-model), which the submit gate of the
+// row's required cells also uses: "truthy" (default) is answered and not a
+// no, "yes" is a yes, "equals" / "notEquals" match a code or wording (a
+// boolean value as yes/no). Only the form's own answer is read (no nested
+// lookup). A runtime without the kit shows the row.
 const rowIsVisible = (row, data) => {
   const rule = row?.visibleWhen
   if (!rule?.fieldId) return true
-
-  const value = data?.[rule.fieldId]
-  const comparableValue = normalizeComparableValue(value)
-
-  switch (rule.operator || "truthy") {
-    case "yes":
-      return isYesLikeValue(value)
-    case "equals":
-      return comparableValue === rule.value
-    case "notEquals":
-      return comparableValue !== rule.value
-    case "truthy":
-    default:
-      return Boolean(comparableValue) && !isNoLikeValue(value)
-  }
+  if (typeof FormLogicKit === "undefined" || !FormLogicKit || typeof FormLogicKit.isLayoutRowVisible !== "function") return true
+  return FormLogicKit.isLayoutRowVisible(rule, (fieldId) => data?.[fieldId])
 }
 
 const LAYOUT_TABLE_CONTROLLER_KINDS = {
@@ -23038,8 +27110,17 @@ function LayoutTable({
       tableData[cell.fieldId] = resolveLayoutTableSourceValue(cell, activeData, sd)
     }
   })
+  // A locked (read-only) table shows what was saved; defaults never write into it.
+  const defaultCells = readOnly ? [] : collectLayoutTableDefaultCells(tableRows)
+  const renderNow = new Date()
+  defaultCells.forEach((entry) => {
+    if (fieldHasSavedValue(activeData, entry.fieldId)) return
+    const value = resolveLayoutTableDefault(entry, renderNow)
+    if (value !== undefined) tableData[entry.fieldId] = value
+  })
   const visibleRows = tableRows.filter((row) => rowIsVisible(row, activeData))
   const controllerKinds = collectLayoutTableControllerKinds(tableRows)
+  const formulaFieldTypes = collectLayoutTableFormulaFieldTypes(tableRows)
   const cellVisibility = {
     getValue: (controllerId) => tableData[controllerId],
     options: { controllerKind: (controllerId) => controllerKinds[controllerId] },
@@ -23059,30 +27140,44 @@ function LayoutTable({
     const boundCells = tableRows
       .flatMap((row) => Array.isArray(row.cells) ? row.cells : [])
       .filter((cell) => cell?.kind === "field" && cell.fieldId && getLayoutTableSourcePaths(cell).length > 0)
-    if ((computedCells.length === 0 && boundCells.length === 0) || typeof setActiveData !== "function") return
+    const seededDefaults = readOnly ? [] : collectLayoutTableDefaultCells(tableRows)
+    if ((computedCells.length === 0 && boundCells.length === 0 && seededDefaults.length === 0) || typeof setActiveData !== "function") return
+    // Nothing to seed and nothing computed or bound: leave the section data alone.
+    if (computedCells.length === 0 && boundCells.length === 0
+      && seededDefaults.every((entry) => fieldHasSavedValue(activeData, entry.fieldId))) return
+    const now = new Date()
 
     setActiveData((draft) => {
       if (!draft) {
         const nextData = {}
+        seededDefaults.forEach((entry) => {
+          const value = resolveLayoutTableDefault(entry, now)
+          if (value !== undefined) nextData[entry.fieldId] = value
+        })
         boundCells.forEach((cell) => {
           nextData[cell.fieldId] = resolveLayoutTableSourceValue(cell, {}, sd)
         })
         computedCells.forEach((cell) => {
-          nextData[cell.fieldId] = computeLayoutTableCellValue(cell, nextData)
+          nextData[cell.fieldId] = computeLayoutTableCellValue(cell, nextData, formulaFieldTypes)
         })
         return nextData
       }
+      seededDefaults.forEach((entry) => {
+        if (fieldHasSavedValue(draft, entry.fieldId)) return
+        const value = resolveLayoutTableDefault(entry, now)
+        if (value !== undefined) draft[entry.fieldId] = value
+      })
       boundCells.forEach((cell) => {
         if (sourceBindingIsInitial(cell) && fieldHasSavedValue(draft, cell.fieldId)) return
         const nextValue = resolveLayoutTableSourceValue(cell, draft, sd)
         if (draft[cell.fieldId] !== nextValue) draft[cell.fieldId] = nextValue
       })
       computedCells.forEach((cell) => {
-        const nextValue = computeLayoutTableCellValue(cell, draft)
+        const nextValue = computeLayoutTableCellValue(cell, draft, formulaFieldTypes)
         if (draft[cell.fieldId] !== nextValue) draft[cell.fieldId] = nextValue
       })
     })
-  }, [setActiveData, sd, tableRows, JSON.stringify(activeData)])
+  }, [setActiveData, sd, tableRows, readOnly, JSON.stringify(activeData)])
 
   if (visibleRows.length === 0) return null
 
@@ -23108,7 +27203,7 @@ function LayoutTable({
                     rowSpan={Math.max(1, Number(cell.rowSpan) || 1)}
                     style={cellStyle(cell, config)}
                   >
-                    {renderLayoutTableCellContent(cell, readOnly, tableData, sd, setFieldValue, cellVisibility)}
+                    {renderLayoutTableCellContent(cell, readOnly, tableData, sd, setFieldValue, cellVisibility, formulaFieldTypes)}
                   </Tag>
                 )
               })}
@@ -27351,7 +31446,7 @@ hoursPerWeek
 })();
 
 const { useEffect, useMemo } = React
-const { Dropdown, Label, Separator, Stack, Text, TextField } = Fluent
+const { Label, Separator, Stack, Text } = Fluent
 
 const panelGridRows = (rows) => Array.isArray(rows)
   ? rows.filter((row) => row && typeof row === "object" && typeof row.id === "string")
@@ -27608,46 +31703,28 @@ const PanelEntryGrid = ({
         />
       )
     }
-    if (type === "choice" || type === "coded") {
-      const answer = kit.normalizeAnswer(value, normalizedOptions)
-      return (
-        <Dropdown
-          options={normalizedOptions.map((option) => ({ key: option.key, text: option.label }))}
-          selectedKey={answer.empty ? undefined : answer.code}
-          onChange={readOnly ? undefined : (_event, option) => {
-            const selected = normalizedOptions.find((candidate) => candidate.key === String(option?.key ?? ""))
-            setRowValue(row.id, selected ? {
-              code: selected.key,
-              display: selected.label,
-              system: row.system ?? selected.system,
-            } : null)
-          }}
-          disabled={readOnly}
-        />
-      )
-    }
-    if (type === "numeric" || type === "number") {
-      const answer = kit.normalizeAnswer(value, row.options)
-      return (
-        <TextField
-          type="number"
-          value={answer.empty ? "" : String(answer.raw)}
-          min={row.min}
-          max={row.max}
-          step={row.step}
-          onChange={readOnly ? undefined : (_event, nextValue) => setRowValue(row.id, nextValue === "" ? "" : Number(nextValue))}
-          readOnly={readOnly}
-        />
-      )
-    }
-    return (
-      <TextField
-        value={kit.normalizeAnswer(value, row.options).display}
-        multiline={row.multiline !== false}
-        onChange={readOnly ? undefined : (_event, nextValue) => setRowValue(row.id, nextValue ?? "")}
-        readOnly={readOnly}
-      />
+    // Choice, number and text rows are drawn by FieldKit with the MOIS
+    // control the exporter chooses (a SimpleCodeSelect dropdown, a Numeric,
+    // a TextArea, multiline unless the row says otherwise). The row keeps its
+    // stored shape (FieldKit.storage.coding): a choice as a Coding carrying
+    // the row's system, a number as a Number ("" when cleared), text as typed.
+    const descriptor = FieldKit.fromPanelRow(
+      type === "choice" || type === "coded"
+        ? { ...row, options: normalizedOptions.map((option) => ({ key: option.key, label: option.label, system: option.system })) }
+        : row
     )
+    return FieldKit.renderControl(descriptor, {
+      value,
+      onChange: (stored) => setRowValue(row.id, stored),
+      storage: FieldKit.storage.coding(descriptor, descriptor.type === "number" ? {} : {
+        display: (stored) => kit.normalizeAnswer(stored, row.options).display,
+      }),
+      label: row.label,
+      labelPosition: "none",
+      required: row.required === true,
+      readOnly,
+      inline: true,
+    })
   }
 
   return (
@@ -34324,8 +38401,12 @@ const RelationshipStatus = ({
 // produce recipe computed from the draft (never a spread snapshot), and a
 // burst guard stops writing if the sync ever fails to converge.
 //
-// EditableTable, FormLogicKit and FormulaKit are referenced only inside
-// function bodies (component files load in no guaranteed order).
+// Card questions are drawn by FieldKit (the exporter's control for each
+// column) and the delete confirmation is DialogKit's ConfirmDialog.
+//
+// EditableTable, FormLogicKit, FormulaKit, DefaultsKit (a new row's default
+// answers), FieldKit and DialogKit are referenced only inside function
+// bodies (component files load in no guaranteed order).
 
 const RepeatForEachTable = (props) => {
   const {
@@ -34473,7 +38554,7 @@ const RepeatForEachTable = (props) => {
   const orphanPolicy = repeatConfig ? repeatConfig.orphanPolicy || "remove-if-unanswered" : "remove"
   const allowDeleteRows = tableProps.allowDeleteRows !== false &&
     (allowManualRows || orphanPolicy !== "remove")
-  const { Dialog, DialogType, DialogFooter, PrimaryButton, DefaultButton, Text, Label, ChoiceGroup, Checkbox } = Fluent
+  const { DefaultButton, Text, Label } = Fluent
 
   // Empty state: nothing in the source table matches, so there is nothing to
   // answer. The grid is dropped too unless people may add their own rows or
@@ -34533,136 +38614,23 @@ const RepeatForEachTable = (props) => {
         </Text>
       )
     }
-    const onValue = (next) => writeCardCell(rowId, column, next)
     // Cards only show the columns visible in the row, so required = the flag.
-    const required = helpers.isRequiredColumn(column)
-    switch (column.type) {
-      case "number": {
-        const settings = helpers.numberSettings(column)
-        const spinButtonProps = {}
-        Object.keys(settings.spinButtonProps).forEach((key) => {
-          if (settings.spinButtonProps[key] !== undefined && settings.spinButtonProps[key] !== null) spinButtonProps[key] = settings.spinButtonProps[key]
-        })
-        return (
-          <Numeric
-            inline={true}
-            typeNumber={settings.typeNumber}
-            buttonControls={settings.buttonControls}
-            value={value === undefined || value === null ? "" : value.toString()}
-            onChange={(valueOrEvent, nextValue) => onValue(helpers.coerceNumber(nextValue === undefined ? valueOrEvent : nextValue, column))}
-            spinButtonProps={spinButtonProps}
-            textFieldProps={settings.suffix ? { suffix: settings.suffix } : undefined}
-            storeAsNumber={settings.storeAsNumber !== false}
-            placeholder={column.placeholder || undefined}
-            required={required}
-          />
-        )
-      }
-      case "date":
-        if (column.withTime) {
-          return (
-            <DateTimeSelect
-              inline={true}
-              value={value || ""}
-              onChange={(next) => onValue(next || "")}
-              placeholder={column.placeholder || "Select date and time"}
-              required={required}
-            />
-          )
-        }
-        return (
-          <DateSelect
-            dateFormat={column.dateConfig ? column.dateConfig.dateFormat : undefined}
-            inline={true}
-            value={value || ""}
-            onChange={(next) => onValue(helpers.dateCellValue(next))}
-            placeholder={column.placeholder || "Select date"}
-            required={required}
-          />
-        )
-      case "time":
-        return (
-          <TimeSelect
-            inline={true}
-            value={value || ""}
-            onChange={(event, next) => onValue(next || "")}
-            placeholder={column.placeholder || "HH:mm"}
-            required={required}
-          />
-        )
-      case "dropdown": {
-        const options = helpers.choiceOptions(column.options)
-        // The authored radio / checkbox-list styles, as EditableTable's cells
-        // draw them (same stored values: a code, or a list of codes).
-        if (column.choiceStyle === "checkbox" && !column.codeSystem && Checkbox) {
-          const selected = new Set((Array.isArray(value) ? value : value ? [value] : []).map(String))
-          return (
-            <div role="group" aria-label={column.title || column.label || column.id} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              {options.map((option) => (
-                <Checkbox
-                  key={option.key}
-                  label={option.text}
-                  checked={selected.has(option.key)}
-                  onChange={(_event, checked) => {
-                    const next = new Set(selected)
-                    if (checked) next.add(option.key)
-                    else next.delete(option.key)
-                    onValue(options.map((entry) => entry.key).filter((key) => next.has(key)))
-                  }}
-                />
-              ))}
-            </div>
-          )
-        }
-        if (column.choiceStyle === "radio" && !column.codeSystem && ChoiceGroup) {
-          return (
-            <ChoiceGroup
-              options={options}
-              selectedKey={value ? String(value) : undefined}
-              required={required}
-              onChange={(_event, option) => onValue(option ? option.key : "")}
-            />
-          )
-        }
-        const multiple = column.choiceStyle === "multiselect" || column.choiceStyle === "checkbox"
-        return (
-          <SimpleCodeSelect
-            inline={true}
-            optionList={column.codeSystem ? undefined : options}
-            codeSystem={column.codeSystem || undefined}
-            selectionType={multiple ? "multiple" : "single"}
-            value={helpers.choiceForControl(value, column, options)}
-            onChange={(coding, codings) => onValue(helpers.choiceForStorage(coding, codings, column))}
-            placeholder={column.placeholder || "Select..."}
-            showOther={column.showOtherOption === true}
-            required={required}
-          />
-        )
-      }
-      case "checkbox":
-        return (
-          <OptionChoice
-            inline={true}
-            displayStyle="checkmark"
-            value={value}
-            onChange={(event, checked) => onValue(!!checked)}
-            required={required}
-          />
-        )
-      case "text":
-      default:
-        return (
-          <TextArea
-            multiline={column.textareaConfig ? column.textareaConfig.multiline : undefined}
-            textFieldProps={column.textareaConfig ? { rows: column.textareaConfig.rows, resizable: column.textareaConfig.resizable } : undefined}
-            inline={true}
-            value={value || ""}
-            onChange={(event, next) => onValue(next || "")}
-            placeholder={column.placeholder || ""}
-            required={required}
-          />
-        )
-    }
+    // Each question is drawn by FieldKit with the control the exporter
+    // chooses (the same controls and stored cell shapes as EditableTable's
+    // cells: FieldKit.fromTableColumn + FieldKit.storage.cell); the card
+    // draws the label above it.
+    const descriptor = FieldKit.fromTableColumn(column)
+    return FieldKit.renderControl(descriptor, {
+      value,
+      onChange: (stored) => writeCardCell(rowId, column, stored),
+      storage: FieldKit.storage.cell(descriptor, { coerceNumber: (next) => helpers.coerceNumber(next, column) }),
+      label: column.title || column.label || column.id,
+      labelPosition: "none",
+      required: helpers.isRequiredColumn(column),
+      readOnly: false,
+      inline: true,
+      placeholder: column.placeholder || undefined,
+    })
   }
 
   const renderCard = (row, index) => {
@@ -34774,23 +38742,16 @@ const RepeatForEachTable = (props) => {
         </Text>
       ) : null}
       {pendingDelete ? (
-        <Dialog
-          hidden={false}
-          onDismiss={() => setPendingDelete(null)}
-          dialogContentProps={{
-            type: DialogType.normal,
-            title: t("Delete this row?"),
-            subText: pendingDelete.label
-              ? t("\\"{label}\\" and its answers will be removed.", { label: pendingDelete.label })
-              : t("The row and its answers will be removed."),
-          }}
-          modalProps={{ isBlocking: true }}
-        >
-          <DialogFooter>
-            <PrimaryButton text={t("Delete")} onClick={confirmPendingDelete} />
-            <DefaultButton text={t("Cancel")} onClick={() => setPendingDelete(null)} />
-          </DialogFooter>
-        </Dialog>
+        <DialogKit.ConfirmDialog
+          title={t("Delete this row?")}
+          message={pendingDelete.label
+            ? t("\\"{label}\\" and its answers will be removed.", { label: pendingDelete.label })
+            : t("The row and its answers will be removed.")}
+          confirmText={t("Delete")}
+          cancelText={t("Cancel")}
+          onConfirm={confirmPendingDelete}
+          onCancel={() => setPendingDelete(null)}
+        />
       ) : null}
     </div>
   )
@@ -34884,9 +38845,19 @@ RepeatForEachTable.helpers = (() => {
 
   const hasRowMeta = (row) => !!row && (row._complete !== undefined || row[STATUS_KEY] !== undefined)
 
+  // A new row's cell: the column's default answer, read and resolved by
+  // DefaultsKit (a fixed value, today or now) the way EditableTable seeds a
+  // row; a runtime without the kit keeps the prefill-only reading.
   const defaultCellValue = (column) => {
-    if (column.type === "checkbox") return column.prefill === true
-    if (typeof column.prefill === "string" || typeof column.prefill === "number") return String(column.prefill)
+    const kit = typeof DefaultsKit !== "undefined" && DefaultsKit ? DefaultsKit : null
+    const value = kit
+      ? kit.resolveDefaultAnswer(kit.readDefaultAnswer(column, { shape: "tableColumn" }), {
+        now: new Date(),
+        fieldType: kit.temporalKindOf(column),
+      })
+      : column.prefill
+    if (column.type === "checkbox") return value === true
+    if (typeof value === "string" || typeof value === "number") return String(value)
     return ""
   }
 
@@ -34899,7 +38870,10 @@ RepeatForEachTable.helpers = (() => {
 
   const cellAnswered = (row, column) => {
     const value = getPath(row, columnPath(column))
-    if (column.type !== "checkbox" && column.prefill !== undefined && column.prefill !== null && toText(value) === String(column.prefill)) return false
+    if (column.type !== "checkbox") {
+      const startingValue = defaultCellValue(column)
+      if (startingValue !== "" && toText(value) === startingValue) return false
+    }
     return isMeaningful(value)
   }
 
@@ -35150,32 +39124,7 @@ RepeatForEachTable.helpers = (() => {
     })
     .filter(Boolean)
 
-  const isMultipleChoice = (column) => column.choiceStyle === "multiselect" || column.choiceStyle === "checkbox"
-
-  const choiceCoding = (value, options) => {
-    if (value === undefined || value === null || value === "") return null
-    if (typeof value === "object" && !Array.isArray(value)) {
-      const code = value.code !== undefined ? value.code : value.value !== undefined ? value.value : value.key
-      if (code === undefined || code === null || code === "") return null
-      return { code: String(code), display: String(value.display || value.text || value.label || code) }
-    }
-    const code = String(value)
-    const option = options.find((entry) => String(entry.key) === code)
-    return { code, display: option ? option.text : code }
-  }
-
-  const choiceForControl = (value, column, options) => {
-    if (isMultipleChoice(column)) {
-      const values = Array.isArray(value) ? value : value ? [value] : []
-      return values.map((entry) => choiceCoding(entry, options)).filter(Boolean)
-    }
-    return choiceCoding(value, options) || undefined
-  }
-
-  const choiceForStorage = (coding, codings, column) => (isMultipleChoice(column)
-    ? (codings || []).map((entry) => entry && entry.code).filter(Boolean)
-    : (coding && coding.code) || "")
-
+  // Card questions convert their control values with FieldKit.storage.cell.
   const numberSettings = (column) => {
     const config = column.numberConfig || {}
     const spin = config.spinButtonProps || {}
@@ -35187,16 +39136,6 @@ RepeatForEachTable.helpers = (() => {
       storeAsNumber: pick(pick(config.storeAsNumber, column.storeAsNumber), true),
       spinButtonProps: { min: pick(spin.min, column.min), max: pick(spin.max, column.max), step: pick(spin.step, column.step) },
     }
-  }
-
-  // SMOIS DateSelect reports a Date, preview a string: store the local day.
-  const dateCellValue = (value) => {
-    if (value && typeof value.getFullYear === "function") {
-      if (Number.isNaN(value.getTime())) return ""
-      const pad2 = (part) => (part < 10 ? "0" : "") + part
-      return value.getFullYear() + "-" + pad2(value.getMonth() + 1) + "-" + pad2(value.getDate())
-    }
-    return typeof value === "string" ? value : ""
   }
 
   const coerceNumber = (value, column) => {
@@ -35246,6 +39185,72 @@ RepeatForEachTable.helpers = (() => {
     return policy === "always-calculated" || policy === "suggested-calculation" ? policy : "calculated-until-overridden"
   }
 
+  /** A column's cell type as a builder field type (EditableTable's _editableTableFormulaFieldType). */
+  const formulaFieldType = (column) => {
+    switch (column && column.type) {
+      case "number": return "number"
+      case "date": return column.withTime ? "datetime" : "date"
+      case "time": return "time"
+      case "dropdown": return column.choiceStyle === "multiselect" || column.choiceStyle === "checkbox" ? "multiselect" : "choice"
+      case "checkbox": return "booleanSingle"
+      case "text": return "text"
+      default: return undefined
+    }
+  }
+
+  /** Ids, field types and option score maps a row formula may read (EditableTable's _editableTableFormulaScope). */
+  const formulaScope = (columns) => {
+    const fieldIds = []
+    const fieldTypes = {}
+    const scoreMaps = {}
+    ;(columns || []).forEach((column) => {
+      if (!column) return
+      const type = formulaFieldType(column)
+      const scores = {}
+      if (column.type === "dropdown" && Array.isArray(column.options) && typeof ValueKit !== "undefined" && ValueKit) {
+        column.options.forEach((option) => {
+          const normalized = ValueKit.normalizeOption(option)
+          if (!Number.isFinite(normalized.score)) return
+          if (normalized.code) scores[normalized.code] = normalized.score
+          if (normalized.display) scores[normalized.display] = normalized.score
+        })
+      }
+      ;[column.id, column.dataPath].forEach((id) => {
+        if (!id || fieldIds.indexOf(id) >= 0) return
+        fieldIds.push(id)
+        if (type) fieldTypes[id] = type
+        if (Object.keys(scores).length > 0) scoreMaps[id] = scores
+      })
+    })
+    return { fieldIds, fieldTypes, scoreMaps }
+  }
+
+  /**
+   * The formula as a stored tree: the exported \`formulaTree\`, else the text
+   * parsed by FormulaKit (cached per text). Null when the kit predates trees
+   * or the text does not parse (the text is then evaluated as before).
+   */
+  const formulaTrees = new Map()
+  const formulaTree = (config, scope) => {
+    if (typeof FormulaKit === "undefined" || !FormulaKit || typeof FormulaKit.evaluateTree !== "function") return null
+    const stored = config && config.formulaTree
+    if (stored && stored.v === 1 && stored.expr && typeof stored.expr === "object") return stored
+    const text = typeof config.expression === "string" ? config.expression : ""
+    if (!text.trim() || typeof FormulaKit.parse !== "function") return null
+    const key = text + "\\u0000" + scope.fieldIds.join("\\u0001") + "\\u0000" + JSON.stringify(scope.fieldTypes)
+    if (formulaTrees.has(key)) return formulaTrees.get(key)
+    let tree = null
+    try {
+      const parsed = FormulaKit.parse(text, { fieldIds: scope.fieldIds, fieldType: (id) => scope.fieldTypes[id] })
+      if (parsed && parsed.v === 1 && parsed.expr) tree = parsed
+      else if (parsed && parsed.formula && !(parsed.errors && parsed.errors.length)) tree = parsed.formula
+    } catch (error) {
+      tree = null
+    }
+    formulaTrees.set(key, tree)
+    return tree
+  }
+
   const formulaValue = (row, column, columns) => {
     if (typeof FormulaKit === "undefined") return ""
     const config = column.computedValue
@@ -35256,9 +39261,34 @@ RepeatForEachTable.helpers = (() => {
       values[entry.id] = value
       if (path !== entry.id) values[path] = value
     })
-    if (config.incompleteBehavior !== "compute-anyway" && !FormulaKit.hasAllReferencedValues(config.expression, values)) return ""
     const precision = Number(config.precision)
-    const result = FormulaKit.roundValue(FormulaKit.evaluate(config.expression, values, column.id), Number.isFinite(precision) ? precision : 2)
+    const scope = formulaScope(columns)
+    const tree = formulaTree(config, scope)
+    let raw
+    if (tree) {
+      const getValue = (fieldId) => values[fieldId]
+      const fieldKind = (fieldId) => scope.fieldTypes[fieldId]
+      // Blank until every referenced cell has a value unless "compute-anyway"
+      // (a missing cell then counts as 0). Never its own cell by column id
+      // (selfId); the injected label/status columns do read their own save
+      // key ([_sourceLabel]), which the sync writes.
+      const computeAnyway = config.incompleteBehavior === "compute-anyway"
+      if (!computeAnyway && typeof FormulaKit.hasAllReferencedValues === "function"
+        && !FormulaKit.hasAllReferencedValues(tree, getValue, { fieldKind })) return ""
+      raw = FormulaKit.evaluateTree(tree, getValue, {
+        incomplete: computeAnyway ? "compute-anyway" : "blank",
+        fieldKind,
+        scoreMaps: scope.scoreMaps,
+        selfId: column.id,
+      })
+    } else {
+      // A kit without trees (or text it cannot parse): the text engine, with the
+      // same incomplete mode (a generated kit's evaluate defaults to "blank").
+      const computeAnyway = config.incompleteBehavior === "compute-anyway"
+      if (!computeAnyway && !FormulaKit.hasAllReferencedValues(config.expression, values)) return ""
+      raw = FormulaKit.evaluate(config.expression, values, column.id, { incomplete: computeAnyway ? "compute-anyway" : "blank" })
+    }
+    const result = FormulaKit.roundValue(raw, Number.isFinite(precision) ? precision : 2)
     if (result === null || result === undefined || result === "") return ""
     if (typeof result === "boolean") return result ? "true" : "false"
     return String(result)
@@ -35423,11 +39453,8 @@ RepeatForEachTable.helpers = (() => {
     columnVisible,
     isRequiredColumn,
     choiceOptions,
-    choiceForControl,
-    choiceForStorage,
     numberSettings,
     coerceNumber,
-    dateCellValue,
     formatCell,
     isComputedColumn,
     columnPath,
@@ -36984,9 +41011,13 @@ ScaleField.EndpointLabels = ScaleFieldEndpointLabels
  * Features:
  * - Uses SimpleCodeChecklist for question/answer selection
  * - Configurable questions with scored answer options
- * - Automatic total calculation with weighted terms
+ * - Automatic total calculation with weighted terms, or an authored formula
+ *   (\`formulaTree\` / \`expression\`, evaluated by FormulaKit)
  * - Interpretation ranges with labels (e.g., "Follow-up required")
  * - Dark mode support via theme
+ *
+ * FormulaKit and ValueKit (option and answer readers) are referenced only
+ * inside function bodies (component files load in no guaranteed order).
  */
 
 const { useMemo, useEffect } = React
@@ -37049,6 +41080,9 @@ const {
  * @property {string} id - Unique total ID
  * @property {string} label - Display label for the total
  * @property {ScoreTotalTerm[]} terms - Questions/weights that make up this total
+ * @property {string} [expression] - Authored formula; question ids read the question's score. Replaces the terms.
+ * @property {Object} [formulaTree] - The formula as a stored tree (exported next to \`expression\`)
+ * @property {number} [precision] - Decimal places of a formula total
  * @property {string} [targetFieldId] - Field ID to write result to
  * @property {ScoreTotalRange[]} ranges - Interpretation ranges
  */
@@ -37096,13 +41130,16 @@ const INTERPRETATION_BOX_STYLE = {
  * @returns {Map<string, Map<string, number>>} Map of questionId -> (optionKey -> score)
  */
 const normalizeScoringOption = (option, index = 0) => {
-  const keyValue = option?.key ?? option?.id ?? option?.code ?? option?.value ?? \`\${index}\`
-  const textValue = option?.text ?? option?.label ?? option?.display ?? option?.state ?? String(keyValue)
+  // ValueKit reads the option; the stored key keeps an explicit key or id
+  // (then ValueKit's code), and an option without a score scores its position.
+  const normalized = ValueKit.normalizeOption(option)
+  const explicitKey = option && typeof option === "object" ? option.key ?? option.id : undefined
+  const keyValue = explicitKey !== undefined && explicitKey !== null ? explicitKey : normalized.code || \`\${index}\`
   return {
-    ...option,
+    ...(option && typeof option === "object" ? option : {}),
     key: String(keyValue),
-    text: String(textValue),
-    score: option?.score ?? (typeof option?.value === "number" ? option.value : index),
+    text: String(normalized.display || keyValue),
+    score: Number.isFinite(normalized.score) ? normalized.score : index,
     description: option?.description,
   }
 }
@@ -37131,48 +41168,17 @@ const buildScoreMap = (questions, sharedOptions) => {
 
 const normalizeScoreToken = (value) => String(value ?? "").trim().toLowerCase()
 
-const collectScoreCandidates = (value, out = new Set(), depth = 0) => {
-  if (depth > 4 || value === null || value === undefined) return out
-
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-    const token = String(value).trim()
-    if (token) out.add(token)
-    return out
-  }
-
-  if (Array.isArray(value)) {
-    value.forEach((entry) => collectScoreCandidates(entry, out, depth + 1))
-    return out
-  }
-
-  if (typeof value !== "object") return out
-
-  const candidateKeys = [
-    "code",
-    "key",
-    "value",
-    "id",
-    "text",
-    "display",
-    "label",
-    "state",
-    "fieldId",
-  ]
-  candidateKeys.forEach((key) => {
-    collectScoreCandidates(value[key], out, depth + 1)
+// Every token an answer can be matched to an option by: each chosen entry's
+// code and wording as ValueKit.readChoice reads them (the { selectedKey,
+// response } this module stores, codings, bare codes, checklist ids,
+// FindCodeSelect { selectedItems } / { selectedItem }, lists).
+const collectScoreCandidates = (value, out = new Set()) => {
+  ValueKit.readChoice(value).forEach((entry) => {
+    const code = String(entry.code ?? "").trim()
+    const display = String(entry.display ?? "").trim()
+    if (code) out.add(code)
+    if (display) out.add(display)
   })
-
-  if (Array.isArray(value.selectedItems)) {
-    value.selectedItems.forEach((entry) => collectScoreCandidates(entry, out, depth + 1))
-  }
-  collectScoreCandidates(value.selectedItem, out, depth + 1)
-  if (Array.isArray(value.selectedIds)) {
-    value.selectedIds.forEach((entry) => collectScoreCandidates(entry, out, depth + 1))
-  }
-  if (Array.isArray(value.selectedLabels)) {
-    value.selectedLabels.forEach((entry) => collectScoreCandidates(entry, out, depth + 1))
-  }
-
   return out
 }
 
@@ -37205,6 +41211,111 @@ const getScoreFromValue = (value, optionScoreMap) => {
   }
 
   return null
+}
+
+// ================================================
+// Formula totals
+// ================================================
+//
+// A total with an authored formula (\`formulaTree\`, else \`expression\`) is
+// evaluated by FormulaKit.evaluateTree with the reference semantics
+// (docs/.../architecture/formula-semantics.md): each question reference (the
+// question id, its field id or an answer field id) reads the question's score,
+// the question's emptyScore when unanswered; context variables read 1/0 (or
+// their true/false values) from the chart. The total stays blank until every
+// question it reads has a score, unless its incompleteBehavior is
+// "compute-anyway". A total without a formula is its weighted terms. A kit
+// without tree support keeps the weighted terms.
+
+const scoringModuleFormulaTrees = new Map()
+const scoringModuleFormulaTree = (total, fieldIds) => {
+  if (typeof FormulaKit === "undefined" || !FormulaKit || typeof FormulaKit.evaluateTree !== "function") return null
+  const stored = total?.formulaTree
+  if (stored && stored.v === 1 && stored.expr && typeof stored.expr === "object") return stored
+  const text = typeof total?.expression === "string" ? total.expression : ""
+  if (!text.trim() || typeof FormulaKit.parse !== "function") return null
+  const ids = Array.from(new Set((fieldIds || []).filter(Boolean)))
+  const key = text + "\\u0000" + ids.join("\\u0001")
+  if (scoringModuleFormulaTrees.has(key)) return scoringModuleFormulaTrees.get(key)
+  let tree = null
+  try {
+    const parsed = FormulaKit.parse(text, ids.length > 0 ? { fieldIds: ids } : {})
+    if (parsed && parsed.v === 1 && parsed.expr) tree = parsed
+    else if (parsed && parsed.formula && !(parsed.errors && parsed.errors.length)) tree = parsed.formula
+  } catch (error) {
+    tree = null
+  }
+  scoringModuleFormulaTrees.set(key, tree)
+  return tree
+}
+
+const hasScoringTotalFormula = (total) => Boolean(
+  (typeof total?.expression === "string" && total.expression.trim())
+  || (total?.formulaTree && total.formulaTree.v === 1)
+)
+
+/** Question aliases → the question's score (answer, else emptyScore, else a grouped checklist's unchecked score). */
+const buildQuestionScoreValues = (questions, answers, scoreMap, sharedOptions, layout) => {
+  const values = {}
+  for (const question of questions || []) {
+    let score = getScoreFromValue(answers[question.id], scoreMap.get(question.id))
+    if (score === null && Number.isFinite(question.emptyScore)) score = Number(question.emptyScore)
+    if (score === null && layout === "grouped-checklist") {
+      const { uncheckedOption } = resolveChecklistOptions(question, sharedOptions)
+      if (uncheckedOption) score = uncheckedOption.score ?? 0
+    }
+    if (score === null) continue
+    ;[question.id, question.fieldId, ...(question.childFieldIds || [])].filter(Boolean).forEach((alias) => {
+      values[alias] = score
+    })
+  }
+  return values
+}
+
+/** A context variable's value: trueValue (1) when the chart value matches one of \`equals\`, else falseValue (0). */
+const resolveScoringContextVariable = (variable, root) => {
+  const segments = String(variable.sourcePath || "").split(".").map((segment) => segment.trim()).filter(Boolean)
+  let current = root
+  for (const segment of segments) {
+    if (current === undefined || current === null) break
+    current = current[segment]
+  }
+  const tokens = Array.from(collectScoreCandidates(current)).map((candidate) => candidate.toLowerCase())
+  const matched = (variable.equals || []).some((candidate) => tokens.includes(String(candidate ?? "").trim().toLowerCase()))
+  return matched
+    ? (Number.isFinite(variable.trueValue) ? Number(variable.trueValue) : 1)
+    : (Number.isFinite(variable.falseValue) ? Number(variable.falseValue) : 0)
+}
+
+/** A formula total's { score, isComplete }, or null when the kit cannot evaluate it (use the weighted terms). */
+const evaluateScoringFormulaTotal = (total, questions, scoreValues, contextRoot) => {
+  const formulaIds = [
+    ...(questions || []).flatMap((question) => [question.id, question.fieldId, ...(question.childFieldIds || [])]),
+    ...(total.contextVariables || []).map((variable) => variable?.id),
+  ]
+  const tree = scoringModuleFormulaTree(total, formulaIds)
+  if (!tree) return null
+  const values = { ...scoreValues }
+  for (const variable of total.contextVariables || []) {
+    if (variable?.id && variable?.sourcePath) values[variable.id] = resolveScoringContextVariable(variable, contextRoot)
+  }
+  const getValue = (id) => (Object.prototype.hasOwnProperty.call(values, id) ? values[id] : undefined)
+  // Blank until every question it reads has a score, unless "compute-anyway"
+  // (a missing score then counts as 0).
+  const computeAnyway = total.incompleteBehavior === "compute-anyway"
+  if (!computeAnyway && typeof FormulaKit.hasAllReferencedValues === "function" && !FormulaKit.hasAllReferencedValues(tree, getValue)) {
+    return { score: null, isComplete: false }
+  }
+  const raw = FormulaKit.evaluateTree(tree, getValue, {
+    incomplete: computeAnyway ? "compute-anyway" : "blank",
+    selfId: total.id,
+  })
+  let score = typeof raw === "number" && Number.isFinite(raw) ? raw : null
+  if (score !== null && Number.isFinite(total.precision)) {
+    const factor = 10 ** Math.max(0, Math.floor(Number(total.precision)))
+    score = Math.round((score + Number.EPSILON) * factor) / factor
+  }
+  return { score, isComplete: score !== null }
 }
 
 /**
@@ -37976,6 +42087,8 @@ const ScoringModule = ({
   ...props
 }) => {
   const [fd, setFd] = useFormSessionData()
+  // Chart data for formula totals' context variables (patient.gender…).
+  const sourceData = typeof useSourceData === "function" ? useSourceData() : null
   const theme = useTheme()
   const isDarkMode = theme?.isInverted || false
   const sharedOptions = useMemo(() => resolveMatrixOptions(config), [config])
@@ -38007,7 +42120,20 @@ const ScoringModule = ({
       ? config.calculatedValues
       : config.totals || []
 
+    const scoreValues = totals.some(hasScoringTotalFormula)
+      ? buildQuestionScoreValues(config.questions, answers, scoreMap, sharedOptions, config.layout)
+      : null
+    const contextRoot = { patient: sourceData?.patient, sourceData, formData: fd?.field?.data }
+
     for (const total of totals) {
+      if (hasScoringTotalFormula(total)) {
+        const formulaResult = evaluateScoringFormulaTotal(total, config.questions, scoreValues, contextRoot)
+        if (formulaResult) {
+          results[total.id] = formulaResult
+          continue
+        }
+      }
+
       let score = 0
       let isComplete = true
 
@@ -38039,7 +42165,7 @@ const ScoringModule = ({
     }
 
     return results
-  }, [answers, config.calculatedValues, config.layout, config.questions, config.totals, scoreMap, sharedOptions])
+  }, [answers, config.calculatedValues, config.layout, config.questions, config.totals, scoreMap, sharedOptions, sourceData, fd])
 
   useEffect(() => {
     if (!setFd) return
@@ -38780,6 +42906,14 @@ const SignaturePad = ({
  * Keep the dependency-ordered sections below in this single compilation unit
  * until both runtime loaders, the generator, MOIS export packaging, and the
  * source-level characterization harness support ordered source fragments.
+ *
+ * Calculations and totals are evaluated by FormulaKit from their stored trees;
+ * ValueKit reads options and answers; DefaultsKit reads and resolves each
+ * entry's default answer when the subform opens on an empty answer; FieldKit
+ * draws each data-entry question with the MOIS control the exporter chooses;
+ * DialogKit draws the dialog (RowDialog on the MOIS SubForm). All of them
+ * (and FormLogicKit) are referenced only inside function bodies (component
+ * files load in no guaranteed order).
  */
 
 // =====================================================================
@@ -38792,9 +42926,6 @@ const {
   Label,
   Text,
   PrimaryButton,
-  DefaultButton,
-  Dialog,
-  DialogType,
   Toggle,
 } = Fluent
 
@@ -38947,12 +43078,23 @@ const _resolveQuestionOptions = (question, sharedOptions) => {
   return Array.isArray(sharedOptions) ? sharedOptions : []
 }
 
+// A scoring option's stored key (its explicit key or id, else ValueKit's code)
+// and score (ValueKit's reading, 0 when it has none).
+const _scoringOptionKey = (option) => {
+  const explicit = option && typeof option === "object" ? option.key ?? option.id : undefined
+  return explicit !== undefined && explicit !== null ? explicit : ValueKit.normalizeOption(option).code
+}
+const _scoringOptionScore = (option) => {
+  const score = ValueKit.normalizeOption(option).score
+  return Number.isFinite(score) ? score : 0
+}
+
 const _buildScoreMap = (questions, sharedOptions) => {
   const map = new Map()
   for (const question of questions || []) {
     const optionMap = new Map()
     for (const opt of _resolveQuestionOptions(question, sharedOptions)) {
-      optionMap.set(opt.key, opt.score ?? 0)
+      optionMap.set(_scoringOptionKey(opt), _scoringOptionScore(opt))
     }
     map.set(question.id, optionMap)
   }
@@ -38986,48 +43128,18 @@ const _resolveChecklistOptions = (question, sharedOptions) => {
 
 const _normalizeScoreToken = (value) => String(value ?? "").trim().toLowerCase()
 
-const _collectScoreCandidates = (value, out = new Set(), depth = 0) => {
-  if (depth > 4 || value === null || value === undefined) return out
-
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-    const token = String(value).trim()
-    if (token) out.add(token)
-    return out
-  }
-
-  if (Array.isArray(value)) {
-    value.forEach((entry) => _collectScoreCandidates(entry, out, depth + 1))
-    return out
-  }
-
-  if (typeof value !== "object") return out
-
-  const candidateKeys = [
-    "code",
-    "key",
-    "value",
-    "id",
-    "text",
-    "display",
-    "label",
-    "state",
-    "fieldId",
-  ]
-  candidateKeys.forEach((key) => {
-    _collectScoreCandidates(value[key], out, depth + 1)
+// Every token an answer can be matched to an option by: each chosen entry's
+// code and wording as ValueKit.readChoice reads them (bare codes, codings,
+// subform and scoring selections { selectedKey, response }, checklist ids and
+// labels, FindCodeSelect { selectedItems } / { selectedItem }, FHIR answers,
+// lists).
+const _collectScoreCandidates = (value, out = new Set()) => {
+  ValueKit.readChoice(value).forEach((entry) => {
+    const code = String(entry.code ?? "").trim()
+    const display = String(entry.display ?? "").trim()
+    if (code) out.add(code)
+    if (display) out.add(display)
   })
-
-  if (Array.isArray(value.selectedItems)) {
-    value.selectedItems.forEach((entry) => _collectScoreCandidates(entry, out, depth + 1))
-  }
-  _collectScoreCandidates(value.selectedItem, out, depth + 1)
-  if (Array.isArray(value.selectedIds)) {
-    value.selectedIds.forEach((entry) => _collectScoreCandidates(entry, out, depth + 1))
-  }
-  if (Array.isArray(value.selectedLabels)) {
-    value.selectedLabels.forEach((entry) => _collectScoreCandidates(entry, out, depth + 1))
-  }
-
   return out
 }
 
@@ -39950,6 +44062,77 @@ const _evaluateExpression = (expression, varsByName) => {
 }
 
 // =====================================================================
+// Formula trees: data-entry calculations and scoring totals
+// =====================================================================
+//
+// Calculations and totals are evaluated by FormulaKit.evaluateTree (the
+// reference semantics in docs/.../architecture/formula-semantics.md) from the
+// exported \`formulaTree\`, else from the text parsed by FormulaKit.parse with
+// the ids the formula may read. A kit without tree support, or text that does
+// not parse, keeps _evaluateExpression above.
+
+const _subformFormulaTrees = new Map()
+const _subformFormulaTree = (store, fieldIds) => {
+  if (typeof FormulaKit === "undefined" || !FormulaKit || typeof FormulaKit.evaluateTree !== "function") return null
+  const stored = store?.formulaTree
+  if (stored && stored.v === 1 && stored.expr && typeof stored.expr === "object") return stored
+  const text = typeof store?.expression === "string" ? store.expression : ""
+  if (!text.trim() || typeof FormulaKit.parse !== "function") return null
+  const ids = Array.from(new Set((fieldIds || []).filter(Boolean)))
+  const key = text + "\\u0000" + ids.join("\\u0001")
+  if (_subformFormulaTrees.has(key)) return _subformFormulaTrees.get(key)
+  let tree = null
+  try {
+    const parsed = FormulaKit.parse(text, ids.length > 0 ? { fieldIds: ids } : {})
+    if (parsed && parsed.v === 1 && parsed.expr) tree = parsed
+    else if (parsed && parsed.formula && !(parsed.errors && parsed.errors.length)) tree = parsed.formula
+  } catch (error) {
+    tree = null
+  }
+  _subformFormulaTrees.set(key, tree)
+  return tree
+}
+
+// The formulas to evaluate. The builder's \`calculatedValues\` mirror of the
+// calculations or totals (display settings shared with computed fields) wins
+// when present, but an entry without a tree takes the stored tree of the
+// calculation or total it mirrors (same id, same text), so the exported tree
+// is evaluated whichever copy the config carries.
+const _subformFormulaStores = (mirror, sources) => {
+  const stores = Array.isArray(sources) ? sources : []
+  if (!Array.isArray(mirror) || mirror.length === 0) return stores
+  const sourceById = new Map(stores.filter((store) => store && store.id).map((store) => [store.id, store]))
+  const text = (value) => (typeof value === "string" ? value.trim() : "")
+  return mirror.map((entry) => {
+    if (!entry || (entry.formulaTree && entry.formulaTree.v === 1)) return entry
+    const source = sourceById.get(entry.id)
+    const tree = source?.formulaTree
+    if (!tree || tree.v !== 1 || !text(entry.expression) || text(source.expression) !== text(entry.expression)) return entry
+    return { ...entry, formulaTree: tree }
+  })
+}
+
+// A calculation's or total's result: a finite number, or text; else null.
+const _subformFormulaResult = (value) => {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null
+  if (typeof value === "string") return value.trim() ? value : null
+  return null
+}
+
+// Evaluate a calculation's or total's tree. The result stays blank until every
+// input it reads has a value (as _evaluateExpression did), unless the store
+// says "compute-anyway": a missing input then counts as 0.
+const _evaluateSubformFormulaTree = (tree, getValue, store, options = {}) => {
+  const computeAnyway = store?.incompleteBehavior === "compute-anyway"
+  if (!computeAnyway && typeof FormulaKit.hasAllReferencedValues === "function"
+    && !FormulaKit.hasAllReferencedValues(tree, getValue, { fieldKind: options.fieldKind })) return null
+  return _subformFormulaResult(FormulaKit.evaluateTree(tree, getValue, {
+    ...options,
+    incomplete: computeAnyway ? "compute-anyway" : "blank",
+  }))
+}
+
+// =====================================================================
 // Data-entry field module: layout, choices, defaults, and render groups
 // =====================================================================
 
@@ -40084,15 +44267,16 @@ const _normalizeSelectableOptions = (field, fallbackOptions = []) => {
   return rawOptions
     .map((option, index) => {
       if (option && typeof option === "object" && !Array.isArray(option)) {
+        // ValueKit reads the option; the stored selectedKey keeps an explicit
+        // key or id, then the value, so saved answers still match.
+        const normalized = ValueKit.normalizeOption(option)
         const rawValue =
           option.value ??
           option.key ??
           option.id ??
-          option.label ??
-          option.text ??
-          index
+          (normalized.code || index)
         const key = String(option.key ?? option.id ?? rawValue ?? \`option_\${index + 1}\`)
-        const text = String(option.label ?? option.text ?? rawValue ?? \`Option \${index + 1}\`)
+        const text = String(normalized.display || rawValue || \`Option \${index + 1}\`)
         const description =
           typeof option.description === "string" && option.description.trim()
             ? option.description.trim()
@@ -40179,6 +44363,30 @@ const _resolveSelectableBinaryOptions = (field, fallbackOptions = []) => {
   }
 }
 
+// The open dialog's answers as text, for noticing a change since it opened.
+const _dialogAnswerSignature = (dataEntryValues, answers) => {
+  try {
+    return JSON.stringify({ values: dataEntryValues || {}, answers: answers || {} })
+  } catch (_error) {
+    return ""
+  }
+}
+
+// A yes/no entry's options for its CompactBooleanField: the checked option,
+// the option "No" stores (the value-0 option, else the other one), and the
+// value-0 option alone (strictUncheckedOption), which an unticked check box
+// stores when the field has one.
+const _booleanEntryOptions = (field) => {
+  const options = _normalizeSelectableOptions(field, ["Yes", "No"])
+  const { checkedOption, uncheckedOption } = _resolveSelectableBinaryOptions(field, ["Yes", "No"])
+  return {
+    options,
+    checkedOption,
+    uncheckedOption: uncheckedOption || options.find((option) => option.key !== checkedOption?.key) || null,
+    strictUncheckedOption: uncheckedOption,
+  }
+}
+
 const _latestObservationDefault = (field, sd) => {
   const binding = field?.defaultFromObservation ?? field?.default_from_observation
   const code = String(binding?.observationCode ?? binding?.observation_code ?? "").trim()
@@ -40200,12 +44408,66 @@ const _latestObservationDefault = (field, sd) => {
   return latest[aspect]
 }
 
+// The patient's latest observation with this code, collected within
+// \`lookbackDays\` when set; \`aspect\` (a defaultFromObservation setting) picks
+// another part of it than the value.
+const _latestObservationValue = (sd, code, lookbackDays, aspect, now) => {
+  const observations = Array.isArray(sd?.patient?.observations)
+    ? sd.patient.observations
+    : Array.isArray(sd?.queryResult?.patient?.[0]?.observations)
+      ? sd.queryResult.patient[0].observations
+      : []
+  const collectedAt = (entry) => new Date(entry?.collectedDateTime ?? 0).getTime() || 0
+  const cutoff = typeof lookbackDays === "number" && lookbackDays > 0 ? now.getTime() - lookbackDays * 86400000 : null
+  const latest = observations
+    .filter((entry) => entry?.observationCode === code && (cutoff === null || collectedAt(entry) >= cutoff))
+    .sort((left, right) => collectedAt(right) - collectedAt(left))[0]
+  if (!latest) return undefined
+  return latest[aspect || "value"]
+}
+
+// The entry's default answer through DefaultsKit (every saved shape: the
+// defaultAnswer descriptor, defaultValue with its "__today"/"__now" tokens,
+// defaultFromObservation), resolved for a newly opened subform. An
+// observation default that finds nothing falls back to the entry's other
+// default. Null without the kit (the caller reads the older shapes itself).
+const _resolveDefaultAnswerWithKit = (field, sd, allowObservationDefault) => {
+  const kit = typeof DefaultsKit !== "undefined" && DefaultsKit ? DefaultsKit : null
+  if (!kit) return null
+  const now = new Date()
+  const binding = field.defaultFromObservation ?? field.default_from_observation
+  const context = {
+    now,
+    fieldType: kit.temporalKindOf(field),
+    readLastObservation: (code, system, lookbackDays) => {
+      const bindingCode = String(binding?.observationCode ?? binding?.observation_code ?? "").trim()
+      const aspect = bindingCode === code && typeof binding?.aspect === "string" ? binding.aspect : "value"
+      return _latestObservationValue(sd, code, lookbackDays, aspect, now)
+    },
+  }
+  const answer = kit.readDefaultAnswer(field, { shape: "subformEntry", bringForward: allowObservationDefault })
+  let value = kit.resolveDefaultAnswer(answer, context)
+  if (value === undefined && answer && answer.kind === "lastObservation") {
+    value = kit.resolveDefaultAnswer(kit.readDefaultAnswer(field, { shape: "subformEntry", bringForward: false }), context)
+  }
+  return { value }
+}
+
 const _resolveFieldDefaultValue = (field, sd, allowObservationDefault = true) => {
   if (!field || _isHeadingField(field)) return undefined
 
-  const observationDefault = allowObservationDefault ? _latestObservationDefault(field, sd) : undefined
-  const explicitDefault = observationDefault ?? field.defaultValue ?? field.default_value
+  const fromKit = _resolveDefaultAnswerWithKit(field, sd, allowObservationDefault)
+  if (fromKit && fromKit.value === undefined) return undefined
+  const observationDefault = !fromKit && allowObservationDefault ? _latestObservationDefault(field, sd) : undefined
+  const explicitDefault = fromKit ? fromKit.value : observationDefault ?? field.defaultValue ?? field.default_value
   if (explicitDefault === undefined) return undefined
+
+  // A yes/no default reads as true or false: the first option is yes, the second no.
+  if (field.type === "booleanYesNo" && typeof explicitDefault === "boolean") {
+    const options = _normalizeSelectableOptions(field, ["Yes", "No"])
+    const option = options[explicitDefault ? 0 : 1]
+    if (option) return _serializeSelectableValue(field, option)
+  }
 
   if (explicitDefault === "__today" || explicitDefault === "__now") {
     const today = new Date()
@@ -40358,23 +44620,6 @@ const _buildDataEntryRenderGroups = (fields) => {
   return stackedGroups
 }
 
-const _isScaleChoiceSelected = (value, option) => {
-  const optionValue = String(option?.value ?? "")
-  if (value && typeof value === "object") {
-    if (value.selectedKey !== null && value.selectedKey !== undefined) {
-      return String(value.selectedKey) === optionValue
-    }
-    if (Number.isFinite(value.value)) {
-      return Number(value.value) === Number(option.value)
-    }
-  }
-  const numeric = _toNumericValue(value)
-  if (numeric !== null) {
-    return numeric === Number(option.value)
-  }
-  return false
-}
-
 // =====================================================================
 // Calculator and local-style module
 // =====================================================================
@@ -40400,31 +44645,6 @@ const _computeMorphineEquivalent = (doseValue, equivalentDoseMg, baseEquivalentD
   if (!Number.isFinite(equivalentDose) || equivalentDose <= 0) return null
   if (!Number.isFinite(baseDose) || baseDose <= 0) return null
   return (dose * baseDose) / equivalentDose
-}
-
-const _LOCAL_INPUT_STYLE = (isDarkMode) => ({
-  width: "100%",
-  minHeight: "34px",
-  borderRadius: "2px",
-  border: \`1px solid \${isDarkMode ? "#5a5a5a" : "#b8b8b8"}\`,
-  backgroundColor: isDarkMode ? "#1a1a1a" : "#fff",
-  color: isDarkMode ? "#fff" : "#111",
-  padding: "6px 8px",
-  fontSize: "14px",
-  boxSizing: "border-box",
-})
-
-const _LOCAL_TEXTAREA_STYLE = (isDarkMode) => ({
-  ..._LOCAL_INPUT_STYLE(isDarkMode),
-  minHeight: "96px",
-  resize: "vertical",
-  fontFamily: "inherit",
-})
-
-const _LOCAL_RADIO_GROUP_STYLE = {
-  display: "flex",
-  flexDirection: "column",
-  gap: "8px",
 }
 
 // =====================================================================
@@ -40745,9 +44965,7 @@ const SubformScoringInner = ({
     if (isDataEntryMode) return {}
     const results = {}
     const questionsById = new Map((config.questions || []).map((question) => [question.id, question]))
-    const totals = Array.isArray(config.calculatedValues) && config.calculatedValues.length > 0
-      ? config.calculatedValues
-      : config.totals || []
+    const totals = _subformFormulaStores(config.calculatedValues, config.totals)
     for (const total of totals) {
       let score = 0
       let isComplete = true
@@ -40800,7 +45018,25 @@ const SubformScoringInner = ({
         }
       }
       if (typeof total.expression === "string" && total.expression.trim()) {
-        const evaluated = isComplete ? _evaluateExpression(total.expression, expressionVars) : null
+        // A question reference reads the question's score (emptyScore when
+        // unanswered); the tree says so with score([question]).
+        const computeAnyway = total.incompleteBehavior === "compute-anyway"
+        const formulaIds = [
+          ...(config.questions || []).flatMap((question) => [question.id, question.fieldId, ...(question.childFieldIds || [])]),
+          ...(total.contextVariables || []).map((variable) => variable?.id),
+        ]
+        const tree = _subformFormulaTree(total, formulaIds)
+        let evaluated = null
+        if (tree && (isComplete || computeAnyway)) {
+          evaluated = _evaluateSubformFormulaTree(
+            tree,
+            (id) => (Object.prototype.hasOwnProperty.call(expressionVars, id) ? expressionVars[id] : undefined),
+            total,
+            { selfId: total.id }
+          )
+        } else if (!tree) {
+          evaluated = isComplete ? _evaluateExpression(total.expression, expressionVars) : null
+        }
         score = evaluated
         isComplete = evaluated !== null
       }
@@ -40989,6 +45225,29 @@ const SubformScoringInner = ({
     }))
   }, [bringForward, isDataEntryMode, isDialogOpen, isReadOnly, dataEntryFields, dataEntryValues, fd, onDataEntryValueChange, sd])
 
+  // Whether the open dialog holds changed answers (asked about before a
+  // close discards them). The baseline is taken once the opening defaults
+  // have been written, so seeded defaults do not count as a change.
+  const hasPendingDefaults = isDataEntryMode && isDialogOpen && !isReadOnly && dataEntryFields.some((field) => (
+    field?.id &&
+    !_isMeaningfulValue(dataEntryValues[field.id]) &&
+    _resolveFieldDefaultValue(field, sd, bringForward) !== undefined
+  ))
+  const dialogAnswerSignature = isDialogOpen ? _dialogAnswerSignature(dataEntryValues, answers) : null
+  const dirtyBaselineRef = React.useRef(null)
+  useEffect(() => {
+    if (!isDialogOpen) {
+      dirtyBaselineRef.current = null
+      return
+    }
+    if (dirtyBaselineRef.current === null && !hasPendingDefaults) {
+      dirtyBaselineRef.current = dialogAnswerSignature
+    }
+  }, [isDialogOpen, hasPendingDefaults, dialogAnswerSignature])
+  const isDialogDirty = Boolean(isDialogOpen) &&
+    dirtyBaselineRef.current !== null &&
+    dialogAnswerSignature !== dirtyBaselineRef.current
+
   // Visibility rules may name a sibling (the usual case) or a parent-form
   // field, read from the same store the subform's answers live in.
   const getVisibilityControllerValue = useCallback((controllerId) => {
@@ -41019,12 +45278,10 @@ const SubformScoringInner = ({
     ))
   }, [isDataEntryMode, dataEntryFields, dataEntryValues, isDataEntryFieldShown])
 
-  const dataEntryCalculations = useMemo(() => {
-    if (Array.isArray(dataEntryConfig?.calculatedValues) && dataEntryConfig.calculatedValues.length > 0) {
-      return dataEntryConfig.calculatedValues
-    }
-    return Array.isArray(dataEntryConfig?.calculations) ? dataEntryConfig.calculations : []
-  }, [dataEntryConfig])
+  const dataEntryCalculations = useMemo(
+    () => _subformFormulaStores(dataEntryConfig?.calculatedValues, dataEntryConfig?.calculations),
+    [dataEntryConfig]
+  )
 
   const calculatedExpressions = useMemo(() => {
     if (!isDataEntryMode) return {}
@@ -41044,15 +45301,56 @@ const SubformScoringInner = ({
       const numericValue = _toNumericValue(dataEntryValues[fieldId])
       vars[fieldId] = numericValue !== null ? numericValue : _resolveFieldEmptyNumericValue(configuredField)
     }
+    // The formula kit reads each field's stored answer (its field type and
+    // option scores tell it how); a blank answer reads as the field's
+    // emptyValue when it has one, and a hotspot map's selection as its count
+    // (CDAI: swollen + tender), as _toNumericValue did.
+    const formulaIds = [...variableFieldIds, ...dataEntryCalculations.map((calculation) => calculation?.id)]
+    const fieldKinds = {}
+    const scoreMaps = {}
+    for (const field of dataEntryFields) {
+      if (!field?.id || _isHeadingField(field)) continue
+      if (typeof field.type === "string") fieldKinds[field.id] = field.type
+      const scores = {}
+      const optionSources = field.type === "scale" ? _buildScaleOptions(field) : Array.isArray(field.options) ? field.options : []
+      optionSources.forEach((option) => {
+        const normalized = ValueKit.normalizeOption(option)
+        if (!Number.isFinite(normalized.score)) return
+        if (normalized.code) scores[normalized.code] = normalized.score
+        if (normalized.display) scores[normalized.display] = normalized.score
+      })
+      if (Object.keys(scores).length > 0) scoreMaps[field.id] = scores
+    }
+    const readFieldValue = (fieldId) => {
+      const raw = dataEntryValues[fieldId]
+      if (raw && typeof raw === "object" && !Array.isArray(raw) && Number.isFinite(raw.selectedCount)) {
+        return Number(raw.selectedCount)
+      }
+      if (_isMeaningfulValue(raw)) return raw
+      const emptyValue = _resolveFieldEmptyNumericValue(dataEntryFieldById.get(fieldId) || null)
+      return emptyValue !== null ? emptyValue : raw
+    }
     const result = {}
     for (const calculation of dataEntryCalculations) {
-      const value = _evaluateExpression(calculation.expression, vars)
+      const tree = _subformFormulaTree(calculation, formulaIds)
+      const value = tree
+        ? _evaluateSubformFormulaTree(
+          tree,
+          // Fields by id; an earlier calculation by its id; never itself (selfId).
+          (id) => {
+            if (variableFieldIds.has(id)) return readFieldValue(id)
+            return Object.prototype.hasOwnProperty.call(result, id) ? result[id] : undefined
+          },
+          calculation,
+          { fieldKind: (id) => fieldKinds[id], scoreMaps, selfId: calculation.id }
+        )
+        : _evaluateExpression(calculation.expression, vars)
       if (value === null || value === undefined) {
         result[calculation.id] = null
         continue
       }
       const precision = Number.isFinite(calculation.precision) ? Math.max(0, Math.min(6, calculation.precision)) : null
-      result[calculation.id] = precision === null ? value : Number(value.toFixed(precision))
+      result[calculation.id] = precision === null || typeof value !== "number" ? value : Number(value.toFixed(precision))
     }
     if (isMorphineCalculatorMode && dataEntryCalculatorConfig?.totalCalculationId) {
       const rowValues = (dataEntryCalculatorConfig.rows || []).map((row) => {
@@ -41273,37 +45571,6 @@ const SubformScoringInner = ({
       )
     }
 
-    if (field.type === "number") {
-      const inputValue = dataEntryValues[field.id]
-      return (
-        <div key={\`field-\${field.id}\`}>
-          <Label required={required}>{field.label}</Label>
-          <input
-            type="number"
-            inputMode="decimal"
-            min={Number.isFinite(field.min) ? field.min : undefined}
-            max={Number.isFinite(field.max) ? field.max : undefined}
-            step={Number.isFinite(field.step) ? field.step : "any"}
-            placeholder={field.placeholder}
-            value={inputValue === null || inputValue === undefined ? "" : String(inputValue)}
-            onChange={(event) => {
-              const nextRaw = event?.target?.value ?? ""
-              if (!nextRaw) {
-                setDataEntryValue(field.id, null)
-                return
-              }
-              const parsed = Number(nextRaw)
-              setDataEntryValue(
-                field.id,
-                Number.isFinite(parsed) ? _clampDataEntryNumberValue(parsed, field) : nextRaw
-              )
-            }}
-            style={_LOCAL_INPUT_STYLE(isDarkMode)}
-          />
-        </div>
-      )
-    }
-
     if (field.type === "scale") {
       const scaleOptions = _buildScaleOptions(field)
       const showLegend = typeof renderOptions.showLegend === "boolean"
@@ -41327,238 +45594,11 @@ const SubformScoringInner = ({
           tooltipMode={field.tooltipMode === "option" ? "option" : "all"}
           disableHorizontalScroll={renderOptions.disableHorizontalScroll === true}
           readOnly={isReadOnly}
+          // Controlled, like every other entry: the engine's ScaleField binds
+          // to the host store, which a subform's session never reads.
+          value={dataEntryValues[field.id] ?? null}
+          onChange={(answer) => setDataEntryValue(field.id, answer ?? null)}
         />
-      )
-    }
-
-    if (field.type === "date") {
-      // Standardized Fluent date picker (DateSelect), not the browser-native
-      // input. Controlled: no fieldId, so it never writes the store itself.
-      // DateSelect emits canonical YYYY.MM.DD; normalize to the ISO dashes
-      // the native input stored so downstream save logic sees no change.
-      return (
-        <div key={\`field-\${field.id}\`}>
-          <Label required={required}>{field.label}</Label>
-          <DateSelect
-            inline
-            placeholder={field.placeholder}
-            value={dataEntryValues[field.id] ?? ""}
-            onChange={(value) => setDataEntryValue(field.id, (value ?? "").replace(/\\./g, "-"))}
-            readOnly={isReadOnly}
-            disabled={isReadOnly}
-          />
-        </div>
-      )
-    }
-
-    if (field.type === "time") {
-      // The MOIS masked HH:mm control, driven the same controlled way as the
-      // date branch (and EditableTable/RepeatForEachTable time cells): no
-      // fieldId, so the answer lands only in this subform's store.
-      return (
-        <div key={\`field-\${field.id}\`}>
-          <Label required={required}>{field.label}</Label>
-          <TimeSelect
-            inline
-            placeholder={field.placeholder || "HH:mm"}
-            value={dataEntryValues[field.id] ?? ""}
-            onChange={(_event, value) => setDataEntryValue(field.id, value || "")}
-            readOnly={isReadOnly}
-            disabled={isReadOnly}
-          />
-        </div>
-      )
-    }
-
-    if (field.type === "datetime") {
-      return (
-        <div key={\`field-\${field.id}\`}>
-          <Label required={required}>{field.label}</Label>
-          <input
-            type="datetime-local"
-            placeholder={field.placeholder}
-            value={dataEntryValues[field.id] ?? ""}
-            onChange={(event) => setDataEntryValue(field.id, event?.target?.value ?? "")}
-            style={_LOCAL_INPUT_STYLE(isDarkMode)}
-          />
-        </div>
-      )
-    }
-
-    if (field.type === "choice") {
-      if (field.codeSystem && typeof FindCodeSelect !== "undefined") {
-        return (
-          <FindCodeSelect
-            key={\`field-\${field.id}\`}
-            fieldId={\`subform_\${id}_\${field.id}\`}
-            label={field.label}
-            // Fill the field's cell (the default "medium" caps at 320px and
-            // leaves half-width pairs visually ragged next to native inputs).
-            size={field.size || { minWidth: 120, flex: "1 1 0px" }}
-            codeSystem={field.codeSystem}
-            value={dataEntryValues[field.id] ?? null}
-            defaultValue={_resolveFieldDefaultValue(field, sd, bringForward)}
-            placeholder={field.placeholder || "Please search"}
-            required={required}
-            readOnly={isReadOnly}
-            openOnFocus
-            showOtherOption={Boolean(field.showOtherOption || field.show_other_option)}
-            onChange={(nextValue) => setDataEntryValue(field.id, nextValue)}
-          />
-        )
-      }
-      const optionList = _normalizeSelectableOptions(field)
-      const useRadio = field.choiceStyle === "radio"
-      const selectedOption = optionList.find((option) => _isSelectableOptionSelected(dataEntryValues[field.id], option)) || null
-      if (useRadio) {
-        return (
-          <div key={\`field-\${field.id}\`}>
-            <Label required={required}>{field.label}</Label>
-            <div style={_LOCAL_RADIO_GROUP_STYLE}>
-              {optionList.map((option) => (
-                <label
-                  key={\`\${field.id}_\${option.key}\`}
-                  style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}
-                >
-                  <input
-                    type="radio"
-                    name={\`subform_choice_\${field.id}\`}
-                    checked={Boolean(selectedOption && selectedOption.key === option.key)}
-                    onChange={() => setDataEntryValue(field.id, _serializeSelectableValue(field, option))}
-                  />
-                  <span>{option.text}</span>
-                </label>
-              ))}
-            </div>
-          </div>
-        )
-      }
-      return (
-        <div key={\`field-\${field.id}\`}>
-          <Label required={required}>{field.label}</Label>
-          <select
-            value={selectedOption?.key ?? ""}
-            onChange={(event) => {
-              const nextKey = event?.target?.value || null
-              if (!nextKey) {
-                setDataEntryValue(field.id, null)
-                return
-              }
-              const nextOption = optionList.find((option) => option.key === nextKey) || null
-              setDataEntryValue(field.id, nextOption ? _serializeSelectableValue(field, nextOption) : nextKey)
-            }}
-            style={_LOCAL_INPUT_STYLE(isDarkMode)}
-          >
-            <option value="">Select...</option>
-            {optionList.map((option) => (
-              <option key={\`\${field.id}_\${option.key}\`} value={option.key}>
-                {option.text}
-              </option>
-            ))}
-          </select>
-        </div>
-      )
-    }
-
-    if (field.type === "booleanYesNo") {
-      const optionList = _normalizeSelectableOptions(field, ["Yes", "No"])
-      const selectedOption = optionList.find((option) => _isSelectableOptionSelected(dataEntryValues[field.id], option)) || null
-      const renderStyle = String(field.renderStyle || field.render_style || "").trim().toLowerCase()
-      if (renderStyle === "checkbox" || renderStyle === "checklist-row") {
-        const { checkedOption, uncheckedOption } = _resolveSelectableBinaryOptions(field, ["Yes", "No"])
-        const checked = checkedOption ? _isSelectableOptionSelected(dataEntryValues[field.id], checkedOption) : false
-        const controlLabel = checkedOption?.text || "Yes"
-        const useToggleSwitch = field.useToggleSwitch === true || field.use_toggle_switch === true
-        return (
-          <div key={\`field-\${field.id}\`}>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "minmax(0, 1fr) auto",
-                gap: "12px",
-                alignItems: "center",
-              }}
-            >
-              <Label required={required} styles={{ root: { marginBottom: 0 } }}>
-                {field.label}
-              </Label>
-              <label
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "8px",
-                  cursor: "pointer",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                <input
-                  type="checkbox"
-                  role={useToggleSwitch ? "switch" : undefined}
-                  checked={Boolean(checked)}
-                  onChange={(event) => {
-                    if (event?.target?.checked) {
-                      setDataEntryValue(field.id, _serializeSelectableValue(field, checkedOption))
-                      return
-                    }
-                    if (_resolveFieldEmptyNumericValue(field) !== null) {
-                      setDataEntryValue(field.id, null)
-                      return
-                    }
-                    setDataEntryValue(field.id, uncheckedOption ? _serializeSelectableValue(field, uncheckedOption) : null)
-                  }}
-                  style={useToggleSwitch ? {
-                    appearance: "none",
-                    WebkitAppearance: "none",
-                    width: "34px",
-                    height: "18px",
-                    borderRadius: "999px",
-                    border: \`1px solid \${checked ? "#2563eb" : "#94a3b8"}\`,
-                    background: checked ? "#2563eb" : "#e2e8f0",
-                    boxShadow: \`inset \${checked ? "16px" : "2px"} 0 0 2px #ffffff\`,
-                    transition: "background 120ms ease, box-shadow 120ms ease, border-color 120ms ease",
-                  } : undefined}
-                />
-                <span>{controlLabel}</span>
-              </label>
-            </div>
-          </div>
-        )
-      }
-      return (
-        <div key={\`field-\${field.id}\`}>
-          <Label required={required}>{field.label}</Label>
-          <div style={_LOCAL_RADIO_GROUP_STYLE}>
-            {optionList.map((option) => (
-              <label
-                  key={\`\${field.id}_\${option.key}\`}
-                  style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}
-                >
-                  <input
-                    type="radio"
-                    name={\`subform_boolean_\${field.id}\`}
-                    checked={Boolean(selectedOption && selectedOption.key === option.key)}
-                    onChange={() => setDataEntryValue(field.id, _serializeSelectableValue(field, option))}
-                  />
-                  <span>{option.text}</span>
-                </label>
-              ))}
-          </div>
-        </div>
-      )
-    }
-
-    if (field.type === "textarea") {
-      return (
-        <div key={\`field-\${field.id}\`}>
-          <Label required={required}>{field.label}</Label>
-          <textarea
-            rows={field.rows || 4}
-            placeholder={field.placeholder}
-            value={dataEntryValues[field.id] ?? ""}
-            onChange={(event) => setDataEntryValue(field.id, event?.target?.value ?? "")}
-            style={_LOCAL_TEXTAREA_STYLE(isDarkMode)}
-          />
-        </div>
       )
     }
 
@@ -41604,18 +45644,78 @@ const SubformScoringInner = ({
       )
     }
 
-    return (
-      <div key={\`field-\${field.id}\`}>
-        <Label required={required}>{field.label}</Label>
-        <input
-          type="text"
-          placeholder={field.placeholder}
-          value={dataEntryValues[field.id] ?? ""}
-          onChange={(event) => setDataEntryValue(field.id, event?.target?.value ?? "")}
-          style={_LOCAL_INPUT_STYLE(isDarkMode)}
-        />
-      </div>
-    )
+    // Text, long text, number, date, date-time, time, choice and yes/no.
+    return renderEntryControl(field)
+  }
+
+  // A data-entry question drawn by FieldKit with the MOIS control the
+  // exporter chooses for the same field (FieldKit.fromSubformEntry): a
+  // TextArea, Numeric, DateSelect, DateTimeSelect, TimeSelect, a
+  // SimpleCodeSelect (dropdown) or SimpleCodeChecklist (radio) choice, and a
+  // CompactBooleanField yes/no (its check box for the checkbox render styles;
+  // a yes/no with more than two options is a radio choice, as the exporter
+  // draws it). The answer keeps SubformScoring's stored shapes
+  // (FieldKit.storage.entry): an option's key or { selectedKey, value,
+  // response, detailResponse } (structured options), a coded choice's Coding,
+  // a clamped number, "YYYY-MM-DD", "YYYY-MM-DDTHH:mm" and "HH:mm". Answers
+  // stay in this subform's store: controlled, with no fieldId.
+  const renderEntryControl = (field, overrides = {}) => {
+    const booleanEntry = field.type === "booleanYesNo" ? _booleanEntryOptions(field) : null
+    let descriptor = FieldKit.fromSubformEntry(field)
+    let selectable = []
+    if (booleanEntry && booleanEntry.options.length > 2) {
+      selectable = booleanEntry.options
+      descriptor = {
+        ...descriptor,
+        type: "choice",
+        choiceStyle: "radio",
+        options: selectable.map((option) => ({ key: option.key, label: option.text })),
+      }
+    } else if (booleanEntry) {
+      descriptor = {
+        ...descriptor,
+        booleanLabels: {
+          on: booleanEntry.checkedOption?.text || "Yes",
+          off: booleanEntry.uncheckedOption?.text || "No",
+        },
+      }
+    } else if (descriptor.type === "choice" && !field.codeSystem) {
+      selectable = _normalizeSelectableOptions(field)
+      descriptor = { ...descriptor, options: selectable.map((option) => ({ key: option.key, label: option.text })) }
+    }
+    const storage = FieldKit.storage.entry(descriptor, {
+      options: selectable,
+      serialize: (option) => _serializeSelectableValue(field, option),
+      isSelected: _isSelectableOptionSelected,
+      checkedOption: booleanEntry?.checkedOption || null,
+      uncheckedOption: booleanEntry?.uncheckedOption || null,
+      // A check box left unticked stores the unchecked option only when the
+      // field has one and no empty value (as the native check box did).
+      falseIsEmpty: Boolean(booleanEntry) && descriptor.presentation === "checkbox" &&
+        (_resolveFieldEmptyNumericValue(field) !== null || !booleanEntry.strictUncheckedOption),
+      coerceNumber: field.type === "number"
+        ? (text) => {
+            const raw = String(text ?? "").trim()
+            if (!raw) return null
+            const parsed = Number(raw)
+            return Number.isFinite(parsed) ? _clampDataEntryNumberValue(parsed, field) : raw
+          }
+        : undefined,
+    })
+    return FieldKit.renderControl(descriptor, {
+      key: \`field-\${field.id}\`,
+      value: dataEntryValues[field.id],
+      onChange: (stored) => setDataEntryValue(field.id, stored),
+      storage,
+      label: field.label,
+      labelPosition: "top",
+      required: field.required === true,
+      readOnly: isReadOnly,
+      placeholder: field.placeholder || undefined,
+      // Fill the field's cell (the default "medium" caps at 320px).
+      size: field.size || { minWidth: 120, flex: "1 1 0px" },
+      ...overrides,
+    })
   }
 
   const renderDataEntryScaleStack = (group) => {
@@ -41726,35 +45826,35 @@ const SubformScoringInner = ({
               ) : null}
             </div>
 
-            {options.map((option) => {
-              const checked = _isScaleChoiceSelected(dataEntryValues[field.id], option)
-              return (
-                <label
-                  key={\`matrix-option-\${field.id}-\${option.value}\`}
-                  style={{
-                    display: "flex",
-                    justifyContent: "center",
-                    alignItems: "center",
-                    cursor: "pointer",
-                    minHeight: "34px",
-                  }}
-                >
-                  <input
-                    type="radio"
-                    name={\`subform_matrix_\${field.id}\`}
-                    checked={checked}
-                    onChange={() =>
-                      setDataEntryValue(field.id, {
-                        selectedKey: String(option.value),
-                        value: option.value,
-                        response: option.label || String(option.value),
-                        detailResponse: option.description || option.label || String(option.value),
-                      })
-                    }
-                  />
-                </label>
-              )
-            })}
+            {/* The row's answer is the exporter's scale control (ScaleField
+                through FieldKit), its options spread under the header's
+                columns; it stores { selectedKey, value, response,
+                detailResponse } as the matrix always did. */}
+            <div style={{ gridColumn: \`2 / span \${options.length}\`, minWidth: 0 }}>
+              {FieldKit.renderControl(
+                {
+                  id: field.id,
+                  type: "scale",
+                  label: field.label,
+                  required: field.required === true,
+                  scaleConfig: {
+                    options: options.map((option) => ({
+                      value: option.value,
+                      label: option.label || String(option.value),
+                      description: option.description,
+                    })),
+                    showInlineLabels: false,
+                    disableHorizontalScroll: true,
+                  },
+                },
+                {
+                  value: dataEntryValues[field.id] ?? null,
+                  onChange: (answer) => setDataEntryValue(field.id, answer),
+                  labelPosition: "none",
+                  readOnly: isReadOnly,
+                }
+              )}
+            </div>
           </div>
         ))}
       </div>
@@ -41822,8 +45922,6 @@ const SubformScoringInner = ({
         {rows.map((row, index) => {
           const field = dataEntryFieldById.get(row.inputFieldId)
           const inputType = field?.type === "text" ? "text" : "number"
-          const rawValue = dataEntryValues[row.inputFieldId]
-          const displayValue = rawValue === null || rawValue === undefined ? "" : String(rawValue)
           const meqValue = rowValues[index]
           const meqDisplay = _formatCalculatorDisplayValue(meqValue, row.precision, "-")
 
@@ -41844,37 +45942,10 @@ const SubformScoringInner = ({
               <Text styles={{ root: { fontSize: "16px", fontWeight: 500 } }}>
                 {row.label}:
               </Text>
-              <input
-                type={inputType}
-                inputMode="decimal"
-                step="any"
-                value={displayValue}
-                placeholder={inputType === "number" ? "0" : ""}
-                onChange={(event) => {
-                  const nextRaw = event?.target?.value ?? ""
-                  if (!nextRaw) {
-                    setDataEntryValue(row.inputFieldId, null)
-                    return
-                  }
-                  if (inputType === "number") {
-                    const parsed = Number(nextRaw)
-                    setDataEntryValue(row.inputFieldId, Number.isFinite(parsed) ? parsed : nextRaw)
-                    return
-                  }
-                  setDataEntryValue(row.inputFieldId, nextRaw)
-                }}
-                style={{
-                  width: "100%",
-                  maxWidth: "140px",
-                  height: "34px",
-                  borderRadius: "2px",
-                  border: \`1px solid \${isDarkMode ? "#5a5a5a" : "#b8b8b8"}\`,
-                  backgroundColor: isDarkMode ? "#1a1a1a" : "#fff",
-                  color: isDarkMode ? "#fff" : "#111",
-                  padding: "4px 8px",
-                  fontSize: "15px"
-                }}
-              />
+              {renderEntryControl(
+                { ...(field || {}), id: row.inputFieldId, type: inputType, label: field?.label || row.label },
+                { labelPosition: "none", inline: true, placeholder: inputType === "number" ? "0" : undefined, size: { maxWidth: 140 } }
+              )}
               <Text styles={{ root: { fontSize: "20px", fontWeight: 500 } }}>
                 {_formatCalculatorDisplayValue(row.equivalentDoseMg, 2, "-")}
               </Text>
@@ -41914,33 +45985,9 @@ const SubformScoringInner = ({
     const dateField = dataEntryFieldById.get("Date") || { id: "Date", label: "Select reading date" }
     const commentsField = dataEntryFieldById.get("Comments") || { id: "Comments", label: "Comments", rows: 3 }
     const fieldExists = (fieldId) => dataEntryFieldById.has(fieldId)
-    const renderNumberInput = (fieldId) => (
-      <input
-        id={fieldId}
-        type="number"
-        inputMode="decimal"
-        step="any"
-        value={dataEntryValues[fieldId] === null || dataEntryValues[fieldId] === undefined ? "" : String(dataEntryValues[fieldId])}
-        onChange={(event) => {
-          const nextRaw = event?.target?.value ?? ""
-          if (!nextRaw) {
-            setDataEntryValue(fieldId, null)
-            return
-          }
-          const parsed = Number(nextRaw)
-          setDataEntryValue(fieldId, Number.isFinite(parsed) ? parsed : nextRaw)
-        }}
-        style={{
-          width: "100%",
-          minWidth: "0",
-          border: \`1px solid \${isDarkMode ? "#5a5a5a" : "#b8b8b8"}\`,
-          backgroundColor: isDarkMode ? "#1a1a1a" : "#fff",
-          color: isDarkMode ? "#fff" : "#111",
-          padding: "4px 6px",
-          fontSize: "14px",
-          textAlign: "center",
-        }}
-      />
+    const renderNumberInput = (fieldId) => renderEntryControl(
+      { ...(dataEntryFieldById.get(fieldId) || {}), id: fieldId, type: "number", label: dataEntryFieldById.get(fieldId)?.label || fieldId },
+      { labelPosition: "none", inline: true, size: { minWidth: 0 } }
     )
 
     return (
@@ -41950,14 +45997,9 @@ const SubformScoringInner = ({
             data-field-id={dateField.id}
             style={{ breakInside: "avoid", margin: "0 10px", flex: "2 2 0", minWidth: 80, maxWidth: 180 }}
           >
-            <Label required={dateField.required === true}>{dateField.label || "Select reading date"}</Label>
-            {/* Standardized Fluent date picker; stores ISO dashes like the
-                native input it replaced (DateSelect emits YYYY.MM.DD). */}
-            <DateSelect
-              inline
-              value={dataEntryValues[dateField.id] ?? ""}
-              onChange={(value) => setDataEntryValue(dateField.id, (value ?? "").replace(/\\./g, "-"))}
-            />
+            {/* DateSelect through FieldKit: stores "YYYY-MM-DD" whether the
+                control reports a Date (engine) or dotted text (preview). */}
+            {renderEntryControl({ ...dateField, type: "date", label: dateField.label || "Select reading date" })}
           </div>
 
           <Toggle
@@ -42003,14 +46045,7 @@ const SubformScoringInner = ({
           </table>
 
           <div data-field-id={commentsField.id} style={{ breakInside: "avoid", margin: "0 10px", maxWidth: 360 }}>
-            <Label>{commentsField.label || "Comments"}</Label>
-            <textarea
-              id={commentsField.id}
-              rows={commentsField.rows || 3}
-              value={dataEntryValues[commentsField.id] ?? ""}
-              onChange={(event) => setDataEntryValue(commentsField.id, event?.target?.value ?? "")}
-              style={_LOCAL_TEXTAREA_STYLE(isDarkMode)}
-            />
+            {renderEntryControl({ ...commentsField, type: "textarea", label: commentsField.label || "Comments", rows: commentsField.rows || 3 })}
           </div>
         </Stack>
       </div>
@@ -42195,20 +46230,105 @@ const SubformScoringInner = ({
     configuredDialogMinWidth,
     widestScaleMinWidth > 0 ? widestScaleMinWidth + 48 : 0
   )
-  const dialogMinWidth = \`min(\${desiredDialogMinWidth}px, calc(100vw - 48px))\`
   const showCalculationsInModal =
     Boolean(modalConfig.showCalculationsInModal) ||
     Boolean(modalConfig.show_calculations_in_modal)
 
-  const dialogContentProps = {
-    type: DialogType.largeHeader,
-    title: dialogTitle,
-    closeButtonAriaLabel: "Close",
+  const handleSecondaryComplete = () => {
+    if (isReadOnly) return
+    const shouldClose = onSecondaryComplete({
+      mode: isDataEntryMode ? "data-entry" : "scoring",
+      dataEntryValues,
+      calculatedExpressions,
+      progress,
+      answers,
+      calculatedTotals,
+    })
+    if (shouldClose !== false) {
+      if (blockOnMissingRequired()) return
+      onCommitToParent?.(prepareCompletionState())
+      setDialogOpen(false)
+    }
   }
 
-  const modalProps = {
-    isBlocking: false,
+  const handleComplete = async () => {
+    if (isReadOnly) return
+    const shouldClose = onComplete?.({
+      mode: isDataEntryMode ? "data-entry" : "scoring",
+      dataEntryValues,
+      calculatedExpressions,
+      progress,
+      answers,
+      calculatedTotals,
+    })
+    if (shouldClose !== false) {
+      // A host that keeps the dialog open (onComplete returning
+      // false, e.g. EditableTable's row editor) runs its own
+      // validation and reports it through errorMessage.
+      if (blockOnMissingRequired()) return
+      let actionPayload = null
+      if (isDataEntryMode && dataEntryAction) {
+        const writeDefinition = MOIS_WRITE_MUTATIONS[dataEntryAction.writeKey]
+        const runMutation = writeMutationRunners[dataEntryAction.writeKey]
+        const resolvedId = _resolveWriteActionId(
+          writeDefinition.idVariable,
+          dataEntryAction,
+          { sd, fd, sourceData: sd, formData: fd?.field?.data, patient: sd?.patient }
+        )
+        let payload = _buildMappedPayload(dataEntryValues, dataEntryAction)
+        if (writeDefinition.recordShape) {
+          const contextRoot = { sd, fd, sourceData: sd, formData: fd?.field?.data, patient: sd?.patient }
+          const shaped = _applyMoisRecordShape(payload, writeDefinition.recordShape, {
+            patient: sd?.patient,
+            patientId: resolvedId,
+            encounterId: _resolveWriteActionId("encounterId", null, contextRoot),
+            userId: _resolveWriteActionId("userId", null, contextRoot),
+            today: _moisLocalToday(),
+          })
+          if (shaped.error) {
+            // Refuse rather than send a partial record: the modal stays
+            // open and the reason is recorded for the DebugView.
+            _recordSubformActionPayload(fd?.setFormData, id, {
+              kind: "moisMutation",
+              resource: dataEntryAction.resource,
+              mutation: dataEntryAction.mutation,
+              error: shaped.error,
+            })
+            return
+          }
+          payload = shaped.record
+        }
+        const variables = writeDefinition.buildVariables(resolvedId, payload)
+        actionPayload = {
+          kind: "moisMutation",
+          resource: dataEntryAction.resource,
+          mutation: dataEntryAction.mutation,
+          ...variables,
+        }
+        // When the id is folded into the payload there is no id
+        // variable to inspect, so check the resolved id instead.
+        const hasRequiredId =
+          writeDefinition.requiresId === false ||
+          (writeDefinition.injectContextIdInto
+            ? Boolean(resolvedId)
+            : Boolean(variables[writeDefinition.idVariable]))
+        if (runMutation && hasRequiredId && Object.keys(payload).length > 0) {
+          try {
+            await runMutation(variables)
+          } catch (error) {
+            _recordSubformActionPayload(fd?.setFormData, id, {
+              ...actionPayload,
+              error: error?.message || String(error),
+            })
+            return
+          }
+        }
+      }
+      onCommitToParent?.(prepareCompletionState(actionPayload))
+      setDialogOpen(false)
+    }
   }
+
   const normalizedButtonIconName = String(buttonIconName ?? "").trim()
   const shouldUseDefaultButtonIcon = normalizedButtonIconName.length === 0
   const shouldHideButtonIcon = normalizedButtonIconName.toLowerCase() === "none"
@@ -42250,22 +46370,26 @@ const SubformScoringInner = ({
         </div>
       )}
 
-      <Dialog
+      {/* DialogKit's RowDialog on the MOIS SubForm: blocking, so a click
+          outside no longer closes it (and discards the session); the close
+          button, Escape and Cancel ask before discarding changed answers.
+          Read-only disables the body (a disabled fieldset) and Done. */}
+      <DialogKit.RowDialog
         hidden={!isDialogOpen}
-        onDismiss={() => setDialogOpen(false)}
-        dialogContentProps={dialogContentProps}
-        modalProps={modalProps}
-        minWidth={dialogMinWidth}
+        title={dialogTitle}
+        width={desiredDialogMinWidth}
+        onSave={handleComplete}
+        onCancel={() => setDialogOpen(false)}
+        saveText={completeButtonText}
+        cancelText={cancelButtonText}
+        extraActions={typeof onSecondaryComplete === "function"
+          ? [{ text: secondaryCompleteButtonText || "Save & Add Next", onClick: handleSecondaryComplete }]
+          : []}
+        errorMessage={dialogErrorMessage || undefined}
+        readOnly={isReadOnly}
+        dirty={isDialogDirty}
+        confirmDiscard
       >
-        {/* A disabled fieldset is the platform-level guarantee that every
-            native control inside (inputs, radios, selects, pickers' buttons)
-            is inert while locked — the same technique the exporter uses for
-            read-only archetype fields. Cancel stays outside it. */}
-        <fieldset
-          disabled={isReadOnly}
-          data-subform-readonly={isReadOnly ? "true" : undefined}
-          style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}
-        >
         {isDataEntryMode ? (
           <div style={{ maxHeight: "65vh", overflowY: "auto", paddingRight: "4px" }}>
             {useBloodGlucoseReadingLayout ? (
@@ -42392,124 +46516,7 @@ const SubformScoringInner = ({
             />
           </div>
         )}
-        </fieldset>
-        {dialogErrorMessage ? (
-          <div
-            role="alert"
-            data-subform-error=""
-            style={{ marginTop: "12px", fontSize: "13px", color: isDarkMode ? "#ffb3b3" : "#b42318" }}
-          >
-            {dialogErrorMessage}
-          </div>
-        ) : null}
-        <div style={{ height: "16px" }} />
-        <Stack horizontal horizontalAlign="end" tokens={{ childrenGap: 8 }}>
-          {typeof onSecondaryComplete === "function" ? (
-            <DefaultButton
-              text={secondaryCompleteButtonText || "Save & Add Next"}
-              disabled={isReadOnly}
-              onClick={() => {
-                if (isReadOnly) return
-                const shouldClose = onSecondaryComplete({
-                  mode: isDataEntryMode ? "data-entry" : "scoring",
-                  dataEntryValues,
-                  calculatedExpressions,
-                  progress,
-                  answers,
-                  calculatedTotals,
-                })
-                if (shouldClose !== false) {
-                  if (blockOnMissingRequired()) return
-                  onCommitToParent?.(prepareCompletionState())
-                  setDialogOpen(false)
-                }
-              }}
-            />
-          ) : null}
-          <PrimaryButton
-            text={completeButtonText}
-            disabled={isReadOnly}
-            onClick={async () => {
-              if (isReadOnly) return
-              const shouldClose = onComplete?.({
-                mode: isDataEntryMode ? "data-entry" : "scoring",
-                dataEntryValues,
-                calculatedExpressions,
-                progress,
-                answers,
-                calculatedTotals,
-              })
-              if (shouldClose !== false) {
-                // A host that keeps the dialog open (onComplete returning
-                // false, e.g. EditableTable's row editor) runs its own
-                // validation and reports it through errorMessage.
-                if (blockOnMissingRequired()) return
-                let actionPayload = null
-                if (isDataEntryMode && dataEntryAction) {
-                  const writeDefinition = MOIS_WRITE_MUTATIONS[dataEntryAction.writeKey]
-                  const runMutation = writeMutationRunners[dataEntryAction.writeKey]
-                  const resolvedId = _resolveWriteActionId(
-                    writeDefinition.idVariable,
-                    dataEntryAction,
-                    { sd, fd, sourceData: sd, formData: fd?.field?.data, patient: sd?.patient }
-                  )
-                  let payload = _buildMappedPayload(dataEntryValues, dataEntryAction)
-                  if (writeDefinition.recordShape) {
-                    const contextRoot = { sd, fd, sourceData: sd, formData: fd?.field?.data, patient: sd?.patient }
-                    const shaped = _applyMoisRecordShape(payload, writeDefinition.recordShape, {
-                      patient: sd?.patient,
-                      patientId: resolvedId,
-                      encounterId: _resolveWriteActionId("encounterId", null, contextRoot),
-                      userId: _resolveWriteActionId("userId", null, contextRoot),
-                      today: _moisLocalToday(),
-                    })
-                    if (shaped.error) {
-                      // Refuse rather than send a partial record: the modal stays
-                      // open and the reason is recorded for the DebugView.
-                      _recordSubformActionPayload(fd?.setFormData, id, {
-                        kind: "moisMutation",
-                        resource: dataEntryAction.resource,
-                        mutation: dataEntryAction.mutation,
-                        error: shaped.error,
-                      })
-                      return
-                    }
-                    payload = shaped.record
-                  }
-                  const variables = writeDefinition.buildVariables(resolvedId, payload)
-                  actionPayload = {
-                    kind: "moisMutation",
-                    resource: dataEntryAction.resource,
-                    mutation: dataEntryAction.mutation,
-                    ...variables,
-                  }
-                  // When the id is folded into the payload there is no id
-                  // variable to inspect, so check the resolved id instead.
-                  const hasRequiredId =
-                    writeDefinition.requiresId === false ||
-                    (writeDefinition.injectContextIdInto
-                      ? Boolean(resolvedId)
-                      : Boolean(variables[writeDefinition.idVariable]))
-                  if (runMutation && hasRequiredId && Object.keys(payload).length > 0) {
-                    try {
-                      await runMutation(variables)
-                    } catch (error) {
-                      _recordSubformActionPayload(fd?.setFormData, id, {
-                        ...actionPayload,
-                        error: error?.message || String(error),
-                      })
-                      return
-                    }
-                  }
-                }
-                onCommitToParent?.(prepareCompletionState(actionPayload))
-                setDialogOpen(false)
-              }
-            }}
-          />
-          <DefaultButton text={cancelButtonText} onClick={() => setDialogOpen(false)} />
-        </Stack>
-      </Dialog>
+      </DialogKit.RowDialog>
     </div>
   )
 }
@@ -42948,7 +46955,9 @@ const SubformScoring = (props) => {
 })();
 
 const { useEffect, useMemo, useRef, useState } = React
-const { Stack, Text, DefaultButton, PrimaryButton, Dialog, DialogType } = Fluent
+// The save/discard prompt is DialogKit's ConfirmDialog (referenced only inside
+// function bodies).
+const { Stack, Text, DefaultButton, PrimaryButton } = Fluent
 
 // Real MOIS registers unsaved-changes state with the host via
 // MoisHooks.useConfirmUnload(enabled): in Electron the host intercepts window
@@ -43505,24 +47514,23 @@ const UnsavedChangesGuard = ({
           </div>
         </div>
       ) : null}
-      <Dialog
+      {/* DialogKit's ConfirmDialog (the MOIS SubForm): the primary action,
+          then the others; the close button and Escape cancel. */}
+      <DialogKit.ConfirmDialog
         hidden={!isOpen}
-        onDismiss={() => setIsOpen(false)}
-        dialogContentProps={{
-          type: DialogType.normal,
-          title: promptTitle,
-          subText: promptText,
-        }}
-      >
-        <Stack horizontal horizontalAlign="end" tokens={{ childrenGap: 8 }}>
-          {primaryAction ? (
-            <PrimaryButton text={primaryAction.label} onClick={() => handleAction(primaryAction.id)} />
-          ) : null}
-          {secondaryActions.map((action) => (
-            <DefaultButton key={action.id} text={action.label} onClick={() => handleAction(action.id)} />
-          ))}
-        </Stack>
-      </Dialog>
+        title={promptTitle}
+        message={promptText}
+        confirmText={primaryAction?.label}
+        onConfirm={() => primaryAction && handleAction(primaryAction.id)}
+        confirmDisabled={!primaryAction}
+        extraActions={secondaryActions.map((action) => ({
+          key: action.id,
+          text: action.label,
+          onClick: () => handleAction(action.id),
+        }))}
+        showCancel={false}
+        onCancel={() => setIsOpen(false)}
+      />
     </Stack>
   )
 }
@@ -43608,6 +47616,242 @@ const useChangeWatch = (watchedValue, options = 3) => {
 
   return [dirtyRef.current, setChanged]
 }
+`,
+  './ValueKit/index.jsx': `// ValueKit — reads option definitions and stored answers in every saved shape:
+// normalizeOption, readBoolean, readChoice and readDate. Non-rendering helper
+// module in the FormulaKit pattern: one namespace object, so consumers keep a
+// single bare identifier in engine scope and reference it only inside function
+// bodies (component files load in no guaranteed order).
+//
+// Generated by scripts/generate-value-kit.mjs from packages/form-model/src/values.ts.
+// Do not edit: change values.ts and run \`pnpm generate:nhforms\`. The shared
+// case table (values.cases.ts) holds both implementations to the same results.
+
+const ValueKit = (() => {
+  function isRecord(value) {
+    return value !== null && typeof value === "object" && !Array.isArray(value) && !(value instanceof Date);
+  }
+  function scalarText(value) {
+    if (typeof value === "string") return value.trim() ? value : void 0;
+    if (typeof value === "number") return Number.isFinite(value) ? String(value) : void 0;
+    if (typeof value === "boolean") return String(value);
+    return void 0;
+  }
+  function firstText(record, keys) {
+    for (const key of keys) {
+      const text = scalarText(record[key]);
+      if (text !== void 0) return text;
+    }
+    return void 0;
+  }
+  function finiteNumber(value) {
+    if (typeof value === "number") return Number.isFinite(value) ? value : void 0;
+    if (typeof value === "string" && value.trim()) {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : void 0;
+    }
+    return void 0;
+  }
+  var FHIR_SCORE_EXTENSION = /\\/(ordinalValue|itemWeight)$/;
+  function fhirExtensionScore(extensions) {
+    if (!Array.isArray(extensions)) return void 0;
+    for (const extension of extensions) {
+      if (!isRecord(extension) || typeof extension.url !== "string" || !FHIR_SCORE_EXTENSION.test(extension.url)) continue;
+      const score = finiteNumber(extension.valueDecimal ?? extension.valueInteger);
+      if (score !== void 0) return score;
+    }
+    return void 0;
+  }
+  var FHIR_ANSWER_KEYS = ["valueCoding", "valueString", "valueInteger", "valueDecimal", "valueDate", "valueTime"];
+  function fhirAnswerValue(record) {
+    for (const key of FHIR_ANSWER_KEYS) {
+      if (record[key] !== void 0 && record[key] !== null) return record[key];
+    }
+    return void 0;
+  }
+  var OPTION_CODE_KEYS = ["value", "code", "key", "id", "state"];
+  var ORDINAL_OPTION_CODE_KEYS = ["code", "key", "id", "state", "value"];
+  var OPTION_DISPLAY_KEYS = ["label", "display", "text"];
+  function withOptional(option, system, score) {
+    if (system !== void 0) option.system = system;
+    if (score !== void 0) option.score = score;
+    return option;
+  }
+  function normalizeOption(raw) {
+    if (raw === null || raw === void 0) return { code: "", display: "" };
+    if (!isRecord(raw)) {
+      const text = scalarText(raw) ?? "";
+      return { code: text, display: text };
+    }
+    const fhirValue = fhirAnswerValue(raw);
+    if (fhirValue !== void 0 && raw.value === void 0 && raw.code === void 0 && raw.label === void 0) {
+      const inner = normalizeOption(fhirValue);
+      return withOptional({ code: inner.code, display: inner.display }, inner.system, inner.score ?? fhirExtensionScore(raw.extension));
+    }
+    const ordinal = typeof raw.value === "number" && Number.isFinite(raw.value) ? raw.value : void 0;
+    const code = firstText(raw, ordinal === void 0 ? OPTION_CODE_KEYS : ORDINAL_OPTION_CODE_KEYS);
+    const display = firstText(raw, OPTION_DISPLAY_KEYS);
+    return withOptional(
+      { code: code ?? display ?? "", display: display ?? code ?? "" },
+      scalarText(raw.system),
+      finiteNumber(raw.score) ?? ordinal
+    );
+  }
+  var BOOLEAN_TRUE_TEXT = ["true", "t", "yes", "y", "on", "1", "checked", "selected", "x"];
+  var BOOLEAN_FALSE_TEXT = ["false", "f", "no", "n", "off", "0", "unchecked", "unselected"];
+  var BOOLEAN_OBJECT_KEYS = ["code", "selectedKey", "value", "key", "display", "response", "text", "label"];
+  function normalizedLabel(value) {
+    return typeof value === "string" ? value.trim().toLowerCase() : "";
+  }
+  function readBoolean(value, labels) {
+    if (value === true || value === false) return value;
+    if (value === null || value === void 0) return null;
+    if (typeof value === "number") return value === 1 ? true : value === 0 ? false : null;
+    if (typeof value === "string") {
+      const text = value.trim().toLowerCase();
+      if (!text) return null;
+      const on = normalizedLabel(labels?.on);
+      const off = normalizedLabel(labels?.off);
+      if (on && text === on) return true;
+      if (off && text === off) return false;
+      if (BOOLEAN_TRUE_TEXT.includes(text)) return true;
+      if (BOOLEAN_FALSE_TEXT.includes(text)) return false;
+      return null;
+    }
+    if (Array.isArray(value)) return value.length === 1 ? readBoolean(value[0], labels) : null;
+    if (isRecord(value)) {
+      for (const key of BOOLEAN_OBJECT_KEYS) {
+        const result = readBoolean(value[key], labels);
+        if (result !== null) return result;
+      }
+    }
+    return null;
+  }
+  var CHOICE_CODE_KEYS = ["code", "value", "key", "id"];
+  var CHOICE_DISPLAY_KEYS = ["display", "response", "label", "text"];
+  function choiceValue(code, display, system) {
+    const entry = { code };
+    if (display !== void 0) entry.display = display;
+    if (system !== void 0) entry.system = system;
+    return entry;
+  }
+  function readChoiceEntries(value) {
+    if (value === null || value === void 0) return [];
+    if (Array.isArray(value)) return value.flatMap(readChoiceEntries);
+    if (!isRecord(value)) {
+      const code2 = scalarText(value);
+      return code2 === void 0 ? [] : [{ code: code2 }];
+    }
+    if (Array.isArray(value.coding)) return readChoiceEntries(value.coding[0]);
+    if (isRecord(value.valueCoding)) return readChoiceEntries(value.valueCoding);
+    if (Array.isArray(value.selectedItems)) return value.selectedItems.flatMap(readChoiceEntries);
+    if ("selectedItem" in value) return readChoiceEntries(value.selectedItem);
+    if ("selectedKey" in value) {
+      const code2 = scalarText(value.selectedKey);
+      if (code2 === void 0) return [];
+      return [choiceValue(code2, firstText(value, ["response", "display", "text", "label"]), scalarText(value.system))];
+    }
+    if (Array.isArray(value.selectedIds) || Array.isArray(value.selectedLabels)) {
+      const ids = Array.isArray(value.selectedIds) ? value.selectedIds : [];
+      const labels = Array.isArray(value.selectedLabels) ? value.selectedLabels : [];
+      const entries = [];
+      for (let index = 0; index < Math.max(ids.length, labels.length); index += 1) {
+        const label = scalarText(labels[index]);
+        const code2 = scalarText(ids[index]) ?? label;
+        if (code2 !== void 0) entries.push(choiceValue(code2, label, void 0));
+      }
+      return entries;
+    }
+    if (value.value !== null && typeof value.value === "object") return readChoiceEntries(value.value);
+    const display = firstText(value, CHOICE_DISPLAY_KEYS);
+    const code = firstText(value, CHOICE_CODE_KEYS) ?? display;
+    return code === void 0 ? [] : [choiceValue(code, display, scalarText(value.system))];
+  }
+  function sameText(left, right) {
+    return left !== void 0 && right !== void 0 && left.trim().toLowerCase() === right.trim().toLowerCase();
+  }
+  function resolveAgainstOptions(entry, options) {
+    const match = options.find((option) => option.code === entry.code) ?? options.find((option) => sameText(option.code, entry.code)) ?? options.find((option) => sameText(option.display, entry.code) || sameText(option.display, entry.display));
+    if (!match) return entry;
+    return choiceValue(match.code, match.display, entry.system ?? match.system);
+  }
+  function readChoice(value, options) {
+    const entries = readChoiceEntries(value);
+    if (!Array.isArray(options) || options.length === 0 || entries.length === 0) return entries;
+    const normalized = options.map(normalizeOption).filter((option) => option.code !== "" || option.display !== "");
+    return entries.map((entry) => resolveAgainstOptions(entry, normalized));
+  }
+  var DATE_FORMATS = [
+    { pattern: /^(\\d{4})-(\\d{1,2})-(\\d{1,2})/, order: [1, 2, 3] },
+    // yyyy-MM-dd
+    { pattern: /^(\\d{4})\\.(\\d{1,2})\\.(\\d{1,2})/, order: [1, 2, 3] },
+    // yyyy.MM.dd (DateSelect default)
+    { pattern: /^(\\d{4})\\/(\\d{1,2})\\/(\\d{1,2})/, order: [1, 2, 3] },
+    // yyyy/MM/dd
+    { pattern: /^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})/, order: [3, 2, 1] },
+    // dd/MM/yyyy
+    { pattern: /^(\\d{1,2})-(\\d{1,2})-(\\d{4})/, order: [3, 1, 2] }
+    // MM-dd-yyyy
+  ];
+  var TIME_SUFFIX = /^(?:[T ]|\\s+)(\\d{1,2}):(\\d{2})(?::(\\d{2})(?:\\.(\\d{1,9}))?)?\\s*(Z|[+-]\\d{2}:?\\d{2})?$/i;
+  function parseDateText(text) {
+    const trimmed = text.trim();
+    for (const format of DATE_FORMATS) {
+      const match = format.pattern.exec(trimmed);
+      if (!match) continue;
+      const [year, month, day] = format.order.map((index) => Number(match[index]));
+      const midnight = new Date(year, month - 1, day);
+      if (midnight.getFullYear() !== year || midnight.getMonth() !== month - 1 || midnight.getDate() !== day) return null;
+      const rest = trimmed.slice(match[0].length);
+      if (rest === "") return { date: midnight, dateOnly: true };
+      const time = TIME_SUFFIX.exec(rest);
+      if (!time) return null;
+      const hours = Number(time[1]);
+      const minutes = Number(time[2]);
+      const seconds = time[3] ? Number(time[3]) : 0;
+      const millis = time[4] ? Number(time[4].slice(0, 3).padEnd(3, "0")) : 0;
+      if (hours > 23 || minutes > 59 || seconds > 59) return null;
+      if (!time[5]) return { date: new Date(year, month - 1, day, hours, minutes, seconds, millis), dateOnly: false };
+      const zone = time[5].toUpperCase();
+      let offsetMinutes = 0;
+      if (zone !== "Z") {
+        const digits = zone.replace(":", "");
+        offsetMinutes = (Number(digits.slice(1, 3)) * 60 + Number(digits.slice(3, 5))) * (digits[0] === "-" ? -1 : 1);
+      }
+      return { date: new Date(Date.UTC(year, month - 1, day, hours, minutes, seconds, millis) - offsetMinutes * 6e4), dateOnly: false };
+    }
+    return null;
+  }
+  var DATE_OBJECT_KEYS = ["value", "date", "text", "display"];
+  function readDateTime(value) {
+    if (value === null || value === void 0 || value === "") return null;
+    if (value instanceof Date) return Number.isFinite(value.getTime()) ? { date: new Date(value.getTime()), dateOnly: false } : null;
+    if (typeof value === "number") {
+      if (!Number.isFinite(value)) return null;
+      const date = new Date(value);
+      return Number.isFinite(date.getTime()) ? { date, dateOnly: false } : null;
+    }
+    if (typeof value === "string") return value.trim() ? parseDateText(value) : null;
+    if (isRecord(value)) {
+      for (const key of DATE_OBJECT_KEYS) {
+        const date = readDateTime(value[key]);
+        if (date) return date;
+      }
+    }
+    return null;
+  }
+  function readDate(value) {
+    return readDateTime(value)?.date ?? null;
+  }
+
+  return {
+    normalizeOption,
+    readBoolean,
+    readChoice,
+    readDate,
+    readDateTime,
+  }
+})()
 `,
   './ValueSetObservationField/index.jsx': `// Legacy preset: CodedObservationChoiceField is a strict superset of this
 // component (see lib/coded-choice-field-migration.ts and the component-field
@@ -47160,7 +51404,11 @@ export const componentIdentities: Record<string, any> = {
       "major": 2,
       "minor": 28,
       "patch": 5
-    }
+    },
+    "components": [
+      "DialogKit",
+      "FieldKit"
+    ]
   },
   'AliasIdList': {
     "name": "AliasIdList",
@@ -47378,6 +51626,7 @@ export const componentIdentities: Record<string, any> = {
     },
     "components": [
       "ChartRecordTable",
+      "DialogKit",
       "SubformScoring"
     ]
   },
@@ -47551,7 +51800,8 @@ export const componentIdentities: Record<string, any> = {
       "patch": 12
     },
     "components": [
-      "CompactBooleanField"
+      "CompactBooleanField",
+      "FormLogicKit"
     ]
   },
   'Conditions': {
@@ -47655,6 +51905,32 @@ export const componentIdentities: Record<string, any> = {
       "patch": 5
     }
   },
+  'DefaultsKit': {
+    "name": "DefaultsKit",
+    "title": "Default answer helper kit",
+    "description": "Non-rendering helper module generated from @webforms/form-model defaults.ts: readDefaultAnswer reads a field's, table column's, layout cell's or subform entry's default answer in every saved shape (defaultAnswer, prefill, dateConfig.prefillToday, __today/__now, defaultFromObservation, the clock source binding, a field cell's defaultValue) and resolveDefaultAnswer turns it into the value to seed (fixed value, today, now, chart value, latest observation).",
+    "version": {
+      "major": 1,
+      "minor": 0,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "Northern Health",
+    "author": "Claude",
+    "publisher": "Northern Health",
+    "globalIdentifier": "",
+    "requiredFormViewerVersion": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "requiredMoisVersion": {
+      "major": 2,
+      "minor": 28,
+      "patch": 10
+    },
+    "components": []
+  },
   'DentalWeightConverter': {
     "name": "DentalWeightConverter",
     "title": "Dental Weight Converter",
@@ -47681,6 +51957,32 @@ export const componentIdentities: Record<string, any> = {
     },
     "components": []
   },
+  'DialogKit': {
+    "name": "DialogKit",
+    "title": "Dialog kit",
+    "description": "Rendering helper module: one row dialog (RowDialog) and one confirmation (ConfirmDialog) built on the MOIS SubForm — blocking, titled by the label, one width rule min(<width>px, calc(100vw - 48px)), button-bar footer, error area, optional discard-changes confirmation, lock policy and read-only — plus the width rule for viewer dialogs.",
+    "version": {
+      "major": 1,
+      "minor": 0,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "Northern Health",
+    "author": "Claude",
+    "publisher": "Northern Health",
+    "globalIdentifier": "",
+    "requiredFormViewerVersion": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "requiredMoisVersion": {
+      "major": 2,
+      "minor": 28,
+      "patch": 10
+    },
+    "components": []
+  },
   'DocumentSignButton': {
     "name": "DocumentSignButton",
     "title": "Document signature",
@@ -47692,7 +51994,9 @@ export const componentIdentities: Record<string, any> = {
     },
     "type": "component",
     "owner": "MOIS Exporter",
-    "components": []
+    "components": [
+      "DialogKit"
+    ]
   },
   'EditableTable': {
     "name": "EditableTable",
@@ -47719,9 +52023,13 @@ export const componentIdentities: Record<string, any> = {
       "patch": 12
     },
     "components": [
+      "DefaultsKit",
+      "DialogKit",
+      "FieldKit",
       "FormLogicKit",
       "FormulaKit",
-      "SubformScoring"
+      "SubformScoring",
+      "ValueKit"
     ]
   },
   'EducationHistory': {
@@ -47773,6 +52081,37 @@ export const componentIdentities: Record<string, any> = {
       "minor": 26,
       "patch": 12
     }
+  },
+  'FieldKit': {
+    "name": "FieldKit",
+    "title": "Field control kit",
+    "description": "Rendering helper module: draws a builder-field-shaped question with the MOIS control the exporter chooses (TextArea, Numeric, DateSelect, DateTimeSelect, TimeSelect, SimpleCodeSelect, SimpleCodeChecklist, FindCodeSelect, CompactBooleanField, ScaleField), always passing label, required and read-only, bound to a field or controlled through a per-container storage adapter. Used by EditableTable, RepeatForEachTable, SubformScoring, PanelEntryGrid and ActionButtonGroup.",
+    "version": {
+      "major": 1,
+      "minor": 0,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "Northern Health",
+    "author": "Claude",
+    "publisher": "Northern Health",
+    "globalIdentifier": "",
+    "requiredFormViewerVersion": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "requiredMoisVersion": {
+      "major": 2,
+      "minor": 28,
+      "patch": 10
+    },
+    "components": [
+      "ValueKit",
+      "CompactBooleanField",
+      "FindCodeSelect",
+      "ScaleField"
+    ]
   },
   'FieldStampButton': {
     "name": "FieldStampButton",
@@ -47878,6 +52217,7 @@ export const componentIdentities: Record<string, any> = {
       "patch": 10
     },
     "components": [
+      "DialogKit",
       "ObservationKit"
     ]
   },
@@ -47994,7 +52334,7 @@ export const componentIdentities: Record<string, any> = {
   'FormLogicKit': {
     "name": "FormLogicKit",
     "title": "Form logic helper kit",
-    "description": "Non-rendering helper module for form-level logic: condition-group evaluation, builder visibility rules (including per table column and row), rule-aware field visibility, submit/page validation, value formats, and focusing a field from an error summary.",
+    "description": "Non-rendering helper module for form-level logic: condition-group evaluation, builder visibility rules (including per table column and row), layout-table row rules, rule-aware field visibility, the hidden-answer rule, submit/page validation, value formats, and focusing a field from an error summary.",
     "version": {
       "major": 1,
       "minor": 0,
@@ -48015,7 +52355,9 @@ export const componentIdentities: Record<string, any> = {
       "minor": 28,
       "patch": 10
     },
-    "components": []
+    "components": [
+      "ValueKit"
+    ]
   },
   'FormSessionRuntime': {
     "name": "FormSessionRuntime",
@@ -48046,9 +52388,9 @@ export const componentIdentities: Record<string, any> = {
   'FormulaKit': {
     "name": "FormulaKit",
     "title": "Formula helper kit",
-    "description": "Non-rendering helper module: the formula engine (field references, iif/score/contains, date helpers such as durationBetween and weekdaysBetween) shared by ComputedField and EditableTable formula columns.",
+    "description": "Non-rendering helper module generated from @webforms/form-model's formula module (scripts/generate-formula-kit.mjs): evaluateTree runs a stored formula tree with the reference semantics (missing values, coded answers, local dates, decimal-exact rounding), parse reads formula text, and the older evaluate/hasAllReferencedValues names run on the same engine. Shared by ComputedField, table formula columns and subform and layout calculations.",
     "version": {
-      "major": 1,
+      "major": 2,
       "minor": 0,
       "patch": 0
     },
@@ -48217,7 +52559,9 @@ export const componentIdentities: Record<string, any> = {
     },
     "type": "component",
     "owner": "MOIS Styleguide",
-    "components": []
+    "components": [
+      "DialogKit"
+    ]
   },
   'HistoricalObservationTable': {
     "name": "HistoricalObservationTable",
@@ -48296,7 +52640,10 @@ export const componentIdentities: Record<string, any> = {
       "major": 2,
       "minor": 26,
       "patch": 12
-    }
+    },
+    "components": [
+      "DialogKit"
+    ]
   },
   'HttpJsonTestPanel': {
     "name": "HttpJsonTestPanel",
@@ -48362,8 +52709,11 @@ export const componentIdentities: Record<string, any> = {
       "patch": 5
     },
     "components": [
+      "DefaultsKit",
       "FieldStampButton",
-      "FormLogicKit"
+      "FormLogicKit",
+      "FormulaKit",
+      "ValueKit"
     ]
   },
   'LongTermMedications': {
@@ -48726,6 +53076,7 @@ export const componentIdentities: Record<string, any> = {
       "patch": 10
     },
     "components": [
+      "FieldKit",
       "ObservationValueKit",
       "ScaleField"
     ]
@@ -48969,9 +53320,13 @@ export const componentIdentities: Record<string, any> = {
       "patch": 10
     },
     "components": [
+      "DefaultsKit",
+      "DialogKit",
       "EditableTable",
+      "FieldKit",
       "FormLogicKit",
-      "FormulaKit"
+      "FormulaKit",
+      "ValueKit"
     ]
   },
   'RichMarkdownBlock': {
@@ -49038,7 +53393,9 @@ export const componentIdentities: Record<string, any> = {
       "patch": 12
     },
     "components": [
-      "FormSessionRuntime"
+      "FormSessionRuntime",
+      "FormulaKit",
+      "ValueKit"
     ]
   },
   'ServiceEpisodes': {
@@ -49148,7 +53505,12 @@ export const componentIdentities: Record<string, any> = {
       "ScoringModule",
       "ScaleField",
       "FindCodeSelect",
-      "FormLogicKit"
+      "DefaultsKit",
+      "DialogKit",
+      "FieldKit",
+      "FormLogicKit",
+      "FormulaKit",
+      "ValueKit"
     ]
   },
   'UnsavedChangesGuard': {
@@ -49158,6 +53520,7 @@ export const componentIdentities: Record<string, any> = {
     "category": "Utility",
     "version": "1.0.0",
     "components": [
+      "DialogKit",
       "DocumentSignButton"
     ]
   },
@@ -49185,6 +53548,32 @@ export const componentIdentities: Record<string, any> = {
       "minor": 28,
       "patch": 5
     }
+  },
+  'ValueKit': {
+    "name": "ValueKit",
+    "title": "Value helper kit",
+    "description": "Non-rendering helper module generated from @webforms/form-model values.ts: normalizeOption, readBoolean, readChoice and readDate read option definitions and stored answers in every saved shape (bare codes, Codings, MOIS-YESNO, subform selections, label strings, local dates).",
+    "version": {
+      "major": 1,
+      "minor": 0,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "Northern Health",
+    "author": "Claude",
+    "publisher": "Northern Health",
+    "globalIdentifier": "",
+    "requiredFormViewerVersion": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "requiredMoisVersion": {
+      "major": 2,
+      "minor": 28,
+      "patch": 10
+    },
+    "components": []
   },
   'ValueSetObservationField': {
     "name": "ValueSetObservationField",

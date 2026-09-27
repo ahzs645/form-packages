@@ -267,10 +267,62 @@ const FormLogicKit = (() => {
   }
   // ---- Builder visibility rules — end ----
 
+  // ---- Layout-table rows — begin ----
+  // A row's `visibleWhen` ({ fieldId, operator?, value? }) read exactly as
+  // LayoutTable's rowIsVisible reads it, through ValueKit: "truthy" (default)
+  // is answered and not a no, "yes" is a yes, "equals" / "notEquals" match a
+  // code or wording (a boolean value as yes/no). Parity: isLayoutRowVisible in
+  // @webforms/form-model. Without ValueKit the row counts as shown.
+  const layoutRowAnswerEquals = (value, expected) => {
+    if (value === expected) return true
+    if (typeof expected === "boolean") return ValueKit.readBoolean(value) === expected
+    if (expected === null || expected === undefined) return false
+    const wanted = String(expected)
+    return ValueKit.readChoice(value).some((entry) => entry.code === wanted || entry.display === wanted)
+  }
+  const isLayoutRowVisible = (visibleWhen, getValue) => {
+    const fieldId = visibleWhen && visibleWhen.fieldId
+    if (!fieldId) return true
+    if (typeof ValueKit === "undefined" || !ValueKit || typeof ValueKit.readBoolean !== "function") return true
+    const value = toGetter(getValue)(fieldId)
+    switch (visibleWhen.operator || "truthy") {
+      case "yes":
+        return ValueKit.readBoolean(value) === true
+      case "equals":
+        return layoutRowAnswerEquals(value, visibleWhen.value)
+      case "notEquals":
+        return !layoutRowAnswerEquals(value, visibleWhen.value)
+      default:
+        return ValueKit.readBoolean(value) !== false && ValueKit.readChoice(value).length > 0
+    }
+  }
+  // ---- Layout-table rows — end ----
+
+  /**
+   * Whether one gate passes. A gate is a compiled condition group (a subgroup
+   * gate: { conditions, match }) or a nested entry's own show condition read
+   * the way its container reads it: { layoutRow: visibleWhen } (LayoutTable's
+   * row rule) or { visibility: rule, controllerKinds } (a cell's or subform
+   * field's show-when rule, evaluateVisibilityRule with the container's own
+   * answer kinds). A controller outside the container has no kind, as on screen.
+   */
+  const gatePasses = (gate, getValue) => {
+    if (!gate || typeof gate !== "object") return true
+    const get = toGetter(getValue)
+    if (gate.layoutRow) return isLayoutRowVisible(gate.layoutRow, get)
+    if (gate.visibility) {
+      const kinds = gate.controllerKinds || {}
+      return evaluateVisibilityRule(gate.visibility, get, {
+        controllerKind: (id) => (Object.prototype.hasOwnProperty.call(kinds, id) ? kinds[id] : undefined),
+      })
+    }
+    return evaluateEntries(gate.conditions, gate.match, get)
+  }
+
   /**
    * Whether a field is hidden by its own compiled behaviour config
-   * (compileFieldBehavior + gates): explicitly hidden, a failed subgroup gate,
-   * no matching show rule, or a matching hide rule.
+   * (compileFieldBehavior + gates): explicitly hidden, a failed gate, no
+   * matching show rule, or a matching hide rule.
    */
   const isFieldHidden = (config, getValue) => {
     if (!config) return false
@@ -280,11 +332,140 @@ const FormLogicKit = (() => {
     const showRules = rules.filter((rule) => rule.action === "show")
     return Boolean(
       config.hidden ||
-      (config.gates || []).some((gate) => !matches(gate)) ||
+      (config.gates || []).some((gate) => !gatePasses(gate, get)) ||
       (showRules.length > 0 && !showRules.some(matches)) ||
       rules.some((rule) => rule.action === "hide" && matches(rule))
     )
   }
+
+  // ---- Hidden answers — begin ----
+  // The one hidden-answer rule, shared by ConditionalField, FormFlow's
+  // inactive pages and EditableTable's columns (parity: hiddenAnswerPolicyOf /
+  // shouldClearHiddenAnswer / shouldDropHiddenAnswer in @webforms/form-model).
+  // An answer on a field hidden by its show/hide logic is kept unless the
+  // rule's hiddenAnswerPolicy is "clear". With "clear" it is removed when the
+  // field BECOMES hidden while the form is filled, and left out of the saved
+  // answers at save and submit (dropHiddenAnswers) while it is hidden. A form
+  // that opens with the field hidden never clears it (a chart-filled
+  // controller may resolve after mount). The static Hidden flag never clears.
+
+  /** "clear" when any show/hide rule (or a rule without an action: a field rule, a page) asks to clear. */
+  const hiddenAnswerPolicyOf = (rules) => {
+    const list = Array.isArray(rules) ? rules : rules ? [rules] : []
+    return list.some((rule) => (
+      rule && rule.hiddenAnswerPolicy === "clear" &&
+      (rule.action === undefined || rule.action === null || rule.action === "show" || rule.action === "hide")
+    )) ? "clear" : "preserve"
+  }
+
+  /** Whether there is a stored answer to remove (null, undefined and "" are already empty). */
+  const hasHiddenAnswer = (value) => value !== undefined && value !== null && value !== ""
+
+  /**
+   * Whether a stored answer is removed now: policy "clear", the field has just
+   * become hidden by its rules (wasHidden false: shown before this change),
+   * something stored. wasHidden undefined/null (just opened) never clears.
+   */
+  const shouldClearHiddenAnswer = (policy, hidden, value, wasHidden) => (
+    policy === "clear" && hidden === true && wasHidden === false && hasHiddenAnswer(value)
+  )
+
+  /** Whether an answer is left out of the saved answers: policy "clear", hidden by its rules now, something stored. */
+  const shouldDropHiddenAnswer = (policy, hidden, value) => (
+    policy === "clear" && hidden === true && hasHiddenAnswer(value)
+  )
+
+  /**
+   * Remove the stored answers of `fieldIds` from a data object (an Immer
+   * draft of fd.field.data). Mutates; returns the ids it removed.
+   */
+  const clearHiddenAnswers = (data, fieldIds) => {
+    if (!data || typeof data !== "object") return []
+    return (Array.isArray(fieldIds) ? fieldIds : []).filter((id) => {
+      if (!hasHiddenAnswer(data[id])) return false
+      delete data[id]
+      return true
+    })
+  }
+
+  /** `data` with the value at a dotted path replaced, copying each level (never mutates). */
+  const withValueAtPath = (data, path, value) => {
+    const segments = String(path || "").split(".").map((part) => part.trim()).filter(Boolean)
+    if (segments.length === 0) return data
+    const write = (node, index) => {
+      const copy = node && typeof node === "object" && !Array.isArray(node) ? { ...node } : {}
+      copy[segments[index]] = index === segments.length - 1 ? value : write(copy[segments[index]], index + 1)
+      return copy
+    }
+    return write(data, 0)
+  }
+
+  /**
+   * The table half of the save and submit rule, for an entry with `table`
+   * ({ rowsPath?, columns }, the columns as EditableTable and
+   * RepeatForEachTable get them): in each saved row, the answers of columns
+   * hidden in that row whose rule says "clear" are blanked, as editing the row
+   * would (clearHiddenTableAnswers), so a row loaded with a hidden answer and
+   * never edited no longer keeps it. Rows are copied, never changed in place;
+   * returns `data` itself when nothing changes.
+   */
+  const dropHiddenTableAnswers = (data, entry) => {
+    const table = entry.table
+    const path = (table && table.rowsPath) || entry.fieldId
+    const stored = tableCell(data, path)
+    const rows = Array.isArray(stored) ? stored : stored && Array.isArray(stored.rows) ? stored.rows : null
+    if (!rows || rows.length === 0) return data
+    let changed = false
+    const nextRows = rows.map((row) => {
+      if (!row || typeof row !== "object") return row
+      const before = JSON.stringify(row)
+      const copy = clearHiddenTableAnswers(JSON.parse(before), table.columns, { formData: data })
+      if (JSON.stringify(copy) === before) return row
+      changed = true
+      return copy
+    })
+    if (!changed) return data
+    return withValueAtPath(data, path, Array.isArray(stored) ? nextRows : { ...stored, rows: nextRows })
+  }
+
+  /**
+   * The answers to save without those of hidden "clear" fields (the save and
+   * submit half of the rule). entries: [{ fieldId, rules, gates?, table? }]
+   * where rules are the field's compiled show/hide rules ({ action,
+   * conditions, match, hiddenAnswerPolicy? }); an answer is left out while
+   * those rules hide the field and hiddenAnswerPolicyOf(rules) is "clear"
+   * (entry.hiddenAnswerPolicy overrides). A table entry (`table`) also blanks,
+   * row by row, the answers of its hidden "clear" columns
+   * (dropHiddenTableAnswers). Repeats until settled, since a dropped answer
+   * can hide another field. Never mutates: returns a copy when something is
+   * dropped, otherwise `data` itself.
+   */
+  const dropHiddenAnswers = (data, entries) => {
+    if (!data || typeof data !== "object") return data
+    const list = (Array.isArray(entries) ? entries : []).filter((entry) => entry && entry.fieldId)
+    let next = data
+    for (let pass = 0; pass <= list.length; pass += 1) {
+      let changed = false
+      list.forEach((entry) => {
+        const policy = entry.hiddenAnswerPolicy || hiddenAnswerPolicyOf(entry.rules)
+        const hidden = isFieldHidden({ rules: entry.rules || [], gates: entry.gates || [] }, next)
+        if (shouldDropHiddenAnswer(policy, hidden, next[entry.fieldId])) {
+          if (next === data) next = { ...data }
+          delete next[entry.fieldId]
+          changed = true
+          return
+        }
+        if (!entry.table) return
+        const kept = dropHiddenTableAnswers(next, entry)
+        if (kept === next) return
+        next = kept
+        changed = true
+      })
+      if (!changed) break
+    }
+    return next
+  }
+  // ---- Hidden answers — end ----
 
   // Copy rules resolve together (targets may sit on unmounted pages); a copy
   // cycle is reported as a form-level problem. Port of ConditionalGroup's
@@ -368,7 +549,175 @@ const FormLogicKit = (() => {
         return typeof value === "string" && /^\$?\s?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,2})?$/.test(value.trim())
       },
     },
+    // The answer types' own formats (matchesValueFormat in
+    // @webforms/form-model validation.ts): only text and number answers are
+    // checked, other shapes pass.
+    email: {
+      message: "Please enter a valid email address",
+      test: (value) => { const text = formatText(value); return text === null || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text) },
+    },
+    phone: {
+      message: "Please enter a valid phone number",
+      test: (value) => { const text = formatText(value); return text === null || /^[+]?[(]?[0-9]{1,4}[)]?[-\s./0-9]*$/.test(text) },
+    },
+    url: {
+      message: "Please enter a valid web address",
+      test: (value) => { const text = formatText(value); return text === null || /^(?:https?:\/\/)?[^\s/?#]+\.[^\s/?#]+(?:[/?#]\S*)?$/i.test(text) },
+    },
   }
+
+  // ---- Neutral answer checks — begin ----
+  // config.checks is a field's NeutralFieldValidation (readFieldValidation in
+  // @webforms/form-model validation.ts) compiled by the exporter
+  // (compileFieldValidationChecks): { requiredMessage?, formats?, length?,
+  // number?, date?, patterns?, list?, crossField? }. answerIssues is the twin
+  // of validateAnswer there, held to the shared cases in validation.cases.ts:
+  // same checks, same order (format, length, number, date, pattern, list,
+  // cross-field), same default messages.
+  const checkedText = (value) => {
+    if (typeof value === "string") return value.trim()
+    if (typeof value === "number" && Number.isFinite(value)) return String(value)
+    return null
+  }
+  const readNumberAnswer = (value) => {
+    if (typeof value === "number") return Number.isFinite(value) ? value : null
+    if (typeof value !== "string") return null
+    const cleaned = value.trim().replace(/[$,\s]/g, "")
+    if (!cleaned || !/^[-+]?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?$/i.test(cleaned)) return null
+    const parsed = Number(cleaned)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+  const readDateAnswer = (value) => (
+    typeof ValueKit !== "undefined" && ValueKit && typeof ValueKit.readDate === "function" ? ValueKit.readDate(value) : null
+  )
+  const startOfDay = (date) => new Date(date.getFullYear(), date.getMonth(), date.getDate())
+  const addCalendar = (date, amount, unit) => {
+    if (unit === "days" || unit === "weeks") {
+      const result = new Date(date)
+      result.setDate(result.getDate() + amount * (unit === "weeks" ? 7 : 1))
+      return result
+    }
+    const months = unit === "years" ? amount * 12 : amount
+    const target = date.getMonth() + months
+    const year = date.getFullYear() + Math.floor(target / 12)
+    const month = ((target % 12) + 12) % 12
+    const lastDay = new Date(year, month + 1, 0).getDate()
+    return new Date(year, month, Math.min(date.getDate(), lastDay))
+  }
+  const resolveDateBound = (bound, today) => {
+    if (!bound) return null
+    if (bound.kind === "date") {
+      const date = readDateAnswer(bound.date)
+      return date ? startOfDay(date) : null
+    }
+    const anchor = startOfDay(today)
+    if (bound.direction === "exact" || !bound.value) return anchor
+    return addCalendar(anchor, bound.direction === "before" ? -bound.value : bound.value, bound.unit || "days")
+  }
+  const isoDay = (date) => {
+    const pad = (value) => String(value).padStart(2, "0")
+    return date.getFullYear() + "-" + pad(date.getMonth() + 1) + "-" + pad(date.getDate())
+  }
+  const anchoredPattern = (pattern) => {
+    try {
+      return new RegExp("^(?:" + pattern + ")$")
+    } catch (error) {
+      return null
+    }
+  }
+  const listMessage = (list) => {
+    if (list.match === "email-address") return list.mode === "allow" ? "Please use an approved email address" : "This email address is not allowed"
+    if (list.match === "email-domain") return list.mode === "allow" ? "Please use an approved email domain" : "This email domain is not allowed"
+    return list.mode === "allow" ? "Choose one of the allowed answers" : "This answer is not allowed"
+  }
+
+  // Cross-field checks of `kinds` ("valid-when" / "invalid-when"). A
+  // behavior validation ("valid-when") keeps the issue kind "rule" the error
+  // summary re-checks live; a Logic-tab invalid rule is "cross-field".
+  const crossFieldIssues = (checks, kinds, get, issue, locale) => (
+    (Array.isArray(checks.crossField) ? checks.crossField : [])
+      .filter((check) => check && kinds.includes(check.kind))
+      .filter((check) => {
+        const holds = evaluateEntries(check.condition && check.condition.conditions, check.condition && check.condition.match, get)
+        return check.kind === "valid-when" ? !holds : holds
+      })
+      .map((check) => {
+        const translated = locale && check.translations && typeof check.translations[locale] === "string" && check.translations[locale].trim()
+          ? check.translations[locale].trim()
+          : null
+        return issue(check.kind === "valid-when" ? "rule" : "cross-field", translated || check.message)
+      })
+  )
+
+  /** Problems with a non-empty answer, in validateAnswer's order. */
+  const answerIssues = (checks, value, get, issue, context) => {
+    const translate = context.translate
+    const issues = []
+    let formatFailed = false
+    ;(Array.isArray(checks.formats) ? checks.formats : []).forEach((check) => {
+      const format = check && formats[check.format]
+      if (!format || format.test(value)) return
+      formatFailed = true
+      issues.push(issue("format", check.message || translate(format.message)))
+    })
+    const text = checkedText(value)
+    const length = checks.length
+    if (length && text !== null) {
+      const messages = length.messages || {}
+      if (typeof length.min === "number" && text.length < length.min) issues.push(issue("length", messages.min || translate("Enter at least " + length.min + " characters")))
+      if (typeof length.max === "number" && text.length > length.max) issues.push(issue("length", messages.max || translate("Enter at most " + length.max + " characters")))
+    }
+    const limit = checks.number
+    if (limit && (typeof value === "number" || typeof value === "string")) {
+      const number = readNumberAnswer(value)
+      const messages = limit.messages || {}
+      if (number === null) {
+        issues.push(issue("number", translate("Please enter a number")))
+      } else {
+        if (limit.year && !(Number.isInteger(number) && number >= 1900 && number <= 2099)) {
+          issues.push(issue("number", translate("Please enter a 4-digit year")))
+        } else if (limit.wholeNumber && !Number.isInteger(number)) {
+          issues.push(issue("number", translate("Please enter a whole number")))
+        }
+        if (typeof limit.min === "number" && number < limit.min) issues.push(issue("number", messages.min || translate("Enter a number of at least " + limit.min)))
+        if (typeof limit.max === "number" && number > limit.max) issues.push(issue("number", messages.max || translate("Enter a number of at most " + limit.max)))
+      }
+    }
+    const dateLimit = checks.date
+    if (dateLimit) {
+      const date = readDateAnswer(value)
+      if (!date) {
+        issues.push(issue("date", translate("Please enter a valid date")))
+      } else {
+        const day = startOfDay(date).getTime()
+        const today = context.today instanceof Date ? context.today : (readDateAnswer(context.today) || new Date())
+        ;(dateLimit.earliest || []).forEach((bound) => {
+          const resolved = resolveDateBound(bound, today)
+          if (resolved && day < resolved.getTime()) issues.push(issue("date", translate("Enter a date on or after " + isoDay(resolved))))
+        })
+        ;(dateLimit.latest || []).forEach((bound) => {
+          const resolved = resolveDateBound(bound, today)
+          if (resolved && day > resolved.getTime()) issues.push(issue("date", translate("Enter a date on or before " + isoDay(resolved))))
+        })
+      }
+    }
+    if (text !== null) {
+      ;(Array.isArray(checks.patterns) ? checks.patterns : []).forEach((check) => {
+        const pattern = check && anchoredPattern(check.pattern)
+        if (pattern && !pattern.test(text)) issues.push(issue("pattern", check.message || translate("Enter the answer in the expected format")))
+      })
+    }
+    // An answer that is not an email at all only gets the format message.
+    const list = checks.list
+    if (list && Array.isArray(list.values) && text !== null && !formatFailed) {
+      const normalized = text.toLowerCase()
+      const candidate = list.match === "email-domain" ? normalized.split("@")[1] || "" : normalized
+      const listed = list.values.includes(candidate)
+      if (list.mode === "allow" ? !listed : listed) issues.push(issue("list", list.message || translate(listMessage(list))))
+    }
+    return issues.concat(crossFieldIssues(checks, ["valid-when", "invalid-when"], get, issue, context.locale))
+  }
+  // ---- Neutral answer checks — end ----
 
   // ---- Table row completion (repeat-for-each workstream) — begin ----
   // config.table = { requiredColumnIds (row data paths), requireAllComplete,
@@ -530,8 +879,12 @@ const FormLogicKit = (() => {
   /**
    * Validate answers against compiled field configs
    * (CompiledFieldValidationConfig in lib/mois-export/types.ts).
-   * options: { pageIndex?, inactivePages?, locale?, uiTranslations?, translate? }
+   * options: { pageIndex?, inactivePages?, locale?, uiTranslations?, translate?, today? }
    * `translate` (the form's translateFormText) wins over uiTranslations.
+   * A config with `checks` (the neutral model) is checked like validateAnswer
+   * in @webforms/form-model: an empty answer only meets the required check
+   * and Logic-tab invalid rules; a non-empty one every value check. Without
+   * `checks` the older keys (`validations`, `format`) apply.
    * Returns FormValidationIssue[]: { fieldId, label, message, pageIndex?, kind }.
    */
   const validate = (configs, values, options = {}) => {
@@ -571,15 +924,24 @@ const FormLogicKit = (() => {
       })
       const value = get(config.fieldId)
       if (config.table) return tableRowIssues(config, value, required, issue, translate, values) // table rows (repeat-for-each)
+      const checks = config.checks && typeof config.checks === "object" ? config.checks : null
       if (!hasMeaningfulValue(value)) {
-        return required ? [issue("required", translate(config.label + " is required"))] : []
+        const missing = required
+          ? [issue("required", translate(checks && checks.requiredMessage ? checks.requiredMessage : config.label + " is required"))]
+          : []
+        return checks ? missing.concat(crossFieldIssues(checks, ["invalid-when"], get, issue, locale)) : missing
       }
-      const issues = (config.validations || [])
-        .filter((rule) => !matches(rule.validWhen))
-        .map((rule) => issue("rule", rule.translations?.[locale] || rule.message))
-      const format = config.format ? formats[config.format] : null
-      if (format && typeof format.test === "function" && !format.test(value)) {
-        issues.push(issue("format", config.formatMessage || translate(format.message || (config.label + " is not valid"))))
+      let issues
+      if (checks) {
+        issues = answerIssues(checks, value, get, issue, { translate, locale, today: options.today })
+      } else {
+        issues = (config.validations || [])
+          .filter((rule) => !matches(rule.validWhen))
+          .map((rule) => issue("rule", rule.translations?.[locale] || rule.message))
+        const format = config.format ? formats[config.format] : null
+        if (format && typeof format.test === "function" && !format.test(value)) {
+          issues.push(issue("format", config.formatMessage || translate(format.message || (config.label + " is not valid"))))
+        }
       }
       const selected = Array.isArray(value) ? value : [value]
       const optionBlocked = (config.optionRules || []).some((rule) =>
@@ -669,9 +1031,18 @@ const FormLogicKit = (() => {
     readValue,
     evaluateGroup,
     evaluateVisibilityRule,
+    isLayoutRowVisible,
+    gatePasses,
+    hiddenAnswerPolicyOf,
+    hasHiddenAnswer,
+    shouldClearHiddenAnswer,
+    shouldDropHiddenAnswer,
+    clearHiddenAnswers,
+    dropHiddenAnswers,
     tableColumnKind,
     isTableColumnVisible,
     clearHiddenTableAnswers,
+    dropHiddenTableAnswers,
     isFieldHidden,
     resolveFieldCopies,
     validate,

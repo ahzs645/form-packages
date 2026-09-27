@@ -9,5 +9,5 @@
   },
   "type": "component",
   "owner": "MOIS Styleguide",
-  "components": []
+  "components": ["DialogKit"]
 }

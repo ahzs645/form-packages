@@ -1,0 +1,26 @@
+{
+  "name": "FieldKit",
+  "title": "Field control kit",
+  "description": "Rendering helper module: draws a builder-field-shaped question with the MOIS control the exporter chooses (TextArea, Numeric, DateSelect, DateTimeSelect, TimeSelect, SimpleCodeSelect, SimpleCodeChecklist, FindCodeSelect, CompactBooleanField, ScaleField), always passing label, required and read-only, bound to a field or controlled through a per-container storage adapter. Used by EditableTable, RepeatForEachTable, SubformScoring, PanelEntryGrid and ActionButtonGroup.",
+  "version": {
+    "major": 1,
+    "minor": 0,
+    "patch": 0
+  },
+  "type": "component",
+  "owner": "Northern Health",
+  "author": "Claude",
+  "publisher": "Northern Health",
+  "globalIdentifier": "",
+  "requiredFormViewerVersion": {
+    "major": 0,
+    "minor": 1,
+    "patch": 0
+  },
+  "requiredMoisVersion": {
+    "major": 2,
+    "minor": 28,
+    "patch": 10
+  },
+  "components": ["ValueKit", "CompactBooleanField", "FindCodeSelect", "ScaleField"]
+}

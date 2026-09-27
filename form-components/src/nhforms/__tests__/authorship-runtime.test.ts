@@ -209,9 +209,6 @@ const LOAD_COMPONENTS: Record<string, string[]> = {
     "EditableTable",
     "EditableTableSchema",
     "createTableColumns",
-    "_choiceValueToCoding",
-    "_choiceValueForControl",
-    "_choiceValueForStorage",
   ],
   UnsavedChangesGuard: ["UnsavedChangesGuard"],
   SaveOnClose: ["SaveOnClose", "useSaveOnClose"],
@@ -278,11 +275,12 @@ describe("authorship components load in the real-MOIS wrapper", () => {
   });
 
   it("normalizes stored table choices for single and multiple code selectors", () => {
-    const source = fs.readFileSync(path.join(NH, "EditableTable", "index.jsx"), "utf8");
-    const exportNames = LOAD_COMPONENTS.EditableTable;
+    // EditableTable's cells convert choices with FieldKit.storage.cell, which
+    // reads stored answers through ValueKit (both Identity components).
     const assembled =
       "let Query=null; let InitialData={}; let Schema=null;" + PRELUDE +
-      wrapComponentSource(source, exportNames);
+      wrapComponentSource(fs.readFileSync(path.join(NH, "ValueKit", "index.jsx"), "utf8"), ["ValueKit"]) +
+      wrapComponentSource(fs.readFileSync(path.join(NH, "FieldKit", "index.jsx"), "utf8"), ["FieldKit"]);
     const code = Babel.transform(assembled, { presets: ["react", "typescript"], filename: "form.tsx" }).code;
 
     const previousWindow = (globalThis as any).window;
@@ -292,9 +290,9 @@ describe("authorship components load in the real-MOIS wrapper", () => {
       const factory = Function(
         '"use strict";return (function(React,Fabric,Fluent,MoisControl,MoisFunction,MoisActions,MoisHooks,Mois){' +
           code +
-          ";return({ toCoding: _choiceValueToCoding, forControl: _choiceValueForControl, forStorage: _choiceValueForStorage })})"
+          ";return({ FieldKit })})"
       )();
-      const result = factory(
+      const { FieldKit } = factory(
         React,
         namespaceStub("Fabric"),
         namespaceStub("Fluent"),
@@ -305,22 +303,22 @@ describe("authorship components load in the real-MOIS wrapper", () => {
         {}
       );
       const options = [{ key: "jp", text: "Japanese" }, { key: "kr", text: "Korean" }];
+      const cell = (choiceStyle: string) =>
+        FieldKit.storage.cell(FieldKit.fromTableColumn({ id: "lang", type: "dropdown", choiceStyle, options }));
+      const multiple = cell("multiselect");
+      const single = cell("dropdown");
 
-      expect(result.forControl(["jp", "kr"], "multiple", options)).toEqual([
+      expect(multiple.toControl(["jp", "kr"])).toEqual([
         { code: "jp", display: "Japanese" },
         { code: "kr", display: "Korean" },
       ]);
-      expect(result.forControl({ selectedKey: "jp", response: "Japanese" }, "single", options)).toEqual({
+      expect(single.toControl({ selectedKey: "jp", response: "Japanese" })).toEqual({
         code: "jp",
         display: "Japanese",
       });
-      expect(result.forControl([], "multiple", options)).toEqual([]);
-      expect(result.forStorage(
-        { code: "kr", display: "Korean" },
-        [{ code: "jp", display: "Japanese" }, { code: "kr", display: "Korean" }],
-        "multiple"
-      )).toEqual(["jp", "kr"]);
-      expect(result.forStorage({ code: "jp", display: "Japanese" }, undefined, "single")).toBe("jp");
+      expect(multiple.toControl([])).toEqual([]);
+      expect(multiple.fromControl([{ code: "kr", display: "Korean" }, { code: "jp", display: "Japanese" }])).toEqual(["jp", "kr"]);
+      expect(single.fromControl({ code: "jp", display: "Japanese" })).toBe("jp");
     } finally {
       (globalThis as any).window = previousWindow;
     }

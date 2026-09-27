@@ -53,6 +53,9 @@ const Fluent = {
   Stack: Box, Label: Text, Text, IconButton: Button, DefaultButton: Button, PrimaryButton: Button,
   Dialog, DialogType: { normal: 0, largeHeader: 1 }, DialogFooter: Box, TooltipHost: Box,
 };
+// The MOIS SubForm DialogKit draws on: a dialog titled by its label.
+const SubForm = ({ hidden, label, children }: { hidden?: boolean; label?: React.ReactNode; children?: React.ReactNode }) =>
+  hidden ? null : h("div", { role: "dialog" }, h("h2", null, label), children);
 
 type ActiveTuple = [Record<string, unknown>, (updater: unknown) => void];
 const ActiveDataContext = React.createContext<ActiveTuple>([{}, () => undefined]);
@@ -62,7 +65,7 @@ const useActiveData = () => {
 };
 
 function loadRuntime() {
-  const source = ["FormulaKit", "FormLogicKit", "EditableTable", "RepeatForEachTable"].map(read).join("\n");
+  const source = ["ValueKit", "FormulaKit", "FormLogicKit", "FieldKit", "DialogKit", "EditableTable", "RepeatForEachTable"].map(read).join("\n");
   const compiled = Babel.transform(`var EditableTable;\n${source}`, { presets: ["react"], filename: "index.jsx" }).code ?? "";
   const scope: Record<string, unknown> = {
     window: {},
@@ -75,6 +78,7 @@ function loadRuntime() {
     useSection: () => null,
     TextArea: Field, Numeric: Field, DateSelect: Field, DateTimeSelect: Field, TimeSelect: Field,
     SimpleCodeSelect: CodeField, OptionChoice: Field,
+    SubForm, ButtonBar: Box,
   };
   // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func
   return new Function(...Object.keys(scope), `${compiled};\nreturn { EditableTable, RepeatForEachTable, FormLogicKit };`)(

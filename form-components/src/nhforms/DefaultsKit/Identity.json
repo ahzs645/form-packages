@@ -1,0 +1,26 @@
+{
+  "name": "DefaultsKit",
+  "title": "Default answer helper kit",
+  "description": "Non-rendering helper module generated from @webforms/form-model defaults.ts: readDefaultAnswer reads a field's, table column's, layout cell's or subform entry's default answer in every saved shape (defaultAnswer, prefill, dateConfig.prefillToday, __today/__now, defaultFromObservation, the clock source binding, a field cell's defaultValue) and resolveDefaultAnswer turns it into the value to seed (fixed value, today, now, chart value, latest observation).",
+  "version": {
+    "major": 1,
+    "minor": 0,
+    "patch": 0
+  },
+  "type": "component",
+  "owner": "Northern Health",
+  "author": "Claude",
+  "publisher": "Northern Health",
+  "globalIdentifier": "",
+  "requiredFormViewerVersion": {
+    "major": 0,
+    "minor": 1,
+    "patch": 0
+  },
+  "requiredMoisVersion": {
+    "major": 2,
+    "minor": 28,
+    "patch": 10
+  },
+  "components": []
+}

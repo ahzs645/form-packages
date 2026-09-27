@@ -1424,8 +1424,9 @@ const HealthMaintenanceReview = ({
       <Dialog
         hidden={!isOpen}
         onDismiss={() => setIsOpen(false)}
-        minWidth='min(96vw, 920px)'
-        maxWidth='min(96vw, 1180px)'
+        // A viewer: non-blocking, with the NHForms dialog width rule.
+        minWidth={DialogKit.width(920)}
+        maxWidth={DialogKit.maxWidth}
         dialogContentProps={{
           type: DialogType.largeHeader,
           title: modalTitle,

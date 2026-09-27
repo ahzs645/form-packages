@@ -23,7 +23,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const NH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const SOURCE = fs.readFileSync(path.join(NH, "SubformScoring", "index.jsx"), "utf8");
+// SubformScoring draws its questions with FieldKit and its dialog with
+// DialogKit (Identity components, loaded first with ValueKit).
+const SOURCE = ["ValueKit", "FieldKit", "DialogKit", "SubformScoring"]
+  .map((name) => fs.readFileSync(path.join(NH, name, "index.jsx"), "utf8"))
+  .join("\n");
 
 type State = { field: { data: Record<string, unknown>; status: Record<string, unknown>; history: unknown[] } };
 type Updater = ((current: State) => State | void) | Partial<State>;
@@ -89,8 +93,33 @@ function loadRuntime(kit?: Kit): Runtime {
     useTheme: () => ({}),
     produce,
     ScoringModule: () => null,
+    // The MOIS SubForm DialogKit draws on, and its button bar.
+    SubForm: ({ hidden, label, children }: React.PropsWithChildren<{ hidden?: boolean; label?: React.ReactNode }>) =>
+      hidden ? null : h("div", { role: "dialog" }, label ? h("h2", null, label) : null, children),
+    ButtonBar: Box,
+    // DateTimeSelect is store-bound in the engine: it reads and writes
+    // section.activeSelector(fd)[fieldId] (FieldKit's value box).
+    DateTimeSelect: (props: Record<string, any>) => {
+      const [fd, set] = useActiveData() as [Record<string, unknown>, (updater: unknown) => void];
+      const value = props.section.activeSelector(fd)[props.fieldId];
+      return h("input", {
+        "data-control": "datetime",
+        value: value ?? "",
+        onChange: (event: React.ChangeEvent<HTMLInputElement>) => {
+          const next = event.target.value;
+          set((draft: unknown) => { props.section.activeSelector(draft)[props.fieldId] = next; });
+        },
+      });
+    },
+    // TextArea, DateSelect and TimeSelect report (event, value) like the MOIS
+    // controls (DateSelect a value alone).
+    // CompactBooleanField's Yes/No buttons (FieldKit draws them for a controlled yes/no).
+    YesNoButtons: ({ yesLabel, noLabel, value, onChange }: Record<string, any>) =>
+      h("div", { "data-control": "yesno", "data-value": value ?? "" },
+        h("button", { type: "button", onClick: () => onChange("yes") }, yesLabel),
+        h("button", { type: "button", onClick: () => onChange("no") }, noLabel)),
+    TextArea: control("text", (props, value, event) => (props.onChange as (e: unknown, v: string) => void)?.(event, value)),
     DateSelect: control("date", (props, value) => (props.onChange as (v: string) => void)?.(value)),
-    // TimeSelect reports (event, value) like the MOIS control.
     TimeSelect: control("time", (props, value, event) => (props.onChange as (e: unknown, v: string) => void)?.(event, value)),
     FormLogicKit: kit,
   };
@@ -217,7 +246,9 @@ describe("time fields", () => {
 
     const time = input("input[data-control=time]");
     expect(time.value).toBe("08:30");
-    expect(time.placeholder).toBe("HH:mm");
+    // FieldKit passes a placeholder only when the field has one, as the
+    // exporter does; the MOIS control shows its own mask otherwise.
+    expect(time.placeholder).toBe("");
     typeInto(time, "09:15");
     expect(latestState?.field.data.given_at).toBe("09:15");
   });
@@ -312,6 +343,66 @@ describe("read-only and host error messages", () => {
       dataEntryConfig: { fields: [{ id: "dose", label: "Dose", type: "text" }], calculations: [] },
     });
     expect(container!.querySelector("[role=dialog] [role=alert]")?.textContent).toBe("Dose is required.");
+  });
+});
+
+describe("closing the dialog (DialogKit RowDialog)", () => {
+  const fields = [{ id: "note", label: "Note", type: "text", placeholder: "note" }];
+
+  it("closes an untouched dialog at once", () => {
+    const runtime = loadRuntime();
+    const onOpenChange = vi.fn();
+    mount(runtime.SubformScoringInner, { dataEntryConfig: { fields, calculations: [] }, onOpenChange });
+    click(button("Cancel"));
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("asks before a close discards changed answers", () => {
+    const runtime = loadRuntime();
+    const onOpenChange = vi.fn();
+    mount(runtime.SubformScoringInner, { dataEntryConfig: { fields, calculations: [] }, onOpenChange });
+    typeInto(input("input[placeholder=note]"), "hello");
+
+    click(button("Cancel"));
+    expect(onOpenChange).not.toHaveBeenCalledWith(false);
+    expect(container!.textContent).toContain("Discard changes?");
+
+    click(button("Keep editing"));
+    expect(container!.textContent).not.toContain("Discard changes?");
+    expect(input("input[placeholder=note]").value).toBe("hello");
+    expect(onOpenChange).not.toHaveBeenCalledWith(false);
+
+    click(button("Cancel"));
+    click(button("Discard"));
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("draws a yes/no as CompactBooleanField's Yes/No buttons and stores the chosen option", () => {
+    const runtime = loadRuntime();
+    mount(runtime.SubformScoringInner, {
+      dataEntryConfig: { fields: [{ id: "pain_now", label: "Pain now", type: "booleanYesNo" }], calculations: [] },
+    });
+    const yesNo = container!.querySelector("[data-control=yesno]")!;
+    expect(Array.from(yesNo.querySelectorAll("button")).map((entry) => entry.textContent)).toEqual(["Yes", "No"]);
+    click(button("No"));
+    expect(latestState?.field.data.pain_now).toBe("No");
+    click(button("Yes"));
+    expect(latestState?.field.data.pain_now).toBe("Yes");
+  });
+
+  it("stores a date-time answer through the engine-bound DateTimeSelect", async () => {
+    const runtime = loadRuntime();
+    mount(runtime.SubformScoringInner, {
+      dataEntryConfig: { fields: [{ id: "at", label: "At", type: "datetime" }], calculations: [] },
+    });
+    typeInto(input("input[data-control=datetime]"), "2026-09-27T08:30");
+    // The value box reports the control's write on a microtask.
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(latestState?.field.data.at).toBe("2026-09-27T08:30");
+    expect(input("input[data-control=datetime]").value).toBe("2026-09-27T08:30");
   });
 });
 

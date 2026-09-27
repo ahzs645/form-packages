@@ -49,8 +49,12 @@ type ActiveTuple = [Data, (updater: unknown) => void];
 const ActiveDataContext = React.createContext<ActiveTuple>([{}, () => undefined]);
 
 const NO_KIT = Symbol("no-kit");
-function loadLayoutTable(kit: "real" | typeof NO_KIT | Record<string, unknown>): Helpers {
-  const sources = kit === "real" ? [read("FormLogicKit"), read("LayoutTable")] : [read("LayoutTable")];
+// `formulaKit`: a FormulaKit to inject (e.g. one with evaluateTree); absent,
+// computed cells use LayoutTable's own evaluator. ValueKit is always loaded.
+function loadLayoutTable(kit: "real" | typeof NO_KIT | Record<string, unknown>, formulaKit?: Record<string, unknown>): Helpers {
+  const sources = kit === "real"
+    ? [read("ValueKit"), read("FormLogicKit"), read("LayoutTable")]
+    : [read("ValueKit"), read("LayoutTable")];
   const compiled = Babel.transform(sources.join("\n"), { presets: ["react"], filename: "index.jsx" }).code ?? "";
   const scope: Record<string, unknown> = {
     React,
@@ -69,6 +73,7 @@ function loadLayoutTable(kit: "real" | typeof NO_KIT | Record<string, unknown>):
   // A stub (or an explicitly absent kit) is injected as a scope binding; the
   // real kit is concatenated ahead of the component like the export bundle.
   if (kit !== "real") scope.FormLogicKit = kit === NO_KIT ? undefined : kit;
+  scope.FormulaKit = formulaKit;
   const names = [
     "evaluateLayoutTableFormula",
     "extractLayoutTableFormulaRefs",

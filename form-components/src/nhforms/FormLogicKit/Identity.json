@@ -1,7 +1,7 @@
 {
   "name": "FormLogicKit",
   "title": "Form logic helper kit",
-  "description": "Non-rendering helper module for form-level logic: condition-group evaluation, builder visibility rules (including per table column and row), rule-aware field visibility, submit/page validation, value formats, and focusing a field from an error summary.",
+  "description": "Non-rendering helper module for form-level logic: condition-group evaluation, builder visibility rules (including per table column and row), layout-table row rules, rule-aware field visibility, the hidden-answer rule, submit/page validation, value formats, and focusing a field from an error summary.",
   "version": {
     "major": 1,
     "minor": 0,
@@ -22,5 +22,5 @@
     "minor": 28,
     "patch": 10
   },
-  "components": []
+  "components": ["ValueKit"]
 }

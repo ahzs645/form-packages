@@ -236,10 +236,30 @@ describe("FormFlow navigation", () => {
     expect(visiblePage()).toEqual([2]);
   });
 
-  it("clears answers on an inactive page with the clear policy", () => {
-    mount({ sex: "M", edd: "2026-12-01", taken: "yes" });
+  it("clears answers when a page with the clear policy becomes inactive", () => {
+    mount({ sex: "F", edd: "2026-12-01", taken: "yes" });
+    expect(current.field.data.edd).toBe("2026-12-01");
+    act(() => setActive((previous) => produce(previous, (draft) => { draft.field.data.sex = "M"; })));
     expect(current.field.data.edd).toBeUndefined();
     expect(current.field.data.taken).toBe("yes");
+  });
+
+  it("never clears on load: a page inactive when the form opens keeps its answers, which the save leaves out", () => {
+    mount({ sex: "M", edd: "2026-12-01", taken: "yes" });
+    expect(current.field.data.edd).toBe("2026-12-01");
+    // An unrelated edit while the page stays inactive does not clear it either.
+    act(() => setActive((previous) => produce(previous, (draft) => { draft.field.data.name = "Ada"; })));
+    expect(current.field.data.edd).toBe("2026-12-01");
+    const config = buildFormFlowRuntimeConfig(exportParams(baseFlow));
+    const saved = FormFlow.dropInactiveAnswers(config, current.field.data);
+    expect(saved).toEqual({ sex: "M", taken: "yes", name: "Ada" });
+    expect(current.field.data.edd).toBe("2026-12-01");
+    // Nothing to drop: the same object comes back.
+    const active = { sex: "F", edd: "2026-12-01" };
+    expect(FormFlow.dropInactiveAnswers(config, active)).toBe(active);
+    const preserved = buildFormFlowRuntimeConfig(exportParams({ ...baseFlow, pages: [baseFlow.pages![0], { ...baseFlow.pages![1]!, hiddenAnswerPolicy: "preserve" }] }));
+    const kept = { sex: "M", edd: "2026-12-01" };
+    expect(FormFlow.dropInactiveAnswers(preserved, kept)).toBe(kept);
   });
 
   it("jumps via the breadcrumb and via the preview select-page event", () => {

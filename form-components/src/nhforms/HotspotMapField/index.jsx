@@ -1919,15 +1919,10 @@ const HotspotMapField = ({
               type: DialogType.largeHeader,
               title: modalTitle || label || "Map Selection",
             }}
-            modalProps={{
-              isBlocking: false,
-              styles: {
-                main: {
-                  minWidth: `${resolvedModalMinWidth}px`,
-                  maxWidth: "92vw",
-                },
-              },
-            }}
+            // A viewer: non-blocking, with the NHForms dialog width rule.
+            minWidth={DialogKit.width(resolvedModalMinWidth, 760)}
+            maxWidth={DialogKit.maxWidth}
+            modalProps={{ isBlocking: false }}
           >
             <Stack tokens={{ childrenGap: 10 }}>
               {renderAnnotationModeControls()}

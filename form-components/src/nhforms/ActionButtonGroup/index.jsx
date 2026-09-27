@@ -1,8 +1,23 @@
 // Fluent is a NAMESPACE in the real engine's form scope — bare Fluent
 // identifiers are a ReferenceError in production even though preview
 // injects them. Destructure everything this component renders.
-const { ComboBox, DefaultButton, Dialog, DialogFooter, DialogType, Dropdown, Label, PrimaryButton, TextField } = Fluent
+//
+// Each action opens DialogKit's RowDialog (the MOIS SubForm: blocking,
+// titled by the action, min(<dialogMinWidth>px, calc(100vw - 48px)) wide)
+// showing the action's form fields — drawn by FieldKit with the MOIS
+// control the exporter chooses (dropdown: SimpleCodeSelect, combo:
+// FindCodeSelect with a typed answer allowed, date: DateSelect, textarea and
+// text: TextArea) — or its configured payload.
+//
+// OK writes nothing. It closes the dialog and discards what was typed,
+// exactly like Cancel: whether OK should save the values, and where, is not
+// decided yet (Neutral form model, "Decisions needed"). OK_DISCARDS_VALUES
+// makes that explicit; change it only together with that decision.
+// FieldKit and DialogKit are referenced only inside function bodies.
+const { DefaultButton } = Fluent
 const { useMemo, useState } = React
+
+const OK_DISCARDS_VALUES = true
 
 function ActionButtonGroup({
   id = "legacyButtonGroup",
@@ -45,12 +60,21 @@ function ActionButtonGroup({
     setDraftValues((current) => ({ ...current, [fieldId]: value }))
   }
 
+  const closeAction = () => {
+    setActiveAction(null)
+    setDraftValues({})
+  }
+
+  // OK: see OK_DISCARDS_VALUES above.
+  const confirmAction = () => {
+    if (OK_DISCARDS_VALUES) closeAction()
+  }
+
   const formattedPayload = activeAction?.payload
     ? JSON.stringify(activeAction.payload, null, 2)
     : "No payload configured."
 
   const renderField = (field) => {
-    const value = draftValues[field.id] ?? ""
     const commonStyle = {
       breakInside: "avoid",
       margin: "0px 10px",
@@ -58,74 +82,25 @@ function ActionButtonGroup({
       ...(field.maxWidth ? { maxWidth: field.maxWidth } : {}),
       ...(field.minWidth ? { minWidth: field.minWidth } : {}),
     }
-    const inputStyle = {
-      width: field.width || (field.type === "date" ? 160 : "100%"),
-      maxWidth: field.maxWidth || (field.type === "date" ? 160 : "100%"),
-    }
-
-    let control = null
-    if (field.type === "dropdown") {
-      const options = Array.isArray(field.options)
-        ? field.options.map((option) => ({
-            key: option.key ?? option.value ?? option,
-            text: option.text ?? option.label ?? option.value ?? option,
-          }))
-        : []
-      control = (
-        <Dropdown
-          selectedKey={value}
-          placeholder={field.placeholder || "Please select"}
-          options={options}
-          styles={{ root: inputStyle }}
-          onChange={(_, option) => setValue(field.id, option?.key ?? "")}
-        />
-      )
-    } else if (field.type === "combo") {
-      const options = Array.isArray(field.options)
-        ? field.options.map((option) => ({
-            key: option.key ?? option.value ?? option,
-            text: option.text ?? option.label ?? option.value ?? option,
-          }))
-        : []
-      control = (
-        <ComboBox
-          id={field.id}
-          selectedKey={value}
-          text={value}
-          placeholder={field.placeholder || "Please select an option"}
-          options={options}
-          styles={{ root: inputStyle }}
-          allowFreeform
-          autoComplete="on"
-          onChange={(_, option, __, inputValue) => setValue(field.id, option?.key ?? inputValue ?? "")}
-        />
-      )
-    } else {
-      control = (
-        <TextField
-          value={value}
-          multiline={field.type === "textarea"}
-          rows={field.rows || (field.type === "textarea" ? 3 : undefined)}
-          placeholder={field.placeholder || (field.type === "date" ? "YYYY.MM.DD" : undefined)}
-          styles={{ root: inputStyle }}
-          onChange={(_, nextValue) => setValue(field.id, nextValue || "")}
-        />
-      )
-    }
-
+    const descriptor = FieldKit.fromActionField(field)
+    const width = field.width || (field.type === "date" ? 160 : undefined)
     return (
-      <div key={field.id} style={commonStyle}>
-        <Label>{field.label}</Label>
-        <div style={{ display: "flex", flexFlow: "column", minWidth: field.minWidth || 160, width: "100%", alignItems: "flex-start" }}>
-          {control}
-        </div>
-        <div style={{ clear: "both" }} />
+      <div key={field.id} data-action-field={field.id} style={commonStyle}>
+        {FieldKit.renderControl(descriptor, {
+          value: draftValues[field.id] ?? "",
+          onChange: (stored) => setValue(field.id, stored),
+          storage: FieldKit.storage.text(descriptor),
+          label: field.label,
+          labelPosition: "top",
+          readOnly: false,
+          placeholder: field.placeholder || undefined,
+          size: width ? { width, maxWidth: field.maxWidth || width } : { minWidth: field.minWidth || 160, flex: "1 1 0px" },
+        })}
       </div>
     )
   }
 
   const hasFormFields = Array.isArray(activeAction?.fields) && activeAction.fields.length > 0
-  const formDialogWidth = "min(760px, calc(100vw - 48px))"
 
   return (
     <div data-field-id={id} data-action-button-group>
@@ -149,29 +124,17 @@ function ActionButtonGroup({
         ))}
       </div>
 
-      <Dialog
+      <DialogKit.RowDialog
         hidden={!activeAction}
-        onDismiss={() => setActiveAction(null)}
-        minWidth={dialogMinWidth}
-        dialogContentProps={{
-          type: DialogType.normal,
-          title: activeAction?.dialogTitle || activeAction?.label || dialogTitle,
-        }}
-        modalProps={{
-          isBlocking: false,
-          styles: hasFormFields
-            ? {
-                main: {
-                  width: formDialogWidth,
-                  minWidth: formDialogWidth,
-                  maxWidth: formDialogWidth,
-                },
-              }
-            : undefined,
-        }}
+        title={activeAction?.dialogTitle || activeAction?.label || dialogTitle}
+        width={dialogMinWidth}
+        onSave={confirmAction}
+        onCancel={closeAction}
+        saveText={okText}
+        cancelText={cancelText}
       >
         {hasFormFields ? (
-          <div data-component="SubForm" style={{ width: "100%", minWidth: 0, boxSizing: "border-box" }}>
+          <div style={{ width: "100%", minWidth: 0, boxSizing: "border-box" }}>
             <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>
               {activeAction.fields.map(renderField)}
             </div>
@@ -191,23 +154,7 @@ function ActionButtonGroup({
             {formattedPayload}
           </pre>
         )}
-        <DialogFooter>
-          <PrimaryButton
-            text={okText}
-            onClick={() => {
-              setActiveAction(null)
-              setDraftValues({})
-            }}
-          />
-          <DefaultButton
-            text={cancelText}
-            onClick={() => {
-              setActiveAction(null)
-              setDraftValues({})
-            }}
-          />
-        </DialogFooter>
-      </Dialog>
+      </DialogKit.RowDialog>
     </div>
   )
 }

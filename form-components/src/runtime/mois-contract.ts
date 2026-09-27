@@ -421,6 +421,16 @@ export function readSectionSourceFieldValue(
   return target ? target[fieldId] : undefined;
 }
 
+/**
+ * A control's write: the value (and each linked field's) into the section's
+ * active target, `section.activeSelector(fd)`, else `fd.field.data`.
+ *
+ * As in the engine, a write through a section with its own selector (a
+ * SubForm `tempArea`, a list row, a component's value box) lands in that
+ * target only; it never reaches `field.data`, so it is not saved with the
+ * form. Only a write to `field.data` is copied into the preview's flat
+ * `formData` mirror, which follows `field.data` (form-state.ts).
+ */
 export function writeSectionActiveFieldValue(
   draft: any,
   sectionContext: Pick<SectionContextValue, "activeSelector"> | undefined,
@@ -431,20 +441,12 @@ export function writeSectionActiveFieldValue(
   const field = ensureFieldContainer(draft);
   const target =
     resolveTarget(draft, sectionContext?.activeSelector, getActiveFallback) ?? field.data;
+  const writesFieldData = target === field.data;
+  if (writesFieldData) draft.formData = draft.formData || {};
 
-  target[fieldId] = cloneValue(value);
-  if (target !== field.data) {
-    field.data[fieldId] = cloneValue(value);
-  }
-  draft.formData = draft.formData || {};
-  draft.formData[fieldId] = cloneValue(value);
-  linkedFieldIds.forEach((linkedFieldId) => {
-    if (!linkedFieldId || linkedFieldId === fieldId) return;
-    target[linkedFieldId] = cloneValue(value);
-    if (target !== field.data) {
-      field.data[linkedFieldId] = cloneValue(value);
-    }
-    draft.formData[linkedFieldId] = cloneValue(value);
+  [fieldId, ...linkedFieldIds.filter((linkedFieldId) => linkedFieldId && linkedFieldId !== fieldId)].forEach((id) => {
+    target[id] = cloneValue(value);
+    if (writesFieldData) draft.formData[id] = cloneValue(value);
   });
 }
 

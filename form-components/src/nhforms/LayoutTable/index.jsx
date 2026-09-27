@@ -1,34 +1,33 @@
 // Fluent is a NAMESPACE in the real engine's form scope — bare Fluent
 // identifiers are a ReferenceError in production even though preview
 // injects them. Destructure everything this component renders.
+//
+// ValueKit (options, yes/no and choice answers), FormulaKit (computed cells),
+// FormLogicKit (cell visibility) and DefaultsKit (default answers seeded on
+// first load) are referenced only inside function bodies: component files
+// load in no guaranteed order.
 const { Checkbox } = Fluent
 
+// A cell's options as the { code, display } list SimpleCodeSelect draws, read
+// by ValueKit.normalizeOption; an option's explicit `code` or `key` stays its
+// code, because that is what the answer stores.
 const normalizeLayoutTableOptionList = (optionList) => {
   if (!Array.isArray(optionList)) return []
   return optionList
     .map((option) => {
-      if (typeof option === "string") return { code: option, display: option }
-      if (!option || typeof option !== "object") return null
-      const code = option.code ?? option.key ?? option.value ?? option.display ?? option.text ?? option.label
-      const display = option.display ?? option.text ?? option.label ?? option.code ?? option.key ?? option.value
-      return code || display ? { code: String(code ?? display), display: String(display ?? code) } : null
+      const normalized = ValueKit.normalizeOption(option)
+      const explicit = option && typeof option === "object" ? option.code ?? option.key : undefined
+      const code = explicit !== undefined && explicit !== null && String(explicit) !== "" ? String(explicit) : normalized.code
+      const display = normalized.display
+      return code || display ? { code: String(code || display), display: String(display || code) } : null
     })
     .filter(Boolean)
 }
 
-// Yes/no answers arrive as booleans (Checkbox), MOIS-YESNO codes, or the
-// Coding SimpleCodeSelect stores ({ code: "Y", display: "Yes" }).
-const layoutTableScalarAnswer = (value) => (
-  value && typeof value === "object" && !Array.isArray(value)
-    ? (value.code ?? value.value ?? value.key ?? value.display ?? value.text ?? null)
-    : value
-)
-
-const isCheckedValue = (value) => {
-  const raw = layoutTableScalarAnswer(value)
-  if (raw === true || raw === 1) return true
-  return typeof raw === "string" && ["true", "y", "yes", "1"].includes(raw.trim().toLowerCase())
-}
+// Yes/no answers arrive as booleans (Checkbox), MOIS-YESNO codes, the Coding
+// SimpleCodeSelect stores ({ code: "Y", display: "Yes" }) or legacy text;
+// ValueKit.readBoolean reads them all (null: not a yes/no answer).
+const isCheckedValue = (value) => ValueKit.readBoolean(value) === true
 
 // A calendar date in the user's timezone (yyyy-MM-dd), matching the export
 // pipeline's formatLocalDate — toISOString() is UTC, so late in the day it
@@ -129,6 +128,85 @@ const sourceBindingIsInitial = (cell) => cell?.sourceMode === "initial"
 const fieldHasSavedValue = (data, fieldId) =>
   Boolean(data && fieldId && Object.prototype.hasOwnProperty.call(data, fieldId))
 
+// A default answer in the shape the cell's control saves: a Coding for a
+// choice (matched by option code, then wording; dropped when it is not one of
+// the options), a list of Codings for a multiple choice, a MOIS-YESNO Coding
+// for yes/no, a boolean for a tick box, a number for a number cell and text
+// otherwise. Undefined when nothing fits.
+const layoutTableDefaultToStored = (cell, value) => {
+  if (value === undefined || value === null) return undefined
+  switch (cell.inputType) {
+    case "booleanSingle": {
+      const answer = ValueKit.readBoolean(value)
+      return answer === null ? undefined : answer
+    }
+    case "booleanYesNo": {
+      const answer = ValueKit.readBoolean(value)
+      if (answer === null) return undefined
+      return answer
+        ? { code: "Y", display: "Yes", system: "MOIS-YESNO" }
+        : { code: "N", display: "No", system: "MOIS-YESNO" }
+    }
+    case "number": {
+      if (cell.numberConfig?.storeAsNumber === false) return typeof value === "string" || typeof value === "number" ? String(value) : undefined
+      const number = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : NaN
+      return Number.isFinite(number) ? number : undefined
+    }
+    case "choice":
+    case "choiceMulti": {
+      const options = normalizeLayoutTableOptionList(cell.optionList ?? cell.options)
+      const toCoding = (entry) => {
+        const key = entry && typeof entry === "object" ? entry.code ?? entry.value : entry
+        if (key === undefined || key === null || String(key).trim() === "") return null
+        const text = String(key).trim()
+        const lower = text.toLowerCase()
+        const option = options.find((candidate) => candidate.code === text)
+          || options.find((candidate) => candidate.code.toLowerCase() === lower)
+          || options.find((candidate) => candidate.display.toLowerCase() === lower)
+        // A code-list cell (no inline options) cannot be checked here.
+        if (!option && options.length > 0) return null
+        return { code: option ? option.code : text, display: option ? option.display : text, ...(cell.codeSystem ? { system: cell.codeSystem } : {}) }
+      }
+      const codings = (Array.isArray(value) ? value : [value]).map(toCoding).filter(Boolean)
+      if (cell.inputType === "choiceMulti") return codings.length > 0 ? codings : undefined
+      return codings[0] || undefined
+    }
+    default:
+      return typeof value === "string" || typeof value === "number" ? String(value) : undefined
+  }
+}
+
+// The answer cells (field cells and the fields of a field-list cell) that
+// start with a default answer, read by DefaultsKit in every saved shape
+// (defaultAnswer, prefill, dateConfig.prefillToday, a field cell's legacy
+// defaultValue). Source-bound cells are filled from their source instead (the
+// clock binding included). Empty without the kit.
+const collectLayoutTableDefaultCells = (rows) => {
+  if (typeof DefaultsKit === "undefined" || !DefaultsKit) return []
+  const cells = []
+  ;(Array.isArray(rows) ? rows : []).forEach((row) => {
+    ;(Array.isArray(row?.cells) ? row.cells : []).forEach((cell) => {
+      if (!cell) return
+      const fields = cell.kind === "field" ? [cell] : cell.kind === "fieldList" && Array.isArray(cell.fields) ? cell.fields : []
+      fields.forEach((field) => {
+        const fieldId = field?.fieldId || field?.id
+        if (!fieldId || getLayoutTableSourcePaths(field).length > 0) return
+        const answer = DefaultsKit.readDefaultAnswer(field, { shape: "layoutCell" })
+        if (answer) cells.push({ fieldId, cell: field, answer })
+      })
+    })
+  })
+  return cells
+}
+
+// A default is seeded only into an answer the section has never saved (a new
+// form), never over an answer, the same rule as an initial-mode source binding.
+const resolveLayoutTableDefault = (entry, now) =>
+  layoutTableDefaultToStored(entry.cell, DefaultsKit.resolveDefaultAnswer(entry.answer, {
+    now,
+    fieldType: DefaultsKit.temporalKindOf(entry.cell),
+  }))
+
 const getCellDisplayValue = (cell, data, sourceData) => {
   const sourcePaths = getLayoutTableSourcePaths(cell)
   const value = sourcePaths.length > 0
@@ -161,26 +239,20 @@ const formatLayoutTableFieldDisplayValue = (cell, data) => {
   if (value == null || value === "") return ""
 
   if (cell.inputType === "booleanSingle" || cell.inputType === "booleanYesNo") {
-    const raw = layoutTableScalarAnswer(value)
-    if (raw == null || raw === "") return ""
-    if (isCheckedValue(value)) return "Yes"
-    if (isNoLikeValue(value)) return "No"
+    const answer = ValueKit.readBoolean(value)
+    if (answer === true) return "Yes"
+    if (answer === false) return "No"
     // Another code on the yes/no list (e.g. unknown): show its own wording.
-    return String((value && typeof value === "object" ? value.display ?? value.text : null) ?? raw)
+    const [entry] = ValueKit.readChoice(value)
+    return entry ? String(entry.display ?? entry.code) : ""
   }
 
+  // Codes (or codings) worded from the cell's options, several joined.
   const optionList = normalizeLayoutTableOptionList(cell.optionList ?? cell.options)
-  const formatOne = (candidate) => {
-    if (candidate == null || candidate === "") return ""
-    if (typeof candidate === "object") {
-      return String(candidate.display ?? candidate.text ?? candidate.label ?? candidate.value ?? candidate.code ?? "")
-    }
-    const matched = optionList.find((option) => String(option.code) === String(candidate) || String(option.display) === String(candidate))
-    return matched ? matched.display : String(candidate)
-  }
-
-  if (Array.isArray(value)) return value.map(formatOne).filter(Boolean).join(", ")
-  return formatOne(value)
+  return ValueKit.readChoice(value, optionList)
+    .map((entry) => String(entry.display ?? entry.code))
+    .filter(Boolean)
+    .join(", ")
 }
 
 const renderLayoutTableReadOnlyField = (cell, data) => {
@@ -294,14 +366,87 @@ const formatLayoutTableComputedValue = (value, precision, resultType) => {
   return String(numeric)
 }
 
-const computeLayoutTableCellValue = (cell, data) => {
+// A computed cell's formula as a stored tree (neutral form model): the
+// exported `formulaTree`, else its text parsed by FormulaKit in the LayoutTable
+// dialect (cached per text), where a missing answer counts as 0 through
+// coalesce(…, 0). Null when the kit predates trees or the text does not parse;
+// the cell then uses evaluateLayoutTableFormula, as before.
+const layoutTableFormulaTrees = new Map()
+const layoutTableFormulaTree = (cell) => {
+  if (typeof FormulaKit === "undefined" || !FormulaKit || typeof FormulaKit.evaluateTree !== "function") return null
+  const stored = cell?.formulaTree
+  if (stored && stored.v === 1 && stored.expr && typeof stored.expr === "object") return stored
+  const text = typeof cell?.formula === "string" ? cell.formula : ""
+  if (!text.trim() || typeof FormulaKit.parse !== "function") return null
+  if (layoutTableFormulaTrees.has(text)) return layoutTableFormulaTrees.get(text)
+  let tree = null
+  try {
+    const parsed = FormulaKit.parse(text, { dialect: "layoutTable" })
+    if (parsed && parsed.v === 1 && parsed.expr) tree = parsed
+    else if (parsed && parsed.formula && !(parsed.errors && parsed.errors.length)) tree = parsed.formula
+  } catch (error) {
+    tree = null
+  }
+  layoutTableFormulaTrees.set(text, tree)
+  return tree
+}
+
+// The builder field type of each answer the table owns (see
+// collectLayoutTableControllerKinds), so the formula kit reads yes/no answers
+// as yes/no and dates as dates.
+const LAYOUT_TABLE_FORMULA_FIELD_TYPES = {
+  text: "text",
+  textarea: "textarea",
+  number: "number",
+  date: "date",
+  time: "time",
+  choice: "choice",
+  choiceMulti: "multiselect",
+  booleanYesNo: "booleanYesNo",
+  booleanSingle: "booleanSingle",
+}
+const collectLayoutTableFormulaFieldTypes = (rows) => {
+  const types = {}
+  ;(Array.isArray(rows) ? rows : []).forEach((row) => {
+    ;(Array.isArray(row?.cells) ? row.cells : []).forEach((cell) => {
+      if (!cell) return
+      if (cell.kind === "computed" && cell.fieldId) {
+        types[cell.fieldId] = cell.resultType === "text" ? "text" : "number"
+        return
+      }
+      const fields = cell.kind === "field" ? [cell] : cell.kind === "fieldList" && Array.isArray(cell.fields) ? cell.fields : []
+      fields.forEach((field) => {
+        const fieldId = field?.fieldId || field?.id
+        if (fieldId) types[fieldId] = LAYOUT_TABLE_FORMULA_FIELD_TYPES[field.inputType] || "text"
+      })
+    })
+  })
+  return types
+}
+
+// `fieldTypes` (optional): the table's answer types, from
+// collectLayoutTableFormulaFieldTypes.
+const computeLayoutTableCellValue = (cell, data, fieldTypes) => {
   const sourceFieldIds = Array.isArray(cell.sourceFieldIds) && cell.sourceFieldIds.length > 0
     ? cell.sourceFieldIds
     : extractLayoutTableFormulaRefs(cell.formula).filter((fieldId) => fieldId !== cell.fieldId)
   if (cell.blankWhenEmpty === true && sourceFieldIds.every((fieldId) => getNumericFieldValue(data, fieldId) == null)) {
     return ""
   }
-  const rawValue = evaluateLayoutTableFormula(cell.formula, data, cell.fieldId) ?? cell.defaultValue ?? ""
+  const tree = layoutTableFormulaTree(cell)
+  const evaluated = tree
+    ? FormulaKit.evaluateTree(
+      tree,
+      // A cell never reads its own result.
+      (fieldId) => (fieldId === cell.fieldId ? undefined : data?.[fieldId]),
+      {
+        // The dialect already reads a missing answer as 0.
+        incomplete: "compute-anyway",
+        fieldKind: (fieldId) => (fieldTypes ? fieldTypes[fieldId] : undefined),
+      }
+    )
+    : evaluateLayoutTableFormula(cell.formula, data, cell.fieldId)
+  const rawValue = evaluated ?? cell.defaultValue ?? ""
   return formatLayoutTableComputedValue(rawValue, cell.precision, cell.resultType)
 }
 
@@ -424,14 +569,14 @@ const renderLayoutTableStampButton = (cell, readOnly) => {
 
 // Hidden cells keep their <td> (so colSpan/rowSpan geometry holds) but render
 // no content.
-const renderLayoutTableCellContent = (cell, readOnly, data, sourceData, setFieldValue, visibility) => {
+const renderLayoutTableCellContent = (cell, readOnly, data, sourceData, setFieldValue, visibility, formulaFieldTypes) => {
   if (cell.hidden === true) return null
   if (!layoutTableCellIsVisible(cell, visibility)) return null
   if (cell.kind === "field") return renderLayoutTableField(cell, readOnly, data, setFieldValue)
   if (cell.kind === "fieldList") return renderLayoutTableFieldList(cell, readOnly, data, setFieldValue, visibility)
   if (cell.kind === "resources") return renderLayoutTableResources(cell)
   if (cell.kind === "stampButton") return renderLayoutTableStampButton(cell, readOnly)
-  if (cell.kind === "computed") return computeLayoutTableCellValue(cell, data)
+  if (cell.kind === "computed") return computeLayoutTableCellValue(cell, data, formulaFieldTypes)
   return getCellDisplayValue(cell, data, sourceData)
 }
 
@@ -447,46 +592,18 @@ const cellStyle = (cell, config) => ({
   whiteSpace: cell.kind === "text" ? "pre-wrap" : undefined,
 })
 
-const normalizeComparableValue = (value) => {
-  if (value && typeof value === "object") {
-    return value.value ?? value.code ?? value.key ?? value.text ?? value.display ?? value.label ?? ""
-  }
-
-  return value
-}
-
-const isYesLikeValue = (value) => {
-  const normalized = normalizeComparableValue(value)
-  if (value === true || normalized === true || value === 1 || normalized === 1) return true
-
-  return ["y", "yes", "true", "1"].includes(String(normalized ?? "").trim().toLowerCase())
-}
-
-const isNoLikeValue = (value) => {
-  const normalized = normalizeComparableValue(value)
-  if (value === false || normalized === false || value === 0 || normalized === 0) return true
-
-  return ["n", "no", "false", "0"].includes(String(normalized ?? "").trim().toLowerCase())
-}
-
+// A row's `visibleWhen` ({ fieldId, operator, value }), read by the one
+// implementation, FormLogicKit.isLayoutRowVisible (parity:
+// isLayoutRowVisible in @webforms/form-model), which the submit gate of the
+// row's required cells also uses: "truthy" (default) is answered and not a
+// no, "yes" is a yes, "equals" / "notEquals" match a code or wording (a
+// boolean value as yes/no). Only the form's own answer is read (no nested
+// lookup). A runtime without the kit shows the row.
 const rowIsVisible = (row, data) => {
   const rule = row?.visibleWhen
   if (!rule?.fieldId) return true
-
-  const value = data?.[rule.fieldId]
-  const comparableValue = normalizeComparableValue(value)
-
-  switch (rule.operator || "truthy") {
-    case "yes":
-      return isYesLikeValue(value)
-    case "equals":
-      return comparableValue === rule.value
-    case "notEquals":
-      return comparableValue !== rule.value
-    case "truthy":
-    default:
-      return Boolean(comparableValue) && !isNoLikeValue(value)
-  }
+  if (typeof FormLogicKit === "undefined" || !FormLogicKit || typeof FormLogicKit.isLayoutRowVisible !== "function") return true
+  return FormLogicKit.isLayoutRowVisible(rule, (fieldId) => data?.[fieldId])
 }
 
 const LAYOUT_TABLE_CONTROLLER_KINDS = {
@@ -555,8 +672,17 @@ function LayoutTable({
       tableData[cell.fieldId] = resolveLayoutTableSourceValue(cell, activeData, sd)
     }
   })
+  // A locked (read-only) table shows what was saved; defaults never write into it.
+  const defaultCells = readOnly ? [] : collectLayoutTableDefaultCells(tableRows)
+  const renderNow = new Date()
+  defaultCells.forEach((entry) => {
+    if (fieldHasSavedValue(activeData, entry.fieldId)) return
+    const value = resolveLayoutTableDefault(entry, renderNow)
+    if (value !== undefined) tableData[entry.fieldId] = value
+  })
   const visibleRows = tableRows.filter((row) => rowIsVisible(row, activeData))
   const controllerKinds = collectLayoutTableControllerKinds(tableRows)
+  const formulaFieldTypes = collectLayoutTableFormulaFieldTypes(tableRows)
   const cellVisibility = {
     getValue: (controllerId) => tableData[controllerId],
     options: { controllerKind: (controllerId) => controllerKinds[controllerId] },
@@ -576,30 +702,44 @@ function LayoutTable({
     const boundCells = tableRows
       .flatMap((row) => Array.isArray(row.cells) ? row.cells : [])
       .filter((cell) => cell?.kind === "field" && cell.fieldId && getLayoutTableSourcePaths(cell).length > 0)
-    if ((computedCells.length === 0 && boundCells.length === 0) || typeof setActiveData !== "function") return
+    const seededDefaults = readOnly ? [] : collectLayoutTableDefaultCells(tableRows)
+    if ((computedCells.length === 0 && boundCells.length === 0 && seededDefaults.length === 0) || typeof setActiveData !== "function") return
+    // Nothing to seed and nothing computed or bound: leave the section data alone.
+    if (computedCells.length === 0 && boundCells.length === 0
+      && seededDefaults.every((entry) => fieldHasSavedValue(activeData, entry.fieldId))) return
+    const now = new Date()
 
     setActiveData((draft) => {
       if (!draft) {
         const nextData = {}
+        seededDefaults.forEach((entry) => {
+          const value = resolveLayoutTableDefault(entry, now)
+          if (value !== undefined) nextData[entry.fieldId] = value
+        })
         boundCells.forEach((cell) => {
           nextData[cell.fieldId] = resolveLayoutTableSourceValue(cell, {}, sd)
         })
         computedCells.forEach((cell) => {
-          nextData[cell.fieldId] = computeLayoutTableCellValue(cell, nextData)
+          nextData[cell.fieldId] = computeLayoutTableCellValue(cell, nextData, formulaFieldTypes)
         })
         return nextData
       }
+      seededDefaults.forEach((entry) => {
+        if (fieldHasSavedValue(draft, entry.fieldId)) return
+        const value = resolveLayoutTableDefault(entry, now)
+        if (value !== undefined) draft[entry.fieldId] = value
+      })
       boundCells.forEach((cell) => {
         if (sourceBindingIsInitial(cell) && fieldHasSavedValue(draft, cell.fieldId)) return
         const nextValue = resolveLayoutTableSourceValue(cell, draft, sd)
         if (draft[cell.fieldId] !== nextValue) draft[cell.fieldId] = nextValue
       })
       computedCells.forEach((cell) => {
-        const nextValue = computeLayoutTableCellValue(cell, draft)
+        const nextValue = computeLayoutTableCellValue(cell, draft, formulaFieldTypes)
         if (draft[cell.fieldId] !== nextValue) draft[cell.fieldId] = nextValue
       })
     })
-  }, [setActiveData, sd, tableRows, JSON.stringify(activeData)])
+  }, [setActiveData, sd, tableRows, readOnly, JSON.stringify(activeData)])
 
   if (visibleRows.length === 0) return null
 
@@ -625,7 +765,7 @@ function LayoutTable({
                     rowSpan={Math.max(1, Number(cell.rowSpan) || 1)}
                     style={cellStyle(cell, config)}
                   >
-                    {renderLayoutTableCellContent(cell, readOnly, tableData, sd, setFieldValue, cellVisibility)}
+                    {renderLayoutTableCellContent(cell, readOnly, tableData, sd, setFieldValue, cellVisibility, formulaFieldTypes)}
                   </Tag>
                 )
               })}

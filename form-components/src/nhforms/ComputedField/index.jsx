@@ -1,16 +1,42 @@
 const { useEffect, useMemo } = React
 
-// The formula engine lives in FormulaKit (shared with EditableTable formula
-// columns). Read it only at call time: component files load in no fixed order.
+// The formula engine lives in FormulaKit, generated from @webforms/form-model's
+// reference evaluator (shared with table formula columns and subform
+// calculations). Read it only at call time: component files load in no fixed
+// order.
 const _toNumericValue = (value) => FormulaKit.toNumericValue(value)
 const _toComparableValue = (value) => FormulaKit.toComparableValue(value)
-const _hasValue = (value) => FormulaKit.hasValue(value)
-const _extractComputedReferences = (expression) => FormulaKit.extractReferences(expression)
 const _roundComputedValue = (value, precision) => FormulaKit.roundValue(value, precision)
+// Formula text over answers by field id; kept for callers that only have text.
 const _evaluateComputedExpression = (expression, valuesByFieldId, currentFieldId) =>
   FormulaKit.evaluate(expression, valuesByFieldId, currentFieldId)
-const _hasAllReferencedValues = (expression, valuesByFieldId) =>
-  FormulaKit.hasAllReferencedValues(expression, valuesByFieldId)
+
+// The formula to run: the stored tree the exporter emits (`formulaTree`), or
+// the legacy `expression` text parsed once. Null when neither is usable.
+const _resolveComputedFormula = (formulaTree, expression) => {
+  if (formulaTree && typeof formulaTree === "object" && formulaTree.v === 1 && formulaTree.expr) return formulaTree
+  if (typeof expression !== "string" || !expression.trim()) return null
+  return typeof FormulaKit.parse === "function" ? FormulaKit.parse(expression).formula : null
+}
+
+// "Calculate from what is answered" counts a missing input as 0; every other
+// incomplete behaviour keeps the reference rule (a missing input blanks it).
+const _formulaIncompleteMode = (incompleteBehavior) =>
+  incompleteBehavior === "compute-anyway" ? "compute-anyway" : "blank"
+
+// A computed answer stores a number, text or yes/no; anything else is blank.
+const _evaluateComputedFormula = (formula, expression, valuesByFieldId, options) => {
+  if (typeof FormulaKit.evaluateTree !== "function") {
+    return _evaluateComputedExpression(expression, valuesByFieldId, options.selfId)
+  }
+  if (!formula) return null
+  const result = FormulaKit.evaluateTree(formula, valuesByFieldId, options)
+  if (typeof result === "number") return Number.isFinite(result) ? result : null
+  return typeof result === "string" || typeof result === "boolean" ? result : null
+}
+
+const _hasAllReferencedValues = (formula, valuesByFieldId, fieldKinds) =>
+  formula ? FormulaKit.hasAllReferencedValues(formula, valuesByFieldId, { fieldKinds }) : true
 
 const _toDisplayValue = (value, precision, resultType) => {
   if (typeof value === "string") return value
@@ -190,7 +216,13 @@ const ComputedValuePresentation = ({
 const ComputedField = ({
   fieldId,
   label,
+  // The stored formula tree (@webforms/form-model StoredFormula), emitted by
+  // the MOIS exporter. `expression` is its text and the fallback when absent.
+  formulaTree,
   expression,
+  // Builder field types of the referenced fields that change how an answer
+  // reads (dates, yes/no, single checkboxes): { fieldId: type }.
+  fieldKinds,
   precision,
   resultType = "number",
   displayStyle = "field",
@@ -207,7 +239,8 @@ const ComputedField = ({
   // Legacy calculators (BPI Severity/Interference/Relief, PEG, DLQI) pair
   //   IF (IsNull(...), 'Incomplete', '')
   // with mirrored visible expressions so a partial total never shows and never
-  // persists. "compute-anyway" is the default so existing forms are unchanged.
+  // persists. "compute-anyway" is the default so existing forms are unchanged:
+  // it counts a missing input as 0, so a score total grows as items are answered.
   incompleteBehavior = "compute-anyway",
   incompleteText = "Incomplete",
   resolvedValue,
@@ -232,11 +265,20 @@ const ComputedField = ({
   const policy = _normalizeCalculationPolicy(calculationPolicy)
   const isOverridden = _computedFieldIsOverridden(valuesByFieldId, fieldId)
 
+  const formula = useMemo(
+    () => _resolveComputedFormula(formulaTree, expression),
+    [expression, formulaTree]
+  )
+
   const computedValue = useMemo(
     () => presentationOnly
       ? resolvedValue
-      : _evaluateComputedExpression(expression, valuesByFieldId, fieldId),
-    [expression, fieldId, presentationOnly, resolvedValue, valuesByFieldId]
+      : _evaluateComputedFormula(formula, expression, valuesByFieldId, {
+          selfId: fieldId,
+          incomplete: _formulaIncompleteMode(incompleteBehavior),
+          fieldKinds,
+        }),
+    [expression, fieldId, fieldKinds, formula, incompleteBehavior, presentationOnly, resolvedValue, valuesByFieldId]
   )
 
   const roundedValue = useMemo(
@@ -247,9 +289,9 @@ const ComputedField = ({
   const isIncomplete = useMemo(
     () => (
       incompleteBehavior !== "compute-anyway" &&
-      !_hasAllReferencedValues(expression, valuesByFieldId)
+      !_hasAllReferencedValues(formula, valuesByFieldId, fieldKinds)
     ),
-    [expression, incompleteBehavior, valuesByFieldId]
+    [fieldKinds, formula, incompleteBehavior, valuesByFieldId]
   )
 
   const storedValue = useMemo(() => {
@@ -290,8 +332,8 @@ const ComputedField = ({
       : `calc(${labelColumnWidth} + 10px)`
 
   const canShowInterpretation = useMemo(
-    () => Boolean(showInterpretation && _hasAllReferencedValues(expression, valuesByFieldId)),
-    [expression, showInterpretation, valuesByFieldId]
+    () => Boolean(showInterpretation && _hasAllReferencedValues(formula, valuesByFieldId, fieldKinds)),
+    [fieldKinds, formula, showInterpretation, valuesByFieldId]
   )
 
   const interpretationValue = policy === "always-calculated"

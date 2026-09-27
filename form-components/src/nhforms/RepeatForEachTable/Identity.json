@@ -23,8 +23,12 @@
     "patch": 10
   },
   "components": [
+    "DefaultsKit",
+    "DialogKit",
     "EditableTable",
+    "FieldKit",
     "FormLogicKit",
-    "FormulaKit"
+    "FormulaKit",
+    "ValueKit"
   ]
 }

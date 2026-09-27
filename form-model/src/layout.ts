@@ -1,4 +1,6 @@
 import type { BoundingBox, ParsedField } from "./document";
+import type { StoredFormula } from "./formula/ast";
+import type { BuilderDefaultAnswer } from "./defaults";
 import type { GroupSummary } from "./grouping";
 import type { ReportItemFormat } from "./report-formats";
 import type {
@@ -1065,9 +1067,12 @@ export interface SubformDataEntryFieldConfig {
   renderStyle?: "checkbox" | "checklist-row";
   /**
    * Answer written when the modal opens on an empty field: an option value,
-   * number, text, or the tokens "__today" (date) / "__now" (date-time).
+   * number, text, or the tokens "__today" (date) / "__now" (date-time). A
+   * legacy mirror of `defaultAnswer` (readDefaultAnswer reads both).
    */
   defaultValue?: unknown;
+  /** The default answer (see defaults.ts); `defaultValue` and `defaultFromObservation` are its legacy mirrors. */
+  defaultAnswer?: BuilderDefaultAnswer | null;
   /** Show/hide rule evaluated against sibling answers; hidden fields are never required. */
   visibility?: BuilderField["visibility"];
   /** Never rendered, but still collects its default answer. */
@@ -1078,6 +1083,10 @@ export interface SubformDataEntryFieldConfig {
   defaultFromObservation?: {
     observationCode: string;
     aspect?: "value" | "collectedDateTime" | "units" | "comment";
+    /** Code system when the code is not a MOIS observation code. */
+    system?: string;
+    /** Only observations collected within this many days. */
+    lookbackDays?: number;
   };
   emptyValue?: number;
   rows?: number;
@@ -1175,6 +1184,8 @@ export interface SubformDataEntryCalculationConfig {
   id: string;
   label: string;
   expression: string;
+  /** The stored formula tree; `expression` is its printed mirror (formula-semantics.md, "Storage"). */
+  formulaTree?: StoredFormula;
   precision?: number;
   displayStyle?: "field" | "compact" | "prominent";
   incompleteBehavior?: "compute-anyway" | "show-text" | "hide";

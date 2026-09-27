@@ -464,22 +464,43 @@ const FormFlow = (() => {
       return () => window.removeEventListener("webforms:preview-select-page", handler)
     }, [])
 
-    // hiddenAnswerPolicy "clear": drop answers of fields on inactive pages.
-    // Converges: once cleared, nothing is left to clear.
+    // The one hidden-answer rule (FormLogicKit.shouldClearHiddenAnswer): a
+    // page whose hiddenAnswerPolicy is "clear" drops its fields' answers when
+    // it BECOMES inactive (it was active at the previous render); otherwise
+    // they are kept. A page that is inactive when the form opens keeps them
+    // (a chart-filled answer may only resolve after mount); the save and
+    // submit payloads leave them out (dropInactiveAnswers). The inline
+    // fallback is the same rule.
+    const kit = typeof FormLogicKit !== "undefined" && FormLogicKit && typeof FormLogicKit.shouldClearHiddenAnswer === "function" ? FormLogicKit : null
+    const shouldClear = kit
+      ? kit.shouldClearHiddenAnswer
+      : (policy, hidden, value, wasHidden) => policy === "clear" && hidden === true && wasHidden === false && value !== undefined && value !== null && value !== ""
+    // Page activity at the previous render (null on the first one).
+    const previousActiveRef = React.useRef(null)
+    const previousActive = previousActiveRef.current
     const clearIds = []
     ;(cfg.pages || []).forEach((page, index) => {
-      if (!page || !page.clearWhenInactive || active[index]) return
+      if (!page || active[index]) return
+      const policy = page.clearWhenInactive || page.hiddenAnswerPolicy === "clear" ? "clear" : "preserve"
+      const wasHidden = previousActive ? !previousActive[index] : undefined
       const modelPage = (cfg.model || []).find((entry) => entry.pageIndex === index)
       ;((modelPage && modelPage.fields) || []).forEach((field) => {
-        if (data[field.id] !== undefined && data[field.id] !== null && data[field.id] !== "") clearIds.push(field.id)
+        if (shouldClear(policy, true, data[field.id], wasHidden)) clearIds.push(field.id)
       })
     })
     const clearKey = clearIds.join("\u0000")
+    React.useEffect(() => {
+      previousActiveRef.current = active
+    })
     React.useEffect(() => {
       if (!clearKey) return
       const ids = clearKey.split("\u0000")
       write((draft) => {
         if (!draft.field || !draft.field.data) return
+        if (kit && typeof kit.clearHiddenAnswers === "function") {
+          kit.clearHiddenAnswers(draft.field.data, ids)
+          return
+        }
         ids.forEach((id) => {
           delete draft.field.data[id]
         })
@@ -787,6 +808,34 @@ const FormFlow = (() => {
     submitAttemptedAt = Date.now()
   }
 
+  /**
+   * The save and submit half of the hidden-answer rule (emitted
+   * dropHiddenAnswers): the answers without those of fields on inactive pages
+   * whose hiddenAnswerPolicy is "clear", also when the page has been inactive
+   * since the form opened. Never mutates: returns a copy when something is
+   * dropped, otherwise `values` itself.
+   */
+  const dropInactiveAnswers = (config, values) => {
+    if (!config || !values || typeof values !== "object") return values
+    const kit = typeof FormLogicKit !== "undefined" && FormLogicKit && typeof FormLogicKit.shouldDropHiddenAnswer === "function" ? FormLogicKit : null
+    const shouldDrop = kit
+      ? kit.shouldDropHiddenAnswer
+      : (policy, hidden, value) => policy === "clear" && hidden === true && value !== undefined && value !== null && value !== ""
+    const active = resolveActivePages(config, values)
+    let next = values
+    ;(config.pages || []).forEach((page, index) => {
+      if (!page || active[index]) return
+      const policy = page.clearWhenInactive || page.hiddenAnswerPolicy === "clear" ? "clear" : "preserve"
+      const modelPage = (config.model || []).find((entry) => entry.pageIndex === index)
+      ;((modelPage && modelPage.fields) || []).forEach((field) => {
+        if (!shouldDrop(policy, true, next[field.id])) return
+        if (next === values) next = { ...values }
+        delete next[field.id]
+      })
+    })
+    return next
+  }
+
   FormFlowRoot.Nav = Nav
   FormFlowRoot.Page = Page
   FormFlowRoot.Steps = Steps
@@ -803,5 +852,6 @@ const FormFlow = (() => {
   FormFlowRoot.requestReview = requestReview
   FormFlowRoot.formatText = formatText
   FormFlowRoot.noteSubmitAttempt = noteSubmitAttempt
+  FormFlowRoot.dropInactiveAnswers = dropInactiveAnswers
   return FormFlowRoot
 })()

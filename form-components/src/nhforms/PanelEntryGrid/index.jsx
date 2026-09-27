@@ -1,5 +1,5 @@
 const { useEffect, useMemo } = React
-const { Dropdown, Label, Separator, Stack, Text, TextField } = Fluent
+const { Label, Separator, Stack, Text } = Fluent
 
 const panelGridRows = (rows) => Array.isArray(rows)
   ? rows.filter((row) => row && typeof row === "object" && typeof row.id === "string")
@@ -256,46 +256,28 @@ const PanelEntryGrid = ({
         />
       )
     }
-    if (type === "choice" || type === "coded") {
-      const answer = kit.normalizeAnswer(value, normalizedOptions)
-      return (
-        <Dropdown
-          options={normalizedOptions.map((option) => ({ key: option.key, text: option.label }))}
-          selectedKey={answer.empty ? undefined : answer.code}
-          onChange={readOnly ? undefined : (_event, option) => {
-            const selected = normalizedOptions.find((candidate) => candidate.key === String(option?.key ?? ""))
-            setRowValue(row.id, selected ? {
-              code: selected.key,
-              display: selected.label,
-              system: row.system ?? selected.system,
-            } : null)
-          }}
-          disabled={readOnly}
-        />
-      )
-    }
-    if (type === "numeric" || type === "number") {
-      const answer = kit.normalizeAnswer(value, row.options)
-      return (
-        <TextField
-          type="number"
-          value={answer.empty ? "" : String(answer.raw)}
-          min={row.min}
-          max={row.max}
-          step={row.step}
-          onChange={readOnly ? undefined : (_event, nextValue) => setRowValue(row.id, nextValue === "" ? "" : Number(nextValue))}
-          readOnly={readOnly}
-        />
-      )
-    }
-    return (
-      <TextField
-        value={kit.normalizeAnswer(value, row.options).display}
-        multiline={row.multiline !== false}
-        onChange={readOnly ? undefined : (_event, nextValue) => setRowValue(row.id, nextValue ?? "")}
-        readOnly={readOnly}
-      />
+    // Choice, number and text rows are drawn by FieldKit with the MOIS
+    // control the exporter chooses (a SimpleCodeSelect dropdown, a Numeric,
+    // a TextArea, multiline unless the row says otherwise). The row keeps its
+    // stored shape (FieldKit.storage.coding): a choice as a Coding carrying
+    // the row's system, a number as a Number ("" when cleared), text as typed.
+    const descriptor = FieldKit.fromPanelRow(
+      type === "choice" || type === "coded"
+        ? { ...row, options: normalizedOptions.map((option) => ({ key: option.key, label: option.label, system: option.system })) }
+        : row
     )
+    return FieldKit.renderControl(descriptor, {
+      value,
+      onChange: (stored) => setRowValue(row.id, stored),
+      storage: FieldKit.storage.coding(descriptor, descriptor.type === "number" ? {} : {
+        display: (stored) => kit.normalizeAnswer(stored, row.options).display,
+      }),
+      label: row.label,
+      labelPosition: "none",
+      required: row.required === true,
+      readOnly,
+      inline: true,
+    })
   }
 
   return (

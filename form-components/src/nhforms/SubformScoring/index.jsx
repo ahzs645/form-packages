@@ -9,6 +9,14 @@
  * Keep the dependency-ordered sections below in this single compilation unit
  * until both runtime loaders, the generator, MOIS export packaging, and the
  * source-level characterization harness support ordered source fragments.
+ *
+ * Calculations and totals are evaluated by FormulaKit from their stored trees;
+ * ValueKit reads options and answers; DefaultsKit reads and resolves each
+ * entry's default answer when the subform opens on an empty answer; FieldKit
+ * draws each data-entry question with the MOIS control the exporter chooses;
+ * DialogKit draws the dialog (RowDialog on the MOIS SubForm). All of them
+ * (and FormLogicKit) are referenced only inside function bodies (component
+ * files load in no guaranteed order).
  */
 
 // =====================================================================
@@ -21,9 +29,6 @@ const {
   Label,
   Text,
   PrimaryButton,
-  DefaultButton,
-  Dialog,
-  DialogType,
   Toggle,
 } = Fluent
 
@@ -176,12 +181,23 @@ const _resolveQuestionOptions = (question, sharedOptions) => {
   return Array.isArray(sharedOptions) ? sharedOptions : []
 }
 
+// A scoring option's stored key (its explicit key or id, else ValueKit's code)
+// and score (ValueKit's reading, 0 when it has none).
+const _scoringOptionKey = (option) => {
+  const explicit = option && typeof option === "object" ? option.key ?? option.id : undefined
+  return explicit !== undefined && explicit !== null ? explicit : ValueKit.normalizeOption(option).code
+}
+const _scoringOptionScore = (option) => {
+  const score = ValueKit.normalizeOption(option).score
+  return Number.isFinite(score) ? score : 0
+}
+
 const _buildScoreMap = (questions, sharedOptions) => {
   const map = new Map()
   for (const question of questions || []) {
     const optionMap = new Map()
     for (const opt of _resolveQuestionOptions(question, sharedOptions)) {
-      optionMap.set(opt.key, opt.score ?? 0)
+      optionMap.set(_scoringOptionKey(opt), _scoringOptionScore(opt))
     }
     map.set(question.id, optionMap)
   }
@@ -215,48 +231,18 @@ const _resolveChecklistOptions = (question, sharedOptions) => {
 
 const _normalizeScoreToken = (value) => String(value ?? "").trim().toLowerCase()
 
-const _collectScoreCandidates = (value, out = new Set(), depth = 0) => {
-  if (depth > 4 || value === null || value === undefined) return out
-
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-    const token = String(value).trim()
-    if (token) out.add(token)
-    return out
-  }
-
-  if (Array.isArray(value)) {
-    value.forEach((entry) => _collectScoreCandidates(entry, out, depth + 1))
-    return out
-  }
-
-  if (typeof value !== "object") return out
-
-  const candidateKeys = [
-    "code",
-    "key",
-    "value",
-    "id",
-    "text",
-    "display",
-    "label",
-    "state",
-    "fieldId",
-  ]
-  candidateKeys.forEach((key) => {
-    _collectScoreCandidates(value[key], out, depth + 1)
+// Every token an answer can be matched to an option by: each chosen entry's
+// code and wording as ValueKit.readChoice reads them (bare codes, codings,
+// subform and scoring selections { selectedKey, response }, checklist ids and
+// labels, FindCodeSelect { selectedItems } / { selectedItem }, FHIR answers,
+// lists).
+const _collectScoreCandidates = (value, out = new Set()) => {
+  ValueKit.readChoice(value).forEach((entry) => {
+    const code = String(entry.code ?? "").trim()
+    const display = String(entry.display ?? "").trim()
+    if (code) out.add(code)
+    if (display) out.add(display)
   })
-
-  if (Array.isArray(value.selectedItems)) {
-    value.selectedItems.forEach((entry) => _collectScoreCandidates(entry, out, depth + 1))
-  }
-  _collectScoreCandidates(value.selectedItem, out, depth + 1)
-  if (Array.isArray(value.selectedIds)) {
-    value.selectedIds.forEach((entry) => _collectScoreCandidates(entry, out, depth + 1))
-  }
-  if (Array.isArray(value.selectedLabels)) {
-    value.selectedLabels.forEach((entry) => _collectScoreCandidates(entry, out, depth + 1))
-  }
-
   return out
 }
 
@@ -1179,6 +1165,77 @@ const _evaluateExpression = (expression, varsByName) => {
 }
 
 // =====================================================================
+// Formula trees: data-entry calculations and scoring totals
+// =====================================================================
+//
+// Calculations and totals are evaluated by FormulaKit.evaluateTree (the
+// reference semantics in docs/.../architecture/formula-semantics.md) from the
+// exported `formulaTree`, else from the text parsed by FormulaKit.parse with
+// the ids the formula may read. A kit without tree support, or text that does
+// not parse, keeps _evaluateExpression above.
+
+const _subformFormulaTrees = new Map()
+const _subformFormulaTree = (store, fieldIds) => {
+  if (typeof FormulaKit === "undefined" || !FormulaKit || typeof FormulaKit.evaluateTree !== "function") return null
+  const stored = store?.formulaTree
+  if (stored && stored.v === 1 && stored.expr && typeof stored.expr === "object") return stored
+  const text = typeof store?.expression === "string" ? store.expression : ""
+  if (!text.trim() || typeof FormulaKit.parse !== "function") return null
+  const ids = Array.from(new Set((fieldIds || []).filter(Boolean)))
+  const key = text + "\u0000" + ids.join("\u0001")
+  if (_subformFormulaTrees.has(key)) return _subformFormulaTrees.get(key)
+  let tree = null
+  try {
+    const parsed = FormulaKit.parse(text, ids.length > 0 ? { fieldIds: ids } : {})
+    if (parsed && parsed.v === 1 && parsed.expr) tree = parsed
+    else if (parsed && parsed.formula && !(parsed.errors && parsed.errors.length)) tree = parsed.formula
+  } catch (error) {
+    tree = null
+  }
+  _subformFormulaTrees.set(key, tree)
+  return tree
+}
+
+// The formulas to evaluate. The builder's `calculatedValues` mirror of the
+// calculations or totals (display settings shared with computed fields) wins
+// when present, but an entry without a tree takes the stored tree of the
+// calculation or total it mirrors (same id, same text), so the exported tree
+// is evaluated whichever copy the config carries.
+const _subformFormulaStores = (mirror, sources) => {
+  const stores = Array.isArray(sources) ? sources : []
+  if (!Array.isArray(mirror) || mirror.length === 0) return stores
+  const sourceById = new Map(stores.filter((store) => store && store.id).map((store) => [store.id, store]))
+  const text = (value) => (typeof value === "string" ? value.trim() : "")
+  return mirror.map((entry) => {
+    if (!entry || (entry.formulaTree && entry.formulaTree.v === 1)) return entry
+    const source = sourceById.get(entry.id)
+    const tree = source?.formulaTree
+    if (!tree || tree.v !== 1 || !text(entry.expression) || text(source.expression) !== text(entry.expression)) return entry
+    return { ...entry, formulaTree: tree }
+  })
+}
+
+// A calculation's or total's result: a finite number, or text; else null.
+const _subformFormulaResult = (value) => {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null
+  if (typeof value === "string") return value.trim() ? value : null
+  return null
+}
+
+// Evaluate a calculation's or total's tree. The result stays blank until every
+// input it reads has a value (as _evaluateExpression did), unless the store
+// says "compute-anyway": a missing input then counts as 0.
+const _evaluateSubformFormulaTree = (tree, getValue, store, options = {}) => {
+  const computeAnyway = store?.incompleteBehavior === "compute-anyway"
+  if (!computeAnyway && typeof FormulaKit.hasAllReferencedValues === "function"
+    && !FormulaKit.hasAllReferencedValues(tree, getValue, { fieldKind: options.fieldKind })) return null
+  return _subformFormulaResult(FormulaKit.evaluateTree(tree, getValue, {
+    ...options,
+    incomplete: computeAnyway ? "compute-anyway" : "blank",
+  }))
+}
+
+// =====================================================================
 // Data-entry field module: layout, choices, defaults, and render groups
 // =====================================================================
 
@@ -1313,15 +1370,16 @@ const _normalizeSelectableOptions = (field, fallbackOptions = []) => {
   return rawOptions
     .map((option, index) => {
       if (option && typeof option === "object" && !Array.isArray(option)) {
+        // ValueKit reads the option; the stored selectedKey keeps an explicit
+        // key or id, then the value, so saved answers still match.
+        const normalized = ValueKit.normalizeOption(option)
         const rawValue =
           option.value ??
           option.key ??
           option.id ??
-          option.label ??
-          option.text ??
-          index
+          (normalized.code || index)
         const key = String(option.key ?? option.id ?? rawValue ?? `option_${index + 1}`)
-        const text = String(option.label ?? option.text ?? rawValue ?? `Option ${index + 1}`)
+        const text = String(normalized.display || rawValue || `Option ${index + 1}`)
         const description =
           typeof option.description === "string" && option.description.trim()
             ? option.description.trim()
@@ -1408,6 +1466,30 @@ const _resolveSelectableBinaryOptions = (field, fallbackOptions = []) => {
   }
 }
 
+// The open dialog's answers as text, for noticing a change since it opened.
+const _dialogAnswerSignature = (dataEntryValues, answers) => {
+  try {
+    return JSON.stringify({ values: dataEntryValues || {}, answers: answers || {} })
+  } catch (_error) {
+    return ""
+  }
+}
+
+// A yes/no entry's options for its CompactBooleanField: the checked option,
+// the option "No" stores (the value-0 option, else the other one), and the
+// value-0 option alone (strictUncheckedOption), which an unticked check box
+// stores when the field has one.
+const _booleanEntryOptions = (field) => {
+  const options = _normalizeSelectableOptions(field, ["Yes", "No"])
+  const { checkedOption, uncheckedOption } = _resolveSelectableBinaryOptions(field, ["Yes", "No"])
+  return {
+    options,
+    checkedOption,
+    uncheckedOption: uncheckedOption || options.find((option) => option.key !== checkedOption?.key) || null,
+    strictUncheckedOption: uncheckedOption,
+  }
+}
+
 const _latestObservationDefault = (field, sd) => {
   const binding = field?.defaultFromObservation ?? field?.default_from_observation
   const code = String(binding?.observationCode ?? binding?.observation_code ?? "").trim()
@@ -1429,12 +1511,66 @@ const _latestObservationDefault = (field, sd) => {
   return latest[aspect]
 }
 
+// The patient's latest observation with this code, collected within
+// `lookbackDays` when set; `aspect` (a defaultFromObservation setting) picks
+// another part of it than the value.
+const _latestObservationValue = (sd, code, lookbackDays, aspect, now) => {
+  const observations = Array.isArray(sd?.patient?.observations)
+    ? sd.patient.observations
+    : Array.isArray(sd?.queryResult?.patient?.[0]?.observations)
+      ? sd.queryResult.patient[0].observations
+      : []
+  const collectedAt = (entry) => new Date(entry?.collectedDateTime ?? 0).getTime() || 0
+  const cutoff = typeof lookbackDays === "number" && lookbackDays > 0 ? now.getTime() - lookbackDays * 86400000 : null
+  const latest = observations
+    .filter((entry) => entry?.observationCode === code && (cutoff === null || collectedAt(entry) >= cutoff))
+    .sort((left, right) => collectedAt(right) - collectedAt(left))[0]
+  if (!latest) return undefined
+  return latest[aspect || "value"]
+}
+
+// The entry's default answer through DefaultsKit (every saved shape: the
+// defaultAnswer descriptor, defaultValue with its "__today"/"__now" tokens,
+// defaultFromObservation), resolved for a newly opened subform. An
+// observation default that finds nothing falls back to the entry's other
+// default. Null without the kit (the caller reads the older shapes itself).
+const _resolveDefaultAnswerWithKit = (field, sd, allowObservationDefault) => {
+  const kit = typeof DefaultsKit !== "undefined" && DefaultsKit ? DefaultsKit : null
+  if (!kit) return null
+  const now = new Date()
+  const binding = field.defaultFromObservation ?? field.default_from_observation
+  const context = {
+    now,
+    fieldType: kit.temporalKindOf(field),
+    readLastObservation: (code, system, lookbackDays) => {
+      const bindingCode = String(binding?.observationCode ?? binding?.observation_code ?? "").trim()
+      const aspect = bindingCode === code && typeof binding?.aspect === "string" ? binding.aspect : "value"
+      return _latestObservationValue(sd, code, lookbackDays, aspect, now)
+    },
+  }
+  const answer = kit.readDefaultAnswer(field, { shape: "subformEntry", bringForward: allowObservationDefault })
+  let value = kit.resolveDefaultAnswer(answer, context)
+  if (value === undefined && answer && answer.kind === "lastObservation") {
+    value = kit.resolveDefaultAnswer(kit.readDefaultAnswer(field, { shape: "subformEntry", bringForward: false }), context)
+  }
+  return { value }
+}
+
 const _resolveFieldDefaultValue = (field, sd, allowObservationDefault = true) => {
   if (!field || _isHeadingField(field)) return undefined
 
-  const observationDefault = allowObservationDefault ? _latestObservationDefault(field, sd) : undefined
-  const explicitDefault = observationDefault ?? field.defaultValue ?? field.default_value
+  const fromKit = _resolveDefaultAnswerWithKit(field, sd, allowObservationDefault)
+  if (fromKit && fromKit.value === undefined) return undefined
+  const observationDefault = !fromKit && allowObservationDefault ? _latestObservationDefault(field, sd) : undefined
+  const explicitDefault = fromKit ? fromKit.value : observationDefault ?? field.defaultValue ?? field.default_value
   if (explicitDefault === undefined) return undefined
+
+  // A yes/no default reads as true or false: the first option is yes, the second no.
+  if (field.type === "booleanYesNo" && typeof explicitDefault === "boolean") {
+    const options = _normalizeSelectableOptions(field, ["Yes", "No"])
+    const option = options[explicitDefault ? 0 : 1]
+    if (option) return _serializeSelectableValue(field, option)
+  }
 
   if (explicitDefault === "__today" || explicitDefault === "__now") {
     const today = new Date()
@@ -1587,23 +1723,6 @@ const _buildDataEntryRenderGroups = (fields) => {
   return stackedGroups
 }
 
-const _isScaleChoiceSelected = (value, option) => {
-  const optionValue = String(option?.value ?? "")
-  if (value && typeof value === "object") {
-    if (value.selectedKey !== null && value.selectedKey !== undefined) {
-      return String(value.selectedKey) === optionValue
-    }
-    if (Number.isFinite(value.value)) {
-      return Number(value.value) === Number(option.value)
-    }
-  }
-  const numeric = _toNumericValue(value)
-  if (numeric !== null) {
-    return numeric === Number(option.value)
-  }
-  return false
-}
-
 // =====================================================================
 // Calculator and local-style module
 // =====================================================================
@@ -1629,31 +1748,6 @@ const _computeMorphineEquivalent = (doseValue, equivalentDoseMg, baseEquivalentD
   if (!Number.isFinite(equivalentDose) || equivalentDose <= 0) return null
   if (!Number.isFinite(baseDose) || baseDose <= 0) return null
   return (dose * baseDose) / equivalentDose
-}
-
-const _LOCAL_INPUT_STYLE = (isDarkMode) => ({
-  width: "100%",
-  minHeight: "34px",
-  borderRadius: "2px",
-  border: `1px solid ${isDarkMode ? "#5a5a5a" : "#b8b8b8"}`,
-  backgroundColor: isDarkMode ? "#1a1a1a" : "#fff",
-  color: isDarkMode ? "#fff" : "#111",
-  padding: "6px 8px",
-  fontSize: "14px",
-  boxSizing: "border-box",
-})
-
-const _LOCAL_TEXTAREA_STYLE = (isDarkMode) => ({
-  ..._LOCAL_INPUT_STYLE(isDarkMode),
-  minHeight: "96px",
-  resize: "vertical",
-  fontFamily: "inherit",
-})
-
-const _LOCAL_RADIO_GROUP_STYLE = {
-  display: "flex",
-  flexDirection: "column",
-  gap: "8px",
 }
 
 // =====================================================================
@@ -1974,9 +2068,7 @@ const SubformScoringInner = ({
     if (isDataEntryMode) return {}
     const results = {}
     const questionsById = new Map((config.questions || []).map((question) => [question.id, question]))
-    const totals = Array.isArray(config.calculatedValues) && config.calculatedValues.length > 0
-      ? config.calculatedValues
-      : config.totals || []
+    const totals = _subformFormulaStores(config.calculatedValues, config.totals)
     for (const total of totals) {
       let score = 0
       let isComplete = true
@@ -2029,7 +2121,25 @@ const SubformScoringInner = ({
         }
       }
       if (typeof total.expression === "string" && total.expression.trim()) {
-        const evaluated = isComplete ? _evaluateExpression(total.expression, expressionVars) : null
+        // A question reference reads the question's score (emptyScore when
+        // unanswered); the tree says so with score([question]).
+        const computeAnyway = total.incompleteBehavior === "compute-anyway"
+        const formulaIds = [
+          ...(config.questions || []).flatMap((question) => [question.id, question.fieldId, ...(question.childFieldIds || [])]),
+          ...(total.contextVariables || []).map((variable) => variable?.id),
+        ]
+        const tree = _subformFormulaTree(total, formulaIds)
+        let evaluated = null
+        if (tree && (isComplete || computeAnyway)) {
+          evaluated = _evaluateSubformFormulaTree(
+            tree,
+            (id) => (Object.prototype.hasOwnProperty.call(expressionVars, id) ? expressionVars[id] : undefined),
+            total,
+            { selfId: total.id }
+          )
+        } else if (!tree) {
+          evaluated = isComplete ? _evaluateExpression(total.expression, expressionVars) : null
+        }
         score = evaluated
         isComplete = evaluated !== null
       }
@@ -2218,6 +2328,29 @@ const SubformScoringInner = ({
     }))
   }, [bringForward, isDataEntryMode, isDialogOpen, isReadOnly, dataEntryFields, dataEntryValues, fd, onDataEntryValueChange, sd])
 
+  // Whether the open dialog holds changed answers (asked about before a
+  // close discards them). The baseline is taken once the opening defaults
+  // have been written, so seeded defaults do not count as a change.
+  const hasPendingDefaults = isDataEntryMode && isDialogOpen && !isReadOnly && dataEntryFields.some((field) => (
+    field?.id &&
+    !_isMeaningfulValue(dataEntryValues[field.id]) &&
+    _resolveFieldDefaultValue(field, sd, bringForward) !== undefined
+  ))
+  const dialogAnswerSignature = isDialogOpen ? _dialogAnswerSignature(dataEntryValues, answers) : null
+  const dirtyBaselineRef = React.useRef(null)
+  useEffect(() => {
+    if (!isDialogOpen) {
+      dirtyBaselineRef.current = null
+      return
+    }
+    if (dirtyBaselineRef.current === null && !hasPendingDefaults) {
+      dirtyBaselineRef.current = dialogAnswerSignature
+    }
+  }, [isDialogOpen, hasPendingDefaults, dialogAnswerSignature])
+  const isDialogDirty = Boolean(isDialogOpen) &&
+    dirtyBaselineRef.current !== null &&
+    dialogAnswerSignature !== dirtyBaselineRef.current
+
   // Visibility rules may name a sibling (the usual case) or a parent-form
   // field, read from the same store the subform's answers live in.
   const getVisibilityControllerValue = useCallback((controllerId) => {
@@ -2248,12 +2381,10 @@ const SubformScoringInner = ({
     ))
   }, [isDataEntryMode, dataEntryFields, dataEntryValues, isDataEntryFieldShown])
 
-  const dataEntryCalculations = useMemo(() => {
-    if (Array.isArray(dataEntryConfig?.calculatedValues) && dataEntryConfig.calculatedValues.length > 0) {
-      return dataEntryConfig.calculatedValues
-    }
-    return Array.isArray(dataEntryConfig?.calculations) ? dataEntryConfig.calculations : []
-  }, [dataEntryConfig])
+  const dataEntryCalculations = useMemo(
+    () => _subformFormulaStores(dataEntryConfig?.calculatedValues, dataEntryConfig?.calculations),
+    [dataEntryConfig]
+  )
 
   const calculatedExpressions = useMemo(() => {
     if (!isDataEntryMode) return {}
@@ -2273,15 +2404,56 @@ const SubformScoringInner = ({
       const numericValue = _toNumericValue(dataEntryValues[fieldId])
       vars[fieldId] = numericValue !== null ? numericValue : _resolveFieldEmptyNumericValue(configuredField)
     }
+    // The formula kit reads each field's stored answer (its field type and
+    // option scores tell it how); a blank answer reads as the field's
+    // emptyValue when it has one, and a hotspot map's selection as its count
+    // (CDAI: swollen + tender), as _toNumericValue did.
+    const formulaIds = [...variableFieldIds, ...dataEntryCalculations.map((calculation) => calculation?.id)]
+    const fieldKinds = {}
+    const scoreMaps = {}
+    for (const field of dataEntryFields) {
+      if (!field?.id || _isHeadingField(field)) continue
+      if (typeof field.type === "string") fieldKinds[field.id] = field.type
+      const scores = {}
+      const optionSources = field.type === "scale" ? _buildScaleOptions(field) : Array.isArray(field.options) ? field.options : []
+      optionSources.forEach((option) => {
+        const normalized = ValueKit.normalizeOption(option)
+        if (!Number.isFinite(normalized.score)) return
+        if (normalized.code) scores[normalized.code] = normalized.score
+        if (normalized.display) scores[normalized.display] = normalized.score
+      })
+      if (Object.keys(scores).length > 0) scoreMaps[field.id] = scores
+    }
+    const readFieldValue = (fieldId) => {
+      const raw = dataEntryValues[fieldId]
+      if (raw && typeof raw === "object" && !Array.isArray(raw) && Number.isFinite(raw.selectedCount)) {
+        return Number(raw.selectedCount)
+      }
+      if (_isMeaningfulValue(raw)) return raw
+      const emptyValue = _resolveFieldEmptyNumericValue(dataEntryFieldById.get(fieldId) || null)
+      return emptyValue !== null ? emptyValue : raw
+    }
     const result = {}
     for (const calculation of dataEntryCalculations) {
-      const value = _evaluateExpression(calculation.expression, vars)
+      const tree = _subformFormulaTree(calculation, formulaIds)
+      const value = tree
+        ? _evaluateSubformFormulaTree(
+          tree,
+          // Fields by id; an earlier calculation by its id; never itself (selfId).
+          (id) => {
+            if (variableFieldIds.has(id)) return readFieldValue(id)
+            return Object.prototype.hasOwnProperty.call(result, id) ? result[id] : undefined
+          },
+          calculation,
+          { fieldKind: (id) => fieldKinds[id], scoreMaps, selfId: calculation.id }
+        )
+        : _evaluateExpression(calculation.expression, vars)
       if (value === null || value === undefined) {
         result[calculation.id] = null
         continue
       }
       const precision = Number.isFinite(calculation.precision) ? Math.max(0, Math.min(6, calculation.precision)) : null
-      result[calculation.id] = precision === null ? value : Number(value.toFixed(precision))
+      result[calculation.id] = precision === null || typeof value !== "number" ? value : Number(value.toFixed(precision))
     }
     if (isMorphineCalculatorMode && dataEntryCalculatorConfig?.totalCalculationId) {
       const rowValues = (dataEntryCalculatorConfig.rows || []).map((row) => {
@@ -2502,37 +2674,6 @@ const SubformScoringInner = ({
       )
     }
 
-    if (field.type === "number") {
-      const inputValue = dataEntryValues[field.id]
-      return (
-        <div key={`field-${field.id}`}>
-          <Label required={required}>{field.label}</Label>
-          <input
-            type="number"
-            inputMode="decimal"
-            min={Number.isFinite(field.min) ? field.min : undefined}
-            max={Number.isFinite(field.max) ? field.max : undefined}
-            step={Number.isFinite(field.step) ? field.step : "any"}
-            placeholder={field.placeholder}
-            value={inputValue === null || inputValue === undefined ? "" : String(inputValue)}
-            onChange={(event) => {
-              const nextRaw = event?.target?.value ?? ""
-              if (!nextRaw) {
-                setDataEntryValue(field.id, null)
-                return
-              }
-              const parsed = Number(nextRaw)
-              setDataEntryValue(
-                field.id,
-                Number.isFinite(parsed) ? _clampDataEntryNumberValue(parsed, field) : nextRaw
-              )
-            }}
-            style={_LOCAL_INPUT_STYLE(isDarkMode)}
-          />
-        </div>
-      )
-    }
-
     if (field.type === "scale") {
       const scaleOptions = _buildScaleOptions(field)
       const showLegend = typeof renderOptions.showLegend === "boolean"
@@ -2556,238 +2697,11 @@ const SubformScoringInner = ({
           tooltipMode={field.tooltipMode === "option" ? "option" : "all"}
           disableHorizontalScroll={renderOptions.disableHorizontalScroll === true}
           readOnly={isReadOnly}
+          // Controlled, like every other entry: the engine's ScaleField binds
+          // to the host store, which a subform's session never reads.
+          value={dataEntryValues[field.id] ?? null}
+          onChange={(answer) => setDataEntryValue(field.id, answer ?? null)}
         />
-      )
-    }
-
-    if (field.type === "date") {
-      // Standardized Fluent date picker (DateSelect), not the browser-native
-      // input. Controlled: no fieldId, so it never writes the store itself.
-      // DateSelect emits canonical YYYY.MM.DD; normalize to the ISO dashes
-      // the native input stored so downstream save logic sees no change.
-      return (
-        <div key={`field-${field.id}`}>
-          <Label required={required}>{field.label}</Label>
-          <DateSelect
-            inline
-            placeholder={field.placeholder}
-            value={dataEntryValues[field.id] ?? ""}
-            onChange={(value) => setDataEntryValue(field.id, (value ?? "").replace(/\./g, "-"))}
-            readOnly={isReadOnly}
-            disabled={isReadOnly}
-          />
-        </div>
-      )
-    }
-
-    if (field.type === "time") {
-      // The MOIS masked HH:mm control, driven the same controlled way as the
-      // date branch (and EditableTable/RepeatForEachTable time cells): no
-      // fieldId, so the answer lands only in this subform's store.
-      return (
-        <div key={`field-${field.id}`}>
-          <Label required={required}>{field.label}</Label>
-          <TimeSelect
-            inline
-            placeholder={field.placeholder || "HH:mm"}
-            value={dataEntryValues[field.id] ?? ""}
-            onChange={(_event, value) => setDataEntryValue(field.id, value || "")}
-            readOnly={isReadOnly}
-            disabled={isReadOnly}
-          />
-        </div>
-      )
-    }
-
-    if (field.type === "datetime") {
-      return (
-        <div key={`field-${field.id}`}>
-          <Label required={required}>{field.label}</Label>
-          <input
-            type="datetime-local"
-            placeholder={field.placeholder}
-            value={dataEntryValues[field.id] ?? ""}
-            onChange={(event) => setDataEntryValue(field.id, event?.target?.value ?? "")}
-            style={_LOCAL_INPUT_STYLE(isDarkMode)}
-          />
-        </div>
-      )
-    }
-
-    if (field.type === "choice") {
-      if (field.codeSystem && typeof FindCodeSelect !== "undefined") {
-        return (
-          <FindCodeSelect
-            key={`field-${field.id}`}
-            fieldId={`subform_${id}_${field.id}`}
-            label={field.label}
-            // Fill the field's cell (the default "medium" caps at 320px and
-            // leaves half-width pairs visually ragged next to native inputs).
-            size={field.size || { minWidth: 120, flex: "1 1 0px" }}
-            codeSystem={field.codeSystem}
-            value={dataEntryValues[field.id] ?? null}
-            defaultValue={_resolveFieldDefaultValue(field, sd, bringForward)}
-            placeholder={field.placeholder || "Please search"}
-            required={required}
-            readOnly={isReadOnly}
-            openOnFocus
-            showOtherOption={Boolean(field.showOtherOption || field.show_other_option)}
-            onChange={(nextValue) => setDataEntryValue(field.id, nextValue)}
-          />
-        )
-      }
-      const optionList = _normalizeSelectableOptions(field)
-      const useRadio = field.choiceStyle === "radio"
-      const selectedOption = optionList.find((option) => _isSelectableOptionSelected(dataEntryValues[field.id], option)) || null
-      if (useRadio) {
-        return (
-          <div key={`field-${field.id}`}>
-            <Label required={required}>{field.label}</Label>
-            <div style={_LOCAL_RADIO_GROUP_STYLE}>
-              {optionList.map((option) => (
-                <label
-                  key={`${field.id}_${option.key}`}
-                  style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}
-                >
-                  <input
-                    type="radio"
-                    name={`subform_choice_${field.id}`}
-                    checked={Boolean(selectedOption && selectedOption.key === option.key)}
-                    onChange={() => setDataEntryValue(field.id, _serializeSelectableValue(field, option))}
-                  />
-                  <span>{option.text}</span>
-                </label>
-              ))}
-            </div>
-          </div>
-        )
-      }
-      return (
-        <div key={`field-${field.id}`}>
-          <Label required={required}>{field.label}</Label>
-          <select
-            value={selectedOption?.key ?? ""}
-            onChange={(event) => {
-              const nextKey = event?.target?.value || null
-              if (!nextKey) {
-                setDataEntryValue(field.id, null)
-                return
-              }
-              const nextOption = optionList.find((option) => option.key === nextKey) || null
-              setDataEntryValue(field.id, nextOption ? _serializeSelectableValue(field, nextOption) : nextKey)
-            }}
-            style={_LOCAL_INPUT_STYLE(isDarkMode)}
-          >
-            <option value="">Select...</option>
-            {optionList.map((option) => (
-              <option key={`${field.id}_${option.key}`} value={option.key}>
-                {option.text}
-              </option>
-            ))}
-          </select>
-        </div>
-      )
-    }
-
-    if (field.type === "booleanYesNo") {
-      const optionList = _normalizeSelectableOptions(field, ["Yes", "No"])
-      const selectedOption = optionList.find((option) => _isSelectableOptionSelected(dataEntryValues[field.id], option)) || null
-      const renderStyle = String(field.renderStyle || field.render_style || "").trim().toLowerCase()
-      if (renderStyle === "checkbox" || renderStyle === "checklist-row") {
-        const { checkedOption, uncheckedOption } = _resolveSelectableBinaryOptions(field, ["Yes", "No"])
-        const checked = checkedOption ? _isSelectableOptionSelected(dataEntryValues[field.id], checkedOption) : false
-        const controlLabel = checkedOption?.text || "Yes"
-        const useToggleSwitch = field.useToggleSwitch === true || field.use_toggle_switch === true
-        return (
-          <div key={`field-${field.id}`}>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "minmax(0, 1fr) auto",
-                gap: "12px",
-                alignItems: "center",
-              }}
-            >
-              <Label required={required} styles={{ root: { marginBottom: 0 } }}>
-                {field.label}
-              </Label>
-              <label
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "8px",
-                  cursor: "pointer",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                <input
-                  type="checkbox"
-                  role={useToggleSwitch ? "switch" : undefined}
-                  checked={Boolean(checked)}
-                  onChange={(event) => {
-                    if (event?.target?.checked) {
-                      setDataEntryValue(field.id, _serializeSelectableValue(field, checkedOption))
-                      return
-                    }
-                    if (_resolveFieldEmptyNumericValue(field) !== null) {
-                      setDataEntryValue(field.id, null)
-                      return
-                    }
-                    setDataEntryValue(field.id, uncheckedOption ? _serializeSelectableValue(field, uncheckedOption) : null)
-                  }}
-                  style={useToggleSwitch ? {
-                    appearance: "none",
-                    WebkitAppearance: "none",
-                    width: "34px",
-                    height: "18px",
-                    borderRadius: "999px",
-                    border: `1px solid ${checked ? "#2563eb" : "#94a3b8"}`,
-                    background: checked ? "#2563eb" : "#e2e8f0",
-                    boxShadow: `inset ${checked ? "16px" : "2px"} 0 0 2px #ffffff`,
-                    transition: "background 120ms ease, box-shadow 120ms ease, border-color 120ms ease",
-                  } : undefined}
-                />
-                <span>{controlLabel}</span>
-              </label>
-            </div>
-          </div>
-        )
-      }
-      return (
-        <div key={`field-${field.id}`}>
-          <Label required={required}>{field.label}</Label>
-          <div style={_LOCAL_RADIO_GROUP_STYLE}>
-            {optionList.map((option) => (
-              <label
-                  key={`${field.id}_${option.key}`}
-                  style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer" }}
-                >
-                  <input
-                    type="radio"
-                    name={`subform_boolean_${field.id}`}
-                    checked={Boolean(selectedOption && selectedOption.key === option.key)}
-                    onChange={() => setDataEntryValue(field.id, _serializeSelectableValue(field, option))}
-                  />
-                  <span>{option.text}</span>
-                </label>
-              ))}
-          </div>
-        </div>
-      )
-    }
-
-    if (field.type === "textarea") {
-      return (
-        <div key={`field-${field.id}`}>
-          <Label required={required}>{field.label}</Label>
-          <textarea
-            rows={field.rows || 4}
-            placeholder={field.placeholder}
-            value={dataEntryValues[field.id] ?? ""}
-            onChange={(event) => setDataEntryValue(field.id, event?.target?.value ?? "")}
-            style={_LOCAL_TEXTAREA_STYLE(isDarkMode)}
-          />
-        </div>
       )
     }
 
@@ -2833,18 +2747,78 @@ const SubformScoringInner = ({
       )
     }
 
-    return (
-      <div key={`field-${field.id}`}>
-        <Label required={required}>{field.label}</Label>
-        <input
-          type="text"
-          placeholder={field.placeholder}
-          value={dataEntryValues[field.id] ?? ""}
-          onChange={(event) => setDataEntryValue(field.id, event?.target?.value ?? "")}
-          style={_LOCAL_INPUT_STYLE(isDarkMode)}
-        />
-      </div>
-    )
+    // Text, long text, number, date, date-time, time, choice and yes/no.
+    return renderEntryControl(field)
+  }
+
+  // A data-entry question drawn by FieldKit with the MOIS control the
+  // exporter chooses for the same field (FieldKit.fromSubformEntry): a
+  // TextArea, Numeric, DateSelect, DateTimeSelect, TimeSelect, a
+  // SimpleCodeSelect (dropdown) or SimpleCodeChecklist (radio) choice, and a
+  // CompactBooleanField yes/no (its check box for the checkbox render styles;
+  // a yes/no with more than two options is a radio choice, as the exporter
+  // draws it). The answer keeps SubformScoring's stored shapes
+  // (FieldKit.storage.entry): an option's key or { selectedKey, value,
+  // response, detailResponse } (structured options), a coded choice's Coding,
+  // a clamped number, "YYYY-MM-DD", "YYYY-MM-DDTHH:mm" and "HH:mm". Answers
+  // stay in this subform's store: controlled, with no fieldId.
+  const renderEntryControl = (field, overrides = {}) => {
+    const booleanEntry = field.type === "booleanYesNo" ? _booleanEntryOptions(field) : null
+    let descriptor = FieldKit.fromSubformEntry(field)
+    let selectable = []
+    if (booleanEntry && booleanEntry.options.length > 2) {
+      selectable = booleanEntry.options
+      descriptor = {
+        ...descriptor,
+        type: "choice",
+        choiceStyle: "radio",
+        options: selectable.map((option) => ({ key: option.key, label: option.text })),
+      }
+    } else if (booleanEntry) {
+      descriptor = {
+        ...descriptor,
+        booleanLabels: {
+          on: booleanEntry.checkedOption?.text || "Yes",
+          off: booleanEntry.uncheckedOption?.text || "No",
+        },
+      }
+    } else if (descriptor.type === "choice" && !field.codeSystem) {
+      selectable = _normalizeSelectableOptions(field)
+      descriptor = { ...descriptor, options: selectable.map((option) => ({ key: option.key, label: option.text })) }
+    }
+    const storage = FieldKit.storage.entry(descriptor, {
+      options: selectable,
+      serialize: (option) => _serializeSelectableValue(field, option),
+      isSelected: _isSelectableOptionSelected,
+      checkedOption: booleanEntry?.checkedOption || null,
+      uncheckedOption: booleanEntry?.uncheckedOption || null,
+      // A check box left unticked stores the unchecked option only when the
+      // field has one and no empty value (as the native check box did).
+      falseIsEmpty: Boolean(booleanEntry) && descriptor.presentation === "checkbox" &&
+        (_resolveFieldEmptyNumericValue(field) !== null || !booleanEntry.strictUncheckedOption),
+      coerceNumber: field.type === "number"
+        ? (text) => {
+            const raw = String(text ?? "").trim()
+            if (!raw) return null
+            const parsed = Number(raw)
+            return Number.isFinite(parsed) ? _clampDataEntryNumberValue(parsed, field) : raw
+          }
+        : undefined,
+    })
+    return FieldKit.renderControl(descriptor, {
+      key: `field-${field.id}`,
+      value: dataEntryValues[field.id],
+      onChange: (stored) => setDataEntryValue(field.id, stored),
+      storage,
+      label: field.label,
+      labelPosition: "top",
+      required: field.required === true,
+      readOnly: isReadOnly,
+      placeholder: field.placeholder || undefined,
+      // Fill the field's cell (the default "medium" caps at 320px).
+      size: field.size || { minWidth: 120, flex: "1 1 0px" },
+      ...overrides,
+    })
   }
 
   const renderDataEntryScaleStack = (group) => {
@@ -2955,35 +2929,35 @@ const SubformScoringInner = ({
               ) : null}
             </div>
 
-            {options.map((option) => {
-              const checked = _isScaleChoiceSelected(dataEntryValues[field.id], option)
-              return (
-                <label
-                  key={`matrix-option-${field.id}-${option.value}`}
-                  style={{
-                    display: "flex",
-                    justifyContent: "center",
-                    alignItems: "center",
-                    cursor: "pointer",
-                    minHeight: "34px",
-                  }}
-                >
-                  <input
-                    type="radio"
-                    name={`subform_matrix_${field.id}`}
-                    checked={checked}
-                    onChange={() =>
-                      setDataEntryValue(field.id, {
-                        selectedKey: String(option.value),
-                        value: option.value,
-                        response: option.label || String(option.value),
-                        detailResponse: option.description || option.label || String(option.value),
-                      })
-                    }
-                  />
-                </label>
-              )
-            })}
+            {/* The row's answer is the exporter's scale control (ScaleField
+                through FieldKit), its options spread under the header's
+                columns; it stores { selectedKey, value, response,
+                detailResponse } as the matrix always did. */}
+            <div style={{ gridColumn: `2 / span ${options.length}`, minWidth: 0 }}>
+              {FieldKit.renderControl(
+                {
+                  id: field.id,
+                  type: "scale",
+                  label: field.label,
+                  required: field.required === true,
+                  scaleConfig: {
+                    options: options.map((option) => ({
+                      value: option.value,
+                      label: option.label || String(option.value),
+                      description: option.description,
+                    })),
+                    showInlineLabels: false,
+                    disableHorizontalScroll: true,
+                  },
+                },
+                {
+                  value: dataEntryValues[field.id] ?? null,
+                  onChange: (answer) => setDataEntryValue(field.id, answer),
+                  labelPosition: "none",
+                  readOnly: isReadOnly,
+                }
+              )}
+            </div>
           </div>
         ))}
       </div>
@@ -3051,8 +3025,6 @@ const SubformScoringInner = ({
         {rows.map((row, index) => {
           const field = dataEntryFieldById.get(row.inputFieldId)
           const inputType = field?.type === "text" ? "text" : "number"
-          const rawValue = dataEntryValues[row.inputFieldId]
-          const displayValue = rawValue === null || rawValue === undefined ? "" : String(rawValue)
           const meqValue = rowValues[index]
           const meqDisplay = _formatCalculatorDisplayValue(meqValue, row.precision, "-")
 
@@ -3073,37 +3045,10 @@ const SubformScoringInner = ({
               <Text styles={{ root: { fontSize: "16px", fontWeight: 500 } }}>
                 {row.label}:
               </Text>
-              <input
-                type={inputType}
-                inputMode="decimal"
-                step="any"
-                value={displayValue}
-                placeholder={inputType === "number" ? "0" : ""}
-                onChange={(event) => {
-                  const nextRaw = event?.target?.value ?? ""
-                  if (!nextRaw) {
-                    setDataEntryValue(row.inputFieldId, null)
-                    return
-                  }
-                  if (inputType === "number") {
-                    const parsed = Number(nextRaw)
-                    setDataEntryValue(row.inputFieldId, Number.isFinite(parsed) ? parsed : nextRaw)
-                    return
-                  }
-                  setDataEntryValue(row.inputFieldId, nextRaw)
-                }}
-                style={{
-                  width: "100%",
-                  maxWidth: "140px",
-                  height: "34px",
-                  borderRadius: "2px",
-                  border: `1px solid ${isDarkMode ? "#5a5a5a" : "#b8b8b8"}`,
-                  backgroundColor: isDarkMode ? "#1a1a1a" : "#fff",
-                  color: isDarkMode ? "#fff" : "#111",
-                  padding: "4px 8px",
-                  fontSize: "15px"
-                }}
-              />
+              {renderEntryControl(
+                { ...(field || {}), id: row.inputFieldId, type: inputType, label: field?.label || row.label },
+                { labelPosition: "none", inline: true, placeholder: inputType === "number" ? "0" : undefined, size: { maxWidth: 140 } }
+              )}
               <Text styles={{ root: { fontSize: "20px", fontWeight: 500 } }}>
                 {_formatCalculatorDisplayValue(row.equivalentDoseMg, 2, "-")}
               </Text>
@@ -3143,33 +3088,9 @@ const SubformScoringInner = ({
     const dateField = dataEntryFieldById.get("Date") || { id: "Date", label: "Select reading date" }
     const commentsField = dataEntryFieldById.get("Comments") || { id: "Comments", label: "Comments", rows: 3 }
     const fieldExists = (fieldId) => dataEntryFieldById.has(fieldId)
-    const renderNumberInput = (fieldId) => (
-      <input
-        id={fieldId}
-        type="number"
-        inputMode="decimal"
-        step="any"
-        value={dataEntryValues[fieldId] === null || dataEntryValues[fieldId] === undefined ? "" : String(dataEntryValues[fieldId])}
-        onChange={(event) => {
-          const nextRaw = event?.target?.value ?? ""
-          if (!nextRaw) {
-            setDataEntryValue(fieldId, null)
-            return
-          }
-          const parsed = Number(nextRaw)
-          setDataEntryValue(fieldId, Number.isFinite(parsed) ? parsed : nextRaw)
-        }}
-        style={{
-          width: "100%",
-          minWidth: "0",
-          border: `1px solid ${isDarkMode ? "#5a5a5a" : "#b8b8b8"}`,
-          backgroundColor: isDarkMode ? "#1a1a1a" : "#fff",
-          color: isDarkMode ? "#fff" : "#111",
-          padding: "4px 6px",
-          fontSize: "14px",
-          textAlign: "center",
-        }}
-      />
+    const renderNumberInput = (fieldId) => renderEntryControl(
+      { ...(dataEntryFieldById.get(fieldId) || {}), id: fieldId, type: "number", label: dataEntryFieldById.get(fieldId)?.label || fieldId },
+      { labelPosition: "none", inline: true, size: { minWidth: 0 } }
     )
 
     return (
@@ -3179,14 +3100,9 @@ const SubformScoringInner = ({
             data-field-id={dateField.id}
             style={{ breakInside: "avoid", margin: "0 10px", flex: "2 2 0", minWidth: 80, maxWidth: 180 }}
           >
-            <Label required={dateField.required === true}>{dateField.label || "Select reading date"}</Label>
-            {/* Standardized Fluent date picker; stores ISO dashes like the
-                native input it replaced (DateSelect emits YYYY.MM.DD). */}
-            <DateSelect
-              inline
-              value={dataEntryValues[dateField.id] ?? ""}
-              onChange={(value) => setDataEntryValue(dateField.id, (value ?? "").replace(/\./g, "-"))}
-            />
+            {/* DateSelect through FieldKit: stores "YYYY-MM-DD" whether the
+                control reports a Date (engine) or dotted text (preview). */}
+            {renderEntryControl({ ...dateField, type: "date", label: dateField.label || "Select reading date" })}
           </div>
 
           <Toggle
@@ -3232,14 +3148,7 @@ const SubformScoringInner = ({
           </table>
 
           <div data-field-id={commentsField.id} style={{ breakInside: "avoid", margin: "0 10px", maxWidth: 360 }}>
-            <Label>{commentsField.label || "Comments"}</Label>
-            <textarea
-              id={commentsField.id}
-              rows={commentsField.rows || 3}
-              value={dataEntryValues[commentsField.id] ?? ""}
-              onChange={(event) => setDataEntryValue(commentsField.id, event?.target?.value ?? "")}
-              style={_LOCAL_TEXTAREA_STYLE(isDarkMode)}
-            />
+            {renderEntryControl({ ...commentsField, type: "textarea", label: commentsField.label || "Comments", rows: commentsField.rows || 3 })}
           </div>
         </Stack>
       </div>
@@ -3424,20 +3333,105 @@ const SubformScoringInner = ({
     configuredDialogMinWidth,
     widestScaleMinWidth > 0 ? widestScaleMinWidth + 48 : 0
   )
-  const dialogMinWidth = `min(${desiredDialogMinWidth}px, calc(100vw - 48px))`
   const showCalculationsInModal =
     Boolean(modalConfig.showCalculationsInModal) ||
     Boolean(modalConfig.show_calculations_in_modal)
 
-  const dialogContentProps = {
-    type: DialogType.largeHeader,
-    title: dialogTitle,
-    closeButtonAriaLabel: "Close",
+  const handleSecondaryComplete = () => {
+    if (isReadOnly) return
+    const shouldClose = onSecondaryComplete({
+      mode: isDataEntryMode ? "data-entry" : "scoring",
+      dataEntryValues,
+      calculatedExpressions,
+      progress,
+      answers,
+      calculatedTotals,
+    })
+    if (shouldClose !== false) {
+      if (blockOnMissingRequired()) return
+      onCommitToParent?.(prepareCompletionState())
+      setDialogOpen(false)
+    }
   }
 
-  const modalProps = {
-    isBlocking: false,
+  const handleComplete = async () => {
+    if (isReadOnly) return
+    const shouldClose = onComplete?.({
+      mode: isDataEntryMode ? "data-entry" : "scoring",
+      dataEntryValues,
+      calculatedExpressions,
+      progress,
+      answers,
+      calculatedTotals,
+    })
+    if (shouldClose !== false) {
+      // A host that keeps the dialog open (onComplete returning
+      // false, e.g. EditableTable's row editor) runs its own
+      // validation and reports it through errorMessage.
+      if (blockOnMissingRequired()) return
+      let actionPayload = null
+      if (isDataEntryMode && dataEntryAction) {
+        const writeDefinition = MOIS_WRITE_MUTATIONS[dataEntryAction.writeKey]
+        const runMutation = writeMutationRunners[dataEntryAction.writeKey]
+        const resolvedId = _resolveWriteActionId(
+          writeDefinition.idVariable,
+          dataEntryAction,
+          { sd, fd, sourceData: sd, formData: fd?.field?.data, patient: sd?.patient }
+        )
+        let payload = _buildMappedPayload(dataEntryValues, dataEntryAction)
+        if (writeDefinition.recordShape) {
+          const contextRoot = { sd, fd, sourceData: sd, formData: fd?.field?.data, patient: sd?.patient }
+          const shaped = _applyMoisRecordShape(payload, writeDefinition.recordShape, {
+            patient: sd?.patient,
+            patientId: resolvedId,
+            encounterId: _resolveWriteActionId("encounterId", null, contextRoot),
+            userId: _resolveWriteActionId("userId", null, contextRoot),
+            today: _moisLocalToday(),
+          })
+          if (shaped.error) {
+            // Refuse rather than send a partial record: the modal stays
+            // open and the reason is recorded for the DebugView.
+            _recordSubformActionPayload(fd?.setFormData, id, {
+              kind: "moisMutation",
+              resource: dataEntryAction.resource,
+              mutation: dataEntryAction.mutation,
+              error: shaped.error,
+            })
+            return
+          }
+          payload = shaped.record
+        }
+        const variables = writeDefinition.buildVariables(resolvedId, payload)
+        actionPayload = {
+          kind: "moisMutation",
+          resource: dataEntryAction.resource,
+          mutation: dataEntryAction.mutation,
+          ...variables,
+        }
+        // When the id is folded into the payload there is no id
+        // variable to inspect, so check the resolved id instead.
+        const hasRequiredId =
+          writeDefinition.requiresId === false ||
+          (writeDefinition.injectContextIdInto
+            ? Boolean(resolvedId)
+            : Boolean(variables[writeDefinition.idVariable]))
+        if (runMutation && hasRequiredId && Object.keys(payload).length > 0) {
+          try {
+            await runMutation(variables)
+          } catch (error) {
+            _recordSubformActionPayload(fd?.setFormData, id, {
+              ...actionPayload,
+              error: error?.message || String(error),
+            })
+            return
+          }
+        }
+      }
+      onCommitToParent?.(prepareCompletionState(actionPayload))
+      setDialogOpen(false)
+    }
   }
+
   const normalizedButtonIconName = String(buttonIconName ?? "").trim()
   const shouldUseDefaultButtonIcon = normalizedButtonIconName.length === 0
   const shouldHideButtonIcon = normalizedButtonIconName.toLowerCase() === "none"
@@ -3479,22 +3473,26 @@ const SubformScoringInner = ({
         </div>
       )}
 
-      <Dialog
+      {/* DialogKit's RowDialog on the MOIS SubForm: blocking, so a click
+          outside no longer closes it (and discards the session); the close
+          button, Escape and Cancel ask before discarding changed answers.
+          Read-only disables the body (a disabled fieldset) and Done. */}
+      <DialogKit.RowDialog
         hidden={!isDialogOpen}
-        onDismiss={() => setDialogOpen(false)}
-        dialogContentProps={dialogContentProps}
-        modalProps={modalProps}
-        minWidth={dialogMinWidth}
+        title={dialogTitle}
+        width={desiredDialogMinWidth}
+        onSave={handleComplete}
+        onCancel={() => setDialogOpen(false)}
+        saveText={completeButtonText}
+        cancelText={cancelButtonText}
+        extraActions={typeof onSecondaryComplete === "function"
+          ? [{ text: secondaryCompleteButtonText || "Save & Add Next", onClick: handleSecondaryComplete }]
+          : []}
+        errorMessage={dialogErrorMessage || undefined}
+        readOnly={isReadOnly}
+        dirty={isDialogDirty}
+        confirmDiscard
       >
-        {/* A disabled fieldset is the platform-level guarantee that every
-            native control inside (inputs, radios, selects, pickers' buttons)
-            is inert while locked — the same technique the exporter uses for
-            read-only archetype fields. Cancel stays outside it. */}
-        <fieldset
-          disabled={isReadOnly}
-          data-subform-readonly={isReadOnly ? "true" : undefined}
-          style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}
-        >
         {isDataEntryMode ? (
           <div style={{ maxHeight: "65vh", overflowY: "auto", paddingRight: "4px" }}>
             {useBloodGlucoseReadingLayout ? (
@@ -3621,124 +3619,7 @@ const SubformScoringInner = ({
             />
           </div>
         )}
-        </fieldset>
-        {dialogErrorMessage ? (
-          <div
-            role="alert"
-            data-subform-error=""
-            style={{ marginTop: "12px", fontSize: "13px", color: isDarkMode ? "#ffb3b3" : "#b42318" }}
-          >
-            {dialogErrorMessage}
-          </div>
-        ) : null}
-        <div style={{ height: "16px" }} />
-        <Stack horizontal horizontalAlign="end" tokens={{ childrenGap: 8 }}>
-          {typeof onSecondaryComplete === "function" ? (
-            <DefaultButton
-              text={secondaryCompleteButtonText || "Save & Add Next"}
-              disabled={isReadOnly}
-              onClick={() => {
-                if (isReadOnly) return
-                const shouldClose = onSecondaryComplete({
-                  mode: isDataEntryMode ? "data-entry" : "scoring",
-                  dataEntryValues,
-                  calculatedExpressions,
-                  progress,
-                  answers,
-                  calculatedTotals,
-                })
-                if (shouldClose !== false) {
-                  if (blockOnMissingRequired()) return
-                  onCommitToParent?.(prepareCompletionState())
-                  setDialogOpen(false)
-                }
-              }}
-            />
-          ) : null}
-          <PrimaryButton
-            text={completeButtonText}
-            disabled={isReadOnly}
-            onClick={async () => {
-              if (isReadOnly) return
-              const shouldClose = onComplete?.({
-                mode: isDataEntryMode ? "data-entry" : "scoring",
-                dataEntryValues,
-                calculatedExpressions,
-                progress,
-                answers,
-                calculatedTotals,
-              })
-              if (shouldClose !== false) {
-                // A host that keeps the dialog open (onComplete returning
-                // false, e.g. EditableTable's row editor) runs its own
-                // validation and reports it through errorMessage.
-                if (blockOnMissingRequired()) return
-                let actionPayload = null
-                if (isDataEntryMode && dataEntryAction) {
-                  const writeDefinition = MOIS_WRITE_MUTATIONS[dataEntryAction.writeKey]
-                  const runMutation = writeMutationRunners[dataEntryAction.writeKey]
-                  const resolvedId = _resolveWriteActionId(
-                    writeDefinition.idVariable,
-                    dataEntryAction,
-                    { sd, fd, sourceData: sd, formData: fd?.field?.data, patient: sd?.patient }
-                  )
-                  let payload = _buildMappedPayload(dataEntryValues, dataEntryAction)
-                  if (writeDefinition.recordShape) {
-                    const contextRoot = { sd, fd, sourceData: sd, formData: fd?.field?.data, patient: sd?.patient }
-                    const shaped = _applyMoisRecordShape(payload, writeDefinition.recordShape, {
-                      patient: sd?.patient,
-                      patientId: resolvedId,
-                      encounterId: _resolveWriteActionId("encounterId", null, contextRoot),
-                      userId: _resolveWriteActionId("userId", null, contextRoot),
-                      today: _moisLocalToday(),
-                    })
-                    if (shaped.error) {
-                      // Refuse rather than send a partial record: the modal stays
-                      // open and the reason is recorded for the DebugView.
-                      _recordSubformActionPayload(fd?.setFormData, id, {
-                        kind: "moisMutation",
-                        resource: dataEntryAction.resource,
-                        mutation: dataEntryAction.mutation,
-                        error: shaped.error,
-                      })
-                      return
-                    }
-                    payload = shaped.record
-                  }
-                  const variables = writeDefinition.buildVariables(resolvedId, payload)
-                  actionPayload = {
-                    kind: "moisMutation",
-                    resource: dataEntryAction.resource,
-                    mutation: dataEntryAction.mutation,
-                    ...variables,
-                  }
-                  // When the id is folded into the payload there is no id
-                  // variable to inspect, so check the resolved id instead.
-                  const hasRequiredId =
-                    writeDefinition.requiresId === false ||
-                    (writeDefinition.injectContextIdInto
-                      ? Boolean(resolvedId)
-                      : Boolean(variables[writeDefinition.idVariable]))
-                  if (runMutation && hasRequiredId && Object.keys(payload).length > 0) {
-                    try {
-                      await runMutation(variables)
-                    } catch (error) {
-                      _recordSubformActionPayload(fd?.setFormData, id, {
-                        ...actionPayload,
-                        error: error?.message || String(error),
-                      })
-                      return
-                    }
-                  }
-                }
-                onCommitToParent?.(prepareCompletionState(actionPayload))
-                setDialogOpen(false)
-              }
-            }}
-          />
-          <DefaultButton text={cancelButtonText} onClick={() => setDialogOpen(false)} />
-        </Stack>
-      </Dialog>
+      </DialogKit.RowDialog>
     </div>
   )
 }

@@ -392,6 +392,14 @@ function loadComponentCode(
     'ObservationKit',
     // FormulaKit helper namespace (formula engine: ComputedField, EditableTable formula columns)
     'FormulaKit',
+    // ValueKit helper namespace (option/answer readers generated from form-model values.ts)
+    'ValueKit',
+    // DefaultsKit helper namespace (default-answer reader and resolver generated from form-model defaults.ts)
+    'DefaultsKit',
+    // FieldKit helper namespace (a question drawn with the exporter's MOIS control)
+    'FieldKit',
+    // DialogKit helper namespace (RowDialog / ConfirmDialog on the MOIS SubForm, dialog width rule)
+    'DialogKit',
     // SubformScoring exports. The write kernel (mutation documents + context
     // id resolver) is shared so composing components (ChartRecordManager)
     // reuse one executor instead of duplicating mutation documents.

@@ -30,6 +30,11 @@
     "ScoringModule",
     "ScaleField",
     "FindCodeSelect",
-    "FormLogicKit"
+    "DefaultsKit",
+    "DialogKit",
+    "FieldKit",
+    "FormLogicKit",
+    "FormulaKit",
+    "ValueKit"
   ]
 }

@@ -481,24 +481,19 @@ ChartRecordEditor = ({
       ) : null}
 
       {pendingDelete ? (
+        // DialogKit's ConfirmDialog (the MOIS SubForm, blocking, 450px wide).
         // Mounted only while pending (not hidden-toggled): a closed-but-
         // mounted blocking Dialog leaves its focus trap eating outside
         // clicks until the close animation completes.
-        <Fluent.Dialog
-          hidden={false}
-          onDismiss={() => setPendingDelete(null)}
-          dialogContentProps={{
-            type: Fluent.DialogType.normal,
-            title: confirmDeleteTitle,
-            subText: confirmDeleteText,
-          }}
-          modalProps={{ isBlocking: true, styles: { main: { maxWidth: "450px" } } }}
-        >
-          <Fluent.DialogFooter>
-            <Fluent.PrimaryButton text="Confirm" onClick={handleConfirmDelete} />
-            <Fluent.DefaultButton text="Cancel" onClick={() => setPendingDelete(null)} />
-          </Fluent.DialogFooter>
-        </Fluent.Dialog>
+        <DialogKit.ConfirmDialog
+          title={confirmDeleteTitle}
+          message={confirmDeleteText}
+          confirmText="Confirm"
+          cancelText="Cancel"
+          width={450}
+          onConfirm={handleConfirmDelete}
+          onCancel={() => setPendingDelete(null)}
+        />
       ) : null}
     </>
   )

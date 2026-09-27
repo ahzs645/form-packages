@@ -1,5 +1,7 @@
 const { useEffect, useMemo, useRef, useState } = React
-const { Stack, Text, DefaultButton, PrimaryButton, Dialog, DialogType } = Fluent
+// The save/discard prompt is DialogKit's ConfirmDialog (referenced only inside
+// function bodies).
+const { Stack, Text, DefaultButton, PrimaryButton } = Fluent
 
 // Real MOIS registers unsaved-changes state with the host via
 // MoisHooks.useConfirmUnload(enabled): in Electron the host intercepts window
@@ -556,24 +558,23 @@ const UnsavedChangesGuard = ({
           </div>
         </div>
       ) : null}
-      <Dialog
+      {/* DialogKit's ConfirmDialog (the MOIS SubForm): the primary action,
+          then the others; the close button and Escape cancel. */}
+      <DialogKit.ConfirmDialog
         hidden={!isOpen}
-        onDismiss={() => setIsOpen(false)}
-        dialogContentProps={{
-          type: DialogType.normal,
-          title: promptTitle,
-          subText: promptText,
-        }}
-      >
-        <Stack horizontal horizontalAlign="end" tokens={{ childrenGap: 8 }}>
-          {primaryAction ? (
-            <PrimaryButton text={primaryAction.label} onClick={() => handleAction(primaryAction.id)} />
-          ) : null}
-          {secondaryActions.map((action) => (
-            <DefaultButton key={action.id} text={action.label} onClick={() => handleAction(action.id)} />
-          ))}
-        </Stack>
-      </Dialog>
+        title={promptTitle}
+        message={promptText}
+        confirmText={primaryAction?.label}
+        onConfirm={() => primaryAction && handleAction(primaryAction.id)}
+        confirmDisabled={!primaryAction}
+        extraActions={secondaryActions.map((action) => ({
+          key: action.id,
+          text: action.label,
+          onClick: () => handleAction(action.id),
+        }))}
+        showCancel={false}
+        onCancel={() => setIsOpen(false)}
+      />
     </Stack>
   )
 }

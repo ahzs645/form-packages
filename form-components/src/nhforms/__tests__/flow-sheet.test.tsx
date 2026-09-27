@@ -14,7 +14,9 @@ const source = fs.readFileSync(path.join(NH, "FlowSheet", "index.jsx"), "utf8");
 // FlowSheet depends on the ObservationKit helper module (shared engine scope
 // at runtime); concatenate it ahead of the component source like the export
 // bundle does.
-const kitSource = fs.readFileSync(path.join(NH, "ObservationKit", "index.jsx"), "utf8");
+const kitSource = ["ObservationKit", "DialogKit"]
+  .map((name) => fs.readFileSync(path.join(NH, name, "index.jsx"), "utf8"))
+  .join("\n");
 
 const passthrough = ({ children }: { children?: React.ReactNode }) => React.createElement("div", null, children);
 const FluentStub = {

@@ -23,6 +23,7 @@
     "patch": 10
   },
   "components": [
+    "FieldKit",
     "ObservationValueKit",
     "ScaleField"
   ]

@@ -21,7 +21,11 @@ import React from "react";
 import { produce } from "immer";
 
 const NH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const source = fs.readFileSync(path.join(NH, "SubformScoring", "index.jsx"), "utf8");
+// SubformScoring reads options and answers through ValueKit (loaded first, as its Identity lists it).
+const source = [
+  fs.readFileSync(path.join(NH, "ValueKit", "index.jsx"), "utf8"),
+  fs.readFileSync(path.join(NH, "SubformScoring", "index.jsx"), "utf8"),
+].join("\n");
 
 const FluentStub = new Proxy(
   {},

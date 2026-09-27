@@ -3,25 +3,61 @@
  * Sub-form with optional focus trap. If a default action is given then the
  * subform is inline and that action is taken when focus leaves the subform. If
  * there is no default action, then the subform will be a modal dialog.
+ *
+ * Fidelity (2026-09-27): reproduces the engine's SubForm verbatim. SMOIS
+ * evidence, ~/github/smois/build/static/js/main.a75cc6b1.chunk.js, module 9
+ * export "A" (MoisControl.SubForm):
+ *
+ *   en=["children","hidden","inline","label","lockPolicy","minWidth","moisModule",
+ *       "onCancel","onDefaultAction","section","style","tempArea","initialTempArea"],
+ *   tn=function(e){var t=e.children,n=e.hidden,i=void 0!==n&&n,c=e.inline,d=e.label,
+ *     s=e.lockPolicy,b=void 0===s?null:s,p=e.minWidth,v=e.moisModule,m=e.onCancel,
+ *     j=e.onDefaultAction,f=e.section,O=e.style,h=void 0===O?{}:O,y=e.tempArea,
+ *     x=e.initialTempArea,g=Object(r.a)(e,en),I=Object(M.useTheme)();
+ *     j||(h=Object(o.a)(Object(o.a)({},I.mois.inlineSubformStyle),h));
+ *     var S=Object(M.useTempData)(y,x),C=Object(a.a)(S,1)[0];
+ *     C&&(f=Object(o.a)(Object(o.a)({},C),f)),Object(M.useFormLock)(i?null:b);
+ *     ...onBlur/useEffect: when onDefaultAction is set and focus has left the
+ *        subform (or a "dropdownItemsWrapper-" popup), call onDefaultAction...
+ *     return c||j ? i?null:<div ref onBlur><FocusTrapZone style={h} forceFocusInsideTrap={!j}>
+ *         {f ? <Section {...f}>{t}</Section>
+ *            : <><div style={{fontSize:"20px",fontWeight:600,marginBottom:"10px"}}>{d}{v&&<LinkToMois moisModule={v}/>}</div>{t}</>}
+ *       </FocusTrapZone></div>
+ *     : <Dialog title={<div>{d}{v&&<LinkToMois moisModule={v}/>}</div>} hidden={i}
+ *         onDismiss={m} minWidth={p} modalProps={{isBlocking:true}} {...g}>
+ *         {f ? <Section {...f}>{t}</Section> : <>{t}</>}
+ *       </Dialog>}
+ *
+ * (`B.E` is MoisControl.Section, module 220; `Xt.a` is Fluent FocusTrapZone.)
+ * So: `tempArea` binds the children to `fd.tempArea[tempArea]` (seeded from
+ * `initialTempArea`) through the section context, `lockPolicy` is held while
+ * the subform is shown, the modal is blocking with the label as its title, and
+ * every other prop goes to the Dialog. The host hooks are the preview's
+ * adaptation layer: `useFormLock` from mock-hooks (mois-contract lock state)
+ * and the engine-faithful `useMoisTempData` (hooks/temp-data.ts).
+ *
+ * Preview-only additions, which never change saved data: `authorshipPolicy`
+ * (the authorship model's section policy) and the `data-component="SubForm"`
+ * marker on the section wrapper (a `display: contents` div when the engine
+ * renders the children bare).
  */
 
-import React, { useState } from 'react';
+import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Dialog,
-  DialogType,
-  DialogFooter,
   PrimaryButton,
   DefaultButton,
-  IconButton,
-  TextField,
-  Dropdown,
-  Label,
-  IDialogContentProps,
-  FocusTrapZone,
+  IDialogProps,
   IDropdownOption,
-  Stack,
+  FocusTrapZone,
 } from '@fluentui/react';
-import { useActiveData, produce, useTheme, SectionProvider, SectionContextValue } from '../context/MoisContext';
+import {
+  useActiveData,
+  produce,
+  useTheme,
+  SectionContext,
+  SectionContextValue,
+} from '../context/MoisContext';
 import { Column } from './Column';
 import { SimpleCodeSelect } from './SimpleCodeSelect';
 import { TextArea } from './TextArea';
@@ -30,138 +66,216 @@ import { SaveButton } from '../components/SaveButton';
 import { Action } from './Action';
 import { LinkToMois } from '../components/LinkToMois';
 import { readSectionActiveFieldValue, writeSectionActiveFieldValue } from '../runtime/mois-contract';
+import type { MoisFormLockPolicy } from '../runtime/mois-contract';
+import { useFormLock } from '../hooks/mock-hooks';
+import { useMoisTempData } from '../hooks/temp-data';
 
-export interface SubFormProps {
+/** Section settings a SubForm passes to its engine `Section` (module 220). */
+export type SubFormSection = Partial<SectionContextValue> & {
+  isComplete?: boolean;
+  focusZone?: boolean;
+};
+
+export interface SubFormOwnProps {
   /** Child controls to render in the subform */
-  children: React.ReactNode;
-  /** Minimum width for the subform container */
+  children?: React.ReactNode;
+  /** Dialog minimum width (modal mode); passed to the Dialog as is */
   minWidth?: string | number;
-  /** Props for the dialog content when in modal mode */
-  dialogContentProps?: IDialogContentProps;
-  /** Hidden fields are not shown at all */
+  /** Hidden subforms render nothing and hold no lock */
   hidden?: boolean;
-  /** Initial value for tempArea storage */
-  initialTempArea?: any;
+  /** Initial contents of `fd.tempArea[tempArea]` */
+  initialTempArea?: Record<string, unknown> | null;
   /** If true, renders inline instead of as a modal dialog */
   inline?: boolean;
-  /** Label for this subform */
-  label?: string;
-  /** Lock policy for the subform */
-  lockPolicy?: string;
+  /** Label for this subform (the dialog title, or the inline heading) */
+  label?: React.ReactNode;
+  /** Form lock held while the subform is shown (useFormLock) */
+  lockPolicy?: MoisFormLockPolicy | null;
   /** Link to module in MOIS windows client */
   moisModule?: string;
-  /** Callback when cancel is clicked */
+  /** Called when the dialog is dismissed (close button or Escape) */
   onCancel?: () => void;
   /** Default action when focus leaves (makes subform inline) */
   onDefaultAction?: () => void;
-  /** Optional authorship locking policy for controls inside the subform */
+  /** Preview adaptation: authorship locking policy for controls inside the subform */
   authorshipPolicy?: SectionContextValue['authorshipPolicy'];
-  /** Advanced: Override section settings */
-  section?: Partial<SectionContextValue>;
-  /** Custom styles for the container */
+  /** Section settings for the children (activeSelector, layout, ...) */
+  section?: SubFormSection;
+  /** Inline mode: style of the focus trap zone (modal mode ignores it) */
   style?: React.CSSProperties;
-  /** Temporary storage area for subform data */
-  tempArea?: any;
+  /** Name of the `fd.tempArea` entry the children read and write */
+  tempArea?: string | null;
 }
+
+/** Any other prop is passed to the Dialog, as in the engine. */
+export type SubFormProps = SubFormOwnProps &
+  Omit<Partial<IDialogProps>, keyof SubFormOwnProps | 'title' | 'onDismiss'>;
+
+/**
+ * The engine `Section` (module 220) the SubForm wraps its children in:
+ * sectionNum, readOnlyOptions and the selectors inherit, layout defaults to
+ * "linear" and fieldPlacement does not inherit, and the children render in a
+ * div. The engine Section also writes the inherited completion back to
+ * `uiState.sections[sectionNum].isComplete`; that write is left out here,
+ * because preview section contexts do not carry the engine's completion
+ * reader (their default `sectionComplete` answers false), so repeating it
+ * would reopen a completed preview form.
+ */
+const SubFormSectionProvider: React.FC<{
+  section: SubFormSection;
+  authorshipPolicy?: SectionContextValue['authorshipPolicy'];
+  children?: React.ReactNode;
+}> = ({ section, authorshipPolicy, children }) => {
+  const parent = useContext(SectionContext);
+  const ref = useRef<HTMLDivElement>(null);
+  const {
+    sectionNum: sectionNumProp,
+    layout = 'linear',
+    fieldPlacement,
+    focusZone,
+    readOnlyOptions,
+    activeSelector,
+    statusSelector,
+    sourceSelector,
+    sectionComplete,
+  } = section;
+  const sectionNum = sectionNumProp ?? parent.sectionNum;
+
+  const value = useMemo<SectionContextValue>(() => ({
+    sectionNum,
+    layout,
+    fieldPlacement,
+    readOnlyOptions: readOnlyOptions ?? parent.readOnlyOptions,
+    activeSelector: activeSelector ?? parent.activeSelector,
+    statusSelector: statusSelector ?? parent.statusSelector,
+    sourceSelector: sourceSelector ?? parent.sourceSelector,
+    sectionComplete: sectionComplete ?? parent.sectionComplete,
+    focusZoneRoot: focusZone ? ref.current : parent.focusZoneRoot,
+    authorshipPolicy: authorshipPolicy ?? section.authorshipPolicy ?? parent.authorshipPolicy,
+  }), [
+    parent,
+    sectionNum,
+    layout,
+    fieldPlacement,
+    readOnlyOptions,
+    activeSelector,
+    statusSelector,
+    sourceSelector,
+    sectionComplete,
+    focusZone,
+    authorshipPolicy,
+    section.authorshipPolicy,
+  ]);
+
+  return (
+    <div ref={ref} data-component="SubForm">
+      <SectionContext.Provider value={value}>{children}</SectionContext.Provider>
+    </div>
+  );
+};
 
 /**
  * SubForm - Sub-form with optional focus trap and modal/inline modes
  */
 export const SubForm: React.FC<SubFormProps> = ({
   children,
-  minWidth,
-  dialogContentProps,
   hidden = false,
-  inline = false,
+  inline,
   label,
+  lockPolicy = null,
+  minWidth,
   moisModule,
   onCancel,
   onDefaultAction,
-  authorshipPolicy,
-  style,
   section,
+  style = {},
+  tempArea,
+  initialTempArea,
+  authorshipPolicy,
+  ...dialogProps
 }) => {
   const theme = useTheme();
+  let effectiveStyle: React.CSSProperties = style;
+  if (!onDefaultAction) effectiveStyle = { ...(theme?.mois?.inlineSubformStyle ?? {}), ...style };
 
-  // When hidden=true, don't render anything
-  if (hidden) return null;
+  const [tempAreaSection] = useMoisTempData(tempArea, initialTempArea);
+  let effectiveSection: SubFormSection | undefined = section;
+  if (tempAreaSection) effectiveSection = { ...tempAreaSection, ...section };
 
-  // For inline mode WITHOUT onDefaultAction, apply the theme's inlineSubformStyle (papayawhip border)
-  // When onDefaultAction is provided, it's an "immediate update" style without the border
-  const inlineStyle = (inline && !onDefaultAction) ? { ...theme.mois.inlineSubformStyle, ...style } : style;
+  useFormLock(hidden ? null : lockPolicy);
 
-  const containerStyle: React.CSSProperties = {
-    ...(minWidth ? { minWidth: typeof minWidth === 'number' ? `${minWidth}px` : minWidth } : {}),
-    ...inlineStyle,
-  };
-  const sectionContent = section ? (
-    <SectionProvider {...section} authorshipPolicy={authorshipPolicy ?? section.authorshipPolicy}>
-      {children}
-    </SectionProvider>
-  ) : authorshipPolicy ? (
-    <SectionProvider authorshipPolicy={authorshipPolicy}>
-      {children}
-    </SectionProvider>
-  ) : children;
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [blurred, setBlurred] = useState(false);
+  useEffect(() => {
+    if (!onDefaultAction || !blurred) return;
+    let element: Element | null = document.activeElement;
+    let focusInside = false;
+    while (element) {
+      const className = typeof element.className === 'string' ? element.className : '';
+      if (element === containerRef.current || className.startsWith('dropdownItemsWrapper-')) {
+        focusInside = true;
+        break;
+      }
+      element = element.parentElement;
+    }
+    if (!focusInside) onDefaultAction();
+    setBlurred(false);
+  }, [blurred, onDefaultAction]);
 
-  if (inline) {
-    // Inline mode with focus trap and papayawhip border
+  // The preview's authorship policy rides on the section the engine renders;
+  // without a section, a policy still needs a provider for the children.
+  if (!effectiveSection && authorshipPolicy) effectiveSection = {};
+
+  const title = (
+    <div>
+      {label}
+      {moisModule && <LinkToMois moisModule={moisModule} />}
+    </div>
+  );
+
+  if (inline || onDefaultAction) {
+    if (hidden) return null;
     return (
-      <FocusTrapZone
-        isClickableOutsideFocusTrap
-        forceFocusInsideTrap={false}
-      >
-        <div style={containerStyle} data-component="SubForm">
-          {label && (
-            <div style={{ fontSize: '20px', fontWeight: 600, marginBottom: '10px' }}>
-              {label}
+      <div ref={containerRef} onBlur={() => (onDefaultAction ? setBlurred(true) : undefined)}>
+        <FocusTrapZone style={effectiveStyle} forceFocusInsideTrap={!onDefaultAction}>
+          {effectiveSection ? (
+            <SubFormSectionProvider section={effectiveSection} authorshipPolicy={authorshipPolicy}>
+              {children}
+            </SubFormSectionProvider>
+          ) : (
+            <div data-component="SubForm" style={{ display: 'contents' }}>
+              <div style={{ fontSize: '20px', fontWeight: 600, marginBottom: '10px' }}>
+                {label}
+                {moisModule && <LinkToMois moisModule={moisModule} />}
+              </div>
+              {children}
             </div>
           )}
-          {sectionContent}
-        </div>
-      </FocusTrapZone>
+        </FocusTrapZone>
+      </div>
     );
   }
 
-  // Modal mode - render as Dialog when not inline and not hidden
-  const defaultDialogContentProps: IDialogContentProps = {
-    type: DialogType.normal,
-    title: label ? (
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-        {label}
-        {moisModule && (
-          <LinkToMois moisModule={moisModule} />
-        )}
-      </div>
-    ) as any : undefined,
-    ...dialogContentProps,
-  };
-  const dialogMinWidth =
-    typeof minWidth === 'number'
-      ? minWidth
-      : typeof minWidth === 'string' && minWidth.trim()
-        ? minWidth
-        : 480;
-
-  // In modal mode, minWidth belongs to the Dialog alone (real MOIS renders
-  // children bare inside the Dialog). Repeating it on an inner container
-  // overflows the Dialog's padded content box and adds a horizontal scrollbar.
-  const modalContainerStyle: React.CSSProperties | undefined = style;
-
   return (
     <Dialog
-      hidden={false}
+      title={title as any}
+      hidden={hidden}
       onDismiss={onCancel}
-      dialogContentProps={defaultDialogContentProps}
-      minWidth={dialogMinWidth}
-      // Real MOIS passes isBlocking, and Fluent's Dialog derives the
-      // top-right close button from it (showCloseButton: isBlocking) —
-      // this also stops overlay clicks from dismissing the dialog.
+      minWidth={minWidth}
+      // Blocking, as in the engine: Fluent then shows the top-right close
+      // button (showCloseButton: isBlocking) and ignores overlay clicks.
       modalProps={{ isBlocking: true }}
+      {...dialogProps}
     >
-      <div style={modalContainerStyle} data-component="SubForm">
-        {sectionContent}
-      </div>
+      {effectiveSection ? (
+        <SubFormSectionProvider section={effectiveSection} authorshipPolicy={authorshipPolicy}>
+          {children}
+        </SubFormSectionProvider>
+      ) : (
+        <div data-component="SubForm" style={{ display: 'contents' }}>
+          {children}
+        </div>
+      )}
     </Dialog>
   );
 };

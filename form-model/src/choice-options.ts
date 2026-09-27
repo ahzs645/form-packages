@@ -2,6 +2,7 @@ import type {
   BuilderChoiceOption,
   BuilderChoiceOptionObject,
 } from "./index";
+import { normalizeOption } from "./values";
 
 type ExtendedChoiceOptionObject = BuilderChoiceOptionObject & {
   hotKey?: string;
@@ -46,21 +47,28 @@ export function isChoiceOptionObject(
   return typeof option === "object" && option !== null;
 }
 
-/** The human-readable label for an option, regardless of shape. */
+/**
+ * The human-readable label for an option, regardless of shape. Reads the
+ * label the way normalizeOption (./values) does — label, display, then text,
+ * falling back to the stored value — and repairs imported glyphs.
+ *
+ * One exception: a builder option whose own `label` is blank reads as blank,
+ * not as its code. The option editors bind their label inputs to this and
+ * write it back, so a label cleared mid-edit must stay cleared.
+ */
 export function getOptionLabel(option: BuilderChoiceOption | null | undefined): string {
-  if (option == null) return "";
-  if (typeof option === "string") return normalizeOptionLabel(option);
-  return normalizeOptionLabel(option.label ?? "");
+  if (isChoiceOptionObject(option) && typeof option.label === "string" && !option.label.trim()) return "";
+  return normalizeOptionLabel(normalizeOption(option).display);
 }
 
 /**
- * The stored value for an option. Falls back to the label when no explicit
- * `value` is set (matching how bare-string options behave today).
+ * The stored value for an option, with normalizeOption's precedence: value,
+ * code, key, id, then state (a numeric `value` is a score, so it comes last),
+ * falling back to the label. Blank strings count as missing, and the result
+ * is always text.
  */
 export function getOptionValue(option: BuilderChoiceOption | null | undefined): string {
-  if (option == null) return "";
-  if (typeof option === "string") return option;
-  return option.value ?? option.label ?? "";
+  return normalizeOption(option).code;
 }
 
 /**

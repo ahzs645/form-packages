@@ -44,13 +44,24 @@ const ActiveDataContext = React.createContext<ActiveTuple>([{ field: { data: {},
 // Kit, ScaleField, the grid (and the legacy alias) each evaluate in their own
 // module scope — they all declare `const { useEffect } = React` — and later
 // modules see earlier ones as bare globals, like the engine's shared scope.
+// MOIS controls FieldKit draws for choice, number and text rows: each records
+// its props (by control name) so a test can read the value and call onChange.
+let controlRenders: Array<{ control: string; props: Record<string, any> }> = [];
+const recordingControl = (control: string) => (controlProps: Record<string, any>) => {
+  controlRenders.push({ control, props: controlProps });
+  return null;
+};
+
 function loadComponent(component: "PanelEntryGrid" | "ObservationPanelEditor"): React.ComponentType<any> {
-  const names = ["ObservationValueKit", "ScaleField", "PanelEntryGrid", ...(component === "ObservationPanelEditor" ? [component] : [])];
+  const names = ["ValueKit", "ObservationValueKit", "ScaleField", "FieldKit", "PanelEntryGrid", ...(component === "ObservationPanelEditor" ? [component] : [])];
   const scope: Record<string, unknown> = {
     window: {},
     React,
     Fluent,
     produce,
+    SimpleCodeSelect: recordingControl("SimpleCodeSelect"),
+    Numeric: recordingControl("Numeric"),
+    TextArea: recordingControl("TextArea"),
     useSourceData: () => ({ userProfile: { identity: { fullName: "Dr Test" } } }),
     useSection: () => null,
     useTheme: () => ({ semanticColors: { bodyBackground: "white", bodySubtext: "gray" } }),
@@ -174,6 +185,39 @@ describe("PanelEntryGrid scale rows", () => {
     expect(data.panel.mood).toMatchObject({ selectedKey: "1", value: 1 });
     expect(data.panel.sleep).toMatchObject({ selectedKey: "0", value: 0 });
     expect(data.__componentPayloads.webformUpdatesByComponent.panel.panelUpdates[0].observations).toHaveLength(3);
+  });
+
+  it("draws choice, number and text rows with the exporter's MOIS controls and keeps their stored shapes", () => {
+    controlRenders = [];
+    const view = renderGrid(loadComponent("PanelEntryGrid"), {
+      id: "vitals",
+      fieldId: "vitals",
+      title: "Vitals",
+      rows: [
+        { id: "position", label: "Position", type: "choice", system: "POSITION", options: [{ value: "SIT", label: "Sitting" }, { value: "STAND", label: "Standing" }] },
+        { id: "hr", label: "Heart rate", type: "numeric", min: 20, max: 250 },
+        { id: "note", label: "Note", type: "text" },
+      ],
+    });
+    const latest = (control: string) => [...controlRenders].reverse().find((entry) => entry.control === control)!.props;
+
+    expect(latest("SimpleCodeSelect")).toMatchObject({ label: "Position", labelPosition: "none", selectionType: "single" });
+    expect(latest("Numeric")).toMatchObject({ label: "Heart rate", labelPosition: "none", storeAsNumber: false });
+    expect(latest("TextArea")).toMatchObject({ label: "Note", multiline: true });
+
+    act(() => latest("SimpleCodeSelect").onChange({ code: "STAND", display: "Standing" }));
+    act(() => latest("Numeric").onChange({ target: {} }, "72"));
+    act(() => latest("TextArea").onChange({ target: {} }, "Resting"));
+
+    const data = view.current().field.data;
+    expect(data.vitals).toEqual({
+      position: { code: "STAND", display: "Standing", system: "POSITION" },
+      hr: 72,
+      note: "Resting",
+    });
+    expect(latest("SimpleCodeSelect").value).toMatchObject({ code: "STAND", display: "Standing" });
+    expect(latest("Numeric").value).toBe("72");
+    expect(latest("TextArea").value).toBe("Resting");
   });
 
   it("does not adopt ScaleField's empty placeholder", () => {

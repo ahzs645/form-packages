@@ -1,0 +1,26 @@
+{
+  "name": "DialogKit",
+  "title": "Dialog kit",
+  "description": "Rendering helper module: one row dialog (RowDialog) and one confirmation (ConfirmDialog) built on the MOIS SubForm — blocking, titled by the label, one width rule min(<width>px, calc(100vw - 48px)), button-bar footer, error area, optional discard-changes confirmation, lock policy and read-only — plus the width rule for viewer dialogs.",
+  "version": {
+    "major": 1,
+    "minor": 0,
+    "patch": 0
+  },
+  "type": "component",
+  "owner": "Northern Health",
+  "author": "Claude",
+  "publisher": "Northern Health",
+  "globalIdentifier": "",
+  "requiredFormViewerVersion": {
+    "major": 0,
+    "minor": 1,
+    "patch": 0
+  },
+  "requiredMoisVersion": {
+    "major": 2,
+    "minor": 28,
+    "patch": 10
+  },
+  "components": []
+}

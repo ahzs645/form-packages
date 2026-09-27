@@ -41,8 +41,12 @@
 // produce recipe computed from the draft (never a spread snapshot), and a
 // burst guard stops writing if the sync ever fails to converge.
 //
-// EditableTable, FormLogicKit and FormulaKit are referenced only inside
-// function bodies (component files load in no guaranteed order).
+// Card questions are drawn by FieldKit (the exporter's control for each
+// column) and the delete confirmation is DialogKit's ConfirmDialog.
+//
+// EditableTable, FormLogicKit, FormulaKit, DefaultsKit (a new row's default
+// answers), FieldKit and DialogKit are referenced only inside function
+// bodies (component files load in no guaranteed order).
 
 const RepeatForEachTable = (props) => {
   const {
@@ -190,7 +194,7 @@ const RepeatForEachTable = (props) => {
   const orphanPolicy = repeatConfig ? repeatConfig.orphanPolicy || "remove-if-unanswered" : "remove"
   const allowDeleteRows = tableProps.allowDeleteRows !== false &&
     (allowManualRows || orphanPolicy !== "remove")
-  const { Dialog, DialogType, DialogFooter, PrimaryButton, DefaultButton, Text, Label, ChoiceGroup, Checkbox } = Fluent
+  const { DefaultButton, Text, Label } = Fluent
 
   // Empty state: nothing in the source table matches, so there is nothing to
   // answer. The grid is dropped too unless people may add their own rows or
@@ -250,136 +254,23 @@ const RepeatForEachTable = (props) => {
         </Text>
       )
     }
-    const onValue = (next) => writeCardCell(rowId, column, next)
     // Cards only show the columns visible in the row, so required = the flag.
-    const required = helpers.isRequiredColumn(column)
-    switch (column.type) {
-      case "number": {
-        const settings = helpers.numberSettings(column)
-        const spinButtonProps = {}
-        Object.keys(settings.spinButtonProps).forEach((key) => {
-          if (settings.spinButtonProps[key] !== undefined && settings.spinButtonProps[key] !== null) spinButtonProps[key] = settings.spinButtonProps[key]
-        })
-        return (
-          <Numeric
-            inline={true}
-            typeNumber={settings.typeNumber}
-            buttonControls={settings.buttonControls}
-            value={value === undefined || value === null ? "" : value.toString()}
-            onChange={(valueOrEvent, nextValue) => onValue(helpers.coerceNumber(nextValue === undefined ? valueOrEvent : nextValue, column))}
-            spinButtonProps={spinButtonProps}
-            textFieldProps={settings.suffix ? { suffix: settings.suffix } : undefined}
-            storeAsNumber={settings.storeAsNumber !== false}
-            placeholder={column.placeholder || undefined}
-            required={required}
-          />
-        )
-      }
-      case "date":
-        if (column.withTime) {
-          return (
-            <DateTimeSelect
-              inline={true}
-              value={value || ""}
-              onChange={(next) => onValue(next || "")}
-              placeholder={column.placeholder || "Select date and time"}
-              required={required}
-            />
-          )
-        }
-        return (
-          <DateSelect
-            dateFormat={column.dateConfig ? column.dateConfig.dateFormat : undefined}
-            inline={true}
-            value={value || ""}
-            onChange={(next) => onValue(helpers.dateCellValue(next))}
-            placeholder={column.placeholder || "Select date"}
-            required={required}
-          />
-        )
-      case "time":
-        return (
-          <TimeSelect
-            inline={true}
-            value={value || ""}
-            onChange={(event, next) => onValue(next || "")}
-            placeholder={column.placeholder || "HH:mm"}
-            required={required}
-          />
-        )
-      case "dropdown": {
-        const options = helpers.choiceOptions(column.options)
-        // The authored radio / checkbox-list styles, as EditableTable's cells
-        // draw them (same stored values: a code, or a list of codes).
-        if (column.choiceStyle === "checkbox" && !column.codeSystem && Checkbox) {
-          const selected = new Set((Array.isArray(value) ? value : value ? [value] : []).map(String))
-          return (
-            <div role="group" aria-label={column.title || column.label || column.id} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              {options.map((option) => (
-                <Checkbox
-                  key={option.key}
-                  label={option.text}
-                  checked={selected.has(option.key)}
-                  onChange={(_event, checked) => {
-                    const next = new Set(selected)
-                    if (checked) next.add(option.key)
-                    else next.delete(option.key)
-                    onValue(options.map((entry) => entry.key).filter((key) => next.has(key)))
-                  }}
-                />
-              ))}
-            </div>
-          )
-        }
-        if (column.choiceStyle === "radio" && !column.codeSystem && ChoiceGroup) {
-          return (
-            <ChoiceGroup
-              options={options}
-              selectedKey={value ? String(value) : undefined}
-              required={required}
-              onChange={(_event, option) => onValue(option ? option.key : "")}
-            />
-          )
-        }
-        const multiple = column.choiceStyle === "multiselect" || column.choiceStyle === "checkbox"
-        return (
-          <SimpleCodeSelect
-            inline={true}
-            optionList={column.codeSystem ? undefined : options}
-            codeSystem={column.codeSystem || undefined}
-            selectionType={multiple ? "multiple" : "single"}
-            value={helpers.choiceForControl(value, column, options)}
-            onChange={(coding, codings) => onValue(helpers.choiceForStorage(coding, codings, column))}
-            placeholder={column.placeholder || "Select..."}
-            showOther={column.showOtherOption === true}
-            required={required}
-          />
-        )
-      }
-      case "checkbox":
-        return (
-          <OptionChoice
-            inline={true}
-            displayStyle="checkmark"
-            value={value}
-            onChange={(event, checked) => onValue(!!checked)}
-            required={required}
-          />
-        )
-      case "text":
-      default:
-        return (
-          <TextArea
-            multiline={column.textareaConfig ? column.textareaConfig.multiline : undefined}
-            textFieldProps={column.textareaConfig ? { rows: column.textareaConfig.rows, resizable: column.textareaConfig.resizable } : undefined}
-            inline={true}
-            value={value || ""}
-            onChange={(event, next) => onValue(next || "")}
-            placeholder={column.placeholder || ""}
-            required={required}
-          />
-        )
-    }
+    // Each question is drawn by FieldKit with the control the exporter
+    // chooses (the same controls and stored cell shapes as EditableTable's
+    // cells: FieldKit.fromTableColumn + FieldKit.storage.cell); the card
+    // draws the label above it.
+    const descriptor = FieldKit.fromTableColumn(column)
+    return FieldKit.renderControl(descriptor, {
+      value,
+      onChange: (stored) => writeCardCell(rowId, column, stored),
+      storage: FieldKit.storage.cell(descriptor, { coerceNumber: (next) => helpers.coerceNumber(next, column) }),
+      label: column.title || column.label || column.id,
+      labelPosition: "none",
+      required: helpers.isRequiredColumn(column),
+      readOnly: false,
+      inline: true,
+      placeholder: column.placeholder || undefined,
+    })
   }
 
   const renderCard = (row, index) => {
@@ -491,23 +382,16 @@ const RepeatForEachTable = (props) => {
         </Text>
       ) : null}
       {pendingDelete ? (
-        <Dialog
-          hidden={false}
-          onDismiss={() => setPendingDelete(null)}
-          dialogContentProps={{
-            type: DialogType.normal,
-            title: t("Delete this row?"),
-            subText: pendingDelete.label
-              ? t("\"{label}\" and its answers will be removed.", { label: pendingDelete.label })
-              : t("The row and its answers will be removed."),
-          }}
-          modalProps={{ isBlocking: true }}
-        >
-          <DialogFooter>
-            <PrimaryButton text={t("Delete")} onClick={confirmPendingDelete} />
-            <DefaultButton text={t("Cancel")} onClick={() => setPendingDelete(null)} />
-          </DialogFooter>
-        </Dialog>
+        <DialogKit.ConfirmDialog
+          title={t("Delete this row?")}
+          message={pendingDelete.label
+            ? t("\"{label}\" and its answers will be removed.", { label: pendingDelete.label })
+            : t("The row and its answers will be removed.")}
+          confirmText={t("Delete")}
+          cancelText={t("Cancel")}
+          onConfirm={confirmPendingDelete}
+          onCancel={() => setPendingDelete(null)}
+        />
       ) : null}
     </div>
   )
@@ -601,9 +485,19 @@ RepeatForEachTable.helpers = (() => {
 
   const hasRowMeta = (row) => !!row && (row._complete !== undefined || row[STATUS_KEY] !== undefined)
 
+  // A new row's cell: the column's default answer, read and resolved by
+  // DefaultsKit (a fixed value, today or now) the way EditableTable seeds a
+  // row; a runtime without the kit keeps the prefill-only reading.
   const defaultCellValue = (column) => {
-    if (column.type === "checkbox") return column.prefill === true
-    if (typeof column.prefill === "string" || typeof column.prefill === "number") return String(column.prefill)
+    const kit = typeof DefaultsKit !== "undefined" && DefaultsKit ? DefaultsKit : null
+    const value = kit
+      ? kit.resolveDefaultAnswer(kit.readDefaultAnswer(column, { shape: "tableColumn" }), {
+        now: new Date(),
+        fieldType: kit.temporalKindOf(column),
+      })
+      : column.prefill
+    if (column.type === "checkbox") return value === true
+    if (typeof value === "string" || typeof value === "number") return String(value)
     return ""
   }
 
@@ -616,7 +510,10 @@ RepeatForEachTable.helpers = (() => {
 
   const cellAnswered = (row, column) => {
     const value = getPath(row, columnPath(column))
-    if (column.type !== "checkbox" && column.prefill !== undefined && column.prefill !== null && toText(value) === String(column.prefill)) return false
+    if (column.type !== "checkbox") {
+      const startingValue = defaultCellValue(column)
+      if (startingValue !== "" && toText(value) === startingValue) return false
+    }
     return isMeaningful(value)
   }
 
@@ -867,32 +764,7 @@ RepeatForEachTable.helpers = (() => {
     })
     .filter(Boolean)
 
-  const isMultipleChoice = (column) => column.choiceStyle === "multiselect" || column.choiceStyle === "checkbox"
-
-  const choiceCoding = (value, options) => {
-    if (value === undefined || value === null || value === "") return null
-    if (typeof value === "object" && !Array.isArray(value)) {
-      const code = value.code !== undefined ? value.code : value.value !== undefined ? value.value : value.key
-      if (code === undefined || code === null || code === "") return null
-      return { code: String(code), display: String(value.display || value.text || value.label || code) }
-    }
-    const code = String(value)
-    const option = options.find((entry) => String(entry.key) === code)
-    return { code, display: option ? option.text : code }
-  }
-
-  const choiceForControl = (value, column, options) => {
-    if (isMultipleChoice(column)) {
-      const values = Array.isArray(value) ? value : value ? [value] : []
-      return values.map((entry) => choiceCoding(entry, options)).filter(Boolean)
-    }
-    return choiceCoding(value, options) || undefined
-  }
-
-  const choiceForStorage = (coding, codings, column) => (isMultipleChoice(column)
-    ? (codings || []).map((entry) => entry && entry.code).filter(Boolean)
-    : (coding && coding.code) || "")
-
+  // Card questions convert their control values with FieldKit.storage.cell.
   const numberSettings = (column) => {
     const config = column.numberConfig || {}
     const spin = config.spinButtonProps || {}
@@ -904,16 +776,6 @@ RepeatForEachTable.helpers = (() => {
       storeAsNumber: pick(pick(config.storeAsNumber, column.storeAsNumber), true),
       spinButtonProps: { min: pick(spin.min, column.min), max: pick(spin.max, column.max), step: pick(spin.step, column.step) },
     }
-  }
-
-  // SMOIS DateSelect reports a Date, preview a string: store the local day.
-  const dateCellValue = (value) => {
-    if (value && typeof value.getFullYear === "function") {
-      if (Number.isNaN(value.getTime())) return ""
-      const pad2 = (part) => (part < 10 ? "0" : "") + part
-      return value.getFullYear() + "-" + pad2(value.getMonth() + 1) + "-" + pad2(value.getDate())
-    }
-    return typeof value === "string" ? value : ""
   }
 
   const coerceNumber = (value, column) => {
@@ -963,6 +825,72 @@ RepeatForEachTable.helpers = (() => {
     return policy === "always-calculated" || policy === "suggested-calculation" ? policy : "calculated-until-overridden"
   }
 
+  /** A column's cell type as a builder field type (EditableTable's _editableTableFormulaFieldType). */
+  const formulaFieldType = (column) => {
+    switch (column && column.type) {
+      case "number": return "number"
+      case "date": return column.withTime ? "datetime" : "date"
+      case "time": return "time"
+      case "dropdown": return column.choiceStyle === "multiselect" || column.choiceStyle === "checkbox" ? "multiselect" : "choice"
+      case "checkbox": return "booleanSingle"
+      case "text": return "text"
+      default: return undefined
+    }
+  }
+
+  /** Ids, field types and option score maps a row formula may read (EditableTable's _editableTableFormulaScope). */
+  const formulaScope = (columns) => {
+    const fieldIds = []
+    const fieldTypes = {}
+    const scoreMaps = {}
+    ;(columns || []).forEach((column) => {
+      if (!column) return
+      const type = formulaFieldType(column)
+      const scores = {}
+      if (column.type === "dropdown" && Array.isArray(column.options) && typeof ValueKit !== "undefined" && ValueKit) {
+        column.options.forEach((option) => {
+          const normalized = ValueKit.normalizeOption(option)
+          if (!Number.isFinite(normalized.score)) return
+          if (normalized.code) scores[normalized.code] = normalized.score
+          if (normalized.display) scores[normalized.display] = normalized.score
+        })
+      }
+      ;[column.id, column.dataPath].forEach((id) => {
+        if (!id || fieldIds.indexOf(id) >= 0) return
+        fieldIds.push(id)
+        if (type) fieldTypes[id] = type
+        if (Object.keys(scores).length > 0) scoreMaps[id] = scores
+      })
+    })
+    return { fieldIds, fieldTypes, scoreMaps }
+  }
+
+  /**
+   * The formula as a stored tree: the exported `formulaTree`, else the text
+   * parsed by FormulaKit (cached per text). Null when the kit predates trees
+   * or the text does not parse (the text is then evaluated as before).
+   */
+  const formulaTrees = new Map()
+  const formulaTree = (config, scope) => {
+    if (typeof FormulaKit === "undefined" || !FormulaKit || typeof FormulaKit.evaluateTree !== "function") return null
+    const stored = config && config.formulaTree
+    if (stored && stored.v === 1 && stored.expr && typeof stored.expr === "object") return stored
+    const text = typeof config.expression === "string" ? config.expression : ""
+    if (!text.trim() || typeof FormulaKit.parse !== "function") return null
+    const key = text + "\u0000" + scope.fieldIds.join("\u0001") + "\u0000" + JSON.stringify(scope.fieldTypes)
+    if (formulaTrees.has(key)) return formulaTrees.get(key)
+    let tree = null
+    try {
+      const parsed = FormulaKit.parse(text, { fieldIds: scope.fieldIds, fieldType: (id) => scope.fieldTypes[id] })
+      if (parsed && parsed.v === 1 && parsed.expr) tree = parsed
+      else if (parsed && parsed.formula && !(parsed.errors && parsed.errors.length)) tree = parsed.formula
+    } catch (error) {
+      tree = null
+    }
+    formulaTrees.set(key, tree)
+    return tree
+  }
+
   const formulaValue = (row, column, columns) => {
     if (typeof FormulaKit === "undefined") return ""
     const config = column.computedValue
@@ -973,9 +901,34 @@ RepeatForEachTable.helpers = (() => {
       values[entry.id] = value
       if (path !== entry.id) values[path] = value
     })
-    if (config.incompleteBehavior !== "compute-anyway" && !FormulaKit.hasAllReferencedValues(config.expression, values)) return ""
     const precision = Number(config.precision)
-    const result = FormulaKit.roundValue(FormulaKit.evaluate(config.expression, values, column.id), Number.isFinite(precision) ? precision : 2)
+    const scope = formulaScope(columns)
+    const tree = formulaTree(config, scope)
+    let raw
+    if (tree) {
+      const getValue = (fieldId) => values[fieldId]
+      const fieldKind = (fieldId) => scope.fieldTypes[fieldId]
+      // Blank until every referenced cell has a value unless "compute-anyway"
+      // (a missing cell then counts as 0). Never its own cell by column id
+      // (selfId); the injected label/status columns do read their own save
+      // key ([_sourceLabel]), which the sync writes.
+      const computeAnyway = config.incompleteBehavior === "compute-anyway"
+      if (!computeAnyway && typeof FormulaKit.hasAllReferencedValues === "function"
+        && !FormulaKit.hasAllReferencedValues(tree, getValue, { fieldKind })) return ""
+      raw = FormulaKit.evaluateTree(tree, getValue, {
+        incomplete: computeAnyway ? "compute-anyway" : "blank",
+        fieldKind,
+        scoreMaps: scope.scoreMaps,
+        selfId: column.id,
+      })
+    } else {
+      // A kit without trees (or text it cannot parse): the text engine, with the
+      // same incomplete mode (a generated kit's evaluate defaults to "blank").
+      const computeAnyway = config.incompleteBehavior === "compute-anyway"
+      if (!computeAnyway && !FormulaKit.hasAllReferencedValues(config.expression, values)) return ""
+      raw = FormulaKit.evaluate(config.expression, values, column.id, { incomplete: computeAnyway ? "compute-anyway" : "blank" })
+    }
+    const result = FormulaKit.roundValue(raw, Number.isFinite(precision) ? precision : 2)
     if (result === null || result === undefined || result === "") return ""
     if (typeof result === "boolean") return result ? "true" : "false"
     return String(result)
@@ -1140,11 +1093,8 @@ RepeatForEachTable.helpers = (() => {
     columnVisible,
     isRequiredColumn,
     choiceOptions,
-    choiceForControl,
-    choiceForStorage,
     numberSettings,
     coerceNumber,
-    dateCellValue,
     formatCell,
     isComputedColumn,
     columnPath,

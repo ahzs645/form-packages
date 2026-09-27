@@ -4,9 +4,13 @@
  * Features:
  * - Uses SimpleCodeChecklist for question/answer selection
  * - Configurable questions with scored answer options
- * - Automatic total calculation with weighted terms
+ * - Automatic total calculation with weighted terms, or an authored formula
+ *   (`formulaTree` / `expression`, evaluated by FormulaKit)
  * - Interpretation ranges with labels (e.g., "Follow-up required")
  * - Dark mode support via theme
+ *
+ * FormulaKit and ValueKit (option and answer readers) are referenced only
+ * inside function bodies (component files load in no guaranteed order).
  */
 
 const { useMemo, useEffect } = React
@@ -69,6 +73,9 @@ const {
  * @property {string} id - Unique total ID
  * @property {string} label - Display label for the total
  * @property {ScoreTotalTerm[]} terms - Questions/weights that make up this total
+ * @property {string} [expression] - Authored formula; question ids read the question's score. Replaces the terms.
+ * @property {Object} [formulaTree] - The formula as a stored tree (exported next to `expression`)
+ * @property {number} [precision] - Decimal places of a formula total
  * @property {string} [targetFieldId] - Field ID to write result to
  * @property {ScoreTotalRange[]} ranges - Interpretation ranges
  */
@@ -116,13 +123,16 @@ const INTERPRETATION_BOX_STYLE = {
  * @returns {Map<string, Map<string, number>>} Map of questionId -> (optionKey -> score)
  */
 const normalizeScoringOption = (option, index = 0) => {
-  const keyValue = option?.key ?? option?.id ?? option?.code ?? option?.value ?? `${index}`
-  const textValue = option?.text ?? option?.label ?? option?.display ?? option?.state ?? String(keyValue)
+  // ValueKit reads the option; the stored key keeps an explicit key or id
+  // (then ValueKit's code), and an option without a score scores its position.
+  const normalized = ValueKit.normalizeOption(option)
+  const explicitKey = option && typeof option === "object" ? option.key ?? option.id : undefined
+  const keyValue = explicitKey !== undefined && explicitKey !== null ? explicitKey : normalized.code || `${index}`
   return {
-    ...option,
+    ...(option && typeof option === "object" ? option : {}),
     key: String(keyValue),
-    text: String(textValue),
-    score: option?.score ?? (typeof option?.value === "number" ? option.value : index),
+    text: String(normalized.display || keyValue),
+    score: Number.isFinite(normalized.score) ? normalized.score : index,
     description: option?.description,
   }
 }
@@ -151,48 +161,17 @@ const buildScoreMap = (questions, sharedOptions) => {
 
 const normalizeScoreToken = (value) => String(value ?? "").trim().toLowerCase()
 
-const collectScoreCandidates = (value, out = new Set(), depth = 0) => {
-  if (depth > 4 || value === null || value === undefined) return out
-
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-    const token = String(value).trim()
-    if (token) out.add(token)
-    return out
-  }
-
-  if (Array.isArray(value)) {
-    value.forEach((entry) => collectScoreCandidates(entry, out, depth + 1))
-    return out
-  }
-
-  if (typeof value !== "object") return out
-
-  const candidateKeys = [
-    "code",
-    "key",
-    "value",
-    "id",
-    "text",
-    "display",
-    "label",
-    "state",
-    "fieldId",
-  ]
-  candidateKeys.forEach((key) => {
-    collectScoreCandidates(value[key], out, depth + 1)
+// Every token an answer can be matched to an option by: each chosen entry's
+// code and wording as ValueKit.readChoice reads them (the { selectedKey,
+// response } this module stores, codings, bare codes, checklist ids,
+// FindCodeSelect { selectedItems } / { selectedItem }, lists).
+const collectScoreCandidates = (value, out = new Set()) => {
+  ValueKit.readChoice(value).forEach((entry) => {
+    const code = String(entry.code ?? "").trim()
+    const display = String(entry.display ?? "").trim()
+    if (code) out.add(code)
+    if (display) out.add(display)
   })
-
-  if (Array.isArray(value.selectedItems)) {
-    value.selectedItems.forEach((entry) => collectScoreCandidates(entry, out, depth + 1))
-  }
-  collectScoreCandidates(value.selectedItem, out, depth + 1)
-  if (Array.isArray(value.selectedIds)) {
-    value.selectedIds.forEach((entry) => collectScoreCandidates(entry, out, depth + 1))
-  }
-  if (Array.isArray(value.selectedLabels)) {
-    value.selectedLabels.forEach((entry) => collectScoreCandidates(entry, out, depth + 1))
-  }
-
   return out
 }
 
@@ -225,6 +204,111 @@ const getScoreFromValue = (value, optionScoreMap) => {
   }
 
   return null
+}
+
+// ================================================
+// Formula totals
+// ================================================
+//
+// A total with an authored formula (`formulaTree`, else `expression`) is
+// evaluated by FormulaKit.evaluateTree with the reference semantics
+// (docs/.../architecture/formula-semantics.md): each question reference (the
+// question id, its field id or an answer field id) reads the question's score,
+// the question's emptyScore when unanswered; context variables read 1/0 (or
+// their true/false values) from the chart. The total stays blank until every
+// question it reads has a score, unless its incompleteBehavior is
+// "compute-anyway". A total without a formula is its weighted terms. A kit
+// without tree support keeps the weighted terms.
+
+const scoringModuleFormulaTrees = new Map()
+const scoringModuleFormulaTree = (total, fieldIds) => {
+  if (typeof FormulaKit === "undefined" || !FormulaKit || typeof FormulaKit.evaluateTree !== "function") return null
+  const stored = total?.formulaTree
+  if (stored && stored.v === 1 && stored.expr && typeof stored.expr === "object") return stored
+  const text = typeof total?.expression === "string" ? total.expression : ""
+  if (!text.trim() || typeof FormulaKit.parse !== "function") return null
+  const ids = Array.from(new Set((fieldIds || []).filter(Boolean)))
+  const key = text + "\u0000" + ids.join("\u0001")
+  if (scoringModuleFormulaTrees.has(key)) return scoringModuleFormulaTrees.get(key)
+  let tree = null
+  try {
+    const parsed = FormulaKit.parse(text, ids.length > 0 ? { fieldIds: ids } : {})
+    if (parsed && parsed.v === 1 && parsed.expr) tree = parsed
+    else if (parsed && parsed.formula && !(parsed.errors && parsed.errors.length)) tree = parsed.formula
+  } catch (error) {
+    tree = null
+  }
+  scoringModuleFormulaTrees.set(key, tree)
+  return tree
+}
+
+const hasScoringTotalFormula = (total) => Boolean(
+  (typeof total?.expression === "string" && total.expression.trim())
+  || (total?.formulaTree && total.formulaTree.v === 1)
+)
+
+/** Question aliases → the question's score (answer, else emptyScore, else a grouped checklist's unchecked score). */
+const buildQuestionScoreValues = (questions, answers, scoreMap, sharedOptions, layout) => {
+  const values = {}
+  for (const question of questions || []) {
+    let score = getScoreFromValue(answers[question.id], scoreMap.get(question.id))
+    if (score === null && Number.isFinite(question.emptyScore)) score = Number(question.emptyScore)
+    if (score === null && layout === "grouped-checklist") {
+      const { uncheckedOption } = resolveChecklistOptions(question, sharedOptions)
+      if (uncheckedOption) score = uncheckedOption.score ?? 0
+    }
+    if (score === null) continue
+    ;[question.id, question.fieldId, ...(question.childFieldIds || [])].filter(Boolean).forEach((alias) => {
+      values[alias] = score
+    })
+  }
+  return values
+}
+
+/** A context variable's value: trueValue (1) when the chart value matches one of `equals`, else falseValue (0). */
+const resolveScoringContextVariable = (variable, root) => {
+  const segments = String(variable.sourcePath || "").split(".").map((segment) => segment.trim()).filter(Boolean)
+  let current = root
+  for (const segment of segments) {
+    if (current === undefined || current === null) break
+    current = current[segment]
+  }
+  const tokens = Array.from(collectScoreCandidates(current)).map((candidate) => candidate.toLowerCase())
+  const matched = (variable.equals || []).some((candidate) => tokens.includes(String(candidate ?? "").trim().toLowerCase()))
+  return matched
+    ? (Number.isFinite(variable.trueValue) ? Number(variable.trueValue) : 1)
+    : (Number.isFinite(variable.falseValue) ? Number(variable.falseValue) : 0)
+}
+
+/** A formula total's { score, isComplete }, or null when the kit cannot evaluate it (use the weighted terms). */
+const evaluateScoringFormulaTotal = (total, questions, scoreValues, contextRoot) => {
+  const formulaIds = [
+    ...(questions || []).flatMap((question) => [question.id, question.fieldId, ...(question.childFieldIds || [])]),
+    ...(total.contextVariables || []).map((variable) => variable?.id),
+  ]
+  const tree = scoringModuleFormulaTree(total, formulaIds)
+  if (!tree) return null
+  const values = { ...scoreValues }
+  for (const variable of total.contextVariables || []) {
+    if (variable?.id && variable?.sourcePath) values[variable.id] = resolveScoringContextVariable(variable, contextRoot)
+  }
+  const getValue = (id) => (Object.prototype.hasOwnProperty.call(values, id) ? values[id] : undefined)
+  // Blank until every question it reads has a score, unless "compute-anyway"
+  // (a missing score then counts as 0).
+  const computeAnyway = total.incompleteBehavior === "compute-anyway"
+  if (!computeAnyway && typeof FormulaKit.hasAllReferencedValues === "function" && !FormulaKit.hasAllReferencedValues(tree, getValue)) {
+    return { score: null, isComplete: false }
+  }
+  const raw = FormulaKit.evaluateTree(tree, getValue, {
+    incomplete: computeAnyway ? "compute-anyway" : "blank",
+    selfId: total.id,
+  })
+  let score = typeof raw === "number" && Number.isFinite(raw) ? raw : null
+  if (score !== null && Number.isFinite(total.precision)) {
+    const factor = 10 ** Math.max(0, Math.floor(Number(total.precision)))
+    score = Math.round((score + Number.EPSILON) * factor) / factor
+  }
+  return { score, isComplete: score !== null }
 }
 
 /**
@@ -996,6 +1080,8 @@ const ScoringModule = ({
   ...props
 }) => {
   const [fd, setFd] = useFormSessionData()
+  // Chart data for formula totals' context variables (patient.gender…).
+  const sourceData = typeof useSourceData === "function" ? useSourceData() : null
   const theme = useTheme()
   const isDarkMode = theme?.isInverted || false
   const sharedOptions = useMemo(() => resolveMatrixOptions(config), [config])
@@ -1027,7 +1113,20 @@ const ScoringModule = ({
       ? config.calculatedValues
       : config.totals || []
 
+    const scoreValues = totals.some(hasScoringTotalFormula)
+      ? buildQuestionScoreValues(config.questions, answers, scoreMap, sharedOptions, config.layout)
+      : null
+    const contextRoot = { patient: sourceData?.patient, sourceData, formData: fd?.field?.data }
+
     for (const total of totals) {
+      if (hasScoringTotalFormula(total)) {
+        const formulaResult = evaluateScoringFormulaTotal(total, config.questions, scoreValues, contextRoot)
+        if (formulaResult) {
+          results[total.id] = formulaResult
+          continue
+        }
+      }
+
       let score = 0
       let isComplete = true
 
@@ -1059,7 +1158,7 @@ const ScoringModule = ({
     }
 
     return results
-  }, [answers, config.calculatedValues, config.layout, config.questions, config.totals, scoreMap, sharedOptions])
+  }, [answers, config.calculatedValues, config.layout, config.questions, config.totals, scoreMap, sharedOptions, sourceData, fd])
 
   useEffect(() => {
     if (!setFd) return

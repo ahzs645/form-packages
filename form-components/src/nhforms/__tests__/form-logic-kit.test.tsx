@@ -123,7 +123,8 @@ describe("FormLogicKit.validate", () => {
   });
 
   it("ships the value formats (parity with lib/validation/formats.ts is in value-formats.test.ts)", () => {
-    expect(Object.keys(FormLogicKit.formats).sort()).toEqual(["bc-phn", "ca-postal", "money"]);
+    // The answer types' own formats too (parity: form-logic-kit-validation-parity.test.ts).
+    expect(Object.keys(FormLogicKit.formats).sort()).toEqual(["bc-phn", "ca-postal", "email", "money", "phone", "url"]);
   });
 });
 

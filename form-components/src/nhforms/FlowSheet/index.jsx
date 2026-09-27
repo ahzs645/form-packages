@@ -441,8 +441,9 @@ const FlowSheet = ({
             type: DialogType.largeHeader,
             title: modalTitle || title || "Flow Sheet",
           }}
-          minWidth={Math.min(resolvedMinWidth, typeof window !== "undefined" ? window.innerWidth - 48 : resolvedMinWidth)}
-          maxWidth="96vw"
+          // A viewer: non-blocking, with the NHForms dialog width rule.
+          minWidth={DialogKit.width(resolvedMinWidth, 980)}
+          maxWidth={DialogKit.maxWidth}
           modalProps={{ isBlocking: false }}
         >
           <Stack tokens={{ childrenGap: 6 }}>

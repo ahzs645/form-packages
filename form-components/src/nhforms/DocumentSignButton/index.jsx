@@ -57,9 +57,12 @@ const DocumentSignButton = ({ disabled = false, preparePersist, getSaveData }) =
     <Fluent.DefaultButton text={signed ? "Unsign" : "Sign"}
       disabled={disabled || busy || !available || !sd?.formParams?.documentId}
       onClick={() => { setReason(""); setError(""); setOpen(true); }} />
-    <Fluent.Dialog hidden={!open} onDismiss={dismiss}
-      dialogContentProps={{ title: signed ? "Unsign current record" : "Sign current record" }}
-      modalProps={{ isBlocking: true }}>
+    {/* DialogKit's ConfirmDialog (the MOIS SubForm, blocking) with the
+        reason field as its body; busy disables both buttons and the close. */}
+    <DialogKit.ConfirmDialog hidden={!open} onCancel={dismiss}
+      title={signed ? "Unsign current record" : "Sign current record"}
+      confirmText={signed ? "Unsign" : "Sign"} onConfirm={confirm}
+      confirmDisabled={signed && !reason.trim()} busy={busy} errorMessage={error || undefined}>
       <Fluent.Stack tokens={{ childrenGap: 12 }}>
         <Fluent.Text>{sd?.userProfile?.identity?.fullName || "Current user"}</Fluent.Text>
         <Fluent.Text>{signed
@@ -68,13 +71,7 @@ const DocumentSignButton = ({ disabled = false, preparePersist, getSaveData }) =
         <Fluent.TextField label={signed ? "Reason for unsigning" : "Reason (optional)"}
           required={signed} multiline rows={3} value={reason} disabled={busy}
           onChange={(_, value) => setReason(value || "")} />
-        {error ? <div role="alert">{error}</div> : null}
       </Fluent.Stack>
-      <Fluent.DialogFooter>
-        <Fluent.PrimaryButton text={signed ? "Unsign" : "Sign"} onClick={confirm}
-          disabled={busy || (signed && !reason.trim())} />
-        <Fluent.DefaultButton text="Cancel" onClick={dismiss} disabled={busy} />
-      </Fluent.DialogFooter>
-    </Fluent.Dialog>
+    </DialogKit.ConfirmDialog>
   </>;
 };

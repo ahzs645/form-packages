@@ -351,14 +351,13 @@ describe("ChartRecordManager", () => {
       buttonsByAriaLabel("Edit")[0].click();
     });
     // The default connections field set renders coded editors, not free text:
-    // FindCodeSelect inputs carry placeholder "Please search".
+    // SubformScoring draws a coded choice with the exporter's control for it,
+    // a SimpleCodeSelect dropdown (it used to draw a FindCodeSelect).
     const text = document.body.textContent ?? "";
     for (const label of ["Role", "Provider type", "Stopped reason", "Care team member"]) {
       expect(text).toContain(label);
     }
-    expect(
-      document.querySelectorAll("input[placeholder='Please search']").length
-    ).toBeGreaterThanOrEqual(3);
+    expect(document.querySelectorAll(".ms-Dropdown").length).toBeGreaterThanOrEqual(3);
   });
 
   it("cascades connection type to its default provider type and clears provider", async () => {

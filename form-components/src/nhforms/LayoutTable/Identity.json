@@ -22,5 +22,5 @@
     "minor": 28,
     "patch": 5
   },
-  "components": ["FieldStampButton", "FormLogicKit"]
+  "components": ["DefaultsKit", "FieldStampButton", "FormLogicKit", "FormulaKit", "ValueKit"]
 }

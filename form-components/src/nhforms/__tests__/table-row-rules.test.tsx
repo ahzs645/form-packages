@@ -36,14 +36,53 @@ const Button = ({ text, onClick, title }: { text?: string; onClick?: () => void;
   h("button", { type: "button", onClick, title }, text ?? title);
 const Dialog = ({ hidden, dialogContentProps, children }: { hidden?: boolean; dialogContentProps?: { title?: string }; children?: React.ReactNode }) =>
   hidden ? null : h("div", { role: "dialog" }, h("h2", null, dialogContentProps?.title), children);
+// MOIS controls draw their own label (LayoutItem) unless labelPosition is "none".
+const ownLabel = (props: AnyProps) =>
+  props.label && props.labelPosition !== "none"
+    ? h("label", { "data-required": props.required ? "true" : "false" }, props.label)
+    : null;
 const Field = (props: AnyProps) =>
-  h("input", {
+  h(React.Fragment, null, ownLabel(props), h("input", {
     value: props.value == null ? "" : String(props.value),
     placeholder: props.placeholder,
     "data-required": props.required ? "true" : "false",
     readOnly: props.readOnly,
     onChange: (event: React.ChangeEvent<HTMLInputElement>) => props.onChange?.(event, event.target.value),
-  });
+  }));
+// SimpleCodeChecklist, as the engine draws it: bound to its section's store
+// (section.activeSelector(fd)[fieldId]); a single choice is a radio group, a
+// multiple choice pushes into / filters the list it reads.
+const Checklist = (props: AnyProps) => {
+  const [fd, setFd] = useActiveData() as [Record<string, unknown>, (updater: unknown) => void];
+  const read = () => props.section.activeSelector(fd)[props.fieldId];
+  const multiple = props.selectionType === "multiple";
+  const current = read();
+  const selected: string[] = multiple ? (current || []).map((entry: AnyProps) => entry.code) : current?.code ? [current.code] : [];
+  return h("div", { role: multiple ? "group" : "radiogroup", "data-required": props.required ? "true" : "false" },
+    (props.optionList as Array<{ key: string; text: string }>).map((option) =>
+      h("label", { key: option.key },
+        h("input", {
+          type: multiple ? "checkbox" : "radio",
+          checked: selected.includes(option.key),
+          onChange: () => setFd((draft: unknown) => {
+            const target = props.section.activeSelector(draft);
+            if (!multiple) {
+              target[props.fieldId] = { code: option.key, display: option.text };
+              return;
+            }
+            if (!target[props.fieldId]) target[props.fieldId] = [];
+            if (selected.includes(option.key)) {
+              target[props.fieldId] = target[props.fieldId].filter((entry: AnyProps) => entry.code !== option.key);
+            } else {
+              target[props.fieldId].push({ code: option.key, display: option.text });
+            }
+          }),
+        }),
+        option.text)));
+};
+// The MOIS SubForm DialogKit draws on: a dialog titled by its label.
+const SubForm = ({ hidden, label, children }: AnyProps) =>
+  hidden ? null : h("div", { role: "dialog" }, h("h2", null, label), children);
 const CodeField = (props: AnyProps) =>
   h("input", {
     value: props.value?.code ?? "",
@@ -92,13 +131,14 @@ type Runtime = {
 };
 
 function loadRuntime(): Runtime {
-  const source = ["FormulaKit", "FormLogicKit", "EditableTable", "RepeatForEachTable"].map(read).join("\n");
+  const source = ["ValueKit", "FormulaKit", "FormLogicKit", "FieldKit", "DialogKit", "EditableTable", "RepeatForEachTable"].map(read).join("\n");
   const compiled = Babel.transform(`var EditableTable;\n${source}`, { presets: ["react"], filename: "index.jsx" }).code ?? "";
   const scope: Record<string, unknown> = {
     window: {}, React, Fluent, produce, useActiveData, SubformScoring,
     useTheme: () => ({}), useSourceData: () => ({}), useSection: () => null,
     TextArea: Field, Numeric: Field, DateSelect: Field, DateTimeSelect: Field, TimeSelect: Field,
-    SimpleCodeSelect: CodeField, OptionChoice: Field,
+    SimpleCodeSelect: CodeField, OptionChoice: Field, SimpleCodeChecklist: Checklist,
+    SubForm, ButtonBar: Box,
   };
   // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func
   return new Function(...Object.keys(scope), `${compiled};

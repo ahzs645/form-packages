@@ -17,6 +17,7 @@ import {
   releaseMoisFormLock,
   testMoisFormLock,
 } from '../runtime/mois-contract';
+import { useMoisTempData } from './temp-data';
 
 /**
  * useOnLoad - Called when a form loads
@@ -161,12 +162,14 @@ export const useMoisNavigate = (moisModule?: string) => {
 export const useSetting = (_section: string, _key: string, defaultValue: any) => defaultValue;
 
 /**
- * useTempData - Temporary data storage for a form
+ * useTempData(tempArea, initialTempArea) - the engine's temporary data area,
+ * `fd.tempArea[tempArea]`: seeded once from `initialTempArea`, reset to `{}`
+ * on unmount, and returned as `[sectionOverride, currentTempData]` (the
+ * override's `activeSelector` reads the area), or `[null, null]` without an
+ * area name. See hooks/temp-data.ts for the SMOIS evidence.
  */
-export const useTempData = (_key: string, initial: any) => {
-  const [data, setData] = React.useState(initial);
-  return [data, setData];
-};
+export const useTempData = (tempArea?: string | null, initialTempArea?: Record<string, unknown> | null) =>
+  useMoisTempData(tempArea, initialTempArea);
 
 /**
  * useConfirmUnload - Confirm before leaving page with unsaved changes

@@ -14,6 +14,10 @@ import { BUILDER_FIELD_TYPES } from "./field-types";
 import type { BoundingBox, FieldPrefillValue, WidgetGeometry } from "./document";
 import type { BuilderInvestigationTab } from "./investigation-tabs";
 import type { ReportItemFormat } from "./report-formats";
+import type { ExportTargetsSetting } from "./targets";
+import type { StoredFormula } from "./formula/ast";
+import type { BuilderDefaultAnswer } from "./defaults";
+import type { BuilderFieldBinding } from "./bindings";
 
 export { BUILDER_FIELD_TYPES } from "./field-types";
 export {
@@ -90,6 +94,11 @@ export interface CalculatedValueConfig {
   id: string;
   label: string;
   expression: string;
+  /**
+   * The stored formula tree, the source of truth; `expression` is its mirror
+   * printed with `printFormula`. Read both through `readFormulaStore`.
+   */
+  formulaTree?: StoredFormula;
   precision?: number;
   resultType?: "number" | "text";
   /** Visual presentation shared by regular computed fields and subform totals. */
@@ -400,7 +409,7 @@ export interface BuilderWorkflowOutputCondition {
 /** Fields every output kind shares: identity, enablement, and the submit-time gate. */
 export interface BuilderWorkflowOutputBase extends BuilderWorkflowBaseDefinition {
   condition?: BuilderWorkflowOutputCondition;
-  /** Recursive submit-time gate (may carry a named-condition ref). Emitter support pending. */
+  /** Recursive submit-time gate (may carry a named-condition ref); must hold together with `condition`. The MOIS export checks it with FormLogicKit.evaluateGroup. */
   conditionGroup?: FieldConditionGroup;
 }
 
@@ -684,6 +693,8 @@ export type BuilderTableMode = "inline" | "modal";
 export interface BuilderTableFormulaColumn {
   mode: "formula";
   expression: string;
+  /** The stored formula tree; `expression` is its printed mirror. */
+  formulaTree?: StoredFormula;
   /** Default "calculated-until-overridden": the filler may type over it; a reset icon restores it. */
   calculationPolicy?: "always-calculated" | "calculated-until-overridden" | "suggested-calculation";
   /** Decimal places (default 2). */
@@ -714,6 +725,11 @@ export interface BuilderLayoutTableCellField {
   /** Ordinary field metadata, stored on the nested answer instead of the layout container. */
   fhirConfig?: BuilderFhirConfig | null;
   moisOutput?: BuilderMoisOutputMapping | null;
+  /**
+   * The chart binding (see bindings.ts). `moisOutput` is its write mirror; a
+   * field inside a field-list cell has no source keys, so a read lives here only.
+   */
+  binding?: BuilderFieldBinding | null;
   translations?: Record<string, BuilderFieldTranslation> | null;
   required?: boolean;
   hidden?: boolean;
@@ -730,6 +746,8 @@ export interface BuilderLayoutTableCellField {
    */
   pendingConversion?: { source: string; reason: string } | null;
   prefill?: FieldPrefillValue;
+  /** The default answer (see defaults.ts); `prefill` is its legacy mirror. */
+  defaultAnswer?: BuilderDefaultAnswer | null;
   choiceStyle?: BuilderField["choiceStyle"];
   choiceAnswerLayout?: BuilderField["choiceAnswerLayout"];
   showOtherOption?: boolean;
@@ -760,7 +778,15 @@ export interface BuilderLayoutTableCell {
   /** Keep the source synchronized, or use it only to seed a new saved value. */
   sourceMode?: BuilderLayoutTableSourceMode;
   sourceFallback?: string | number | boolean | null;
+  /**
+   * A static text cell's text when it has no source, and a bound cell's
+   * fallback. On an unbound field cell it is a legacy spelling of the default
+   * answer (readDefaultAnswer reads it; writeDefaultAnswer moves it to
+   * `defaultAnswer` and `prefill`).
+   */
   defaultValue?: string | number | boolean | null;
+  /** A field cell's default answer (see defaults.ts); `prefill` is its legacy mirror. */
+  defaultAnswer?: BuilderDefaultAnswer | null;
   fieldId?: string;
   label?: string;
   readOnly?: boolean;
@@ -771,6 +797,8 @@ export interface BuilderLayoutTableCell {
   step?: number;
   required?: boolean;
   formula?: string;
+  /** The stored formula tree of a computed cell; `formula` is its printed mirror. */
+  formulaTree?: StoredFormula;
   blankWhenEmpty?: boolean;
   precision?: number;
   resultType?: "number" | "text";
@@ -780,6 +808,8 @@ export interface BuilderLayoutTableCell {
   /** Ordinary field metadata, stored on the nested answer instead of the layout container. */
   fhirConfig?: BuilderFhirConfig | null;
   moisOutput?: BuilderMoisOutputMapping | null;
+  /** The chart binding (see bindings.ts); a cell's source keys and `moisOutput` are its legacy mirrors. */
+  binding?: BuilderFieldBinding | null;
   translations?: Record<string, BuilderFieldTranslation> | null;
   hidden?: boolean;
   disabled?: boolean;
@@ -924,6 +954,11 @@ export interface BuilderValidationConfig {
   formatMessage?: string;
 }
 
+/**
+ * @deprecated Legacy "lock from field value" mini rule. It is read through
+ * `readLockCondition` (conditions.ts), which converts it into a
+ * `FieldConditionGroup`; new writes go to `BuilderField.lockCondition`.
+ */
 export interface BuilderLockWhenRule {
   field: string;
   operator?: "truthy" | "equals" | "notEquals";
@@ -2081,7 +2116,18 @@ export interface BuilderField {
   lockWhenSectionComplete?: boolean;
   /** Lock once the MOIS record is SIGNED. Defaults on; set false to opt out. */
   lockWhenSigned?: boolean;
+  /**
+   * @deprecated Legacy lock rule, kept for saved forms. Read the lock with
+   * `readLockCondition(field)`, which converts it; write `lockCondition`.
+   */
   lockWhen?: BuilderLockWhenRule | null;
+  /**
+   * Read-only while this condition holds ("Lock when"), in the neutral
+   * condition tree every other rule uses. Read it with `readLockCondition`
+   * (which falls back to the legacy `lockWhen`). Separate from
+   * `lockWhenSigned` and `lockWhenSectionComplete`.
+   */
+  lockCondition?: FieldConditionGroup | null;
   width?: FieldWidth;
   labelPosition?: "top" | "left" | "none";
   placeholder?: string;
@@ -2096,6 +2142,13 @@ export interface BuilderField {
   pendingConversion?: { source: string; reason: string } | null;
   prefill?: FieldPrefillValue;
   /**
+   * The default answer: a fixed value, today, now, a chart value or the
+   * latest observation (see defaults.ts). Read it with readDefaultAnswer, which
+   * also reads the legacy spellings; writeDefaultAnswer keeps `prefill` and
+   * `dateConfig.prefillToday` as mirrors for readers not yet migrated.
+   */
+  defaultAnswer?: BuilderDefaultAnswer | null;
+  /**
    * MOIS source-data binding for this field's value — the field-level
    * equivalent of a layout-table cell's sourcePaths/sourceMode/sourceFallback.
    * Exports into the generated auto-fill pipeline: the value is resolved
@@ -2103,6 +2156,14 @@ export interface BuilderField {
    * a filled answer, matching the legacy FormCreationHistory contract).
    */
   sourceConfig?: BuilderFieldSourceConfig | null;
+  /**
+   * The field's chart binding in neutral terms: a concept or observation it
+   * reads, and an observation or mutation it writes (see bindings.ts). Read
+   * it with readFieldBinding, which also reads sourceConfig, moisOutput,
+   * measurementConfig, moisConfig.writeBinding and the product stores that
+   * name a concept; writeFieldBinding keeps those as mirrors.
+   */
+  binding?: BuilderFieldBinding | null;
   /**
    * Field-level MOIS save key, chart mutation and module link. Together with
    * sourceConfig and moisOutput this is the single authoring model; layout
@@ -2206,6 +2267,8 @@ export interface BuilderField {
       fhirConfig?: BuilderFhirConfig | null;
       booleanLabels?: { on: string; off: string } | null;
       prefill?: FieldPrefillValue;
+      /** The column's default answer for a new row (see defaults.ts); `prefill` is its legacy mirror. */
+      defaultAnswer?: BuilderDefaultAnswer | null;
       /** Date columns only: pair the date picker with a time input (DateTimeSelect). */
       withTime?: boolean;
       dateConfig?: BuilderField["dateConfig"];
@@ -2273,7 +2336,14 @@ export interface BuilderField {
        * names a sibling column by its row path (`dataPath || id`).
        */
       visibility?: BuilderVisibilityRule | null;
+      /**
+       * Legacy MOIS read path picked for the column (a source-data path, which
+       * the row editor never read). readFieldBinding reads it as the binding's
+       * MOIS path; writeFieldBinding keeps it as the first path's mirror.
+       */
       moisTargetId?: string | null;
+      /** The column's chart binding (see bindings.ts); `moisTargetId` is its legacy read mirror. */
+      binding?: BuilderFieldBinding | null;
       /** Row-1 cell of `tableConfig.documentRowPath` (derived on load, never trusted from a package). */
       documentBinding?: BuilderDocumentBinding | null;
       stampConfig?: {
@@ -2358,6 +2428,8 @@ export interface BuilderField {
   computedConfig?: {
     /** Arithmetic expression using field IDs, e.g. score_a + score_b or [field-1] / 2 */
     expression: string;
+    /** The stored formula tree; `expression` is its printed mirror. */
+    formulaTree?: StoredFormula;
     /** Optional decimal precision applied to the computed result */
     precision?: number;
     /** Whether the computed value is stored/rendered as a number or formatted text */
@@ -3258,6 +3330,12 @@ export interface BuilderDocument<TLayoutDraft = unknown> {
   conditions?: BuilderNamedCondition[];
   /** Conditional page flow (skip/branch/review). Not on variants: disabled for multi-version forms. */
   pageFlow?: BuilderPageFlowConfig | null;
+  /**
+   * Primary and secondary export targets (see ./targets). Absent means the
+   * form has not chosen: `resolveExportTargets` falls back to the current
+   * export mode, else MOIS.
+   */
+  exportTargets?: ExportTargetsSetting | null;
 }
 
 /**
@@ -3327,6 +3405,22 @@ export {
   normalizeConditionBoolean,
   normalizeConditionChoiceValues,
   normalizeConditionComparable,
+  visibilityRuleToFieldLinkConditions,
+  CONDITION_NO_ANSWER_TEXT,
+  hasHiddenAnswer,
+  hiddenAnswerPolicyOf,
+  isLayoutRowVisible,
+  lockWhenToConditionGroup,
+  readLockCondition,
+  shouldClearHiddenAnswer,
+  shouldDropHiddenAnswer,
+  writeLockCondition,
+  type HiddenAnswerPolicySource,
+  type LayoutRowVisibleWhenSource,
+  type LockConditionSource,
+  type LockWhenRuleSource,
+  type VisibilityControllerKindLookup,
+  type VisibilityRuleSource,
   type CompiledFieldLinkConditionGroup,
   type CompiledFieldLinkProtectionRule,
   type CompiledFieldLinkVisibilityRule,
@@ -3370,6 +3464,17 @@ export {
 export * from "./grouping";
 export * from "./lifecycle";
 export * from "./layout";
+// Neutral form model: formulas, answer types, stored values, export targets.
+export * from "./formula";
+export * from "./field-types";
+export * from "./values";
+export * from "./defaults";
+export * from "./bindings";
+export * from "./targets";
+export * from "./validation";
+export * from "./structure";
+export * from "./translations";
+export * from "./workflow";
 export { backfillOptionScoresFromFormula } from "./score-backfill";
 export {
   type SessionFooterButtonConfig,

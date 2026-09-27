@@ -1,9 +1,9 @@
 {
   "name": "FormulaKit",
   "title": "Formula helper kit",
-  "description": "Non-rendering helper module: the formula engine (field references, iif/score/contains, date helpers such as durationBetween and weekdaysBetween) shared by ComputedField and EditableTable formula columns.",
+  "description": "Non-rendering helper module generated from @webforms/form-model's formula module (scripts/generate-formula-kit.mjs): evaluateTree runs a stored formula tree with the reference semantics (missing values, coded answers, local dates, decimal-exact rounding), parse reads formula text, and the older evaluate/hasAllReferencedValues names run on the same engine. Shared by ComputedField, table formula columns and subform and layout calculations.",
   "version": {
-    "major": 1,
+    "major": 2,
     "minor": 0,
     "patch": 0
   },

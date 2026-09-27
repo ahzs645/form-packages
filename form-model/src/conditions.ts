@@ -4,7 +4,9 @@ import type {
   FieldLinkConditionType,
   FieldLinkRule,
   FieldConditionGroup,
+  HiddenAnswerPolicy,
 } from "./index";
+import { readBoolean, readChoice } from "./values";
 
 export interface FieldConditionMetadata {
   booleanLabels?: { on: string; off: string } | null;
@@ -380,6 +382,212 @@ export function visibilityRuleToFieldLinkConditions(
         }
       : {}),
   };
+}
+
+// ---------- Lock conditions ----------
+
+/** The legacy "lock from field value" rule (BuilderLockWhenRule). */
+export interface LockWhenRuleSource {
+  field?: string | null;
+  operator?: string | null;
+  value?: string | number | boolean | null;
+}
+
+/** The two stores a field's lock condition can live in. */
+export interface LockConditionSource {
+  lockCondition?: FieldConditionGroup | null;
+  lockWhen?: LockWhenRuleSource | null;
+}
+
+/**
+ * Stored answers the legacy "is filled/true" operators treat as a no: a
+ * layout-table row's `truthy` rule and the legacy lock rule. Matched against
+ * a coded answer's code and display, so a MOIS-YESNO "N" coding is a no.
+ */
+export const CONDITION_NO_ANSWER_TEXT: readonly string[] = ["false", "0", "n", "N", "no", "No", "NO", "False", "FALSE"];
+
+function lockGroup(controllerFieldId: string, conditions: FieldLinkCondition[]): FieldConditionGroup {
+  return { match: "all", conditions: conditions.map((condition) => ({ controllerFieldId, condition })) };
+}
+
+/**
+ * Convert a legacy `lockWhen` rule into a condition group. `truthy` means
+ * "answered and not a no" (a Yes/No controller: is Yes), so a coded "No" no
+ * longer locks; `equals` / `notEquals` convert exactly like a show-when
+ * rule's equals, so a coded answer matches by code or wording and a Yes/No
+ * controller compares as yes/no. A boolean value (the old editor's default
+ * `equals true`) is a yes/no comparison whatever the controller is.
+ * `controllerKind` is the same lookup `visibilityRuleToFieldLinkConditions`
+ * takes. Null without a controller.
+ */
+export function lockWhenToConditionGroup(
+  rule: LockWhenRuleSource | null | undefined,
+  controllerKind: VisibilityControllerKindLookup = () => undefined,
+): FieldConditionGroup | null {
+  const controllerFieldId = typeof rule?.field === "string" ? rule.field.trim() : "";
+  if (!rule || !controllerFieldId) return null;
+  if (rule.operator === "truthy") {
+    return controllerKind(controllerFieldId) === "boolean"
+      ? lockGroup(controllerFieldId, [{ type: "boolean-yes" }])
+      : lockGroup(controllerFieldId, [
+          { type: "filled" },
+          { type: "choice-not-selected", optionValues: [...CONDITION_NO_ANSWER_TEXT] },
+        ]);
+  }
+  // The legacy runtime compared against `value ?? true`.
+  const value = rule.value ?? true;
+  const kind = controllerKind(controllerFieldId) ?? (typeof value === "boolean" ? "boolean" : undefined);
+  const condition = visibilityConditionToFieldLinkCondition(
+    { type: rule.operator === "notEquals" ? "not-equals" : "equals", controllerId: controllerFieldId, value },
+    kind,
+  );
+  return lockGroup(controllerFieldId, [condition]);
+}
+
+/**
+ * A field's lock condition ("read-only while this holds"): the neutral
+ * `lockCondition` when one is stored, otherwise the legacy `lockWhen`
+ * converted by `lockWhenToConditionGroup`. Null when the field has no lock
+ * condition (an empty group is no lock). `lockWhenSigned` and
+ * `lockWhenSectionComplete` are separate settings.
+ */
+export function readLockCondition(
+  field: LockConditionSource | null | undefined,
+  controllerKind?: VisibilityControllerKindLookup,
+): FieldConditionGroup | null {
+  const stored = field?.lockCondition;
+  if (stored && typeof stored === "object" && Array.isArray(stored.conditions)) {
+    return stored.conditions.length > 0 ? stored : null;
+  }
+  return lockWhenToConditionGroup(field?.lockWhen, controllerKind);
+}
+
+/**
+ * The patch that stores `group` as the field's lock condition (null or an
+ * empty group removes it). Writers write `lockCondition` only; a legacy
+ * `lockWhen` still on the field is cleared so it cannot come back.
+ */
+export function writeLockCondition(
+  field: LockConditionSource | null | undefined,
+  group: FieldConditionGroup | null | undefined,
+): { lockCondition: FieldConditionGroup | null; lockWhen?: null } {
+  const lockCondition = group && Array.isArray(group.conditions) && group.conditions.length > 0 ? group : null;
+  return { lockCondition, ...(field?.lockWhen ? { lockWhen: null } : {}) };
+}
+
+// ---------- Hidden answers ----------
+// The one rule for answers on hidden fields, shared by every runtime
+// (ConditionalField, FormFlow pages, EditableTable columns, the Cerner
+// preview): an answer on a field hidden by its show/hide logic is KEPT unless
+// the rule's hiddenAnswerPolicy is "clear". With "clear":
+// - while the form is filled, the answer is removed when the field BECOMES
+//   hidden (it was shown before this change: shouldClearHiddenAnswer);
+// - at save and submit, the answer of a field hidden now is left out of the
+//   saved answers (shouldDropHiddenAnswer).
+// A form that opens with the field already hidden never clears it: a
+// controller filled from the chart may only resolve after the form mounts,
+// and clearing on load could wipe a saved answer. The static Hidden flag
+// ("Hidden (still collects data)") is not "hidden by a rule" and never
+// clears. NHForms twin: FormLogicKit.hiddenAnswerPolicyOf /
+// shouldClearHiddenAnswer / shouldDropHiddenAnswer / dropHiddenAnswers.
+
+/** A rule that can hide its target: show/hide field-link rules, field visibility rules and flow pages (no action). */
+export interface HiddenAnswerPolicySource {
+  action?: string | null;
+  hiddenAnswerPolicy?: HiddenAnswerPolicy | string | null;
+}
+
+/** "clear" when any show/hide rule on the field asks to clear, otherwise "preserve". */
+export function hiddenAnswerPolicyOf(
+  rules: Iterable<HiddenAnswerPolicySource | null | undefined>,
+): HiddenAnswerPolicy {
+  for (const rule of rules) {
+    if (!rule || rule.hiddenAnswerPolicy !== "clear") continue;
+    if (rule.action === undefined || rule.action === null || rule.action === "show" || rule.action === "hide") return "clear";
+  }
+  return "preserve";
+}
+
+/** Whether there is a stored answer to remove (null, undefined and "" are already empty). */
+export function hasHiddenAnswer(value: unknown): boolean {
+  return value !== undefined && value !== null && value !== "";
+}
+
+/**
+ * Whether a field's stored answer is removed now, while the form is filled:
+ * policy "clear", the field has just become hidden by its rules (`hidden`
+ * true and `wasHidden` false: it was shown before this change), and something
+ * is stored. `wasHidden` undefined or null means the previous state is not
+ * known (the form or the field has just opened) and never clears; the answer
+ * is left out at save instead (`shouldDropHiddenAnswer`).
+ */
+export function shouldClearHiddenAnswer(
+  policy: HiddenAnswerPolicy | string | null | undefined,
+  hidden: boolean,
+  value: unknown,
+  wasHidden?: boolean | null,
+): boolean {
+  return policy === "clear" && hidden === true && wasHidden === false && hasHiddenAnswer(value);
+}
+
+/**
+ * Whether a field's answer is left out of the saved or submitted answers:
+ * policy "clear", hidden by its rules now, and something stored. Unlike
+ * `shouldClearHiddenAnswer` it does not need a change, so an answer on a field
+ * that has been hidden since the form opened is not saved either.
+ */
+export function shouldDropHiddenAnswer(
+  policy: HiddenAnswerPolicy | string | null | undefined,
+  hidden: boolean,
+  value: unknown,
+): boolean {
+  return policy === "clear" && hidden === true && hasHiddenAnswer(value);
+}
+
+// ---------- Layout-table rows ----------
+
+/** A layout-table row's `visibleWhen` (BuilderLayoutTableRow). */
+export interface LayoutRowVisibleWhenSource {
+  fieldId?: string | null;
+  operator?: string | null;
+  value?: unknown;
+}
+
+// The answer (a bare value, a coding or a selection) equals `expected` by
+// code or wording, or as yes/no when `expected` is a boolean.
+function layoutRowAnswerEquals(value: unknown, expected: unknown): boolean {
+  if (value === expected) return true;
+  if (typeof expected === "boolean") return readBoolean(value) === expected;
+  if (expected === null || expected === undefined) return false;
+  const wanted = String(expected);
+  return readChoice(value).some((entry) => entry.code === wanted || entry.display === wanted);
+}
+
+/**
+ * Whether a layout-table row is shown: the reference for LayoutTable's
+ * `rowIsVisible` and the submit-time gate of the row's required cells
+ * (FormLogicKit.isLayoutRowVisible reads answers the same way through
+ * ValueKit). `truthy` (default) is answered and not a no, `yes` is a yes,
+ * `equals` / `notEquals` match a code or wording (a boolean value as yes/no).
+ * No controller: shown.
+ */
+export function isLayoutRowVisible(
+  visibleWhen: LayoutRowVisibleWhenSource | null | undefined,
+  getValue: (fieldId: string) => unknown,
+): boolean {
+  const fieldId = visibleWhen?.fieldId;
+  if (!visibleWhen || !fieldId) return true;
+  const value = getValue(fieldId);
+  switch (visibleWhen.operator || "truthy") {
+    case "yes":
+      return readBoolean(value) === true;
+    case "equals":
+      return layoutRowAnswerEquals(value, visibleWhen.value);
+    case "notEquals":
+      return !layoutRowAnswerEquals(value, visibleWhen.value);
+    default:
+      return readBoolean(value) !== false && readChoice(value).length > 0;
+  }
 }
 
 function asConditionValue(value: unknown): string | number | boolean | null {

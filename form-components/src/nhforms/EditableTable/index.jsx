@@ -10,6 +10,15 @@
  * - Per-row column visibility (column.visibility, a BuilderVisibilityRule
  *   evaluated by FormLogicKit) and required-while-shown columns
  *   (column.required / requiredWhenVisible, requiredMessage) checked on row Save
+ * - Formula columns evaluated by FormulaKit from their stored tree
+ *
+ * ValueKit reads column options and stored answers (yes/no, choices);
+ * DefaultsKit reads and resolves each column's default answer for a new row;
+ * FieldKit draws each cell and dialog question with the MOIS control the
+ * exporter chooses; DialogKit draws the row dialog (RowDialog on SubForm).
+ * FormulaKit, FormLogicKit, ValueKit, DefaultsKit, FieldKit and DialogKit are
+ * referenced only inside function bodies (component files load in no
+ * guaranteed order).
  */
 
 const { useState, useEffect, useMemo, useCallback } = React
@@ -19,21 +28,31 @@ const {
   IconButton,
   DefaultButton,
   PrimaryButton,
-  Dialog,
-  DialogType,
   Text,
-  Checkbox,
-  ChoiceGroup,
 } = Fluent
 
 if (typeof EditableTable === "undefined") {
   window.EditableTable = null
 }
 
+// DefaultsKit (generated from form-model defaults.ts) reads a default answer in
+// every saved shape and resolves it; referenced only inside function bodies.
+// A runtime without the kit keeps the older prefill-only reading.
+const _defaultsKit = () => (typeof DefaultsKit !== "undefined" && DefaultsKit ? DefaultsKit : null)
+
+// A column's starting value in a new row: its default answer (a fixed value
+// such as 7.5 hours per shift, today or now), or blank. A cell stores text, so
+// a number becomes text; a checkbox starts unchecked unless its default is on.
 const _getDefaultCellValue = (column = {}) => {
-  if (column.type === "checkbox") return column.prefill === true ? true : false
-  // A starting value the filler can change (e.g. 7.5 hours per shift).
-  if (typeof column.prefill === "string" || typeof column.prefill === "number") return String(column.prefill)
+  const kit = _defaultsKit()
+  const value = kit
+    ? kit.resolveDefaultAnswer(kit.readDefaultAnswer(column, { shape: "tableColumn" }), {
+      now: new Date(),
+      fieldType: kit.temporalKindOf(column),
+    })
+    : column.prefill
+  if (column.type === "checkbox") return value === true
+  if (typeof value === "string" || typeof value === "number") return String(value)
   return ""
 }
 
@@ -42,34 +61,24 @@ const _getDefaultCellValue = (column = {}) => {
 const _isRequiredColumn = (column = {}) => column?.required === true || column?.requiredWhenVisible === true
 
 // Checkbox cells store a boolean. The subform row editor reports its
-// checkbox as a selected option ({ selectedKey: "true" }) and older rows
-// stored the label ("Checked"), so read those as booleans too.
-const _CHECKBOX_TRUE_TEXT = ["true", "yes", "y", "1", "on", "checked"]
-const _toCheckboxValue = (value, column = {}) => {
-  if (typeof value === "boolean") return value
-  if (value === null || value === undefined) return false
-  if (typeof value === "number") return Number.isFinite(value) && value !== 0
-  if (Array.isArray(value)) return value.some((entry) => _toCheckboxValue(entry, column))
-  if (typeof value === "object") {
-    return _toCheckboxValue(value.selectedKey ?? value.code ?? value.value ?? value.key ?? null, column)
-  }
-  const text = String(value).trim().toLowerCase()
-  const onLabel = String(column?.booleanLabels?.on || "").trim().toLowerCase()
-  return _CHECKBOX_TRUE_TEXT.includes(text) || (onLabel !== "" && text === onLabel)
+// checkbox as a selected option ({ selectedKey: "true" }), older rows stored
+// the label ("Checked") and MOIS yes/no answers are codings; ValueKit reads
+// every shape (the column's own on/off labels included). Unknown reads as
+// unchecked.
+const _toCheckboxValue = (value, column = {}) =>
+  ValueKit.readBoolean(value, column?.booleanLabels) === true
+
+// A yes/no read of a value mirrored to or from a document field: ValueKit's
+// reading when it knows the value ("Off", "No", false, a MOIS-YESNO coding),
+// else any other non-empty value (a PDF check box's own on-state name) is on.
+const _toDocumentCheckboxValue = (value) => {
+  const read = ValueKit.readBoolean(value)
+  return read === null ? Boolean(value) : read
 }
 
 const _formatLocalDate = (date) => {
   const pad2 = (value) => String(value).padStart(2, "0")
   return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`
-}
-
-// SMOIS DateSelect calls onChange with a Date; preview supplies a date string.
-// Store the local calendar day, avoiding an implicit UTC conversion.
-const _normalizeDateCellValue = (value) => {
-  if (value && typeof value.getFullYear === "function") {
-    return Number.isNaN(value.getTime()) ? "" : _formatLocalDate(value)
-  }
-  return typeof value === "string" ? value : ""
 }
 
 const _todayDateValue = () => _formatLocalDate(new Date())
@@ -95,15 +104,34 @@ const _makeEmptyRow = (columns = [], rowIndex = 0) => {
   return row
 }
 
+// The default of one row-editor (data-entry) field for a new row, or
+// undefined for none. The row-relative "next date after the last row" belongs
+// to this table; every other shape is read and resolved by DefaultsKit.
+const _resolveRowEditorDefault = (field, context = {}) => {
+  const defaultValue = field.defaultValue
+  if (defaultValue && typeof defaultValue === "object" && defaultValue.kind === "nextDateAfterLastRow") {
+    return _resolveFieldDefaultValue(defaultValue, context)
+  }
+  const kit = _defaultsKit()
+  if (!kit) return typeof defaultValue === "undefined" ? undefined : _resolveFieldDefaultValue(defaultValue, context)
+  return kit.resolveDefaultAnswer(kit.readDefaultAnswer(field, { shape: "subformEntry" }), {
+    now: new Date(),
+    fieldType: kit.temporalKindOf(field),
+  })
+}
+
+// A default never overwrites an answer: only empty cells of a new row are filled.
 const _applyDefaultValuesToRow = (row, fields = [], context = {}) => {
   if (!row || !Array.isArray(fields)) return row
   fields.forEach((field) => {
-    if (!field || typeof field !== "object" || typeof field.defaultValue === "undefined") return
+    if (!field || typeof field !== "object") return
     const fieldId = field.id
     if (!fieldId) return
     const currentValue = _getValueAtPath(row, fieldId)
     if (_isMeaningfulValue(currentValue)) return
-    _setValueAtPath(row, fieldId, _resolveFieldDefaultValue(field.defaultValue, context))
+    const value = _resolveRowEditorDefault(field, context)
+    if (typeof value === "undefined") return
+    _setValueAtPath(row, fieldId, value)
   })
   return row
 }
@@ -305,7 +333,10 @@ const _isRowEmpty = (row, columns = []) => {
     // Calculated cells and untouched starting values are not answers.
     if (col?.computedValue?.mode === "formula") return true
     const value = _getValueAtPath(row, col.dataPath || col.id)
-    if (col.type !== "checkbox" && col.prefill !== undefined && col.prefill !== null && _stringifyValue(value) === String(col.prefill)) return true
+    if (col.type !== "checkbox") {
+      const startingValue = _getDefaultCellValue(col)
+      if (startingValue !== "" && _stringifyValue(value) === startingValue) return true
+    }
     return !_isMeaningfulValue(value)
   })
 }
@@ -360,9 +391,8 @@ const _formatCellValue = (row, column) => {
     : _getValueAtPath(row, column.dataPath || column.id)
   // Choice cells store the option's code; show its wording.
   if (column.type === "dropdown" && !column.codeSystem && (typeof value === "string" || Array.isArray(value))) {
-    const options = _normalizeChoiceOptions(column.options)
-    const wording = (code) => options.find((option) => String(option.key) === String(code))?.text ?? code
-    return _stringifyValue(Array.isArray(value) ? value.map(wording) : wording(value))
+    const wording = ValueKit.readChoice(value, _choiceOptionList(column.options)).map((entry) => entry.display ?? entry.code)
+    return _stringifyValue(wording)
   }
   if (column.type === "checkbox") {
     if (value === undefined || value === null || value === "") return ""
@@ -397,10 +427,13 @@ const _applyComputedColumns = (row, columns = []) => {
   return _applyFormulaColumns(nextRow, columns)
 }
 
-// Formula columns: `computedValue: { mode: "formula", expression, calculationPolicy?,
-// precision?, incompleteBehavior? }`. The expression uses ComputedField's syntax
-// (FormulaKit) and reads the same row: `[columnId]` is that row's cell, e.g.
-// `weekdaysBetween([from], [to]) * [hoursPerShift]`.
+// Formula columns: `computedValue: { mode: "formula", expression, formulaTree?,
+// calculationPolicy?, precision?, incompleteBehavior? }`. The formula reads the
+// same row: `[columnId]` is that row's cell, e.g.
+// `weekdaysBetween([from], [to]) * [hoursPerShift]`. The exported tree (else
+// the text, parsed) is evaluated by FormulaKit.evaluateTree with the reference
+// semantics (docs/.../architecture/formula-semantics.md); a kit without tree
+// support evaluates the text as before.
 //
 // calculationPolicy (ComputedField's names):
 // - "always-calculated": read-only, recalculated on every change;
@@ -441,14 +474,111 @@ const _rowFormulaValues = (row, columns = []) => {
   return values
 }
 
+// The builder field type of a column's cells, so the formula kit reads date
+// cells as dates, tick boxes as yes/no and choices as codes.
+const _editableTableFormulaFieldType = (column = {}) => {
+  switch (column.type) {
+    case "number": return "number"
+    case "date": return column.withTime ? "datetime" : "date"
+    case "time": return "time"
+    case "dropdown": return column.choiceStyle === "multiselect" || column.choiceStyle === "checkbox" ? "multiselect" : "choice"
+    case "checkbox": return "booleanSingle"
+    case "text": return "text"
+    default: return undefined
+  }
+}
+
+// What a formula over this table's rows may read, per columns array: every
+// column by id and by save key, its field type, and choice options' scores
+// (for score([column])).
+const _editableTableFormulaScopes = new WeakMap()
+const _editableTableFormulaScope = (columns = []) => {
+  const cached = _editableTableFormulaScopes.get(columns)
+  if (cached) return cached
+  const fieldIds = []
+  const fieldTypes = {}
+  const scoreMaps = {}
+  columns.forEach((column) => {
+    const type = _editableTableFormulaFieldType(column)
+    const scores = {}
+    if (column.type === "dropdown" && Array.isArray(column.options)) {
+      column.options.forEach((option) => {
+        const normalized = ValueKit.normalizeOption(option)
+        if (!Number.isFinite(normalized.score)) return
+        if (normalized.code) scores[normalized.code] = normalized.score
+        if (normalized.display) scores[normalized.display] = normalized.score
+      })
+    }
+    ;[column.id, column.dataPath].forEach((id) => {
+      if (!id || fieldIds.includes(id)) return
+      fieldIds.push(id)
+      if (type) fieldTypes[id] = type
+      if (Object.keys(scores).length > 0) scoreMaps[id] = scores
+    })
+  })
+  const scope = { fieldIds, fieldTypes, scoreMaps }
+  if (columns && typeof columns === "object") _editableTableFormulaScopes.set(columns, scope)
+  return scope
+}
+
+// The formula as a stored tree (neutral form model): the column's exported
+// `formulaTree`, else its text parsed by FormulaKit (cached per text). Null
+// when the kit predates trees or the text does not parse; the cell then uses
+// FormulaKit.evaluate on the text, as before.
+const _editableTableFormulaTrees = new Map()
+const _editableTableFormulaTree = (config, scope) => {
+  if (typeof FormulaKit === "undefined" || !FormulaKit || typeof FormulaKit.evaluateTree !== "function") return null
+  const stored = config?.formulaTree
+  if (stored && stored.v === 1 && stored.expr && typeof stored.expr === "object") return stored
+  const text = typeof config?.expression === "string" ? config.expression : ""
+  if (!text.trim() || typeof FormulaKit.parse !== "function") return null
+  const key = text + "\u0000" + scope.fieldIds.join("\u0001") + "\u0000" + JSON.stringify(scope.fieldTypes)
+  if (_editableTableFormulaTrees.has(key)) return _editableTableFormulaTrees.get(key)
+  let tree = null
+  try {
+    const parsed = FormulaKit.parse(text, { fieldIds: scope.fieldIds, fieldType: (id) => scope.fieldTypes[id] })
+    if (parsed && parsed.v === 1 && parsed.expr) tree = parsed
+    else if (parsed && parsed.formula && !(parsed.errors && parsed.errors.length)) tree = parsed.formula
+  } catch (error) {
+    tree = null
+  }
+  _editableTableFormulaTrees.set(key, tree)
+  return tree
+}
+
 // The calculated value for one cell, as stored text ("" when the formula's
-// inputs are incomplete or it cannot be evaluated).
+// inputs are incomplete or it cannot be evaluated). The formula reads its own
+// row, never its own cell by column id (selfId, FormulaKit.evaluate's rule; a
+// RepeatForEachTable label column reads its own save key on purpose).
 const _computeFormulaCellValue = (row, column, columns = []) => {
   const config = column.computedValue
   const values = _rowFormulaValues(row, columns)
-  if (config.incompleteBehavior !== "compute-anyway" && !FormulaKit.hasAllReferencedValues(config.expression, values)) return ""
   const precision = Number(config.precision)
-  const result = FormulaKit.roundValue(FormulaKit.evaluate(config.expression, values, column.id), Number.isFinite(precision) ? precision : 2)
+  const scope = _editableTableFormulaScope(columns)
+  const tree = _editableTableFormulaTree(config, scope)
+  let raw
+  if (tree) {
+    const getValue = (fieldId) => values[fieldId]
+    const fieldKind = (fieldId) => scope.fieldTypes[fieldId]
+    // Default: blank until every referenced cell has a value; "compute-anyway"
+    // evaluates with a missing cell counting as 0.
+    const computeAnyway = config.incompleteBehavior === "compute-anyway"
+    if (!computeAnyway && typeof FormulaKit.hasAllReferencedValues === "function"
+      && !FormulaKit.hasAllReferencedValues(tree, getValue, { fieldKind })) return ""
+    raw = FormulaKit.evaluateTree(tree, getValue, {
+      incomplete: computeAnyway ? "compute-anyway" : "blank",
+      fieldKind,
+      scoreMaps: scope.scoreMaps,
+      selfId: column.id,
+    })
+  } else {
+    // A kit without trees (or text it cannot parse): the text engine, with the
+    // same incomplete mode (a generated kit's evaluate defaults to "blank").
+    const computeAnyway = config.incompleteBehavior === "compute-anyway"
+    if (!computeAnyway && !FormulaKit.hasAllReferencedValues(config.expression, values)) return ""
+    raw = FormulaKit.evaluate(config.expression, values, column.id, { incomplete: computeAnyway ? "compute-anyway" : "blank" })
+  }
+  const result = FormulaKit.roundValue(raw, Number.isFinite(precision) ? precision : 2)
   if (result === null || result === undefined || result === "") return ""
   if (typeof result === "boolean") return result ? "true" : "false"
   return String(result)
@@ -507,7 +637,7 @@ const _resetFormulaCell = (row, column, columns = []) => {
 
 const _normalizeMirroredCellValue = (value, column) => {
   if (column?.type === "checkbox") {
-    return Boolean(value)
+    return _toDocumentCheckboxValue(value)
   }
 
   if (value === undefined || value === null) {
@@ -524,7 +654,7 @@ const _normalizeMirroredCellValue = (value, column) => {
 
 const _normalizeSourceCellValue = (value, column) => {
   if (column?.type === "checkbox") {
-    return Boolean(value)
+    return _toDocumentCheckboxValue(value)
   }
 
   if (value === undefined || value === null) {
@@ -533,13 +663,9 @@ const _normalizeSourceCellValue = (value, column) => {
 
   if (column?.type === "dropdown") {
     if (typeof value === "string") return value
-    if (Array.isArray(value)) {
-      const first = value[0]
-      if (typeof first === "string") return first
-      return _stringifyValue(first)
-    }
-    if (typeof value === "object") {
-      return _stringifyValue(value.code ?? value.display ?? value.value ?? value.key ?? value.text ?? "")
+    // A coding, a subform selection or a list: the (first) chosen code.
+    if (Array.isArray(value) || typeof value === "object") {
+      return ValueKit.readChoice(value)[0]?.code ?? ""
     }
   }
 
@@ -635,53 +761,30 @@ const _normalizeUniqueToken = (row, columnId, columns = []) => {
   return _stringifyValue(raw).toLowerCase()
 }
 
-const _normalizeChoiceOptions = (options = []) => {
+// A column's options as the { code, display } list ValueKit reads, one per
+// option: ValueKit.normalizeOption, except that an option's explicit `key`
+// (or `id`) stays its code, because that is what the cell stores.
+const _choiceOptionList = (options = []) => {
   if (!Array.isArray(options)) return []
-
   return options
-    .map((option, index) => {
-      if (typeof option === "string") {
-        const trimmed = option.trim()
-        if (!trimmed) return null
-        return { key: trimmed || `option_${index + 1}`, text: trimmed }
-      }
-      if (option && typeof option === "object") {
-        const candidate = option.text || option.display || option.label || option.code || option.key || option.value
-        const trimmed = typeof candidate === "string" ? candidate.trim() : ""
-        if (!trimmed) return null
-        const rawKey = option.key || option.code || option.value || option.id || trimmed
-        return { key: String(rawKey), text: trimmed }
-      }
-      return null
+    .map((option) => {
+      const normalized = ValueKit.normalizeOption(option)
+      const explicitKey = option && typeof option === "object" ? option.key ?? option.id : undefined
+      const code = explicitKey !== undefined && explicitKey !== null && String(explicitKey).trim()
+        ? String(explicitKey)
+        : String(normalized.code).trim()
+      const display = String(normalized.display).trim()
+      return code || display ? { code: code || display, display: display || code } : null
     })
     .filter(Boolean)
 }
 
-const _choiceValueToCoding = (value, options = []) => {
-  if (value === undefined || value === null || value === "") return null
-  if (value && typeof value === "object" && !Array.isArray(value)) {
-    const code = value.code ?? value.value ?? value.key ?? value.selectedKey
-    if (code === undefined || code === null || code === "") return null
-    const display = value.display ?? value.text ?? value.label ?? value.response ?? code
-    return { code: String(code), display: String(display) }
-  }
-  const code = String(value)
-  const option = options.find((entry) => String(entry.key) === code)
-  return { code, display: option?.text || code }
-}
+// The { key, text } list the choice controls draw.
+const _normalizeChoiceOptions = (options = []) =>
+  _choiceOptionList(options).map((option) => ({ key: option.code, text: option.display }))
 
-const _choiceValueForControl = (value, selectionType, options = []) => {
-  if (selectionType === "multiple") {
-    const values = Array.isArray(value) ? value : value ? [value] : []
-    return values.map((entry) => _choiceValueToCoding(entry, options)).filter(Boolean)
-  }
-  return _choiceValueToCoding(value, options) || undefined
-}
-
-const _choiceValueForStorage = (coding, codings, selectionType) =>
-  selectionType === "multiple"
-    ? (codings || []).map((entry) => entry?.code).filter(Boolean)
-    : coding?.code || ""
+// A choice cell's control value and stored code(s) are converted by
+// FieldKit.storage.cell (ValueKit reads every stored shape).
 
 const _normalizeValidationMessage = (result) => {
   if (!result) return null
@@ -922,7 +1025,7 @@ const _buildSubformFieldFromColumn = (column) => {
       return withCommon({
         id: fieldId,
         label,
-        type: column.withTime ? "datetime" : "date",
+        type: column.withTime || column.dateConfig?.withTime ? "datetime" : "date",
       })
     case "time":
       return withCommon({
@@ -947,7 +1050,7 @@ const _buildSubformFieldFromColumn = (column) => {
         type: "booleanYesNo",
         renderStyle: "checkbox",
         useToggleSwitch: column.useToggleSwitch === true,
-        defaultValue: column.prefill === true ? true : undefined,
+        defaultValue: _getDefaultCellValue(column) === true ? true : undefined,
         options: [
           { key: "true", value: 1, text: column.booleanLabels?.on || "Checked" },
           { key: "false", value: 0, text: column.booleanLabels?.off || "Unchecked" },
@@ -1755,145 +1858,38 @@ EditableTable = ({
     }
 
     // Required while shown: the MOIS controls tint an empty required input.
-    const required = _isRequiredColumn(column) && _evaluateColumnVisibility(column, row, columns, formData)
+    // The row dialog also marks legacy requiredPaths entries.
+    const required = inline
+      ? _isRequiredColumn(column) && _evaluateColumnVisibility(column, row, columns, formData)
+      : isRequiredModalColumn(column)
+
+    if (column.type !== "stampButton") {
+      // Every other column is a question drawn by FieldKit with the control
+      // the exporter chooses for the same field (FieldKit.fromTableColumn: a
+      // dropdown is a SimpleCodeSelect, radio and checkbox styles a
+      // SimpleCodeChecklist, multiselect a FindCodeSelect, a tick box a
+      // CompactBooleanField check box). The cell keeps its stored shape
+      // (FieldKit.storage.cell): an option code or list of codes, a boolean,
+      // text, a number per numberConfig, a date "YYYY-MM-DD" and a date-time
+      // "YYYY-MM-DDTHH:mm". Cells draw no label of their own (the column
+      // heading is the label); the row dialog's questions do.
+      const descriptor = FieldKit.fromTableColumn(column)
+      return FieldKit.renderControl(descriptor, {
+        value,
+        onChange: (stored) => onValueChange(rowIndex, column.id, stored),
+        storage: FieldKit.storage.cell(descriptor, {
+          coerceNumber: (next) => _coerceNumberCellValue(next, column),
+        }),
+        label: column.title || column.id,
+        labelPosition: inline ? "none" : "top",
+        required,
+        readOnly: effectiveReadOnly,
+        inline,
+        placeholder: column.placeholder || undefined,
+      })
+    }
 
     switch (column.type) {
-      case "number":
-        const numberConfig = _normalizeNumberConfig(column)
-        const spinButtonProps = {}
-        if (numberConfig.spinButtonProps.min !== undefined) spinButtonProps.min = numberConfig.spinButtonProps.min
-        if (numberConfig.spinButtonProps.max !== undefined) spinButtonProps.max = numberConfig.spinButtonProps.max
-        if (numberConfig.spinButtonProps.step !== undefined) spinButtonProps.step = numberConfig.spinButtonProps.step
-        return (
-          <Numeric
-            inline={inline}
-            typeNumber={numberConfig.typeNumber}
-            buttonControls={numberConfig.buttonControls}
-            value={value?.toString() || ""}
-            onChange={(valueOrEvent, nextValue) => onValueChange(rowIndex, column.id, _coerceNumberCellValue(nextValue === undefined ? valueOrEvent : nextValue, column))}
-            spinButtonProps={spinButtonProps}
-            textFieldProps={numberConfig.suffix ? { suffix: numberConfig.suffix } : undefined}
-            storeAsNumber={numberConfig.storeAsNumber !== false}
-            placeholder={column.placeholder || undefined}
-            required={required}
-            readOnly={effectiveReadOnly}
-            disabled={effectiveReadOnly}
-          />
-        )
-
-      case "date":
-        // withTime columns persist the engine's getDateTimeString shape
-        // (YYYY-MM-DDTHH:mm) rather than a bare date.
-        if (column.withTime) {
-          return (
-            <DateTimeSelect
-              inline={inline}
-              value={value || ""}
-              onChange={(newValue) => onValueChange(rowIndex, column.id, newValue || "")}
-              placeholder={column.placeholder || "Select date and time"}
-              required={required}
-              readOnly={effectiveReadOnly}
-              disabled={effectiveReadOnly}
-            />
-          )
-        }
-        return (
-          <DateSelect
-            dateFormat={column.dateConfig?.dateFormat}
-            inline={inline}
-            value={value || ""}
-            onChange={(newValue) => onValueChange(rowIndex, column.id, _normalizeDateCellValue(newValue))}
-            placeholder={column.placeholder || "Select date"}
-            required={required}
-            readOnly={effectiveReadOnly}
-            disabled={effectiveReadOnly}
-          />
-        )
-
-      case "dropdown":
-        const dropdownOptions = _normalizeChoiceOptions(column.options)
-        if (column.choiceStyle === "checkbox") {
-          const selected = new Set((Array.isArray(value) ? value : value ? [value] : []).map(String))
-          return (
-            <Stack tokens={{ childrenGap: 4 }}>
-              {dropdownOptions.map((option) => (
-                <Checkbox
-                  key={option.key}
-                  label={option.text}
-                  checked={selected.has(option.key)}
-                  disabled={effectiveReadOnly}
-                  onChange={(_event, checked) => {
-                    const next = new Set(selected)
-                    if (checked) next.add(option.key)
-                    else next.delete(option.key)
-                    onValueChange(rowIndex, column.id, Array.from(next))
-                  }}
-                />
-              ))}
-            </Stack>
-          )
-        }
-        if (column.choiceStyle === "radio") {
-          return (
-            <ChoiceGroup
-              options={dropdownOptions}
-              selectedKey={value ? String(value) : undefined}
-              required={required}
-              disabled={effectiveReadOnly}
-              onChange={(_event, option) => onValueChange(rowIndex, column.id, option?.key || "")}
-            />
-          )
-        }
-        const selectionType =
-          column.choiceStyle === "multiselect" || column.choiceStyle === "checkbox"
-            ? "multiple"
-            : "single"
-        return (
-          <SimpleCodeSelect
-            inline={inline}
-            optionList={column.codeSystem ? undefined : dropdownOptions}
-            codeSystem={column.codeSystem || undefined}
-            selectionType={selectionType}
-            value={_choiceValueForControl(value, selectionType, dropdownOptions)}
-            onChange={(coding, codings) => onValueChange(
-              rowIndex,
-              column.id,
-              _choiceValueForStorage(coding, codings, selectionType)
-            )}
-            placeholder={column.placeholder || "Select..."}
-            showOther={column.showOtherOption === true}
-            required={required}
-            readOnly={effectiveReadOnly}
-            disabled={effectiveReadOnly}
-          />
-        )
-
-      case "time":
-        return (
-          <TimeSelect
-            inline={inline}
-            value={value || ""}
-            onChange={(event, newValue) => onValueChange(rowIndex, column.id, newValue || "")}
-            placeholder={column.placeholder || "HH:mm"}
-            required={required}
-            readOnly={effectiveReadOnly}
-            disabled={effectiveReadOnly}
-          />
-        )
-
-      case "checkbox":
-        return (
-          <OptionChoice
-            inline={inline}
-            displayStyle="checkmark"
-            value={value}
-            onChange={(event, checked) => onValueChange(rowIndex, column.id, !!checked)}
-            required={required}
-            readOnly={effectiveReadOnly}
-            disabled={effectiveReadOnly}
-          />
-        )
-
       case "stampButton":
         const stampConfig = column.stampConfig || {}
         const stampedValue = _stringifyValue(value)
@@ -1938,22 +1934,8 @@ EditableTable = ({
             ) : null}
           </Stack>
         )
-
-      case "text":
       default:
-        return (
-          <TextArea
-            multiline={column.textareaConfig?.multiline}
-            textFieldProps={column.textareaConfig ? { rows: column.textareaConfig.rows, resizable: column.textareaConfig.resizable } : undefined}
-            inline={inline}
-            value={value || ""}
-            onChange={(event, newValue) => onValueChange(rowIndex, column.id, newValue || "")}
-            placeholder={column.placeholder || ""}
-            required={required}
-            readOnly={effectiveReadOnly}
-            disabled={effectiveReadOnly}
-          />
-        )
+        return null
     }
   }
 
@@ -2412,34 +2394,40 @@ EditableTable = ({
         />
       )}
 
+      {/* The row dialog is DialogKit's RowDialog on the MOIS SubForm:
+          blocking (a click outside never closes it), titled by the table's
+          modal title, min(<modalWidth>px, calc(100vw - 48px)) wide, Save /
+          Save & Add Next / Cancel in its button bar. The close button,
+          Escape and Cancel discard the draft, as before. */}
       {isModalMode && isDialogOpen && draftRow && !usesSubformEditor && (
-        <Dialog
+        <DialogKit.RowDialog
           hidden={!isDialogOpen}
-          dialogContentProps={{
-            type: DialogType.largeHeader,
-            title: modalTitle || label || "Row Details",
-          }}
-          modalProps={{
-            isBlocking: true,
-          }}
-          minWidth={Math.min(Math.max(340, Number(modalWidth) || 640), typeof window !== "undefined" ? window.innerWidth - 48 : 640)}
-          maxWidth="96vw"
-          onDismiss={closeDialog}
+          title={modalTitle || label || "Row Details"}
+          width={Math.max(340, Number(modalWidth) || 640)}
+          onSave={saveDraftRow}
+          onCancel={closeDialog}
+          saveText="Save"
+          cancelText="Cancel"
+          extraActions={canSaveAndAddNext
+            ? [{ text: saveAndAddNextLabel, onClick: () => commitSave({ addNext: true }) }]
+            : []}
+          errorMessage={errorMessage || undefined}
         >
-          <Stack tokens={{ childrenGap: 12 }}>
-            {/* Two columns when the dialog has room; choices and long text take a full row. */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "12px 16px" }}>
-            {modalColumns.filter((column) => _evaluateColumnVisibility(column, draftRow, columns, formData)).flatMap((column, index, visibleColumns) => [
+          {/* Two columns when the dialog has room; choices and long text take a full row. */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "12px 16px" }}>
+          {modalColumns.filter((column) => _evaluateColumnVisibility(column, draftRow, columns, formData)).flatMap((column, index, visibleColumns) => {
+            // FieldKit questions draw their own label; a stamp, a formula or a
+            // locked cell does not, so the dialog labels those.
+            const cellReadOnly = isLocked || draftLocalStampLock.locked
+            const drawsOwnLabel = column.type !== "stampButton" && !_isFormulaColumn(column) && !cellReadOnly
+            return [
               ...(column.modalSection && (index === 0 || visibleColumns[index - 1]?.modalSection !== column.modalSection)
                 ? [<div key={`section-${column.id}`} style={{ gridColumn: "1 / -1", fontWeight: 600, borderBottom: `1px solid ${isDarkMode ? "#505050" : "#d1d5db"}`, paddingTop: "8px", paddingBottom: "4px" }}>{column.modalSection}</div>]
                 : []),
-              <div key={column.id} style={column.type === "dropdown" || column.type === "text" ? { gridColumn: "1 / -1" } : undefined}>
-                <Label required={isRequiredModalColumn(column)}>{column.title || column.id}</Label>
-                {column.helpText ? (
-                  <Text variant="small" styles={{ root: { display: "block", marginBottom: "4px", color: mutedTextColor } }}>
-                    {column.helpText}
-                  </Text>
-                ) : null}
+              <div key={column.id} data-table-dialog-question={column.id} style={column.type === "dropdown" || column.type === "text" ? { gridColumn: "1 / -1" } : undefined}>
+                {drawsOwnLabel ? null : (
+                  <Label required={isRequiredModalColumn(column)}>{column.title || column.id}</Label>
+                )}
                 {renderEditorInput(
                   draftRow,
                   editingRowIndex ?? currentRows.length,
@@ -2451,23 +2439,16 @@ EditableTable = ({
                   draftLockState,
                   (_rowIndex, formulaColumn) => resetDraftFormulaCell(formulaColumn)
                 )}
+                {column.helpText ? (
+                  <Text variant="small" styles={{ root: { display: "block", marginTop: "4px", color: mutedTextColor } }}>
+                    {column.helpText}
+                  </Text>
+                ) : null}
               </div>,
-            ])}
-            </div>
-            {errorMessage && (
-              <Text style={{ color: isDarkMode ? "#ffb3b3" : "#b42318" }}>
-                {errorMessage}
-              </Text>
-            )}
-            <Stack horizontal horizontalAlign="end" tokens={{ childrenGap: 8 }}>
-              <DefaultButton text="Cancel" onClick={closeDialog} />
-              {canSaveAndAddNext ? (
-                <DefaultButton text={saveAndAddNextLabel} onClick={() => commitSave({ addNext: true })} />
-              ) : null}
-              <PrimaryButton text="Save" onClick={saveDraftRow} />
-            </Stack>
-          </Stack>
-        </Dialog>
+            ]
+          })}
+          </div>
+        </DialogKit.RowDialog>
       )}
     </div>
   )
@@ -2505,6 +2486,9 @@ const createTableColumns = (columnDefs) => {
     step: def.step,
     booleanLabels: def.booleanLabels,
     prefill: def.prefill,
+    defaultAnswer: def.defaultAnswer,
+    dateConfig: def.dateConfig,
+    withTime: def.withTime,
     useToggleSwitch: def.useToggleSwitch,
     stampConfig: def.stampConfig,
   }))

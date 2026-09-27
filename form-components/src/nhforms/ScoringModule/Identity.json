@@ -23,6 +23,8 @@
     "patch": 12
   },
   "components": [
-    "FormSessionRuntime"
+    "FormSessionRuntime",
+    "FormulaKit",
+    "ValueKit"
   ]
 }

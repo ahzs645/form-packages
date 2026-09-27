@@ -23,8 +23,12 @@
     "patch": 12
   },
   "components": [
+    "DefaultsKit",
+    "DialogKit",
+    "FieldKit",
     "FormLogicKit",
     "FormulaKit",
-    "SubformScoring"
+    "SubformScoring",
+    "ValueKit"
   ]
 }

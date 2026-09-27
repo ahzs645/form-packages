@@ -7,6 +7,14 @@ import {
   compileFieldLinkVisibilityRule,
   evaluateFieldCondition,
   evaluateFieldLinkRuleCondition,
+  CONDITION_NO_ANSWER_TEXT,
+  hiddenAnswerPolicyOf,
+  isLayoutRowVisible,
+  lockWhenToConditionGroup,
+  readLockCondition,
+  shouldClearHiddenAnswer,
+  shouldDropHiddenAnswer,
+  writeLockCondition,
   type FieldLinkRule,
 } from "./index";
 import { parseBuilderFields } from "./schemas";
@@ -106,5 +114,87 @@ describe("builder persistence schemas", () => {
   it("defines metadata for every supported field type", () => {
     expect(BUILDER_FIELD_DEFINITIONS.map((definition) => definition.type).sort())
       .toEqual([...BUILDER_FIELD_TYPES].sort());
+  });
+});
+
+describe("lock conditions (readLockCondition / writeLockCondition)", () => {
+  it("converts legacy lockWhen rules into condition groups", () => {
+    expect(lockWhenToConditionGroup({ field: "consent", operator: "truthy" }, () => "boolean")).toEqual({
+      match: "all",
+      conditions: [{ controllerFieldId: "consent", condition: { type: "boolean-yes" } }],
+    });
+    expect(lockWhenToConditionGroup({ field: "reason", operator: "truthy" })).toEqual({
+      match: "all",
+      conditions: [
+        { controllerFieldId: "reason", condition: { type: "filled" } },
+        { controllerFieldId: "reason", condition: { type: "choice-not-selected", optionValues: [...CONDITION_NO_ANSWER_TEXT] } },
+      ],
+    });
+    // The old editor's default (`equals true`) is a yes/no comparison.
+    expect(lockWhenToConditionGroup({ field: "done" })).toEqual({
+      match: "all",
+      conditions: [{ controllerFieldId: "done", condition: { type: "boolean-yes" } }],
+    });
+    expect(lockWhenToConditionGroup({ field: "site", operator: "notEquals", value: "Home" }, () => "choice")).toEqual({
+      match: "all",
+      conditions: [{ controllerFieldId: "site", condition: { type: "choice-not-selected", optionValues: ["Home"] } }],
+    });
+    expect(lockWhenToConditionGroup({ field: "note", operator: "equals", value: "x" }, () => "text")).toEqual({
+      match: "all",
+      conditions: [{ controllerFieldId: "note", condition: { type: "equals", value: "x" } }],
+    });
+    expect(lockWhenToConditionGroup({ field: "" })).toBeNull();
+    expect(lockWhenToConditionGroup(null)).toBeNull();
+  });
+
+  it("writes lockCondition only and clears a legacy lockWhen", () => {
+    const group = { match: "all" as const, conditions: [{ controllerFieldId: "a", condition: { type: "filled" as const } }] };
+    expect(writeLockCondition({}, group)).toEqual({ lockCondition: group });
+    expect(writeLockCondition({ lockWhen: { field: "a" } }, group)).toEqual({ lockCondition: group, lockWhen: null });
+    expect(writeLockCondition({ lockCondition: group }, null)).toEqual({ lockCondition: null });
+    expect(writeLockCondition({}, { match: "all", conditions: [] })).toEqual({ lockCondition: null });
+    expect(readLockCondition({ ...writeLockCondition({ lockWhen: { field: "a" } }, null), lockWhen: null })).toBeNull();
+  });
+});
+
+describe("hidden answers", () => {
+  it("clears only for a show/hide rule (or a page) set to clear, when the field becomes hidden, with something stored", () => {
+    expect(hiddenAnswerPolicyOf([])).toBe("preserve");
+    expect(hiddenAnswerPolicyOf([{ action: "show" }, { action: "hide", hiddenAnswerPolicy: "clear" }])).toBe("clear");
+    expect(hiddenAnswerPolicyOf([{ action: "copy-value", hiddenAnswerPolicy: "clear" }])).toBe("preserve");
+    expect(hiddenAnswerPolicyOf([{ hiddenAnswerPolicy: "clear" }])).toBe("clear");
+    expect(shouldClearHiddenAnswer("clear", true, "x", false)).toBe(true);
+    expect(shouldClearHiddenAnswer("clear", true, false, false)).toBe(true);
+    expect(shouldClearHiddenAnswer("clear", true, "", false)).toBe(false);
+    expect(shouldClearHiddenAnswer("clear", false, "x", false)).toBe(false);
+    expect(shouldClearHiddenAnswer("preserve", true, "x", false)).toBe(false);
+  });
+
+  it("never clears on load: a field already hidden, or whose previous state is unknown, keeps its answer", () => {
+    expect(shouldClearHiddenAnswer("clear", true, "x", true)).toBe(false);
+    expect(shouldClearHiddenAnswer("clear", true, "x", undefined)).toBe(false);
+    expect(shouldClearHiddenAnswer("clear", true, "x", null)).toBe(false);
+    expect(shouldClearHiddenAnswer("clear", true, "x")).toBe(false);
+  });
+
+  it("drops a hidden answer from the saved answers whenever the field is hidden, also when it opened hidden", () => {
+    expect(shouldDropHiddenAnswer("clear", true, "x")).toBe(true);
+    expect(shouldDropHiddenAnswer("clear", true, false)).toBe(true);
+    expect(shouldDropHiddenAnswer("clear", true, "")).toBe(false);
+    expect(shouldDropHiddenAnswer("clear", false, "x")).toBe(false);
+    expect(shouldDropHiddenAnswer("preserve", true, "x")).toBe(false);
+  });
+});
+
+describe("layout-table row visibility", () => {
+  it("reads answers the way LayoutTable's rowIsVisible does", () => {
+    const shown = (visibleWhen: Parameters<typeof isLayoutRowVisible>[0], value: unknown) =>
+      isLayoutRowVisible(visibleWhen, () => value);
+    expect(shown(undefined, undefined)).toBe(true);
+    expect(shown({ fieldId: "c" }, { code: "N", display: "No" })).toBe(false);
+    expect(shown({ fieldId: "c" }, "Heel")).toBe(true);
+    expect(shown({ fieldId: "c", operator: "yes" }, "TRUE")).toBe(true);
+    expect(shown({ fieldId: "c", operator: "equals", value: "Home" }, { code: "H", display: "Home" })).toBe(true);
+    expect(shown({ fieldId: "c", operator: "notEquals", value: "Home" }, undefined)).toBe(true);
   });
 });

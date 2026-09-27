@@ -777,7 +777,20 @@ const ConditionalField = ({
       return parentContext.isGroupVisible(parentId)
     })
   }
-  const wasVisibleRef = useRef(isVisible)
+
+  // The one hidden-answer rule (FormLogicKit.shouldClearHiddenAnswer): with
+  // hiddenAnswerPolicy 'clear' the answer is removed when this field BECOMES
+  // hidden by its rules (it was shown on the previous check); otherwise it is
+  // kept. A field that mounts hidden (a draft reopening, a chart-filled
+  // controller that resolves after mount, a page shown again) keeps its
+  // answer; the save and submit payloads leave it out while it is hidden
+  // (FormLogicKit.dropHiddenAnswers). The inline fallback is the same rule
+  // for a runtime without the kit.
+  const shouldClearHiddenAnswer = typeof FormLogicKit !== 'undefined' && FormLogicKit && typeof FormLogicKit.shouldClearHiddenAnswer === 'function'
+    ? FormLogicKit.shouldClearHiddenAnswer
+    : (policy, hidden, value, wasHidden) => policy === 'clear' && hidden === true && wasHidden === false && value !== undefined && value !== null && value !== ''
+  // Visibility at the previous check: undefined until the first effect runs.
+  const wasVisibleRef = useRef(undefined)
 
   // Hiding a field must also withdraw its STAGED chart writes. Observation /
   // narrative components stage payloads in __componentPayloads keyed by field
@@ -790,16 +803,14 @@ const ConditionalField = ({
   // Previously-SAVED chart observations stay untouched — hiding withdraws the
   // pending write, it does not delete history (legacy parity).
   useEffect(() => {
-    const becameHidden = wasVisibleRef.current && !isVisible
+    const wasVisible = wasVisibleRef.current
     wasVisibleRef.current = isVisible
     if (isVisible || !fieldId) return
+    const wasHidden = wasVisible === undefined ? undefined : !wasVisible
 
     const activeFieldData = fd?.field?.data
     const activePayloads = activeFieldData?.__componentPayloads
-    const shouldClearAnswer =
-      becameHidden &&
-      hiddenAnswerPolicy === 'clear' &&
-      activeFieldData?.[fieldId] !== undefined
+    const shouldClearAnswer = shouldClearHiddenAnswer(hiddenAnswerPolicy, true, activeFieldData?.[fieldId], wasHidden)
     const hasStagedDco =
       activePayloads?.dcoUpdatesByComponent?.[fieldId] !== undefined
     const hasStagedWebformUpdate =
@@ -812,7 +823,7 @@ const ConditionalField = ({
     if (!shouldClearAnswer && !hasStagedDco && !hasStagedWebformUpdate) return
 
     setFormData(produce((draft) => {
-      if (becameHidden && hiddenAnswerPolicy === 'clear' && draft?.field?.data) {
+      if (draft?.field?.data && shouldClearHiddenAnswer(hiddenAnswerPolicy, true, draft.field.data[fieldId], wasHidden)) {
         delete draft.field.data[fieldId]
       }
       const payloads = draft?.field?.data?.__componentPayloads

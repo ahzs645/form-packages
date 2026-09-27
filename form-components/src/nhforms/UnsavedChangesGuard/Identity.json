@@ -5,6 +5,7 @@
   "category": "Utility",
   "version": "1.0.0",
   "components": [
+    "DialogKit",
     "DocumentSignButton"
   ]
 }
