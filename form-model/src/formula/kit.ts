@@ -17,12 +17,14 @@
  *   now run on the same engine.
  */
 
-import { formulaReferences, isStoredFormula, type FormulaDiagnostic, type FormulaNode, type StoredFormula } from "./ast";
+import { formulaReferences, isStoredFormula, walkFormula, type FormulaDiagnostic, type FormulaNode, type StoredFormula } from "./ast";
+import { chartRecordReader, readLatestTerm, type FormulaChartRecord, type FormulaObservationReader, type LatestTerm } from "./chart-results";
 import {
   evaluateFormula,
   formulaAnswerNumber,
   formulaAnswerOutput,
   isBlankFormulaAnswer,
+  missingChartResults,
   roundFormulaNumber,
   type FormulaEnv,
   type FormulaIncompleteMode,
@@ -38,6 +40,8 @@ export interface FormulaKitOptions {
   scoreMaps?: FormulaEnv["scoreMaps"];
   /** The clock for today() and now(). */
   now?: Date;
+  /** The time the answer is documented for, which `latest()` windows count from; `now` when omitted. */
+  referenceTime?: Date;
   /** `blank` (default): a missing input blanks the result; `compute-anyway`: it counts as 0. */
   incomplete?: FormulaIncompleteMode;
   /** The builder field type of a referenced field (dates, yes/no, single checkboxes). */
@@ -50,6 +54,8 @@ export interface FormulaKitOptions {
   getParam?(name: string): unknown;
   /** The field that owns the formula: a formula that reads it is blank. */
   selfId?: string | null;
+  /** The patient's chart for `latest()`: a reader, or plain records (MOIS `patient.observations`). */
+  observations?: FormulaObservationReader | ReadonlyArray<FormulaChartRecord> | null;
 }
 
 export interface FormulaKitParseResult {
@@ -122,17 +128,49 @@ export function evaluateTree(formula: unknown, getValue: FormulaKitValues, optio
     getParam: options.getParam,
     scoreMaps: options.scoreMaps,
     now: options.now,
+    referenceTime: options.referenceTime,
     fieldKind: kindGetter(options),
     functions: options.functions,
     incomplete: options.incomplete,
+    observations: observationReader(options.observations),
   });
 }
 
-/** Whether every field the formula reads has an answer (the "incomplete" test). */
+/** A chart reader from a reader or plain records; undefined when there is no chart. */
+function observationReader(observations: FormulaKitOptions["observations"]): FormulaObservationReader | undefined {
+  if (typeof observations === "function") return observations;
+  if (Array.isArray(observations)) return chartRecordReader(observations);
+  return undefined;
+}
+
+/**
+ * Whether every input the formula needs has a value (the "incomplete" test):
+ * every field it reads, and every required `latest()` result.
+ */
 export function hasAllReferencedValues(formula: unknown, values: FormulaKitValues, options: FormulaKitOptions = {}): boolean {
   const get = valueGetter(values);
   const kind = kindGetter(options);
-  return references(formula).every((fieldId) => !isBlankFormulaAnswer(get(fieldId), kind?.(fieldId)));
+  if (!references(formula).every((fieldId) => !isBlankFormulaAnswer(get(fieldId), kind?.(fieldId)))) return false;
+  const resolved = toFormula(formula);
+  if (!resolved || latestTerms(resolved).length === 0) return true;
+  return missingChartResults(resolved, { observations: observationReader(options.observations), now: options.now, referenceTime: options.referenceTime }).length === 0;
+}
+
+/** The `latest()` terms a formula (tree or text) reads: a form needs the patient's chart for them. */
+export function latestTerms(formula: unknown): LatestTerm[] {
+  const resolved = toFormula(formula);
+  const terms: LatestTerm[] = [];
+  if (!resolved) return terms;
+  walkFormula(resolved, (node) => {
+    const term = node.kind === "call" && node.fn === "latest" ? readLatestTerm(node) : null;
+    if (term) terms.push(term);
+  });
+  return terms;
+}
+
+/** A chart reader over plain records: MOIS observations (`observationCode`, `loincCode`, `collectedDateTime`) or FHIR-style chart records. */
+export function chartReader(records: ReadonlyArray<FormulaChartRecord> | null | undefined): FormulaObservationReader {
+  return chartRecordReader(records);
 }
 
 // ── The names NHForms components used before the kit was generated ─────────

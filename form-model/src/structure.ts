@@ -15,6 +15,7 @@ import {
   SUBFORM_ENTRY_TYPE_TO_FIELD_TYPE,
   TABLE_COLUMN_TYPE_TO_FIELD_TYPE,
 } from "./field-types";
+import { isQuestionMatrixTable } from "./matrix";
 
 /**
  * Structure and repetition, read as neutral intent (neutral form model,
@@ -45,6 +46,7 @@ export const STRUCTURE_GROUP_PRESENTATIONS = [
   "row-dialog",
   "cards",
   "fixed-grid",
+  "matrix",
   "modal-subform",
   "section",
 ] as const;
@@ -151,8 +153,15 @@ export interface StructureGroup {
   /** The container field (table, layout table, component); null for a subform module or a repeating section. */
   field: BuilderField | null;
   presentation: StructureGroupPresentation;
+  /** Absent for a group that does not repeat (a question matrix, a layout table, a subform). */
   repeat?: StructureRepeat;
   repeatFor?: StructureRepeatFor;
+  /**
+   * The headings of a fixed grid's rows, one per row, when its rows are named
+   * rather than numbered (a Cerner UltraGrid's second DTA axis,
+   * `cernerConfig.grid.rows`).
+   */
+  rowLabels?: string[];
   members: StructureMember[];
   source: StructureGroupSource;
 }
@@ -321,14 +330,21 @@ function tableGroup(field: BuilderField, fieldById: ReadonlyMap<string, BuilderF
     ...(repeatFor ? {} : { initial }),
   };
 
+  // A question matrix is asked once: its columns are the rows people answer.
+  const matrix = !repeatFor && isQuestionMatrixTable(field);
   const presentation: StructureGroupPresentation =
-    seed?.presentation === "cards"
-      ? "cards"
-      : config.mode === "modal"
-        ? "row-dialog"
-        : !repeatFor && !addable && !removable
-          ? "fixed-grid"
-          : "inline-table";
+    matrix
+      ? "matrix"
+      : seed?.presentation === "cards"
+        ? "cards"
+        : config.mode === "modal"
+          ? "row-dialog"
+          : !repeatFor && !addable && !removable
+            ? "fixed-grid"
+            : "inline-table";
+  // A fixed grid whose rows are named: a Cerner UltraGrid's second DTA axis.
+  const axis = field.cernerConfig?.grid?.family === "ultra" ? field.cernerConfig.grid.rows ?? [] : [];
+  const rowLabels = presentation === "fixed-grid" && axis.length > 0 && axis.length === repeat.max ? axis.map((row) => text(row.label) || row.id) : undefined;
 
   // Hidden yes/no columns an option of a choice column fills (choiceBooleanTargets).
   const pathOf = (column: TableColumn) => text(column.dataPath) || column.id;
@@ -362,8 +378,9 @@ function tableGroup(field: BuilderField, fieldById: ReadonlyMap<string, BuilderF
     label: text(field.label) || field.id,
     field,
     presentation,
-    repeat,
+    ...(matrix ? {} : { repeat }),
     ...(repeatFor ? { repeatFor } : {}),
+    ...(rowLabels ? { rowLabels } : {}),
     members,
     source: { kind: "table", fieldId: field.id },
   };

@@ -284,12 +284,138 @@ var DocumentFillRuntime = (() => {
   __export(runtime_entry_exports, {
     appendOverflowAddendum: () => appendOverflowAddendum,
     applyDocumentFillPreparers: () => applyDocumentFillPreparers,
+    applyDocumentOutput: () => applyDocumentOutput,
     documentValueText: () => documentValueText,
     expandNumberedRowFields: () => expandNumberedRowFields,
     expandTableSourceMaps: () => expandTableSourceMaps,
     formatDateWithPattern: () => formatDateWithPattern,
     planTableOverflow: () => planTableOverflow
   });
+
+  // packages/form-model/src/values.ts
+  function isRecord(value) {
+    return value !== null && typeof value === "object" && !Array.isArray(value) && !(value instanceof Date);
+  }
+  function scalarText(value) {
+    if (typeof value === "string") return value.trim() ? value : void 0;
+    if (typeof value === "number") return Number.isFinite(value) ? String(value) : void 0;
+    if (typeof value === "boolean") return String(value);
+    return void 0;
+  }
+  function firstText(record, keys) {
+    for (const key of keys) {
+      const text = scalarText(record[key]);
+      if (text !== void 0) return text;
+    }
+    return void 0;
+  }
+  function finiteNumber(value) {
+    if (typeof value === "number") return Number.isFinite(value) ? value : void 0;
+    if (typeof value === "string" && value.trim()) {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : void 0;
+    }
+    return void 0;
+  }
+  var FHIR_SCORE_EXTENSION = /\/(ordinalValue|itemWeight)$/;
+  function fhirExtensionScore(extensions) {
+    if (!Array.isArray(extensions)) return void 0;
+    for (const extension of extensions) {
+      if (!isRecord(extension) || typeof extension.url !== "string" || !FHIR_SCORE_EXTENSION.test(extension.url)) continue;
+      const score = finiteNumber(extension.valueDecimal ?? extension.valueInteger);
+      if (score !== void 0) return score;
+    }
+    return void 0;
+  }
+  var FHIR_ANSWER_KEYS = ["valueCoding", "valueString", "valueInteger", "valueDecimal", "valueDate", "valueTime"];
+  function fhirAnswerValue(record) {
+    for (const key of FHIR_ANSWER_KEYS) {
+      if (record[key] !== void 0 && record[key] !== null) return record[key];
+    }
+    return void 0;
+  }
+  var OPTION_CODE_KEYS = ["value", "code", "key", "id", "state"];
+  var ORDINAL_OPTION_CODE_KEYS = ["code", "key", "id", "state", "value"];
+  var OPTION_DISPLAY_KEYS = ["label", "display", "text"];
+  function withOptional(option, system, score) {
+    if (system !== void 0) option.system = system;
+    if (score !== void 0) option.score = score;
+    return option;
+  }
+  function normalizeOption(raw) {
+    if (raw === null || raw === void 0) return { code: "", display: "" };
+    if (!isRecord(raw)) {
+      const text = scalarText(raw) ?? "";
+      return { code: text, display: text };
+    }
+    const fhirValue = fhirAnswerValue(raw);
+    if (fhirValue !== void 0 && raw.value === void 0 && raw.code === void 0 && raw.label === void 0) {
+      const inner = normalizeOption(fhirValue);
+      return withOptional({ code: inner.code, display: inner.display }, inner.system, inner.score ?? fhirExtensionScore(raw.extension));
+    }
+    const ordinal = typeof raw.value === "number" && Number.isFinite(raw.value) ? raw.value : void 0;
+    const code = firstText(raw, ordinal === void 0 ? OPTION_CODE_KEYS : ORDINAL_OPTION_CODE_KEYS);
+    const display = firstText(raw, OPTION_DISPLAY_KEYS);
+    return withOptional(
+      { code: code ?? display ?? "", display: display ?? code ?? "" },
+      scalarText(raw.system),
+      finiteNumber(raw.score) ?? ordinal
+    );
+  }
+  var CHOICE_CODE_KEYS = ["code", "value", "key", "id"];
+  var CHOICE_DISPLAY_KEYS = ["display", "response", "label", "text"];
+  function choiceValue(code, display, system) {
+    const entry = { code };
+    if (display !== void 0) entry.display = display;
+    if (system !== void 0) entry.system = system;
+    return entry;
+  }
+  function readChoiceEntries(value) {
+    if (value === null || value === void 0) return [];
+    if (Array.isArray(value)) return value.flatMap(readChoiceEntries);
+    if (!isRecord(value)) {
+      const code2 = scalarText(value);
+      return code2 === void 0 ? [] : [{ code: code2 }];
+    }
+    if (Array.isArray(value.coding)) return readChoiceEntries(value.coding[0]);
+    if (isRecord(value.valueCoding)) return readChoiceEntries(value.valueCoding);
+    if (Array.isArray(value.selectedItems)) return value.selectedItems.flatMap(readChoiceEntries);
+    if ("selectedItem" in value) return readChoiceEntries(value.selectedItem);
+    if ("selectedKey" in value) {
+      const code2 = scalarText(value.selectedKey);
+      if (code2 === void 0) return [];
+      return [choiceValue(code2, firstText(value, ["response", "display", "text", "label"]), scalarText(value.system))];
+    }
+    if (Array.isArray(value.selectedIds) || Array.isArray(value.selectedLabels)) {
+      const ids = Array.isArray(value.selectedIds) ? value.selectedIds : [];
+      const labels = Array.isArray(value.selectedLabels) ? value.selectedLabels : [];
+      const entries = [];
+      for (let index = 0; index < Math.max(ids.length, labels.length); index += 1) {
+        const label = scalarText(labels[index]);
+        const code2 = scalarText(ids[index]) ?? label;
+        if (code2 !== void 0) entries.push(choiceValue(code2, label, void 0));
+      }
+      return entries;
+    }
+    if (value.value !== null && typeof value.value === "object") return readChoiceEntries(value.value);
+    const display = firstText(value, CHOICE_DISPLAY_KEYS);
+    const code = firstText(value, CHOICE_CODE_KEYS) ?? display;
+    return code === void 0 ? [] : [choiceValue(code, display, scalarText(value.system))];
+  }
+  function sameText(left, right) {
+    return left !== void 0 && right !== void 0 && left.trim().toLowerCase() === right.trim().toLowerCase();
+  }
+  function resolveAgainstOptions(entry, options) {
+    const match = options.find((option) => option.code === entry.code) ?? options.find((option) => sameText(option.code, entry.code)) ?? options.find((option) => sameText(option.display, entry.code) || sameText(option.display, entry.display));
+    if (!match) return entry;
+    return choiceValue(match.code, match.display, entry.system ?? match.system);
+  }
+  function readChoice(value, options) {
+    const entries = readChoiceEntries(value);
+    if (!Array.isArray(options) || options.length === 0 || entries.length === 0) return entries;
+    const normalized = options.map(normalizeOption).filter((option) => option.code !== "" || option.display !== "");
+    return entries.map((entry) => resolveAgainstOptions(entry, normalized));
+  }
 
   // packages/form-model/src/conditions.ts
   function normalizeConditionComparable(candidate) {
@@ -1015,6 +1141,96 @@ var DocumentFillRuntime = (() => {
       page.drawText(text, { x: (pageWidth - width) / 2, y: margin - footerSize, size: footerSize, font, color: muted });
     });
     return { pagesAdded: added.length, rowsPrinted, firstPageNumber };
+  }
+
+  // packages/form-model/src/document-layout.ts
+  function readDocumentLayout(field) {
+    return field?.documentLayout;
+  }
+  function selectedDocumentPages(pageCount, fields, values) {
+    let pages = Array.from({ length: pageCount }, (_, index) => index + 1);
+    for (const field of fields) {
+      const selection = readDocumentLayout(field)?.pageSelection;
+      if (!selection) continue;
+      const answers = readChoice(values[field.id] ?? selection.defaultValue);
+      const answer = answers.length === 1 ? answers[0].code : void 0;
+      const selected = typeof answer === "string" && Object.prototype.hasOwnProperty.call(selection.pagesByValue, answer) ? selection.pagesByValue[answer] : void 0;
+      if (!selected) throw new Error(`Choose a valid page selection for ${field.id}.`);
+      pages = pages.filter((page) => selected.includes(page));
+    }
+    if (!pages.length) throw new Error("Select at least one document page.");
+    return pages;
+  }
+
+  // lib/document-fill/document-layout.ts
+  async function applyDocumentOutput(doc, values, fields, PDFLib, options = {}) {
+    if (!fields?.length) return { pagesAdded: 0, pagesRemoved: 0, filledFieldCount: 0 };
+    const originals = doc.getPages();
+    const selected = selectedDocumentPages(originals.length, fields, values);
+    const font = await doc.embedFont(PDFLib.StandardFonts.Helvetica);
+    const black = PDFLib.rgb(0, 0, 0);
+    const supported = new Set(font.getCharacterSet());
+    const continuations = [];
+    let filledFieldCount = 0;
+    for (const field of fields) {
+      const layout = field.documentLayout?.text;
+      if (!layout || !selected.includes(field.page ?? 0)) continue;
+      if (options.includeOnlyFieldIds && !options.includeOnlyFieldIds.includes(field.id)) continue;
+      const text = documentValueText(values[field.id]).replace(/\r\n?/g, "\n").replace(/\t/g, "    ");
+      if (!text) continue;
+      const page = originals[field.page - 1];
+      const box = field.bbox;
+      const { fontSize: size, lineHeight: leading, padding: pad2 } = layout;
+      if (!box || ![box.x, box.y, box.width, box.height, size, leading, pad2].every(Number.isFinite) || size <= 0 || leading < size || pad2 < 0 || box.width <= 2 * pad2 || box.height < size + 2 * pad2 || box.x < 0 || box.y < 0 || box.x + box.width > page.getWidth() + 0.1 || box.y + box.height > page.getHeight() + 0.1) {
+        throw new Error(`The printable writing region for ${field.label || field.id} needs review.`);
+      }
+      try {
+        if (Array.from(text).some((char) => char !== "\n" && !supported.has(char.codePointAt(0)))) throw new Error("Unsupported glyph");
+        font.encodeText(text.replace(/\n/g, ""));
+      } catch {
+        throw new Error(`${field.label || field.id} contains characters unavailable in the document font. Review the text before printing.`);
+      }
+      const lines = wrapTextToWidth(text, font, size, box.width - 2 * pad2);
+      const capacity = Math.floor((box.height - 2 * pad2 - size) / leading) + 1;
+      const overflow = lines.slice(capacity);
+      if (overflow.length && layout.overflow === "block") throw new Error(`${field.label || field.id} exceeds its printable writing region.`);
+      const visibleLines = lines.slice(0, capacity);
+      if (layout.backgroundColor) {
+        if (!/^#[0-9a-f]{6}$/i.test(layout.backgroundColor)) throw new Error(`Invalid document background color for ${field.id}.`);
+        const channels = [1, 3, 5].map((offset) => parseInt(layout.backgroundColor.slice(offset, offset + 2), 16) / 255);
+        const usedHeight = Math.min(box.height, visibleLines.length * leading + 2 * pad2);
+        page.drawRectangle({ x: box.x, y: box.y + box.height - usedHeight, width: box.width, height: usedHeight, color: PDFLib.rgb(channels[0], channels[1], channels[2]) });
+      }
+      visibleLines.forEach((line, index) => {
+        if (line) page.drawText(line, { x: box.x + pad2, y: box.y + box.height - pad2 - size - index * leading, size, font, color: black });
+      });
+      filledFieldCount++;
+      if (overflow.length) continuations.push({ field, lines: overflow, size, leading });
+    }
+    for (let index = originals.length - 1; index >= 0; index--) if (!selected.includes(index + 1)) doc.removePage(index);
+    let pagesAdded = 0;
+    for (const { field, lines, size, leading } of continuations) {
+      const original = originals[field.page - 1];
+      const width = original.getWidth(), height = original.getHeight(), margin = 36;
+      const header = `${field.label || field.id} (continued)`;
+      const continuationLines = lines.flatMap((line) => wrapTextToWidth(line, font, size, width - 2 * margin));
+      const headerLines = wrapTextToWidth(header, font, size, width - 2 * margin);
+      const top = height - margin - size - (headerLines.length + 2) * leading;
+      const capacity = Math.floor((top - margin) / leading) + 1;
+      if (capacity < 1) throw new Error(`The continuation page for ${field.id} is too small.`);
+      for (let offset = 0; offset < continuationLines.length; offset += capacity) {
+        const page = doc.addPage([width, height]);
+        pagesAdded++;
+        headerLines.forEach((line, index) => page.drawText(line, { x: margin, y: height - margin - size - index * leading, size, font, color: black }));
+        page.drawText(`Continued from page ${selected.indexOf(field.page) + 1}`, { x: margin, y: height - margin - size - headerLines.length * leading, size: 10, font, color: black });
+        continuationLines.slice(offset, offset + capacity).forEach((line, index) => {
+          if (line) page.drawText(line, { x: margin, y: top - index * leading, size, font, color: black });
+        });
+        page.drawText(`Continuation ${Math.floor(offset / capacity) + 1} of ${Math.ceil(continuationLines.length / capacity)}`, { x: margin, y: 18, size: 9, font, color: black });
+      }
+      options.warnings?.push(`${field.label || field.id} continues on additional pages; the complete answer is included.`);
+    }
+    return { pagesAdded, pagesRemoved: originals.length - selected.length, filledFieldCount };
   }
   return __toCommonJS(runtime_entry_exports);
 })();
@@ -2182,6 +2398,7 @@ const PdfRegenerator = ({
   choiceComponentMaps,
   textFlowMaps,
   geometryOverlayFields,
+  documentOutputFields,
   includeOnlyFieldIds,
   flatten = false,
   recalculate = false,
@@ -2350,6 +2567,8 @@ const PdfRegenerator = ({
           form.markFieldAsClean(field.ref)
         }
       })
+      const documentOutput = await DocumentFillRuntime.applyDocumentOutput(doc, formData, documentOutputFields, PDFLib, { includeOnlyFieldIds, warnings })
+      filledFieldCount += documentOutput.filledFieldCount
       // Table rows the PDF has no printed row for: addendum pages (or a warning for mode "drop").
       const overflowPlans = DocumentFillRuntime.planTableOverflow(formData, fillTableMaps, pdfFieldNames)
         .filter((plan) => !includeSet || includeSet.has(plan.tableId))
@@ -2392,7 +2611,7 @@ const PdfRegenerator = ({
     } finally {
       setIsBusy(false)
     }
-  }, [resolvedPdfSource, fd, fieldMap, tableSourceMaps, pdfPreparers, booleanFieldStates, fieldMaxLengths, dateComponentMaps, documentDateFormats, choiceComponentMaps, textFlowMaps, geometryOverlayFields, includeOnlyFieldIds, flatten, recalculate, organizationSigning, fileName, onComplete, pdfLibStrategy, pdfLibSource])
+  }, [resolvedPdfSource, fd, fieldMap, tableSourceMaps, pdfPreparers, booleanFieldStates, fieldMaxLengths, dateComponentMaps, documentDateFormats, choiceComponentMaps, textFlowMaps, geometryOverlayFields, documentOutputFields, includeOnlyFieldIds, flatten, recalculate, organizationSigning, fileName, onComplete, pdfLibStrategy, pdfLibSource])
 
   const diagnosticsText = useMemo(() => {
     if (!showDiagnostics) return null

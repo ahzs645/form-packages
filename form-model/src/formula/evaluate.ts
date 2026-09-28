@@ -17,6 +17,7 @@
 
 import { readBoolean, readChoice, readDateTime, type ChoiceValue } from "../values";
 import type { FormulaNode, StoredFormula } from "./ast";
+import { readLatestTerm, selectLatestResult, type FormulaObservationReader, type LatestTerm } from "./chart-results";
 
 /**
  * What a calculation does with an unanswered input.
@@ -41,6 +42,13 @@ export interface FormulaEnv {
   /** The clock for today() and now(); the real clock when omitted. */
   now?: Date;
   /**
+   * The time the calculated answer is documented for, which `latest()` time
+   * windows count from: PowerChart's "Performed on" time, an iView column's
+   * time. It is not the clock: a form charted late is documented for earlier.
+   * `now` when omitted.
+   */
+  referenceTime?: Date;
+  /**
    * The builder field type (or a formula value type) of a field. Lets a
    * formula read date fields as dates and yes/no fields as booleans.
    */
@@ -49,6 +57,12 @@ export interface FormulaEnv {
   functions?: Readonly<Record<string, (...args: unknown[]) => unknown>>;
   /** How unanswered field inputs read; `blank` when omitted. */
   incomplete?: FormulaIncompleteMode;
+  /**
+   * The patient's chart, for `latest()`: every result the host has for an
+   * observation (./chart-results.ts selects the one that counts). Without
+   * it, every `latest()` has no result.
+   */
+  observations?: FormulaObservationReader;
 }
 
 // ── Runtime values ──────────────────────────────────────────────────────────
@@ -333,6 +347,12 @@ function fractionalMonths(from: DateValue, to: DateValue): number {
 
 function todayValue(env: FormulaEnv): DateValue {
   return asDateOnly(nowValue(env));
+}
+
+/** Where `latest()` windows count from: the reference time, else the clock. */
+function referenceTimeMs(env: FormulaEnv): number {
+  const at = env.referenceTime;
+  return at instanceof Date && Number.isFinite(at.getTime()) ? at.getTime() : nowValue(env).ms;
 }
 
 function nowValue(env: FormulaEnv): DateValue {
@@ -791,6 +811,85 @@ function hostFunction(name: string, args: Lazy[], env: FormulaEnv): Value {
   }
 }
 
+/** The chart result a term takes, or undefined when none counts. */
+function chartResultOf(term: LatestTerm, env: FormulaEnv): unknown {
+  let results;
+  try {
+    results = env.observations ? env.observations(term.observation) : null;
+  } catch {
+    results = null;
+  }
+  const result = selectLatestResult(results, term, referenceTimeMs(env));
+  return result ? result.value : undefined;
+}
+
+/**
+ * `latest(observation, options)`: the latest counted result (numeric text as
+ * a number), else the fallback, else a missing input (blank; 0 under
+ * compute-anyway), like an unanswered field.
+ */
+function latestResult(node: Extract<FormulaNode, { kind: "call" }>, scope: Scope): Value {
+  const term = readLatestTerm(node);
+  if (!term) return null;
+  const raw = chartResultOf(term, scope.env);
+  const value = raw === undefined ? null : readStored(raw, undefined);
+  if (!isMissing(value)) {
+    if (typeof value === "string") return numberFromText(value) ?? value;
+    return value;
+  }
+  if (term.fallback) return evaluateNode(term.fallback, scope);
+  return scope.env.incomplete === "compute-anyway" ? MISSING_INPUT : null;
+}
+
+/**
+ * The `latest()` terms a formula needs that have no result: required terms
+ * (no fallback) whose observation has no counted result in the host's chart.
+ * A formula with any is incomplete, like one with an unanswered field.
+ */
+export function missingChartResults(formula: StoredFormula | FormulaNode, env: Pick<FormulaEnv, "observations" | "now" | "referenceTime">): LatestTerm[] {
+  const expr =
+    formula && typeof formula === "object" && (formula as StoredFormula).v === 1 && (formula as StoredFormula).expr
+      ? (formula as StoredFormula).expr
+      : (formula as FormulaNode);
+  const missing: LatestTerm[] = [];
+  const stack: FormulaNode[] = expr ? [expr] : [];
+  const fullEnv = env as FormulaEnv;
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    if (!node || typeof node !== "object") continue;
+    if (node.kind === "call" && node.fn === "latest") {
+      const term = readLatestTerm(node);
+      if (term && term.required) {
+        const raw = chartResultOf(term, fullEnv);
+        if (raw === undefined || isMissing(readStored(raw, undefined))) missing.push(term);
+      }
+    }
+    switch (node.kind) {
+      case "list":
+        stack.push(...node.items);
+        break;
+      case "map":
+        for (const entry of node.entries) stack.push(entry.value);
+        break;
+      case "unary":
+        stack.push(node.operand);
+        break;
+      case "binary":
+        stack.push(node.left, node.right);
+        break;
+      case "call":
+        stack.push(...node.args);
+        break;
+      case "if":
+        stack.push(node.test, node.then, node.else);
+        break;
+      default:
+        break;
+    }
+  }
+  return missing;
+}
+
 function evaluateCall(node: Extract<FormulaNode, { kind: "call" }>, scope: Scope): Value {
   const env = scope.env;
   const cache = new Map<number, Value>();
@@ -954,6 +1053,8 @@ function evaluateCall(node: Extract<FormulaNode, { kind: "call" }>, scope: Scope
     }
 
     // Clinical
+    case "latest":
+      return latestResult(node, scope);
     case "bmi": {
       const weight = numberArg(args, 0);
       const height = numberArg(args, 1);

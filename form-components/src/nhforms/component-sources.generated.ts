@@ -4802,8 +4802,28 @@ const _evaluateComputedFormula = (formula, expression, valuesByFieldId, options)
   return typeof result === "string" || typeof result === "boolean" ? result : null
 }
 
-const _hasAllReferencedValues = (formula, valuesByFieldId, fieldKinds) =>
-  formula ? FormulaKit.hasAllReferencedValues(formula, valuesByFieldId, { fieldKinds }) : true
+const _hasAllReferencedValues = (formula, valuesByFieldId, fieldKinds, observations) =>
+  formula ? FormulaKit.hasAllReferencedValues(formula, valuesByFieldId, { fieldKinds, observations }) : true
+
+// The patient's observations, for a formula's charted results (\`latest()\`):
+// the same list the form's latest-result defaults read, which the export
+// queries when a calculation needs it (formReadsPatientObservations).
+const _readPath = (source, path) => {
+  let current = source
+  for (const step of path) {
+    if (!current || typeof current !== "object") return null
+    current = current[step]
+  }
+  return current
+}
+const _patientObservations = (sd) => {
+  const direct = _readPath(sd, ["patient", "observations"])
+  if (Array.isArray(direct) && direct.length > 0) return direct
+  const queried = _readPath(sd, ["queryResult", "patient", 0, "observations"])
+  return Array.isArray(queried) ? queried : Array.isArray(direct) ? direct : []
+}
+const _chartTerms = (formula) =>
+  formula && typeof FormulaKit.latestTerms === "function" ? FormulaKit.latestTerms(formula) : []
 
 const _toDisplayValue = (value, precision, resultType) => {
   if (typeof value === "string") return value
@@ -5028,6 +5048,7 @@ const ComputedField = ({
   const readOnly = disabled ? true : readOnlyProp
   const theme = useTheme()
   const [fd, setFd] = useActiveData()
+  const sd = typeof useSourceData === "function" ? useSourceData() : null
   const valuesByFieldId = fd?.field?.data || {}
   const policy = _normalizeCalculationPolicy(calculationPolicy)
   const isOverridden = _computedFieldIsOverridden(valuesByFieldId, fieldId)
@@ -5037,6 +5058,12 @@ const ComputedField = ({
     [expression, formulaTree]
   )
 
+  const readsChart = useMemo(() => _chartTerms(formula).length > 0, [formula])
+  const observations = useMemo(
+    () => (readsChart ? _patientObservations(sd) : null),
+    [readsChart, sd]
+  )
+
   const computedValue = useMemo(
     () => presentationOnly
       ? resolvedValue
@@ -5044,8 +5071,9 @@ const ComputedField = ({
           selfId: fieldId,
           incomplete: _formulaIncompleteMode(incompleteBehavior),
           fieldKinds,
+          observations,
         }),
-    [expression, fieldId, fieldKinds, formula, incompleteBehavior, presentationOnly, resolvedValue, valuesByFieldId]
+    [expression, fieldId, fieldKinds, formula, incompleteBehavior, observations, presentationOnly, resolvedValue, valuesByFieldId]
   )
 
   const roundedValue = useMemo(
@@ -5056,9 +5084,9 @@ const ComputedField = ({
   const isIncomplete = useMemo(
     () => (
       incompleteBehavior !== "compute-anyway" &&
-      !_hasAllReferencedValues(formula, valuesByFieldId, fieldKinds)
+      !_hasAllReferencedValues(formula, valuesByFieldId, fieldKinds, observations)
     ),
-    [fieldKinds, formula, incompleteBehavior, valuesByFieldId]
+    [fieldKinds, formula, incompleteBehavior, observations, valuesByFieldId]
   )
 
   const storedValue = useMemo(() => {
@@ -5099,8 +5127,8 @@ const ComputedField = ({
       : \`calc(\${labelColumnWidth} + 10px)\`
 
   const canShowInterpretation = useMemo(
-    () => Boolean(showInterpretation && _hasAllReferencedValues(formula, valuesByFieldId, fieldKinds)),
-    [fieldKinds, formula, showInterpretation, valuesByFieldId]
+    () => Boolean(showInterpretation && _hasAllReferencedValues(formula, valuesByFieldId, fieldKinds, observations)),
+    [fieldKinds, formula, observations, showInterpretation, valuesByFieldId]
   )
 
   const interpretationValue = policy === "always-calculated"
@@ -12667,6 +12695,46 @@ const FindCodeSelectWithSourceLookup = ({
 }
 
 /**
+ * The provider directory, read as MOIS's own \`Provider\` control reads it
+ * (SMOIS main chunk: \`useSourceData().useAppSettings().providers\`, filtered
+ * by \`providerType\`, default "PROVIDER"). Each entry becomes the Coding the
+ * engine itself uses for a provider default:
+ * { code: providerId, display: name, system: 'MOIS-PROVIDERS' }.
+ * Entries without a providerType (the preview's sample list) are kept.
+ */
+const PROVIDER_CODE_SYSTEM = 'MOIS-PROVIDERS'
+
+const providerDirectoryItems = (providers, providerType) => (Array.isArray(providers) ? providers : [])
+  .filter((provider) => provider && typeof provider === 'object')
+  .filter((provider) => !provider.providerType || !providerType || provider.providerType === providerType)
+  .map((provider) => {
+    const code = provider.providerId ?? provider.code ?? provider.id ?? null
+    return {
+      code: code == null ? null : String(code),
+      display: String(provider.name ?? provider.display ?? code ?? ''),
+      system: PROVIDER_CODE_SYSTEM,
+    }
+  })
+  .filter((item) => item.display)
+
+const FindCodeSelectWithProviders = ({ providerType = 'PROVIDER', ...props }) => {
+  const sd = useSourceData()
+  const appSettings = typeof sd?.useAppSettings === 'function' ? sd.useAppSettings() : null
+  const providers = appSettings?.providers
+  const items = useMemo(() => providerDirectoryItems(providers, providerType), [providers, providerType])
+  return (
+    <FindCodeSelectWithFieldBinding
+      placeholder='Search for a provider'
+      {...props}
+      codeSystem={PROVIDER_CODE_SYSTEM}
+      optionList={items}
+      fallbackItems={[]}
+      selectionType='single'
+    />
+  )
+}
+
+/**
  * FindCodeSelect
  * Hybrid between FindCode and SimpleCodeSelect:
  * - Search/filter while typing
@@ -12678,6 +12746,10 @@ const FindCodeSelectWithSourceLookup = ({
  * code-list host context, and calling \`useCodeList\` in that path can fail.
  */
 const FindCodeSelect = (props) => {
+  // A provider search: the options are the engine's provider directory.
+  if (String(props?.providerType ?? '').trim()) {
+    return <FindCodeSelectWithProviders {...props} />
+  }
   const hasSourceLookup = Boolean(String(props?.lookupType ?? '').trim()) ||
     (Array.isArray(props?.lookupSourcePaths) && props.lookupSourcePaths.length > 0)
   if (hasSourceLookup) {
@@ -16078,6 +16150,153 @@ const FormulaKit = (() => {
     return ids;
   }
 
+  var FORMULA_LOINC_SYSTEM = "http://loinc.org";
+  var FORMULA_MOIS_OBSERVATION_SYSTEM = "urn:mois:observation";
+  var FORMULA_CERNER_DTA_SYSTEM = "urn:webforms:cerner:dta";
+  var LATEST_OBSERVATION_SYSTEMS = {
+    loinc: FORMULA_LOINC_SYSTEM,
+    mois: FORMULA_MOIS_OBSERVATION_SYSTEM,
+    dta: FORMULA_CERNER_DTA_SYSTEM
+  };
+  var NEVER_COUNTED = /* @__PURE__ */ new Set(["entered-in-error", "cancelled"]);
+  function literalText(node) {
+    if (!node) return void 0;
+    if (node.kind === "text") return node.value.trim() || void 0;
+    if (node.kind === "number" && Number.isFinite(node.value)) return String(node.value);
+    return void 0;
+  }
+  function literalNumber(node) {
+    if (!node) return void 0;
+    if (node.kind === "number") return Number.isFinite(node.value) ? node.value : void 0;
+    if (node.kind === "text" && /^\\s*\\d+(?:\\.\\d+)?\\s*$/.test(node.value)) return Number(node.value);
+    return void 0;
+  }
+  function mapEntry(node, key) {
+    if (!node || node.kind !== "map") return void 0;
+    return node.entries.find((entry) => entry.key === key)?.value;
+  }
+  function observationOf(node) {
+    if (!node) return null;
+    if (node.kind === "text") {
+      const bar = node.value.indexOf("|");
+      if (bar <= 0 || bar === node.value.length - 1) return null;
+      return { codings: [{ system: node.value.slice(0, bar).trim(), code: node.value.slice(bar + 1).trim() }] };
+    }
+    if (node.kind !== "map") return null;
+    const codings = [];
+    for (const key of ["loinc", "mois", "dta"]) {
+      const code2 = literalText(mapEntry(node, key));
+      if (code2) codings.push({ system: LATEST_OBSERVATION_SYSTEMS[key], code: code2 });
+    }
+    const system = literalText(mapEntry(node, "system"));
+    const code = literalText(mapEntry(node, "code"));
+    if (system && code && !codings.some((coding) => coding.system === system && coding.code === code)) codings.push({ system, code });
+    const concept = literalText(mapEntry(node, "concept"));
+    const unit = literalText(mapEntry(node, "unit"));
+    if (codings.length === 0 && !concept) return null;
+    return { codings, ...concept ? { concept } : {}, ...unit ? { unit } : {} };
+  }
+  function readLatestTerm(node) {
+    if (node.kind !== "call" || node.fn !== "latest" || node.args.length < 1 || node.args.length > 2) return null;
+    const observation = observationOf(node.args[0]);
+    if (!observation) return null;
+    const options = node.args[1];
+    if (options && options.kind !== "map") return null;
+    const term = { observation, required: true };
+    const within = literalNumber(mapEntry(options, "withinMinutes"));
+    if (within !== void 0 && within > 0) term.withinMinutes = within;
+    const ahead = literalNumber(mapEntry(options, "aheadMinutes"));
+    if (ahead !== void 0 && ahead > 0) term.aheadMinutes = ahead;
+    const statuses = mapEntry(options, "statuses");
+    if (statuses) {
+      const list = statuses.kind === "list" ? statuses.items : [statuses];
+      const codes = list.map(literalText).filter((code) => Boolean(code)).map((code) => code.toLowerCase());
+      if (codes.length > 0) term.statuses = codes;
+    }
+    const fallback = mapEntry(options, "fallback");
+    if (fallback && fallback.kind !== "null") term.fallback = fallback;
+    const required = mapEntry(options, "required");
+    term.required = required && required.kind === "boolean" ? required.value && !term.fallback : !term.fallback;
+    return term;
+  }
+  function timeOf(value) {
+    if (value === null || value === void 0) return null;
+    if (value instanceof Date) return Number.isFinite(value.getTime()) ? value.getTime() : null;
+    if (typeof value === "number") return Number.isFinite(value) ? value : null;
+    const text = String(value).trim();
+    if (!text) return null;
+    const dateOnly = /^(\\d{4})-(\\d{2})-(\\d{2})$/.exec(text);
+    if (dateOnly) return new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3])).getTime();
+    const local = /^(\\d{4})-(\\d{2})-(\\d{2})[T ](\\d{2}):(\\d{2})(?::(\\d{2})(?:\\.(\\d+))?)?$/.exec(text);
+    if (local) {
+      const [, y, mo, d2, h, mi, s = "0", ms = "0"] = local;
+      return new Date(Number(y), Number(mo) - 1, Number(d2), Number(h), Number(mi), Number(s), Number(ms.slice(0, 3).padEnd(3, "0"))).getTime();
+    }
+    const parsed = Date.parse(text);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  var unitKey = (unit) => typeof unit === "string" ? unit.replace(/\\s+/g, "").toLowerCase() : "";
+  var hasValue = (value) => !(value === null || value === void 0 || typeof value === "string" && value.trim() === "" || Array.isArray(value) && value.length === 0);
+  function selectLatestResult(results, term, nowMs) {
+    if (!results || results.length === 0) return void 0;
+    const earliest = term.withinMinutes ? nowMs - term.withinMinutes * 6e4 : -Infinity;
+    const latest = nowMs + (term.aheadMinutes ?? 0) * 6e4;
+    const wantedUnit = unitKey(term.observation.unit);
+    const statuses = term.statuses?.map((status) => status.toLowerCase());
+    let best;
+    let bestTime = -Infinity;
+    let undated;
+    for (const result of results) {
+      if (!result || !hasValue(result.value)) continue;
+      const status = typeof result.status === "string" ? result.status.trim().toLowerCase() : "";
+      if (status && (statuses ? !statuses.includes(status) : NEVER_COUNTED.has(status))) continue;
+      if (wantedUnit && unitKey(result.unit) && unitKey(result.unit) !== wantedUnit) continue;
+      const time = timeOf(result.date);
+      if (time === null) {
+        if (!term.withinMinutes && !undated) undated = result;
+        continue;
+      }
+      if (time < earliest || time > latest) continue;
+      if (time >= bestTime) {
+        best = result;
+        bestTime = time;
+      }
+    }
+    return best ?? undated;
+  }
+  var lower = (value) => typeof value === "string" || typeof value === "number" ? String(value).trim().toLowerCase() : "";
+  function chartRecordMatches(record, observation) {
+    if (!record || typeof record !== "object") return false;
+    if (record.kind !== void 0 && record.kind !== "Observation") return false;
+    const moisCode = lower(record.observationCode);
+    const loincCode = lower(record.loincCode);
+    const label = lower(record.label);
+    for (const coding of observation.codings) {
+      const code = lower(coding.code);
+      if (!code) continue;
+      if (coding.system === FORMULA_MOIS_OBSERVATION_SYSTEM && moisCode === code) return true;
+      if (coding.system === FORMULA_LOINC_SYSTEM && loincCode === code) return true;
+      if (coding.system === FORMULA_CERNER_DTA_SYSTEM && label === code) return true;
+      for (const own of record.codes ?? []) {
+        if (!own) continue;
+        const system = typeof own.system === "string" ? own.system : "";
+        if (lower(own.code) !== code) continue;
+        if (system === coding.system) return true;
+        if (coding.system === FORMULA_CERNER_DTA_SYSTEM && /^urn:webforms:cerner:[^:]+:dta$/.test(system)) return true;
+      }
+    }
+    return false;
+  }
+  function chartRecordReader(records) {
+    const list = Array.isArray(records) ? records : [];
+    return (observation) => list.filter((record) => chartRecordMatches(record, observation)).map((record) => ({
+      value: record.value,
+      date: record.date ?? record.collectedDateTime ?? null,
+      status: typeof record.status === "string" ? record.status : null,
+      unit: typeof record.unit === "string" ? record.unit : typeof record.units === "string" ? record.units : null
+    }));
+  }
+
   function isRecord(value) {
     return value !== null && typeof value === "object" && !Array.isArray(value) && !(value instanceof Date);
   }
@@ -16498,6 +16717,10 @@ const FormulaKit = (() => {
   function todayValue(env) {
     return asDateOnly(nowValue(env));
   }
+  function referenceTimeMs(env) {
+    const at = env.referenceTime;
+    return at instanceof Date && Number.isFinite(at.getTime()) ? at.getTime() : nowValue(env).ms;
+  }
   function nowValue(env) {
     const now = env.now instanceof Date && Number.isFinite(env.now.getTime()) ? env.now : /* @__PURE__ */ new Date();
     return { $date: true, ms: now.getTime(), dateOnly: false };
@@ -16896,6 +17119,68 @@ const FormulaKit = (() => {
       return null;
     }
   }
+  function chartResultOf(term, env) {
+    let results;
+    try {
+      results = env.observations ? env.observations(term.observation) : null;
+    } catch {
+      results = null;
+    }
+    const result = selectLatestResult(results, term, referenceTimeMs(env));
+    return result ? result.value : void 0;
+  }
+  function latestResult(node, scope) {
+    const term = readLatestTerm(node);
+    if (!term) return null;
+    const raw = chartResultOf(term, scope.env);
+    const value = raw === void 0 ? null : readStored(raw, void 0);
+    if (!isMissing(value)) {
+      if (typeof value === "string") return numberFromText(value) ?? value;
+      return value;
+    }
+    if (term.fallback) return evaluateNode(term.fallback, scope);
+    return scope.env.incomplete === "compute-anyway" ? MISSING_INPUT : null;
+  }
+  function missingChartResults(formula, env) {
+    const expr = formula && typeof formula === "object" && formula.v === 1 && formula.expr ? formula.expr : formula;
+    const missing = [];
+    const stack = expr ? [expr] : [];
+    const fullEnv = env;
+    while (stack.length > 0) {
+      const node = stack.pop();
+      if (!node || typeof node !== "object") continue;
+      if (node.kind === "call" && node.fn === "latest") {
+        const term = readLatestTerm(node);
+        if (term && term.required) {
+          const raw = chartResultOf(term, fullEnv);
+          if (raw === void 0 || isMissing(readStored(raw, void 0))) missing.push(term);
+        }
+      }
+      switch (node.kind) {
+        case "list":
+          stack.push(...node.items);
+          break;
+        case "map":
+          for (const entry of node.entries) stack.push(entry.value);
+          break;
+        case "unary":
+          stack.push(node.operand);
+          break;
+        case "binary":
+          stack.push(node.left, node.right);
+          break;
+        case "call":
+          stack.push(...node.args);
+          break;
+        case "if":
+          stack.push(node.test, node.then, node.else);
+          break;
+        default:
+          break;
+      }
+    }
+    return missing;
+  }
   function evaluateCall(node, scope) {
     const env = scope.env;
     const cache = /* @__PURE__ */ new Map();
@@ -17050,6 +17335,8 @@ const FormulaKit = (() => {
         return Math.floor(wholeMonths(birth, asOf) / 12);
       }
       // Clinical
+      case "latest":
+        return latestResult(node, scope);
       case "bmi": {
         const weight = numberArg(args, 0);
         const height = numberArg(args, 1);
@@ -17567,6 +17854,23 @@ const FormulaKit = (() => {
       description: "A WHO/CDC growth z-score. Needs the growth reference tables, so the host supplies it through the evaluator's \`functions\`; blank without it.",
       engines: ["lib/expressions"],
       targets: support(U, U, U, U, U, "changed")
+    },
+    // ── The patient's chart ─────────────────────────────────────────────────
+    {
+      name: "latest",
+      aliases: [],
+      category: "chart",
+      params: [{ name: "observation", type: "observation" }, { name: "options", type: "options", optional: true }],
+      minArgs: 1,
+      maxArgs: 2,
+      // A number when the result is numeric, else its text or choice; a fallback gives its own type.
+      result: "unknown",
+      missing: "handles",
+      description: 'The patient\\'s latest charted result for an observation: \`latest({"loinc": "29463-7"}, {"withinMinutes": 1440, "fallback": 0})\`. The observation is named like a chart binding (\`loinc\`, \`mois\`, \`dta\` for a Cerner DTA, \`system\` + \`code\`, \`concept\`, and a \`unit\` results must be in); the options are \`withinMinutes\`, \`aheadMinutes\`, \`statuses\`, \`fallback\` and \`required\`. With no result in the window and no fallback it reads like an unanswered field, and a required result that is missing makes the formula incomplete. See chart-results.ts.',
+      engines: ["cerner-equation", "new"],
+      // MOIS: read by MOIS observation code (a LOINC or DTA through the crosswalk). Cerner: an equation component
+      // over the DTA. FHIR: an x-fhir-query variable over a LOINC (or other queryable) code.
+      targets: support(C, C, U, C, U, U)
     }
   ];
   var BY_NAME = /* @__PURE__ */ new Map();
@@ -17578,8 +17882,8 @@ const FormulaKit = (() => {
   }
   for (const spec of FORMULA_FUNCTIONS) {
     for (const name of [spec.name, ...spec.aliases]) {
-      const lower = name.toLowerCase();
-      if (!BY_LOWER.has(lower)) BY_LOWER.set(lower, spec);
+      const lower2 = name.toLowerCase();
+      if (!BY_LOWER.has(lower2)) BY_LOWER.set(lower2, spec);
     }
   }
   function findFormulaFunction(name) {
@@ -17676,6 +17980,10 @@ const FormulaKit = (() => {
       case "call": {
         const spec = findFormulaFunction(node.fn);
         if (!spec) return "unknown";
+        if (spec.name === "latest") {
+          const fallback = readLatestTerm(node)?.fallback;
+          return fallback ? typeOfNode(fallback, env) : "unknown";
+        }
         if (spec.result !== "branches") return spec.result;
         const valueArgs = node.fn === "iif" ? node.args.slice(1) : node.fn === "ifPresent" ? node.args.slice(1) : node.args;
         return unifyTypes(valueArgs.map((arg) => typeOfNode(arg, env)));
@@ -18343,15 +18651,38 @@ const FormulaKit = (() => {
       getParam: options.getParam,
       scoreMaps: options.scoreMaps,
       now: options.now,
+      referenceTime: options.referenceTime,
       fieldKind: kindGetter(options),
       functions: options.functions,
-      incomplete: options.incomplete
+      incomplete: options.incomplete,
+      observations: observationReader(options.observations)
     });
+  }
+  function observationReader(observations) {
+    if (typeof observations === "function") return observations;
+    if (Array.isArray(observations)) return chartRecordReader(observations);
+    return void 0;
   }
   function hasAllReferencedValues(formula, values, options = {}) {
     const get = valueGetter(values);
     const kind = kindGetter(options);
-    return references(formula).every((fieldId) => !isBlankFormulaAnswer(get(fieldId), kind?.(fieldId)));
+    if (!references(formula).every((fieldId) => !isBlankFormulaAnswer(get(fieldId), kind?.(fieldId)))) return false;
+    const resolved = toFormula(formula);
+    if (!resolved || latestTerms(resolved).length === 0) return true;
+    return missingChartResults(resolved, { observations: observationReader(options.observations), now: options.now, referenceTime: options.referenceTime }).length === 0;
+  }
+  function latestTerms(formula) {
+    const resolved = toFormula(formula);
+    const terms = [];
+    if (!resolved) return terms;
+    walkFormula(resolved, (node) => {
+      const term = node.kind === "call" && node.fn === "latest" ? readLatestTerm(node) : null;
+      if (term) terms.push(term);
+    });
+    return terms;
+  }
+  function chartReader(records) {
+    return chartRecordReader(records);
   }
   function evaluate(expression, valuesByFieldId, currentFieldId, options = {}) {
     const formula = toFormula(expression);
@@ -18369,7 +18700,7 @@ const FormulaKit = (() => {
   function toComparableValue(value) {
     return formulaAnswerOutput(value) ?? "";
   }
-  function hasValue(value) {
+  function hasValue2(value) {
     return !isBlankFormulaAnswer(value);
   }
   function roundValue(value, precision) {
@@ -18380,11 +18711,13 @@ const FormulaKit = (() => {
   }
 
   return {
+    chartReader,
     evaluate,
     evaluateTree,
     extractReferences,
     hasAllReferencedValues,
-    hasValue,
+    hasValue: hasValue2,
+    latestTerms,
     parse,
     print,
     references,
@@ -35402,12 +35735,138 @@ var DocumentFillRuntime = (() => {
   __export(runtime_entry_exports, {
     appendOverflowAddendum: () => appendOverflowAddendum,
     applyDocumentFillPreparers: () => applyDocumentFillPreparers,
+    applyDocumentOutput: () => applyDocumentOutput,
     documentValueText: () => documentValueText,
     expandNumberedRowFields: () => expandNumberedRowFields,
     expandTableSourceMaps: () => expandTableSourceMaps,
     formatDateWithPattern: () => formatDateWithPattern,
     planTableOverflow: () => planTableOverflow
   });
+
+  // packages/form-model/src/values.ts
+  function isRecord(value) {
+    return value !== null && typeof value === "object" && !Array.isArray(value) && !(value instanceof Date);
+  }
+  function scalarText(value) {
+    if (typeof value === "string") return value.trim() ? value : void 0;
+    if (typeof value === "number") return Number.isFinite(value) ? String(value) : void 0;
+    if (typeof value === "boolean") return String(value);
+    return void 0;
+  }
+  function firstText(record, keys) {
+    for (const key of keys) {
+      const text = scalarText(record[key]);
+      if (text !== void 0) return text;
+    }
+    return void 0;
+  }
+  function finiteNumber(value) {
+    if (typeof value === "number") return Number.isFinite(value) ? value : void 0;
+    if (typeof value === "string" && value.trim()) {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : void 0;
+    }
+    return void 0;
+  }
+  var FHIR_SCORE_EXTENSION = /\\/(ordinalValue|itemWeight)$/;
+  function fhirExtensionScore(extensions) {
+    if (!Array.isArray(extensions)) return void 0;
+    for (const extension of extensions) {
+      if (!isRecord(extension) || typeof extension.url !== "string" || !FHIR_SCORE_EXTENSION.test(extension.url)) continue;
+      const score = finiteNumber(extension.valueDecimal ?? extension.valueInteger);
+      if (score !== void 0) return score;
+    }
+    return void 0;
+  }
+  var FHIR_ANSWER_KEYS = ["valueCoding", "valueString", "valueInteger", "valueDecimal", "valueDate", "valueTime"];
+  function fhirAnswerValue(record) {
+    for (const key of FHIR_ANSWER_KEYS) {
+      if (record[key] !== void 0 && record[key] !== null) return record[key];
+    }
+    return void 0;
+  }
+  var OPTION_CODE_KEYS = ["value", "code", "key", "id", "state"];
+  var ORDINAL_OPTION_CODE_KEYS = ["code", "key", "id", "state", "value"];
+  var OPTION_DISPLAY_KEYS = ["label", "display", "text"];
+  function withOptional(option, system, score) {
+    if (system !== void 0) option.system = system;
+    if (score !== void 0) option.score = score;
+    return option;
+  }
+  function normalizeOption(raw) {
+    if (raw === null || raw === void 0) return { code: "", display: "" };
+    if (!isRecord(raw)) {
+      const text = scalarText(raw) ?? "";
+      return { code: text, display: text };
+    }
+    const fhirValue = fhirAnswerValue(raw);
+    if (fhirValue !== void 0 && raw.value === void 0 && raw.code === void 0 && raw.label === void 0) {
+      const inner = normalizeOption(fhirValue);
+      return withOptional({ code: inner.code, display: inner.display }, inner.system, inner.score ?? fhirExtensionScore(raw.extension));
+    }
+    const ordinal = typeof raw.value === "number" && Number.isFinite(raw.value) ? raw.value : void 0;
+    const code = firstText(raw, ordinal === void 0 ? OPTION_CODE_KEYS : ORDINAL_OPTION_CODE_KEYS);
+    const display = firstText(raw, OPTION_DISPLAY_KEYS);
+    return withOptional(
+      { code: code ?? display ?? "", display: display ?? code ?? "" },
+      scalarText(raw.system),
+      finiteNumber(raw.score) ?? ordinal
+    );
+  }
+  var CHOICE_CODE_KEYS = ["code", "value", "key", "id"];
+  var CHOICE_DISPLAY_KEYS = ["display", "response", "label", "text"];
+  function choiceValue(code, display, system) {
+    const entry = { code };
+    if (display !== void 0) entry.display = display;
+    if (system !== void 0) entry.system = system;
+    return entry;
+  }
+  function readChoiceEntries(value) {
+    if (value === null || value === void 0) return [];
+    if (Array.isArray(value)) return value.flatMap(readChoiceEntries);
+    if (!isRecord(value)) {
+      const code2 = scalarText(value);
+      return code2 === void 0 ? [] : [{ code: code2 }];
+    }
+    if (Array.isArray(value.coding)) return readChoiceEntries(value.coding[0]);
+    if (isRecord(value.valueCoding)) return readChoiceEntries(value.valueCoding);
+    if (Array.isArray(value.selectedItems)) return value.selectedItems.flatMap(readChoiceEntries);
+    if ("selectedItem" in value) return readChoiceEntries(value.selectedItem);
+    if ("selectedKey" in value) {
+      const code2 = scalarText(value.selectedKey);
+      if (code2 === void 0) return [];
+      return [choiceValue(code2, firstText(value, ["response", "display", "text", "label"]), scalarText(value.system))];
+    }
+    if (Array.isArray(value.selectedIds) || Array.isArray(value.selectedLabels)) {
+      const ids = Array.isArray(value.selectedIds) ? value.selectedIds : [];
+      const labels = Array.isArray(value.selectedLabels) ? value.selectedLabels : [];
+      const entries = [];
+      for (let index = 0; index < Math.max(ids.length, labels.length); index += 1) {
+        const label = scalarText(labels[index]);
+        const code2 = scalarText(ids[index]) ?? label;
+        if (code2 !== void 0) entries.push(choiceValue(code2, label, void 0));
+      }
+      return entries;
+    }
+    if (value.value !== null && typeof value.value === "object") return readChoiceEntries(value.value);
+    const display = firstText(value, CHOICE_DISPLAY_KEYS);
+    const code = firstText(value, CHOICE_CODE_KEYS) ?? display;
+    return code === void 0 ? [] : [choiceValue(code, display, scalarText(value.system))];
+  }
+  function sameText(left, right) {
+    return left !== void 0 && right !== void 0 && left.trim().toLowerCase() === right.trim().toLowerCase();
+  }
+  function resolveAgainstOptions(entry, options) {
+    const match = options.find((option) => option.code === entry.code) ?? options.find((option) => sameText(option.code, entry.code)) ?? options.find((option) => sameText(option.display, entry.code) || sameText(option.display, entry.display));
+    if (!match) return entry;
+    return choiceValue(match.code, match.display, entry.system ?? match.system);
+  }
+  function readChoice(value, options) {
+    const entries = readChoiceEntries(value);
+    if (!Array.isArray(options) || options.length === 0 || entries.length === 0) return entries;
+    const normalized = options.map(normalizeOption).filter((option) => option.code !== "" || option.display !== "");
+    return entries.map((entry) => resolveAgainstOptions(entry, normalized));
+  }
 
   // packages/form-model/src/conditions.ts
   function normalizeConditionComparable(candidate) {
@@ -36133,6 +36592,96 @@ var DocumentFillRuntime = (() => {
       page.drawText(text, { x: (pageWidth - width) / 2, y: margin - footerSize, size: footerSize, font, color: muted });
     });
     return { pagesAdded: added.length, rowsPrinted, firstPageNumber };
+  }
+
+  // packages/form-model/src/document-layout.ts
+  function readDocumentLayout(field) {
+    return field?.documentLayout;
+  }
+  function selectedDocumentPages(pageCount, fields, values) {
+    let pages = Array.from({ length: pageCount }, (_, index) => index + 1);
+    for (const field of fields) {
+      const selection = readDocumentLayout(field)?.pageSelection;
+      if (!selection) continue;
+      const answers = readChoice(values[field.id] ?? selection.defaultValue);
+      const answer = answers.length === 1 ? answers[0].code : void 0;
+      const selected = typeof answer === "string" && Object.prototype.hasOwnProperty.call(selection.pagesByValue, answer) ? selection.pagesByValue[answer] : void 0;
+      if (!selected) throw new Error(\`Choose a valid page selection for \${field.id}.\`);
+      pages = pages.filter((page) => selected.includes(page));
+    }
+    if (!pages.length) throw new Error("Select at least one document page.");
+    return pages;
+  }
+
+  // lib/document-fill/document-layout.ts
+  async function applyDocumentOutput(doc, values, fields, PDFLib, options = {}) {
+    if (!fields?.length) return { pagesAdded: 0, pagesRemoved: 0, filledFieldCount: 0 };
+    const originals = doc.getPages();
+    const selected = selectedDocumentPages(originals.length, fields, values);
+    const font = await doc.embedFont(PDFLib.StandardFonts.Helvetica);
+    const black = PDFLib.rgb(0, 0, 0);
+    const supported = new Set(font.getCharacterSet());
+    const continuations = [];
+    let filledFieldCount = 0;
+    for (const field of fields) {
+      const layout = field.documentLayout?.text;
+      if (!layout || !selected.includes(field.page ?? 0)) continue;
+      if (options.includeOnlyFieldIds && !options.includeOnlyFieldIds.includes(field.id)) continue;
+      const text = documentValueText(values[field.id]).replace(/\\r\\n?/g, "\\n").replace(/\\t/g, "    ");
+      if (!text) continue;
+      const page = originals[field.page - 1];
+      const box = field.bbox;
+      const { fontSize: size, lineHeight: leading, padding: pad2 } = layout;
+      if (!box || ![box.x, box.y, box.width, box.height, size, leading, pad2].every(Number.isFinite) || size <= 0 || leading < size || pad2 < 0 || box.width <= 2 * pad2 || box.height < size + 2 * pad2 || box.x < 0 || box.y < 0 || box.x + box.width > page.getWidth() + 0.1 || box.y + box.height > page.getHeight() + 0.1) {
+        throw new Error(\`The printable writing region for \${field.label || field.id} needs review.\`);
+      }
+      try {
+        if (Array.from(text).some((char) => char !== "\\n" && !supported.has(char.codePointAt(0)))) throw new Error("Unsupported glyph");
+        font.encodeText(text.replace(/\\n/g, ""));
+      } catch {
+        throw new Error(\`\${field.label || field.id} contains characters unavailable in the document font. Review the text before printing.\`);
+      }
+      const lines = wrapTextToWidth(text, font, size, box.width - 2 * pad2);
+      const capacity = Math.floor((box.height - 2 * pad2 - size) / leading) + 1;
+      const overflow = lines.slice(capacity);
+      if (overflow.length && layout.overflow === "block") throw new Error(\`\${field.label || field.id} exceeds its printable writing region.\`);
+      const visibleLines = lines.slice(0, capacity);
+      if (layout.backgroundColor) {
+        if (!/^#[0-9a-f]{6}$/i.test(layout.backgroundColor)) throw new Error(\`Invalid document background color for \${field.id}.\`);
+        const channels = [1, 3, 5].map((offset) => parseInt(layout.backgroundColor.slice(offset, offset + 2), 16) / 255);
+        const usedHeight = Math.min(box.height, visibleLines.length * leading + 2 * pad2);
+        page.drawRectangle({ x: box.x, y: box.y + box.height - usedHeight, width: box.width, height: usedHeight, color: PDFLib.rgb(channels[0], channels[1], channels[2]) });
+      }
+      visibleLines.forEach((line, index) => {
+        if (line) page.drawText(line, { x: box.x + pad2, y: box.y + box.height - pad2 - size - index * leading, size, font, color: black });
+      });
+      filledFieldCount++;
+      if (overflow.length) continuations.push({ field, lines: overflow, size, leading });
+    }
+    for (let index = originals.length - 1; index >= 0; index--) if (!selected.includes(index + 1)) doc.removePage(index);
+    let pagesAdded = 0;
+    for (const { field, lines, size, leading } of continuations) {
+      const original = originals[field.page - 1];
+      const width = original.getWidth(), height = original.getHeight(), margin = 36;
+      const header = \`\${field.label || field.id} (continued)\`;
+      const continuationLines = lines.flatMap((line) => wrapTextToWidth(line, font, size, width - 2 * margin));
+      const headerLines = wrapTextToWidth(header, font, size, width - 2 * margin);
+      const top = height - margin - size - (headerLines.length + 2) * leading;
+      const capacity = Math.floor((top - margin) / leading) + 1;
+      if (capacity < 1) throw new Error(\`The continuation page for \${field.id} is too small.\`);
+      for (let offset = 0; offset < continuationLines.length; offset += capacity) {
+        const page = doc.addPage([width, height]);
+        pagesAdded++;
+        headerLines.forEach((line, index) => page.drawText(line, { x: margin, y: height - margin - size - index * leading, size, font, color: black }));
+        page.drawText(\`Continued from page \${selected.indexOf(field.page) + 1}\`, { x: margin, y: height - margin - size - headerLines.length * leading, size: 10, font, color: black });
+        continuationLines.slice(offset, offset + capacity).forEach((line, index) => {
+          if (line) page.drawText(line, { x: margin, y: top - index * leading, size, font, color: black });
+        });
+        page.drawText(\`Continuation \${Math.floor(offset / capacity) + 1} of \${Math.ceil(continuationLines.length / capacity)}\`, { x: margin, y: 18, size: 9, font, color: black });
+      }
+      options.warnings?.push(\`\${field.label || field.id} continues on additional pages; the complete answer is included.\`);
+    }
+    return { pagesAdded, pagesRemoved: originals.length - selected.length, filledFieldCount };
   }
   return __toCommonJS(runtime_entry_exports);
 })();
@@ -37300,6 +37849,7 @@ const PdfRegenerator = ({
   choiceComponentMaps,
   textFlowMaps,
   geometryOverlayFields,
+  documentOutputFields,
   includeOnlyFieldIds,
   flatten = false,
   recalculate = false,
@@ -37468,6 +38018,8 @@ const PdfRegenerator = ({
           form.markFieldAsClean(field.ref)
         }
       })
+      const documentOutput = await DocumentFillRuntime.applyDocumentOutput(doc, formData, documentOutputFields, PDFLib, { includeOnlyFieldIds, warnings })
+      filledFieldCount += documentOutput.filledFieldCount
       // Table rows the PDF has no printed row for: addendum pages (or a warning for mode "drop").
       const overflowPlans = DocumentFillRuntime.planTableOverflow(formData, fillTableMaps, pdfFieldNames)
         .filter((plan) => !includeSet || includeSet.has(plan.tableId))
@@ -37510,7 +38062,7 @@ const PdfRegenerator = ({
     } finally {
       setIsBusy(false)
     }
-  }, [resolvedPdfSource, fd, fieldMap, tableSourceMaps, pdfPreparers, booleanFieldStates, fieldMaxLengths, dateComponentMaps, documentDateFormats, choiceComponentMaps, textFlowMaps, geometryOverlayFields, includeOnlyFieldIds, flatten, recalculate, organizationSigning, fileName, onComplete, pdfLibStrategy, pdfLibSource])
+  }, [resolvedPdfSource, fd, fieldMap, tableSourceMaps, pdfPreparers, booleanFieldStates, fieldMaxLengths, dateComponentMaps, documentDateFormats, choiceComponentMaps, textFlowMaps, geometryOverlayFields, documentOutputFields, includeOnlyFieldIds, flatten, recalculate, organizationSigning, fileName, onComplete, pdfLibStrategy, pdfLibSource])
 
   const diagnosticsText = useMemo(() => {
     if (!showDiagnostics) return null
@@ -52142,11 +52694,11 @@ export const componentIdentities: Record<string, any> = {
   'FindCodeSelect': {
     "name": "FindCodeSelect",
     "title": "Find code searchable dropdown",
-    "description": "Searchable coded-value selector with code-list, inline-option, and MOIS source-lookup modes",
+    "description": "Searchable coded-value selector with code-list, inline-option, MOIS source-lookup and provider-directory modes",
     "version": {
       "major": 1,
-      "minor": 0,
-      "patch": 2
+      "minor": 1,
+      "patch": 0
     },
     "type": "component",
     "owner": "Northern Health",

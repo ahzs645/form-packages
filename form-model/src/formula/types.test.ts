@@ -180,9 +180,9 @@ describe("function registry", () => {
     expect(findFormulaFunction("Math.random")).toBeUndefined();
   });
 
-  it("marks every function native for MOIS except the host-supplied zScore (FormulaKit is generated from this evaluator)", () => {
+  it("marks every function native for MOIS except the host-supplied zScore and the chart read latest() (FormulaKit is generated from this evaluator)", () => {
     for (const spec of FORMULA_FUNCTIONS) {
-      expect(spec.targets.mois, spec.name).toBe(spec.name === "zScore" ? "unsupported" : "native");
+      expect(spec.targets.mois, spec.name).toBe(spec.name === "zScore" ? "unsupported" : spec.name === "latest" ? "changed" : "native");
     }
   });
 });

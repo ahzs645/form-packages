@@ -72,6 +72,7 @@ export const UNSUPPORTED_REASONS: Partial<Record<BuilderFieldType, string>> = {
   scale: "Scale has no Terra equivalent yet; model it as a radio group.",
   matrix: "Matrix questions are not supported; split them into individual choice fields.",
   barcode: "Barcode capture has no Terra equivalent.",
+  provider: "Provider search has no Terra equivalent in the vendored component set; a PowerForm writes it as PowerChart's provider search (control 18).",
   password: "Password fields are not meaningful in a clinical form.",
   layoutTable: "Layout tables are not supported yet; the Terra table renders data rows only.",
 };

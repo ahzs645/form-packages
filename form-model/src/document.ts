@@ -150,6 +150,7 @@ export type ParsedTableConfig = Omit<BuilderTableConfig, "columns" | "allowAddRo
 };
 
 export interface ParsedField {
+  documentLayout?: import("./document-layout").DocumentLayout;
   /** Canonical answer values to target MOIS codes, used for rule projection. */
   answerValueAliases?: Record<string, string>;
   answerSetIssue?: string;
@@ -245,6 +246,11 @@ export interface ParsedField {
    * MOIS store holds; lib/mois-export/field-binding.ts). Present only when set.
    */
   binding?: BuilderField["binding"];
+  /**
+   * The field's reference ranges, read from every store (lib/reference-ranges.ts):
+   * normal, critical and feasible limits by patient. Present only when set.
+   */
+  referenceRanges?: import("./reference-ranges").ReferenceRangeBand[];
   /** Field-level MOIS source binding, carried verbatim from BuilderField. */
   sourceConfig?: BuilderFieldSourceConfig | null;
   /** Field-level MOIS save key / mutation / module link, carried verbatim. */

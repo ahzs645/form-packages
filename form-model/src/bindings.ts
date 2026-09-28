@@ -113,6 +113,30 @@ export interface BuilderFieldBindingRead {
   transform?: string;
   /** Show the patient's earlier results for the observation beside the field. */
   history?: boolean;
+  /**
+   * The field shows chart content the EMR assembles, read-only, and takes no
+   * answer: a chart summary. Such a read has no value path of its own; each
+   * target converts it or reports it (`<target>.binding.chart-summary`).
+   */
+  summary?: BindingChartSummary;
+}
+
+/**
+ * A read-only view of chart content, not a value the question takes: a
+ * PowerChart Smart Template or chart summary drawn in a rich-text box, the
+ * charted results of a DTA shown read-only, or an iView row that displays
+ * results charted elsewhere (a lab, a device, another form). The field is
+ * refreshed from the chart, never answered and never written back.
+ */
+export interface BindingChartSummary {
+  /** What the content is called: the template's, the DTA's or the result set's display name. */
+  title: string;
+  /**
+   * `template`: content a named chart template or program assembles (a
+   * Smart Template, a chart summary); `results`: the charted results of one
+   * result type (a DTA, an event set).
+   */
+  kind: "template" | "results";
 }
 
 export interface BindingMutation {
@@ -282,7 +306,8 @@ const CERNER_DTA_KEYS = [
   "authoring", "provenance",
 ];
 const BINDING_KEYS = ["read", "write"];
-const READ_KEYS = ["concept", "variant", "observation", "query", "paths", "mode", "presentation", "fallback", "format", "transform", "history"];
+const READ_KEYS = ["concept", "variant", "observation", "query", "paths", "mode", "presentation", "fallback", "format", "transform", "history", "summary"];
+const SUMMARY_KEYS = ["title", "kind"];
 const WRITE_KEYS = ["concept", "observation", "mutation", "when"];
 const OBSERVATION_KEYS = ["code", "system", "unit", "codings", "valueType"];
 
@@ -438,8 +463,9 @@ function normalizeRead(value: unknown, unknown: string[]): BuilderFieldBindingRe
   const paths = Array.isArray(value.paths) ? uniqueStrings(value.paths) : [];
   const mode: BindingReadMode = value.mode === "sync" ? "sync" : value.mode === "none" ? "none" : "initial";
   const history = value.history === true;
-  if (!concept && !observation && paths.length === 0) return undefined;
-  if (mode === "none" && !history) return undefined;
+  const summary = normalizeSummary(value.summary, unknown);
+  if (!concept && !observation && paths.length === 0 && !summary) return undefined;
+  if (mode === "none" && !history && !summary) return undefined;
   const format = nonEmptyString(value.format);
   const transform = nonEmptyString(value.transform);
   const fallback = value.fallback;
@@ -455,7 +481,22 @@ function normalizeRead(value: unknown, unknown: string[]): BuilderFieldBindingRe
     ...(format ? { format: format === "datetime" ? "dateTime" : format } : {}),
     ...(transform ? { transform } : {}),
     ...(history ? { history } : {}),
+    ...(summary ? { summary } : {}),
   };
+}
+
+function normalizeSummary(value: unknown, unknown: string[]): BindingChartSummary | undefined {
+  if (!isRecord(value)) return undefined;
+  checkKeys("binding.read.summary", value, SUMMARY_KEYS, unknown);
+  const title = nonEmptyString(value.title);
+  if (!title) return undefined;
+  checkValue("binding.read.summary.kind", value.kind, ["template", "results"], unknown);
+  return { title, kind: value.kind === "results" ? "results" : "template" };
+}
+
+/** The chart summary a binding shows, or null (see `BindingChartSummary`). */
+export function chartSummaryOfBinding(binding: BuilderFieldBinding | null | undefined): BindingChartSummary | null {
+  return binding?.read?.summary ?? null;
 }
 
 function normalizeMutation(value: unknown): BindingMutation | undefined {

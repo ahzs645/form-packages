@@ -16,6 +16,7 @@ import {
   FORMULA_COMPARISON_OPS,
   FORMULA_VALUE_TYPES,
 } from "./ast";
+import { latestTermProblems, readLatestTerm } from "./chart-results";
 import { FORMULA_DURATION_UNITS, findFormulaFunction, formulaArityError, type FormulaParamType } from "./registry";
 
 export interface FormulaTypeEnv {
@@ -101,6 +102,11 @@ function typeOfNode(node: FormulaNode, env: FormulaTypeEnv): FormulaValueType {
     case "call": {
       const spec = findFormulaFunction(node.fn);
       if (!spec) return "unknown";
+      // A charted result is whatever the chart holds; its fallback says what the author expects.
+      if (spec.name === "latest") {
+        const fallback = readLatestTerm(node)?.fallback;
+        return fallback ? typeOfNode(fallback, env) : "unknown";
+      }
       if (spec.result !== "branches") return spec.result;
       const valueArgs = node.fn === "iif" ? node.args.slice(1) : node.fn === "ifPresent" ? node.args.slice(1) : node.args;
       return unifyTypes(valueArgs.map((arg) => typeOfNode(arg, env)));
@@ -257,6 +263,9 @@ export function checkFormula(formula: StoredFormula | FormulaNode, env: FormulaT
           const param = spec.params[index] ?? spec.params.find((entry) => entry.rest);
           if (param) checkArgument(arg, param.type, spec.name, env, report);
         });
+        if (spec.name === "latest") {
+          for (const problem of latestTermProblems(node)) report("error", "latest-argument", problem, { fn: "latest" });
+        }
         if (spec.name === "score" && node.args.length > 0) {
           const answerType = typeOfNode(node.args[0], env);
           if (answerType === "number" || answerType === "text" || isDateType(answerType)) {

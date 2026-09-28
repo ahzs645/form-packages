@@ -8,6 +8,7 @@
  * FormulaKit listed in the neutral-form-model proposal.
  */
 
+import type { FormulaChartRecord } from "./chart-results";
 import type { FormulaIncompleteMode } from "./evaluate";
 import type { FormulaDialect } from "./parse";
 
@@ -22,6 +23,8 @@ export interface FormulaSemanticCase {
   dialect?: FormulaDialect;
   /** The evaluator's `incomplete` option (default `blank`). */
   incomplete?: FormulaIncompleteMode;
+  /** The patient's chart for `latest()`: plain records, read by `chartRecordReader` (FormulaKit takes them as they are). */
+  observations?: FormulaChartRecord[];
   /** Compare numbers to 10 decimal places. */
   approx?: true;
   probe?: true;
@@ -41,6 +44,23 @@ const pediatricWeight =
   "([a] >= 1 && [a] <= 12) ? (0.5 * [a] + 4) : (([a] >= 13 && [a] <= 60) ? (2 * ([a] / 12) + 8) : (([a] >= 61 && [a] <= 144) ? (3 * ([a] / 12) + 7) : null))";
 const countTrueBuckets =
   "iif(countTrue([c1], [c2], [c3], [c4], [c5]) == 0, 0, iif(countTrue([c1], [c2], [c3], [c4], [c5]) == 1, 1, iif(countTrue([c1], [c2], [c3], [c4], [c5]) <= 3, 2, 3)))";
+
+/**
+ * A chart for `latest()`: MOIS observations (observationCode, loincCode,
+ * collectedDateTime) and FHIR-style records (codes, label, date, status)
+ * side by side, as the two hosts hand them over. Times are local, relative
+ * to formulaCaseNow (2026-09-26 10:30).
+ */
+const CHART: FormulaChartRecord[] = [
+  { observationCode: "22732", loincCode: "29463-7", value: "70", units: "kg", collectedDateTime: "2026-08-01T08:00:00" },
+  { observationCode: "22732", loincCode: "29463-7", value: "72.5", units: "kg", collectedDateTime: "2026-09-25T08:00:00" },
+  { observationCode: "22732", loincCode: "29463-7", value: "99", units: "kg", collectedDateTime: "2026-09-26T09:00:00", status: "entered-in-error" },
+  { kind: "Observation", label: "Heart Rate", codes: [{ system: "http://loinc.org", code: "8867-4" }], value: 88, unit: "/min", date: "2026-09-26T10:00:00", status: "final" },
+  { kind: "Observation", label: "Heart Rate", codes: [{ system: "http://loinc.org", code: "8867-4" }], value: 90, unit: "/min", date: "2026-09-26T10:15:00", status: "preliminary" },
+  { kind: "Observation", label: "RASS Score", codes: [{ system: "urn:webforms:cerner:T1978A:dta", code: "4000123" }], value: "-2", date: "2026-09-26T06:00:00", status: "final" },
+  { observationCode: "SMOKE", value: "Never smoker", collectedDateTime: "2026-01-01" },
+  { loincCode: "1111-1", value: 5, collectedDateTime: "2026-09-26T11:00:00" },
+];
 
 export const FORMULA_SEMANTIC_CASES: FormulaSemanticCase[] = [
   // ── The proposal's probe table ──────────────────────────────────────────
@@ -448,4 +468,24 @@ export const FORMULA_SEMANTIC_CASES: FormulaSemanticCase[] = [
   { formula: 'durationBetween([dob], today(), "years")', values: {}, incomplete: "compute-anyway", expected: null, note: "dates never count as 0" },
   { formula: "[a]", values: {}, incomplete: "compute-anyway", expected: null },
   { formula: "round([a] / 3, 1) + 1", values: { a: 5 }, incomplete: "compute-anyway", expected: 2.7, note: "answered inputs are unaffected" },
+
+  // ── latest(): the patient's latest charted result ───────────────────────
+  { formula: 'latest({"loinc": "29463-7"})', observations: CHART, expected: 72.5, note: "the latest counted result; numeric text reads as a number; entered-in-error never counts" },
+  { formula: 'latest({"mois": "22732"}) * 2', observations: CHART, expected: 145, note: "a MOIS observation code" },
+  { formula: 'latest({"loinc": "29463-7"}, {"withinMinutes": 60})', observations: CHART, expected: null, note: "nothing in the look-back window: blank" },
+  { formula: 'latest({"loinc": "29463-7"}, {"withinMinutes": 2880})', observations: CHART, expected: 72.5 },
+  { formula: 'latest({"loinc": "29463-7"}, {"withinMinutes": 60, "fallback": 0})', observations: CHART, expected: 0 },
+  { formula: 'latest({"loinc": "29463-7"}, {"withinMinutes": 60}) + 1', observations: CHART, expected: null, note: "a missing result blanks the formula" },
+  { formula: 'latest({"loinc": "29463-7"}, {"withinMinutes": 60}) + 1', observations: CHART, incomplete: "compute-anyway", expected: 1, note: "and counts as 0 when calculating from what is there" },
+  { formula: 'latest({"loinc": "29463-7", "unit": "lb"})', observations: CHART, expected: null, note: "a result in another unit does not count" },
+  { formula: 'latest({"loinc": "8867-4"})', observations: CHART, expected: 90, note: "every status counts by default, a preliminary one included" },
+  { formula: 'latest({"loinc": "8867-4"}, {"statuses": ["final", "amended", "corrected"]})', observations: CHART, expected: 88 },
+  { formula: 'latest("http://loinc.org|8867-4")', observations: CHART, expected: 90, note: "the FHIR token form" },
+  { formula: 'latest({"dta": "RASS Score"})', observations: CHART, expected: -2, note: "a Cerner DTA by its mnemonic (the record's label or a domain DTA coding)" },
+  { formula: 'latest({"mois": "SMOKE"})', observations: CHART, expected: "Never smoker", note: "a text result stays text" },
+  { formula: 'latest({"loinc": "1111-1"})', observations: CHART, expected: null, note: "a result after now does not count" },
+  { formula: 'latest({"loinc": "1111-1"}, {"aheadMinutes": 60})', observations: CHART, expected: 5, note: "unless it is inside the look-ahead" },
+  { formula: 'latest({"loinc": "0000-0"}, {"fallback": [w]})', values: { w: 5 }, observations: CHART, expected: 5, note: "the fallback is any formula" },
+  { formula: 'hasValue(latest({"loinc": "0000-0"}))', observations: CHART, expected: false },
+  { formula: 'latest({"loinc": "29463-7"})', expected: null, note: "no chart: no result" },
 ];

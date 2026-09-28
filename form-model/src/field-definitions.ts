@@ -27,6 +27,7 @@ export const BUILDER_FIELD_DEFINITIONS: readonly BuilderFieldDefinition[] = [
   { type: "booleanYesNo", label: "Yes / No", defaultLabel: "Yes / No question", description: "Radio pair (mutually exclusive)", category: "selection", palette: "primary" },
   { type: "booleanSingle", label: "Checkbox", defaultLabel: "Checkbox", description: "Single checkbox toggle", category: "selection", palette: "primary" },
   { type: "choice", label: "Choice", defaultLabel: "Choice", description: "Dropdown or radio/checkbox group", category: "selection", palette: "primary" },
+  { type: "provider", label: "Provider Search", defaultLabel: "Provider", description: "Search the provider directory for a clinician", category: "selection", palette: "primary" },
   { type: "date", label: "Date", defaultLabel: "Date", description: "Calendar date picker", category: "input", palette: "primary" },
   { type: "time", label: "Time", defaultLabel: "Time", description: "Time picker (currently 24-hour)", category: "input", palette: "primary" },
   { type: "datetime", label: "Date & Time", defaultLabel: "Date & time", description: "Combined date and time picker", category: "input", palette: "primary" },

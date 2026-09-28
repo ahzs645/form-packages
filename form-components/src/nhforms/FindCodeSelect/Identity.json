@@ -1,11 +1,11 @@
 {
   "name": "FindCodeSelect",
   "title": "Find code searchable dropdown",
-  "description": "Searchable coded-value selector with code-list, inline-option, and MOIS source-lookup modes",
+  "description": "Searchable coded-value selector with code-list, inline-option, MOIS source-lookup and provider-directory modes",
   "version": {
     "major": 1,
-    "minor": 0,
-    "patch": 2
+    "minor": 1,
+    "patch": 0
   },
   "type": "component",
   "owner": "Northern Health",

@@ -35,8 +35,28 @@ const _evaluateComputedFormula = (formula, expression, valuesByFieldId, options)
   return typeof result === "string" || typeof result === "boolean" ? result : null
 }
 
-const _hasAllReferencedValues = (formula, valuesByFieldId, fieldKinds) =>
-  formula ? FormulaKit.hasAllReferencedValues(formula, valuesByFieldId, { fieldKinds }) : true
+const _hasAllReferencedValues = (formula, valuesByFieldId, fieldKinds, observations) =>
+  formula ? FormulaKit.hasAllReferencedValues(formula, valuesByFieldId, { fieldKinds, observations }) : true
+
+// The patient's observations, for a formula's charted results (`latest()`):
+// the same list the form's latest-result defaults read, which the export
+// queries when a calculation needs it (formReadsPatientObservations).
+const _readPath = (source, path) => {
+  let current = source
+  for (const step of path) {
+    if (!current || typeof current !== "object") return null
+    current = current[step]
+  }
+  return current
+}
+const _patientObservations = (sd) => {
+  const direct = _readPath(sd, ["patient", "observations"])
+  if (Array.isArray(direct) && direct.length > 0) return direct
+  const queried = _readPath(sd, ["queryResult", "patient", 0, "observations"])
+  return Array.isArray(queried) ? queried : Array.isArray(direct) ? direct : []
+}
+const _chartTerms = (formula) =>
+  formula && typeof FormulaKit.latestTerms === "function" ? FormulaKit.latestTerms(formula) : []
 
 const _toDisplayValue = (value, precision, resultType) => {
   if (typeof value === "string") return value
@@ -261,6 +281,7 @@ const ComputedField = ({
   const readOnly = disabled ? true : readOnlyProp
   const theme = useTheme()
   const [fd, setFd] = useActiveData()
+  const sd = typeof useSourceData === "function" ? useSourceData() : null
   const valuesByFieldId = fd?.field?.data || {}
   const policy = _normalizeCalculationPolicy(calculationPolicy)
   const isOverridden = _computedFieldIsOverridden(valuesByFieldId, fieldId)
@@ -270,6 +291,12 @@ const ComputedField = ({
     [expression, formulaTree]
   )
 
+  const readsChart = useMemo(() => _chartTerms(formula).length > 0, [formula])
+  const observations = useMemo(
+    () => (readsChart ? _patientObservations(sd) : null),
+    [readsChart, sd]
+  )
+
   const computedValue = useMemo(
     () => presentationOnly
       ? resolvedValue
@@ -277,8 +304,9 @@ const ComputedField = ({
           selfId: fieldId,
           incomplete: _formulaIncompleteMode(incompleteBehavior),
           fieldKinds,
+          observations,
         }),
-    [expression, fieldId, fieldKinds, formula, incompleteBehavior, presentationOnly, resolvedValue, valuesByFieldId]
+    [expression, fieldId, fieldKinds, formula, incompleteBehavior, observations, presentationOnly, resolvedValue, valuesByFieldId]
   )
 
   const roundedValue = useMemo(
@@ -289,9 +317,9 @@ const ComputedField = ({
   const isIncomplete = useMemo(
     () => (
       incompleteBehavior !== "compute-anyway" &&
-      !_hasAllReferencedValues(formula, valuesByFieldId, fieldKinds)
+      !_hasAllReferencedValues(formula, valuesByFieldId, fieldKinds, observations)
     ),
-    [fieldKinds, formula, incompleteBehavior, valuesByFieldId]
+    [fieldKinds, formula, incompleteBehavior, observations, valuesByFieldId]
   )
 
   const storedValue = useMemo(() => {
@@ -332,8 +360,8 @@ const ComputedField = ({
       : `calc(${labelColumnWidth} + 10px)`
 
   const canShowInterpretation = useMemo(
-    () => Boolean(showInterpretation && _hasAllReferencedValues(formula, valuesByFieldId, fieldKinds)),
-    [fieldKinds, formula, showInterpretation, valuesByFieldId]
+    () => Boolean(showInterpretation && _hasAllReferencedValues(formula, valuesByFieldId, fieldKinds, observations)),
+    [fieldKinds, formula, observations, showInterpretation, valuesByFieldId]
   )
 
   const interpretationValue = policy === "always-calculated"

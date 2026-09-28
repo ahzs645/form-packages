@@ -59,6 +59,7 @@ export const BUILDER_FIELD_TYPES = [
   "scale",
   "matrix",
   "barcode",
+  "provider",
   "section",
   "heading",
 ] as const;
@@ -101,6 +102,14 @@ export const NEUTRAL_ANSWER_TYPES = [
   "attachment",
   /** Derived from other answers by a formula. */
   "computed",
+  /**
+   * A clinician chosen from the organisation's provider directory. Stored as
+   * a Coding: the provider's identifier as `code`, their name as `display`
+   * and the directory as `system` (see ./providers.ts). Every EMR target has
+   * a native equivalent (Cerner PROVIDER, MOIS Provider, a FHIR reference to
+   * a Practitioner), so it is an answer type rather than a text hint.
+   */
+  "provider",
 ] as const;
 export type NeutralAnswerType = (typeof NEUTRAL_ANSWER_TYPES)[number];
 
@@ -150,6 +159,7 @@ export const FIELD_TYPE_PROFILES = {
   scale: { role: "answer", answer: "scale" },
   matrix: { role: "container", answer: null },
   barcode: { role: "answer", answer: "text", textFormat: "barcode" },
+  provider: { role: "answer", answer: "provider" },
   section: { role: "structure", answer: null },
   heading: { role: "structure", answer: null },
 } as const satisfies Record<FieldType, FieldTypeProfile>;
@@ -170,6 +180,7 @@ export const NEUTRAL_ANSWER_TYPE_TO_FIELD_TYPE = {
   signature: "signature",
   attachment: "file",
   computed: "computed",
+  provider: "provider",
 } as const satisfies Record<NeutralAnswerType, FieldType>;
 
 /** The settings that refine a builder type's meaning. Any field-like object fits. */
@@ -334,6 +345,7 @@ export const FIELD_TYPE_TO_TABLE_COLUMN_TYPE = {
   scale: null,
   matrix: null,
   barcode: null,
+  provider: null,
   section: null,
   heading: null,
 } as const satisfies Record<FieldType, BuilderTableColumnType | null>;
@@ -404,6 +416,7 @@ export const FIELD_TYPE_TO_LAYOUT_CELL_INPUT_TYPE = {
   scale: null,
   matrix: null,
   barcode: null,
+  provider: null,
   section: null,
   heading: null,
 } as const satisfies Record<FieldType, BuilderLayoutTableCellInputType | null>;
@@ -495,6 +508,7 @@ export const FIELD_TYPE_TO_SUBFORM_ENTRY_TYPE = {
   scale: "scale",
   matrix: null,
   barcode: "text",
+  provider: null,
   section: null,
   heading: "heading",
 } as const satisfies Record<FieldType, SubformEntryType | null>;
@@ -626,6 +640,9 @@ export const FIELD_TYPE_TO_FHIR_ITEM_TYPE = {
   scale: "choice",
   matrix: "group",
   barcode: "string",
+  // A reference to a Practitioner (questionnaire-referenceResource), with the
+  // directory search left to the form filler (lib/fhir/questionnaire-providers.ts).
+  provider: "reference",
   section: "group",
   heading: "display",
 } as const satisfies Record<FieldType, FhirItemType>;
@@ -801,6 +818,7 @@ export const FIELD_TYPE_TO_ALAYACARE_FIELD_TYPE = {
   scale: "list",
   matrix: null,
   barcode: "text",
+  provider: "text",
   section: "section",
   heading: null,
 } as const satisfies Record<FieldType, AlayaCareFieldTypeName | null>;
@@ -817,6 +835,7 @@ export const FIELD_TYPE_TO_ALAYACARE_FIELD_TYPE_LOSSES: Partial<Record<FieldType
   password: "AlayaCare text does not mask answers.",
   scale: "AlayaCare has no scale; exported as a list carrying each option's score.",
   barcode: "Exported as text; scanning dropped.",
+  provider: "AlayaCare has no provider or employee search on a form; exported as text holding the provider's name, without their identifier.",
 };
 
 /**
@@ -1011,6 +1030,8 @@ export const FIELD_TYPE_TO_PARSED_KIND = {
   scale: "number",
   matrix: "matrix",
   barcode: "text",
+  // The MOIS exporter draws it by rawType (FindCodeSelect over the provider directory).
+  provider: "text",
   section: "section",
   heading: "heading",
 } as const satisfies Record<FieldType, ComponentKind>;

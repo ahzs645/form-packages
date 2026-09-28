@@ -720,6 +720,46 @@ const FindCodeSelectWithSourceLookup = ({
 }
 
 /**
+ * The provider directory, read as MOIS's own `Provider` control reads it
+ * (SMOIS main chunk: `useSourceData().useAppSettings().providers`, filtered
+ * by `providerType`, default "PROVIDER"). Each entry becomes the Coding the
+ * engine itself uses for a provider default:
+ * { code: providerId, display: name, system: 'MOIS-PROVIDERS' }.
+ * Entries without a providerType (the preview's sample list) are kept.
+ */
+const PROVIDER_CODE_SYSTEM = 'MOIS-PROVIDERS'
+
+const providerDirectoryItems = (providers, providerType) => (Array.isArray(providers) ? providers : [])
+  .filter((provider) => provider && typeof provider === 'object')
+  .filter((provider) => !provider.providerType || !providerType || provider.providerType === providerType)
+  .map((provider) => {
+    const code = provider.providerId ?? provider.code ?? provider.id ?? null
+    return {
+      code: code == null ? null : String(code),
+      display: String(provider.name ?? provider.display ?? code ?? ''),
+      system: PROVIDER_CODE_SYSTEM,
+    }
+  })
+  .filter((item) => item.display)
+
+const FindCodeSelectWithProviders = ({ providerType = 'PROVIDER', ...props }) => {
+  const sd = useSourceData()
+  const appSettings = typeof sd?.useAppSettings === 'function' ? sd.useAppSettings() : null
+  const providers = appSettings?.providers
+  const items = useMemo(() => providerDirectoryItems(providers, providerType), [providers, providerType])
+  return (
+    <FindCodeSelectWithFieldBinding
+      placeholder='Search for a provider'
+      {...props}
+      codeSystem={PROVIDER_CODE_SYSTEM}
+      optionList={items}
+      fallbackItems={[]}
+      selectionType='single'
+    />
+  )
+}
+
+/**
  * FindCodeSelect
  * Hybrid between FindCode and SimpleCodeSelect:
  * - Search/filter while typing
@@ -731,6 +771,10 @@ const FindCodeSelectWithSourceLookup = ({
  * code-list host context, and calling `useCodeList` in that path can fail.
  */
 const FindCodeSelect = (props) => {
+  // A provider search: the options are the engine's provider directory.
+  if (String(props?.providerType ?? '').trim()) {
+    return <FindCodeSelectWithProviders {...props} />
+  }
   const hasSourceLookup = Boolean(String(props?.lookupType ?? '').trim()) ||
     (Array.isArray(props?.lookupSourcePaths) && props.lookupSourcePaths.length > 0)
   if (hasSourceLookup) {

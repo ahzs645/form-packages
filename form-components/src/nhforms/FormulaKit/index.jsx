@@ -76,6 +76,153 @@ const FormulaKit = (() => {
     return ids;
   }
 
+  var FORMULA_LOINC_SYSTEM = "http://loinc.org";
+  var FORMULA_MOIS_OBSERVATION_SYSTEM = "urn:mois:observation";
+  var FORMULA_CERNER_DTA_SYSTEM = "urn:webforms:cerner:dta";
+  var LATEST_OBSERVATION_SYSTEMS = {
+    loinc: FORMULA_LOINC_SYSTEM,
+    mois: FORMULA_MOIS_OBSERVATION_SYSTEM,
+    dta: FORMULA_CERNER_DTA_SYSTEM
+  };
+  var NEVER_COUNTED = /* @__PURE__ */ new Set(["entered-in-error", "cancelled"]);
+  function literalText(node) {
+    if (!node) return void 0;
+    if (node.kind === "text") return node.value.trim() || void 0;
+    if (node.kind === "number" && Number.isFinite(node.value)) return String(node.value);
+    return void 0;
+  }
+  function literalNumber(node) {
+    if (!node) return void 0;
+    if (node.kind === "number") return Number.isFinite(node.value) ? node.value : void 0;
+    if (node.kind === "text" && /^\s*\d+(?:\.\d+)?\s*$/.test(node.value)) return Number(node.value);
+    return void 0;
+  }
+  function mapEntry(node, key) {
+    if (!node || node.kind !== "map") return void 0;
+    return node.entries.find((entry) => entry.key === key)?.value;
+  }
+  function observationOf(node) {
+    if (!node) return null;
+    if (node.kind === "text") {
+      const bar = node.value.indexOf("|");
+      if (bar <= 0 || bar === node.value.length - 1) return null;
+      return { codings: [{ system: node.value.slice(0, bar).trim(), code: node.value.slice(bar + 1).trim() }] };
+    }
+    if (node.kind !== "map") return null;
+    const codings = [];
+    for (const key of ["loinc", "mois", "dta"]) {
+      const code2 = literalText(mapEntry(node, key));
+      if (code2) codings.push({ system: LATEST_OBSERVATION_SYSTEMS[key], code: code2 });
+    }
+    const system = literalText(mapEntry(node, "system"));
+    const code = literalText(mapEntry(node, "code"));
+    if (system && code && !codings.some((coding) => coding.system === system && coding.code === code)) codings.push({ system, code });
+    const concept = literalText(mapEntry(node, "concept"));
+    const unit = literalText(mapEntry(node, "unit"));
+    if (codings.length === 0 && !concept) return null;
+    return { codings, ...concept ? { concept } : {}, ...unit ? { unit } : {} };
+  }
+  function readLatestTerm(node) {
+    if (node.kind !== "call" || node.fn !== "latest" || node.args.length < 1 || node.args.length > 2) return null;
+    const observation = observationOf(node.args[0]);
+    if (!observation) return null;
+    const options = node.args[1];
+    if (options && options.kind !== "map") return null;
+    const term = { observation, required: true };
+    const within = literalNumber(mapEntry(options, "withinMinutes"));
+    if (within !== void 0 && within > 0) term.withinMinutes = within;
+    const ahead = literalNumber(mapEntry(options, "aheadMinutes"));
+    if (ahead !== void 0 && ahead > 0) term.aheadMinutes = ahead;
+    const statuses = mapEntry(options, "statuses");
+    if (statuses) {
+      const list = statuses.kind === "list" ? statuses.items : [statuses];
+      const codes = list.map(literalText).filter((code) => Boolean(code)).map((code) => code.toLowerCase());
+      if (codes.length > 0) term.statuses = codes;
+    }
+    const fallback = mapEntry(options, "fallback");
+    if (fallback && fallback.kind !== "null") term.fallback = fallback;
+    const required = mapEntry(options, "required");
+    term.required = required && required.kind === "boolean" ? required.value && !term.fallback : !term.fallback;
+    return term;
+  }
+  function timeOf(value) {
+    if (value === null || value === void 0) return null;
+    if (value instanceof Date) return Number.isFinite(value.getTime()) ? value.getTime() : null;
+    if (typeof value === "number") return Number.isFinite(value) ? value : null;
+    const text = String(value).trim();
+    if (!text) return null;
+    const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+    if (dateOnly) return new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3])).getTime();
+    const local = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?$/.exec(text);
+    if (local) {
+      const [, y, mo, d2, h, mi, s = "0", ms = "0"] = local;
+      return new Date(Number(y), Number(mo) - 1, Number(d2), Number(h), Number(mi), Number(s), Number(ms.slice(0, 3).padEnd(3, "0"))).getTime();
+    }
+    const parsed = Date.parse(text);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  var unitKey = (unit) => typeof unit === "string" ? unit.replace(/\s+/g, "").toLowerCase() : "";
+  var hasValue = (value) => !(value === null || value === void 0 || typeof value === "string" && value.trim() === "" || Array.isArray(value) && value.length === 0);
+  function selectLatestResult(results, term, nowMs) {
+    if (!results || results.length === 0) return void 0;
+    const earliest = term.withinMinutes ? nowMs - term.withinMinutes * 6e4 : -Infinity;
+    const latest = nowMs + (term.aheadMinutes ?? 0) * 6e4;
+    const wantedUnit = unitKey(term.observation.unit);
+    const statuses = term.statuses?.map((status) => status.toLowerCase());
+    let best;
+    let bestTime = -Infinity;
+    let undated;
+    for (const result of results) {
+      if (!result || !hasValue(result.value)) continue;
+      const status = typeof result.status === "string" ? result.status.trim().toLowerCase() : "";
+      if (status && (statuses ? !statuses.includes(status) : NEVER_COUNTED.has(status))) continue;
+      if (wantedUnit && unitKey(result.unit) && unitKey(result.unit) !== wantedUnit) continue;
+      const time = timeOf(result.date);
+      if (time === null) {
+        if (!term.withinMinutes && !undated) undated = result;
+        continue;
+      }
+      if (time < earliest || time > latest) continue;
+      if (time >= bestTime) {
+        best = result;
+        bestTime = time;
+      }
+    }
+    return best ?? undated;
+  }
+  var lower = (value) => typeof value === "string" || typeof value === "number" ? String(value).trim().toLowerCase() : "";
+  function chartRecordMatches(record, observation) {
+    if (!record || typeof record !== "object") return false;
+    if (record.kind !== void 0 && record.kind !== "Observation") return false;
+    const moisCode = lower(record.observationCode);
+    const loincCode = lower(record.loincCode);
+    const label = lower(record.label);
+    for (const coding of observation.codings) {
+      const code = lower(coding.code);
+      if (!code) continue;
+      if (coding.system === FORMULA_MOIS_OBSERVATION_SYSTEM && moisCode === code) return true;
+      if (coding.system === FORMULA_LOINC_SYSTEM && loincCode === code) return true;
+      if (coding.system === FORMULA_CERNER_DTA_SYSTEM && label === code) return true;
+      for (const own of record.codes ?? []) {
+        if (!own) continue;
+        const system = typeof own.system === "string" ? own.system : "";
+        if (lower(own.code) !== code) continue;
+        if (system === coding.system) return true;
+        if (coding.system === FORMULA_CERNER_DTA_SYSTEM && /^urn:webforms:cerner:[^:]+:dta$/.test(system)) return true;
+      }
+    }
+    return false;
+  }
+  function chartRecordReader(records) {
+    const list = Array.isArray(records) ? records : [];
+    return (observation) => list.filter((record) => chartRecordMatches(record, observation)).map((record) => ({
+      value: record.value,
+      date: record.date ?? record.collectedDateTime ?? null,
+      status: typeof record.status === "string" ? record.status : null,
+      unit: typeof record.unit === "string" ? record.unit : typeof record.units === "string" ? record.units : null
+    }));
+  }
+
   function isRecord(value) {
     return value !== null && typeof value === "object" && !Array.isArray(value) && !(value instanceof Date);
   }
@@ -496,6 +643,10 @@ const FormulaKit = (() => {
   function todayValue(env) {
     return asDateOnly(nowValue(env));
   }
+  function referenceTimeMs(env) {
+    const at = env.referenceTime;
+    return at instanceof Date && Number.isFinite(at.getTime()) ? at.getTime() : nowValue(env).ms;
+  }
   function nowValue(env) {
     const now = env.now instanceof Date && Number.isFinite(env.now.getTime()) ? env.now : /* @__PURE__ */ new Date();
     return { $date: true, ms: now.getTime(), dateOnly: false };
@@ -894,6 +1045,68 @@ const FormulaKit = (() => {
       return null;
     }
   }
+  function chartResultOf(term, env) {
+    let results;
+    try {
+      results = env.observations ? env.observations(term.observation) : null;
+    } catch {
+      results = null;
+    }
+    const result = selectLatestResult(results, term, referenceTimeMs(env));
+    return result ? result.value : void 0;
+  }
+  function latestResult(node, scope) {
+    const term = readLatestTerm(node);
+    if (!term) return null;
+    const raw = chartResultOf(term, scope.env);
+    const value = raw === void 0 ? null : readStored(raw, void 0);
+    if (!isMissing(value)) {
+      if (typeof value === "string") return numberFromText(value) ?? value;
+      return value;
+    }
+    if (term.fallback) return evaluateNode(term.fallback, scope);
+    return scope.env.incomplete === "compute-anyway" ? MISSING_INPUT : null;
+  }
+  function missingChartResults(formula, env) {
+    const expr = formula && typeof formula === "object" && formula.v === 1 && formula.expr ? formula.expr : formula;
+    const missing = [];
+    const stack = expr ? [expr] : [];
+    const fullEnv = env;
+    while (stack.length > 0) {
+      const node = stack.pop();
+      if (!node || typeof node !== "object") continue;
+      if (node.kind === "call" && node.fn === "latest") {
+        const term = readLatestTerm(node);
+        if (term && term.required) {
+          const raw = chartResultOf(term, fullEnv);
+          if (raw === void 0 || isMissing(readStored(raw, void 0))) missing.push(term);
+        }
+      }
+      switch (node.kind) {
+        case "list":
+          stack.push(...node.items);
+          break;
+        case "map":
+          for (const entry of node.entries) stack.push(entry.value);
+          break;
+        case "unary":
+          stack.push(node.operand);
+          break;
+        case "binary":
+          stack.push(node.left, node.right);
+          break;
+        case "call":
+          stack.push(...node.args);
+          break;
+        case "if":
+          stack.push(node.test, node.then, node.else);
+          break;
+        default:
+          break;
+      }
+    }
+    return missing;
+  }
   function evaluateCall(node, scope) {
     const env = scope.env;
     const cache = /* @__PURE__ */ new Map();
@@ -1048,6 +1261,8 @@ const FormulaKit = (() => {
         return Math.floor(wholeMonths(birth, asOf) / 12);
       }
       // Clinical
+      case "latest":
+        return latestResult(node, scope);
       case "bmi": {
         const weight = numberArg(args, 0);
         const height = numberArg(args, 1);
@@ -1565,6 +1780,23 @@ const FormulaKit = (() => {
       description: "A WHO/CDC growth z-score. Needs the growth reference tables, so the host supplies it through the evaluator's `functions`; blank without it.",
       engines: ["lib/expressions"],
       targets: support(U, U, U, U, U, "changed")
+    },
+    // ── The patient's chart ─────────────────────────────────────────────────
+    {
+      name: "latest",
+      aliases: [],
+      category: "chart",
+      params: [{ name: "observation", type: "observation" }, { name: "options", type: "options", optional: true }],
+      minArgs: 1,
+      maxArgs: 2,
+      // A number when the result is numeric, else its text or choice; a fallback gives its own type.
+      result: "unknown",
+      missing: "handles",
+      description: 'The patient\'s latest charted result for an observation: `latest({"loinc": "29463-7"}, {"withinMinutes": 1440, "fallback": 0})`. The observation is named like a chart binding (`loinc`, `mois`, `dta` for a Cerner DTA, `system` + `code`, `concept`, and a `unit` results must be in); the options are `withinMinutes`, `aheadMinutes`, `statuses`, `fallback` and `required`. With no result in the window and no fallback it reads like an unanswered field, and a required result that is missing makes the formula incomplete. See chart-results.ts.',
+      engines: ["cerner-equation", "new"],
+      // MOIS: read by MOIS observation code (a LOINC or DTA through the crosswalk). Cerner: an equation component
+      // over the DTA. FHIR: an x-fhir-query variable over a LOINC (or other queryable) code.
+      targets: support(C, C, U, C, U, U)
     }
   ];
   var BY_NAME = /* @__PURE__ */ new Map();
@@ -1576,8 +1808,8 @@ const FormulaKit = (() => {
   }
   for (const spec of FORMULA_FUNCTIONS) {
     for (const name of [spec.name, ...spec.aliases]) {
-      const lower = name.toLowerCase();
-      if (!BY_LOWER.has(lower)) BY_LOWER.set(lower, spec);
+      const lower2 = name.toLowerCase();
+      if (!BY_LOWER.has(lower2)) BY_LOWER.set(lower2, spec);
     }
   }
   function findFormulaFunction(name) {
@@ -1674,6 +1906,10 @@ const FormulaKit = (() => {
       case "call": {
         const spec = findFormulaFunction(node.fn);
         if (!spec) return "unknown";
+        if (spec.name === "latest") {
+          const fallback = readLatestTerm(node)?.fallback;
+          return fallback ? typeOfNode(fallback, env) : "unknown";
+        }
         if (spec.result !== "branches") return spec.result;
         const valueArgs = node.fn === "iif" ? node.args.slice(1) : node.fn === "ifPresent" ? node.args.slice(1) : node.args;
         return unifyTypes(valueArgs.map((arg) => typeOfNode(arg, env)));
@@ -2341,15 +2577,38 @@ const FormulaKit = (() => {
       getParam: options.getParam,
       scoreMaps: options.scoreMaps,
       now: options.now,
+      referenceTime: options.referenceTime,
       fieldKind: kindGetter(options),
       functions: options.functions,
-      incomplete: options.incomplete
+      incomplete: options.incomplete,
+      observations: observationReader(options.observations)
     });
+  }
+  function observationReader(observations) {
+    if (typeof observations === "function") return observations;
+    if (Array.isArray(observations)) return chartRecordReader(observations);
+    return void 0;
   }
   function hasAllReferencedValues(formula, values, options = {}) {
     const get = valueGetter(values);
     const kind = kindGetter(options);
-    return references(formula).every((fieldId) => !isBlankFormulaAnswer(get(fieldId), kind?.(fieldId)));
+    if (!references(formula).every((fieldId) => !isBlankFormulaAnswer(get(fieldId), kind?.(fieldId)))) return false;
+    const resolved = toFormula(formula);
+    if (!resolved || latestTerms(resolved).length === 0) return true;
+    return missingChartResults(resolved, { observations: observationReader(options.observations), now: options.now, referenceTime: options.referenceTime }).length === 0;
+  }
+  function latestTerms(formula) {
+    const resolved = toFormula(formula);
+    const terms = [];
+    if (!resolved) return terms;
+    walkFormula(resolved, (node) => {
+      const term = node.kind === "call" && node.fn === "latest" ? readLatestTerm(node) : null;
+      if (term) terms.push(term);
+    });
+    return terms;
+  }
+  function chartReader(records) {
+    return chartRecordReader(records);
   }
   function evaluate(expression, valuesByFieldId, currentFieldId, options = {}) {
     const formula = toFormula(expression);
@@ -2367,7 +2626,7 @@ const FormulaKit = (() => {
   function toComparableValue(value) {
     return formulaAnswerOutput(value) ?? "";
   }
-  function hasValue(value) {
+  function hasValue2(value) {
     return !isBlankFormulaAnswer(value);
   }
   function roundValue(value, precision) {
@@ -2378,11 +2637,13 @@ const FormulaKit = (() => {
   }
 
   return {
+    chartReader,
     evaluate,
     evaluateTree,
     extractReferences,
     hasAllReferencedValues,
-    hasValue,
+    hasValue: hasValue2,
+    latestTerms,
     parse,
     print,
     references,

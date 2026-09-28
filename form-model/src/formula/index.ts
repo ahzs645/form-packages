@@ -60,7 +60,29 @@ export {
 export { printFormula } from "./print";
 export { checkFormula, formulaValueTypeForFieldType, inferFormulaType, isTimeReference, type FormulaTypeEnv } from "./types";
 export {
+  FORMULA_CERNER_DTA_SYSTEM,
+  FORMULA_LOINC_SYSTEM,
+  FORMULA_MOIS_OBSERVATION_SYSTEM,
+  LATEST_OBSERVATION_SYSTEMS,
+  LATEST_RESULT_STATUSES,
+  chartRecordMatches,
+  chartRecordReader,
+  latestCode,
+  latestFormulaNode,
+  latestObservationKeys,
+  latestTermProblems,
+  readLatestTerm,
+  selectLatestResult,
+  type FormulaChartRecord,
+  type FormulaChartResult,
+  type FormulaObservation,
+  type FormulaObservationCoding,
+  type FormulaObservationReader,
+  type LatestTerm,
+} from "./chart-results";
+export {
   evaluateFormula,
+  missingChartResults,
   formulaAnswerNumber,
   formulaAnswerOutput,
   formulaAnswerText,

@@ -39,6 +39,7 @@ function runCase(engine: Kit, entry: FormulaSemanticCase): unknown {
     fieldKinds: kinds,
     getParam: (name: string) => params[name],
     incomplete: entry.incomplete,
+    observations: entry.observations,
   });
 }
 

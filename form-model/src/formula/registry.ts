@@ -13,7 +13,8 @@
  * mirror them, and lib/__tests__/formula-registry-capabilities.test.ts fails
  * when one disagrees. The `mois` column is `native` throughout because
  * FormulaKit is generated from the reference evaluator, except zScore, whose
- * growth tables the exported form does not carry. `documents` has no table:
+ * growth tables the exported form does not carry, and latest(), which reads
+ * the chart by MOIS observation code and so only where one is known. `documents` has no table:
  * document fill runs the reference evaluator.
  */
 
@@ -39,7 +40,7 @@ export type FormulaEngine =
  * `unit` / `units` are duration unit names, `scoreMap` is a literal map or a
  * checkbox's points.
  */
-export type FormulaParamType = "number" | "numbers" | "text" | "boolean" | "date" | "unit" | "units" | "scoreMap" | "any";
+export type FormulaParamType = "number" | "numbers" | "text" | "boolean" | "date" | "unit" | "units" | "scoreMap" | "observation" | "options" | "any";
 
 export interface FormulaFunctionParam {
   name: string;
@@ -49,7 +50,7 @@ export interface FormulaFunctionParam {
   rest?: boolean;
 }
 
-export type FormulaFunctionCategory = "logic" | "missing" | "choice" | "math" | "aggregate" | "text" | "date" | "clinical";
+export type FormulaFunctionCategory = "logic" | "missing" | "choice" | "math" | "aggregate" | "text" | "date" | "clinical" | "chart";
 
 export interface FormulaFunctionSpec {
   name: string;
@@ -574,6 +575,25 @@ export const FORMULA_FUNCTIONS: readonly FormulaFunctionSpec[] = [
     description: "A WHO/CDC growth z-score. Needs the growth reference tables, so the host supplies it through the evaluator's `functions`; blank without it.",
     engines: ["lib/expressions"],
     targets: support(U, U, U, U, U, "changed"),
+  },
+
+  // ── The patient's chart ─────────────────────────────────────────────────
+  {
+    name: "latest",
+    aliases: [],
+    category: "chart",
+    params: [{ name: "observation", type: "observation" }, { name: "options", type: "options", optional: true }],
+    minArgs: 1,
+    maxArgs: 2,
+    // A number when the result is numeric, else its text or choice; a fallback gives its own type.
+    result: "unknown",
+    missing: "handles",
+    description:
+      'The patient\'s latest charted result for an observation: `latest({"loinc": "29463-7"}, {"withinMinutes": 1440, "fallback": 0})`. The observation is named like a chart binding (`loinc`, `mois`, `dta` for a Cerner DTA, `system` + `code`, `concept`, and a `unit` results must be in); the options are `withinMinutes`, `aheadMinutes`, `statuses`, `fallback` and `required`. With no result in the window and no fallback it reads like an unanswered field, and a required result that is missing makes the formula incomplete. See chart-results.ts.',
+    engines: ["cerner-equation", "new"],
+    // MOIS: read by MOIS observation code (a LOINC or DTA through the crosswalk). Cerner: an equation component
+    // over the DTA. FHIR: an x-fhir-query variable over a LOINC (or other queryable) code.
+    targets: support(C, C, U, C, U, U),
   },
 ];
 

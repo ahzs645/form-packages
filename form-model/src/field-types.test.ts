@@ -131,9 +131,10 @@ describe("round trips", () => {
       tableColumn: ["datetime", "textarea", "email", "phone", "url"],
       layoutCell: ["datetime", "email", "phone", "url"],
       subformEntry: ["booleanSingle", "email", "phone", "url", "password", "barcode", "rating", "slider"],
-      fhir: ["booleanSingle", "email", "phone", "password", "barcode", "rating", "slider", "signature", "table", "layoutTable", "matrix", "component", "hyperlink", "richText", "scale", "computed"],
-      alayaCare: ["booleanYesNo", "email", "phone", "url", "password", "barcode", "rating", "slider", "scale"],
-      parsedKind: ["computed", "booleanYesNo", "datetime", "email", "phone", "url", "hyperlink", "textarea", "signature", "file", "password", "richText", "rating", "slider", "scale", "barcode"],
+      // A provider is a reference item; its referenceResource extension (Practitioner) restores it on import.
+      fhir: ["booleanSingle", "email", "phone", "password", "barcode", "rating", "slider", "signature", "table", "layoutTable", "matrix", "component", "hyperlink", "richText", "scale", "computed", "provider"],
+      alayaCare: ["booleanYesNo", "email", "phone", "url", "password", "barcode", "rating", "slider", "scale", "provider"],
+      parsedKind: ["computed", "booleanYesNo", "datetime", "email", "phone", "url", "hyperlink", "textarea", "signature", "file", "password", "richText", "rating", "slider", "scale", "barcode", "provider"],
     };
     const routes: Array<[string, (type: BuilderFieldType) => BuilderFieldType | null]> = [
       ["tableColumn", (type) => { const column = FIELD_TYPE_TO_TABLE_COLUMN_TYPE[type]; return column && TABLE_COLUMN_TYPE_TO_FIELD_TYPE[column]; }],

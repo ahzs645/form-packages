@@ -18,6 +18,7 @@ import type { ExportTargetsSetting } from "./targets";
 import type { StoredFormula } from "./formula/ast";
 import type { BuilderDefaultAnswer } from "./defaults";
 import type { BuilderFieldBinding } from "./bindings";
+import type { BuilderChartList } from "./chart-lists";
 
 export { BUILDER_FIELD_TYPES } from "./field-types";
 export {
@@ -1260,12 +1261,36 @@ export interface BuilderCernerRangeLimits {
   criticalHigh?: number;
   feasibleLow?: number;
   feasibleHigh?: number;
+  /**
+   * Laboratory linear (analytical) limits: a lab result outside them is
+   * flagged nonlinear and shown as `<low` or `>high`. PowerChart's Configure
+   * DTAs page marks its Linear box "reserved for future use", so they are
+   * not a PowerForm validation rule. Only General Lab DTAs set them.
+   */
+  linearLow?: number;
+  linearHigh?: number;
+  /**
+   * MINS_BACK: how far back, in minutes, a question defaults from the
+   * previously charted result (the configuration reference and export
+   * contract). One DTA Wizard help page calls it a delta-check window
+   * instead; see domain-catalog.md. Delta checks are not modelled.
+   */
+  minsBack?: number;
+  /**
+   * Who or what the row applies to beyond the patient, as displays (their
+   * codes are domain-specific): the performing service resource (only General
+   * Lab rows set one), the specimen type and the encounter type (neither set
+   * in T1978A; how PowerChart ranks an encounter-type row is undocumented).
+   */
+  serviceResource?: string;
+  specimenType?: string;
+  encounterType?: string;
 }
 
 /**
  * One row of DTA Wizard's Reference Ranges spreadsheet beyond the default
  * band: who it applies to (sex, gestation, an age span) and the limits for
- * them. `minsBack` is the delta-check window to the previous result.
+ * them.
  */
 export interface BuilderCernerReferenceBand extends BuilderCernerRangeLimits {
   sex?: "FEMALE" | "MALE" | "UNDIFFERENTIATED" | "";
@@ -1274,7 +1299,6 @@ export interface BuilderCernerReferenceBand extends BuilderCernerRangeLimits {
   ageFromUnits?: BuilderCernerAgeUnit;
   ageTo?: number;
   ageToUnits?: BuilderCernerAgeUnit;
-  minsBack?: number;
   /**
    * Answers selected specifically for this range; empty means no responses.
    * `truthState` is the TRUTH_STATE_MEAN ("UNK", or "" for none), `category`
@@ -1314,6 +1338,13 @@ export interface BuilderCernerEquationComponent {
   lookBackMinutes?: number;
   /** RESULT_STATUS_DISPLAY the component reads (Performed when absent; "" for none). */
   resultStatus?: string;
+  /**
+   * The DTA is not on the form: PowerChart reads its last charted result
+   * (the formula's `latest()`). Its identity comes with it (COMP_DESCRIPTION).
+   */
+  chartResult?: boolean;
+  /** COMP_DESCRIPTION of a chart-result component. */
+  description?: string;
 }
 
 /**
@@ -1596,6 +1627,14 @@ export interface BuilderCernerConfig {
    * beside it) or into a section (its title bar and marker), kept verbatim
    * so the export replays them at their original coordinates.
    */
+  /** The input's own MODULE: the extension control library that draws a native special control (PFEXTCTRLS on problem, medication, procedure, family and social history lists; PFPMCtrls). Empty on ordinary inputs. */
+  inputModule?: string;
+  /**
+   * The question an imported input became (type, choice style, "other" answer).
+   * While the field still has this shape its DTA keeps its source result type
+   * (YESNO, FREETEXT, ONLINECODESET…) on export; a changed shape derives one.
+   */
+  importedShape?: { type: string; choiceStyle?: string; showOtherOption?: boolean };
   absorbedInputs?: Array<{
     seq: number;
     /** Position in the section's INPUT_LIST. */
@@ -1605,8 +1644,10 @@ export interface BuilderCernerConfig {
     prefs: Record<string, string>;
     /** What this input became: the field's label, its help text, or section chrome. */
     role?: "label" | "chip" | "help";
-    /** Preserve complete native modules when a reference note becomes help text. */
+    /** The input's complete native modules, replayed with any value the export changes. */
     modules?: BuilderCernerInputModule[];
+    /** The input's own MODULE: the extension control library that draws it (PFEXTCTRLS, PFPMCtrls). */
+    module?: string;
   }>;
   /** Native help-note placement; omitted keeps imported coordinates unchanged. */
   helpTextPosition?: "source" | "left" | "right" | "above" | "below";
@@ -2072,6 +2113,7 @@ export interface BuilderLibraryDefinition {
 }
 
 export interface BuilderField {
+  documentLayout?: import("./document-layout").DocumentLayout;
   fieldDefinition?: BuilderLibraryDefinition | null;
   behavior?: BuilderFieldBehavior;
 
@@ -2165,6 +2207,13 @@ export interface BuilderField {
    */
   binding?: BuilderFieldBinding | null;
   /**
+   * The patient's chart list this field shows (allergies, problems,
+   * medications, procedures, social or family history), and whether the form
+   * maintains it (see chart-lists.ts). Read it with readChartList, which also
+   * reads MOIS chart components and imported PowerChart chart controls.
+   */
+  chartList?: BuilderChartList | null;
+  /**
    * Field-level MOIS save key, chart mutation and module link. Together with
    * sourceConfig and moisOutput this is the single authoring model; layout
    * drafts mirror it (lib/editor-sdk/mois-binding-reconciliation.ts).
@@ -2256,6 +2305,8 @@ export interface BuilderField {
   // Direct MOIS submit/export mapping. This makes legacy getSaveData/signSubmit
   // observation behavior editable without requiring a custom component wrapper.
   moisOutput?: BuilderMoisOutputMapping | null;
+  /** What a numeric answer is expected to be, by patient: normal, critical and feasible limits in bands (reference-ranges.ts). */
+  referenceRanges?: import("./reference-ranges").ReferenceRangeBand[] | null;
 
   // Table field config
   tableConfig?: {
@@ -2359,6 +2410,13 @@ export interface BuilderField {
       } | null;
     }>;
     mode?: BuilderTableMode;
+    /**
+     * `matrix`: each column is a question asked once, drawn as a row with its
+     * answers across, and the table holds one row of answers (a Cerner
+     * Discrete Grid). Read through `readQuestionMatrix` (./matrix); the
+     * structure reader gives the table the `matrix` presentation.
+     */
+    presentation?: "matrix";
     orientation?: "horizontal" | "vertical";
     allowAddRows?: boolean;
     allowRemoveRows?: boolean;
@@ -3468,11 +3526,15 @@ export * from "./layout";
 export * from "./formula";
 export * from "./field-types";
 export * from "./values";
+export * from "./providers";
 export * from "./defaults";
 export * from "./bindings";
+export * from "./chart-lists";
+export * from "./reference-ranges";
 export * from "./targets";
 export * from "./validation";
 export * from "./structure";
+export * from "./matrix";
 export * from "./translations";
 export * from "./workflow";
 export { backfillOptionScoresFromFormula } from "./score-backfill";
@@ -3484,3 +3546,5 @@ export {
   type SessionWorkflowSnapshot,
   type SessionXmlAttachment,
 } from "./session";
+
+export * from "./document-layout";

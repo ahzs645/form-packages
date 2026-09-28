@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { evaluateFormula, formulaEnvFromValues, parseFormula, parseFormulaOrThrow } from "./index";
+import { chartRecordReader, evaluateFormula, formulaEnvFromValues, parseFormula, parseFormulaOrThrow } from "./index";
 import { FORMULA_SEMANTIC_CASES, formulaCaseNow, type FormulaSemanticCase } from "./semantic-cases";
 
 function runCase(entry: FormulaSemanticCase): unknown {
@@ -18,6 +18,7 @@ function runCase(entry: FormulaSemanticCase): unknown {
       fieldKind: (id) => kinds[id],
       getParam: (name) => params[name],
       incomplete: entry.incomplete,
+      ...(entry.observations ? { observations: chartRecordReader(entry.observations) } : {}),
     }),
   );
 }
