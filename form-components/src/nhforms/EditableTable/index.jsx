@@ -203,7 +203,8 @@ const _resolvePathValue = (root, path) => {
 
 const _resolveLiteralValue = (value, context) => {
   if (value === "$now") return new Date().toISOString()
-  if (value === "$today") return new Date().toISOString().slice(0, 10)
+  // The signer's local day; toISOString() is UTC and stamps tomorrow in the evening.
+  if (value === "$today") return _todayDateValue()
   if (value === "$userInitials") return _resolvePathValue(context, "userProfile.identity.initials")
   if (value === "$userFullName") return _resolvePathValue(context, "userProfile.identity.fullName")
   if (value === "$userLoginName") return _resolvePathValue(context, "userProfile.loginName")
@@ -652,6 +653,109 @@ const _normalizeMirroredCellValue = (value, column) => {
   return value
 }
 
+// Chart observations (`chartObservations` prop, from columns saved as an
+// observation): each row writes one observation per such column, dated by the
+// row's date (and time) columns, through the component DCO channel
+// (__componentPayloads.dcoUpdatesByComponent[id], written on submit only).
+// The observations this webform wrote before are reconciled by code and
+// date/time: unchanged ones are left, changed ones corrected (status C on
+// their id), and ones no row still produces deleted (negative id).
+const _observationDateKey = (value) => {
+  const text = value && typeof value === "object" && "date" in value ? value.date : value
+  const match = /^(\d{4})[-./](\d{1,2})[-./](\d{1,2})(?:[T ](\d{1,2}):(\d{2}))?/.exec(String(text ?? "").trim())
+  if (!match) return null
+  const pad = (part) => String(part).padStart(2, "0")
+  const date = `${match[1]}-${pad(match[2])}-${pad(match[3])}`
+  return match[4] === undefined ? { date, key: date } : { date, time: `${pad(match[4])}:${match[5]}`, key: `${date}T${pad(match[4])}:${match[5]}` }
+}
+
+const _rowObservationDate = (row, dateConfig) => {
+  if (!dateConfig?.datePath) return null
+  const day = _observationDateKey(_getValueAtPath(row, dateConfig.datePath))
+  if (!day) return null
+  const timeText = dateConfig.timePath ? String(_getValueAtPath(row, dateConfig.timePath) ?? "").trim() : ""
+  const time = /^(\d{1,2}):(\d{2})/.exec(timeText)
+  if (!time) return day
+  const hhmm = `${time[1].padStart(2, "0")}:${time[2]}`
+  return { date: day.date, time: hhmm, key: `${day.date}T${hhmm}` }
+}
+
+const _chartObservationWebformId = (observation) => (
+  Number(observation?.sourceWebformId) || Number(observation?.linkedWebformId) ||
+  Number(observation?.webformId) || Number(observation?.webform?.webformId) || 0
+)
+
+// The staged DCO payload for the table's rows. `existing` are the chart
+// observations this webform wrote before (sd.webform.observations).
+const _buildChartObservationPayload = ({ rows = [], columns = [], config, existing = [], formData, createdBy } = {}) => {
+  const writes = Array.isArray(config?.columns) ? config.columns : []
+  if (writes.length === 0) return []
+  const codes = new Set()
+  writes.forEach((write) => {
+    codes.add(String(write.observationCode))
+    Object.values(write.codeBy?.codes || {}).forEach((entry) => entry?.observationCode && codes.add(String(entry.observationCode)))
+  })
+  const columnById = new Map(columns.map((column) => [column.id, column]))
+  const desired = []
+  ;(Array.isArray(rows) ? rows : []).forEach((row) => {
+    if (!row || typeof row !== "object") return
+    const when = _rowObservationDate(row, config.date)
+    if (!when) return
+    writes.forEach((write) => {
+      const column = columnById.get(write.columnId)
+      if (column && !_evaluateColumnVisibility(column, row, columns, formData)) return
+      const raw = _getValueAtPath(row, write.dataPath || write.columnId)
+      const value = _stringifyValue(raw).trim()
+      if (!value) return
+      const chosen = write.codeBy
+        ? write.codeBy.codes?.[String(_getValueAtPath(row, write.codeBy.columnPath || write.codeBy.columnId) ?? "")]
+        : null
+      const target = chosen?.observationCode ? { ...write, ...chosen } : write
+      desired.push({
+        key: `${target.observationCode}|${when.key}`,
+        observationCode: String(target.observationCode),
+        value,
+        valueType: target.valueType || (typeof raw === "number" ? "NUMERIC" : "TEXT"),
+        units: target.units || "",
+        description: target.description || write.description || "",
+        loincCode: target.loincCode || "",
+        when,
+      })
+    })
+  })
+  const existingByKey = new Map()
+  ;(Array.isArray(existing) ? existing : []).forEach((observation) => {
+    const code = String(observation?.observationCode ?? "").trim()
+    const id = Number(observation?.observationId)
+    if (!codes.has(code) || !(id > 0)) return
+    const when = _observationDateKey(observation.collectedDateTime) || _observationDateKey(observation.collectedDate)
+    if (!when) return
+    const key = `${code}|${when.key}`
+    if (!existingByKey.has(key)) existingByKey.set(key, [])
+    existingByKey.get(key).push(observation)
+  })
+  const payload = []
+  desired.forEach((entry) => {
+    const prior = existingByKey.get(entry.key)?.shift()
+    if (prior && String(prior.value ?? "").trim() === entry.value) return
+    payload.push({
+      observationId: prior ? Number(prior.observationId) : 0,
+      observationCode: entry.observationCode,
+      observationClass: "DCOBS",
+      value: entry.value,
+      valueType: entry.valueType,
+      status: prior ? "C" : "F",
+      ...(entry.description ? { description: entry.description } : {}),
+      ...(entry.units ? { units: entry.units } : {}),
+      ...(entry.loincCode ? { loincCode: entry.loincCode } : {}),
+      ...(createdBy ? { collectedBy: createdBy, ...(prior ? {} : { orderedBy: createdBy }) } : {}),
+      ...(entry.when.time ? { collectedDateTime: entry.when.key } : { collectedDate: entry.when.date }),
+    })
+  })
+  existingByKey.forEach((left) => left.forEach((observation) => payload.push({ observationId: -Number(observation.observationId) })))
+  return payload
+}
+
 const _normalizeSourceCellValue = (value, column) => {
   if (column?.type === "checkbox") {
     return _toDocumentCheckboxValue(value)
@@ -1004,6 +1108,8 @@ const _buildSubformFieldFromColumn = (column) => {
     required: _isRequiredColumn(column),
     requiredMessage: typeof column.requiredMessage === "string" && column.requiredMessage.trim() ? column.requiredMessage : undefined,
     visibility: visibility || undefined,
+    // Which answers the row editor offers (FormLogicKit.availableOptions).
+    optionRules: Array.isArray(column.optionRules) && column.optionRules.length > 0 ? column.optionRules : undefined,
   })
 
   switch (column.type) {
@@ -1156,6 +1262,9 @@ EditableTable = ({
   authorshipColumnLabel = "Lock",
   sourceFieldIds = {},
   sourceFieldIdsByRow = {},
+  // Columns saved as observations and the columns that date them (see
+  // _buildChartObservationPayload); staged for submit.
+  chartObservations = null,
   rowsPath,
   countPath,
   ...props
@@ -1331,6 +1440,42 @@ EditableTable = ({
   }
 
   const rows = getRows()
+
+  // Stage the rows' chart observations (written on submit). The observations
+  // this webform wrote before come back on sd.webform.observations; a new
+  // form (no webform id yet) has none.
+  const chartObservationPayload = useMemo(() => {
+    if (!chartObservations || isLocked) return null
+    const webformId = Number(sd?.webform?.webformId) || Number(sd?.formParams?.webformId) || 0
+    const existing = webformId && Array.isArray(sd?.webform?.observations)
+      ? sd.webform.observations.filter((observation) => {
+        const linked = _chartObservationWebformId(observation)
+        return !linked || linked === webformId
+      })
+      : []
+    return _buildChartObservationPayload({
+      rows: Array.isArray(rows) ? rows : [],
+      columns,
+      config: chartObservations,
+      existing,
+      formData,
+      createdBy: sd?.userProfile?.identity?.fullName,
+    })
+  }, [chartObservations, columns, formData, isLocked, rows, sd])
+  useEffect(() => {
+    if (chartObservationPayload === null || !fd?.setFormData) return
+    fd.setFormData(produce((draft) => {
+      if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
+      if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
+      const container = draft.field.data.__componentPayloads ?? {}
+      const group = container.dcoUpdatesByComponent ?? {}
+      if (JSON.stringify(group[id] ?? null) === JSON.stringify(chartObservationPayload.length ? chartObservationPayload : null)) return
+      if (chartObservationPayload.length) group[id] = chartObservationPayload
+      else delete group[id]
+      container.dcoUpdatesByComponent = group
+      draft.field.data.__componentPayloads = container
+    }))
+  }, [chartObservationPayload, fd, id])
   const sourceSeedRows = useMemo(() => _buildRowsFromSourceFields({
     fieldData: fd?.field?.data,
     columns,

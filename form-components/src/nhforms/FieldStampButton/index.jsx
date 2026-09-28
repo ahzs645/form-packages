@@ -29,12 +29,60 @@ const resolvePathValue = (root, path) => {
     }, root)
 }
 
+const STAMP_MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+const pad2 = (number) => (number < 10 ? "0" : "") + number
+
+// Local wall-clock date/time (the signer's day, not UTC). Tokens match the
+// document date formats: yyyy yy MMMM MMM MM M dd d HH H mm.
+const formatStampDate = (date, format) =>
+  String(format || "yyyy-MM-dd").replace(/yyyy|yy|MMMM|MMM|MM|M|dd|d|HH|H|mm/g, (token) => {
+    switch (token) {
+      case "yyyy": return String(date.getFullYear())
+      case "yy": return pad2(date.getFullYear() % 100)
+      case "MMMM": return STAMP_MONTHS[date.getMonth()]
+      case "MMM": return STAMP_MONTHS[date.getMonth()].slice(0, 3)
+      case "MM": return pad2(date.getMonth() + 1)
+      case "M": return String(date.getMonth() + 1)
+      case "dd": return pad2(date.getDate())
+      case "d": return String(date.getDate())
+      case "HH": return pad2(date.getHours())
+      case "H": return String(date.getHours())
+      default: return pad2(date.getMinutes())
+    }
+  })
+
+const STAMP_USER_PATHS = {
+  userInitials: "userProfile.identity.initials",
+  userFullName: "userProfile.identity.fullName",
+  userLoginName: "userProfile.loginName",
+}
+
+// A value with {tokens} is a template: "{today:dd/MMM/yyyy} {userInitials}"
+// stamps "28/Sep/2026 DPU" into one field. {today} and {now} take a date
+// format after the colon; the user tokens read the signed-in user's profile.
+const resolveStampTemplate = (template, context) => {
+  const now = new Date()
+  return String(template)
+    .replace(/\{(\w+)(?::([^}]*))?\}/g, (match, token, format) => {
+      if (token === "today") return formatStampDate(now, format || "yyyy-MM-dd")
+      if (token === "now" || token === "time") return formatStampDate(now, format || "HH:mm")
+      if (STAMP_USER_PATHS[token]) {
+        const value = resolvePathValue(context, STAMP_USER_PATHS[token])
+        return value == null ? "" : String(value)
+      }
+      return match
+    })
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
 const resolveLiteralValue = (value, context) => {
   if (value === "$now") return new Date().toISOString()
-  if (value === "$today") return new Date().toISOString().slice(0, 10)
+  if (value === "$today") return formatStampDate(new Date(), "yyyy-MM-dd")
   if (value === "$userInitials") return resolvePathValue(context, "userProfile.identity.initials")
   if (value === "$userFullName") return resolvePathValue(context, "userProfile.identity.fullName")
   if (value === "$userLoginName") return resolvePathValue(context, "userProfile.loginName")
+  if (typeof value === "string" && value.indexOf("{") !== -1) return resolveStampTemplate(value, context)
   return value
 }
 

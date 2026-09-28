@@ -981,6 +981,33 @@ const _evaluateDataEntryVisibility = (field, values = {}) => {
   return true
 }
 
+/**
+ * Whether a scoring question can be answered now: its `enabledWhen` rule over
+ * the other questions' answers, read as option keys. Mirrors ScoringModule's
+ * isScoringQuestionEnabled, which greys the question out in the dialog (DLQI's
+ * "If No…" follow-up, MOIS window 120).
+ */
+const _isScoringQuestionEnabled = (question, answers) => {
+  const rule = question?.enabledWhen
+  if (!rule || typeof rule !== "object" || !rule.controllerId || rule.type === "always") return true
+  const getValue = (questionId) => {
+    const answer = answers?.[questionId]
+    if (answer === null || answer === undefined) return ""
+    if (typeof answer !== "object") return String(answer)
+    const key = answer.selectedKey ?? answer.value ?? answer.code ?? ""
+    return key === null ? "" : String(key)
+  }
+  if (typeof FormLogicKit !== "undefined" && FormLogicKit && typeof FormLogicKit.evaluateVisibilityRule === "function") {
+    return FormLogicKit.evaluateVisibilityRule(rule, getValue, { controllerKind: () => "choice" }) !== false
+  }
+  const value = getValue(rule.controllerId)
+  const expected = rule.value === undefined || rule.value === null ? "" : String(rule.value)
+  if (rule.type === "equals") return value === expected
+  if (rule.type === "not-equals") return value !== expected
+  if (rule.type === "not-filled") return value === ""
+  return value !== ""
+}
+
 // How FormLogicKit should compare a controller's answer, from its entry type.
 const _dataEntryControllerKind = (field) => {
   const type = field?.type
@@ -1362,6 +1389,16 @@ const _getSelectableOptionNumericValue = (option) => {
   return null
 }
 
+// A data-entry field's answers as offered now. Its option rules (lifted by
+// lib/subform-data-entry.ts, or a table column's) hide or disable answers by
+// sibling answers, parent-form answers and chart facts (FormLogicKit).
+const _withAvailableOptions = (field, getValue) => {
+  if (!field || !Array.isArray(field.optionRules) || field.optionRules.length === 0 || !Array.isArray(field.options)) return field
+  if (typeof FormLogicKit === "undefined" || !FormLogicKit || typeof FormLogicKit.availableOptions !== "function") return field
+  const options = FormLogicKit.availableOptions(field.options, field.optionRules, getValue)
+  return options === field.options ? field : { ...field, options }
+}
+
 const _normalizeSelectableOptions = (field, fallbackOptions = []) => {
   const rawOptions = Array.isArray(field?.options) && field.options.length > 0
     ? field.options
@@ -1390,6 +1427,7 @@ const _normalizeSelectableOptions = (field, fallbackOptions = []) => {
           value: rawValue,
           description,
           system: option.system,
+          ...(option.disabled === true ? { disabled: true } : {}),
         }
       }
 
@@ -2052,14 +2090,20 @@ const SubformScoringInner = ({
     return _buildScoreMap(config.questions, config.sharedOptions)
   }, [isDataEntryMode, config.questions, config.sharedOptions])
 
+  // A question whose enabledWhen fails (see _isScoringQuestionEnabled) counts
+  // as unanswered: out of the totals, the progress and the report.
   const answers = useMemo(() => {
     if (isDataEntryMode) return {}
-    const result = {}
+    const stored = {}
     for (const question of config.questions || []) {
       const value = fd?.field?.data?.[question.id]
       if (value !== undefined && value !== null && value !== "") {
-        result[question.id] = value
+        stored[question.id] = value
       }
+    }
+    const result = {}
+    for (const question of config.questions || []) {
+      if (question.id in stored && _isScoringQuestionEnabled(question, stored)) result[question.id] = stored[question.id]
     }
     return result
   }, [isDataEntryMode, fd, config.questions])
@@ -2068,6 +2112,7 @@ const SubformScoringInner = ({
     if (isDataEntryMode) return {}
     const results = {}
     const questionsById = new Map((config.questions || []).map((question) => [question.id, question]))
+    const storedAnswers = Object.fromEntries((config.questions || []).map((question) => [question.id, fd?.field?.data?.[question.id]]))
     const totals = _subformFormulaStores(config.calculatedValues, config.totals)
     for (const total of totals) {
       let score = 0
@@ -2101,6 +2146,9 @@ const SubformScoringInner = ({
       }
       for (const term of total.terms || []) {
         const termQuestionId = term.questionId || term.answerFieldId
+        // an unavailable question (enabledWhen) adds nothing and blocks nothing
+        const termQuestion = questionsById.get(termQuestionId)
+        if (termQuestion?.enabledWhen && !_isScoringQuestionEnabled(termQuestion, storedAnswers)) continue
         const answer = answers[termQuestionId]
         const optionScoreMap = scoreMap.get(termQuestionId)
         const answerScore = _getScoreFromValue(answer, optionScoreMap)
@@ -2242,6 +2290,14 @@ const SubformScoringInner = ({
       ? baseEquivalentDoseRaw
       : 30
     const totalCalculationId = String(rawConfig.totalCalculationId || rawConfig.total_calculation_id || "").trim() || null
+    // The total's decimal places: the preset's defaultPrecision (MOIS's
+    // MORPHINE EQUIVALENCE sums its rows unrounded), else one place.
+    const totalPrecisionRaw = Number(
+      rawConfig.totalPrecision ?? rawConfig.total_precision ?? rawConfig.defaultPrecision ?? rawConfig.default_precision
+    )
+    const totalPrecision = Number.isFinite(totalPrecisionRaw)
+      ? Math.max(0, Math.min(6, Math.trunc(totalPrecisionRaw)))
+      : 1
     const totalLabel = String(rawConfig.totalLabel || rawConfig.total_label || "TOTAL MEQ").trim() || "TOTAL MEQ"
     const doseColumnLabel = String(rawConfig.doseColumnLabel || rawConfig.dose_column_label || "Total Daily Dose").trim() || "Total Daily Dose"
     const equivalentColumnLabel = String(rawConfig.equivalentColumnLabel || rawConfig.equivalent_column_label || "Equivalent Dose (mg)").trim() || "Equivalent Dose (mg)"
@@ -2252,6 +2308,7 @@ const SubformScoringInner = ({
       rows,
       baseEquivalentDoseMg,
       totalCalculationId,
+      totalPrecision,
       totalLabel,
       doseColumnLabel,
       equivalentColumnLabel,
@@ -2465,8 +2522,16 @@ const SubformScoringInner = ({
         )
       })
       const numericValues = rowValues.filter((value) => Number.isFinite(Number(value))).map(Number)
+      // The exported total calculation carries the preset's precision; a
+      // config handed over whole (component insert) says it itself.
+      const totalCalculation = dataEntryCalculations.find(
+        (calculation) => calculation?.id === dataEntryCalculatorConfig.totalCalculationId
+      )
+      const totalPrecision = Number.isFinite(totalCalculation?.precision)
+        ? Math.max(0, Math.min(6, Math.trunc(totalCalculation.precision)))
+        : dataEntryCalculatorConfig.totalPrecision
       result[dataEntryCalculatorConfig.totalCalculationId] = numericValues.length > 0
-        ? Number(numericValues.reduce((sum, value) => sum + value, 0).toFixed(1))
+        ? Number(numericValues.reduce((sum, value) => sum + value, 0).toFixed(totalPrecision))
         : null
     }
     return result
@@ -2496,8 +2561,10 @@ const SubformScoringInner = ({
       }
     }
 
-    const total = config.questions?.length || 0
-    const answered = (config.questions || []).filter((question) => {
+    const storedAnswers = Object.fromEntries((config.questions || []).map((question) => [question.id, fd?.field?.data?.[question.id]]))
+    const enabledQuestions = (config.questions || []).filter((question) => _isScoringQuestionEnabled(question, storedAnswers))
+    const total = enabledQuestions.length
+    const answered = enabledQuestions.filter((question) => {
       const value = answers[question.id]
       const optionScoreMap = scoreMap.get(question.id)
       return _getScoreFromValue(value, optionScoreMap) !== null
@@ -2507,7 +2574,7 @@ const SubformScoringInner = ({
       total,
       percentage: total > 0 ? Math.round((answered / total) * 100) : 0
     }
-  }, [isDataEntryMode, isMorphineCalculatorMode, dataEntryCalculatorConfig, dataEntryFieldById, dataEntryFields, dataEntryValues, isDataEntryFieldShown, config.questions, answers])
+  }, [isDataEntryMode, isMorphineCalculatorMode, dataEntryCalculatorConfig, dataEntryFieldById, dataEntryFields, dataEntryValues, isDataEntryFieldShown, config.questions, answers, fd])
 
   const hasAnyAnswers = useMemo(() => {
     if (isDataEntryMode) {
@@ -2609,7 +2676,8 @@ const SubformScoringInner = ({
   // General field renderer
   // -------------------------------------------------------------------
 
-  const renderDataEntryField = (field, renderOptions = {}) => {
+  const renderDataEntryField = (sourceField, renderOptions = {}) => {
+    const field = _withAvailableOptions(sourceField, getVisibilityControllerValue)
     if (_isHeadingField(field)) {
       // MOIS questionnaires lead with the stem question in sentence case
       // ("1. Over the past 2 weeks, ..."); only band headers are shouted.
@@ -3072,7 +3140,7 @@ const SubformScoringInner = ({
             {dataEntryCalculatorConfig.totalLabel}:
           </Text>
           <Text styles={{ root: { fontSize: "40px", fontWeight: 800, lineHeight: 1 } }}>
-            {_formatCalculatorDisplayValue(totalValue, 1)}
+            {_formatCalculatorDisplayValue(totalValue, dataEntryCalculatorConfig.totalPrecision)}
           </Text>
         </div>
       </div>
@@ -3271,13 +3339,25 @@ const SubformScoringInner = ({
 
   // Done/Save & Add Next refuse to complete while a visible required field is
   // empty, like EditableTable's row Save: the dialog stays open and names them.
+  // An answer its option rules no longer offer (a sibling or the chart
+  // changed) blocks Done the same way, naming the field.
+  const unavailableAnswerFields = isDataEntryMode && typeof FormLogicKit !== "undefined" && FormLogicKit && typeof FormLogicKit.hasUnavailableAnswer === "function"
+    ? dataEntryFields.filter((field) => (
+      field?.id && Array.isArray(field.optionRules) && field.optionRules.length > 0 &&
+      isDataEntryFieldShown(field) &&
+      FormLogicKit.hasUnavailableAnswer(dataEntryValues[field.id], field.optionRules, getVisibilityControllerValue)
+    ))
+    : []
   const blockOnMissingRequired = () => {
-    if (missingRequiredFields.length === 0) return false
+    if (missingRequiredFields.length === 0 && unavailableAnswerFields.length === 0) return false
     setShowRequiredErrors(true)
     return true
   }
   const requiredErrorMessage = showRequiredErrors
-    ? _formatMissingRequiredMessage(missingRequiredFields)
+    ? [
+      missingRequiredFields.length ? _formatMissingRequiredMessage(missingRequiredFields) : "",
+      ...unavailableAnswerFields.map((field) => `${field.label || field.id}: choose an available option.`),
+    ].filter(Boolean).join(" ")
     : ""
   const hostErrorMessage = typeof errorMessage === "string" ? errorMessage.trim() : ""
   const dialogErrorMessage = requiredErrorMessage || hostErrorMessage

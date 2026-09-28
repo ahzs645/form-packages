@@ -19,7 +19,13 @@ const normalizeLayoutTableOptionList = (optionList) => {
       const explicit = option && typeof option === "object" ? option.code ?? option.key : undefined
       const code = explicit !== undefined && explicit !== null && String(explicit) !== "" ? String(explicit) : normalized.code
       const display = normalized.display
-      return code || display ? { code: String(code || display), display: String(display || code) } : null
+      if (!code && !display) return null
+      return {
+        code: String(code || display),
+        display: String(display || code),
+        // An answer the cell's option rules disable (FormLogicKit.availableOptions).
+        ...(option && typeof option === "object" && option.disabled === true ? { disabled: true } : {}),
+      }
     })
     .filter(Boolean)
 }
@@ -450,7 +456,20 @@ const computeLayoutTableCellValue = (cell, data, fieldTypes) => {
   return formatLayoutTableComputedValue(rawValue, cell.precision, cell.resultType)
 }
 
-const renderLayoutTableField = (cell, readOnly, data, setFieldValue) => {
+// A cell as it offers its answers now: its option rules (lifted by
+// lib/layout-table-answer-fields.ts) read the form's answers and chart facts.
+const withAvailableCellOptions = (cell, data) => {
+  const rules = cell?.optionRules
+  if (!Array.isArray(rules) || rules.length === 0) return cell
+  if (typeof FormLogicKit === "undefined" || !FormLogicKit || typeof FormLogicKit.availableOptions !== "function") return cell
+  const key = Array.isArray(cell.optionList) ? "optionList" : "options"
+  if (!Array.isArray(cell[key])) return cell
+  const offered = FormLogicKit.availableOptions(cell[key], rules, (fieldId) => data?.[fieldId])
+  return offered === cell[key] ? cell : { ...cell, [key]: offered }
+}
+
+const renderLayoutTableField = (sourceCell, readOnly, data, setFieldValue) => {
+  const cell = withAvailableCellOptions(sourceCell, data)
   if (cell.hidden === true) return null
   const fieldId = cell.fieldId || cell.id
   const label = cell.label || ""
@@ -466,6 +485,32 @@ const renderLayoutTableField = (cell, readOnly, data, setFieldValue) => {
   const optionList = normalizeLayoutTableOptionList(cell.optionList ?? cell.options)
 
   if (effectiveReadOnly) return renderLayoutTableReadOnlyField(cell, data)
+
+  // A cell with answer conditions or exclusive answers: AnswerChoiceField
+  // hides, greys out and clears answers, which SimpleCodeSelect cannot.
+  const rawAnswers = Array.isArray(sourceCell.optionList) ? sourceCell.optionList : Array.isArray(sourceCell.options) ? sourceCell.options : []
+  const needsAnswerChoice = (cell.inputType === "choice" || cell.inputType === "choiceMulti") && typeof AnswerChoiceField !== "undefined" &&
+    ((Array.isArray(sourceCell.optionRules) && sourceCell.optionRules.length > 0) || rawAnswers.some((option) => option && typeof option === "object" && option.exclusive === true))
+  if (needsAnswerChoice) {
+    return (
+      <AnswerChoiceField
+        fieldId={fieldId}
+        label={label}
+        labelPosition={sharedProps.labelPosition}
+        required={sharedProps.required}
+        placeholder={cell.placeholder}
+        presentation={cell.inputType === "choiceMulti" ? "checklist" : "dropdown"}
+        selectionType={cell.inputType === "choiceMulti" ? "multiple" : "single"}
+        answers={rawAnswers}
+        optionRules={sourceCell.optionRules}
+        codeSystem={cell.codeSystem}
+        showOtherOption={cell.showOtherOption === true}
+        value={data?.[fieldId] ?? null}
+        getValue={(id) => data?.[id]}
+        onChange={(next) => setFieldValue(fieldId, next)}
+      />
+    )
+  }
 
   switch (cell.inputType) {
     case "booleanSingle":

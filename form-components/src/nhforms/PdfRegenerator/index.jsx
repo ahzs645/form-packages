@@ -47,6 +47,8 @@ var DocumentDateRuntime = (() => {
     if (format === "ddMMMyyyy") return `${day}${mon}${year}`;
     if (format === "yyyy.MM.dd") return `${year}.${month}.${day}`;
     if (format === "dd/MM/yyyy") return `${day}/${month}/${year}`;
+    if (format === "dd/MM/yy") return `${day}/${month}/${year.slice(2)}`;
+    if (format === "dd/MM") return `${day}/${month}`;
     if (format === "MM/dd/yyyy") return `${month}/${day}/${year}`;
     if (format === "MMMM d, yyyy") return `${monthName} ${+day}, ${year}`;
     return `${year}-${month}-${day}`;
@@ -755,6 +757,22 @@ var DocumentFillRuntime = (() => {
             if (rendered.hasValue) lines.push(rendered.text.trim());
           });
           write(step.targetId, lines.join(step.separator ?? "\n"));
+          return;
+        }
+        case "table-date": {
+          const rows = read(step.tableId);
+          if (rows !== void 0 && rows !== null && !Array.isArray(rows)) {
+            warnings.push(`Preparer "${name}": "${step.tableId}" is not a table.`);
+            return;
+          }
+          const dated = (Array.isArray(rows) ? rows : []).flatMap((row) => {
+            const value = row && typeof row === "object" ? readValuePath(row, step.columnId) : void 0;
+            const key = formatDateWithPattern(value, "yyyy-MM-dd'T'HH:mm");
+            return key ? [{ value, key }] : [];
+          });
+          const pick = step.pick ?? "first";
+          const chosen = pick === "last" ? dated[dated.length - 1] : pick === "earliest" ? dated.reduce((best, entry) => !best || entry.key < best.key ? entry : best, void 0) : pick === "latest" ? dated.reduce((best, entry) => !best || entry.key > best.key ? entry : best, void 0) : dated[0];
+          write(step.targetId, chosen ? formatDateWithPattern(chosen.value, step.format || "yyyy-MM-dd") ?? "" : "");
           return;
         }
         case "copy": {
@@ -1709,6 +1727,35 @@ const _resolveDateComponentValue = (formData, dateEntry, rawValue) => {
   return parts[dateEntry.role]
 }
 
+// One answer written a character per PDF box (a characters composite): each box's
+// PDF field name maps to its position. "right" puts a shorter answer in the last boxes.
+const _buildCharacterComponentIndex = (characterComponentMaps) => {
+  const index = new Map()
+  if (!Array.isArray(characterComponentMaps)) return index
+  characterComponentMaps.forEach((characterMap) => {
+    if (!characterMap || !_isNonEmptyString(characterMap.sourceFieldId) || !Array.isArray(characterMap.fieldIds)) return
+    characterMap.fieldIds.forEach((fieldId, position) => {
+      if (!_isNonEmptyString(fieldId)) return
+      index.set(fieldId, {
+        sourceFieldId: characterMap.sourceFieldId,
+        position,
+        count: characterMap.fieldIds.length,
+        align: characterMap.align === "right" ? "right" : "left",
+      })
+    })
+  })
+  return index
+}
+
+const _resolveCharacterComponentValue = (formData, entry) => {
+  const answer = formData?.[entry.sourceFieldId]
+  if (answer === undefined || answer === null) return undefined
+  const characters = String(_toText(answer) || "").replace(/\s+/g, "").split("")
+  const shown = entry.align === "right" ? characters.slice(-entry.count) : characters.slice(0, entry.count)
+  const offset = entry.align === "right" ? entry.count - shown.length : 0
+  return shown[entry.position - offset] || ""
+}
+
 const _buildChoiceComponentIndex = (choiceComponentMaps) => {
   const index = new Map()
   if (!Array.isArray(choiceComponentMaps)) return index
@@ -2396,6 +2443,7 @@ const PdfRegenerator = ({
   dateComponentMaps,
   documentDateFormats,
   choiceComponentMaps,
+  characterComponentMaps,
   textFlowMaps,
   geometryOverlayFields,
   documentOutputFields,
@@ -2459,6 +2507,7 @@ const PdfRegenerator = ({
       const map = _normalizeFieldMap(fieldMap, formData)
       const dateComponentIndex = _buildDateComponentIndex(dateComponentMaps)
       const choiceComponentIndex = _buildChoiceComponentIndex(choiceComponentMaps)
+      const characterComponentIndex = _buildCharacterComponentIndex(characterComponentMaps)
       const includeSet = Array.isArray(includeOnlyFieldIds)
         ? new Set(includeOnlyFieldIds.map((id) => String(id || "").trim()).filter(Boolean))
         : null
@@ -2504,6 +2553,9 @@ const PdfRegenerator = ({
         if (choiceComponentValue !== undefined && choiceComponentValue !== null && choiceComponentValue !== "") {
           rawValue = choiceComponentValue
         }
+        const characterEntry = characterComponentIndex.get(pdfFieldName)
+        const characterValue = characterEntry ? _resolveCharacterComponentValue(formData, characterEntry) : undefined
+        if (characterValue !== undefined) rawValue = characterValue
         const dateEntry = dateComponentIndex.get(pdfFieldName) || dateComponentIndex.get(sourceFieldId)
         const dateComponentValue = dateEntry
           ? _resolveDateComponentValue(formData, dateEntry, rawValue)
@@ -2611,7 +2663,7 @@ const PdfRegenerator = ({
     } finally {
       setIsBusy(false)
     }
-  }, [resolvedPdfSource, fd, fieldMap, tableSourceMaps, pdfPreparers, booleanFieldStates, fieldMaxLengths, dateComponentMaps, documentDateFormats, choiceComponentMaps, textFlowMaps, geometryOverlayFields, documentOutputFields, includeOnlyFieldIds, flatten, recalculate, organizationSigning, fileName, onComplete, pdfLibStrategy, pdfLibSource])
+  }, [resolvedPdfSource, fd, fieldMap, tableSourceMaps, pdfPreparers, booleanFieldStates, fieldMaxLengths, dateComponentMaps, documentDateFormats, choiceComponentMaps, characterComponentMaps, textFlowMaps, geometryOverlayFields, documentOutputFields, includeOnlyFieldIds, flatten, recalculate, organizationSigning, fileName, onComplete, pdfLibStrategy, pdfLibSource])
 
   const diagnosticsText = useMemo(() => {
     if (!showDiagnostics) return null

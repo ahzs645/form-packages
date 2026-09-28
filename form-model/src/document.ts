@@ -220,6 +220,8 @@ export interface ParsedField {
    * choice renderer serializes these (and keeps them alongside `codeSystem`,
    * matching CodedObservationChoiceField precedence: inline options win).
    */
+  /** Answers that clear the others when chosen (option `exclusive`). */
+  exclusiveOptionValues?: string[];
   optionDetails?: Array<{
     value: string;
     label: string;

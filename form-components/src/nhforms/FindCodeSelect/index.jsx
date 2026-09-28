@@ -302,7 +302,9 @@ const FindCodeSelectBase = ({
     .filter(Boolean)
   const selectedKeySet = useMemo(() => new Set(selectedKeys), [selectedKeys.join('|')])
   const selectedCode = !isMultiSelect ? selectedValue?.[codeId] ?? selectedValue?.code ?? null : null
-  const selectedKey = selectedCode == null ? undefined : String(selectedCode)
+  // Fluent's ComboBox treats `undefined` as uncontrolled (the last pick stays
+  // on screen) and `null` as "nothing selected", so a cleared value is null.
+  const selectedKey = selectedCode != null ? String(selectedCode) : selectedValue ? undefined : null
   const hasSearchText = String(searchText || '').trim().length > 0
   const comboSelectedKey = hasSearchText ? undefined : isMultiSelect ? selectedKeys : selectedKey
 
@@ -669,21 +671,30 @@ const FindCodeSelectWithSourceLookup = ({
   )
   const items = sourceItems.length > 0 ? sourceItems : fallbackItems
   const storedValue = fd?.field?.data?.[effectiveFieldId]
+  const lookupTargets = Array.isArray(targetFieldIds) && targetFieldIds.length > 0 ? targetFieldIds : [effectiveFieldId]
+  const storedTargets = lookupTargets.map((targetId) => String(fd?.field?.data?.[targetId] ?? ''))
   const boundValue = useMemo(() => {
-    if (props.value !== undefined || storedValue === undefined || storedValue === null || storedValue === '') {
-      return props.value
-    }
+    if (props.value !== undefined || storedValue === undefined || storedValue === null) return props.value
+    // Cleared by this lookup or a sibling one (a service location with no
+    // JORG unit empties Health Authority): show the box empty.
+    if (storedValue === '') return null
     if (typeof storedValue === 'object') return storedValue
     const text = String(storedValue)
+    // A lookup stores a column of the row it picked (Health Authority keeps
+    // only the authority), so find that row again by every target it filled.
     return items.find((item) => String(item?.code ?? item?.key ?? '') === text || String(item?.display ?? item?.text ?? '') === text)
+      ?? items.find((item) => lookupTargets.every((targetId, index) => (
+        valueForLookupTarget(item, targetId, targetLabels?.[targetId], '') === storedTargets[index]
+      )))
       ?? { code: null, display: text }
-  }, [items, props.value, storedValue])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- storedTargets is keyed by its joined text
+  }, [items, props.value, storedValue, storedTargets.join('\u0000')])
 
   const handleChange = (nextValue) => {
     props.onChange?.(nextValue)
     const selected = Array.isArray(nextValue) ? nextValue[nextValue.length - 1] : nextValue
     const fallback = String(selected?.display ?? selected?.text ?? selected?.value ?? selected?.code ?? '')
-    const targets = Array.isArray(targetFieldIds) && targetFieldIds.length > 0 ? targetFieldIds : [effectiveFieldId]
+    const targets = lookupTargets
     const clearTargets = Array.from(new Set([
       ...targets,
       ...(Array.isArray(clearTargetFieldIds) ? clearTargetFieldIds : []),

@@ -761,6 +761,8 @@ export interface BuilderLayoutTableCellField {
   booleanNeutralMode?: "cycle" | "initial" | "none";
   useToggleSwitch?: boolean;
   visibility?: BuilderVisibilityRule | null;
+  /** Which answers it offers, by condition (option-rules.ts); conditions may read chart facts. */
+  optionRules?: BuilderOptionRule[] | null;
   validation?: BuilderValidationConfig | null;
   numberConfig?: BuilderField["numberConfig"];
   dateConfig?: BuilderField["dateConfig"];
@@ -838,6 +840,8 @@ export interface BuilderLayoutTableCell {
   booleanNeutralMode?: "cycle" | "initial" | "none";
   useToggleSwitch?: boolean;
   visibility?: BuilderVisibilityRule | null;
+  /** Which answers it offers, by condition (option-rules.ts); conditions may read chart facts. */
+  optionRules?: BuilderOptionRule[] | null;
   validation?: BuilderValidationConfig | null;
   numberConfig?: BuilderField["numberConfig"];
   dateConfig?: BuilderField["dateConfig"];
@@ -1849,6 +1853,13 @@ export interface BuilderChoiceOptionObject {
   value?: string;
   /** Numeric score used by computed `score([id])` formulas. */
   score?: number;
+  /**
+   * Choosing this answer clears the others, and choosing another clears it
+   * ("Unable to obtain", "None"), on a question that takes several answers
+   * (option-rules.ts). Cerner's `exclude_first_ar` imports as the first
+   * answer's flag.
+   */
+  exclusive?: boolean;
   /** Optional helper text shown in option editors. */
   description?: string;
   /**
@@ -2084,7 +2095,7 @@ export interface BuilderOscarImportMapping {
 
 export interface BuilderFieldBehavior {
   validations?: Array<{ id: string; validWhen: FieldConditionGroup; message: string; translations?: Record<string, string> }>;
-  optionRules?: Array<{ value: string; showWhen?: FieldConditionGroup; disableWhen?: FieldConditionGroup }>;
+  optionRules?: BuilderOptionRule[];
 }
 
 /** A pinned library definition travels with the form; edits never mutate its source. */
@@ -2387,6 +2398,8 @@ export interface BuilderField {
        * names a sibling column by its row path (`dataPath || id`).
        */
       visibility?: BuilderVisibilityRule | null;
+      /** Which answers it offers, by condition (option-rules.ts); conditions may read chart facts. */
+      optionRules?: BuilderOptionRule[] | null;
       /**
        * Legacy MOIS read path picked for the column (a source-data path, which
        * the row editor never read). readFieldBinding reads it as the binding's
@@ -2395,6 +2408,13 @@ export interface BuilderField {
       moisTargetId?: string | null;
       /** The column's chart binding (see bindings.ts); `moisTargetId` is its legacy read mirror. */
       binding?: BuilderFieldBinding | null;
+      /**
+       * For a column saved as an observation: the observation chosen by another
+       * column's answer in the same row (a blood pressure's position), keyed by
+       * that answer's option value. A blank or unlisted answer keeps the
+       * binding's own observation.
+       */
+      observationCodeBy?: TableObservationCodeBy | null;
       /** Row-1 cell of `tableConfig.documentRowPath` (derived on load, never trusted from a package). */
       documentBinding?: BuilderDocumentBinding | null;
       stampConfig?: {
@@ -2417,6 +2437,12 @@ export interface BuilderField {
      * structure reader gives the table the `matrix` presentation.
      */
     presentation?: "matrix";
+    /**
+     * The columns that date each row's chart observations (columns saved as an
+     * observation). Absent: the first date column and the first time column.
+     * A row without a date writes none.
+     */
+    observationDate?: TableObservationDate | null;
     orientation?: "horizontal" | "vertical";
     allowAddRows?: boolean;
     allowRemoveRows?: boolean;
@@ -2962,6 +2988,17 @@ export type FieldLinkAction =
  * Example: "When 'ART Specify' has 'IVF' selected, show 'IVF Details'"
  */
 // ---------- Conditions: leaf alias + named references ----------
+/**
+ * One answer's availability rule (option-rules.ts): show the answer only when
+ * `showWhen` holds, disable it when `disableWhen` does. `value` is the
+ * answer's stored value (getOptionValue).
+ */
+export interface BuilderOptionRule {
+  value: string;
+  showWhen?: FieldConditionGroup;
+  disableWhen?: FieldConditionGroup;
+}
+
 export type FieldConditionLeaf = { controllerFieldId: string; condition: FieldLinkCondition };
 
 export interface FieldConditionGroup {
@@ -3114,8 +3151,37 @@ export type DocumentFillPreparer = DocumentFillPreparerBase & (
   | { kind: "map-value"; sourceId: string; map: Record<string, string>; fallback?: string; targetId?: string }
   | { kind: "format-date"; sourceId: string; format: string; targetId?: string }
   | { kind: "table-to-text"; tableId: string; template: string; separator?: string; startRow?: number; targetId: string }
+  | {
+      kind: "table-date";
+      tableId: string;
+      /** The date column's row path (its dataPath, else its id). */
+      columnId: string;
+      /**
+       * Which row's date prints. "first" (default) is the first dated row in
+       * list order, so a flowsheet's year box keeps the year of its first
+       * entry when later rows run into the next year.
+       */
+      pick?: TableDatePick;
+      format: string;
+      targetId: string;
+    }
   | { kind: "copy"; sourceId: string; targetId: string }
 );
+export type TableDatePick = "first" | "last" | "earliest" | "latest";
+
+/** Which columns date a table row's chart observations (`tableConfig.observationDate`). */
+export interface TableObservationDate {
+  dateColumnId: string;
+  timeColumnId?: string | null;
+}
+
+/** An observation picked by another column's answer (`column.observationCodeBy`). */
+export interface TableObservationCodeBy {
+  /** The deciding column's id. */
+  columnId: string;
+  /** Option value → the observation to save instead (MOIS code, unit, description). */
+  codes: Record<string, { code: string; unit?: string; description?: string }>;
+}
 
 export interface FieldLinkRule {
   /** PowerForm page navigation while a Show/Hide rule makes the page inactive.
@@ -3531,6 +3597,8 @@ export * from "./defaults";
 export * from "./bindings";
 export * from "./chart-lists";
 export * from "./reference-ranges";
+export * from "./chart-facts";
+export * from "./option-rules";
 export * from "./targets";
 export * from "./validation";
 export * from "./structure";

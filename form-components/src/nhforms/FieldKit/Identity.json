@@ -22,5 +22,11 @@
     "minor": 28,
     "patch": 10
   },
-  "components": ["ValueKit", "CompactBooleanField", "FindCodeSelect", "ScaleField"]
+  "components": [
+    "ValueKit",
+    "CompactBooleanField",
+    "FindCodeSelect",
+    "ScaleField",
+    "AnswerChoiceField"
+  ]
 }

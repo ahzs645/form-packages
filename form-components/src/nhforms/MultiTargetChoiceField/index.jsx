@@ -192,6 +192,8 @@ const MultiTargetChoiceField = ({
   id,
   fieldId,
   label = "Categories",
+  // "none" draws no caption row: a single MOIS checkbox whose text is its label.
+  labelPosition,
   options = [],
   columns = 1,
   writeAggregate = true,
@@ -231,7 +233,7 @@ const MultiTargetChoiceField = ({
     : {}
 
   return (
-    <LayoutItem fieldId={effectiveFieldId} label={label} readOnly={readOnly} required={required}>
+    <LayoutItem fieldId={effectiveFieldId} label={label} labelPosition={labelPosition} readOnly={readOnly} required={required}>
       <div style={{ ...gridStyle, ...requiredStyle }}>
         {options.filter((option) => optionVisible(data, option)).map((option) => (
           <Fluent.Checkbox

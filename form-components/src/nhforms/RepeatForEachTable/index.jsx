@@ -259,7 +259,11 @@ const RepeatForEachTable = (props) => {
     // chooses (the same controls and stored cell shapes as EditableTable's
     // cells: FieldKit.fromTableColumn + FieldKit.storage.cell); the card
     // draws the label above it.
-    const descriptor = FieldKit.fromTableColumn(column)
+    // Only the answers the column's option rules offer in this row.
+    const offered = typeof FormLogicKit !== "undefined" && FormLogicKit && typeof FormLogicKit.withAvailableColumnOptions === "function"
+      ? FormLogicKit.withAvailableColumnOptions(column, row, { columns: baseColumns, formData: fd?.field?.data })
+      : column
+    const descriptor = FieldKit.fromTableColumn(offered)
     return FieldKit.renderControl(descriptor, {
       value,
       onChange: (stored) => writeCardCell(rowId, column, stored),

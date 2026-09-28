@@ -5,11 +5,13 @@ import type { GroupSummary } from "./grouping";
 import type { ReportItemFormat } from "./report-formats";
 import type {
   BuilderField,
+  BuilderOptionRule,
   BuilderFieldMoisConfig,
   BuilderFieldSourceConfig,
   BuilderMoisOutputMapping,
   CalculatedValueConfig,
   CalculatedValueRange,
+  BuilderVisibilityRule,
   MoisNavigationTarget,
   ScoreTotalTerm,
 } from "./index";
@@ -437,7 +439,7 @@ export function stripRedundantDraftFieldLabelPrefix(
 }
 
 // Composite field types (e.g., combining DD/MM/YYYY into a single date field, or merging duplicate boolean fields)
-export type CompositeFieldType = "date" | "boolean" | "text" | "textFlow" | "choice";
+export type CompositeFieldType = "date" | "boolean" | "text" | "textFlow" | "choice" | "characters";
 
 export type DateFieldRole = "day" | "month" | "year";
 export type GenericFieldRole = "primary" | "secondary" | "tertiary";
@@ -469,6 +471,12 @@ export interface CompositeField {
    * keeps the full answer in the form.
    */
   textFlowOverflow?: "block" | "truncate";
+  /**
+   * characters only: the answer is written one character per PDF box, in component
+   * order (a PHN, an ICD code, a 3-digit count). "right" puts a shorter answer in the
+   * last boxes, as numbers are written; the default "left" starts in the first box.
+   */
+  characterAlign?: "left" | "right";
   /**
    * Snapshot of the original component builder fields (in component order,
    * primary first), captured when the builder collapses the members into one
@@ -1075,6 +1083,8 @@ export interface SubformDataEntryFieldConfig {
   defaultAnswer?: BuilderDefaultAnswer | null;
   /** Show/hide rule evaluated against sibling answers; hidden fields are never required. */
   visibility?: BuilderField["visibility"];
+  /** Which answers it offers, by sibling answers, parent-form answers and chart facts (option-rules.ts). */
+  optionRules?: BuilderOptionRule[] | null;
   /** Never rendered, but still collects its default answer. */
   hidden?: boolean;
   /** Export-only passthrough for the FHIR Questionnaire; the runtime only checks it for LOINC codes. */
@@ -1388,6 +1398,14 @@ export interface ModuleQuestionConfig {
   };
   /** Score used by formulas when this question is intentionally left unanswered. */
   emptyScore?: number;
+  /**
+   * When the question can be answered, as a show-when rule over the other
+   * questions' answers (option keys). Otherwise its answers are shown but
+   * cannot be picked, and it counts as unanswered and out of the progress —
+   * a MOIS DataWindow column whose `visible` expression swaps its radio
+   * buttons for plain text (DLQI's "If No…" follow-up).
+   */
+  enabledWhen?: BuilderVisibilityRule;
   /** Inspector presentation only: hides per-option value inputs without clearing option state values. */
   hideOptionValues?: boolean;
   /** True if this question was created in the module designer (not linked from existing fields) */

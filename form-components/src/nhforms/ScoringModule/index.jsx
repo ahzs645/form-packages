@@ -457,6 +457,38 @@ const _getQuestionMirrorFieldIds = (question) => {
   return Array.from(ids)
 }
 
+/**
+ * Whether a question can be answered now: its `enabledWhen` is a show-when
+ * rule over the other questions' answers, read as their option keys
+ * (FormLogicKit when loaded, else equals / not-equals / filled here). An
+ * unavailable question keeps its answers on screen but they cannot be picked,
+ * it counts as unanswered (its emptyScore) and it leaves the progress count —
+ * a MOIS column whose `visible` expression swaps its radio buttons for plain
+ * text, as DLQI's "If No…" follow-up does (window 120, `num_field_0008`).
+ * Mirrored by SubformScoring's _isScoringQuestionEnabled.
+ */
+const _scoringAnswerKey = (answer) => {
+  if (answer === null || answer === undefined) return ""
+  if (typeof answer !== "object") return String(answer)
+  const key = answer.selectedKey ?? answer.value ?? answer.code ?? ""
+  return key === null ? "" : String(key)
+}
+
+const isScoringQuestionEnabled = (question, answers) => {
+  const rule = question?.enabledWhen
+  if (!rule || typeof rule !== "object" || !rule.controllerId || rule.type === "always") return true
+  const getValue = (questionId) => _scoringAnswerKey(answers?.[questionId])
+  if (typeof FormLogicKit !== "undefined" && FormLogicKit && typeof FormLogicKit.evaluateVisibilityRule === "function") {
+    return FormLogicKit.evaluateVisibilityRule(rule, getValue, { controllerKind: () => "choice" }) !== false
+  }
+  const value = getValue(rule.controllerId)
+  const expected = rule.value === undefined || rule.value === null ? "" : String(rule.value)
+  if (rule.type === "equals") return value === expected
+  if (rule.type === "not-equals") return value !== expected
+  if (rule.type === "not-filled") return value === ""
+  return value !== ""
+}
+
 // ================================================
 // Sub-components
 // ================================================
@@ -468,6 +500,7 @@ const ScoringQuestion = ({
   question,
   sharedOptions,
   isDarkMode,
+  disabled = false,
 }) => {
   const [fieldData, setFieldData] = useFormSessionData(fd => fd.field.data)
   const currentData = fieldData?.[question.id] || { selectedKey: null }
@@ -515,17 +548,18 @@ const ScoringQuestion = ({
               display: "flex",
               alignItems: "flex-start",
               gap: "8px",
-              cursor: "pointer",
-              color: isDarkMode ? "#f3f3f3" : "#222222",
+              cursor: disabled ? "default" : "pointer",
+              color: disabled ? "#8a8a8a" : isDarkMode ? "#f3f3f3" : "#222222",
               lineHeight: 1.35,
             }}
           >
             <input
               type="radio"
               name={`scoring_${question.id}`}
-              checked={currentData.selectedKey === option.key}
+              checked={!disabled && currentData.selectedKey === option.key}
+              disabled={disabled}
               onChange={() => handleSelect(option)}
-              style={{ marginTop: "2px", width: "14px", height: "14px", cursor: "pointer" }}
+              style={{ marginTop: "2px", width: "14px", height: "14px", cursor: disabled ? "default" : "pointer" }}
             />
             <span>{option.text}</span>
           </label>
@@ -551,6 +585,7 @@ const CompactScoringQuestion = ({
   sharedOptions,
   continuumLabels,
   isDarkMode,
+  disabled = false,
 }) => {
   const [fieldData, setFieldData] = useFormSessionData(fd => fd.field.data)
   const currentData = fieldData?.[question.id] || { selectedKey: null }
@@ -664,9 +699,10 @@ const CompactScoringQuestion = ({
                   <input
                     type="radio"
                     name={`compact_${question.id}`}
-                    checked={selected}
+                    checked={!disabled && selected}
+                    disabled={disabled}
                     onChange={() => handleSelect(option)}
-                    style={{ width: "16px", height: "16px", cursor: "pointer", margin: 0 }}
+                    style={{ width: "16px", height: "16px", cursor: disabled ? "default" : "pointer", margin: 0 }}
                   />
                   <span
                     style={{
@@ -1104,6 +1140,13 @@ const ScoringModule = ({
   }
 
   const answers = getAnswers()
+  // Questions whose enabledWhen fails count as unanswered and out of progress.
+  const enabledQuestionIds = new Set(
+    (config.questions || []).filter((question) => isScoringQuestionEnabled(question, answers)).map((question) => question.id)
+  )
+  const scoredAnswers = Object.fromEntries(
+    Object.entries(answers).filter(([questionId]) => enabledQuestionIds.has(questionId))
+  )
 
   // Calculate totals
   const calculatedTotals = useMemo(() => {
@@ -1114,7 +1157,7 @@ const ScoringModule = ({
       : config.totals || []
 
     const scoreValues = totals.some(hasScoringTotalFormula)
-      ? buildQuestionScoreValues(config.questions, answers, scoreMap, sharedOptions, config.layout)
+      ? buildQuestionScoreValues(config.questions, scoredAnswers, scoreMap, sharedOptions, config.layout)
       : null
     const contextRoot = { patient: sourceData?.patient, sourceData, formData: fd?.field?.data }
 
@@ -1132,7 +1175,9 @@ const ScoringModule = ({
 
       for (const term of total.terms || []) {
         const termQuestionId = term.questionId || term.answerFieldId
-        const answer = answers[termQuestionId]
+        // an unavailable question (enabledWhen) adds nothing and blocks nothing
+        if (questionsById.has(termQuestionId) && !enabledQuestionIds.has(termQuestionId)) continue
+        const answer = scoredAnswers[termQuestionId]
         const optionScoreMap = scoreMap.get(termQuestionId)
         const answerScore = getScoreFromValue(answer, optionScoreMap)
 
@@ -1158,7 +1203,7 @@ const ScoringModule = ({
     }
 
     return results
-  }, [answers, config.calculatedValues, config.layout, config.questions, config.totals, scoreMap, sharedOptions, sourceData, fd])
+  }, [scoredAnswers, config.calculatedValues, config.layout, config.questions, config.totals, scoreMap, sharedOptions, sourceData, fd])
 
   useEffect(() => {
     if (!setFd) return
@@ -1212,15 +1257,15 @@ const ScoringModule = ({
 
   // Calculate progress
   const progress = useMemo(() => {
-    const questions = config.questions || []
+    const questions = (config.questions || []).filter((question) => enabledQuestionIds.has(question.id))
     const total = questions.length
     const answered = questions.filter((question) => {
-      const value = answers[question.id]
+      const value = scoredAnswers[question.id]
       const optionScoreMap = scoreMap.get(question.id)
       return getScoreFromValue(value, optionScoreMap) !== null
     }).length
     return { answered, total, percentage: total > 0 ? Math.round((answered / total) * 100) : 0 }
-  }, [answers, config.questions, scoreMap])
+  }, [scoredAnswers, enabledQuestionIds, config.questions, scoreMap])
 
   const matrixSignature = sharedOptions.length > 0 ? serializeOptionSignature(sharedOptions) : null
   const normalizedLayout = config.layout || "stacked"
@@ -1346,6 +1391,7 @@ const ScoringModule = ({
                 sharedOptions={sharedOptions}
                 continuumLabels={continuumLabels}
                 isDarkMode={isDarkMode}
+                disabled={!enabledQuestionIds.has(question.id)}
               />
             ) : (
               <ScoringQuestion
@@ -1353,6 +1399,7 @@ const ScoringModule = ({
                 question={question}
                 sharedOptions={sharedOptions}
                 isDarkMode={isDarkMode}
+                disabled={!enabledQuestionIds.has(question.id)}
               />
             )
           ))}

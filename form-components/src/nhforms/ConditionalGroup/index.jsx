@@ -577,7 +577,12 @@ const checkComparisonMatch = (fieldValue, operator, expectedValue) => {
 const evaluateConditionEntry = (entry, getFieldValue) => {
   if (entry && Array.isArray(entry.conditions)) return evaluateConditionEntries(entry.conditions, entry.match, getFieldValue)
   if (!entry || !entry.controllerFieldId || !entry.type) return false
-  const fieldValue = getFieldValue(entry.controllerFieldId)
+  let fieldValue = getFieldValue(entry.controllerFieldId)
+  // A chart fact (chart:patient.sex, chart:patient.ageYears …) comes from the
+  // chart the form root registered with FormLogicKit, never from the answers.
+  if (fieldValue === undefined && typeof FormLogicKit !== 'undefined' && FormLogicKit && typeof FormLogicKit.chartFact === 'function') {
+    fieldValue = FormLogicKit.chartFact(entry.controllerFieldId)
+  }
   const type = entry.type
   if (type === 'choice-selected') return checkChoiceMatch(fieldValue, entry.optionValues ?? [], false)
   if (type === 'choice-not-selected') return checkChoiceMatch(fieldValue, entry.optionValues ?? [], true)
@@ -1084,14 +1089,20 @@ const ConditionalFieldBehavior = ({ fieldId, rules = [], validations = [], optio
         props[key] = options.flatMap(option => {
           const stored = typeof option === 'string' ? option : option.code ?? option.key ?? option.value ?? option.text
           const rule = optionRules.find(rule => rule.value === String(stored))
-          if (rule?.showWhen && !matches(rule.showWhen)) return []
+          // A group with no conditions yet (still being authored) is no rule.
+          if (rule?.showWhen?.conditions?.length && !matches(rule.showWhen)) return []
           const translated = text.options?.[stored] || text.options?.[typeof option === "string" ? option : option.text ?? option.display ?? option.label]
-          if (typeof option === 'string') return [{ key: option, text: translated || option, code: option, display: translated || option, disabled: rule?.disableWhen ? matches(rule.disableWhen) : false }]
-          return [{ ...option, ...(translated ? { ...(option.text !== undefined ? { text: translated } : {}), ...(option.display !== undefined ? { display: translated } : {}), ...(option.label !== undefined ? { label: translated } : {}) } : {}), ...(rule?.disableWhen ? { disabled: matches(rule.disableWhen) } : {}) }]
+          if (typeof option === 'string') return [{ key: option, text: translated || option, code: option, display: translated || option, disabled: rule?.disableWhen?.conditions?.length ? matches(rule.disableWhen) : false }]
+          return [{ ...option, ...(translated ? { ...(option.text !== undefined ? { text: translated } : {}), ...(option.display !== undefined ? { display: translated } : {}), ...(option.label !== undefined ? { label: translated } : {}) } : {}), ...(rule?.disableWhen?.conditions?.length ? { disabled: matches(rule.disableWhen) } : {}) }]
         })
       }
       if (child.props.children) props.children = adapt(child.props.children)
-      if (optionRules.length && Array.isArray(props.optionList) && child.props.fieldId === fieldId) return <ConditionalChoiceOptions {...child.props} {...props} />
+      // Only greying an answer out needs the list below: the faithful MOIS
+      // controls have no per-answer disabled state. Rules that only offer or
+      // hide answers (a Cerner DTA's answers by age and sex) keep the question's
+      // own control (checklist, dropdown, searchable select) with the filtered list.
+      const greysOut = optionRules.some(rule => rule?.disableWhen?.conditions?.length)
+      if (greysOut && Array.isArray(props.optionList) && child.props.fieldId === fieldId) return <ConditionalChoiceOptions {...child.props} {...props} />
     }
     return React.cloneElement(child, props)
   })

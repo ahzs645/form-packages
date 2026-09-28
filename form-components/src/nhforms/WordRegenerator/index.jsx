@@ -2744,6 +2744,8 @@ var WordFormRuntime = (() => {
     if (format === "ddMMMyyyy") return `${day}${mon}${year}`;
     if (format === "yyyy.MM.dd") return `${year}.${month}.${day}`;
     if (format === "dd/MM/yyyy") return `${day}/${month}/${year}`;
+    if (format === "dd/MM/yy") return `${day}/${month}/${year.slice(2)}`;
+    if (format === "dd/MM") return `${day}/${month}`;
     if (format === "MM/dd/yyyy") return `${month}/${day}/${year}`;
     if (format === "MMMM d, yyyy") return `${monthName} ${+day}, ${year}`;
     return `${year}-${month}-${day}`;
@@ -3087,6 +3089,22 @@ var WordFormRuntime = (() => {
             if (rendered.hasValue) lines.push(rendered.text.trim());
           });
           write(step.targetId, lines.join(step.separator ?? "\n"));
+          return;
+        }
+        case "table-date": {
+          const rows = read(step.tableId);
+          if (rows !== void 0 && rows !== null && !Array.isArray(rows)) {
+            warnings.push(`Preparer "${name}": "${step.tableId}" is not a table.`);
+            return;
+          }
+          const dated = (Array.isArray(rows) ? rows : []).flatMap((row) => {
+            const value = row && typeof row === "object" ? readValuePath(row, step.columnId) : void 0;
+            const key = formatDateWithPattern(value, "yyyy-MM-dd'T'HH:mm");
+            return key ? [{ value, key }] : [];
+          });
+          const pick = step.pick ?? "first";
+          const chosen = pick === "last" ? dated[dated.length - 1] : pick === "earliest" ? dated.reduce((best, entry) => !best || entry.key < best.key ? entry : best, void 0) : pick === "latest" ? dated.reduce((best, entry) => !best || entry.key > best.key ? entry : best, void 0) : dated[0];
+          write(step.targetId, chosen ? formatDateWithPattern(chosen.value, step.format || "yyyy-MM-dd") ?? "" : "");
           return;
         }
         case "copy": {

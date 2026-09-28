@@ -343,6 +343,322 @@ AllergyTable = ({
   )
 }
 `,
+  './AnswerChoiceField/index.jsx': `const { useState } = React
+
+/**
+ * AnswerChoiceField — a choice question drawn from Fluent parts inside the
+ * MOIS LayoutItem, for what the faithful MOIS controls (SimpleCodeChecklist,
+ * SimpleCodeSelect) cannot do:
+ *
+ * - answer conditions (option-rules.ts): an answer is offered only when its
+ *   show-when holds and is greyed out while its disable-when holds; conditions
+ *   read other answers and chart facts (FormLogicKit.withChartFacts);
+ * - exclusive answers ("Unable to obtain", "None"): choosing one clears the
+ *   others, and choosing another clears it;
+ * - free text ("Other"), saved as MOIS saves it: a coding whose code is the text;
+ * - presentations: checklist (checkboxes or radios), dropdown, and a
+ *   searchable list (single or several answers).
+ *
+ * It saves exactly what SimpleCodeChecklist saves: one answer as
+ * { code, display, system }, several as an array of those, nothing as null.
+ * Bound to \`fd.field.data[fieldId]\`, or controlled through \`value\`/\`onChange\`
+ * (FieldKit in subform entries, table rows and cards; LayoutTable cells).
+ * A chosen answer that is no longer offered stays chosen and is flagged here
+ * and at save, never cleared.
+ */
+
+const OTHER_KEY = "__answer_other__"
+
+const text = (value) => (value === null || value === undefined ? "" : String(value))
+
+// An answer in any list shape: a string, { code, display }, { key, text },
+// or a builder option { label, value } (a text value first, as normalizeOption).
+const readAnswer = (option, index, codeSystem) => {
+  if (option === null || option === undefined) return null
+  if (typeof option !== "object") {
+    const value = text(option).trim()
+    return value ? { code: value, display: value, system: codeSystem, exclusive: false, disabled: false } : null
+  }
+  const ordinal = typeof option.value === "number"
+  const code = [ordinal ? undefined : option.value, option.code, option.key, option.id, ordinal ? option.value : undefined]
+    .map(text).find((entry) => entry.trim() !== "")
+  const display = [option.label, option.display, option.text].map(text).find((entry) => entry.trim() !== "")
+  if (!code && !display) return null
+  return {
+    code: (code || display).trim(),
+    display: (display || code).trim(),
+    system: option.system || codeSystem,
+    exclusive: option.exclusive === true,
+    disabled: option.disabled === true,
+    order: index,
+  }
+}
+
+// The codes a stored answer holds: codings, subform selections, plain values.
+const storedCodes = (stored) => {
+  const list = Array.isArray(stored) ? stored : stored === null || stored === undefined || stored === "" ? [] : [stored]
+  return list
+    .map((entry) => (entry && typeof entry === "object" ? entry.code ?? entry.selectedKey ?? entry.key ?? entry.value ?? entry.display : entry))
+    .map(text)
+    .filter((entry) => entry.trim() !== "")
+}
+
+const AnswerChoiceField = ({
+  id,
+  fieldId,
+  label,
+  labelPosition = "top",
+  required = false,
+  readOnly = false,
+  disabled = false,
+  placeholder,
+  presentation = "checklist",
+  selectionType = "single",
+  answers = [],
+  optionRules,
+  codeSystem,
+  showOtherOption = false,
+  otherLabel = "Other",
+  layout = "vertical",
+  value,
+  onChange,
+  getValue,
+  note,
+  size,
+  section,
+  moisModule,
+  isComplete,
+  hidden,
+}) => {
+  const controlled = typeof onChange === "function"
+  const [fd, setFormData] = useActiveData()
+  const sd = typeof useSourceData === "function" ? useSourceData() : null
+  const effectiveId = fieldId || id || ""
+  const stored = controlled ? value : effectiveId ? fd?.field?.data?.[effectiveId] : undefined
+  const multiple = selectionType === "multiple"
+  const inactive = Boolean(readOnly || disabled || isComplete)
+  // Free text: what is being typed, and whether "Other" is ticked while empty.
+  const [otherDraft, setOtherDraft] = useState(null)
+  const [otherOpen, setOtherOpen] = useState(false)
+
+  const all = (Array.isArray(answers) ? answers : []).map((option, index) => readAnswer(option, index, codeSystem)).filter(Boolean)
+  const byCode = new Map(all.map((answer) => [answer.code, answer]))
+
+  // Which answers are offered now: the rules read the form's answers (or the
+  // container's, through \`getValue\`) and the chart.
+  const kit = typeof FormLogicKit !== "undefined" && FormLogicKit ? FormLogicKit : null
+  const lookup = kit
+    ? kit.withChartFacts(typeof getValue === "function" ? getValue : (id) => kit.readValue(fd?.field?.data || {}, id), sd)
+    : () => undefined
+  const stateOf = (answer) => {
+    if (answer.disabled) return "disabled"
+    return kit && optionRules ? kit.optionState(answer.code, optionRules, lookup) : "available"
+  }
+  const states = new Map(all.map((answer) => [answer.code, stateOf(answer)]))
+  const offered = all.filter((answer) => states.get(answer.code) !== "hidden")
+
+  const selected = storedCodes(stored)
+  const otherCode = selected.find((code) => !byCode.has(code))
+  const otherText = otherDraft ?? (otherCode || "")
+  const otherChosen = showOtherOption && (otherOpen || Boolean(otherCode))
+  const unavailable = selected.filter((code) => byCode.has(code) && states.get(code) !== "available").map((code) => byCode.get(code).display)
+  const isEmpty = selected.length === 0
+
+  const codingOf = (code) => {
+    const answer = byCode.get(code)
+    return answer ? { code: answer.code, display: answer.display, system: answer.system } : { code, display: code, system: codeSystem }
+  }
+  const write = (codes) => {
+    const unique = [...new Set(codes.filter((code) => code && code !== OTHER_KEY))]
+    const next = multiple ? (unique.length ? unique.map(codingOf) : null) : unique.length ? codingOf(unique[0]) : null
+    if (inactive) return
+    if (controlled) {
+      onChange(next)
+      return
+    }
+    if (!effectiveId) return
+    setFormData(produce((draft) => {
+      if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
+      if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
+      draft.field.data[effectiveId] = next
+    }))
+  }
+
+  // Choosing an exclusive answer clears the others; choosing another clears it.
+  const toggle = (code, checked) => {
+    const answer = byCode.get(code)
+    if (!checked) return write(selected.filter((entry) => entry !== code))
+    if (answer?.exclusive) return write([code])
+    return write([...selected.filter((entry) => !byCode.get(entry)?.exclusive), code])
+  }
+  const choose = (code) => write(code ? [code] : [])
+  // Free text replaces any earlier free text; with several answers it joins
+  // the listed ones (and clears an exclusive one), with one it is the answer.
+  const commitOther = (raw) => {
+    const typed = text(raw).trim()
+    setOtherDraft(null)
+    if (!typed) setOtherOpen(false)
+    const listed = selected.filter((code) => byCode.has(code))
+    if (!multiple) return write(typed ? [typed] : otherCode ? [] : listed)
+    const kept = typed ? listed.filter((code) => !byCode.get(code)?.exclusive) : listed
+    return write(typed ? [...kept, typed] : kept)
+  }
+  const openOther = () => {
+    setOtherOpen(true)
+    setOtherDraft(otherText)
+    // One answer: choosing Other replaces the listed answer.
+    if (!multiple && selected.some((code) => byCode.has(code))) write([])
+  }
+
+  const answerDisabled = (answer) => inactive || states.get(answer.code) === "disabled"
+  const otherInput = otherChosen ? (
+    <Fluent.TextField
+      ariaLabel={\`\${label || effectiveId} \${otherLabel}\`}
+      value={otherText}
+      placeholder={placeholder}
+      disabled={inactive}
+      onChange={(_event, next) => setOtherDraft(next ?? "")}
+      onBlur={() => commitOther(otherText)}
+      onKeyDown={(event) => { if (event.key === "Enter") commitOther(otherText) }}
+      styles={{ root: { marginTop: 6, maxWidth: 320 } }}
+    />
+  ) : null
+
+  const renderChecklist = () => {
+    const wrap = { display: "flex", flexFlow: layout === "inline" ? "row wrap" : "column", alignItems: "flex-start", gap: layout === "inline" ? "4px 12px" : 6, marginTop: 4 }
+    if (multiple) {
+      return (
+        <div style={wrap} role="group" aria-label={label || effectiveId}>
+          {offered.map((answer) => (
+            <Fluent.Checkbox
+              key={answer.code}
+              label={answer.display}
+              checked={selected.includes(answer.code)}
+              disabled={answerDisabled(answer)}
+              onChange={(_event, checked) => toggle(answer.code, Boolean(checked))}
+            />
+          ))}
+          {showOtherOption ? (
+            <Fluent.Checkbox
+              label={otherLabel}
+              checked={otherChosen}
+              disabled={inactive}
+              onChange={(_event, checked) => (checked ? openOther() : commitOther(""))}
+            />
+          ) : null}
+          {otherInput}
+        </div>
+      )
+    }
+    const options = [
+      ...offered.map((answer) => ({ key: answer.code, text: answer.display, disabled: answerDisabled(answer) })),
+      ...(showOtherOption ? [{ key: OTHER_KEY, text: otherLabel, disabled: inactive }] : []),
+    ]
+    return (
+      <>
+        <Fluent.ChoiceGroup
+          ariaLabelledBy={undefined}
+          selectedKey={otherChosen ? OTHER_KEY : selected[0] ?? null}
+          options={options}
+          disabled={inactive}
+          onChange={(_event, option) => {
+            if (option?.key === OTHER_KEY) return openOther()
+            setOtherOpen(false)
+            return choose(option?.key)
+          }}
+          styles={layout === "inline" ? { flexContainer: { display: "flex", flexWrap: "wrap", gap: "0 12px" } } : undefined}
+        />
+        {otherInput}
+      </>
+    )
+  }
+
+  const comboOptions = offered.map((answer) => ({ key: answer.code, text: answer.display, disabled: answerDisabled(answer) }))
+
+  const renderDropdown = () => (
+    <>
+      <Fluent.Dropdown
+        ariaLabel={label || effectiveId}
+        placeholder={placeholder}
+        multiSelect={multiple}
+        disabled={inactive}
+        options={[...comboOptions, ...(showOtherOption ? [{ key: OTHER_KEY, text: otherLabel }] : [])]}
+        selectedKey={multiple ? undefined : otherChosen ? OTHER_KEY : selected[0] ?? null}
+        selectedKeys={multiple ? [...selected.filter((code) => byCode.has(code)), ...(otherChosen ? [OTHER_KEY] : [])] : undefined}
+        onChange={(_event, option) => {
+          if (!option) return
+          if (option.key === OTHER_KEY) return multiple && option.selected === false ? commitOther("") : openOther()
+          if (!multiple) setOtherOpen(false)
+          return multiple ? toggle(String(option.key), Boolean(option.selected)) : choose(String(option.key))
+        }}
+        styles={{ root: { maxWidth: 480 } }}
+      />
+      {otherInput}
+    </>
+  )
+
+  const renderSearchable = () => (
+    <Fluent.ComboBox
+      ariaLabel={label || effectiveId}
+      placeholder={placeholder}
+      multiSelect={multiple}
+      disabled={inactive}
+      autoComplete="on"
+      allowFreeform={showOtherOption}
+      options={comboOptions}
+      selectedKey={multiple ? selected.filter((code) => byCode.has(code)) : selected[0] ?? null}
+      text={!multiple && otherCode ? otherCode : undefined}
+      onChange={(_event, option, _index, typed) => {
+        if (option) return multiple ? toggle(String(option.key), Boolean(option.selected)) : choose(String(option.key))
+        if (showOtherOption && typed) return commitOther(typed)
+        return undefined
+      }}
+      styles={{ root: { maxWidth: 480 } }}
+    />
+  )
+
+  const control = presentation === "dropdown" ? renderDropdown() : presentation === "searchable" ? renderSearchable() : renderChecklist()
+  const flag = unavailable.length ? (
+    <div role="alert" style={{ color: "#a4262c", fontSize: 12, marginTop: 4 }}>
+      {\`\${unavailable.join(", ")} \${unavailable.length > 1 ? "are" : "is"} not offered for this patient. Choose an available answer.\`}
+    </div>
+  ) : null
+
+  if (typeof LayoutItem === "undefined" || controlled) {
+    const showLabel = label && labelPosition !== "none"
+    return (
+      <div data-answer-choice={effectiveId}>
+        {showLabel ? <Fluent.Label required={required}>{label}</Fluent.Label> : null}
+        {control}
+        {flag}
+      </div>
+    )
+  }
+  return (
+    <LayoutItem
+      fieldId={effectiveId}
+      id={id}
+      label={label}
+      labelPosition={labelPosition}
+      required={required}
+      readOnly={readOnly}
+      disabled={disabled}
+      isComplete={isComplete}
+      isEmpty={isEmpty}
+      hidden={hidden}
+      note={note}
+      size={size}
+      section={section}
+      moisModule={moisModule}
+    >
+      <div data-answer-choice={effectiveId}>
+        {control}
+        {flag}
+      </div>
+    </LayoutItem>
+  )
+}
+`,
   './AssessmentScoringTable/index.jsx': `// Fluent is a NAMESPACE in the real engine's form scope — bare Fluent
 // identifiers are a ReferenceError in production even though preview
 // injects them. Destructure everything this component renders.
@@ -5854,7 +6170,12 @@ const checkComparisonMatch = (fieldValue, operator, expectedValue) => {
 const evaluateConditionEntry = (entry, getFieldValue) => {
   if (entry && Array.isArray(entry.conditions)) return evaluateConditionEntries(entry.conditions, entry.match, getFieldValue)
   if (!entry || !entry.controllerFieldId || !entry.type) return false
-  const fieldValue = getFieldValue(entry.controllerFieldId)
+  let fieldValue = getFieldValue(entry.controllerFieldId)
+  // A chart fact (chart:patient.sex, chart:patient.ageYears …) comes from the
+  // chart the form root registered with FormLogicKit, never from the answers.
+  if (fieldValue === undefined && typeof FormLogicKit !== 'undefined' && FormLogicKit && typeof FormLogicKit.chartFact === 'function') {
+    fieldValue = FormLogicKit.chartFact(entry.controllerFieldId)
+  }
   const type = entry.type
   if (type === 'choice-selected') return checkChoiceMatch(fieldValue, entry.optionValues ?? [], false)
   if (type === 'choice-not-selected') return checkChoiceMatch(fieldValue, entry.optionValues ?? [], true)
@@ -6361,14 +6682,20 @@ const ConditionalFieldBehavior = ({ fieldId, rules = [], validations = [], optio
         props[key] = options.flatMap(option => {
           const stored = typeof option === 'string' ? option : option.code ?? option.key ?? option.value ?? option.text
           const rule = optionRules.find(rule => rule.value === String(stored))
-          if (rule?.showWhen && !matches(rule.showWhen)) return []
+          // A group with no conditions yet (still being authored) is no rule.
+          if (rule?.showWhen?.conditions?.length && !matches(rule.showWhen)) return []
           const translated = text.options?.[stored] || text.options?.[typeof option === "string" ? option : option.text ?? option.display ?? option.label]
-          if (typeof option === 'string') return [{ key: option, text: translated || option, code: option, display: translated || option, disabled: rule?.disableWhen ? matches(rule.disableWhen) : false }]
-          return [{ ...option, ...(translated ? { ...(option.text !== undefined ? { text: translated } : {}), ...(option.display !== undefined ? { display: translated } : {}), ...(option.label !== undefined ? { label: translated } : {}) } : {}), ...(rule?.disableWhen ? { disabled: matches(rule.disableWhen) } : {}) }]
+          if (typeof option === 'string') return [{ key: option, text: translated || option, code: option, display: translated || option, disabled: rule?.disableWhen?.conditions?.length ? matches(rule.disableWhen) : false }]
+          return [{ ...option, ...(translated ? { ...(option.text !== undefined ? { text: translated } : {}), ...(option.display !== undefined ? { display: translated } : {}), ...(option.label !== undefined ? { label: translated } : {}) } : {}), ...(rule?.disableWhen?.conditions?.length ? { disabled: matches(rule.disableWhen) } : {}) }]
         })
       }
       if (child.props.children) props.children = adapt(child.props.children)
-      if (optionRules.length && Array.isArray(props.optionList) && child.props.fieldId === fieldId) return <ConditionalChoiceOptions {...child.props} {...props} />
+      // Only greying an answer out needs the list below: the faithful MOIS
+      // controls have no per-answer disabled state. Rules that only offer or
+      // hide answers (a Cerner DTA's answers by age and sex) keep the question's
+      // own control (checklist, dropdown, searchable select) with the filtered list.
+      const greysOut = optionRules.some(rule => rule?.disableWhen?.conditions?.length)
+      if (greysOut && Array.isArray(props.optionList) && child.props.fieldId === fieldId) return <ConditionalChoiceOptions {...child.props} {...props} />
     }
     return React.cloneElement(child, props)
   })
@@ -8385,7 +8712,8 @@ const _resolvePathValue = (root, path) => {
 
 const _resolveLiteralValue = (value, context) => {
   if (value === "$now") return new Date().toISOString()
-  if (value === "$today") return new Date().toISOString().slice(0, 10)
+  // The signer's local day; toISOString() is UTC and stamps tomorrow in the evening.
+  if (value === "$today") return _todayDateValue()
   if (value === "$userInitials") return _resolvePathValue(context, "userProfile.identity.initials")
   if (value === "$userFullName") return _resolvePathValue(context, "userProfile.identity.fullName")
   if (value === "$userLoginName") return _resolvePathValue(context, "userProfile.loginName")
@@ -8834,6 +9162,109 @@ const _normalizeMirroredCellValue = (value, column) => {
   return value
 }
 
+// Chart observations (\`chartObservations\` prop, from columns saved as an
+// observation): each row writes one observation per such column, dated by the
+// row's date (and time) columns, through the component DCO channel
+// (__componentPayloads.dcoUpdatesByComponent[id], written on submit only).
+// The observations this webform wrote before are reconciled by code and
+// date/time: unchanged ones are left, changed ones corrected (status C on
+// their id), and ones no row still produces deleted (negative id).
+const _observationDateKey = (value) => {
+  const text = value && typeof value === "object" && "date" in value ? value.date : value
+  const match = /^(\\d{4})[-./](\\d{1,2})[-./](\\d{1,2})(?:[T ](\\d{1,2}):(\\d{2}))?/.exec(String(text ?? "").trim())
+  if (!match) return null
+  const pad = (part) => String(part).padStart(2, "0")
+  const date = \`\${match[1]}-\${pad(match[2])}-\${pad(match[3])}\`
+  return match[4] === undefined ? { date, key: date } : { date, time: \`\${pad(match[4])}:\${match[5]}\`, key: \`\${date}T\${pad(match[4])}:\${match[5]}\` }
+}
+
+const _rowObservationDate = (row, dateConfig) => {
+  if (!dateConfig?.datePath) return null
+  const day = _observationDateKey(_getValueAtPath(row, dateConfig.datePath))
+  if (!day) return null
+  const timeText = dateConfig.timePath ? String(_getValueAtPath(row, dateConfig.timePath) ?? "").trim() : ""
+  const time = /^(\\d{1,2}):(\\d{2})/.exec(timeText)
+  if (!time) return day
+  const hhmm = \`\${time[1].padStart(2, "0")}:\${time[2]}\`
+  return { date: day.date, time: hhmm, key: \`\${day.date}T\${hhmm}\` }
+}
+
+const _chartObservationWebformId = (observation) => (
+  Number(observation?.sourceWebformId) || Number(observation?.linkedWebformId) ||
+  Number(observation?.webformId) || Number(observation?.webform?.webformId) || 0
+)
+
+// The staged DCO payload for the table's rows. \`existing\` are the chart
+// observations this webform wrote before (sd.webform.observations).
+const _buildChartObservationPayload = ({ rows = [], columns = [], config, existing = [], formData, createdBy } = {}) => {
+  const writes = Array.isArray(config?.columns) ? config.columns : []
+  if (writes.length === 0) return []
+  const codes = new Set()
+  writes.forEach((write) => {
+    codes.add(String(write.observationCode))
+    Object.values(write.codeBy?.codes || {}).forEach((entry) => entry?.observationCode && codes.add(String(entry.observationCode)))
+  })
+  const columnById = new Map(columns.map((column) => [column.id, column]))
+  const desired = []
+  ;(Array.isArray(rows) ? rows : []).forEach((row) => {
+    if (!row || typeof row !== "object") return
+    const when = _rowObservationDate(row, config.date)
+    if (!when) return
+    writes.forEach((write) => {
+      const column = columnById.get(write.columnId)
+      if (column && !_evaluateColumnVisibility(column, row, columns, formData)) return
+      const raw = _getValueAtPath(row, write.dataPath || write.columnId)
+      const value = _stringifyValue(raw).trim()
+      if (!value) return
+      const chosen = write.codeBy
+        ? write.codeBy.codes?.[String(_getValueAtPath(row, write.codeBy.columnPath || write.codeBy.columnId) ?? "")]
+        : null
+      const target = chosen?.observationCode ? { ...write, ...chosen } : write
+      desired.push({
+        key: \`\${target.observationCode}|\${when.key}\`,
+        observationCode: String(target.observationCode),
+        value,
+        valueType: target.valueType || (typeof raw === "number" ? "NUMERIC" : "TEXT"),
+        units: target.units || "",
+        description: target.description || write.description || "",
+        loincCode: target.loincCode || "",
+        when,
+      })
+    })
+  })
+  const existingByKey = new Map()
+  ;(Array.isArray(existing) ? existing : []).forEach((observation) => {
+    const code = String(observation?.observationCode ?? "").trim()
+    const id = Number(observation?.observationId)
+    if (!codes.has(code) || !(id > 0)) return
+    const when = _observationDateKey(observation.collectedDateTime) || _observationDateKey(observation.collectedDate)
+    if (!when) return
+    const key = \`\${code}|\${when.key}\`
+    if (!existingByKey.has(key)) existingByKey.set(key, [])
+    existingByKey.get(key).push(observation)
+  })
+  const payload = []
+  desired.forEach((entry) => {
+    const prior = existingByKey.get(entry.key)?.shift()
+    if (prior && String(prior.value ?? "").trim() === entry.value) return
+    payload.push({
+      observationId: prior ? Number(prior.observationId) : 0,
+      observationCode: entry.observationCode,
+      observationClass: "DCOBS",
+      value: entry.value,
+      valueType: entry.valueType,
+      status: prior ? "C" : "F",
+      ...(entry.description ? { description: entry.description } : {}),
+      ...(entry.units ? { units: entry.units } : {}),
+      ...(entry.loincCode ? { loincCode: entry.loincCode } : {}),
+      ...(createdBy ? { collectedBy: createdBy, ...(prior ? {} : { orderedBy: createdBy }) } : {}),
+      ...(entry.when.time ? { collectedDateTime: entry.when.key } : { collectedDate: entry.when.date }),
+    })
+  })
+  existingByKey.forEach((left) => left.forEach((observation) => payload.push({ observationId: -Number(observation.observationId) })))
+  return payload
+}
+
 const _normalizeSourceCellValue = (value, column) => {
   if (column?.type === "checkbox") {
     return _toDocumentCheckboxValue(value)
@@ -9186,6 +9617,8 @@ const _buildSubformFieldFromColumn = (column) => {
     required: _isRequiredColumn(column),
     requiredMessage: typeof column.requiredMessage === "string" && column.requiredMessage.trim() ? column.requiredMessage : undefined,
     visibility: visibility || undefined,
+    // Which answers the row editor offers (FormLogicKit.availableOptions).
+    optionRules: Array.isArray(column.optionRules) && column.optionRules.length > 0 ? column.optionRules : undefined,
   })
 
   switch (column.type) {
@@ -9338,6 +9771,9 @@ EditableTable = ({
   authorshipColumnLabel = "Lock",
   sourceFieldIds = {},
   sourceFieldIdsByRow = {},
+  // Columns saved as observations and the columns that date them (see
+  // _buildChartObservationPayload); staged for submit.
+  chartObservations = null,
   rowsPath,
   countPath,
   ...props
@@ -9513,6 +9949,42 @@ EditableTable = ({
   }
 
   const rows = getRows()
+
+  // Stage the rows' chart observations (written on submit). The observations
+  // this webform wrote before come back on sd.webform.observations; a new
+  // form (no webform id yet) has none.
+  const chartObservationPayload = useMemo(() => {
+    if (!chartObservations || isLocked) return null
+    const webformId = Number(sd?.webform?.webformId) || Number(sd?.formParams?.webformId) || 0
+    const existing = webformId && Array.isArray(sd?.webform?.observations)
+      ? sd.webform.observations.filter((observation) => {
+        const linked = _chartObservationWebformId(observation)
+        return !linked || linked === webformId
+      })
+      : []
+    return _buildChartObservationPayload({
+      rows: Array.isArray(rows) ? rows : [],
+      columns,
+      config: chartObservations,
+      existing,
+      formData,
+      createdBy: sd?.userProfile?.identity?.fullName,
+    })
+  }, [chartObservations, columns, formData, isLocked, rows, sd])
+  useEffect(() => {
+    if (chartObservationPayload === null || !fd?.setFormData) return
+    fd.setFormData(produce((draft) => {
+      if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
+      if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
+      const container = draft.field.data.__componentPayloads ?? {}
+      const group = container.dcoUpdatesByComponent ?? {}
+      if (JSON.stringify(group[id] ?? null) === JSON.stringify(chartObservationPayload.length ? chartObservationPayload : null)) return
+      if (chartObservationPayload.length) group[id] = chartObservationPayload
+      else delete group[id]
+      container.dcoUpdatesByComponent = group
+      draft.field.data.__componentPayloads = container
+    }))
+  }, [chartObservationPayload, fd, id])
   const sourceSeedRows = useMemo(() => _buildRowsFromSourceFields({
     fieldData: fd?.field?.data,
     columns,
@@ -10827,6 +11299,8 @@ const FieldKit = (() => {
           system: (isRecord(option) && option.system) || normalized.system || system,
           order: index,
           ...(isRecord(option) && option.hotKey ? { hotKey: option.hotKey } : {}),
+          // An answer its option rules disable (FormLogicKit.availableOptions).
+          ...(isRecord(option) && option.disabled === true ? { disabled: true } : {}),
         }
       })
       .filter(Boolean)
@@ -10905,6 +11379,20 @@ const FieldKit = (() => {
       const checklist = style === "checkbox" || style === "radio"
       const multiple = style === "multiselect" || style === "checkbox"
       const selectionType = multiple ? "multiple" : "single"
+      // Answers the container greys out, exclusive answers, or answer
+      // conditions: AnswerChoiceField draws what the MOIS controls cannot.
+      const rawOptions = Array.isArray(descriptor.options) ? descriptor.options : []
+      const needsAnswerChoice =
+        (Array.isArray(descriptor.optionRules) && descriptor.optionRules.length > 0) ||
+        rawOptions.some((option) => isRecord(option) && (option.disabled === true || option.exclusive === true))
+      if (needsAnswerChoice && rawOptions.length > 0) {
+        return {
+          control: "AnswerChoiceField",
+          selectionType,
+          presentation: checklist ? "checklist" : findCode || searchableMultiple ? "searchable" : "dropdown",
+          supported: true,
+        }
+      }
       if (validCodeSystem(descriptor.codeSystem) || hasOptions(descriptor)) {
         if (!validCodeSystem(descriptor.codeSystem) && checklist && descriptor.presentation === "buttons") {
           return { control: "CompactChoiceField", supported: false }
@@ -10969,6 +11457,7 @@ const FieldKit = (() => {
       case "SimpleCodeSelect":
       case "SimpleCodeChecklist":
       case "FindCodeSelect":
+      case "AnswerChoiceField":
         return choice.selectionType === "multiple" ? [] : null
       case "CompactBooleanField":
       case "ScaleField":
@@ -10994,6 +11483,7 @@ const FieldKit = (() => {
         switch (choice.control) {
           case "SimpleCodeSelect":
           case "SimpleCodeChecklist":
+          case "AnswerChoiceField":
           case "FindCodeSelect": {
             const codings = codingsOf(stored, descriptor)
             return choice.selectionType === "multiple" ? codings : codings[0] || null
@@ -11016,6 +11506,7 @@ const FieldKit = (() => {
           case "SimpleCodeSelect":
           case "SimpleCodeChecklist":
           case "FindCodeSelect":
+          case "AnswerChoiceField":
             if (choice.selectionType === "multiple") {
               // Codes in option order (as cells always stored them), whatever
               // order the control reports them in.
@@ -11053,6 +11544,7 @@ const FieldKit = (() => {
         switch (choice.control) {
           case "SimpleCodeSelect":
           case "SimpleCodeChecklist":
+          case "AnswerChoiceField":
           case "FindCodeSelect": {
             if (options.length > 0) {
               const selected = options.filter((option) => isSelected(stored, option))
@@ -11084,6 +11576,7 @@ const FieldKit = (() => {
         switch (choice.control) {
           case "SimpleCodeSelect":
           case "SimpleCodeChecklist":
+          case "AnswerChoiceField":
           case "FindCodeSelect": {
             const first = Array.isArray(value) ? value[value.length - 1] : value
             if (!first || first.code === null || first.code === undefined || first.code === "") return null
@@ -11122,6 +11615,7 @@ const FieldKit = (() => {
         switch (choice.control) {
           case "SimpleCodeSelect":
           case "SimpleCodeChecklist":
+          case "AnswerChoiceField":
           case "FindCodeSelect": {
             const codings = codingsOf(stored, descriptor)
             return choice.selectionType === "multiple" ? codings : codings[0] || null
@@ -11141,6 +11635,7 @@ const FieldKit = (() => {
         switch (choice.control) {
           case "SimpleCodeSelect":
           case "SimpleCodeChecklist":
+          case "AnswerChoiceField":
           case "FindCodeSelect": {
             if (choice.selectionType === "multiple") return (Array.isArray(value) ? value : []).map(codingForStorage).filter(Boolean)
             const coding = codingForStorage(Array.isArray(value) ? value[0] : value)
@@ -11173,6 +11668,7 @@ const FieldKit = (() => {
         switch (choice.control) {
           case "SimpleCodeSelect":
           case "SimpleCodeChecklist":
+          case "AnswerChoiceField":
           case "FindCodeSelect": {
             const codings = codingsOf(stored, descriptor)
             if (codings.length === 0 && toText(stored).trim()) return { code: toText(stored), display: toText(stored) }
@@ -11188,6 +11684,7 @@ const FieldKit = (() => {
         switch (choice.control) {
           case "SimpleCodeSelect":
           case "SimpleCodeChecklist":
+          case "AnswerChoiceField":
           case "FindCodeSelect": {
             const first = Array.isArray(value) ? value[0] : value
             return first?.code ?? first?.display ?? ""
@@ -11293,6 +11790,7 @@ const FieldKit = (() => {
       text: option.display,
       order: option.order,
       ...(option.hotKey ? { hotKey: option.hotKey } : {}),
+      ...(option.disabled ? { disabled: true } : {}),
     }))
 
   const findCodeOptionList = (descriptor) =>
@@ -11301,6 +11799,7 @@ const FieldKit = (() => {
       display: option.display,
       system: option.system ?? validCodeSystem(descriptor.codeSystem) ?? "",
       order: option.order,
+      ...(option.disabled ? { disabled: true } : {}),
     }))
 
   const numberProps = (descriptor) => {
@@ -11390,6 +11889,28 @@ const FieldKit = (() => {
     const codeSystem = validCodeSystem(descriptor.codeSystem)
 
     switch (choice.control) {
+      case "AnswerChoiceField": {
+        const multiple = choice.selectionType === "multiple"
+        const answerProps = {
+          ...common,
+          ...placeholderProp,
+          presentation: choice.presentation,
+          selectionType: choice.selectionType,
+          answers: descriptor.options,
+          ...(Array.isArray(descriptor.optionRules) && descriptor.optionRules.length ? { optionRules: descriptor.optionRules } : {}),
+          ...(codeSystem ? { codeSystem } : {}),
+          ...(descriptor.showOtherOption ? { showOtherOption: true } : {}),
+          ...(descriptor.choiceAnswerLayout === "inline" ? { layout: "inline" } : {}),
+        }
+        if (!controlled) return <AnswerChoiceField {...answerProps} {...bound} />
+        return (
+          <AnswerChoiceField
+            {...answerProps}
+            value={controlValue ?? (multiple ? [] : null)}
+            onChange={(next) => emit(next ?? (multiple ? [] : null))}
+          />
+        )
+      }
       case "TextArea": {
         const multilineProps = choice.multiline
           ? {
@@ -11841,12 +12362,60 @@ const resolvePathValue = (root, path) => {
     }, root)
 }
 
+const STAMP_MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+const pad2 = (number) => (number < 10 ? "0" : "") + number
+
+// Local wall-clock date/time (the signer's day, not UTC). Tokens match the
+// document date formats: yyyy yy MMMM MMM MM M dd d HH H mm.
+const formatStampDate = (date, format) =>
+  String(format || "yyyy-MM-dd").replace(/yyyy|yy|MMMM|MMM|MM|M|dd|d|HH|H|mm/g, (token) => {
+    switch (token) {
+      case "yyyy": return String(date.getFullYear())
+      case "yy": return pad2(date.getFullYear() % 100)
+      case "MMMM": return STAMP_MONTHS[date.getMonth()]
+      case "MMM": return STAMP_MONTHS[date.getMonth()].slice(0, 3)
+      case "MM": return pad2(date.getMonth() + 1)
+      case "M": return String(date.getMonth() + 1)
+      case "dd": return pad2(date.getDate())
+      case "d": return String(date.getDate())
+      case "HH": return pad2(date.getHours())
+      case "H": return String(date.getHours())
+      default: return pad2(date.getMinutes())
+    }
+  })
+
+const STAMP_USER_PATHS = {
+  userInitials: "userProfile.identity.initials",
+  userFullName: "userProfile.identity.fullName",
+  userLoginName: "userProfile.loginName",
+}
+
+// A value with {tokens} is a template: "{today:dd/MMM/yyyy} {userInitials}"
+// stamps "28/Sep/2026 DPU" into one field. {today} and {now} take a date
+// format after the colon; the user tokens read the signed-in user's profile.
+const resolveStampTemplate = (template, context) => {
+  const now = new Date()
+  return String(template)
+    .replace(/\\{(\\w+)(?::([^}]*))?\\}/g, (match, token, format) => {
+      if (token === "today") return formatStampDate(now, format || "yyyy-MM-dd")
+      if (token === "now" || token === "time") return formatStampDate(now, format || "HH:mm")
+      if (STAMP_USER_PATHS[token]) {
+        const value = resolvePathValue(context, STAMP_USER_PATHS[token])
+        return value == null ? "" : String(value)
+      }
+      return match
+    })
+    .replace(/\\s+/g, " ")
+    .trim()
+}
+
 const resolveLiteralValue = (value, context) => {
   if (value === "$now") return new Date().toISOString()
-  if (value === "$today") return new Date().toISOString().slice(0, 10)
+  if (value === "$today") return formatStampDate(new Date(), "yyyy-MM-dd")
   if (value === "$userInitials") return resolvePathValue(context, "userProfile.identity.initials")
   if (value === "$userFullName") return resolvePathValue(context, "userProfile.identity.fullName")
   if (value === "$userLoginName") return resolvePathValue(context, "userProfile.loginName")
+  if (typeof value === "string" && value.indexOf("{") !== -1) return resolveStampTemplate(value, context)
   return value
 }
 
@@ -12277,7 +12846,9 @@ const FindCodeSelectBase = ({
     .filter(Boolean)
   const selectedKeySet = useMemo(() => new Set(selectedKeys), [selectedKeys.join('|')])
   const selectedCode = !isMultiSelect ? selectedValue?.[codeId] ?? selectedValue?.code ?? null : null
-  const selectedKey = selectedCode == null ? undefined : String(selectedCode)
+  // Fluent's ComboBox treats \`undefined\` as uncontrolled (the last pick stays
+  // on screen) and \`null\` as "nothing selected", so a cleared value is null.
+  const selectedKey = selectedCode != null ? String(selectedCode) : selectedValue ? undefined : null
   const hasSearchText = String(searchText || '').trim().length > 0
   const comboSelectedKey = hasSearchText ? undefined : isMultiSelect ? selectedKeys : selectedKey
 
@@ -12644,21 +13215,30 @@ const FindCodeSelectWithSourceLookup = ({
   )
   const items = sourceItems.length > 0 ? sourceItems : fallbackItems
   const storedValue = fd?.field?.data?.[effectiveFieldId]
+  const lookupTargets = Array.isArray(targetFieldIds) && targetFieldIds.length > 0 ? targetFieldIds : [effectiveFieldId]
+  const storedTargets = lookupTargets.map((targetId) => String(fd?.field?.data?.[targetId] ?? ''))
   const boundValue = useMemo(() => {
-    if (props.value !== undefined || storedValue === undefined || storedValue === null || storedValue === '') {
-      return props.value
-    }
+    if (props.value !== undefined || storedValue === undefined || storedValue === null) return props.value
+    // Cleared by this lookup or a sibling one (a service location with no
+    // JORG unit empties Health Authority): show the box empty.
+    if (storedValue === '') return null
     if (typeof storedValue === 'object') return storedValue
     const text = String(storedValue)
+    // A lookup stores a column of the row it picked (Health Authority keeps
+    // only the authority), so find that row again by every target it filled.
     return items.find((item) => String(item?.code ?? item?.key ?? '') === text || String(item?.display ?? item?.text ?? '') === text)
+      ?? items.find((item) => lookupTargets.every((targetId, index) => (
+        valueForLookupTarget(item, targetId, targetLabels?.[targetId], '') === storedTargets[index]
+      )))
       ?? { code: null, display: text }
-  }, [items, props.value, storedValue])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- storedTargets is keyed by its joined text
+  }, [items, props.value, storedValue, storedTargets.join('\\u0000')])
 
   const handleChange = (nextValue) => {
     props.onChange?.(nextValue)
     const selected = Array.isArray(nextValue) ? nextValue[nextValue.length - 1] : nextValue
     const fallback = String(selected?.display ?? selected?.text ?? selected?.value ?? selected?.code ?? '')
-    const targets = Array.isArray(targetFieldIds) && targetFieldIds.length > 0 ? targetFieldIds : [effectiveFieldId]
+    const targets = lookupTargets
     const clearTargets = Array.from(new Set([
       ...targets,
       ...(Array.isArray(clearTargetFieldIds) ? clearTargetFieldIds : []),
@@ -14986,7 +15566,8 @@ const FormLogicKit = (() => {
     }
     const entry = toFlatEntry(rawEntry)
     if (!entry || !entry.controllerFieldId || !entry.type) return false
-    const fieldValue = get(entry.controllerFieldId)
+    let fieldValue = get(entry.controllerFieldId)
+    if (fieldValue === undefined && isChartFactId(entry.controllerFieldId)) fieldValue = activeChartFact(entry.controllerFieldId)
     const type = entry.type
     if (type === "choice-selected") return checkChoiceMatch(fieldValue, entry.optionValues, false)
     if (type === "choice-not-selected") return checkChoiceMatch(fieldValue, entry.optionValues, true)
@@ -15016,6 +15597,194 @@ const FormLogicKit = (() => {
     if (!group || typeof group !== "object") return false
     return evaluateEntries(group.conditions, group.match, toGetter(getValue))
   }
+
+  // ---- Chart facts and answer availability — begin ----
+  // Mirrors @webforms/form-model chart-facts.ts and option-rules.ts (parity:
+  // lib/__tests__/form-logic-kit-chart-facts-parity.test.ts). A condition names
+  // a chart fact by a reserved controller id; its value comes from the
+  // patient in source data when the rule runs and is never saved.
+  const CHART_FACT_AGE_IDS = {
+    years: "chart:patient.ageYears",
+    months: "chart:patient.ageMonths",
+    weeks: "chart:patient.ageWeeks",
+    days: "chart:patient.ageDays",
+    hours: "chart:patient.ageHours",
+  }
+  const CHART_FACT_SEX_ID = "chart:patient.sex"
+  const isChartFactId = (id) => typeof id === "string" && id.startsWith("chart:patient.")
+
+  const chartFactSex = (raw) => {
+    const value = raw && typeof raw === "object" ? (raw.code ?? raw.value ?? raw.display) : raw
+    const key = typeof value === "string" ? value.trim().toLowerCase() : ""
+    if (!key) return undefined
+    if (key.startsWith("f")) return "female"
+    if (key.startsWith("m")) return "male"
+    // Undifferentiated (Cerner, HL7 v2 "A") is AdministrativeGender "other".
+    if (key.startsWith("o") || key.startsWith("und") || key === "a") return "other"
+    if (key.startsWith("u")) return "unknown"
+    return undefined
+  }
+
+  // A date-only birth date is a local calendar day, not UTC midnight.
+  const chartFactBirthDate = (raw) => {
+    const value = raw && typeof raw === "object" && !(raw instanceof Date) ? (raw.value ?? raw.code) : raw
+    if (value instanceof Date) return Number.isFinite(value.getTime()) ? value : undefined
+    if (typeof value !== "string" || !value.trim()) return undefined
+    const match = /^(\\d{4})[-./](\\d{1,2})[-./](\\d{1,2})$/.exec(value.trim())
+    const date = match ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3])) : new Date(value)
+    return Number.isFinite(date.getTime()) ? date : undefined
+  }
+
+  const completedMonths = (from, to) => {
+    let months = (to.getFullYear() - from.getFullYear()) * 12 + (to.getMonth() - from.getMonth())
+    if (to.getDate() < from.getDate()) months -= 1
+    return months
+  }
+
+  const chartFactAge = (birthDate, unit, asOf) => {
+    const birth = chartFactBirthDate(birthDate)
+    const at = asOf instanceof Date ? asOf : new Date()
+    if (!birth || at < birth) return undefined
+    if (unit === "years") return Math.floor(completedMonths(birth, at) / 12)
+    if (unit === "months") return completedMonths(birth, at)
+    if (unit === "weeks") return Math.floor((at.getTime() - birth.getTime()) / (7 * 86400000))
+    if (unit === "days") return Math.floor((at.getTime() - birth.getTime()) / 86400000)
+    if (unit === "hours") return Math.floor((at.getTime() - birth.getTime()) / 3600000)
+    return undefined
+  }
+
+  // The patient in source data (sd.patient, or the query result's first
+  // patient, as PatientValueField reads it), or a plain { sex, birthDate }.
+  const chartPatientOf = (sourceData) => {
+    if (!sourceData || typeof sourceData !== "object") return null
+    const patient = sourceData.patient ?? sourceData.queryResult?.patient?.[0]
+    if (patient && typeof patient === "object") {
+      return { sex: patient.administrativeGender ?? patient.gender ?? patient.sex, birthDate: patient.birthDate }
+    }
+    return "sex" in sourceData || "birthDate" in sourceData ? sourceData : null
+  }
+
+  // The preview's assessment date (the workspace's patient test values), at
+  // the current time of day; real MOIS has none, so ages count to now.
+  const previewAsOf = (sourceData) => {
+    const raw = sourceData && sourceData.previewOptions && sourceData.previewOptions.chartFactsAsOf
+    const match = typeof raw === "string" ? /^(\\d{4})-(\\d{2})-(\\d{2})$/.exec(raw.trim()) : null
+    if (!match) return undefined
+    const now = new Date()
+    return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), now.getHours(), now.getMinutes())
+  }
+
+  /** Every chart fact's value, keyed by controller id; facts the chart lacks are left out. */
+  const chartFactValues = (sourceData, explicitAsOf) => {
+    const asOf = explicitAsOf instanceof Date ? explicitAsOf : previewAsOf(sourceData)
+    const patient = chartPatientOf(sourceData)
+    const values = {}
+    if (!patient) return values
+    const sex = chartFactSex(patient.sex)
+    if (sex) values[CHART_FACT_SEX_ID] = sex
+    Object.keys(CHART_FACT_AGE_IDS).forEach((unit) => {
+      const age = chartFactAge(patient.birthDate, unit, asOf)
+      if (age !== undefined) values[CHART_FACT_AGE_IDS[unit]] = age
+    })
+    return values
+  }
+
+  // The form's source data, registered by the generated form root
+  // (setChartSource(sd)) for rules evaluated where no getter reads the chart:
+  // inline read-only gates, workflow gates. A getter's own value wins.
+  let activeChartSource = null
+  let activeChartFacts = null
+  let activeChartDay = ""
+  const setChartSource = (sourceData) => {
+    if (sourceData === activeChartSource) return
+    activeChartSource = sourceData || null
+    activeChartFacts = null
+  }
+  const activeChartFact = (id) => {
+    // Ages move with the clock: recompute at most once a minute.
+    const stamp = new Date().toISOString().slice(0, 16)
+    if (!activeChartFacts || activeChartDay !== stamp) {
+      activeChartFacts = chartFactValues(activeChartSource)
+      activeChartDay = stamp
+    }
+    return activeChartFacts[id]
+  }
+
+  /** A getter that answers chart-fact ids from the chart and everything else as before. */
+  const withChartFacts = (getValue, sourceData, asOf) => {
+    const get = toGetter(getValue)
+    let facts = null
+    return (id) => {
+      if (!isChartFactId(id)) return get(id)
+      if (!facts) facts = chartFactValues(sourceData, asOf)
+      return facts[id]
+    }
+  }
+
+  // An option's stored value, with normalizeOption's precedence: a text
+  // value, code, key, id, state, then a numeric value (a score), then the label.
+  const optionKey = (option) => {
+    if (option === null || option === undefined) return ""
+    if (typeof option !== "object") return String(option)
+    const text = (value) => (value === null || value === undefined || String(value).trim() === "" ? undefined : String(value))
+    const ordinal = typeof option.value === "number"
+    const keys = ordinal ? ["code", "key", "id", "state", "value"] : ["value", "code", "key", "id", "state"]
+    for (const key of keys) {
+      const value = text(option[key])
+      if (value !== undefined) return value
+    }
+    return text(option.label) ?? text(option.display) ?? text(option.text) ?? ""
+  }
+
+  // A group still being authored (no conditions) is no rule.
+  const hasConditions = (group) => Boolean(group && Array.isArray(group.conditions) && group.conditions.length > 0)
+  const readOptionRules = (source) => {
+    const raw = Array.isArray(source) ? source : (source && (source.behavior?.optionRules ?? source.optionRules))
+    return Array.isArray(raw) ? raw.filter((rule) => rule && typeof rule.value === "string" && (hasConditions(rule.showWhen) || hasConditions(rule.disableWhen))) : []
+  }
+
+  /** "available", "disabled" or "hidden" for one answer. */
+  const optionState = (value, optionRules, getValue) => {
+    const rule = readOptionRules(optionRules).find((entry) => entry.value === String(value))
+    if (!rule) return "available"
+    if (hasConditions(rule.showWhen) && !evaluateGroup(rule.showWhen, getValue)) return "hidden"
+    if (hasConditions(rule.disableWhen) && evaluateGroup(rule.disableWhen, getValue)) return "disabled"
+    return "available"
+  }
+
+  /**
+   * The answers a choice offers now: hidden ones left out, disabled ones
+   * marked \`disabled: true\` (a string option becomes { key, text, … }).
+   * Unchanged (same array) when there are no rules.
+   */
+  const availableOptions = (options, optionRules, getValue) => {
+    const rules = readOptionRules(optionRules)
+    if (!Array.isArray(options) || rules.length === 0) return options
+    return options.flatMap((option) => {
+      const state = optionState(optionKey(option), rules, getValue)
+      if (state === "hidden") return []
+      if (state !== "disabled") return [option]
+      return [typeof option === "object" && option !== null
+        ? { ...option, disabled: true }
+        : { key: String(option), text: String(option), code: String(option), display: String(option), label: String(option), value: String(option), disabled: true }]
+    })
+  }
+
+  /** Whether a stored answer (one value or several) includes an answer that is not offered now. */
+  const hasUnavailableAnswer = (value, optionRules, getValue) => {
+    const rules = readOptionRules(optionRules)
+    if (rules.length === 0) return false
+    // Codings ({ code }), subform selections ({ selectedKey }) and plain values.
+    const answerKey = (entry) => entry && typeof entry === "object"
+      ? (entry.code ?? entry.selectedKey ?? entry.key ?? entry.value ?? entry.display ?? "")
+      : entry
+    const selected = (Array.isArray(value) ? value : [value])
+      .map(answerKey)
+      .filter((entry) => entry !== undefined && entry !== null && String(entry).trim() !== "")
+      .map(String)
+    return selected.some((entry) => optionState(entry, rules, getValue) !== "available")
+  }
+  // ---- Chart facts and answer availability — end ----
 
   // ---- Builder visibility rules (BuilderVisibilityRule) — begin ----
   // { type, controllerId, value, additionalConditions?, match?, hiddenAnswerPolicy? }
@@ -15592,9 +16361,9 @@ const FormLogicKit = (() => {
    * row path (or id); anything else is read from the row, then from the form
    * answers. options: { columns (the table's columns), formData }.
    */
-  const isTableColumnVisible = (column, row, options = {}) => {
-    const rule = column && column.visibility
-    if (!rule || typeof rule !== "object") return true
+  // What a rule on one row reads: a sibling column by row path, else the row,
+  // else the form's answers (\`formData\`), else a chart fact.
+  const tableRowGetter = (row, options = {}) => {
     const columns = Array.isArray(options.columns) ? options.columns : []
     const sibling = (id) => columns.find((entry) => entry && (tableColumnPath(entry) === id || entry.id === id))
     const getValue = (id) => {
@@ -15604,7 +16373,22 @@ const FormLogicKit = (() => {
       if (inRow !== undefined) return inRow
       return options.formData ? readValue(options.formData, id) : undefined
     }
+    return { getValue: withChartFacts(getValue, options.sourceData, options.asOf), sibling }
+  }
+
+  const isTableColumnVisible = (column, row, options = {}) => {
+    const rule = column && column.visibility
+    if (!rule || typeof rule !== "object") return true
+    const { getValue, sibling } = tableRowGetter(row, options)
     return evaluateVisibilityRule(rule, getValue, { controllerKind: (id) => tableColumnKind(sibling(id)) })
+  }
+
+  /** A column as one row offers it: its options filtered by its option rules. */
+  const withAvailableColumnOptions = (column, row, options = {}) => {
+    if (!column || !Array.isArray(column.optionRules) || column.optionRules.length === 0 || !Array.isArray(column.options)) return column
+    const { getValue } = tableRowGetter(row || {}, options)
+    const offered = availableOptions(column.options, column.optionRules, getValue)
+    return offered === column.options ? column : { ...column, options: offered }
   }
 
   /**
@@ -15729,7 +16513,8 @@ const FormLogicKit = (() => {
     if (copyResult.error) {
       return [{ fieldId: "_form", label: "", message: copyResult.error, kind: "rule" }]
     }
-    const get = (id) => readValue(values, id)
+    // \`options.sourceData\`: the form's source data, for rules that read chart facts.
+    const get = withChartFacts((id) => readValue(values, id), options.sourceData, options.asOf)
     const matches = (group) => evaluateEntries(group?.conditions, group?.match, get)
     return scoped.flatMap((config) => {
       if (isFieldHidden(config, get)) return []
@@ -15768,12 +16553,7 @@ const FormLogicKit = (() => {
           issues.push(issue("format", config.formatMessage || translate(format.message || (config.label + " is not valid"))))
         }
       }
-      const selected = Array.isArray(value) ? value : [value]
-      const optionBlocked = (config.optionRules || []).some((rule) =>
-        selected.some((option) => String(normalizeComparableValue(option)) === rule.value) &&
-        ((rule.showWhen && !matches(rule.showWhen)) || (rule.disableWhen && matches(rule.disableWhen)))
-      )
-      if (optionBlocked) issues.push(issue("option", translate(config.label + ": choose an available option")))
+      if (hasUnavailableAnswer(value, config.optionRules, get)) issues.push(issue("option", translate(config.label + ": choose an available option")))
       return issues
     })
   }
@@ -15851,6 +16631,16 @@ const FormLogicKit = (() => {
   }
 
   return {
+    chartFactValues,
+    withChartFacts,
+    setChartSource,
+    /** A chart fact from the registered source data; undefined for any other id. */
+    chartFact: (id) => (isChartFactId(id) ? activeChartFact(id) : undefined),
+    isChartFactId,
+    optionKey,
+    optionState,
+    availableOptions,
+    hasUnavailableAnswer,
     hasMeaningfulValue,
     isEmptyValue,
     readValue,
@@ -15866,6 +16656,7 @@ const FormLogicKit = (() => {
     dropHiddenAnswers,
     tableColumnKind,
     isTableColumnVisible,
+    withAvailableColumnOptions,
     clearHiddenTableAnswers,
     dropHiddenTableAnswers,
     isFieldHidden,
@@ -26790,7 +27581,13 @@ const normalizeLayoutTableOptionList = (optionList) => {
       const explicit = option && typeof option === "object" ? option.code ?? option.key : undefined
       const code = explicit !== undefined && explicit !== null && String(explicit) !== "" ? String(explicit) : normalized.code
       const display = normalized.display
-      return code || display ? { code: String(code || display), display: String(display || code) } : null
+      if (!code && !display) return null
+      return {
+        code: String(code || display),
+        display: String(display || code),
+        // An answer the cell's option rules disable (FormLogicKit.availableOptions).
+        ...(option && typeof option === "object" && option.disabled === true ? { disabled: true } : {}),
+      }
     })
     .filter(Boolean)
 }
@@ -27221,7 +28018,20 @@ const computeLayoutTableCellValue = (cell, data, fieldTypes) => {
   return formatLayoutTableComputedValue(rawValue, cell.precision, cell.resultType)
 }
 
-const renderLayoutTableField = (cell, readOnly, data, setFieldValue) => {
+// A cell as it offers its answers now: its option rules (lifted by
+// lib/layout-table-answer-fields.ts) read the form's answers and chart facts.
+const withAvailableCellOptions = (cell, data) => {
+  const rules = cell?.optionRules
+  if (!Array.isArray(rules) || rules.length === 0) return cell
+  if (typeof FormLogicKit === "undefined" || !FormLogicKit || typeof FormLogicKit.availableOptions !== "function") return cell
+  const key = Array.isArray(cell.optionList) ? "optionList" : "options"
+  if (!Array.isArray(cell[key])) return cell
+  const offered = FormLogicKit.availableOptions(cell[key], rules, (fieldId) => data?.[fieldId])
+  return offered === cell[key] ? cell : { ...cell, [key]: offered }
+}
+
+const renderLayoutTableField = (sourceCell, readOnly, data, setFieldValue) => {
+  const cell = withAvailableCellOptions(sourceCell, data)
   if (cell.hidden === true) return null
   const fieldId = cell.fieldId || cell.id
   const label = cell.label || ""
@@ -27237,6 +28047,32 @@ const renderLayoutTableField = (cell, readOnly, data, setFieldValue) => {
   const optionList = normalizeLayoutTableOptionList(cell.optionList ?? cell.options)
 
   if (effectiveReadOnly) return renderLayoutTableReadOnlyField(cell, data)
+
+  // A cell with answer conditions or exclusive answers: AnswerChoiceField
+  // hides, greys out and clears answers, which SimpleCodeSelect cannot.
+  const rawAnswers = Array.isArray(sourceCell.optionList) ? sourceCell.optionList : Array.isArray(sourceCell.options) ? sourceCell.options : []
+  const needsAnswerChoice = (cell.inputType === "choice" || cell.inputType === "choiceMulti") && typeof AnswerChoiceField !== "undefined" &&
+    ((Array.isArray(sourceCell.optionRules) && sourceCell.optionRules.length > 0) || rawAnswers.some((option) => option && typeof option === "object" && option.exclusive === true))
+  if (needsAnswerChoice) {
+    return (
+      <AnswerChoiceField
+        fieldId={fieldId}
+        label={label}
+        labelPosition={sharedProps.labelPosition}
+        required={sharedProps.required}
+        placeholder={cell.placeholder}
+        presentation={cell.inputType === "choiceMulti" ? "checklist" : "dropdown"}
+        selectionType={cell.inputType === "choiceMulti" ? "multiple" : "single"}
+        answers={rawAnswers}
+        optionRules={sourceCell.optionRules}
+        codeSystem={cell.codeSystem}
+        showOtherOption={cell.showOtherOption === true}
+        value={data?.[fieldId] ?? null}
+        getValue={(id) => data?.[id]}
+        onChange={(next) => setFieldValue(fieldId, next)}
+      />
+    )
+  }
 
   switch (cell.inputType) {
     case "booleanSingle":
@@ -28543,6 +29379,8 @@ const MultiTargetChoiceField = ({
   id,
   fieldId,
   label = "Categories",
+  // "none" draws no caption row: a single MOIS checkbox whose text is its label.
+  labelPosition,
   options = [],
   columns = 1,
   writeAggregate = true,
@@ -28582,7 +29420,7 @@ const MultiTargetChoiceField = ({
     : {}
 
   return (
-    <LayoutItem fieldId={effectiveFieldId} label={label} readOnly={readOnly} required={required}>
+    <LayoutItem fieldId={effectiveFieldId} label={label} labelPosition={labelPosition} readOnly={readOnly} required={required}>
       <div style={{ ...gridStyle, ...requiredStyle }}>
         {options.filter((option) => optionVisible(data, option)).map((option) => (
           <Fluent.Checkbox
@@ -35498,6 +36336,8 @@ var DocumentDateRuntime = (() => {
     if (format === "ddMMMyyyy") return \`\${day}\${mon}\${year}\`;
     if (format === "yyyy.MM.dd") return \`\${year}.\${month}.\${day}\`;
     if (format === "dd/MM/yyyy") return \`\${day}/\${month}/\${year}\`;
+    if (format === "dd/MM/yy") return \`\${day}/\${month}/\${year.slice(2)}\`;
+    if (format === "dd/MM") return \`\${day}/\${month}\`;
     if (format === "MM/dd/yyyy") return \`\${month}/\${day}/\${year}\`;
     if (format === "MMMM d, yyyy") return \`\${monthName} \${+day}, \${year}\`;
     return \`\${year}-\${month}-\${day}\`;
@@ -36206,6 +37046,22 @@ var DocumentFillRuntime = (() => {
             if (rendered.hasValue) lines.push(rendered.text.trim());
           });
           write(step.targetId, lines.join(step.separator ?? "\\n"));
+          return;
+        }
+        case "table-date": {
+          const rows = read(step.tableId);
+          if (rows !== void 0 && rows !== null && !Array.isArray(rows)) {
+            warnings.push(\`Preparer "\${name}": "\${step.tableId}" is not a table.\`);
+            return;
+          }
+          const dated = (Array.isArray(rows) ? rows : []).flatMap((row) => {
+            const value = row && typeof row === "object" ? readValuePath(row, step.columnId) : void 0;
+            const key = formatDateWithPattern(value, "yyyy-MM-dd'T'HH:mm");
+            return key ? [{ value, key }] : [];
+          });
+          const pick = step.pick ?? "first";
+          const chosen = pick === "last" ? dated[dated.length - 1] : pick === "earliest" ? dated.reduce((best, entry) => !best || entry.key < best.key ? entry : best, void 0) : pick === "latest" ? dated.reduce((best, entry) => !best || entry.key > best.key ? entry : best, void 0) : dated[0];
+          write(step.targetId, chosen ? formatDateWithPattern(chosen.value, step.format || "yyyy-MM-dd") ?? "" : "");
           return;
         }
         case "copy": {
@@ -37160,6 +38016,35 @@ const _resolveDateComponentValue = (formData, dateEntry, rawValue) => {
   return parts[dateEntry.role]
 }
 
+// One answer written a character per PDF box (a characters composite): each box's
+// PDF field name maps to its position. "right" puts a shorter answer in the last boxes.
+const _buildCharacterComponentIndex = (characterComponentMaps) => {
+  const index = new Map()
+  if (!Array.isArray(characterComponentMaps)) return index
+  characterComponentMaps.forEach((characterMap) => {
+    if (!characterMap || !_isNonEmptyString(characterMap.sourceFieldId) || !Array.isArray(characterMap.fieldIds)) return
+    characterMap.fieldIds.forEach((fieldId, position) => {
+      if (!_isNonEmptyString(fieldId)) return
+      index.set(fieldId, {
+        sourceFieldId: characterMap.sourceFieldId,
+        position,
+        count: characterMap.fieldIds.length,
+        align: characterMap.align === "right" ? "right" : "left",
+      })
+    })
+  })
+  return index
+}
+
+const _resolveCharacterComponentValue = (formData, entry) => {
+  const answer = formData?.[entry.sourceFieldId]
+  if (answer === undefined || answer === null) return undefined
+  const characters = String(_toText(answer) || "").replace(/\\s+/g, "").split("")
+  const shown = entry.align === "right" ? characters.slice(-entry.count) : characters.slice(0, entry.count)
+  const offset = entry.align === "right" ? entry.count - shown.length : 0
+  return shown[entry.position - offset] || ""
+}
+
 const _buildChoiceComponentIndex = (choiceComponentMaps) => {
   const index = new Map()
   if (!Array.isArray(choiceComponentMaps)) return index
@@ -37847,6 +38732,7 @@ const PdfRegenerator = ({
   dateComponentMaps,
   documentDateFormats,
   choiceComponentMaps,
+  characterComponentMaps,
   textFlowMaps,
   geometryOverlayFields,
   documentOutputFields,
@@ -37910,6 +38796,7 @@ const PdfRegenerator = ({
       const map = _normalizeFieldMap(fieldMap, formData)
       const dateComponentIndex = _buildDateComponentIndex(dateComponentMaps)
       const choiceComponentIndex = _buildChoiceComponentIndex(choiceComponentMaps)
+      const characterComponentIndex = _buildCharacterComponentIndex(characterComponentMaps)
       const includeSet = Array.isArray(includeOnlyFieldIds)
         ? new Set(includeOnlyFieldIds.map((id) => String(id || "").trim()).filter(Boolean))
         : null
@@ -37955,6 +38842,9 @@ const PdfRegenerator = ({
         if (choiceComponentValue !== undefined && choiceComponentValue !== null && choiceComponentValue !== "") {
           rawValue = choiceComponentValue
         }
+        const characterEntry = characterComponentIndex.get(pdfFieldName)
+        const characterValue = characterEntry ? _resolveCharacterComponentValue(formData, characterEntry) : undefined
+        if (characterValue !== undefined) rawValue = characterValue
         const dateEntry = dateComponentIndex.get(pdfFieldName) || dateComponentIndex.get(sourceFieldId)
         const dateComponentValue = dateEntry
           ? _resolveDateComponentValue(formData, dateEntry, rawValue)
@@ -38062,7 +38952,7 @@ const PdfRegenerator = ({
     } finally {
       setIsBusy(false)
     }
-  }, [resolvedPdfSource, fd, fieldMap, tableSourceMaps, pdfPreparers, booleanFieldStates, fieldMaxLengths, dateComponentMaps, documentDateFormats, choiceComponentMaps, textFlowMaps, geometryOverlayFields, documentOutputFields, includeOnlyFieldIds, flatten, recalculate, organizationSigning, fileName, onComplete, pdfLibStrategy, pdfLibSource])
+  }, [resolvedPdfSource, fd, fieldMap, tableSourceMaps, pdfPreparers, booleanFieldStates, fieldMaxLengths, dateComponentMaps, documentDateFormats, choiceComponentMaps, characterComponentMaps, textFlowMaps, geometryOverlayFields, documentOutputFields, includeOnlyFieldIds, flatten, recalculate, organizationSigning, fileName, onComplete, pdfLibStrategy, pdfLibSource])
 
   const diagnosticsText = useMemo(() => {
     if (!showDiagnostics) return null
@@ -39171,7 +40061,11 @@ const RepeatForEachTable = (props) => {
     // chooses (the same controls and stored cell shapes as EditableTable's
     // cells: FieldKit.fromTableColumn + FieldKit.storage.cell); the card
     // draws the label above it.
-    const descriptor = FieldKit.fromTableColumn(column)
+    // Only the answers the column's option rules offer in this row.
+    const offered = typeof FormLogicKit !== "undefined" && FormLogicKit && typeof FormLogicKit.withAvailableColumnOptions === "function"
+      ? FormLogicKit.withAvailableColumnOptions(column, row, { columns: baseColumns, formData: fd?.field?.data })
+      : column
+    const descriptor = FieldKit.fromTableColumn(offered)
     return FieldKit.renderControl(descriptor, {
       value,
       onChange: (stored) => writeCardCell(rowId, column, stored),
@@ -42016,6 +42910,38 @@ const _getQuestionMirrorFieldIds = (question) => {
   return Array.from(ids)
 }
 
+/**
+ * Whether a question can be answered now: its \`enabledWhen\` is a show-when
+ * rule over the other questions' answers, read as their option keys
+ * (FormLogicKit when loaded, else equals / not-equals / filled here). An
+ * unavailable question keeps its answers on screen but they cannot be picked,
+ * it counts as unanswered (its emptyScore) and it leaves the progress count —
+ * a MOIS column whose \`visible\` expression swaps its radio buttons for plain
+ * text, as DLQI's "If No…" follow-up does (window 120, \`num_field_0008\`).
+ * Mirrored by SubformScoring's _isScoringQuestionEnabled.
+ */
+const _scoringAnswerKey = (answer) => {
+  if (answer === null || answer === undefined) return ""
+  if (typeof answer !== "object") return String(answer)
+  const key = answer.selectedKey ?? answer.value ?? answer.code ?? ""
+  return key === null ? "" : String(key)
+}
+
+const isScoringQuestionEnabled = (question, answers) => {
+  const rule = question?.enabledWhen
+  if (!rule || typeof rule !== "object" || !rule.controllerId || rule.type === "always") return true
+  const getValue = (questionId) => _scoringAnswerKey(answers?.[questionId])
+  if (typeof FormLogicKit !== "undefined" && FormLogicKit && typeof FormLogicKit.evaluateVisibilityRule === "function") {
+    return FormLogicKit.evaluateVisibilityRule(rule, getValue, { controllerKind: () => "choice" }) !== false
+  }
+  const value = getValue(rule.controllerId)
+  const expected = rule.value === undefined || rule.value === null ? "" : String(rule.value)
+  if (rule.type === "equals") return value === expected
+  if (rule.type === "not-equals") return value !== expected
+  if (rule.type === "not-filled") return value === ""
+  return value !== ""
+}
+
 // ================================================
 // Sub-components
 // ================================================
@@ -42027,6 +42953,7 @@ const ScoringQuestion = ({
   question,
   sharedOptions,
   isDarkMode,
+  disabled = false,
 }) => {
   const [fieldData, setFieldData] = useFormSessionData(fd => fd.field.data)
   const currentData = fieldData?.[question.id] || { selectedKey: null }
@@ -42074,17 +43001,18 @@ const ScoringQuestion = ({
               display: "flex",
               alignItems: "flex-start",
               gap: "8px",
-              cursor: "pointer",
-              color: isDarkMode ? "#f3f3f3" : "#222222",
+              cursor: disabled ? "default" : "pointer",
+              color: disabled ? "#8a8a8a" : isDarkMode ? "#f3f3f3" : "#222222",
               lineHeight: 1.35,
             }}
           >
             <input
               type="radio"
               name={\`scoring_\${question.id}\`}
-              checked={currentData.selectedKey === option.key}
+              checked={!disabled && currentData.selectedKey === option.key}
+              disabled={disabled}
               onChange={() => handleSelect(option)}
-              style={{ marginTop: "2px", width: "14px", height: "14px", cursor: "pointer" }}
+              style={{ marginTop: "2px", width: "14px", height: "14px", cursor: disabled ? "default" : "pointer" }}
             />
             <span>{option.text}</span>
           </label>
@@ -42110,6 +43038,7 @@ const CompactScoringQuestion = ({
   sharedOptions,
   continuumLabels,
   isDarkMode,
+  disabled = false,
 }) => {
   const [fieldData, setFieldData] = useFormSessionData(fd => fd.field.data)
   const currentData = fieldData?.[question.id] || { selectedKey: null }
@@ -42223,9 +43152,10 @@ const CompactScoringQuestion = ({
                   <input
                     type="radio"
                     name={\`compact_\${question.id}\`}
-                    checked={selected}
+                    checked={!disabled && selected}
+                    disabled={disabled}
                     onChange={() => handleSelect(option)}
-                    style={{ width: "16px", height: "16px", cursor: "pointer", margin: 0 }}
+                    style={{ width: "16px", height: "16px", cursor: disabled ? "default" : "pointer", margin: 0 }}
                   />
                   <span
                     style={{
@@ -42663,6 +43593,13 @@ const ScoringModule = ({
   }
 
   const answers = getAnswers()
+  // Questions whose enabledWhen fails count as unanswered and out of progress.
+  const enabledQuestionIds = new Set(
+    (config.questions || []).filter((question) => isScoringQuestionEnabled(question, answers)).map((question) => question.id)
+  )
+  const scoredAnswers = Object.fromEntries(
+    Object.entries(answers).filter(([questionId]) => enabledQuestionIds.has(questionId))
+  )
 
   // Calculate totals
   const calculatedTotals = useMemo(() => {
@@ -42673,7 +43610,7 @@ const ScoringModule = ({
       : config.totals || []
 
     const scoreValues = totals.some(hasScoringTotalFormula)
-      ? buildQuestionScoreValues(config.questions, answers, scoreMap, sharedOptions, config.layout)
+      ? buildQuestionScoreValues(config.questions, scoredAnswers, scoreMap, sharedOptions, config.layout)
       : null
     const contextRoot = { patient: sourceData?.patient, sourceData, formData: fd?.field?.data }
 
@@ -42691,7 +43628,9 @@ const ScoringModule = ({
 
       for (const term of total.terms || []) {
         const termQuestionId = term.questionId || term.answerFieldId
-        const answer = answers[termQuestionId]
+        // an unavailable question (enabledWhen) adds nothing and blocks nothing
+        if (questionsById.has(termQuestionId) && !enabledQuestionIds.has(termQuestionId)) continue
+        const answer = scoredAnswers[termQuestionId]
         const optionScoreMap = scoreMap.get(termQuestionId)
         const answerScore = getScoreFromValue(answer, optionScoreMap)
 
@@ -42717,7 +43656,7 @@ const ScoringModule = ({
     }
 
     return results
-  }, [answers, config.calculatedValues, config.layout, config.questions, config.totals, scoreMap, sharedOptions, sourceData, fd])
+  }, [scoredAnswers, config.calculatedValues, config.layout, config.questions, config.totals, scoreMap, sharedOptions, sourceData, fd])
 
   useEffect(() => {
     if (!setFd) return
@@ -42771,15 +43710,15 @@ const ScoringModule = ({
 
   // Calculate progress
   const progress = useMemo(() => {
-    const questions = config.questions || []
+    const questions = (config.questions || []).filter((question) => enabledQuestionIds.has(question.id))
     const total = questions.length
     const answered = questions.filter((question) => {
-      const value = answers[question.id]
+      const value = scoredAnswers[question.id]
       const optionScoreMap = scoreMap.get(question.id)
       return getScoreFromValue(value, optionScoreMap) !== null
     }).length
     return { answered, total, percentage: total > 0 ? Math.round((answered / total) * 100) : 0 }
-  }, [answers, config.questions, scoreMap])
+  }, [scoredAnswers, enabledQuestionIds, config.questions, scoreMap])
 
   const matrixSignature = sharedOptions.length > 0 ? serializeOptionSignature(sharedOptions) : null
   const normalizedLayout = config.layout || "stacked"
@@ -42905,6 +43844,7 @@ const ScoringModule = ({
                 sharedOptions={sharedOptions}
                 continuumLabels={continuumLabels}
                 isDarkMode={isDarkMode}
+                disabled={!enabledQuestionIds.has(question.id)}
               />
             ) : (
               <ScoringQuestion
@@ -42912,6 +43852,7 @@ const ScoringModule = ({
                 question={question}
                 sharedOptions={sharedOptions}
                 isDarkMode={isDarkMode}
+                disabled={!enabledQuestionIds.has(question.id)}
               />
             )
           ))}
@@ -44430,6 +45371,33 @@ const _evaluateDataEntryVisibility = (field, values = {}) => {
   return true
 }
 
+/**
+ * Whether a scoring question can be answered now: its \`enabledWhen\` rule over
+ * the other questions' answers, read as option keys. Mirrors ScoringModule's
+ * isScoringQuestionEnabled, which greys the question out in the dialog (DLQI's
+ * "If No…" follow-up, MOIS window 120).
+ */
+const _isScoringQuestionEnabled = (question, answers) => {
+  const rule = question?.enabledWhen
+  if (!rule || typeof rule !== "object" || !rule.controllerId || rule.type === "always") return true
+  const getValue = (questionId) => {
+    const answer = answers?.[questionId]
+    if (answer === null || answer === undefined) return ""
+    if (typeof answer !== "object") return String(answer)
+    const key = answer.selectedKey ?? answer.value ?? answer.code ?? ""
+    return key === null ? "" : String(key)
+  }
+  if (typeof FormLogicKit !== "undefined" && FormLogicKit && typeof FormLogicKit.evaluateVisibilityRule === "function") {
+    return FormLogicKit.evaluateVisibilityRule(rule, getValue, { controllerKind: () => "choice" }) !== false
+  }
+  const value = getValue(rule.controllerId)
+  const expected = rule.value === undefined || rule.value === null ? "" : String(rule.value)
+  if (rule.type === "equals") return value === expected
+  if (rule.type === "not-equals") return value !== expected
+  if (rule.type === "not-filled") return value === ""
+  return value !== ""
+}
+
 // How FormLogicKit should compare a controller's answer, from its entry type.
 const _dataEntryControllerKind = (field) => {
   const type = field?.type
@@ -44811,6 +45779,16 @@ const _getSelectableOptionNumericValue = (option) => {
   return null
 }
 
+// A data-entry field's answers as offered now. Its option rules (lifted by
+// lib/subform-data-entry.ts, or a table column's) hide or disable answers by
+// sibling answers, parent-form answers and chart facts (FormLogicKit).
+const _withAvailableOptions = (field, getValue) => {
+  if (!field || !Array.isArray(field.optionRules) || field.optionRules.length === 0 || !Array.isArray(field.options)) return field
+  if (typeof FormLogicKit === "undefined" || !FormLogicKit || typeof FormLogicKit.availableOptions !== "function") return field
+  const options = FormLogicKit.availableOptions(field.options, field.optionRules, getValue)
+  return options === field.options ? field : { ...field, options }
+}
+
 const _normalizeSelectableOptions = (field, fallbackOptions = []) => {
   const rawOptions = Array.isArray(field?.options) && field.options.length > 0
     ? field.options
@@ -44839,6 +45817,7 @@ const _normalizeSelectableOptions = (field, fallbackOptions = []) => {
           value: rawValue,
           description,
           system: option.system,
+          ...(option.disabled === true ? { disabled: true } : {}),
         }
       }
 
@@ -45501,14 +46480,20 @@ const SubformScoringInner = ({
     return _buildScoreMap(config.questions, config.sharedOptions)
   }, [isDataEntryMode, config.questions, config.sharedOptions])
 
+  // A question whose enabledWhen fails (see _isScoringQuestionEnabled) counts
+  // as unanswered: out of the totals, the progress and the report.
   const answers = useMemo(() => {
     if (isDataEntryMode) return {}
-    const result = {}
+    const stored = {}
     for (const question of config.questions || []) {
       const value = fd?.field?.data?.[question.id]
       if (value !== undefined && value !== null && value !== "") {
-        result[question.id] = value
+        stored[question.id] = value
       }
+    }
+    const result = {}
+    for (const question of config.questions || []) {
+      if (question.id in stored && _isScoringQuestionEnabled(question, stored)) result[question.id] = stored[question.id]
     }
     return result
   }, [isDataEntryMode, fd, config.questions])
@@ -45517,6 +46502,7 @@ const SubformScoringInner = ({
     if (isDataEntryMode) return {}
     const results = {}
     const questionsById = new Map((config.questions || []).map((question) => [question.id, question]))
+    const storedAnswers = Object.fromEntries((config.questions || []).map((question) => [question.id, fd?.field?.data?.[question.id]]))
     const totals = _subformFormulaStores(config.calculatedValues, config.totals)
     for (const total of totals) {
       let score = 0
@@ -45550,6 +46536,9 @@ const SubformScoringInner = ({
       }
       for (const term of total.terms || []) {
         const termQuestionId = term.questionId || term.answerFieldId
+        // an unavailable question (enabledWhen) adds nothing and blocks nothing
+        const termQuestion = questionsById.get(termQuestionId)
+        if (termQuestion?.enabledWhen && !_isScoringQuestionEnabled(termQuestion, storedAnswers)) continue
         const answer = answers[termQuestionId]
         const optionScoreMap = scoreMap.get(termQuestionId)
         const answerScore = _getScoreFromValue(answer, optionScoreMap)
@@ -45691,6 +46680,14 @@ const SubformScoringInner = ({
       ? baseEquivalentDoseRaw
       : 30
     const totalCalculationId = String(rawConfig.totalCalculationId || rawConfig.total_calculation_id || "").trim() || null
+    // The total's decimal places: the preset's defaultPrecision (MOIS's
+    // MORPHINE EQUIVALENCE sums its rows unrounded), else one place.
+    const totalPrecisionRaw = Number(
+      rawConfig.totalPrecision ?? rawConfig.total_precision ?? rawConfig.defaultPrecision ?? rawConfig.default_precision
+    )
+    const totalPrecision = Number.isFinite(totalPrecisionRaw)
+      ? Math.max(0, Math.min(6, Math.trunc(totalPrecisionRaw)))
+      : 1
     const totalLabel = String(rawConfig.totalLabel || rawConfig.total_label || "TOTAL MEQ").trim() || "TOTAL MEQ"
     const doseColumnLabel = String(rawConfig.doseColumnLabel || rawConfig.dose_column_label || "Total Daily Dose").trim() || "Total Daily Dose"
     const equivalentColumnLabel = String(rawConfig.equivalentColumnLabel || rawConfig.equivalent_column_label || "Equivalent Dose (mg)").trim() || "Equivalent Dose (mg)"
@@ -45701,6 +46698,7 @@ const SubformScoringInner = ({
       rows,
       baseEquivalentDoseMg,
       totalCalculationId,
+      totalPrecision,
       totalLabel,
       doseColumnLabel,
       equivalentColumnLabel,
@@ -45914,8 +46912,16 @@ const SubformScoringInner = ({
         )
       })
       const numericValues = rowValues.filter((value) => Number.isFinite(Number(value))).map(Number)
+      // The exported total calculation carries the preset's precision; a
+      // config handed over whole (component insert) says it itself.
+      const totalCalculation = dataEntryCalculations.find(
+        (calculation) => calculation?.id === dataEntryCalculatorConfig.totalCalculationId
+      )
+      const totalPrecision = Number.isFinite(totalCalculation?.precision)
+        ? Math.max(0, Math.min(6, Math.trunc(totalCalculation.precision)))
+        : dataEntryCalculatorConfig.totalPrecision
       result[dataEntryCalculatorConfig.totalCalculationId] = numericValues.length > 0
-        ? Number(numericValues.reduce((sum, value) => sum + value, 0).toFixed(1))
+        ? Number(numericValues.reduce((sum, value) => sum + value, 0).toFixed(totalPrecision))
         : null
     }
     return result
@@ -45945,8 +46951,10 @@ const SubformScoringInner = ({
       }
     }
 
-    const total = config.questions?.length || 0
-    const answered = (config.questions || []).filter((question) => {
+    const storedAnswers = Object.fromEntries((config.questions || []).map((question) => [question.id, fd?.field?.data?.[question.id]]))
+    const enabledQuestions = (config.questions || []).filter((question) => _isScoringQuestionEnabled(question, storedAnswers))
+    const total = enabledQuestions.length
+    const answered = enabledQuestions.filter((question) => {
       const value = answers[question.id]
       const optionScoreMap = scoreMap.get(question.id)
       return _getScoreFromValue(value, optionScoreMap) !== null
@@ -45956,7 +46964,7 @@ const SubformScoringInner = ({
       total,
       percentage: total > 0 ? Math.round((answered / total) * 100) : 0
     }
-  }, [isDataEntryMode, isMorphineCalculatorMode, dataEntryCalculatorConfig, dataEntryFieldById, dataEntryFields, dataEntryValues, isDataEntryFieldShown, config.questions, answers])
+  }, [isDataEntryMode, isMorphineCalculatorMode, dataEntryCalculatorConfig, dataEntryFieldById, dataEntryFields, dataEntryValues, isDataEntryFieldShown, config.questions, answers, fd])
 
   const hasAnyAnswers = useMemo(() => {
     if (isDataEntryMode) {
@@ -46058,7 +47066,8 @@ const SubformScoringInner = ({
   // General field renderer
   // -------------------------------------------------------------------
 
-  const renderDataEntryField = (field, renderOptions = {}) => {
+  const renderDataEntryField = (sourceField, renderOptions = {}) => {
+    const field = _withAvailableOptions(sourceField, getVisibilityControllerValue)
     if (_isHeadingField(field)) {
       // MOIS questionnaires lead with the stem question in sentence case
       // ("1. Over the past 2 weeks, ..."); only band headers are shouted.
@@ -46521,7 +47530,7 @@ const SubformScoringInner = ({
             {dataEntryCalculatorConfig.totalLabel}:
           </Text>
           <Text styles={{ root: { fontSize: "40px", fontWeight: 800, lineHeight: 1 } }}>
-            {_formatCalculatorDisplayValue(totalValue, 1)}
+            {_formatCalculatorDisplayValue(totalValue, dataEntryCalculatorConfig.totalPrecision)}
           </Text>
         </div>
       </div>
@@ -46720,13 +47729,25 @@ const SubformScoringInner = ({
 
   // Done/Save & Add Next refuse to complete while a visible required field is
   // empty, like EditableTable's row Save: the dialog stays open and names them.
+  // An answer its option rules no longer offer (a sibling or the chart
+  // changed) blocks Done the same way, naming the field.
+  const unavailableAnswerFields = isDataEntryMode && typeof FormLogicKit !== "undefined" && FormLogicKit && typeof FormLogicKit.hasUnavailableAnswer === "function"
+    ? dataEntryFields.filter((field) => (
+      field?.id && Array.isArray(field.optionRules) && field.optionRules.length > 0 &&
+      isDataEntryFieldShown(field) &&
+      FormLogicKit.hasUnavailableAnswer(dataEntryValues[field.id], field.optionRules, getVisibilityControllerValue)
+    ))
+    : []
   const blockOnMissingRequired = () => {
-    if (missingRequiredFields.length === 0) return false
+    if (missingRequiredFields.length === 0 && unavailableAnswerFields.length === 0) return false
     setShowRequiredErrors(true)
     return true
   }
   const requiredErrorMessage = showRequiredErrors
-    ? _formatMissingRequiredMessage(missingRequiredFields)
+    ? [
+      missingRequiredFields.length ? _formatMissingRequiredMessage(missingRequiredFields) : "",
+      ...unavailableAnswerFields.map((field) => \`\${field.label || field.id}: choose an available option.\`),
+    ].filter(Boolean).join(" ")
     : ""
   const hostErrorMessage = typeof errorMessage === "string" ? errorMessage.trim() : ""
   const dialogErrorMessage = requiredErrorMessage || hostErrorMessage
@@ -51171,6 +52192,8 @@ var WordFormRuntime = (() => {
     if (format === "ddMMMyyyy") return \`\${day}\${mon}\${year}\`;
     if (format === "yyyy.MM.dd") return \`\${year}.\${month}.\${day}\`;
     if (format === "dd/MM/yyyy") return \`\${day}/\${month}/\${year}\`;
+    if (format === "dd/MM/yy") return \`\${day}/\${month}/\${year.slice(2)}\`;
+    if (format === "dd/MM") return \`\${day}/\${month}\`;
     if (format === "MM/dd/yyyy") return \`\${month}/\${day}/\${year}\`;
     if (format === "MMMM d, yyyy") return \`\${monthName} \${+day}, \${year}\`;
     return \`\${year}-\${month}-\${day}\`;
@@ -51514,6 +52537,22 @@ var WordFormRuntime = (() => {
             if (rendered.hasValue) lines.push(rendered.text.trim());
           });
           write(step.targetId, lines.join(step.separator ?? "\\n"));
+          return;
+        }
+        case "table-date": {
+          const rows = read(step.tableId);
+          if (rows !== void 0 && rows !== null && !Array.isArray(rows)) {
+            warnings.push(\`Preparer "\${name}": "\${step.tableId}" is not a table.\`);
+            return;
+          }
+          const dated = (Array.isArray(rows) ? rows : []).flatMap((row) => {
+            const value = row && typeof row === "object" ? readValuePath(row, step.columnId) : void 0;
+            const key = formatDateWithPattern(value, "yyyy-MM-dd'T'HH:mm");
+            return key ? [{ value, key }] : [];
+          });
+          const pick = step.pick ?? "first";
+          const chosen = pick === "last" ? dated[dated.length - 1] : pick === "earliest" ? dated.reduce((best, entry) => !best || entry.key < best.key ? entry : best, void 0) : pick === "latest" ? dated.reduce((best, entry) => !best || entry.key > best.key ? entry : best, void 0) : dated[0];
+          write(step.targetId, chosen ? formatDateWithPattern(chosen.value, step.format || "yyyy-MM-dd") ?? "" : "");
           return;
         }
         case "copy": {
@@ -52038,6 +53077,34 @@ export const componentIdentities: Record<string, any> = {
     },
     "components": [
       "ChartRecordTable"
+    ]
+  },
+  'AnswerChoiceField': {
+    "name": "AnswerChoiceField",
+    "title": "Answer choice field",
+    "description": "A choice question drawn from Fluent parts in the MOIS LayoutItem, for what the faithful MOIS controls cannot do: answer conditions (answers offered or greyed out by other answers and the patient's chart), exclusive answers that clear the others, free-text Other, and checklist, dropdown and searchable presentations. Saves exactly what SimpleCodeChecklist saves.",
+    "version": {
+      "major": 1,
+      "minor": 0,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "Northern Health",
+    "author": "Claude",
+    "publisher": "Northern Health",
+    "globalIdentifier": "",
+    "requiredFormViewerVersion": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "requiredMoisVersion": {
+      "major": 2,
+      "minor": 28,
+      "patch": 10
+    },
+    "components": [
+      "FormLogicKit"
     ]
   },
   'AssessmentScoringTable': {
@@ -52662,7 +53729,8 @@ export const componentIdentities: Record<string, any> = {
       "ValueKit",
       "CompactBooleanField",
       "FindCodeSelect",
-      "ScaleField"
+      "ScaleField",
+      "AnswerChoiceField"
     ]
   },
   'FieldStampButton': {
@@ -53265,7 +54333,8 @@ export const componentIdentities: Record<string, any> = {
       "FieldStampButton",
       "FormLogicKit",
       "FormulaKit",
-      "ValueKit"
+      "ValueKit",
+      "AnswerChoiceField"
     ]
   },
   'LongTermMedications': {
@@ -53946,6 +55015,7 @@ export const componentIdentities: Record<string, any> = {
     },
     "components": [
       "FormSessionRuntime",
+      "FormLogicKit",
       "FormulaKit",
       "ValueKit"
     ]

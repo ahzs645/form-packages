@@ -75,6 +75,8 @@ const FieldKit = (() => {
           system: (isRecord(option) && option.system) || normalized.system || system,
           order: index,
           ...(isRecord(option) && option.hotKey ? { hotKey: option.hotKey } : {}),
+          // An answer its option rules disable (FormLogicKit.availableOptions).
+          ...(isRecord(option) && option.disabled === true ? { disabled: true } : {}),
         }
       })
       .filter(Boolean)
@@ -153,6 +155,20 @@ const FieldKit = (() => {
       const checklist = style === "checkbox" || style === "radio"
       const multiple = style === "multiselect" || style === "checkbox"
       const selectionType = multiple ? "multiple" : "single"
+      // Answers the container greys out, exclusive answers, or answer
+      // conditions: AnswerChoiceField draws what the MOIS controls cannot.
+      const rawOptions = Array.isArray(descriptor.options) ? descriptor.options : []
+      const needsAnswerChoice =
+        (Array.isArray(descriptor.optionRules) && descriptor.optionRules.length > 0) ||
+        rawOptions.some((option) => isRecord(option) && (option.disabled === true || option.exclusive === true))
+      if (needsAnswerChoice && rawOptions.length > 0) {
+        return {
+          control: "AnswerChoiceField",
+          selectionType,
+          presentation: checklist ? "checklist" : findCode || searchableMultiple ? "searchable" : "dropdown",
+          supported: true,
+        }
+      }
       if (validCodeSystem(descriptor.codeSystem) || hasOptions(descriptor)) {
         if (!validCodeSystem(descriptor.codeSystem) && checklist && descriptor.presentation === "buttons") {
           return { control: "CompactChoiceField", supported: false }
@@ -217,6 +233,7 @@ const FieldKit = (() => {
       case "SimpleCodeSelect":
       case "SimpleCodeChecklist":
       case "FindCodeSelect":
+      case "AnswerChoiceField":
         return choice.selectionType === "multiple" ? [] : null
       case "CompactBooleanField":
       case "ScaleField":
@@ -242,6 +259,7 @@ const FieldKit = (() => {
         switch (choice.control) {
           case "SimpleCodeSelect":
           case "SimpleCodeChecklist":
+          case "AnswerChoiceField":
           case "FindCodeSelect": {
             const codings = codingsOf(stored, descriptor)
             return choice.selectionType === "multiple" ? codings : codings[0] || null
@@ -264,6 +282,7 @@ const FieldKit = (() => {
           case "SimpleCodeSelect":
           case "SimpleCodeChecklist":
           case "FindCodeSelect":
+          case "AnswerChoiceField":
             if (choice.selectionType === "multiple") {
               // Codes in option order (as cells always stored them), whatever
               // order the control reports them in.
@@ -301,6 +320,7 @@ const FieldKit = (() => {
         switch (choice.control) {
           case "SimpleCodeSelect":
           case "SimpleCodeChecklist":
+          case "AnswerChoiceField":
           case "FindCodeSelect": {
             if (options.length > 0) {
               const selected = options.filter((option) => isSelected(stored, option))
@@ -332,6 +352,7 @@ const FieldKit = (() => {
         switch (choice.control) {
           case "SimpleCodeSelect":
           case "SimpleCodeChecklist":
+          case "AnswerChoiceField":
           case "FindCodeSelect": {
             const first = Array.isArray(value) ? value[value.length - 1] : value
             if (!first || first.code === null || first.code === undefined || first.code === "") return null
@@ -370,6 +391,7 @@ const FieldKit = (() => {
         switch (choice.control) {
           case "SimpleCodeSelect":
           case "SimpleCodeChecklist":
+          case "AnswerChoiceField":
           case "FindCodeSelect": {
             const codings = codingsOf(stored, descriptor)
             return choice.selectionType === "multiple" ? codings : codings[0] || null
@@ -389,6 +411,7 @@ const FieldKit = (() => {
         switch (choice.control) {
           case "SimpleCodeSelect":
           case "SimpleCodeChecklist":
+          case "AnswerChoiceField":
           case "FindCodeSelect": {
             if (choice.selectionType === "multiple") return (Array.isArray(value) ? value : []).map(codingForStorage).filter(Boolean)
             const coding = codingForStorage(Array.isArray(value) ? value[0] : value)
@@ -421,6 +444,7 @@ const FieldKit = (() => {
         switch (choice.control) {
           case "SimpleCodeSelect":
           case "SimpleCodeChecklist":
+          case "AnswerChoiceField":
           case "FindCodeSelect": {
             const codings = codingsOf(stored, descriptor)
             if (codings.length === 0 && toText(stored).trim()) return { code: toText(stored), display: toText(stored) }
@@ -436,6 +460,7 @@ const FieldKit = (() => {
         switch (choice.control) {
           case "SimpleCodeSelect":
           case "SimpleCodeChecklist":
+          case "AnswerChoiceField":
           case "FindCodeSelect": {
             const first = Array.isArray(value) ? value[0] : value
             return first?.code ?? first?.display ?? ""
@@ -541,6 +566,7 @@ const FieldKit = (() => {
       text: option.display,
       order: option.order,
       ...(option.hotKey ? { hotKey: option.hotKey } : {}),
+      ...(option.disabled ? { disabled: true } : {}),
     }))
 
   const findCodeOptionList = (descriptor) =>
@@ -549,6 +575,7 @@ const FieldKit = (() => {
       display: option.display,
       system: option.system ?? validCodeSystem(descriptor.codeSystem) ?? "",
       order: option.order,
+      ...(option.disabled ? { disabled: true } : {}),
     }))
 
   const numberProps = (descriptor) => {
@@ -638,6 +665,28 @@ const FieldKit = (() => {
     const codeSystem = validCodeSystem(descriptor.codeSystem)
 
     switch (choice.control) {
+      case "AnswerChoiceField": {
+        const multiple = choice.selectionType === "multiple"
+        const answerProps = {
+          ...common,
+          ...placeholderProp,
+          presentation: choice.presentation,
+          selectionType: choice.selectionType,
+          answers: descriptor.options,
+          ...(Array.isArray(descriptor.optionRules) && descriptor.optionRules.length ? { optionRules: descriptor.optionRules } : {}),
+          ...(codeSystem ? { codeSystem } : {}),
+          ...(descriptor.showOtherOption ? { showOtherOption: true } : {}),
+          ...(descriptor.choiceAnswerLayout === "inline" ? { layout: "inline" } : {}),
+        }
+        if (!controlled) return <AnswerChoiceField {...answerProps} {...bound} />
+        return (
+          <AnswerChoiceField
+            {...answerProps}
+            value={controlValue ?? (multiple ? [] : null)}
+            onChange={(next) => emit(next ?? (multiple ? [] : null))}
+          />
+        )
+      }
       case "TextArea": {
         const multilineProps = choice.multiline
           ? {

@@ -161,7 +161,8 @@ const FormLogicKit = (() => {
     }
     const entry = toFlatEntry(rawEntry)
     if (!entry || !entry.controllerFieldId || !entry.type) return false
-    const fieldValue = get(entry.controllerFieldId)
+    let fieldValue = get(entry.controllerFieldId)
+    if (fieldValue === undefined && isChartFactId(entry.controllerFieldId)) fieldValue = activeChartFact(entry.controllerFieldId)
     const type = entry.type
     if (type === "choice-selected") return checkChoiceMatch(fieldValue, entry.optionValues, false)
     if (type === "choice-not-selected") return checkChoiceMatch(fieldValue, entry.optionValues, true)
@@ -191,6 +192,194 @@ const FormLogicKit = (() => {
     if (!group || typeof group !== "object") return false
     return evaluateEntries(group.conditions, group.match, toGetter(getValue))
   }
+
+  // ---- Chart facts and answer availability — begin ----
+  // Mirrors @webforms/form-model chart-facts.ts and option-rules.ts (parity:
+  // lib/__tests__/form-logic-kit-chart-facts-parity.test.ts). A condition names
+  // a chart fact by a reserved controller id; its value comes from the
+  // patient in source data when the rule runs and is never saved.
+  const CHART_FACT_AGE_IDS = {
+    years: "chart:patient.ageYears",
+    months: "chart:patient.ageMonths",
+    weeks: "chart:patient.ageWeeks",
+    days: "chart:patient.ageDays",
+    hours: "chart:patient.ageHours",
+  }
+  const CHART_FACT_SEX_ID = "chart:patient.sex"
+  const isChartFactId = (id) => typeof id === "string" && id.startsWith("chart:patient.")
+
+  const chartFactSex = (raw) => {
+    const value = raw && typeof raw === "object" ? (raw.code ?? raw.value ?? raw.display) : raw
+    const key = typeof value === "string" ? value.trim().toLowerCase() : ""
+    if (!key) return undefined
+    if (key.startsWith("f")) return "female"
+    if (key.startsWith("m")) return "male"
+    // Undifferentiated (Cerner, HL7 v2 "A") is AdministrativeGender "other".
+    if (key.startsWith("o") || key.startsWith("und") || key === "a") return "other"
+    if (key.startsWith("u")) return "unknown"
+    return undefined
+  }
+
+  // A date-only birth date is a local calendar day, not UTC midnight.
+  const chartFactBirthDate = (raw) => {
+    const value = raw && typeof raw === "object" && !(raw instanceof Date) ? (raw.value ?? raw.code) : raw
+    if (value instanceof Date) return Number.isFinite(value.getTime()) ? value : undefined
+    if (typeof value !== "string" || !value.trim()) return undefined
+    const match = /^(\d{4})[-./](\d{1,2})[-./](\d{1,2})$/.exec(value.trim())
+    const date = match ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3])) : new Date(value)
+    return Number.isFinite(date.getTime()) ? date : undefined
+  }
+
+  const completedMonths = (from, to) => {
+    let months = (to.getFullYear() - from.getFullYear()) * 12 + (to.getMonth() - from.getMonth())
+    if (to.getDate() < from.getDate()) months -= 1
+    return months
+  }
+
+  const chartFactAge = (birthDate, unit, asOf) => {
+    const birth = chartFactBirthDate(birthDate)
+    const at = asOf instanceof Date ? asOf : new Date()
+    if (!birth || at < birth) return undefined
+    if (unit === "years") return Math.floor(completedMonths(birth, at) / 12)
+    if (unit === "months") return completedMonths(birth, at)
+    if (unit === "weeks") return Math.floor((at.getTime() - birth.getTime()) / (7 * 86400000))
+    if (unit === "days") return Math.floor((at.getTime() - birth.getTime()) / 86400000)
+    if (unit === "hours") return Math.floor((at.getTime() - birth.getTime()) / 3600000)
+    return undefined
+  }
+
+  // The patient in source data (sd.patient, or the query result's first
+  // patient, as PatientValueField reads it), or a plain { sex, birthDate }.
+  const chartPatientOf = (sourceData) => {
+    if (!sourceData || typeof sourceData !== "object") return null
+    const patient = sourceData.patient ?? sourceData.queryResult?.patient?.[0]
+    if (patient && typeof patient === "object") {
+      return { sex: patient.administrativeGender ?? patient.gender ?? patient.sex, birthDate: patient.birthDate }
+    }
+    return "sex" in sourceData || "birthDate" in sourceData ? sourceData : null
+  }
+
+  // The preview's assessment date (the workspace's patient test values), at
+  // the current time of day; real MOIS has none, so ages count to now.
+  const previewAsOf = (sourceData) => {
+    const raw = sourceData && sourceData.previewOptions && sourceData.previewOptions.chartFactsAsOf
+    const match = typeof raw === "string" ? /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw.trim()) : null
+    if (!match) return undefined
+    const now = new Date()
+    return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), now.getHours(), now.getMinutes())
+  }
+
+  /** Every chart fact's value, keyed by controller id; facts the chart lacks are left out. */
+  const chartFactValues = (sourceData, explicitAsOf) => {
+    const asOf = explicitAsOf instanceof Date ? explicitAsOf : previewAsOf(sourceData)
+    const patient = chartPatientOf(sourceData)
+    const values = {}
+    if (!patient) return values
+    const sex = chartFactSex(patient.sex)
+    if (sex) values[CHART_FACT_SEX_ID] = sex
+    Object.keys(CHART_FACT_AGE_IDS).forEach((unit) => {
+      const age = chartFactAge(patient.birthDate, unit, asOf)
+      if (age !== undefined) values[CHART_FACT_AGE_IDS[unit]] = age
+    })
+    return values
+  }
+
+  // The form's source data, registered by the generated form root
+  // (setChartSource(sd)) for rules evaluated where no getter reads the chart:
+  // inline read-only gates, workflow gates. A getter's own value wins.
+  let activeChartSource = null
+  let activeChartFacts = null
+  let activeChartDay = ""
+  const setChartSource = (sourceData) => {
+    if (sourceData === activeChartSource) return
+    activeChartSource = sourceData || null
+    activeChartFacts = null
+  }
+  const activeChartFact = (id) => {
+    // Ages move with the clock: recompute at most once a minute.
+    const stamp = new Date().toISOString().slice(0, 16)
+    if (!activeChartFacts || activeChartDay !== stamp) {
+      activeChartFacts = chartFactValues(activeChartSource)
+      activeChartDay = stamp
+    }
+    return activeChartFacts[id]
+  }
+
+  /** A getter that answers chart-fact ids from the chart and everything else as before. */
+  const withChartFacts = (getValue, sourceData, asOf) => {
+    const get = toGetter(getValue)
+    let facts = null
+    return (id) => {
+      if (!isChartFactId(id)) return get(id)
+      if (!facts) facts = chartFactValues(sourceData, asOf)
+      return facts[id]
+    }
+  }
+
+  // An option's stored value, with normalizeOption's precedence: a text
+  // value, code, key, id, state, then a numeric value (a score), then the label.
+  const optionKey = (option) => {
+    if (option === null || option === undefined) return ""
+    if (typeof option !== "object") return String(option)
+    const text = (value) => (value === null || value === undefined || String(value).trim() === "" ? undefined : String(value))
+    const ordinal = typeof option.value === "number"
+    const keys = ordinal ? ["code", "key", "id", "state", "value"] : ["value", "code", "key", "id", "state"]
+    for (const key of keys) {
+      const value = text(option[key])
+      if (value !== undefined) return value
+    }
+    return text(option.label) ?? text(option.display) ?? text(option.text) ?? ""
+  }
+
+  // A group still being authored (no conditions) is no rule.
+  const hasConditions = (group) => Boolean(group && Array.isArray(group.conditions) && group.conditions.length > 0)
+  const readOptionRules = (source) => {
+    const raw = Array.isArray(source) ? source : (source && (source.behavior?.optionRules ?? source.optionRules))
+    return Array.isArray(raw) ? raw.filter((rule) => rule && typeof rule.value === "string" && (hasConditions(rule.showWhen) || hasConditions(rule.disableWhen))) : []
+  }
+
+  /** "available", "disabled" or "hidden" for one answer. */
+  const optionState = (value, optionRules, getValue) => {
+    const rule = readOptionRules(optionRules).find((entry) => entry.value === String(value))
+    if (!rule) return "available"
+    if (hasConditions(rule.showWhen) && !evaluateGroup(rule.showWhen, getValue)) return "hidden"
+    if (hasConditions(rule.disableWhen) && evaluateGroup(rule.disableWhen, getValue)) return "disabled"
+    return "available"
+  }
+
+  /**
+   * The answers a choice offers now: hidden ones left out, disabled ones
+   * marked `disabled: true` (a string option becomes { key, text, … }).
+   * Unchanged (same array) when there are no rules.
+   */
+  const availableOptions = (options, optionRules, getValue) => {
+    const rules = readOptionRules(optionRules)
+    if (!Array.isArray(options) || rules.length === 0) return options
+    return options.flatMap((option) => {
+      const state = optionState(optionKey(option), rules, getValue)
+      if (state === "hidden") return []
+      if (state !== "disabled") return [option]
+      return [typeof option === "object" && option !== null
+        ? { ...option, disabled: true }
+        : { key: String(option), text: String(option), code: String(option), display: String(option), label: String(option), value: String(option), disabled: true }]
+    })
+  }
+
+  /** Whether a stored answer (one value or several) includes an answer that is not offered now. */
+  const hasUnavailableAnswer = (value, optionRules, getValue) => {
+    const rules = readOptionRules(optionRules)
+    if (rules.length === 0) return false
+    // Codings ({ code }), subform selections ({ selectedKey }) and plain values.
+    const answerKey = (entry) => entry && typeof entry === "object"
+      ? (entry.code ?? entry.selectedKey ?? entry.key ?? entry.value ?? entry.display ?? "")
+      : entry
+    const selected = (Array.isArray(value) ? value : [value])
+      .map(answerKey)
+      .filter((entry) => entry !== undefined && entry !== null && String(entry).trim() !== "")
+      .map(String)
+    return selected.some((entry) => optionState(entry, rules, getValue) !== "available")
+  }
+  // ---- Chart facts and answer availability — end ----
 
   // ---- Builder visibility rules (BuilderVisibilityRule) — begin ----
   // { type, controllerId, value, additionalConditions?, match?, hiddenAnswerPolicy? }
@@ -767,9 +956,9 @@ const FormLogicKit = (() => {
    * row path (or id); anything else is read from the row, then from the form
    * answers. options: { columns (the table's columns), formData }.
    */
-  const isTableColumnVisible = (column, row, options = {}) => {
-    const rule = column && column.visibility
-    if (!rule || typeof rule !== "object") return true
+  // What a rule on one row reads: a sibling column by row path, else the row,
+  // else the form's answers (`formData`), else a chart fact.
+  const tableRowGetter = (row, options = {}) => {
     const columns = Array.isArray(options.columns) ? options.columns : []
     const sibling = (id) => columns.find((entry) => entry && (tableColumnPath(entry) === id || entry.id === id))
     const getValue = (id) => {
@@ -779,7 +968,22 @@ const FormLogicKit = (() => {
       if (inRow !== undefined) return inRow
       return options.formData ? readValue(options.formData, id) : undefined
     }
+    return { getValue: withChartFacts(getValue, options.sourceData, options.asOf), sibling }
+  }
+
+  const isTableColumnVisible = (column, row, options = {}) => {
+    const rule = column && column.visibility
+    if (!rule || typeof rule !== "object") return true
+    const { getValue, sibling } = tableRowGetter(row, options)
     return evaluateVisibilityRule(rule, getValue, { controllerKind: (id) => tableColumnKind(sibling(id)) })
+  }
+
+  /** A column as one row offers it: its options filtered by its option rules. */
+  const withAvailableColumnOptions = (column, row, options = {}) => {
+    if (!column || !Array.isArray(column.optionRules) || column.optionRules.length === 0 || !Array.isArray(column.options)) return column
+    const { getValue } = tableRowGetter(row || {}, options)
+    const offered = availableOptions(column.options, column.optionRules, getValue)
+    return offered === column.options ? column : { ...column, options: offered }
   }
 
   /**
@@ -904,7 +1108,8 @@ const FormLogicKit = (() => {
     if (copyResult.error) {
       return [{ fieldId: "_form", label: "", message: copyResult.error, kind: "rule" }]
     }
-    const get = (id) => readValue(values, id)
+    // `options.sourceData`: the form's source data, for rules that read chart facts.
+    const get = withChartFacts((id) => readValue(values, id), options.sourceData, options.asOf)
     const matches = (group) => evaluateEntries(group?.conditions, group?.match, get)
     return scoped.flatMap((config) => {
       if (isFieldHidden(config, get)) return []
@@ -943,12 +1148,7 @@ const FormLogicKit = (() => {
           issues.push(issue("format", config.formatMessage || translate(format.message || (config.label + " is not valid"))))
         }
       }
-      const selected = Array.isArray(value) ? value : [value]
-      const optionBlocked = (config.optionRules || []).some((rule) =>
-        selected.some((option) => String(normalizeComparableValue(option)) === rule.value) &&
-        ((rule.showWhen && !matches(rule.showWhen)) || (rule.disableWhen && matches(rule.disableWhen)))
-      )
-      if (optionBlocked) issues.push(issue("option", translate(config.label + ": choose an available option")))
+      if (hasUnavailableAnswer(value, config.optionRules, get)) issues.push(issue("option", translate(config.label + ": choose an available option")))
       return issues
     })
   }
@@ -1026,6 +1226,16 @@ const FormLogicKit = (() => {
   }
 
   return {
+    chartFactValues,
+    withChartFacts,
+    setChartSource,
+    /** A chart fact from the registered source data; undefined for any other id. */
+    chartFact: (id) => (isChartFactId(id) ? activeChartFact(id) : undefined),
+    isChartFactId,
+    optionKey,
+    optionState,
+    availableOptions,
+    hasUnavailableAnswer,
     hasMeaningfulValue,
     isEmptyValue,
     readValue,
@@ -1041,6 +1251,7 @@ const FormLogicKit = (() => {
     dropHiddenAnswers,
     tableColumnKind,
     isTableColumnVisible,
+    withAvailableColumnOptions,
     clearHiddenTableAnswers,
     dropHiddenTableAnswers,
     isFieldHidden,
