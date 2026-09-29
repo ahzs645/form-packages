@@ -272,7 +272,7 @@ export interface ParsedField {
   linkedAnswerFieldIds?: string[];
   // New field type properties
   textareaRows?: number;
-  /** Explicit MOIS control size for the textarea input, overriding the width-derived size. */
+  /** Explicit MOIS control size for number/measurement and textarea inputs. */
   moisSize?: string;
   textareaMultiline?: boolean;
   textareaBorderless?: boolean;
@@ -389,6 +389,7 @@ export interface ParsedField {
   dateFillTodayOnCalendarOpen?: boolean;
   dateShowAge?: boolean;
   dateVertical?: boolean;
+  dateLegacyTimeFieldId?: string;
 
   // Phone field properties
   phoneUseSimpleInput?: boolean;

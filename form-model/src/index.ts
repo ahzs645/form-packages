@@ -2273,7 +2273,7 @@ export interface BuilderField {
     | "findCode";
   /** Layout of radio/checklist answers inside a SimpleCodeChecklist field. */
   choiceAnswerLayout?: "vertical" | "responsive" | "inline" | "columns-2" | "columns-3" | "columns-4";
-  /** MOIS control density for coded selection controls. */
+  /** MOIS control size for choices, numbers (including measurements), and textareas. */
   moisSize?: string;
   /** MOIS per-answer density for radio/checklist controls. */
   moisOptionSize?: string;
@@ -2612,6 +2612,8 @@ export interface BuilderField {
   // Date field config
   dateConfig?: {
     withTime?: boolean;
+    /** Retired time answer to merge into this date-time answer when reopening an older form. */
+    legacyTimeFieldId?: string;
     dateRange?: boolean;
     dateFormat?: "yyyy.MM.dd" | "dd/MM/yyyy" | "MM-dd-yyyy" | "yyyy-MM-dd";
     /** Format used when writing the answer into the original PDF or Word document. */
