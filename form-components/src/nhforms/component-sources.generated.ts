@@ -11956,13 +11956,18 @@ const FieldKit = (() => {
         )
       }
       case "DateSelect":
+        // SMOIS main.a75cc6b1.chunk.js DateSelect reparses defaultValue on
+        // changes. Its value effect reads activeSelector[fieldId] when
+        // value is truthy, clearing a controlled container cell that has
+        // no standalone fieldId. Use the supported defaultValue channel;
+        // the container still owns the answer through onChange.
         return (
           <DateSelect
             {...common}
             {...bound}
             {...placeholderProp}
             {...(descriptor.dateConfig?.dateFormat ? { dateFormat: descriptor.dateConfig.dateFormat } : {})}
-            {...(controlled ? { value: controlValue || "", onChange: (next) => emit(toDateText(next)) } : {})}
+            {...(controlled ? { defaultValue: controlValue || "", onChange: (next) => emit(toDateText(next)) } : {})}
           />
         )
       case "TimeSelect":
