@@ -6162,6 +6162,13 @@ const checkComparisonMatch = (fieldValue, operator, expectedValue) => {
   return operator === 'not-equals' ? left !== right : left === right
 }
 
+// A chart-fact condition with its compared answers in the fact's lowercase codes.
+const chartFactEntry = (entry) => ({
+  ...entry,
+  ...(Array.isArray(entry.optionValues) ? { optionValues: entry.optionValues.map((value) => (typeof value === 'string' ? value.toLowerCase() : value)) } : {}),
+  ...(typeof entry.value === 'string' ? { value: entry.value.toLowerCase() } : {}),
+})
+
 /**
  * Evaluate one multi-condition entry ({controllerFieldId, type, optionValues?, value?})
  * against a field-value getter. Mirrors the builder's FieldLinkCondition types;
@@ -6175,6 +6182,9 @@ const evaluateConditionEntry = (entry, getFieldValue) => {
   // chart the form root registered with FormLogicKit, never from the answers.
   if (fieldValue === undefined && typeof FormLogicKit !== 'undefined' && FormLogicKit && typeof FormLogicKit.chartFact === 'function') {
     fieldValue = FormLogicKit.chartFact(entry.controllerFieldId)
+    // A choice fact's value is a lowercase code ("female", "yes"); a rule
+    // saved with the answer's label ("Female", "Yes") names the same one.
+    if (typeof fieldValue === 'string') entry = chartFactEntry(entry)
   }
   const type = entry.type
   if (type === 'choice-selected') return checkChoiceMatch(fieldValue, entry.optionValues ?? [], false)
@@ -6354,13 +6364,25 @@ const ConditionalField = ({
     const matches = evaluateConditionEntries(conditions, match, (id) => readControllerValue(fd?.field?.data, id))
     isVisible = invertMatch ? !matches : matches
   } else if (mode === 'controller' && controllerFieldId) {
-    const controllerValue = readControllerValue(fd?.field?.data, controllerFieldId)
+    // A chart fact (chart:patient.sex, chart:patient.concept.DIABETES …) comes
+    // from the chart the form root registered, as in evaluateConditionEntry.
+    let controllerValue = readControllerValue(fd?.field?.data, controllerFieldId)
+    let chartOptions = optionValues
+    let chartCompare = compareValue
+    if (controllerValue === undefined && typeof FormLogicKit !== 'undefined' && FormLogicKit && typeof FormLogicKit.chartFact === 'function') {
+      controllerValue = FormLogicKit.chartFact(controllerFieldId)
+      if (typeof controllerValue === 'string') {
+        const fact = chartFactEntry({ optionValues, value: compareValue })
+        chartOptions = fact.optionValues
+        chartCompare = fact.value
+      }
+    }
 
     // If optionValues is provided, use choice matching instead of boolean matching
-    if (optionValues && optionValues.length > 0) {
-      isVisible = checkChoiceMatch(controllerValue, optionValues, invertMatch)
+    if (chartOptions && chartOptions.length > 0) {
+      isVisible = checkChoiceMatch(controllerValue, chartOptions, invertMatch)
     } else if (operator) {
-      const matches = checkComparisonMatch(controllerValue, operator, compareValue)
+      const matches = checkComparisonMatch(controllerValue, operator, chartCompare)
       isVisible = invertMatch ? !matches : matches
     } else {
       // Boolean matching (yes/no)
@@ -15569,10 +15591,19 @@ const FormLogicKit = (() => {
     if (rawEntry && Array.isArray(rawEntry.conditions)) {
       return evaluateEntries(rawEntry.conditions, rawEntry.match, get)
     }
-    const entry = toFlatEntry(rawEntry)
+    let entry = toFlatEntry(rawEntry)
     if (!entry || !entry.controllerFieldId || !entry.type) return false
     let fieldValue = get(entry.controllerFieldId)
     if (fieldValue === undefined && isChartFactId(entry.controllerFieldId)) fieldValue = activeChartFact(entry.controllerFieldId)
+    // A choice fact's value is a lowercase code ("female", "yes"); a rule
+    // saved with the answer's label ("Female", "Yes") names the same one.
+    if (typeof fieldValue === "string" && isChartFactId(entry.controllerFieldId)) {
+      entry = {
+        ...entry,
+        ...(Array.isArray(entry.optionValues) ? { optionValues: entry.optionValues.map((value) => (typeof value === "string" ? value.toLowerCase() : value)) } : {}),
+        ...(typeof entry.value === "string" ? { value: entry.value.toLowerCase() } : {}),
+      }
+    }
     const type = entry.type
     if (type === "choice-selected") return checkChoiceMatch(fieldValue, entry.optionValues, false)
     if (type === "choice-not-selected") return checkChoiceMatch(fieldValue, entry.optionValues, true)
@@ -15664,9 +15695,99 @@ const FormLogicKit = (() => {
     if (!sourceData || typeof sourceData !== "object") return null
     const patient = sourceData.patient ?? sourceData.queryResult?.patient?.[0]
     if (patient && typeof patient === "object") {
-      return { sex: patient.administrativeGender ?? patient.gender ?? patient.sex, birthDate: patient.birthDate }
+      return {
+        sex: patient.administrativeGender ?? patient.gender ?? patient.sex,
+        birthDate: patient.birthDate,
+        conditions: patient.conditions,
+        longTermMedications: patient.longTermMedications,
+      }
     }
-    return "sex" in sourceData || "birthDate" in sourceData ? sourceData : null
+    return "sex" in sourceData || "birthDate" in sourceData || "conditions" in sourceData || "longTermMedications" in sourceData ? sourceData : null
+  }
+
+  // ---- Chart concepts (mirrors @webforms/form-model chart-concepts.ts) ----
+  // \`chart:patient.concept.<NAME>\` answers "yes" when a current health issue
+  // (unresolved condition) or medication (current long-term medication) on
+  // the chart belongs to the concept, by the concept's MOIS Concept Mapping
+  // rules. The exported form registers the rules of the concepts it uses
+  // (setChartConcepts): MOIS has no API that returns them.
+  const CHART_FACT_CONCEPT_PREFIX = "chart:patient.concept."
+  let chartConcepts = []
+  const conceptNorm = (value) => (typeof value === "string" || typeof value === "number" ? String(value).trim().toUpperCase() : "")
+  const conceptSystemKey = (value) => conceptNorm(value).replace(/[^A-Z0-9]/g, "")
+  const conceptCodeKey = (code, system) => (conceptSystemKey(system).startsWith("ICD") ? code.replace(/\\./g, "") : code)
+  const conceptFilled = (value) => typeof value === "string" && value.trim() !== ""
+  const conceptCodeMatches = (pattern, value, system) => {
+    const p = conceptCodeKey(conceptNorm(pattern), system)
+    const v = conceptCodeKey(conceptNorm(value), system)
+    if (!p || !v) return false
+    return p.endsWith("*") ? v.startsWith(p.slice(0, -1)) : v === p
+  }
+  const chartConceptRuleMatches = (rule, target) => {
+    if (!rule || !target) return false
+    if (rule.ruleType === "TEXT") {
+      const text = conceptNorm(target.description)
+      const includes = [rule.include1, rule.include2].filter(conceptFilled).map((value) => value.toUpperCase())
+      if (!text || includes.length === 0) return false
+      if (!includes.every((value) => text.includes(value))) return false
+      return !(conceptFilled(rule.exclude) && text.includes(rule.exclude.toUpperCase()))
+    }
+    const value = rule.codeField === "str_atc_code" ? target.atc : rule.codeField === "str_class" ? target.measureClass : target.code
+    if (!rule.code || !value) return false
+    if (rule.codeField === "MOIS" && rule.codeSystem && target.codeSystem && conceptSystemKey(rule.codeSystem) !== conceptSystemKey(target.codeSystem)) return false
+    return conceptCodeMatches(rule.code, value, rule.codeSystem ?? target.codeSystem ?? "")
+  }
+  const chartConceptMatches = (concept, target) => Array.isArray(concept?.rules) && concept.rules.some((rule) => chartConceptRuleMatches(rule, target))
+  const conceptText = (value) => (typeof value === "string" ? value : value && typeof value === "object" ? String(value.display ?? value.code ?? "") : "")
+  const conceptDate = (value) => {
+    if (typeof value !== "string" || !value.trim()) return undefined
+    const date = new Date(value.trim().replace(/^(\\d{4})\\.(\\d{2})\\.(\\d{2})/, "$1-$2-$3"))
+    return Number.isFinite(date.getTime()) ? date : undefined
+  }
+  const conceptCurrent = (end, asOf) => {
+    const date = conceptDate(end)
+    return !date || date > asOf
+  }
+  const chartConceptTargets = (group, patient, asOf) => {
+    if (!patient) return undefined
+    const at = asOf instanceof Date ? asOf : new Date()
+    const records = (list) => list.filter((record) => record && typeof record === "object")
+    if (group === "HEALTH ISSUE") {
+      if (!Array.isArray(patient.conditions)) return undefined
+      return records(patient.conditions)
+        .filter((record) => conceptCurrent(record.resolveDate, at))
+        .map((record) => {
+          const own = record.condition && typeof record.condition === "object" ? record.condition : record
+          return { code: conceptText(own.code), codeSystem: conceptText(own.system), description: conceptText(own.display) || conceptText(record.condition) }
+        })
+    }
+    if (group === "MEDICATION") {
+      if (!Array.isArray(patient.longTermMedications)) return undefined
+      return records(patient.longTermMedications)
+        .filter((record) => conceptCurrent(record.endDate, at))
+        .map((record) => ({
+          code: conceptText(record.cdicCode && typeof record.cdicCode === "object" ? record.cdicCode.code : record.cdicCode),
+          atc: conceptText(record.atcCode && typeof record.atcCode === "object" ? record.atcCode.code : record.atcCode),
+          description: [conceptText(record.medication), conceptText(record.genericName)].filter(Boolean).join(" "),
+        }))
+    }
+    return undefined
+  }
+  const chartConceptAnswer = (concept, patient, asOf) => {
+    const targets = chartConceptTargets(concept?.group, patient, asOf)
+    if (!targets) return undefined
+    return targets.some((target) => chartConceptMatches(concept, target)) ? "yes" : "no"
+  }
+  /** The concepts whose facts this form reads: [{ name, group, rules }]. The
+      form root calls it on every render; the same list keeps the cache. */
+  let chartConceptsKey = ""
+  const setChartConcepts = (concepts) => {
+    const next = Array.isArray(concepts) ? concepts.filter((concept) => concept && typeof concept.name === "string") : []
+    const key = JSON.stringify(next)
+    if (key === chartConceptsKey) return
+    chartConceptsKey = key
+    chartConcepts = next
+    activeChartFacts = null
   }
 
   // The preview's assessment date (the workspace's patient test values), at
@@ -15679,8 +15800,8 @@ const FormLogicKit = (() => {
     return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), now.getHours(), now.getMinutes())
   }
 
-  /** Every chart fact's value, keyed by controller id; facts the chart lacks are left out. */
-  const chartFactValues = (sourceData, explicitAsOf) => {
+  /** Every chart fact's value, keyed by controller id; facts the chart lacks are left out. \`concepts\` defaults to the registered ones. */
+  const chartFactValues = (sourceData, explicitAsOf, concepts) => {
     const asOf = explicitAsOf instanceof Date ? explicitAsOf : previewAsOf(sourceData)
     const patient = chartPatientOf(sourceData)
     const values = {}
@@ -15690,6 +15811,11 @@ const FormLogicKit = (() => {
     Object.keys(CHART_FACT_AGE_IDS).forEach((unit) => {
       const age = chartFactAge(patient.birthDate, unit, asOf)
       if (age !== undefined) values[CHART_FACT_AGE_IDS[unit]] = age
+    })
+    const list = Array.isArray(concepts) ? concepts : chartConcepts
+    list.forEach((concept) => {
+      const answer = chartConceptAnswer(concept, patient, asOf)
+      if (answer) values[CHART_FACT_CONCEPT_PREFIX + concept.name.trim()] = answer
     })
     return values
   }
@@ -16639,6 +16765,8 @@ const FormLogicKit = (() => {
     chartFactValues,
     withChartFacts,
     setChartSource,
+    setChartConcepts,
+    chartConceptMatches,
     /** A chart fact from the registered source data; undefined for any other id. */
     chartFact: (id) => (isChartFactId(id) ? activeChartFact(id) : undefined),
     isChartFactId,
@@ -16967,6 +17095,11 @@ const FormulaKit = (() => {
     if (node.kind === "text" && /^\\s*\\d+(?:\\.\\d+)?\\s*$/.test(node.value)) return Number(node.value);
     return void 0;
   }
+  function literalTexts(node) {
+    if (node?.kind === "list") return node.items.map(literalText).filter((code) => Boolean(code));
+    const one = literalText(node);
+    return one ? [one] : [];
+  }
   function mapEntry(node, key) {
     if (!node || node.kind !== "map") return void 0;
     return node.entries.find((entry) => entry.key === key)?.value;
@@ -16981,8 +17114,11 @@ const FormulaKit = (() => {
     if (node.kind !== "map") return null;
     const codings = [];
     for (const key of ["loinc", "mois", "dta"]) {
-      const code2 = literalText(mapEntry(node, key));
-      if (code2) codings.push({ system: LATEST_OBSERVATION_SYSTEMS[key], code: code2 });
+      for (const code2 of literalTexts(mapEntry(node, key))) {
+        if (!codings.some((coding) => coding.system === LATEST_OBSERVATION_SYSTEMS[key] && coding.code === code2)) {
+          codings.push({ system: LATEST_OBSERVATION_SYSTEMS[key], code: code2 });
+        }
+      }
     }
     const system = literalText(mapEntry(node, "system"));
     const code = literalText(mapEntry(node, "code"));
@@ -31481,9 +31617,25 @@ const ObservationKit = (() => {
     return "Last " + amount + " " + (amount === 1 ? singular : unit)
   }
 
+  // MOIS observation codes that are one reading (MOIS's HGBA1C concept: 128,
+  // 10487, 10488, … — lib/mois-concepts.ts), registered by the exported form
+  // (setEquivalentCodes) as { code: [every code of its reading] }.
+  let equivalentCodes = {}
+  const setEquivalentCodes = (map) => {
+    const next = {}
+    if (map && typeof map === "object") {
+      Object.keys(map).forEach((code) => {
+        const list = Array.isArray(map[code]) ? map[code].map((value) => toText(value).trim().toLowerCase()).filter(Boolean) : []
+        if (list.length) next[toText(code).trim().toLowerCase()] = list
+      })
+    }
+    equivalentCodes = next
+  }
+
   // A chart entry matches a configured {code, loincCode} candidate when either
   // of the entry's identifiers equals either of the candidate's,
-  // case-insensitively.
+  // case-insensitively, or its MOIS code is the same reading as the
+  // candidate's (setEquivalentCodes).
   const matchesCode = (entry, candidate) => {
     const entryCode = toText(entry?.observationCode).trim().toLowerCase()
     const entryLoinc = toText(entry?.loincCode).trim().toLowerCase()
@@ -31491,6 +31643,8 @@ const ObservationKit = (() => {
     const loinc = toText(candidate?.loincCode).trim().toLowerCase()
     if (entryCode && (entryCode === code || (loinc && entryCode === loinc))) return true
     if (entryLoinc && (entryLoinc === code || (loinc && entryLoinc === loinc))) return true
+    const same = code ? equivalentCodes[code] : null
+    if (entryCode && same && same.includes(entryCode)) return true
     return false
   }
 
@@ -31563,6 +31717,7 @@ const ObservationKit = (() => {
     lookbackLabel,
     matchesCode,
     matchCodeIndex,
+    setEquivalentCodes,
     toNumber,
     extractValue,
     classifyRanges,
@@ -36839,15 +36994,25 @@ var DocumentFillRuntime = (() => {
     if (typeof normalized === "number" || typeof normalized === "boolean") return normalized;
     return String(normalized);
   }
+  var CHART_FACT_ID_PREFIX = "chart:patient.";
+  function chartFactCondition(condition) {
+    return {
+      ...condition,
+      ...condition.optionValues ? { optionValues: condition.optionValues.map((value) => typeof value === "string" ? value.toLowerCase() : value) } : {},
+      ...typeof condition.value === "string" ? { value: condition.value.toLowerCase() } : {}
+    };
+  }
   function evaluateConditionGroup(group, metadata, values) {
     if (!group.conditions.length) return false;
     const evaluate = (entry) => {
       if ("conditions" in entry) return evaluateConditionGroup(entry, metadata, values);
       const compareFieldId = entry.condition.compareFieldId || entry.condition.valueFieldId;
       if (compareFieldId && isConditionValueEmpty(values[compareFieldId])) return false;
+      const controllerValue = values[entry.controllerFieldId];
+      const condition = compareFieldId ? { ...entry.condition, value: asConditionValue(values[compareFieldId]) } : entry.condition;
       return evaluateFieldCondition(
-        compareFieldId ? { ...entry.condition, value: asConditionValue(values[compareFieldId]) } : entry.condition,
-        values[entry.controllerFieldId],
+        typeof controllerValue === "string" && entry.controllerFieldId.startsWith(CHART_FACT_ID_PREFIX) ? chartFactCondition(condition) : condition,
+        controllerValue,
         metadata(entry.controllerFieldId)
       );
     };
@@ -52330,15 +52495,25 @@ var WordFormRuntime = (() => {
     if (typeof normalized === "number" || typeof normalized === "boolean") return normalized;
     return String(normalized);
   }
+  var CHART_FACT_ID_PREFIX = "chart:patient.";
+  function chartFactCondition(condition) {
+    return {
+      ...condition,
+      ...condition.optionValues ? { optionValues: condition.optionValues.map((value) => typeof value === "string" ? value.toLowerCase() : value) } : {},
+      ...typeof condition.value === "string" ? { value: condition.value.toLowerCase() } : {}
+    };
+  }
   function evaluateConditionGroup(group, metadata, values) {
     if (!group.conditions.length) return false;
     const evaluate = (entry) => {
       if ("conditions" in entry) return evaluateConditionGroup(entry, metadata, values);
       const compareFieldId = entry.condition.compareFieldId || entry.condition.valueFieldId;
       if (compareFieldId && isConditionValueEmpty(values[compareFieldId])) return false;
+      const controllerValue = values[entry.controllerFieldId];
+      const condition = compareFieldId ? { ...entry.condition, value: asConditionValue(values[compareFieldId]) } : entry.condition;
       return evaluateFieldCondition(
-        compareFieldId ? { ...entry.condition, value: asConditionValue(values[compareFieldId]) } : entry.condition,
-        values[entry.controllerFieldId],
+        typeof controllerValue === "string" && entry.controllerFieldId.startsWith(CHART_FACT_ID_PREFIX) ? chartFactCondition(condition) : condition,
+        controllerValue,
         metadata(entry.controllerFieldId)
       );
     };

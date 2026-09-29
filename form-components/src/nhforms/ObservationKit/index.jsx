@@ -121,9 +121,25 @@ const ObservationKit = (() => {
     return "Last " + amount + " " + (amount === 1 ? singular : unit)
   }
 
+  // MOIS observation codes that are one reading (MOIS's HGBA1C concept: 128,
+  // 10487, 10488, … — lib/mois-concepts.ts), registered by the exported form
+  // (setEquivalentCodes) as { code: [every code of its reading] }.
+  let equivalentCodes = {}
+  const setEquivalentCodes = (map) => {
+    const next = {}
+    if (map && typeof map === "object") {
+      Object.keys(map).forEach((code) => {
+        const list = Array.isArray(map[code]) ? map[code].map((value) => toText(value).trim().toLowerCase()).filter(Boolean) : []
+        if (list.length) next[toText(code).trim().toLowerCase()] = list
+      })
+    }
+    equivalentCodes = next
+  }
+
   // A chart entry matches a configured {code, loincCode} candidate when either
   // of the entry's identifiers equals either of the candidate's,
-  // case-insensitively.
+  // case-insensitively, or its MOIS code is the same reading as the
+  // candidate's (setEquivalentCodes).
   const matchesCode = (entry, candidate) => {
     const entryCode = toText(entry?.observationCode).trim().toLowerCase()
     const entryLoinc = toText(entry?.loincCode).trim().toLowerCase()
@@ -131,6 +147,8 @@ const ObservationKit = (() => {
     const loinc = toText(candidate?.loincCode).trim().toLowerCase()
     if (entryCode && (entryCode === code || (loinc && entryCode === loinc))) return true
     if (entryLoinc && (entryLoinc === code || (loinc && entryLoinc === loinc))) return true
+    const same = code ? equivalentCodes[code] : null
+    if (entryCode && same && same.includes(entryCode)) return true
     return false
   }
 
@@ -203,6 +221,7 @@ const ObservationKit = (() => {
     lookbackLabel,
     matchesCode,
     matchCodeIndex,
+    setEquivalentCodes,
     toNumber,
     extractValue,
     classifyRanges,

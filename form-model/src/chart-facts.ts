@@ -1,4 +1,13 @@
 import type { BuilderField } from "./index";
+import {
+  chartConceptAnswer,
+  chartConceptFactId,
+  chartConceptFactLabel,
+  chartConceptNameOf,
+  isChartConceptFactId,
+  type ChartConceptDefinition,
+  type ChartConceptPatient,
+} from "./chart-concepts";
 
 /**
  * Chart facts: patient attributes a condition can read straight from the
@@ -16,6 +25,11 @@ import type { BuilderField } from "./index";
  * Ages count completed units from the birth date to the time the form is
  * filled in (`asOf`), so a band "from 13 to 18 years" is `ageYears >= 13` and
  * `ageYears < 18`. Sex uses FHIR AdministrativeGender codes.
+ *
+ * Concept facts (`chart:patient.concept.DIABETES`, chart-concepts.ts) answer
+ * "yes" or "no": whether a current health issue or medication on the chart
+ * belongs to the named concept. Their values need the concepts' rules, which
+ * the caller passes; their definitions do not.
  */
 
 export const CHART_FACT_PREFIX = "chart:";
@@ -33,14 +47,23 @@ export const CHART_FACT_AGE_IDS = {
 
 export const CHART_FACT_SEX_ID = "chart:patient.sex";
 
-export type ChartFactId = typeof CHART_FACT_SEX_ID | (typeof CHART_FACT_AGE_IDS)[ChartFactAgeUnit];
+export type ChartFactId =
+  | typeof CHART_FACT_SEX_ID
+  | (typeof CHART_FACT_AGE_IDS)[ChartFactAgeUnit]
+  | `chart:patient.concept.${string}`;
 
 export interface ChartFactDefinition {
   id: ChartFactId;
   label: string;
   kind: "choice" | "number";
-  options?: ReadonlyArray<{ value: ChartFactSex; label: string }>;
+  options?: ReadonlyArray<{ value: string; label: string }>;
 }
+
+/** A concept fact's answers. */
+export const CHART_FACT_CONCEPT_OPTIONS: ReadonlyArray<{ value: "yes" | "no"; label: string }> = [
+  { value: "yes", label: "Yes" },
+  { value: "no", label: "No" },
+];
 
 export const CHART_FACT_SEX_OPTIONS: ReadonlyArray<{ value: ChartFactSex; label: string }> = [
   { value: "female", label: "Female" },
@@ -62,15 +85,25 @@ const FACT_BY_ID = new Map<string, ChartFactDefinition>(CHART_FACTS.map((fact) =
 
 /** Whether a controller id names a chart fact rather than a field. */
 export function isChartFactId(id: unknown): id is ChartFactId {
-  return typeof id === "string" && FACT_BY_ID.has(id);
+  return typeof id === "string" && (FACT_BY_ID.has(id) || isChartConceptFactId(id));
 }
 
-export function chartFactDefinition(id: string): ChartFactDefinition | undefined {
+/** A concept's fact, labelled from its group when the concept is known. */
+function conceptFactDefinition(name: string, group?: string): ChartFactDefinition {
+  return { id: chartConceptFactId(name), label: chartConceptFactLabel(name, group), kind: "choice", options: CHART_FACT_CONCEPT_OPTIONS };
+}
+
+export function chartFactDefinition(id: string, concepts?: ReadonlyArray<ChartConceptDefinition>): ChartFactDefinition | undefined {
+  const name = chartConceptNameOf(id);
+  if (name !== undefined) {
+    const concept = concepts?.find((entry) => entry.name.trim() === name);
+    return conceptFactDefinition(name, concept?.group);
+  }
   return FACT_BY_ID.get(id);
 }
 
 /** The patient a chart fact is read from. */
-export interface ChartFactPatient {
+export interface ChartFactPatient extends ChartConceptPatient {
   /** Any spelling: "F", "female", a coding `{ code: "F" }`. */
   sex?: unknown;
   /** A calendar date (YYYY-MM-DD) or a date-time. */
@@ -124,8 +157,16 @@ export function chartFactAge(birthDate: unknown, unit: ChartFactAgeUnit, asOf: D
   }
 }
 
-/** Every chart fact's value for a patient, keyed by controller id; a fact the chart lacks is left out. */
-export function chartFactValues(patient: ChartFactPatient | null | undefined, asOf: Date = new Date()): Partial<Record<ChartFactId, string | number>> {
+/**
+ * Every chart fact's value for a patient, keyed by controller id; a fact the
+ * chart lacks is left out. `concepts` are the concepts whose facts to answer
+ * (their rules decide the answer).
+ */
+export function chartFactValues(
+  patient: ChartFactPatient | null | undefined,
+  asOf: Date = new Date(),
+  concepts: ReadonlyArray<ChartConceptDefinition> = [],
+): Partial<Record<ChartFactId, string | number>> {
   const values: Partial<Record<ChartFactId, string | number>> = {};
   const sex = chartFactSex(patient?.sex);
   if (sex) values[CHART_FACT_SEX_ID] = sex;
@@ -133,16 +174,21 @@ export function chartFactValues(patient: ChartFactPatient | null | undefined, as
     const age = chartFactAge(patient?.birthDate, unit, asOf);
     if (age !== undefined) values[CHART_FACT_AGE_IDS[unit]] = age;
   }
+  for (const concept of concepts) {
+    const answer = chartConceptAnswer(concept, patient, asOf);
+    if (answer) values[chartConceptFactId(concept.name)] = answer;
+  }
   return values;
 }
 
 /**
  * The chart facts as condition controllers for the rule editors: a choice
- * for sex and numbers for age. They are offered beside the form's fields and
- * are never added to the form.
+ * for sex, numbers for age and a Yes/No choice for each of `concepts`. They
+ * are offered beside the form's fields and are never added to the form.
  */
-export function chartFactControllerFields(): BuilderField[] {
-  return CHART_FACTS.map((fact) => ({
+export function chartFactControllerFields(concepts: ReadonlyArray<ChartConceptDefinition> = []): BuilderField[] {
+  const facts = [...CHART_FACTS, ...concepts.map((concept) => conceptFactDefinition(concept.name, concept.group))];
+  return facts.map((fact) => ({
     id: fact.id,
     label: fact.label,
     type: fact.kind === "choice" ? "choice" : "number",

@@ -54,6 +54,8 @@ export const LATEST_OBSERVATION_SYSTEMS: Readonly<Record<"loinc" | "mois" | "dta
 };
 
 const OBSERVATION_KEYS = ["concept", "loinc", "mois", "dta", "system", "code", "unit"] as const;
+/** Keys that may name several codes of one reading. */
+const CODE_LIST_KEYS = ["loinc", "mois", "dta"] as const;
 const OPTION_KEYS = ["withinMinutes", "aheadMinutes", "statuses", "required", "fallback"] as const;
 
 /** FHIR ObservationStatus codes a `statuses` option may list. */
@@ -115,6 +117,13 @@ function literalNumber(node: FormulaNode | undefined): number | undefined {
   return undefined;
 }
 
+/** A literal, or each literal of a list. */
+function literalTexts(node: FormulaNode | undefined): string[] {
+  if (node?.kind === "list") return node.items.map(literalText).filter((code): code is string => Boolean(code));
+  const one = literalText(node);
+  return one ? [one] : [];
+}
+
 function mapEntry(node: FormulaNode | undefined, key: string): FormulaNode | undefined {
   if (!node || node.kind !== "map") return undefined;
   return node.entries.find((entry) => entry.key === key)?.value;
@@ -132,8 +141,13 @@ function observationOf(node: FormulaNode | undefined): FormulaObservation | null
   if (node.kind !== "map") return null;
   const codings: FormulaObservationCoding[] = [];
   for (const key of ["loinc", "mois", "dta"] as const) {
-    const code = literalText(mapEntry(node, key));
-    if (code) codings.push({ system: LATEST_OBSERVATION_SYSTEMS[key], code });
+    // One code, or a list of codes that are the same reading (MOIS's HGBA1C
+    // is 128, 10487, 10488 … — lib/mois-concepts.ts); a result under any counts.
+    for (const code of literalTexts(mapEntry(node, key))) {
+      if (!codings.some((coding) => coding.system === LATEST_OBSERVATION_SYSTEMS[key] && coding.code === code)) {
+        codings.push({ system: LATEST_OBSERVATION_SYSTEMS[key], code });
+      }
+    }
   }
   const system = literalText(mapEntry(node, "system"));
   const code = literalText(mapEntry(node, "code"));
@@ -178,7 +192,9 @@ export function latestTermProblems(node: Extract<FormulaNode, { kind: "call" }>)
   } else if (observation.kind === "map") {
     for (const entry of observation.entries) {
       if (!(OBSERVATION_KEYS as readonly string[]).includes(entry.key)) problems.push(`latest() does not know the observation key "${entry.key}"; use ${OBSERVATION_KEYS.join(", ")}.`);
-      else if (literalText(entry.value) === undefined) problems.push(`latest()'s "${entry.key}" must be written as text.`);
+      else if (entry.value.kind === "list" && (CODE_LIST_KEYS as readonly string[]).includes(entry.key)) {
+        if (entry.value.items.length === 0 || entry.value.items.some((item) => literalText(item) === undefined)) problems.push(`latest()'s "${entry.key}" list must hold codes written as text.`);
+      } else if (literalText(entry.value) === undefined) problems.push(`latest()'s "${entry.key}" must be written as text.`);
     }
     const hasSystem = observation.entries.some((entry) => entry.key === "system");
     const hasCode = observation.entries.some((entry) => entry.key === "code");
@@ -216,7 +232,8 @@ function entry(key: string, value: FormulaNode): FormulaMapEntry {
  * say something, so a term written twice prints the same.
  */
 export function latestFormulaNode(term: {
-  observation: { loinc?: string; mois?: string; dta?: string; system?: string; code?: string; concept?: string; unit?: string };
+  /** `mois` may list every code of one reading, the preferred first. */
+  observation: { loinc?: string; mois?: string | readonly string[]; dta?: string; system?: string; code?: string; concept?: string; unit?: string };
   withinMinutes?: number;
   aheadMinutes?: number;
   statuses?: readonly string[];
@@ -226,8 +243,11 @@ export function latestFormulaNode(term: {
   const text = (value: string): FormulaNode => ({ kind: "text", value });
   const observation: FormulaMapEntry[] = [];
   for (const key of ["concept", "loinc", "mois", "dta", "system", "code", "unit"] as const) {
-    const value = term.observation[key]?.trim();
-    if (value) observation.push(entry(key, text(value)));
+    const raw = term.observation[key];
+    const values = (Array.isArray(raw) ? raw : [raw]).map((value) => (typeof value === "string" ? value.trim() : "")).filter(Boolean);
+    const unique = [...new Set(values)];
+    if (unique.length > 1) observation.push(entry(key, { kind: "list", items: unique.map((value) => text(value)) }));
+    else if (unique.length === 1) observation.push(entry(key, text(unique[0]!)));
   }
   const options: FormulaMapEntry[] = [];
   if (isFiniteNumber(term.withinMinutes) && term.withinMinutes > 0) options.push(entry("withinMinutes", { kind: "number", value: term.withinMinutes }));

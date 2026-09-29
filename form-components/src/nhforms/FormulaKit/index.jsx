@@ -97,6 +97,11 @@ const FormulaKit = (() => {
     if (node.kind === "text" && /^\s*\d+(?:\.\d+)?\s*$/.test(node.value)) return Number(node.value);
     return void 0;
   }
+  function literalTexts(node) {
+    if (node?.kind === "list") return node.items.map(literalText).filter((code) => Boolean(code));
+    const one = literalText(node);
+    return one ? [one] : [];
+  }
   function mapEntry(node, key) {
     if (!node || node.kind !== "map") return void 0;
     return node.entries.find((entry) => entry.key === key)?.value;
@@ -111,8 +116,11 @@ const FormulaKit = (() => {
     if (node.kind !== "map") return null;
     const codings = [];
     for (const key of ["loinc", "mois", "dta"]) {
-      const code2 = literalText(mapEntry(node, key));
-      if (code2) codings.push({ system: LATEST_OBSERVATION_SYSTEMS[key], code: code2 });
+      for (const code2 of literalTexts(mapEntry(node, key))) {
+        if (!codings.some((coding) => coding.system === LATEST_OBSERVATION_SYSTEMS[key] && coding.code === code2)) {
+          codings.push({ system: LATEST_OBSERVATION_SYSTEMS[key], code: code2 });
+        }
+      }
     }
     const system = literalText(mapEntry(node, "system"));
     const code = literalText(mapEntry(node, "code"));

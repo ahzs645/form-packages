@@ -569,6 +569,13 @@ const checkComparisonMatch = (fieldValue, operator, expectedValue) => {
   return operator === 'not-equals' ? left !== right : left === right
 }
 
+// A chart-fact condition with its compared answers in the fact's lowercase codes.
+const chartFactEntry = (entry) => ({
+  ...entry,
+  ...(Array.isArray(entry.optionValues) ? { optionValues: entry.optionValues.map((value) => (typeof value === 'string' ? value.toLowerCase() : value)) } : {}),
+  ...(typeof entry.value === 'string' ? { value: entry.value.toLowerCase() } : {}),
+})
+
 /**
  * Evaluate one multi-condition entry ({controllerFieldId, type, optionValues?, value?})
  * against a field-value getter. Mirrors the builder's FieldLinkCondition types;
@@ -582,6 +589,9 @@ const evaluateConditionEntry = (entry, getFieldValue) => {
   // chart the form root registered with FormLogicKit, never from the answers.
   if (fieldValue === undefined && typeof FormLogicKit !== 'undefined' && FormLogicKit && typeof FormLogicKit.chartFact === 'function') {
     fieldValue = FormLogicKit.chartFact(entry.controllerFieldId)
+    // A choice fact's value is a lowercase code ("female", "yes"); a rule
+    // saved with the answer's label ("Female", "Yes") names the same one.
+    if (typeof fieldValue === 'string') entry = chartFactEntry(entry)
   }
   const type = entry.type
   if (type === 'choice-selected') return checkChoiceMatch(fieldValue, entry.optionValues ?? [], false)
@@ -761,13 +771,25 @@ const ConditionalField = ({
     const matches = evaluateConditionEntries(conditions, match, (id) => readControllerValue(fd?.field?.data, id))
     isVisible = invertMatch ? !matches : matches
   } else if (mode === 'controller' && controllerFieldId) {
-    const controllerValue = readControllerValue(fd?.field?.data, controllerFieldId)
+    // A chart fact (chart:patient.sex, chart:patient.concept.DIABETES …) comes
+    // from the chart the form root registered, as in evaluateConditionEntry.
+    let controllerValue = readControllerValue(fd?.field?.data, controllerFieldId)
+    let chartOptions = optionValues
+    let chartCompare = compareValue
+    if (controllerValue === undefined && typeof FormLogicKit !== 'undefined' && FormLogicKit && typeof FormLogicKit.chartFact === 'function') {
+      controllerValue = FormLogicKit.chartFact(controllerFieldId)
+      if (typeof controllerValue === 'string') {
+        const fact = chartFactEntry({ optionValues, value: compareValue })
+        chartOptions = fact.optionValues
+        chartCompare = fact.value
+      }
+    }
 
     // If optionValues is provided, use choice matching instead of boolean matching
-    if (optionValues && optionValues.length > 0) {
-      isVisible = checkChoiceMatch(controllerValue, optionValues, invertMatch)
+    if (chartOptions && chartOptions.length > 0) {
+      isVisible = checkChoiceMatch(controllerValue, chartOptions, invertMatch)
     } else if (operator) {
-      const matches = checkComparisonMatch(controllerValue, operator, compareValue)
+      const matches = checkComparisonMatch(controllerValue, operator, chartCompare)
       isVisible = invertMatch ? !matches : matches
     } else {
       // Boolean matching (yes/no)

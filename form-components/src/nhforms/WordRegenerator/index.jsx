@@ -2877,15 +2877,25 @@ var WordFormRuntime = (() => {
     if (typeof normalized === "number" || typeof normalized === "boolean") return normalized;
     return String(normalized);
   }
+  var CHART_FACT_ID_PREFIX = "chart:patient.";
+  function chartFactCondition(condition) {
+    return {
+      ...condition,
+      ...condition.optionValues ? { optionValues: condition.optionValues.map((value) => typeof value === "string" ? value.toLowerCase() : value) } : {},
+      ...typeof condition.value === "string" ? { value: condition.value.toLowerCase() } : {}
+    };
+  }
   function evaluateConditionGroup(group, metadata, values) {
     if (!group.conditions.length) return false;
     const evaluate = (entry) => {
       if ("conditions" in entry) return evaluateConditionGroup(entry, metadata, values);
       const compareFieldId = entry.condition.compareFieldId || entry.condition.valueFieldId;
       if (compareFieldId && isConditionValueEmpty(values[compareFieldId])) return false;
+      const controllerValue = values[entry.controllerFieldId];
+      const condition = compareFieldId ? { ...entry.condition, value: asConditionValue(values[compareFieldId]) } : entry.condition;
       return evaluateFieldCondition(
-        compareFieldId ? { ...entry.condition, value: asConditionValue(values[compareFieldId]) } : entry.condition,
-        values[entry.controllerFieldId],
+        typeof controllerValue === "string" && entry.controllerFieldId.startsWith(CHART_FACT_ID_PREFIX) ? chartFactCondition(condition) : condition,
+        controllerValue,
         metadata(entry.controllerFieldId)
       );
     };

@@ -621,15 +621,33 @@ export function getFieldLinkConditionEntries(rule: Pick<FieldLinkRule, "controll
   return flatten(getFieldLinkConditionGroup(rule));
 }
 
+/** Chart facts (chart-facts.ts) are named by controller ids under this prefix. */
+const CHART_FACT_ID_PREFIX = "chart:patient.";
+
+/**
+ * A choice fact's value is a lowercase code ("female", "yes"); a rule saved
+ * with the answer's label ("Female", "Yes") names the same one. Mirrors
+ * FormLogicKit.evaluateEntry.
+ */
+function chartFactCondition(condition: FieldLinkCondition): FieldLinkCondition {
+  return {
+    ...condition,
+    ...(condition.optionValues ? { optionValues: condition.optionValues.map((value) => (typeof value === "string" ? value.toLowerCase() : value)) } : {}),
+    ...(typeof condition.value === "string" ? { value: condition.value.toLowerCase() } : {}),
+  };
+}
+
 export function evaluateConditionGroup(group: FieldConditionGroup, metadata: FieldConditionMetadataLookup, values: Record<string, unknown>): boolean {
   if (!group.conditions.length) return false;
   const evaluate = (entry: FieldConditionGroup["conditions"][number]): boolean => {
     if ("conditions" in entry) return evaluateConditionGroup(entry, metadata, values);
     const compareFieldId = entry.condition.compareFieldId || entry.condition.valueFieldId;
     if (compareFieldId && isConditionValueEmpty(values[compareFieldId])) return false;
+    const controllerValue = values[entry.controllerFieldId];
+    const condition = compareFieldId ? { ...entry.condition, value: asConditionValue(values[compareFieldId]) } : entry.condition;
     return evaluateFieldCondition(
-      compareFieldId ? { ...entry.condition, value: asConditionValue(values[compareFieldId]) } : entry.condition,
-      values[entry.controllerFieldId], metadata(entry.controllerFieldId),
+      typeof controllerValue === "string" && entry.controllerFieldId.startsWith(CHART_FACT_ID_PREFIX) ? chartFactCondition(condition) : condition,
+      controllerValue, metadata(entry.controllerFieldId),
     );
   };
   return group.match === "any" ? group.conditions.some(evaluate) : group.conditions.every(evaluate);

@@ -159,10 +159,19 @@ const FormLogicKit = (() => {
     if (rawEntry && Array.isArray(rawEntry.conditions)) {
       return evaluateEntries(rawEntry.conditions, rawEntry.match, get)
     }
-    const entry = toFlatEntry(rawEntry)
+    let entry = toFlatEntry(rawEntry)
     if (!entry || !entry.controllerFieldId || !entry.type) return false
     let fieldValue = get(entry.controllerFieldId)
     if (fieldValue === undefined && isChartFactId(entry.controllerFieldId)) fieldValue = activeChartFact(entry.controllerFieldId)
+    // A choice fact's value is a lowercase code ("female", "yes"); a rule
+    // saved with the answer's label ("Female", "Yes") names the same one.
+    if (typeof fieldValue === "string" && isChartFactId(entry.controllerFieldId)) {
+      entry = {
+        ...entry,
+        ...(Array.isArray(entry.optionValues) ? { optionValues: entry.optionValues.map((value) => (typeof value === "string" ? value.toLowerCase() : value)) } : {}),
+        ...(typeof entry.value === "string" ? { value: entry.value.toLowerCase() } : {}),
+      }
+    }
     const type = entry.type
     if (type === "choice-selected") return checkChoiceMatch(fieldValue, entry.optionValues, false)
     if (type === "choice-not-selected") return checkChoiceMatch(fieldValue, entry.optionValues, true)
@@ -254,9 +263,99 @@ const FormLogicKit = (() => {
     if (!sourceData || typeof sourceData !== "object") return null
     const patient = sourceData.patient ?? sourceData.queryResult?.patient?.[0]
     if (patient && typeof patient === "object") {
-      return { sex: patient.administrativeGender ?? patient.gender ?? patient.sex, birthDate: patient.birthDate }
+      return {
+        sex: patient.administrativeGender ?? patient.gender ?? patient.sex,
+        birthDate: patient.birthDate,
+        conditions: patient.conditions,
+        longTermMedications: patient.longTermMedications,
+      }
     }
-    return "sex" in sourceData || "birthDate" in sourceData ? sourceData : null
+    return "sex" in sourceData || "birthDate" in sourceData || "conditions" in sourceData || "longTermMedications" in sourceData ? sourceData : null
+  }
+
+  // ---- Chart concepts (mirrors @webforms/form-model chart-concepts.ts) ----
+  // `chart:patient.concept.<NAME>` answers "yes" when a current health issue
+  // (unresolved condition) or medication (current long-term medication) on
+  // the chart belongs to the concept, by the concept's MOIS Concept Mapping
+  // rules. The exported form registers the rules of the concepts it uses
+  // (setChartConcepts): MOIS has no API that returns them.
+  const CHART_FACT_CONCEPT_PREFIX = "chart:patient.concept."
+  let chartConcepts = []
+  const conceptNorm = (value) => (typeof value === "string" || typeof value === "number" ? String(value).trim().toUpperCase() : "")
+  const conceptSystemKey = (value) => conceptNorm(value).replace(/[^A-Z0-9]/g, "")
+  const conceptCodeKey = (code, system) => (conceptSystemKey(system).startsWith("ICD") ? code.replace(/\./g, "") : code)
+  const conceptFilled = (value) => typeof value === "string" && value.trim() !== ""
+  const conceptCodeMatches = (pattern, value, system) => {
+    const p = conceptCodeKey(conceptNorm(pattern), system)
+    const v = conceptCodeKey(conceptNorm(value), system)
+    if (!p || !v) return false
+    return p.endsWith("*") ? v.startsWith(p.slice(0, -1)) : v === p
+  }
+  const chartConceptRuleMatches = (rule, target) => {
+    if (!rule || !target) return false
+    if (rule.ruleType === "TEXT") {
+      const text = conceptNorm(target.description)
+      const includes = [rule.include1, rule.include2].filter(conceptFilled).map((value) => value.toUpperCase())
+      if (!text || includes.length === 0) return false
+      if (!includes.every((value) => text.includes(value))) return false
+      return !(conceptFilled(rule.exclude) && text.includes(rule.exclude.toUpperCase()))
+    }
+    const value = rule.codeField === "str_atc_code" ? target.atc : rule.codeField === "str_class" ? target.measureClass : target.code
+    if (!rule.code || !value) return false
+    if (rule.codeField === "MOIS" && rule.codeSystem && target.codeSystem && conceptSystemKey(rule.codeSystem) !== conceptSystemKey(target.codeSystem)) return false
+    return conceptCodeMatches(rule.code, value, rule.codeSystem ?? target.codeSystem ?? "")
+  }
+  const chartConceptMatches = (concept, target) => Array.isArray(concept?.rules) && concept.rules.some((rule) => chartConceptRuleMatches(rule, target))
+  const conceptText = (value) => (typeof value === "string" ? value : value && typeof value === "object" ? String(value.display ?? value.code ?? "") : "")
+  const conceptDate = (value) => {
+    if (typeof value !== "string" || !value.trim()) return undefined
+    const date = new Date(value.trim().replace(/^(\d{4})\.(\d{2})\.(\d{2})/, "$1-$2-$3"))
+    return Number.isFinite(date.getTime()) ? date : undefined
+  }
+  const conceptCurrent = (end, asOf) => {
+    const date = conceptDate(end)
+    return !date || date > asOf
+  }
+  const chartConceptTargets = (group, patient, asOf) => {
+    if (!patient) return undefined
+    const at = asOf instanceof Date ? asOf : new Date()
+    const records = (list) => list.filter((record) => record && typeof record === "object")
+    if (group === "HEALTH ISSUE") {
+      if (!Array.isArray(patient.conditions)) return undefined
+      return records(patient.conditions)
+        .filter((record) => conceptCurrent(record.resolveDate, at))
+        .map((record) => {
+          const own = record.condition && typeof record.condition === "object" ? record.condition : record
+          return { code: conceptText(own.code), codeSystem: conceptText(own.system), description: conceptText(own.display) || conceptText(record.condition) }
+        })
+    }
+    if (group === "MEDICATION") {
+      if (!Array.isArray(patient.longTermMedications)) return undefined
+      return records(patient.longTermMedications)
+        .filter((record) => conceptCurrent(record.endDate, at))
+        .map((record) => ({
+          code: conceptText(record.cdicCode && typeof record.cdicCode === "object" ? record.cdicCode.code : record.cdicCode),
+          atc: conceptText(record.atcCode && typeof record.atcCode === "object" ? record.atcCode.code : record.atcCode),
+          description: [conceptText(record.medication), conceptText(record.genericName)].filter(Boolean).join(" "),
+        }))
+    }
+    return undefined
+  }
+  const chartConceptAnswer = (concept, patient, asOf) => {
+    const targets = chartConceptTargets(concept?.group, patient, asOf)
+    if (!targets) return undefined
+    return targets.some((target) => chartConceptMatches(concept, target)) ? "yes" : "no"
+  }
+  /** The concepts whose facts this form reads: [{ name, group, rules }]. The
+      form root calls it on every render; the same list keeps the cache. */
+  let chartConceptsKey = ""
+  const setChartConcepts = (concepts) => {
+    const next = Array.isArray(concepts) ? concepts.filter((concept) => concept && typeof concept.name === "string") : []
+    const key = JSON.stringify(next)
+    if (key === chartConceptsKey) return
+    chartConceptsKey = key
+    chartConcepts = next
+    activeChartFacts = null
   }
 
   // The preview's assessment date (the workspace's patient test values), at
@@ -269,8 +368,8 @@ const FormLogicKit = (() => {
     return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), now.getHours(), now.getMinutes())
   }
 
-  /** Every chart fact's value, keyed by controller id; facts the chart lacks are left out. */
-  const chartFactValues = (sourceData, explicitAsOf) => {
+  /** Every chart fact's value, keyed by controller id; facts the chart lacks are left out. `concepts` defaults to the registered ones. */
+  const chartFactValues = (sourceData, explicitAsOf, concepts) => {
     const asOf = explicitAsOf instanceof Date ? explicitAsOf : previewAsOf(sourceData)
     const patient = chartPatientOf(sourceData)
     const values = {}
@@ -280,6 +379,11 @@ const FormLogicKit = (() => {
     Object.keys(CHART_FACT_AGE_IDS).forEach((unit) => {
       const age = chartFactAge(patient.birthDate, unit, asOf)
       if (age !== undefined) values[CHART_FACT_AGE_IDS[unit]] = age
+    })
+    const list = Array.isArray(concepts) ? concepts : chartConcepts
+    list.forEach((concept) => {
+      const answer = chartConceptAnswer(concept, patient, asOf)
+      if (answer) values[CHART_FACT_CONCEPT_PREFIX + concept.name.trim()] = answer
     })
     return values
   }
@@ -1229,6 +1333,8 @@ const FormLogicKit = (() => {
     chartFactValues,
     withChartFacts,
     setChartSource,
+    setChartConcepts,
+    chartConceptMatches,
     /** A chart fact from the registered source data; undefined for any other id. */
     chartFact: (id) => (isChartFactId(id) ? activeChartFact(id) : undefined),
     isChartFactId,

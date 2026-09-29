@@ -3600,6 +3600,7 @@ export * from "./bindings";
 export * from "./chart-lists";
 export * from "./reference-ranges";
 export * from "./chart-facts";
+export * from "./chart-concepts";
 export * from "./option-rules";
 export * from "./targets";
 export * from "./validation";
