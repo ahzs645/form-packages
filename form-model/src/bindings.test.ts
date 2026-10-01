@@ -6,6 +6,7 @@ import {
   fieldBindingPatch,
   inferFieldBindingShape,
   moisReadPathsOf,
+  observationDateOf,
   readFieldBinding,
   readFieldBindingDetails,
   writeFieldBinding,
@@ -432,5 +433,51 @@ describe("writeFieldBinding", () => {
     const snapshot = JSON.parse(JSON.stringify(field));
     writeFieldBinding(field, { read: { paths: ["patient.name.family"], mode: "sync", presentation: "backing" } });
     expect(field).toEqual(snapshot);
+  });
+});
+
+describe("the date of a reading (write.effective)", () => {
+  const birthWeight = {
+    id: "birth_weight",
+    type: "number",
+    measurementConfig: { enabled: true, observationCode: "22732", persistenceMode: "observationAndForm", valueType: "NUMERIC", saveUnits: "kg" },
+  };
+  const dated = (field: Record<string, unknown>) => {
+    const binding = readFieldBinding(field)!;
+    return writeFieldBinding(field, { ...binding, write: { ...binding.write!, effective: { fieldId: "birth_date", whenMissing: "ask" } } });
+  };
+
+  it("is stored on the binding and leaves the measurement store alone", () => {
+    const written = dated(birthWeight);
+    expect(written.measurementConfig).toEqual(birthWeight.measurementConfig);
+    expect(observationDateOf(readFieldBinding(written))).toEqual({ fieldId: "birth_date", whenMissing: "ask" });
+  });
+
+  it("follows the observation when a legacy store supplies a newer edit", () => {
+    const written = dated(birthWeight) as typeof birthWeight;
+    const edited = { ...written, measurementConfig: { ...written.measurementConfig, saveUnits: "g" } };
+    expect(readFieldBinding(edited)?.write?.observation?.unit).toBe("g");
+    expect(observationDateOf(readFieldBinding(edited))).toEqual({ fieldId: "birth_date", whenMissing: "ask" });
+  });
+
+  it("is dropped with the observation it dates", () => {
+    const written = dated(birthWeight);
+    const { measurementConfig: _removed, ...withoutObservation } = written as Record<string, unknown>;
+    expect(observationDateOf(readFieldBinding(withoutObservation))).toBeNull();
+    const mutationOnly = { id: "x", type: "text", moisConfig: { writeBinding: { targetId: "m", payloadField: "p" } } };
+    const stored = { ...mutationOnly, binding: { write: { ...readFieldBinding(mutationOnly)?.write, effective: { fieldId: "d" } } } };
+    expect(readFieldBinding(stored)?.write?.mutation).toBeDefined();
+    expect(readFieldBinding(stored)?.write?.effective).toBeUndefined();
+  });
+
+  it("defaults a missing policy to ask and reports unknown keys and policies", () => {
+    const details = readFieldBindingDetails({
+      id: "w",
+      type: "number",
+      moisOutput: { enabled: true, kind: "observation", observationCode: "22732" },
+      binding: { write: { observation: { code: "22732", system: MOIS }, when: "submit", effective: { fieldId: "d", timeFieldId: "t", whenMissing: "later", extra: 1 } } },
+    });
+    expect(details.binding?.write?.effective).toEqual({ fieldId: "d", timeFieldId: "t", whenMissing: "ask" });
+    expect(details.unknown).toEqual(expect.arrayContaining(["binding.write.effective.extra", "binding.write.effective.whenMissing=later"]));
   });
 });

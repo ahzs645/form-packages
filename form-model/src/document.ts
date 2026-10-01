@@ -249,6 +249,12 @@ export interface ParsedField {
    */
   binding?: BuilderField["binding"];
   /**
+   * The date of the reading an observation this field writes to MOIS records
+   * (the binding's `write.effective`), whether the field's Save as observation
+   * or its past measurement writes it. Present only when set.
+   */
+  observationDate?: NonNullable<NonNullable<BuilderField["binding"]>["write"]>["effective"];
+  /**
    * The field's reference ranges, read from every store (lib/reference-ranges.ts):
    * normal, critical and feasible limits by patient. Present only when set.
    */

@@ -35,6 +35,7 @@ import {
   type FieldConditionMetadataLookup,
 } from "./conditions";
 import { FIELD_TYPE_PROFILES, neutralAnswerTypeOf, type FieldTypeProfile } from "./field-types";
+import { observationDateOf, readFieldBinding, type BindingObservationDate } from "./bindings";
 import { readDate } from "./values";
 
 // ---------------------------------------------------------------------------
@@ -125,7 +126,12 @@ export interface NeutralListCheck {
 
 export interface NeutralCrossFieldCheck {
   id: string;
-  source: "behavior" | "logic-rule";
+  /**
+   * `observation-date`: the field's chart binding dates its observation by
+   * another answer and asks for that date when it is blank
+   * (`binding.write.effective.whenMissing: "ask"`, bindings.ts).
+   */
+  source: "behavior" | "logic-rule" | "observation-date";
   /**
    * `valid-when`: the answer is valid only while the condition holds
    * (`behavior.validations`). `invalid-when`: the condition describes what is
@@ -161,10 +167,18 @@ export interface NeutralFieldValidation {
 export interface ReadFieldValidationContext {
   /** The form's Logic-tab rules; the ones targeting this field add required-when and cross-field checks. */
   fieldLinkRules?: ReadonlyArray<FieldLinkRule> | null;
+  /** Another field's label, for messages that name it (the date an observation is charted at). */
+  fieldLabel?: (fieldId: string) => string | null | undefined;
 }
 
 /** Any field-like object: a `BuilderField`, or a nested field projected by its adapter. */
 export type ValidationFieldInput = Pick<BuilderField, "id" | "type"> & Partial<BuilderField> & {
+  /**
+   * The date of the reading the field's observation write records, as an
+   * exporter already realised it (a parsed field keeps no binding stores).
+   * A builder field's is read from its binding.
+   */
+  observationDate?: BindingObservationDate | null;
   /** Legacy table-column alias of `required`. */
   requiredWhenVisible?: boolean;
   /** Table-column row-save message. */
@@ -457,6 +471,35 @@ function readList(field: ValidationFieldInput): NeutralListCheck | null {
 }
 
 /**
+ * The check a dated observation write adds (bindings.ts, `write.effective`
+ * with `whenMissing: "ask"`): the answer is charted at the date another
+ * field gives, so an answer with that date blank stops the submit. It is an
+ * `invalid-when` check, so it holds only while this answer is filled and the
+ * date is empty, and names both answers.
+ */
+/** The id prefix of the check a dated observation write adds (`observation-date:<fieldId>`). */
+export const OBSERVATION_DATE_CHECK_PREFIX = "observation-date:";
+
+function observationDateCheck(field: ValidationFieldInput, context: ReadFieldValidationContext): NeutralCrossFieldCheck | null {
+  // The date is stored on the binding only, so a field without one has none to read.
+  const stored = (field as { binding?: { write?: { effective?: unknown } } | null }).binding;
+  const date = field.observationDate
+    ?? (stored?.write?.effective ? observationDateOf(readFieldBinding(field, { shape: "field" })) : null);
+  if (!date || date.whenMissing !== "ask" || date.fieldId === field.id) return null;
+  const label = typeof field.label === "string" && field.label.trim() ? field.label.trim() : null;
+  const dateLabel = context.fieldLabel?.(date.fieldId)?.trim() || null;
+  const blank: FieldConditionGroup["conditions"] = [{ controllerFieldId: date.fieldId, condition: { type: "empty" } }];
+  return {
+    id: `${OBSERVATION_DATE_CHECK_PREFIX}${field.id}`,
+    source: "observation-date",
+    kind: "invalid-when",
+    condition: { match: "all", conditions: [{ controllerFieldId: field.id, condition: { type: "filled" } }, ...blank] },
+    // Starting with the answer's own label, so a summary that prefixes labels names it once.
+    message: `${label ?? "This reading"} needs ${dateLabel ?? "its date"}: it is charted at that date.`,
+  };
+}
+
+/**
  * Every check saved on one field, whatever store holds it. Pass the form's
  * Logic-tab rules to include required-when and `invalid` rules.
  */
@@ -498,6 +541,8 @@ export function readFieldValidation(
       ...(entry.translations && Object.keys(entry.translations).length ? { translations: entry.translations } : {}),
     });
   }
+  const dateCheck = observationDateCheck(field, context);
+  if (dateCheck) crossField.push(dateCheck);
   for (const rule of targeting) {
     if (rule.action !== "invalid") continue;
     crossField.push({

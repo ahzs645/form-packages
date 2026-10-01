@@ -279,6 +279,8 @@ export interface SubgroupNode {
   /** Omit to inherit the form design's label position. */
   headingPosition?: SubgroupHeadingPosition;
   showCard?: boolean; // When false, subgroup renders inline without card borders
+  /** Mirror of `SectionSubgroup.visibility` (the subgroup's show-when rule). */
+  visibility?: BuilderVisibilityRule | null;
 }
 
 export interface SubgroupTreeNode extends SubgroupNode {

@@ -17,7 +17,7 @@
  *   now run on the same engine.
  */
 
-import { formulaReferences, isStoredFormula, walkFormula, type FormulaDiagnostic, type FormulaNode, type StoredFormula } from "./ast";
+import { formulaReferences, formulaRequiredReferences, isStoredFormula, walkFormula, type FormulaDiagnostic, type FormulaNode, type StoredFormula } from "./ast";
 import { chartRecordReader, readLatestTerm, type FormulaChartRecord, type FormulaObservationReader, type LatestTerm } from "./chart-results";
 import {
   evaluateFormula,
@@ -145,13 +145,17 @@ function observationReader(observations: FormulaKitOptions["observations"]): For
 
 /**
  * Whether every input the formula needs has a value (the "incomplete" test):
- * every field it reads, and every required `latest()` result.
+ * every field it reads where a blank one blanks it (`formulaRequiredReferences`:
+ * not where the formula says what a blank one means, with hasValue(),
+ * coalesce() or ifPresent()), and
+ * every required `latest()` result.
  */
 export function hasAllReferencedValues(formula: unknown, values: FormulaKitValues, options: FormulaKitOptions = {}): boolean {
   const get = valueGetter(values);
   const kind = kindGetter(options);
-  if (!references(formula).every((fieldId) => !isBlankFormulaAnswer(get(fieldId), kind?.(fieldId)))) return false;
   const resolved = toFormula(formula);
+  const needed = resolved ? formulaRequiredReferences(resolved) : [];
+  if (!needed.every((fieldId) => !isBlankFormulaAnswer(get(fieldId), kind?.(fieldId)))) return false;
   if (!resolved || latestTerms(resolved).length === 0) return true;
   return missingChartResults(resolved, { observations: observationReader(options.observations), now: options.now, referenceTime: options.referenceTime }).length === 0;
 }

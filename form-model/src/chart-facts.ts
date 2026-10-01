@@ -22,9 +22,14 @@ import {
  * `FormLogicKit.withChartFacts`). Nothing is written to the form's answers:
  * a chart fact is read when the rule runs, never saved.
  *
+ * Formulas read them the same way, as field references (`[chart:patient.sex]`,
+ * `dateAdd([chart:patient.birthDate], 18, "years")`; formula/chart-facts.ts):
+ * the host answers chart-fact ids from the chart, never from the answers.
+ *
  * Ages count completed units from the birth date to the time the form is
  * filled in (`asOf`), so a band "from 13 to 18 years" is `ageYears >= 13` and
- * `ageYears < 18`. Sex uses FHIR AdministrativeGender codes.
+ * `ageYears < 18`. Sex uses FHIR AdministrativeGender codes. The birth date
+ * (`chart:patient.birthDate`, `YYYY-MM-DD`) is a value for formulas only.
  *
  * Concept facts (`chart:patient.concept.DIABETES`, chart-concepts.ts) answer
  * "yes" or "no": whether a current health issue or medication on the chart
@@ -46,16 +51,23 @@ export const CHART_FACT_AGE_IDS = {
 } as const satisfies Record<ChartFactAgeUnit, string>;
 
 export const CHART_FACT_SEX_ID = "chart:patient.sex";
+/**
+ * The patient's birth date as a calendar day (`YYYY-MM-DD`). A value for
+ * formulas (`dateAdd([chart:patient.birthDate], 18, "years")`), not a
+ * condition controller: conditions compare ages.
+ */
+export const CHART_FACT_BIRTH_DATE_ID = "chart:patient.birthDate";
 
 export type ChartFactId =
   | typeof CHART_FACT_SEX_ID
+  | typeof CHART_FACT_BIRTH_DATE_ID
   | (typeof CHART_FACT_AGE_IDS)[ChartFactAgeUnit]
   | `chart:patient.concept.${string}`;
 
 export interface ChartFactDefinition {
   id: ChartFactId;
   label: string;
-  kind: "choice" | "number";
+  kind: "choice" | "number" | "date";
   options?: ReadonlyArray<{ value: string; label: string }>;
 }
 
@@ -79,6 +91,7 @@ export const CHART_FACTS: readonly ChartFactDefinition[] = [
   { id: CHART_FACT_AGE_IDS.weeks, label: "Patient's age in weeks (from the chart)", kind: "number" },
   { id: CHART_FACT_AGE_IDS.days, label: "Patient's age in days (from the chart)", kind: "number" },
   { id: CHART_FACT_AGE_IDS.hours, label: "Patient's age in hours (from the chart)", kind: "number" },
+  { id: CHART_FACT_BIRTH_DATE_ID, label: "Patient's birth date (from the chart)", kind: "date" },
 ];
 
 const FACT_BY_ID = new Map<string, ChartFactDefinition>(CHART_FACTS.map((fact) => [fact.id, fact]));
@@ -137,6 +150,14 @@ function birthDateOf(raw: unknown): Date | undefined {
   return Number.isFinite(date.getTime()) ? date : undefined;
 }
 
+/** A birth date as calendar-day text (`YYYY-MM-DD`), or undefined. */
+export function chartFactBirthDate(raw: unknown): string | undefined {
+  const birth = birthDateOf(raw);
+  if (!birth) return undefined;
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${birth.getFullYear()}-${pad(birth.getMonth() + 1)}-${pad(birth.getDate())}`;
+}
+
 /** Completed calendar months from `from` to `to`. */
 function completedMonths(from: Date, to: Date): number {
   let months = (to.getFullYear() - from.getFullYear()) * 12 + (to.getMonth() - from.getMonth());
@@ -170,6 +191,8 @@ export function chartFactValues(
   const values: Partial<Record<ChartFactId, string | number>> = {};
   const sex = chartFactSex(patient?.sex);
   if (sex) values[CHART_FACT_SEX_ID] = sex;
+  const birthDate = chartFactBirthDate(patient?.birthDate);
+  if (birthDate) values[CHART_FACT_BIRTH_DATE_ID] = birthDate;
   for (const unit of Object.keys(CHART_FACT_AGE_IDS) as ChartFactAgeUnit[]) {
     const age = chartFactAge(patient?.birthDate, unit, asOf);
     if (age !== undefined) values[CHART_FACT_AGE_IDS[unit]] = age;
@@ -184,10 +207,11 @@ export function chartFactValues(
 /**
  * The chart facts as condition controllers for the rule editors: a choice
  * for sex, numbers for age and a Yes/No choice for each of `concepts`. They
- * are offered beside the form's fields and are never added to the form.
+ * are offered beside the form's fields and are never added to the form. The
+ * birth date is a formula value only: conditions compare ages.
  */
 export function chartFactControllerFields(concepts: ReadonlyArray<ChartConceptDefinition> = []): BuilderField[] {
-  const facts = [...CHART_FACTS, ...concepts.map((concept) => conceptFactDefinition(concept.name, concept.group))];
+  const facts = [...CHART_FACTS.filter((fact) => fact.kind !== "date"), ...concepts.map((concept) => conceptFactDefinition(concept.name, concept.group))];
   return facts.map((fact) => ({
     id: fact.id,
     label: fact.label,

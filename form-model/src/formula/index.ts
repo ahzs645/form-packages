@@ -15,6 +15,7 @@ export {
   formulaFunctions,
   formulaParams,
   formulaReferences,
+  formulaRequiredReferences,
   inlineScoreMaps,
   isStoredFormula,
   mapFormula,
@@ -80,6 +81,8 @@ export {
   type FormulaObservationReader,
   type LatestTerm,
 } from "./chart-results";
+export { FORMULA_CHART_FACT_PREFIX, formulaChartFactKind, isFormulaChartFactRef } from "./chart-facts";
+export { FORMULA_REGEX_FLAGS, FORMULA_REGEX_MAX_LENGTH, FORMULA_REGEX_MAX_TEXT, formulaRegexProblem } from "./regex";
 export {
   evaluateFormula,
   missingChartResults,

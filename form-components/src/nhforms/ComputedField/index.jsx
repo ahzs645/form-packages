@@ -58,6 +58,19 @@ const _patientObservations = (sd) => {
 const _chartTerms = (formula) =>
   formula && typeof FormulaKit.latestTerms === "function" ? FormulaKit.latestTerms(formula) : []
 
+// Chart facts a formula reads as references ([chart:patient.sex],
+// [chart:patient.birthDate], [chart:patient.concept.DIABETES] …; @webforms/form-model
+// formula/chart-facts.ts) come from the chart, never from the answers: the
+// form root registers the chart with FormLogicKit (setChartSource) whenever
+// the export reads one.
+const _readsChartFacts = (formula) =>
+  Boolean(formula) && typeof FormulaKit.references === "function" &&
+  FormulaKit.references(formula).some((id) => typeof id === "string" && id.startsWith("chart:patient."))
+const _withChartFacts = (valuesByFieldId, sd) =>
+  typeof FormLogicKit !== "undefined" && FormLogicKit && typeof FormLogicKit.withChartFacts === "function"
+    ? FormLogicKit.withChartFacts(valuesByFieldId, sd)
+    : valuesByFieldId
+
 const _toDisplayValue = (value, precision, resultType) => {
   if (typeof value === "string") return value
   if (typeof value === "boolean") return value ? "Yes" : "No"
@@ -292,6 +305,12 @@ const ComputedField = ({
   )
 
   const readsChart = useMemo(() => _chartTerms(formula).length > 0, [formula])
+  const readsChartFacts = useMemo(() => _readsChartFacts(formula), [formula])
+  // The answers the formula reads, with chart facts answered from the chart.
+  const formulaValues = useMemo(
+    () => (readsChartFacts ? _withChartFacts(valuesByFieldId, sd) : valuesByFieldId),
+    [readsChartFacts, sd, valuesByFieldId]
+  )
   const observations = useMemo(
     () => (readsChart ? _patientObservations(sd) : null),
     [readsChart, sd]
@@ -300,13 +319,13 @@ const ComputedField = ({
   const computedValue = useMemo(
     () => presentationOnly
       ? resolvedValue
-      : _evaluateComputedFormula(formula, expression, valuesByFieldId, {
+      : _evaluateComputedFormula(formula, expression, formula ? formulaValues : valuesByFieldId, {
           selfId: fieldId,
           incomplete: _formulaIncompleteMode(incompleteBehavior),
           fieldKinds,
           observations,
         }),
-    [expression, fieldId, fieldKinds, formula, incompleteBehavior, observations, presentationOnly, resolvedValue, valuesByFieldId]
+    [expression, fieldId, fieldKinds, formula, formulaValues, incompleteBehavior, observations, presentationOnly, resolvedValue, valuesByFieldId]
   )
 
   const roundedValue = useMemo(
@@ -317,9 +336,9 @@ const ComputedField = ({
   const isIncomplete = useMemo(
     () => (
       incompleteBehavior !== "compute-anyway" &&
-      !_hasAllReferencedValues(formula, valuesByFieldId, fieldKinds, observations)
+      !_hasAllReferencedValues(formula, formulaValues, fieldKinds, observations)
     ),
-    [fieldKinds, formula, incompleteBehavior, observations, valuesByFieldId]
+    [fieldKinds, formula, formulaValues, incompleteBehavior, observations]
   )
 
   const storedValue = useMemo(() => {
@@ -360,8 +379,8 @@ const ComputedField = ({
       : `calc(${labelColumnWidth} + 10px)`
 
   const canShowInterpretation = useMemo(
-    () => Boolean(showInterpretation && _hasAllReferencedValues(formula, valuesByFieldId, fieldKinds, observations)),
-    [fieldKinds, formula, observations, showInterpretation, valuesByFieldId]
+    () => Boolean(showInterpretation && _hasAllReferencedValues(formula, formulaValues, fieldKinds, observations)),
+    [fieldKinds, formula, formulaValues, observations, showInterpretation]
   )
 
   const interpretationValue = policy === "always-calculated"

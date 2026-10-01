@@ -16,8 +16,10 @@ import {
   FORMULA_COMPARISON_OPS,
   FORMULA_VALUE_TYPES,
 } from "./ast";
+import { formulaChartFactKind, isFormulaChartFactRef } from "./chart-facts";
 import { latestTermProblems, readLatestTerm } from "./chart-results";
 import { FORMULA_DURATION_UNITS, findFormulaFunction, formulaArityError, type FormulaParamType } from "./registry";
+import { formulaRegexProblem } from "./regex";
 
 export interface FormulaTypeEnv {
   /** A builder field type (`number`, `choice`, `booleanYesNo`…) or a formula value type. */
@@ -86,7 +88,7 @@ function typeOfNode(node: FormulaNode, env: FormulaTypeEnv): FormulaValueType {
     case "null":
       return "unknown";
     case "ref":
-      return formulaValueTypeForFieldType(env.fieldType?.(node.id));
+      return formulaValueTypeForFieldType(env.fieldType?.(node.id) ?? formulaChartFactKind(node.id));
     case "param":
       return formulaValueTypeForFieldType(env.paramType?.(node.name));
     case "list":
@@ -107,6 +109,8 @@ function typeOfNode(node: FormulaNode, env: FormulaTypeEnv): FormulaValueType {
         const fallback = readLatestTerm(node)?.fallback;
         return fallback ? typeOfNode(fallback, env) : "unknown";
       }
+      // A date moved by a duration keeps its time of day, if it has one.
+      if (spec.name === "dateAdd") return node.args[0] && typeOfNode(node.args[0], env) === "datetime" ? "datetime" : "date";
       if (spec.result !== "branches") return spec.result;
       const valueArgs = node.fn === "iif" ? node.args.slice(1) : node.fn === "ifPresent" ? node.args.slice(1) : node.args;
       return unifyTypes(valueArgs.map((arg) => typeOfNode(arg, env)));
@@ -212,7 +216,7 @@ export function checkFormula(formula: StoredFormula | FormulaNode, env: FormulaT
       case "ref":
         if (env.selfId !== undefined && node.id === env.selfId) {
           report("error", "self-reference", `The formula reads its own field [${node.id}].`, { ref: node.id });
-        } else if (knownIds && !knownIds.has(node.id)) {
+        } else if (knownIds && !knownIds.has(node.id) && !isFormulaChartFactRef(node.id)) {
           report("error", "unknown-reference", `There is no field [${node.id}] on this form.`, { ref: node.id });
         }
         return;
@@ -265,6 +269,15 @@ export function checkFormula(formula: StoredFormula | FormulaNode, env: FormulaT
         });
         if (spec.name === "latest") {
           for (const problem of latestTermProblems(node)) report("error", "latest-argument", problem, { fn: "latest" });
+        }
+        if (spec.name === "replaceMatches" && node.args.length > 1) {
+          const pattern = node.args[1];
+          if (pattern.kind === "text") {
+            const problem = formulaRegexProblem(pattern.value);
+            if (problem) report("error", "regex", `replaceMatches(): ${problem}`, { fn: spec.name });
+          } else {
+            report("warning", "regex", "replaceMatches() checks a pattern written as text when the formula is saved; a computed pattern is checked only as the form runs, and gives blank when it is refused.", { fn: spec.name });
+          }
         }
         if (spec.name === "score" && node.args.length > 0) {
           const answerType = typeOfNode(node.args[0], env);

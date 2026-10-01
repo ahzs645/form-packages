@@ -4,6 +4,7 @@ import type {
   BuilderLayoutTableCell,
   BuilderLayoutTableCellField,
   BuilderRepeatOrphanPolicy,
+  BuilderVisibilityRule,
 } from "./index";
 import type {
   ModuleConfig,
@@ -171,6 +172,8 @@ export interface StructureSubgroup {
   id: string;
   name: string;
   layout: "table" | "grid" | "list" | null;
+  /** The subgroup's show-when rule (`SectionSubgroup.visibility`); absent when it always shows. */
+  visibility?: BuilderVisibilityRule;
   children: StructureNode[];
 }
 
@@ -583,7 +586,7 @@ function moduleReplacesFields(subformModule: ModuleConfig): boolean {
 interface DraftLike {
   key?: unknown;
   moduleConfig?: ModuleConfig | null;
-  subgroups?: Array<{ id: string; name?: string; parentId?: string | null; layoutType?: string }>;
+  subgroups?: Array<{ id: string; name?: string; parentId?: string | null; layoutType?: string; visibility?: BuilderVisibilityRule | null }>;
   fieldOverrides?: Record<string, { subgroupId?: string | null } | undefined>;
   autoFillMode?: string;
   autoFillCollectionId?: string | null;
@@ -593,6 +596,13 @@ interface SectionDraft {
   draft: DraftLike;
   index: number;
   modules: StructureGroup[];
+}
+
+/** A subgroup's stored show-when rule, or null when it always shows. */
+function subgroupVisibility(value: unknown): BuilderVisibilityRule | null {
+  if (!isRecord(value)) return null;
+  const rule = value as unknown as BuilderVisibilityRule;
+  return rule.type && rule.type !== "always" && rule.controllerId ? rule : null;
 }
 
 function draftSectionId(draft: DraftLike): string {
@@ -711,7 +721,7 @@ export function readFormStructure(document: FormStructureDocument, context: Form
 
     // Subgroups: the section's own, else its draft's.
     const ownSubgroups = config?.subgroups?.length ? config.subgroups : null;
-    const subgroupDefs: Array<{ id: string; name: string; parentId: string | null; layoutType: string | null }> = (
+    const subgroupDefs: Array<{ id: string; name: string; parentId: string | null; layoutType: string | null; visibility: BuilderVisibilityRule | null }> = (
       ownSubgroups ?? draft?.subgroups ?? []
     )
       .filter((subgroup) => isRecord(subgroup) && text(subgroup.id))
@@ -720,6 +730,7 @@ export function readFormStructure(document: FormStructureDocument, context: Form
         name: text(subgroup.name),
         parentId: text(subgroup.parentId) || null,
         layoutType: text(subgroup.layoutType) || null,
+        visibility: subgroupVisibility(subgroup.visibility),
       }));
     const subgroupIds = new Set(subgroupDefs.map((subgroup) => subgroup.id));
     const subgroupOf = (fieldId: string): string | null => {
@@ -766,6 +777,7 @@ export function readFormStructure(document: FormStructureDocument, context: Form
             id: subgroup.id,
             name: text(subgroup.name) || subgroup.id,
             layout: subgroup.layoutType === "table" || subgroup.layoutType === "grid" || subgroup.layoutType === "list" ? subgroup.layoutType : null,
+            ...(subgroup.visibility ? { visibility: subgroup.visibility } : {}),
             children: sortEntries(buildLevel(subgroup.id, nextTrail), []).map((entry) => entry.node),
           },
         });

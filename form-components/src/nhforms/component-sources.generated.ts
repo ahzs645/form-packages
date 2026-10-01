@@ -5141,6 +5141,19 @@ const _patientObservations = (sd) => {
 const _chartTerms = (formula) =>
   formula && typeof FormulaKit.latestTerms === "function" ? FormulaKit.latestTerms(formula) : []
 
+// Chart facts a formula reads as references ([chart:patient.sex],
+// [chart:patient.birthDate], [chart:patient.concept.DIABETES] …; @webforms/form-model
+// formula/chart-facts.ts) come from the chart, never from the answers: the
+// form root registers the chart with FormLogicKit (setChartSource) whenever
+// the export reads one.
+const _readsChartFacts = (formula) =>
+  Boolean(formula) && typeof FormulaKit.references === "function" &&
+  FormulaKit.references(formula).some((id) => typeof id === "string" && id.startsWith("chart:patient."))
+const _withChartFacts = (valuesByFieldId, sd) =>
+  typeof FormLogicKit !== "undefined" && FormLogicKit && typeof FormLogicKit.withChartFacts === "function"
+    ? FormLogicKit.withChartFacts(valuesByFieldId, sd)
+    : valuesByFieldId
+
 const _toDisplayValue = (value, precision, resultType) => {
   if (typeof value === "string") return value
   if (typeof value === "boolean") return value ? "Yes" : "No"
@@ -5375,6 +5388,12 @@ const ComputedField = ({
   )
 
   const readsChart = useMemo(() => _chartTerms(formula).length > 0, [formula])
+  const readsChartFacts = useMemo(() => _readsChartFacts(formula), [formula])
+  // The answers the formula reads, with chart facts answered from the chart.
+  const formulaValues = useMemo(
+    () => (readsChartFacts ? _withChartFacts(valuesByFieldId, sd) : valuesByFieldId),
+    [readsChartFacts, sd, valuesByFieldId]
+  )
   const observations = useMemo(
     () => (readsChart ? _patientObservations(sd) : null),
     [readsChart, sd]
@@ -5383,13 +5402,13 @@ const ComputedField = ({
   const computedValue = useMemo(
     () => presentationOnly
       ? resolvedValue
-      : _evaluateComputedFormula(formula, expression, valuesByFieldId, {
+      : _evaluateComputedFormula(formula, expression, formula ? formulaValues : valuesByFieldId, {
           selfId: fieldId,
           incomplete: _formulaIncompleteMode(incompleteBehavior),
           fieldKinds,
           observations,
         }),
-    [expression, fieldId, fieldKinds, formula, incompleteBehavior, observations, presentationOnly, resolvedValue, valuesByFieldId]
+    [expression, fieldId, fieldKinds, formula, formulaValues, incompleteBehavior, observations, presentationOnly, resolvedValue, valuesByFieldId]
   )
 
   const roundedValue = useMemo(
@@ -5400,9 +5419,9 @@ const ComputedField = ({
   const isIncomplete = useMemo(
     () => (
       incompleteBehavior !== "compute-anyway" &&
-      !_hasAllReferencedValues(formula, valuesByFieldId, fieldKinds, observations)
+      !_hasAllReferencedValues(formula, formulaValues, fieldKinds, observations)
     ),
-    [fieldKinds, formula, incompleteBehavior, observations, valuesByFieldId]
+    [fieldKinds, formula, formulaValues, incompleteBehavior, observations]
   )
 
   const storedValue = useMemo(() => {
@@ -5443,8 +5462,8 @@ const ComputedField = ({
       : \`calc(\${labelColumnWidth} + 10px)\`
 
   const canShowInterpretation = useMemo(
-    () => Boolean(showInterpretation && _hasAllReferencedValues(formula, valuesByFieldId, fieldKinds, observations)),
-    [fieldKinds, formula, observations, showInterpretation, valuesByFieldId]
+    () => Boolean(showInterpretation && _hasAllReferencedValues(formula, formulaValues, fieldKinds, observations)),
+    [fieldKinds, formula, formulaValues, observations, showInterpretation]
   )
 
   const interpretationValue = policy === "always-calculated"
@@ -15647,6 +15666,8 @@ const FormLogicKit = (() => {
     hours: "chart:patient.ageHours",
   }
   const CHART_FACT_SEX_ID = "chart:patient.sex"
+  // A value for formulas (\`dateAdd([chart:patient.birthDate], 18, "years")\`), YYYY-MM-DD.
+  const CHART_FACT_BIRTH_DATE_ID = "chart:patient.birthDate"
   const isChartFactId = (id) => typeof id === "string" && id.startsWith("chart:patient.")
 
   const chartFactSex = (raw) => {
@@ -15669,6 +15690,13 @@ const FormLogicKit = (() => {
     const match = /^(\\d{4})[-./](\\d{1,2})[-./](\\d{1,2})$/.exec(value.trim())
     const date = match ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3])) : new Date(value)
     return Number.isFinite(date.getTime()) ? date : undefined
+  }
+
+  const chartFactBirthDay = (raw) => {
+    const birth = chartFactBirthDate(raw)
+    if (!birth) return undefined
+    const pad = (value) => String(value).padStart(2, "0")
+    return \`\${birth.getFullYear()}-\${pad(birth.getMonth() + 1)}-\${pad(birth.getDate())}\`
   }
 
   const completedMonths = (from, to) => {
@@ -15808,6 +15836,8 @@ const FormLogicKit = (() => {
     if (!patient) return values
     const sex = chartFactSex(patient.sex)
     if (sex) values[CHART_FACT_SEX_ID] = sex
+    const birthDay = chartFactBirthDay(patient.birthDate)
+    if (birthDay) values[CHART_FACT_BIRTH_DATE_ID] = birthDay
     Object.keys(CHART_FACT_AGE_IDS).forEach((unit) => {
       const age = chartFactAge(patient.birthDate, unit, asOf)
       if (age !== undefined) values[CHART_FACT_AGE_IDS[unit]] = age
@@ -16154,16 +16184,55 @@ const FormLogicKit = (() => {
   }
 
   /**
+   * \`data\` without the answer at a dotted path (a table's rowsPath), copying
+   * each level on the way (never mutates); \`data\` itself when nothing is stored there.
+   */
+  const withoutValueAtPath = (data, path) => {
+    const segments = String(path || "").split(".").map((part) => part.trim()).filter(Boolean)
+    if (segments.length === 0) return data
+    const remove = (node, index) => {
+      if (!node || typeof node !== "object" || Array.isArray(node)) return node
+      const key = segments[index]
+      if (!Object.prototype.hasOwnProperty.call(node, key)) return node
+      if (index === segments.length - 1) {
+        if (!hasHiddenAnswer(node[key])) return node
+        const copy = { ...node }
+        delete copy[key]
+        return copy
+      }
+      const child = remove(node[key], index + 1)
+      return child === node[key] ? node : { ...node, [key]: child }
+    }
+    return remove(data, 0)
+  }
+
+  /** \`data\` without one answer: data[fieldId], and the value at \`path\` (a table's rowsPath) when given. Copies; \`data\` itself when nothing was stored. */
+  const withoutAnswer = (data, fieldId, path) => {
+    let next = data
+    if (fieldId && hasHiddenAnswer(next[fieldId])) {
+      next = { ...next }
+      delete next[fieldId]
+    }
+    return path ? withoutValueAtPath(next, path) : next
+  }
+
+  /**
    * The answers to save without those of hidden "clear" fields (the save and
-   * submit half of the rule). entries: [{ fieldId, rules, gates?, table? }]
+   * submit half of the rule). entries: [{ fieldId, rules, gates?, path?, table?, members? }]
    * where rules are the field's compiled show/hide rules ({ action,
    * conditions, match, hiddenAnswerPolicy? }); an answer is left out while
    * those rules hide the field and hiddenAnswerPolicyOf(rules) is "clear"
-   * (entry.hiddenAnswerPolicy overrides). A table entry (\`table\`) also blanks,
+   * (entry.hiddenAnswerPolicy overrides). \`path\` is where a table keeps its
+   * rows when not under its id (its rowsPath); they are left out too.
+   * A table entry (\`table\`) also blanks,
    * row by row, the answers of its hidden "clear" columns
-   * (dropHiddenTableAnswers). Repeats until settled, since a dropped answer
-   * can hide another field. Never mutates: returns a copy when something is
-   * dropped, otherwise \`data\` itself.
+   * (dropHiddenTableAnswers). A container entry (a section or subgroup whose
+   * show-when rule says "clear": fieldId is the container's id, \`members\`
+   * [{ fieldId, path? }] every question inside it, nested ones included)
+   * leaves out all its members' answers while its rules hide it; a question
+   * inside several containers is left out when any "clear" one is hidden.
+   * Repeats until settled, since a dropped answer can hide another field.
+   * Never mutates: returns a copy when something is dropped, otherwise \`data\` itself.
    */
   const dropHiddenAnswers = (data, entries) => {
     if (!data || typeof data !== "object") return data
@@ -16174,9 +16243,20 @@ const FormLogicKit = (() => {
       list.forEach((entry) => {
         const policy = entry.hiddenAnswerPolicy || hiddenAnswerPolicyOf(entry.rules)
         const hidden = isFieldHidden({ rules: entry.rules || [], gates: entry.gates || [] }, next)
-        if (shouldDropHiddenAnswer(policy, hidden, next[entry.fieldId])) {
-          if (next === data) next = { ...data }
-          delete next[entry.fieldId]
+        if (Array.isArray(entry.members)) {
+          if (policy !== "clear" || !hidden) return
+          entry.members.forEach((member) => {
+            const id = member && typeof member === "object" ? member.fieldId : member
+            const kept = withoutAnswer(next, id, member && typeof member === "object" ? member.path : undefined)
+            if (kept === next) return
+            next = kept
+            changed = true
+          })
+          return
+        }
+        const stored = entry.path ? tableCell(next, entry.path) : undefined
+        if (shouldDropHiddenAnswer(policy, hidden, next[entry.fieldId]) || shouldDropHiddenAnswer(policy, hidden, stored)) {
+          next = withoutAnswer(next, entry.fieldId, entry.path)
           changed = true
           return
         }
@@ -17073,6 +17153,42 @@ const FormulaKit = (() => {
     });
     return ids;
   }
+  function formulaRequiredReferences(formula) {
+    const required = /* @__PURE__ */ new Set();
+    const answeredBy = (test) => {
+      if (test.kind === "binary" && test.op === "&&") return [...answeredBy(test.left), ...answeredBy(test.right)];
+      if (test.kind === "call" && test.fn === "hasValue" && test.args.length === 1 && test.args[0].kind === "ref") return [test.args[0].id];
+      if (test.kind === "call" && test.fn === "coalesce" && test.args.length === 2 && test.args[1].kind === "boolean" && !test.args[1].value) return answeredBy(test.args[0]);
+      return [];
+    };
+    const visit = (node, answered) => {
+      switch (node.kind) {
+        case "ref":
+          if (!answered.has(node.id)) required.add(node.id);
+          return;
+        case "if":
+          visit(node.test, answered);
+          visit(node.then, /* @__PURE__ */ new Set([...answered, ...answeredBy(node.test)]));
+          visit(node.else, answered);
+          return;
+        case "call":
+          if (node.fn === "hasValue" || node.fn === "coalesce") return;
+          if (node.fn === "ifPresent") {
+            const [subject, then, otherwise] = node.args;
+            const present = subject?.kind === "ref" ? [subject.id] : [];
+            if (then) visit(then, /* @__PURE__ */ new Set([...answered, ...present]));
+            if (otherwise) visit(otherwise, answered);
+            return;
+          }
+          break;
+        default:
+          break;
+      }
+      for (const child of formulaChildren(node)) visit(child, answered);
+    };
+    visit(formulaExpr(formula), /* @__PURE__ */ new Set());
+    return formulaReferences(formula).filter((id) => required.has(id));
+  }
 
   var FORMULA_LOINC_SYSTEM = "http://loinc.org";
   var FORMULA_MOIS_OBSERVATION_SYSTEM = "urn:mois:observation";
@@ -17442,6 +17558,163 @@ const FormulaKit = (() => {
     return null;
   }
 
+  var FORMULA_CHART_FACT_PREFIX = "chart:patient.";
+  function isFormulaChartFactRef(id) {
+    return typeof id === "string" && id.startsWith(FORMULA_CHART_FACT_PREFIX) && id.length > FORMULA_CHART_FACT_PREFIX.length;
+  }
+  function formulaChartFactKind(id) {
+    if (!isFormulaChartFactRef(id)) return void 0;
+    const name = id.slice(FORMULA_CHART_FACT_PREFIX.length);
+    if (name === "birthDate") return "date";
+    if (/^age(?:Years|Months|Weeks|Days|Hours)$/.test(name)) return "number";
+    if (name === "sex" || name.startsWith("concept.")) return "text";
+    return void 0;
+  }
+
+  var FORMULA_REGEX_MAX_LENGTH = 200;
+  var FORMULA_REGEX_MAX_TEXT = 4096;
+  var FORMULA_REGEX_FLAGS = "gsu";
+  var BOUNDED_REPEAT = 20;
+  var compiled = /* @__PURE__ */ new Map();
+  var newGroup = () => ({ repeats: false, alternation: false, pending: false, separated: false, leading: false, trailing: false, separatedAll: true });
+  function endAlternative(group) {
+    if (group.pending) group.trailing = true;
+    if (!group.separated) group.separatedAll = false;
+    group.pending = false;
+    group.separated = false;
+  }
+  var SIDE_BY_SIDE = "Two repeating parts sit side by side with nothing required between them (\\\\d+\\\\d*, .*.*), which can take very long to match; put a fixed character between them or merge them.";
+  var NESTED = "A group that repeats has a repeating part or alternatives inside it ((a+)+, (a|ab)*), which can take very long to match; write alternatives of single characters as a class ([ab]+ for (a|b)+).";
+  function compileFormulaRegex(pattern) {
+    const cached = compiled.get(pattern);
+    if (cached !== void 0) return cached;
+    const result = analyse(pattern);
+    if (compiled.size > 256) compiled.clear();
+    compiled.set(pattern, result);
+    return result;
+  }
+  function replaceFormulaMatches(text, pattern, substitution) {
+    if (text.length > FORMULA_REGEX_MAX_TEXT) return null;
+    const regex = compileFormulaRegex(pattern);
+    if (typeof regex === "string") return null;
+    regex.lastIndex = 0;
+    const out = text.replace(regex, substitution);
+    return out === "" ? null : out;
+  }
+  function analyse(pattern) {
+    if (pattern.length === 0) return "The pattern is empty.";
+    if (pattern.length > FORMULA_REGEX_MAX_LENGTH) return \`The pattern is longer than \${FORMULA_REGEX_MAX_LENGTH} characters.\`;
+    let regex;
+    try {
+      regex = new RegExp(pattern, FORMULA_REGEX_FLAGS);
+    } catch (error) {
+      return \`The pattern is not a valid regular expression (\${error instanceof Error ? error.message : String(error)}).\`;
+    }
+    const problem = backtrackingProblem(pattern);
+    return problem ?? regex;
+  }
+  function backtrackingProblem(pattern) {
+    const stack = [newGroup()];
+    const top = () => stack[stack.length - 1];
+    let index = 0;
+    const placeAtom = (unbounded, optional) => {
+      const group = top();
+      if (unbounded) {
+        if (group.pending) return SIDE_BY_SIDE;
+        if (!group.separated) group.leading = true;
+        group.repeats = true;
+        group.pending = true;
+      } else if (!optional) {
+        group.pending = false;
+        group.separated = true;
+      }
+      return null;
+    };
+    const quantifier = () => {
+      const char = pattern[index];
+      let end = index + 1;
+      let result = null;
+      if (char === "*") result = { unbounded: true, optional: true, repeats: true };
+      else if (char === "+") result = { unbounded: true, optional: false, repeats: true };
+      else if (char === "?") result = { unbounded: false, optional: true, repeats: false };
+      else if (char === "{") {
+        const match = /^\\{(\\d+)(,(\\d*))?\\}/.exec(pattern.slice(index));
+        if (!match) return null;
+        const min = Number(match[1]);
+        const max = match[2] === void 0 ? min : match[3] === "" ? Infinity : Number(match[3]);
+        end = index + match[0].length;
+        result = { unbounded: max - min > BOUNDED_REPEAT, optional: min === 0, repeats: max > 1 };
+      }
+      if (!result) return null;
+      if (pattern[end] === "?") end += 1;
+      return { ...result, end };
+    };
+    while (index < pattern.length) {
+      const char = pattern[index];
+      if (char === "(") {
+        if (pattern.startsWith("(?=", index) || pattern.startsWith("(?!", index) || pattern.startsWith("(?<=", index) || pattern.startsWith("(?<!", index)) {
+          return "The pattern looks ahead or behind ((?=, (?!, (?<=, (?<!), which formulas do not allow.";
+        }
+        stack.push(newGroup());
+        index = pattern.startsWith("(?:", index) ? index + 3 : pattern.startsWith("(?<", index) ? pattern.indexOf(">", index) + 1 : index + 1;
+        continue;
+      }
+      if (char === "|") {
+        top().alternation = true;
+        endAlternative(top());
+        index += 1;
+        continue;
+      }
+      if (char === "^" || char === "$") {
+        index += 1;
+        continue;
+      }
+      if (char === ")") {
+        const group = stack.pop();
+        if (stack.length === 0) return "The pattern's groups are unbalanced.";
+        endAlternative(group);
+        index += 1;
+        const repeat2 = quantifier();
+        if (repeat2) index = repeat2.end;
+        const parent = top();
+        if (repeat2?.repeats) {
+          if (group.repeats || group.alternation) return NESTED;
+          const problem2 = placeAtom(repeat2.unbounded, repeat2.optional);
+          if (problem2) return problem2;
+          continue;
+        }
+        if (parent.pending && group.leading) return SIDE_BY_SIDE;
+        if (group.repeats) parent.repeats = true;
+        if (!parent.separated && group.leading) parent.leading = true;
+        const separates = group.separatedAll && !repeat2?.optional;
+        parent.pending = group.trailing || !separates && parent.pending;
+        if (separates) parent.separated = true;
+        continue;
+      }
+      let atomEnd = index + 1;
+      if (char === "\\\\") {
+        const next = pattern[index + 1] ?? "";
+        if (/[1-9]/.test(next) || next === "k") return "The pattern refers back to a group (\\\\1, \\\\k<name>), which formulas do not allow.";
+        atomEnd = index + 2;
+        if ((next === "u" || next === "p" || next === "P") && pattern[index + 2] === "{") atomEnd = pattern.indexOf("}", index) + 1;
+        else if (next === "u") atomEnd = index + 6;
+        else if (next === "x") atomEnd = index + 4;
+        else if (next === "c") atomEnd = index + 3;
+      } else if (char === "[") {
+        let cursor = index + 1;
+        if (pattern[cursor] === "^") cursor += 1;
+        while (cursor < pattern.length && pattern[cursor] !== "]") cursor += pattern[cursor] === "\\\\" ? 2 : 1;
+        atomEnd = cursor + 1;
+      }
+      index = atomEnd;
+      const repeat = quantifier();
+      if (repeat) index = repeat.end;
+      const problem = placeAtom(Boolean(repeat?.unbounded), Boolean(repeat?.optional));
+      if (problem) return problem;
+    }
+    return stack.length === 1 ? null : "The pattern's groups are unbalanced.";
+  }
+
   var MISSING_INPUT = { $missing: true };
   var MS_PER_DAY = 864e5;
   var MAX_DEPTH = 400;
@@ -17638,6 +17911,11 @@ const FormulaKit = (() => {
     const p = partsOf(date);
     const ms = new Date(p.year, p.month, p.day + days, p.hours, p.minutes, p.seconds, p.millis).getTime();
     return { $date: true, ms, dateOnly: date.dateOnly };
+  }
+  function addCalendarDuration(date, amount, unit) {
+    const whole = Math.trunc(amount) || 0;
+    if (unit === "days" || unit === "weeks") return addDays(date, unit === "weeks" ? whole * 7 : whole);
+    return addMonthsClamped(date, unit === "years" ? whole * 12 : whole);
   }
   function fractionalMonths(from, to) {
     const whole = wholeMonths(from, to);
@@ -17836,7 +18114,7 @@ const FormulaKit = (() => {
       case "null":
         return null;
       case "ref": {
-        const value = readStored(scope.env.getValue(node.id), scope.env.fieldKind?.(node.id));
+        const value = readStored(scope.env.getValue(node.id), scope.env.fieldKind?.(node.id) ?? formulaChartFactKind(node.id));
         return value === null && scope.env.incomplete === "compute-anyway" ? MISSING_INPUT : value;
       }
       case "param":
@@ -18012,6 +18290,21 @@ const FormulaKit = (() => {
     const nonZero = parts.filter((part) => part.amount > 0);
     const shown = nonZero.length > 0 ? nonZero : [parts[parts.length - 1]];
     return shown.map((part) => \`\${part.amount} \${part.amount === 1 ? part.unit.slice(0, -1) : part.unit}\`).join(", ");
+  }
+  function substringOf(args) {
+    const value = args.length > 0 ? args[0]() : null;
+    if (isMissing(value)) return null;
+    const start = numberArg(args, 1);
+    if (start === null) return null;
+    const chars = Array.from(toText(value));
+    const first = Math.trunc(start);
+    if (first < 0 || first >= chars.length) return null;
+    const lengthValue = args.length > 2 ? args[2]() : null;
+    if (isMissing(lengthValue)) return chars.slice(first).join("");
+    const length = toNumber(lengthValue);
+    if (length === null) return null;
+    const count = Math.trunc(length);
+    return count <= 0 ? null : chars.slice(first, first + count).join("");
   }
   function skippedDates(value) {
     const items = isList(value) ? flatten(value) : typeof value === "string" ? value.split(/[,;\\n]/) : [value];
@@ -18211,11 +18504,36 @@ const FormulaKit = (() => {
         if (values.every(isMissing)) return null;
         return values.map((value) => value === null ? "" : toText(value)).join("");
       }
+      case "substring":
+        return substringOf(args);
+      case "replaceMatches": {
+        const value = args.length > 0 ? args[0]() : null;
+        if (isMissing(value)) return null;
+        const pattern = args.length > 1 ? args[1]() : null;
+        if (pattern === null || pattern === MISSING_INPUT || isList(pattern) || toText(pattern) === "") return null;
+        const substitution = args.length > 2 ? args[2]() : null;
+        const replacement = typeof substitution === "string" ? substitution : isMissing(substitution) ? "" : toText(substitution);
+        return replaceFormulaMatches(toText(value), toText(pattern), replacement);
+      }
+      case "upper":
+      case "lower": {
+        const value = args.length > 0 ? args[0]() : null;
+        if (isMissing(value)) return null;
+        const textValue = toText(value);
+        return node.fn === "upper" ? textValue.toUpperCase() : textValue.toLowerCase();
+      }
       // Dates
       case "today":
         return todayValue(env);
       case "now":
         return nowValue(env);
+      case "dateAdd": {
+        const date = args.length > 0 ? toDate(args[0]()) : null;
+        const amount = numberArg(args, 1);
+        const unit = args.length > 2 ? normalizeUnit(args[2]()) : null;
+        if (!date || amount === null || !unit) return null;
+        return addCalendarDuration(date, amount, unit);
+      }
       case "durationBetween": {
         const from = args.length > 0 ? toDate(args[0]()) : null;
         if (!from) return null;
@@ -18629,6 +18947,58 @@ const FormulaKit = (() => {
       engines: ["chart-value"],
       targets: support(N, U, U, N, N)
     },
+    {
+      name: "substring",
+      aliases: [],
+      category: "text",
+      params: [any("text"), n("start"), n("length", { optional: true })],
+      minArgs: 2,
+      maxArgs: 3,
+      result: "text",
+      missing: "propagate",
+      description: "Part of the text (read like text()) from character \`start\` (counted from 0), \`length\` characters long or to the end. Blank when \`start\` is outside the text, and when \`length\` is 0 or negative. FHIRPath substring().",
+      engines: ["new"],
+      targets: support(N, U, U, N, U)
+    },
+    {
+      name: "upper",
+      aliases: [],
+      category: "text",
+      params: [any("text")],
+      minArgs: 1,
+      maxArgs: 1,
+      result: "text",
+      missing: "propagate",
+      description: "The text (read like text()) in upper case. FHIRPath upper().",
+      engines: ["new"],
+      targets: support(N, U, U, N, U)
+    },
+    {
+      name: "lower",
+      aliases: [],
+      category: "text",
+      params: [any("text")],
+      minArgs: 1,
+      maxArgs: 1,
+      result: "text",
+      missing: "propagate",
+      description: "The text (read like text()) in lower case. FHIRPath lower().",
+      engines: ["new"],
+      targets: support(N, U, U, N, U)
+    },
+    {
+      name: "replaceMatches",
+      aliases: [],
+      category: "text",
+      params: [any("text"), { name: "regex", type: "text" }, { name: "substitution", type: "text" }],
+      minArgs: 3,
+      maxArgs: 3,
+      result: "text",
+      missing: "propagate",
+      description: "The text (read like text()) with every match of the regular expression replaced by the substitution (\`$1\`, \`$<name>\` name a group; a blank substitution removes the matches). JavaScript regular expressions in single-line Unicode mode; a pattern that could take very long to match (nested or side-by-side repeats, back-references, look-around), an invalid one, or a text over 4,096 characters gives blank. FHIRPath replaceMatches().",
+      engines: ["new"],
+      targets: support(N, U, U, N, U)
+    },
     // ── Dates ───────────────────────────────────────────────────────────────
     {
       name: "today",
@@ -18655,6 +19025,20 @@ const FormulaKit = (() => {
       description: "The current date and time.",
       engines: ["new"],
       targets: support(N, C, U, N, U)
+    },
+    {
+      name: "dateAdd",
+      aliases: [],
+      category: "date",
+      params: [d("date"), n("amount"), { name: "unit", type: "unit" }],
+      minArgs: 3,
+      maxArgs: 3,
+      // A date, or a date and time when \`date\` has a time (types.ts).
+      result: "date",
+      missing: "propagate",
+      description: "The date moved by a whole number of days, weeks, months or years (negative moves back; a fraction is dropped), with FHIRPath calendar semantics: a month or year that lands on a day the month lacks gives the month's last day (31 January + 1 month is 28 or 29 February). A date and time keeps its time of day. FHIRPath \`date + 2 years\`.",
+      engines: ["new"],
+      targets: support(N, U, U, C, U)
     },
     {
       name: "durationBetween",
@@ -18896,7 +19280,7 @@ const FormulaKit = (() => {
       case "null":
         return "unknown";
       case "ref":
-        return formulaValueTypeForFieldType(env.fieldType?.(node.id));
+        return formulaValueTypeForFieldType(env.fieldType?.(node.id) ?? formulaChartFactKind(node.id));
       case "param":
         return formulaValueTypeForFieldType(env.paramType?.(node.name));
       case "list":
@@ -18916,6 +19300,7 @@ const FormulaKit = (() => {
           const fallback = readLatestTerm(node)?.fallback;
           return fallback ? typeOfNode(fallback, env) : "unknown";
         }
+        if (spec.name === "dateAdd") return node.args[0] && typeOfNode(node.args[0], env) === "datetime" ? "datetime" : "date";
         if (spec.result !== "branches") return spec.result;
         const valueArgs = node.fn === "iif" ? node.args.slice(1) : node.fn === "ifPresent" ? node.args.slice(1) : node.args;
         return unifyTypes(valueArgs.map((arg) => typeOfNode(arg, env)));
@@ -19239,7 +19624,7 @@ const FormulaKit = (() => {
         case "str":
           return { kind: "text", value: token.value };
         case "ref":
-          if (this.knownIds && !this.knownIds.has(token.value)) {
+          if (this.knownIds && !this.knownIds.has(token.value) && !isFormulaChartFactRef(token.value)) {
             this.warn("unknown-reference", \`There is no field [\${token.value}] on this form.\`, token, { ref: token.value });
           }
           return { kind: "ref", id: token.value };
@@ -19598,8 +19983,9 @@ const FormulaKit = (() => {
   function hasAllReferencedValues(formula, values, options = {}) {
     const get = valueGetter(values);
     const kind = kindGetter(options);
-    if (!references(formula).every((fieldId) => !isBlankFormulaAnswer(get(fieldId), kind?.(fieldId)))) return false;
     const resolved = toFormula(formula);
+    const needed = resolved ? formulaRequiredReferences(resolved) : [];
+    if (!needed.every((fieldId) => !isBlankFormulaAnswer(get(fieldId), kind?.(fieldId)))) return false;
     if (!resolved || latestTerms(resolved).length === 0) return true;
     return missingChartResults(resolved, { observations: observationReader(options.observations), now: options.now, referenceTime: options.referenceTime }).length === 0;
   }

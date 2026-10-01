@@ -146,11 +146,42 @@ export interface BindingMutation {
   contextIdPath?: string | null;
 }
 
+/**
+ * What an observation write does when its date field is blank on submit:
+ * `ask` stops the submit until the date is entered, `skip` leaves the reading
+ * off the chart (the answer stays with the form), `submitTime` dates it at
+ * the moment the form is submitted.
+ */
+export type BindingWhenDateMissing = "ask" | "skip" | "submitTime";
+
+/**
+ * When the reading an observation write records was taken, from other
+ * answers on the form: a birth weight is dated by the birth date, a discharge
+ * weight by the discharge date. Each target converts it (MOIS: the collected
+ * date, hour and minute; FHIR: `Observation.effective[x]`; Cerner: the
+ * result's performed date) or reports it as a loss
+ * (`<target>.binding.observation-date`). No `effective` means the target's own
+ * default, which for every target today is the time the form is submitted.
+ */
+export interface BindingObservationDate {
+  /** The date or date-and-time field whose answer dates the reading. */
+  fieldId: string;
+  /** A time field giving the clock when `fieldId` holds a date only. */
+  timeFieldId?: string;
+  whenMissing: BindingWhenDateMissing;
+}
+
 export interface BuilderFieldBindingWrite {
   concept?: string;
   observation?: BindingObservation & { valueType?: BindingValueType };
   mutation?: BindingMutation;
   when: BindingWriteWhen;
+  /**
+   * The date of the reading the observation records. Stored on the binding
+   * only (no product store holds it), so it follows the observation whichever
+   * store that comes from.
+   */
+  effective?: BindingObservationDate;
 }
 
 export interface BuilderFieldBinding {
@@ -308,7 +339,9 @@ const CERNER_DTA_KEYS = [
 const BINDING_KEYS = ["read", "write"];
 const READ_KEYS = ["concept", "variant", "observation", "query", "paths", "mode", "presentation", "fallback", "format", "transform", "history", "summary"];
 const SUMMARY_KEYS = ["title", "kind"];
-const WRITE_KEYS = ["concept", "observation", "mutation", "when"];
+const WRITE_KEYS = ["concept", "observation", "mutation", "when", "effective"];
+const EFFECTIVE_KEYS = ["fieldId", "timeFieldId", "whenMissing"];
+const WHEN_DATE_MISSING: readonly BindingWhenDateMissing[] = ["ask", "skip", "submitTime"];
 const OBSERVATION_KEYS = ["code", "system", "unit", "codings", "valueType"];
 
 function checkKeys(store: string, value: AnyRecord, known: readonly string[], unknown: string[]) {
@@ -508,6 +541,19 @@ function normalizeMutation(value: unknown): BindingMutation | undefined {
   return { id, payloadField, ...(contextIdPath ? { contextIdPath } : {}) };
 }
 
+function normalizeObservationDate(value: unknown, unknown: string[]): BindingObservationDate | undefined {
+  if (!isRecord(value)) return undefined;
+  checkKeys("binding.write.effective", value, EFFECTIVE_KEYS, unknown);
+  checkValue("binding.write.effective.whenMissing", value.whenMissing, WHEN_DATE_MISSING, unknown);
+  const fieldId = nonEmptyString(value.fieldId);
+  if (!fieldId) return undefined;
+  const timeFieldId = nonEmptyString(value.timeFieldId);
+  const whenMissing = WHEN_DATE_MISSING.includes(value.whenMissing as BindingWhenDateMissing)
+    ? value.whenMissing as BindingWhenDateMissing
+    : "ask";
+  return { fieldId, ...(timeFieldId && timeFieldId !== fieldId ? { timeFieldId } : {}), whenMissing };
+}
+
 function normalizeWrite(value: unknown, unknown: string[]): BuilderFieldBindingWrite | undefined {
   if (!isRecord(value)) return undefined;
   checkKeys("binding.write", value, WRITE_KEYS, unknown);
@@ -515,12 +561,24 @@ function normalizeWrite(value: unknown, unknown: string[]): BuilderFieldBindingW
   const mutation = normalizeMutation(value.mutation);
   if (!observation && !mutation) return undefined;
   const concept = nonEmptyString(value.concept);
+  // A date dates an observation; a write with none has nothing to date.
+  const effective = observation ? normalizeObservationDate(value.effective, unknown) : undefined;
   return {
     ...(concept ? { concept } : {}),
     ...(observation ? { observation } : {}),
     ...(mutation ? { mutation } : {}),
     when: value.when === "save" ? "save" : "submit",
+    ...(effective ? { effective } : {}),
   };
+}
+
+/**
+ * The date of the reading a binding's observation write records, or null
+ * (the target dates it at submit). A date with no observation is none.
+ */
+export function observationDateOf(binding: BuilderFieldBinding | null | undefined): BindingObservationDate | null {
+  const write = binding?.write;
+  return write?.observation && write.effective ? write.effective : null;
 }
 
 function normalizeBindingWith(value: unknown, unknown: string[]): BuilderFieldBinding | null {
@@ -1106,12 +1164,16 @@ export function readFieldBindingDetails(fieldLike: unknown, options: FieldBindin
   const read = readFromStored ? stored.read : legacyBinding?.read;
   const observationSide = observationFromStored ? stored.write : legacyBinding?.write;
   const mutationSide = mutationFromStored ? stored.write : legacyBinding?.write;
+  // The reading's date has no legacy store: it stays with the observation
+  // even when a legacy store's newer edit supplies the observation itself.
+  const effective = observationSide?.observation ? stored.write?.effective : undefined;
   const write: BuilderFieldBindingWrite | undefined = observationSide?.observation || mutationSide?.mutation
     ? {
         ...(observationSide?.observation && observationSide.concept ? { concept: observationSide.concept } : {}),
         ...(observationSide?.observation ? { observation: observationSide.observation } : {}),
         ...(mutationSide?.mutation ? { mutation: mutationSide.mutation } : {}),
         when: (observationFromStored || mutationFromStored ? stored.write?.when : undefined) ?? "submit",
+        ...(effective ? { effective } : {}),
       }
     : undefined;
   const binding = read || write ? cloneValue({ ...(read ? { read } : {}), ...(write ? { write } : {}) }) : null;

@@ -340,10 +340,27 @@ export const CROSS_FIELD_ANSWER_CASES: ValidationAnswerCase[] = [
   },
 ];
 
+/** A weight charted at the birth date (bindings.ts `write.effective`), asking for the date when it is blank. */
+const datedWeight = (whenMissing: "ask" | "skip" | "submitTime") => number({
+  id: "w",
+  label: "Birth weight",
+  moisOutput: { enabled: true, kind: "observation", observationCode: "22732", valueType: "NUMERIC" },
+  binding: { write: { observation: { code: "22732" }, when: "submit", effective: { fieldId: "born", whenMissing } } },
+} as Partial<ValidationFieldInput>);
+
+export const OBSERVATION_DATE_ANSWER_CASES: ValidationAnswerCase[] = [
+  { name: "a dated reading asks for its blank date", field: datedWeight("ask"), value: 3, values: {}, expected: ["cross-field"], message: "Birth weight needs its date: it is charted at that date." },
+  { name: "a dated reading with its date is accepted", field: datedWeight("ask"), value: 3, values: { born: "2026-09-01T15:15:00.000Z" }, expected: [] },
+  { name: "an empty dated reading needs no date", field: datedWeight("ask"), value: "", values: {}, expected: [] },
+  { name: "a reading that skips a blank date does not ask", field: datedWeight("skip"), value: 3, values: {}, expected: [] },
+  { name: "a reading dated at submit when blank does not ask", field: datedWeight("submitTime"), value: 3, values: {}, expected: [] },
+];
+
 export const VALIDATION_ANSWER_CASES: ValidationAnswerCase[] = [
   ...REQUIRED_ANSWER_CASES,
   ...FORMAT_ANSWER_CASES,
   ...LIMIT_ANSWER_CASES,
   ...LIST_ANSWER_CASES,
   ...CROSS_FIELD_ANSWER_CASES,
+  ...OBSERVATION_DATE_ANSWER_CASES,
 ];

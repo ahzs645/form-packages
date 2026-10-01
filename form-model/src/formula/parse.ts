@@ -28,6 +28,7 @@ import {
   type FormulaValueType,
   type StoredFormula,
 } from "./ast";
+import { isFormulaChartFactRef } from "./chart-facts";
 import { findFormulaFunction, formulaArityError } from "./registry";
 import { inferFormulaType, isTimeReference, type FormulaTypeEnv } from "./types";
 
@@ -413,7 +414,7 @@ class Parser {
       case "str":
         return { kind: "text", value: token.value };
       case "ref":
-        if (this.knownIds && !this.knownIds.has(token.value)) {
+        if (this.knownIds && !this.knownIds.has(token.value) && !isFormulaChartFactRef(token.value)) {
           this.warn("unknown-reference", `There is no field [${token.value}] on this form.`, token, { ref: token.value });
         }
         return { kind: "ref", id: token.value };

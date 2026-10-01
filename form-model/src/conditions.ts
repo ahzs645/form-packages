@@ -488,7 +488,9 @@ export function writeLockCondition(
 // controller filled from the chart may only resolve after the form mounts,
 // and clearing on load could wipe a saved answer. The static Hidden flag
 // ("Hidden (still collects data)") is not "hidden by a rule" and never
-// clears. NHForms twin: FormLogicKit.hiddenAnswerPolicyOf /
+// clears. A section's or subgroup's "clear" rule reaches the questions inside
+// it at save and submit (container entries of collectHiddenAnswerDrops in
+// lib/mois-export), not on screen. NHForms twin: FormLogicKit.hiddenAnswerPolicyOf /
 // shouldClearHiddenAnswer / shouldDropHiddenAnswer / dropHiddenAnswers.
 
 /** A rule that can hide its target: show/hide field-link rules, field visibility rules and flow pages (no action). */

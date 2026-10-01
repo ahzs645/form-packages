@@ -1505,9 +1505,9 @@ export interface BuilderCernerConfig {
   dateOffset?: { sourceFieldId: string; amount: number; units: "minutes" | "hours" | "days" | "weeks" | "months" };
   grid?: {
     family: "power" | "discrete" | "ultra";
-    /** Source GRIDITEMLIST leaves, retained verbatim for imported grids. */
+    /** Original GRIDITEMLIST leaves, preserved as the baseline for direct imported-grid edits. */
     nativeItems?: Array<Record<string, string>>;
-    /** Authored UltraGrid intersection destinations, keyed by stable axis ids. */
+    /** Authored or explicitly edited UltraGrid intersection destinations, keyed by stable axis ids. */
     intersections?: Array<{ rowId: string; columnId: string; eventDisplay: string; eventCode?: string; eventUid?: string; eventCki?: string;
       /** Separate target-domain DTA needed to document this detail cell in iView; handoff only, not a GRIDITEM leaf. */
       iviewDtaMnemonic?: string; iviewDtaActivityType?: string }>;
@@ -1536,7 +1536,7 @@ export interface BuilderCernerConfig {
     };
     gridEvent?: { display: string; uid?: string };
     rowEvent?: { display: string; uid?: string };
-    columns?: Record<string, { mnemonic?: string; taskAssayId?: string; taskAssayGuid?: string; eventCodeDisplay?: string; eventCodeUid?: string; required?: boolean; width?: number; dta?: BuilderCernerConfig["dta"]; alphaResponses?: BuilderCernerConfig["alphaResponses"] }>;
+    columns?: Record<string, { mnemonic?: string; taskAssayId?: string; taskAssayGuid?: string; eventCodeDisplay?: string; eventCodeUid?: string; required?: boolean; width?: number; /** Target column size in DLUs; handoff until flags/width encoding is verified. */ nativeWidth?: number; dta?: BuilderCernerConfig["dta"]; alphaResponses?: BuilderCernerConfig["alphaResponses"] }>;
     rows?: Array<{ id: string; label: string; mnemonic?: string; taskAssayId?: string; taskAssayGuid?: string; dta?: BuilderCernerConfig["dta"]; alphaResponses?: BuilderCernerConfig["alphaResponses"] }>;
   };
   /**
@@ -1791,6 +1791,16 @@ export interface BuilderFhirConfig {
   questionnaireRoot?: Record<string, unknown>;
   /** Full imported item used to preserve release- and profile-specific fields. */
   questionnaireItem?: Record<string, unknown>;
+  /**
+   * On a section: the FHIR groups the import folded into this section's
+   * native subgroups (`sectionConfig.subgroups`), keyed by subgroup id. Each
+   * value is the imported group item without its `item` children (linkId,
+   * text, code, extensions, required, …). The FHIR export rebuilds these
+   * groups around their members; subgroups without an entry (authored ones)
+   * export flat. Kept here, not on the subgroup, because the section ⇄ layout
+   * draft sync drops unknown subgroup keys.
+   */
+  nestedGroups?: Record<string, Record<string, unknown>>;
 }
 
 /**
@@ -2743,6 +2753,14 @@ export interface SectionSubgroup {
   showCard?: boolean;
   /** Created by assistant (used for UI badges) */
   createdByAssistant?: boolean;
+  /**
+   * The subgroup's show-when rule: the subgroup (heading, members and nested
+   * subgroups) shows only while it holds. Same shape as a field's or
+   * section's `visibility`; "always" or absent means always shown. A subgroup
+   * gate (`branchingRules["builder-section-X::id"]`) is a separate, older
+   * store that holds one Yes/No controller shown in the subgroup header.
+   */
+  visibility?: BuilderVisibilityRule | null;
 }
 
 /**

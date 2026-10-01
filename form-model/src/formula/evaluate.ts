@@ -17,7 +17,9 @@
 
 import { readBoolean, readChoice, readDateTime, type ChoiceValue } from "../values";
 import type { FormulaNode, StoredFormula } from "./ast";
+import { formulaChartFactKind } from "./chart-facts";
 import { readLatestTerm, selectLatestResult, type FormulaObservationReader, type LatestTerm } from "./chart-results";
+import { replaceFormulaMatches } from "./regex";
 
 /**
  * What a calculation does with an unanswered input.
@@ -337,6 +339,20 @@ function addDays(date: DateValue, days: number): DateValue {
   return { $date: true, ms, dateOnly: date.dateOnly };
 }
 
+/**
+ * FHIRPath date arithmetic with a calendar duration (FHIRPath v3.0.0
+ * "Date/Time Arithmetic", https://hl7.org/fhirpath/#datetime-arithmetic): the
+ * decimal part of the amount is ignored above seconds; weeks are 7 days added
+ * to the day component; months and years are added to the month and year
+ * components, and a day the resulting month lacks becomes its last day. The
+ * time of day stays the same wall-clock time.
+ */
+function addCalendarDuration(date: DateValue, amount: number, unit: "days" | "weeks" | "months" | "years"): DateValue {
+  const whole = Math.trunc(amount) || 0;
+  if (unit === "days" || unit === "weeks") return addDays(date, unit === "weeks" ? whole * 7 : whole);
+  return addMonthsClamped(date, unit === "years" ? whole * 12 : whole);
+}
+
 function fractionalMonths(from: DateValue, to: DateValue): number {
   const whole = wholeMonths(from, to);
   const anchor = addMonthsClamped(from, whole);
@@ -581,7 +597,8 @@ function evaluateNode(node: FormulaNode, scope: Scope): Value {
     case "null":
       return null;
     case "ref": {
-      const value = readStored(scope.env.getValue(node.id), scope.env.fieldKind?.(node.id));
+      // A chart fact (`[chart:patient.birthDate]`) reads as its kind unless the host says otherwise.
+      const value = readStored(scope.env.getValue(node.id), scope.env.fieldKind?.(node.id) ?? formulaChartFactKind(node.id));
       return value === null && scope.env.incomplete === "compute-anyway" ? MISSING_INPUT : value;
     }
     case "param":
@@ -768,6 +785,29 @@ function durationText(from: DateValue, to: DateValue, units: Value): string {
   const nonZero = parts.filter((part) => part.amount > 0);
   const shown = nonZero.length > 0 ? nonZero : [parts[parts.length - 1]];
   return shown.map((part) => `${part.amount} ${part.amount === 1 ? part.unit.slice(0, -1) : part.unit}`).join(", ");
+}
+
+/**
+ * `substring(text, start, length)` with FHIRPath's rules (v3.0.0,
+ * https://hl7.org/fhirpath/#substringstart--integer--length--integer--string):
+ * characters are Unicode code points counted from 0; a start outside the text
+ * gives blank; a blank length reads to the end; a zero or negative length
+ * gives FHIRPath's '' (blank here, like any empty text).
+ */
+function substringOf(args: Lazy[]): Value {
+  const value = args.length > 0 ? args[0]() : null;
+  if (isMissing(value)) return null;
+  const start = numberArg(args, 1);
+  if (start === null) return null;
+  const chars = Array.from(toText(value));
+  const first = Math.trunc(start);
+  if (first < 0 || first >= chars.length) return null;
+  const lengthValue = args.length > 2 ? args[2]() : null;
+  if (isMissing(lengthValue)) return chars.slice(first).join("");
+  const length = toNumber(lengthValue);
+  if (length === null) return null;
+  const count = Math.trunc(length);
+  return count <= 0 ? null : chars.slice(first, first + count).join("");
 }
 
 function skippedDates(value: Value): DateValue[] {
@@ -993,12 +1033,40 @@ function evaluateCall(node: Extract<FormulaNode, { kind: "call" }>, scope: Scope
       if (values.every(isMissing)) return null;
       return values.map((value) => (value === null ? "" : toText(value))).join("");
     }
+    case "substring":
+      return substringOf(args);
+    case "replaceMatches": {
+      // FHIRPath replaceMatches() (regex.ts): blank text or pattern, a refused
+      // pattern or too long a text give blank; a blank substitution removes the
+      // matches (an empty text and a blank answer are one value here).
+      const value = args.length > 0 ? args[0]() : null;
+      if (isMissing(value)) return null;
+      const pattern = args.length > 1 ? args[1]() : null;
+      if (pattern === null || pattern === MISSING_INPUT || isList(pattern) || toText(pattern) === "") return null;
+      const substitution = args.length > 2 ? args[2]() : null;
+      const replacement = typeof substitution === "string" ? substitution : isMissing(substitution) ? "" : toText(substitution);
+      return replaceFormulaMatches(toText(value), toText(pattern), replacement);
+    }
+    case "upper":
+    case "lower": {
+      const value = args.length > 0 ? args[0]() : null;
+      if (isMissing(value)) return null;
+      const textValue = toText(value);
+      return node.fn === "upper" ? textValue.toUpperCase() : textValue.toLowerCase();
+    }
 
     // Dates
     case "today":
       return todayValue(env);
     case "now":
       return nowValue(env);
+    case "dateAdd": {
+      const date = args.length > 0 ? toDate(args[0]()) : null;
+      const amount = numberArg(args, 1);
+      const unit = args.length > 2 ? normalizeUnit(args[2]()) : null;
+      if (!date || amount === null || !unit) return null;
+      return addCalendarDuration(date, amount, unit);
+    }
     case "durationBetween": {
       const from = args.length > 0 ? toDate(args[0]()) : null;
       if (!from) return null;

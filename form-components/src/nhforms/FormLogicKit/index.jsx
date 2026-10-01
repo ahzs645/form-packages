@@ -215,6 +215,8 @@ const FormLogicKit = (() => {
     hours: "chart:patient.ageHours",
   }
   const CHART_FACT_SEX_ID = "chart:patient.sex"
+  // A value for formulas (`dateAdd([chart:patient.birthDate], 18, "years")`), YYYY-MM-DD.
+  const CHART_FACT_BIRTH_DATE_ID = "chart:patient.birthDate"
   const isChartFactId = (id) => typeof id === "string" && id.startsWith("chart:patient.")
 
   const chartFactSex = (raw) => {
@@ -237,6 +239,13 @@ const FormLogicKit = (() => {
     const match = /^(\d{4})[-./](\d{1,2})[-./](\d{1,2})$/.exec(value.trim())
     const date = match ? new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3])) : new Date(value)
     return Number.isFinite(date.getTime()) ? date : undefined
+  }
+
+  const chartFactBirthDay = (raw) => {
+    const birth = chartFactBirthDate(raw)
+    if (!birth) return undefined
+    const pad = (value) => String(value).padStart(2, "0")
+    return `${birth.getFullYear()}-${pad(birth.getMonth() + 1)}-${pad(birth.getDate())}`
   }
 
   const completedMonths = (from, to) => {
@@ -376,6 +385,8 @@ const FormLogicKit = (() => {
     if (!patient) return values
     const sex = chartFactSex(patient.sex)
     if (sex) values[CHART_FACT_SEX_ID] = sex
+    const birthDay = chartFactBirthDay(patient.birthDate)
+    if (birthDay) values[CHART_FACT_BIRTH_DATE_ID] = birthDay
     Object.keys(CHART_FACT_AGE_IDS).forEach((unit) => {
       const age = chartFactAge(patient.birthDate, unit, asOf)
       if (age !== undefined) values[CHART_FACT_AGE_IDS[unit]] = age
@@ -722,16 +733,55 @@ const FormLogicKit = (() => {
   }
 
   /**
+   * `data` without the answer at a dotted path (a table's rowsPath), copying
+   * each level on the way (never mutates); `data` itself when nothing is stored there.
+   */
+  const withoutValueAtPath = (data, path) => {
+    const segments = String(path || "").split(".").map((part) => part.trim()).filter(Boolean)
+    if (segments.length === 0) return data
+    const remove = (node, index) => {
+      if (!node || typeof node !== "object" || Array.isArray(node)) return node
+      const key = segments[index]
+      if (!Object.prototype.hasOwnProperty.call(node, key)) return node
+      if (index === segments.length - 1) {
+        if (!hasHiddenAnswer(node[key])) return node
+        const copy = { ...node }
+        delete copy[key]
+        return copy
+      }
+      const child = remove(node[key], index + 1)
+      return child === node[key] ? node : { ...node, [key]: child }
+    }
+    return remove(data, 0)
+  }
+
+  /** `data` without one answer: data[fieldId], and the value at `path` (a table's rowsPath) when given. Copies; `data` itself when nothing was stored. */
+  const withoutAnswer = (data, fieldId, path) => {
+    let next = data
+    if (fieldId && hasHiddenAnswer(next[fieldId])) {
+      next = { ...next }
+      delete next[fieldId]
+    }
+    return path ? withoutValueAtPath(next, path) : next
+  }
+
+  /**
    * The answers to save without those of hidden "clear" fields (the save and
-   * submit half of the rule). entries: [{ fieldId, rules, gates?, table? }]
+   * submit half of the rule). entries: [{ fieldId, rules, gates?, path?, table?, members? }]
    * where rules are the field's compiled show/hide rules ({ action,
    * conditions, match, hiddenAnswerPolicy? }); an answer is left out while
    * those rules hide the field and hiddenAnswerPolicyOf(rules) is "clear"
-   * (entry.hiddenAnswerPolicy overrides). A table entry (`table`) also blanks,
+   * (entry.hiddenAnswerPolicy overrides). `path` is where a table keeps its
+   * rows when not under its id (its rowsPath); they are left out too.
+   * A table entry (`table`) also blanks,
    * row by row, the answers of its hidden "clear" columns
-   * (dropHiddenTableAnswers). Repeats until settled, since a dropped answer
-   * can hide another field. Never mutates: returns a copy when something is
-   * dropped, otherwise `data` itself.
+   * (dropHiddenTableAnswers). A container entry (a section or subgroup whose
+   * show-when rule says "clear": fieldId is the container's id, `members`
+   * [{ fieldId, path? }] every question inside it, nested ones included)
+   * leaves out all its members' answers while its rules hide it; a question
+   * inside several containers is left out when any "clear" one is hidden.
+   * Repeats until settled, since a dropped answer can hide another field.
+   * Never mutates: returns a copy when something is dropped, otherwise `data` itself.
    */
   const dropHiddenAnswers = (data, entries) => {
     if (!data || typeof data !== "object") return data
@@ -742,9 +792,20 @@ const FormLogicKit = (() => {
       list.forEach((entry) => {
         const policy = entry.hiddenAnswerPolicy || hiddenAnswerPolicyOf(entry.rules)
         const hidden = isFieldHidden({ rules: entry.rules || [], gates: entry.gates || [] }, next)
-        if (shouldDropHiddenAnswer(policy, hidden, next[entry.fieldId])) {
-          if (next === data) next = { ...data }
-          delete next[entry.fieldId]
+        if (Array.isArray(entry.members)) {
+          if (policy !== "clear" || !hidden) return
+          entry.members.forEach((member) => {
+            const id = member && typeof member === "object" ? member.fieldId : member
+            const kept = withoutAnswer(next, id, member && typeof member === "object" ? member.path : undefined)
+            if (kept === next) return
+            next = kept
+            changed = true
+          })
+          return
+        }
+        const stored = entry.path ? tableCell(next, entry.path) : undefined
+        if (shouldDropHiddenAnswer(policy, hidden, next[entry.fieldId]) || shouldDropHiddenAnswer(policy, hidden, stored)) {
+          next = withoutAnswer(next, entry.fieldId, entry.path)
           changed = true
           return
         }

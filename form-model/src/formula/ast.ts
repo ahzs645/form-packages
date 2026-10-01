@@ -150,6 +150,59 @@ export function formulaReferences(formula: StoredFormula | FormulaNode): string[
   return ids;
 }
 
+/**
+ * The references a formula needs answered before it is complete (the
+ * computed field's "show text / hide while incomplete" test): every one it
+ * reads, except where the formula itself says what a blank one means. A
+ * reference is not needed
+ *
+ * - inside `hasValue()` or `coalesce()`, or as `ifPresent()`'s first argument;
+ * - in the branch of a conditional whose test requires it answered
+ *   (`iif(hasValue([height]), [height], latest(…))`; the test may be wrapped
+ *   in `coalesce(…, false)` and joined with `&&`), or in `ifPresent()`'s
+ *   `then`.
+ *
+ * Anywhere else it is needed: `iif(hasValue([a]) || hasValue([b]), [a] + [b], null)`
+ * still waits for both.
+ */
+export function formulaRequiredReferences(formula: StoredFormula | FormulaNode): string[] {
+  const required = new Set<string>();
+  /** References a test requires answered for it to hold. */
+  const answeredBy = (test: FormulaNode): string[] => {
+    if (test.kind === "binary" && test.op === "&&") return [...answeredBy(test.left), ...answeredBy(test.right)];
+    if (test.kind === "call" && test.fn === "hasValue" && test.args.length === 1 && test.args[0].kind === "ref") return [test.args[0].id];
+    if (test.kind === "call" && test.fn === "coalesce" && test.args.length === 2 && test.args[1].kind === "boolean" && !test.args[1].value) return answeredBy(test.args[0]);
+    return [];
+  };
+  const visit = (node: FormulaNode, answered: ReadonlySet<string>): void => {
+    switch (node.kind) {
+      case "ref":
+        if (!answered.has(node.id)) required.add(node.id);
+        return;
+      case "if":
+        visit(node.test, answered);
+        visit(node.then, new Set([...answered, ...answeredBy(node.test)]));
+        visit(node.else, answered);
+        return;
+      case "call":
+        if (node.fn === "hasValue" || node.fn === "coalesce") return;
+        if (node.fn === "ifPresent") {
+          const [subject, then, otherwise] = node.args;
+          const present = subject?.kind === "ref" ? [subject.id] : [];
+          if (then) visit(then, new Set([...answered, ...present]));
+          if (otherwise) visit(otherwise, answered);
+          return;
+        }
+        break;
+      default:
+        break;
+    }
+    for (const child of formulaChildren(node)) visit(child, answered);
+  };
+  visit(formulaExpr(formula), new Set());
+  return formulaReferences(formula).filter((id) => required.has(id));
+}
+
 /** Template slots and chart paths (`param` nodes) the formula reads, in first-use order. */
 export function formulaParams(formula: StoredFormula | FormulaNode): string[] {
   const names: string[] = [];

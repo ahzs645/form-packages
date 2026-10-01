@@ -80,6 +80,14 @@ describe("checkFormula", () => {
     expect(codes('concat([name], " (", text([dob]), ")")')).toEqual([]);
   });
 
+  it("checks replaceMatches() patterns for catastrophic backtracking", () => {
+    expect(codes('replaceMatches([name], "[^A-Za-z]", "")')).toEqual([]);
+    expect(codes('replaceMatches([name], "(a+)+$", "")')).toEqual(["error:regex"]);
+    expect(codes('replaceMatches([name], "\\\\d+\\\\d*", "")')).toEqual(["error:regex"]);
+    expect(codes('replaceMatches([name], "[", "")')).toEqual(["error:regex"]);
+    expect(codes('replaceMatches([name], [name], "")')).toEqual(["warning:regex"]);
+  });
+
   it("reports unknown functions and wrong arity on programmatic trees", () => {
     const tree = (fn: string, args: FormulaNode[]): FormulaNode => ({ kind: "call", fn, args });
     expect(checkFormula(tree("median", [{ kind: "number", value: 1 }]))).toMatchObject([{ severity: "error", code: "unknown-function", fn: "median" }]);
