@@ -143,6 +143,20 @@ function normalizedLabel(value: string | null | undefined): string {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
 }
 
+/** How a Yes/No answer treats blank: it can be cleared back to blank, or once answered it stays Yes or No. */
+export type BooleanNeutralMode = "cycle" | "initial";
+
+/**
+ * A Yes/No field's neutral state. Only decides whether the answer can go back
+ * to blank; it never chooses an answer (a starting answer is the field's
+ * Default answer). The retired "none" ("Start as No") reads as "initial": a
+ * form that started as No keeps that through its stored default answer, and a
+ * field without one now starts blank instead of showing a No it never saved.
+ */
+export function readBooleanNeutralMode(mode: unknown): BooleanNeutralMode {
+  return mode === "initial" || mode === "none" ? "initial" : "cycle";
+}
+
 /**
  * A stored yes/no or tick-box answer as true/false, or null when it is
  * unanswered or not a yes/no value. Reads booleans, 1/0, "true"/"false",

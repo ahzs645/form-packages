@@ -29745,6 +29745,41 @@ const MoisPatientReviewLink = ({
 // e.g. HOS shows only for non-male patients via the mirrored __patientGender field:
 //   { controllerFieldId: "__patientGender", condition: { type: "not-equals", value: "M" } }
 
+const { useEffect } = React
+
+// Opt-in compatibility for imported independent checkboxes. An explicit current
+// answer wins; consume only understood old aliases so a stale answer cannot
+// return after a later edit. Unknown/foreign codings remain recoverable.
+const normalizeLegacyCheckboxData = (previous, options) => {
+  const data = { ...(previous || {}) }
+  const convert = (value, target) => {
+    if (typeof value === "boolean") return value ? String(target.value ?? "YES") : String(target.offValue ?? "NO")
+    if (typeof value !== "string") return value
+    if (/^(true|yes|y)$/i.test(value)) return String(target.value ?? "YES")
+    if (/^(false|no|n)$/i.test(value)) return String(target.offValue ?? "NO")
+    return value
+  }
+  options.forEach(({ target = {} }) => {
+    if (target.mode !== "yesNo" || !target.acceptLegacyBoolean || !target.fieldId) return
+    if (Object.prototype.hasOwnProperty.call(data, target.fieldId)) {
+      data[target.fieldId] = convert(data[target.fieldId], target)
+    } else {
+      const alias = (target.legacyFieldIds || []).find((key) => {
+        const value = data[key]
+        return typeof value === "boolean" || (typeof value === "string" && /^(true|false|yes|no|y|n)$/i.test(value))
+      })
+      if (alias) data[target.fieldId] = convert(data[alias], target)
+    }
+    if (Object.prototype.hasOwnProperty.call(data, target.fieldId)) {
+      ;(target.legacyFieldIds || []).forEach((key) => {
+        const value = data[key]
+        if (key !== target.fieldId && (typeof value === "boolean" || (typeof value === "string" && /^(true|false|yes|no|y|n)$/i.test(value)))) delete data[key]
+      })
+    }
+  })
+  return data
+}
+
 const codeOf = (value) => {
   if (value == null) return ""
   if (typeof value === "object") return String(value.code ?? value.key ?? value.value ?? "")
@@ -29876,7 +29911,7 @@ const applyForces = (data, options) => {
 // aggregate mirror) are directly unit-testable — see
 // lib/__tests__/nhforms-runtime-logic.test.ts.
 const computeToggledData = (prevData, option, next, options, aggregateFieldId) => {
-  const data = { ...(prevData || {}) }
+  const data = normalizeLegacyCheckboxData(prevData, options)
   const target = option.target || {}
   if (target.mode === "arrayMember") {
     const currentArr = asArray(data[target.fieldId])
@@ -29917,7 +29952,21 @@ const MultiTargetChoiceField = ({
 }) => {
   const [fd, setFormData] = useActiveData()
   const theme = useTheme()
-  const data = (fd && fd.field && fd.field.data) || {}
+  const storedData = (fd && fd.field && fd.field.data) || {}
+  const data = normalizeLegacyCheckboxData(storedData, options)
+  useEffect(() => {
+    if (!setFormData || !options.some(({ target }) => target?.acceptLegacyBoolean)) return
+    const keys = Object.keys(storedData)
+    if (keys.length === Object.keys(data).length && keys.every((key) => storedData[key] === data[key])) return
+    setFormData(produce((draftFd) => {
+      const previous = draftFd.field?.data
+      if (!previous) return
+      const normalized = normalizeLegacyCheckboxData(previous, options)
+      const keys = Object.keys(previous)
+      if (keys.length === Object.keys(normalized).length && keys.every((key) => previous[key] === normalized[key])) return
+      draftFd.field.data = normalized
+    }))
+  }, [storedData, options, setFormData])
   const effectiveFieldId = fieldId || id || "multiTargetChoice"
   const anyChecked = options.some((option) => optionChecked(data, option))
   // Native MOIS required affordance: warning tint while unanswered.
@@ -49832,6 +49881,9 @@ const ValueKit = (() => {
   function normalizedLabel(value) {
     return typeof value === "string" ? value.trim().toLowerCase() : "";
   }
+  function readBooleanNeutralMode(mode) {
+    return mode === "initial" || mode === "none" ? "initial" : "cycle";
+  }
   function readBoolean(value, labels) {
     if (value === true || value === false) return value;
     if (value === null || value === void 0) return null;
@@ -49976,6 +50028,7 @@ const ValueKit = (() => {
   return {
     normalizeOption,
     readBoolean,
+    readBooleanNeutralMode,
     readChoice,
     readDate,
     readDateTime,

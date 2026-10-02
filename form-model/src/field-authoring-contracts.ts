@@ -181,7 +181,8 @@ const SPECIALIZED_CONTRACTS: Partial<Record<BuilderFieldType, Omit<BuilderFieldA
         required: ["on", "off"],
         additionalProperties: false,
       },
-      booleanNeutralMode: { type: "string", enum: ["cycle", "initial", "none"] },
+      // "none" (Start as No) is retired: a starting answer is the default answer.
+      booleanNeutralMode: { type: "string", enum: ["cycle", "initial"] },
       useToggleSwitch: { type: "boolean" },
     },
     defaultConfig: { booleanLabels: { on: "Yes", off: "No" } },

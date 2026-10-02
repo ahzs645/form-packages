@@ -195,12 +195,16 @@ export function isTargetId(value: unknown): value is TargetId {
 /**
  * How much one loss matters for this form: a meaning loss blocks export on the
  * primary target and warns on any other; a presentation loss is information.
+ * A check the target can't run (a date limit, a pattern, an allowed list) is
+ * only a warning on any target: the export goes ahead without it and what is
+ * recorded is unchanged.
  */
 export function lossSeverityFor(
-  loss: Pick<ConversionLoss, "target" | "severity">,
+  loss: Pick<ConversionLoss, "target" | "severity"> & { concept?: FormConcept },
   setting: ExportTargetsSetting
 ): LossSeverity {
   if (loss.severity === "presentation") return "info";
+  if (loss.concept === "validation") return "warn";
   return loss.target === setting.primary ? "block" : "warn";
 }
 

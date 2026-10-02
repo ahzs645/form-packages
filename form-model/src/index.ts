@@ -758,6 +758,7 @@ export interface BuilderLayoutTableCellField {
   minSelection?: number;
   maxSelection?: number;
   booleanLabels?: { on: string; off: string } | null;
+  /** Read with `readBooleanNeutralMode`; "none" ("Start as No") is retired and reads as "initial". */
   booleanNeutralMode?: "cycle" | "initial" | "none";
   useToggleSwitch?: boolean;
   visibility?: BuilderVisibilityRule | null;
@@ -837,6 +838,7 @@ export interface BuilderLayoutTableCell {
   minSelection?: number;
   maxSelection?: number;
   booleanLabels?: { on: string; off: string } | null;
+  /** Read with `readBooleanNeutralMode`; "none" ("Start as No") is retired and reads as "initial". */
   booleanNeutralMode?: "cycle" | "initial" | "none";
   useToggleSwitch?: boolean;
   visibility?: BuilderVisibilityRule | null;
@@ -2317,6 +2319,7 @@ export interface BuilderField {
 
   // Boolean field settings
   booleanLabels?: { on: string; off: string } | null;
+  /** Read with `readBooleanNeutralMode`; "none" ("Start as No") is retired and reads as "initial". */
   booleanNeutralMode?: "cycle" | "initial" | "none";
   useToggleSwitch?: boolean;
 

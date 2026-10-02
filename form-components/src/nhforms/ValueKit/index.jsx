@@ -84,6 +84,9 @@ const ValueKit = (() => {
   function normalizedLabel(value) {
     return typeof value === "string" ? value.trim().toLowerCase() : "";
   }
+  function readBooleanNeutralMode(mode) {
+    return mode === "initial" || mode === "none" ? "initial" : "cycle";
+  }
   function readBoolean(value, labels) {
     if (value === true || value === false) return value;
     if (value === null || value === void 0) return null;
@@ -228,6 +231,7 @@ const ValueKit = (() => {
   return {
     normalizeOption,
     readBoolean,
+    readBooleanNeutralMode,
     readChoice,
     readDate,
     readDateTime,
