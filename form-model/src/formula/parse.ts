@@ -571,15 +571,19 @@ function layoutSumShorthand(text: string, options: ParseFormulaOptions): Formula
   return { kind: "call", fn: "sum", args: ids.map((id) => ({ kind: "ref", id })) };
 }
 
-/** LayoutTable reads a missing answer as 0; make that explicit, except inside sum(), which skips blanks anyway. */
+/**
+ * LayoutTable arithmetic reads a missing answer as 0. A direct sum argument
+ * skips blanks, and hasValue must inspect the raw answer to distinguish a
+ * missing input from an explicitly entered zero.
+ */
 function missingAsZero(node: FormulaNode): FormulaNode {
-  const wrap = (current: FormulaNode, insideSum: boolean): FormulaNode => {
+  const wrap = (current: FormulaNode, preserveReference: boolean): FormulaNode => {
     if (current.kind === "ref") {
-      return insideSum ? current : { kind: "call", fn: "coalesce", args: [current, { kind: "number", value: 0 }] };
+      return preserveReference ? current : { kind: "call", fn: "coalesce", args: [current, { kind: "number", value: 0 }] };
     }
     if (current.kind === "call") {
-      const sum = current.fn === "sum";
-      return { kind: "call", fn: current.fn, args: current.args.map((arg) => wrap(arg, sum)) };
+      const rawReference = current.fn === "sum" || current.fn === "hasValue";
+      return { kind: "call", fn: current.fn, args: current.args.map((arg) => wrap(arg, rawReference)) };
     }
     return mapFormulaChildren(current, (child) => wrap(child, false));
   };

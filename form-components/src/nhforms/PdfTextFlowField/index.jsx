@@ -48,8 +48,10 @@ var PdfTextFlowFieldLayout = (() => {
   }
   function resolveCompositeTextFlowSlots(composite, lookup) {
     const snapshotBox = new Map((composite.componentSnapshots ?? []).map((snapshot) => [snapshot.id, snapshot.bbox ?? null]));
+    const disconnected = new Set((composite.componentSnapshots ?? []).filter((snapshot) => snapshot.pdfFieldAliases?.length === 0).map((snapshot) => snapshot.id));
     const slots = [];
     for (const { fieldId } of composite.components) {
+      if (disconnected.has(fieldId)) continue;
       const box = snapshotBox.get(fieldId) ?? lookup?.(fieldId) ?? null;
       if (!box || !(box.width > 0) || !(box.height > 0)) return null;
       slots.push(resolvePdfTextFlowSlot(fieldId, box));

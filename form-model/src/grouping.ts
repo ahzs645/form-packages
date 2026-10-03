@@ -29,6 +29,8 @@ export interface GroupSummary {
   rows: string[];
   columns: string[];
   entries: GroupEntry[];
+  /** Hide the whole section while retaining its fields and chart/PDF bindings. */
+  hidden?: boolean;
   /** Section-level inline show-when rule, carried from the builder section field. */
   visibility?: ParsedField["visibility"];
   /** Section-level layout type: "grid" for Row-based side-by-side, "stacked" for Column-based vertical */

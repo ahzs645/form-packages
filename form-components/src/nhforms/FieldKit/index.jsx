@@ -628,6 +628,7 @@ const FieldKit = (() => {
       inline,
       labelPosition,
       placeholder,
+      allowClear,
       size,
       section,
       storage,
@@ -670,6 +671,7 @@ const FieldKit = (() => {
         const answerProps = {
           ...common,
           ...placeholderProp,
+          allowClear: allowClear === true,
           presentation: choice.presentation,
           selectionType: choice.selectionType,
           answers: descriptor.options,
@@ -779,7 +781,7 @@ const FieldKit = (() => {
           ...(descriptor.autoHotKey ? { autoHotKey: true } : {}),
           ...(descriptor.showOtherOption ? { showOtherOption: true } : {}),
         }
-        return (
+        const control = (
           <SimpleCodeSelect
             {...common}
             {...bound}
@@ -793,6 +795,19 @@ const FieldKit = (() => {
               : {})}
           />
         )
+        // An optional table cell may be cleared even when its faithful MOIS
+        // dropdown has no blank item. Compose an action around that control;
+        // keep its implementation and the neutral option codes unchanged.
+        const canClear = controlled && allowClear === true && !readOnly && !disabled
+          && codingsOf(value, descriptor).some((entry) => Boolean(entry.code))
+        if (!canClear) return control
+        return <div style={{ display: "flex", alignItems: "flex-end", gap: 4 }}>
+          <div style={{ flex: "1 1 auto", minWidth: 0 }}>{control}</div>
+          <Fluent.IconButton iconProps={{ iconName: "Cancel" }} title="Clear answer" ariaLabel="Clear answer"
+            onClick={() => emit(choice.selectionType === "multiple" ? [] : null)}
+            styles={{ root: { flex: "0 0 28px", width: 28 } }} />
+        </div>
+
       }
       case "SimpleCodeChecklist": {
         const checklistProps = {

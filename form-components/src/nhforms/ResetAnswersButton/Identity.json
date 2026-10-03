@@ -1,0 +1,9 @@
+{
+  "name": "ResetAnswersButton",
+  "title": "Reset form answers",
+  "description": "Restore declared form answers to their source defaults without changing chart data or unowned answers.",
+  "version": { "major": 1, "minor": 0, "patch": 0 },
+  "type": "component",
+  "owner": "Bright Health",
+  "components": []
+}

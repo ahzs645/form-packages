@@ -1,0 +1,1 @@
+{"name":"AddressEntryField","title":"Address entry","description":"Editable form-local address components, formatted PDF wording and measured line-fit preview; keeps structured parts and optional print override without chart writes.","version":{"major":1,"minor":0,"patch":0},"type":"component","owner":"Northern Health","components":["PdfTextFlowField"]}

@@ -130,12 +130,14 @@ type Runtime = {
   subformCellValue: (value: unknown, column: Column) => unknown;
 };
 
+let runtimeSourceData: AnyProps = {};
+
 function loadRuntime(): Runtime {
   const source = ["ValueKit", "FormulaKit", "FormLogicKit", "FieldKit", "DialogKit", "EditableTable", "RepeatForEachTable"].map(read).join("\n");
   const compiled = Babel.transform(`var EditableTable;\n${source}`, { presets: ["react"], filename: "index.jsx" }).code ?? "";
   const scope: Record<string, unknown> = {
     window: {}, React, Fluent, produce, useActiveData, SubformScoring,
-    useTheme: () => ({}), useSourceData: () => ({}), useSection: () => null,
+    useTheme: () => ({}), useSourceData: () => runtimeSourceData, useSection: () => null,
     TextArea: Field, Numeric: Field, DateSelect: Field, DateTimeSelect: Field, TimeSelect: Field,
     SimpleCodeSelect: CodeField, OptionChoice: Field, SimpleCodeChecklist: Checklist,
     SubForm, ButtonBar: Box,
@@ -157,6 +159,7 @@ afterEach(async () => {
   root = null;
   container = null;
   subform = null;
+  runtimeSourceData = {};
 });
 
 async function mount(element: () => React.ReactElement, data: Record<string, unknown>) {
@@ -175,6 +178,7 @@ async function mount(element: () => React.ReactElement, data: Record<string, unk
   const button = (text: string) => Array.from(container!.querySelectorAll("button")).find((entry) => entry.textContent === text)!;
   return {
     data: () => (state.field as { data: Record<string, unknown> }).data,
+    rerender: async () => act(async () => root!.render(h(Harness))),
     run: async (fn: () => void) => act(async () => fn()),
     click: async (element: Element) => act(async () => (element as HTMLElement).click()),
     button,
@@ -325,6 +329,29 @@ describe("EditableTable subform row editor fields", () => {
 });
 
 describe("EditableTable modal mode with the subform row editor (rendered)", () => {
+  it("initializes seeded and new rows from the active user, preserving saved and manual initials", async () => {
+    runtimeSourceData = { userProfile: { identity: { initials: "JD" } } };
+    const initialsColumns = [{ id: "allergen", title: "Allergen", type: "text" },
+      { id: "initials", title: "Initials", type: "text", initialReadPaths: ["userProfile.identity.initials"] }];
+    const view = await mount(() => h(runtime.EditableTable, { id: "allergies", mode: "modal", columns: initialsColumns,
+      maxRows: 10, initialRows: 1, modalEditorConfig: { seedInitialRows: true } }), {});
+    await view.click(view.button("+ Add Row"));
+    expect(subform!.dataEntryValueRoot.initials).toBe("JD");
+    await view.run(() => subform!.onDataEntryValueChange("allergen", "Peanut"));
+    await view.run(() => subform!.onDataEntryValueChange("initials", "ZZ"));
+    await view.click(container!.querySelector("[data-subform] button")!);
+    runtimeSourceData = { userProfile: { identity: { initials: "NM" } } };
+    await view.rerender();
+    await view.click(view.button("+ Add Row"));
+    expect(subform!.dataEntryValueRoot.initials).toBe("NM");
+    expect((view.data().allergies as Row[])[0].initials).toBe("ZZ");
+    await view.run(() => subform!.onDataEntryValueChange("allergen", "Latex"));
+    await view.click(container!.querySelector("[data-subform] button")!);
+    expect(view.data().allergies).toMatchObject([{ allergen: "Peanut", initials: "ZZ" }, { allergen: "Latex", initials: "NM" }]);
+    await view.click(container!.querySelector('button[title="Edit"]')!);
+    expect(subform!.dataEntryValueRoot.initials).toBe("ZZ");
+  });
+
   const columns: Column[] = [
     { id: "given", title: "Given", type: "checkbox", booleanLabels: { on: "Given" } },
     { id: "dose", title: "Dose", type: "number", requiredWhenVisible: true, visibility: { type: "equals", controllerId: "given", value: "Yes" } },

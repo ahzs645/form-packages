@@ -22,14 +22,17 @@ const source = [
 type ActiveTuple = [any, (updater: any) => void];
 const ActiveDataContext = React.createContext<ActiveTuple>([{}, () => undefined]);
 
-function loadComputedField(): React.ComponentType<any> {
+function loadComputedField(onControlRender?: (props: any) => void): React.ComponentType<any> {
   const compiled = Babel.transform(source, { presets: ["react"], filename: "index.jsx" }).code ?? "";
-  const TextArea = (props: { fieldId: string; value?: unknown; textFieldProps?: { suffix?: string } }) => React.createElement("input", {
+  const TextArea = (props: { fieldId: string; value?: unknown; textFieldProps?: { suffix?: string } }) => {
+    onControlRender?.(props);
+    return React.createElement("input", {
     "data-field-id": props.fieldId,
     "data-display-suffix": props.textFieldProps?.suffix ?? "",
     value: props.value == null ? "" : String(props.value),
     readOnly: true,
-  });
+    });
+  };
   const ObservationValueDisplay = (props: Record<string, unknown>) => React.createElement("div", {
     "data-history-code": String(props.observationCode ?? ""),
     "data-history-units": String(props.units ?? ""),
@@ -61,7 +64,8 @@ function renderComputedField(
     componentProps?: Record<string, unknown>;
   } = {},
 ) {
-  const ComputedField = loadComputedField();
+  let controlProps: any;
+  const ComputedField = loadComputedField((props) => { controlProps = props; });
   let currentState: any = null;
   let updateState: ((updater: any) => void) | null = null;
 
@@ -102,6 +106,9 @@ function renderComputedField(
       await act(async () => root.render(React.createElement(Harness)));
     },
     getState: () => currentState,
+    editControl: async (...args: any[]) => {
+      await act(async () => controlProps.onChange(...args));
+    },
     replaceStoredValue: async (value: unknown) => {
       await act(async () => updateState!((draft: any) => {
         draft.field.data.result = value;
@@ -126,6 +133,29 @@ function renderComputedField(
 }
 
 describe("ComputedField stored-value synchronization", () => {
+  it("persists native MOIS edits and their ownership flag together", async () => {
+    const harness = renderComputedField("calculated-until-overridden");
+    await harness.render();
+    await harness.editControl({ target: { value: "2" } }, "2");
+    expect(harness.getState().field.data.result).toBe("2");
+    expect(harness.getState().field.data.__computedFieldState.result.overridden).toBe(true);
+    await harness.setFieldValue("source", 30);
+    expect(harness.getState().field.data.result).toBe("2");
+    await harness.editControl({}, "");
+    expect(harness.getState().field.data.result).toBe("");
+    expect(harness.getState().field.data.__computedFieldState.result.overridden).toBe(true);
+    await harness.unmount();
+  });
+
+  it("also persists the preview single-value callback including zero", async () => {
+    const harness = renderComputedField("calculated-until-overridden");
+    await harness.render();
+    await harness.editControl(0);
+    expect(harness.getState().field.data.result).toBe(0);
+    expect(harness.getState().field.data.__computedFieldState.result.overridden).toBe(true);
+    await harness.unmount();
+  });
+
   it("repairs a late InitialData/sourceFormData overwrite for owned calculations", async () => {
     const harness = renderComputedField("always-calculated");
     await harness.render();

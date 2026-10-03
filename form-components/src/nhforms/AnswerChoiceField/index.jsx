@@ -67,6 +67,7 @@ const AnswerChoiceField = ({
   readOnly = false,
   disabled = false,
   placeholder,
+  allowClear = false,
   presentation = "checklist",
   selectionType = "single",
   answers = [],
@@ -232,6 +233,7 @@ const AnswerChoiceField = ({
 
   const renderDropdown = () => (
     <>
+      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
       <Fluent.Dropdown
         ariaLabel={label || effectiveId}
         placeholder={placeholder}
@@ -246,8 +248,16 @@ const AnswerChoiceField = ({
           if (!multiple) setOtherOpen(false)
           return multiple ? toggle(String(option.key), Boolean(option.selected)) : choose(String(option.key))
         }}
-        styles={{ root: { maxWidth: 480 } }}
+        styles={{ root: { maxWidth: 480, flex: "1 1 auto", minWidth: 0 } }}
       />
+      {allowClear && !inactive && selected.some(Boolean) ? <Fluent.IconButton
+        iconProps={{ iconName: "Cancel" }}
+        title="Clear answer"
+        ariaLabel="Clear answer"
+        onClick={() => { setOtherOpen(false); setOtherDraft(null); write([]) }}
+        styles={{ root: { flex: "0 0 28px", width: 28 } }}
+      /> : null}
+      </div>
       {otherInput}
     </>
   )

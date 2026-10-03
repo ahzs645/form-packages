@@ -105,8 +105,10 @@ var PdfTextFlowLayout = (() => {
   }
   function resolveCompositeTextFlowSlots(composite, lookup) {
     const snapshotBox = new Map((composite.componentSnapshots ?? []).map((snapshot) => [snapshot.id, snapshot.bbox ?? null]));
+    const disconnected = new Set((composite.componentSnapshots ?? []).filter((snapshot) => snapshot.pdfFieldAliases?.length === 0).map((snapshot) => snapshot.id));
     const slots = [];
     for (const { fieldId } of composite.components) {
+      if (disconnected.has(fieldId)) continue;
       const box = snapshotBox.get(fieldId) ?? lookup?.(fieldId) ?? null;
       if (!box || !(box.width > 0) || !(box.height > 0)) return null;
       slots.push(resolvePdfTextFlowSlot(fieldId, box));
@@ -1388,10 +1390,29 @@ const _fieldHasValue = (field, PDFLib) => {
   return true
 }
 
+// Some standard text fonts silently substitute '?' for unsupported glyphs in
+// the pdf-lib fork. Native tick/cross answers must keep both their /V value and
+// their printed mark. Use the standard symbol font only for mark-only answers;
+// ordinary and mixed text continue through the existing text-font path.
+const _isNativeMarkText = (text) => typeof text === "string" && /^[\s✓✔✗✘]+$/u.test(text) && /[✓✔✗✘]/u.test(text)
+
+const _nativeAppearanceFont = (field, font, PDFLib, markFont) => {
+  if (!(field instanceof PDFLib.PDFTextField) || !markFont) return font
+  const text = field.getText() || ""
+  if (!_isNativeMarkText(text)) return font
+  const points = Array.from(text).filter((char) => !/\s/u.test(char)).map((char) => char.codePointAt(0))
+  const supported = new Set(font.getCharacterSet())
+  if (points.every((point) => supported.has(point))) return font
+  const markSupported = new Set(markFont.getCharacterSet())
+  if (!points.every((point) => markSupported.has(point))) throw new Error("The PDF symbol font cannot draw this native mark.")
+  return markFont
+}
+
 // The default pdf-lib appearance providers ignore AcroForm /BS /S /U and
 // redraw an underline as a full box. Generate the text with no box, then put
 // the supplier's underline back into that widget's appearance stream.
-const _updateTextAppearancePreservingUnderline = (field, font, PDFLib) => {
+const _updateTextAppearancePreservingUnderline = (field, font, PDFLib, markFont = null) => {
+  font = _nativeAppearanceFont(field, font, PDFLib, markFont)
   const provider = field instanceof PDFLib.PDFTextField
     ? PDFLib.defaultTextFieldAppearanceProvider
     : field instanceof PDFLib.PDFDropdown
@@ -1425,12 +1446,12 @@ const _updateTextAppearancePreservingUnderline = (field, font, PDFLib) => {
   })
 }
 
-const _flattenForm = (form, PDFLib, font, warnings) => {
+const _flattenForm = (form, PDFLib, font, warnings, markFont = null) => {
   form.getFields().forEach((field) => {
     if (field instanceof PDFLib.PDFSignature || !_fieldHasValue(field, PDFLib)) return
     if (field.acroField.getWidgets().every((widget) => _widgetHasAppearance(field, widget, PDFLib))) return
     try {
-      _updateTextAppearancePreservingUnderline(field, font, PDFLib)
+      _updateTextAppearancePreservingUnderline(field, font, PDFLib, markFont)
     } catch (error) {
       warnings.push(`Field "${field.getName()}": could not be painted for flattening (${error?.message || "unknown error"}); it is left blank.`)
     }
@@ -1719,7 +1740,7 @@ const _buildDateComponentIndex = (dateComponentMaps) => {
   return index
 }
 
-const _resolveDateComponentValue = (formData, dateEntry, rawValue) => {
+const _resolveDateComponentValue = (formData, dateEntry, rawValue, documentFormat) => {
   if (!dateEntry) return undefined
   const sourceValues = [
     rawValue,
@@ -1731,7 +1752,12 @@ const _resolveDateComponentValue = (formData, dateEntry, rawValue) => {
   let parts = null
   for (const sourceValue of sourceValues) {
     parts = _splitCanonicalDateParts(sourceValue)
-    if (parts) break
+    if (parts) {
+      // Validate the full calendar answer before projecting its parts. A month
+      // or day by itself must never be sent through the whole-date formatter.
+      if (documentFormat) DocumentDateRuntime.formatDocumentDate(sourceValue, documentFormat)
+      break
+    }
   }
   if (!parts) return undefined
   return parts[dateEntry.role]
@@ -1988,6 +2014,33 @@ const _loadPdfLib = (options) => {
   // "cdn", or "inline" with no embedded source (e.g. builder preview).
   _pdfLibPromise = _loadPdfLibFromCdn()
   return _pdfLibPromise
+}
+
+// Some freely openable supplier PDFs encrypt their streams with an empty
+// user password. The fork decrypts only when password is explicitly supplied;
+// ignoreEncryption alone leaves their field names/content encrypted. Trying
+// the empty password opens those originals and still rejects protected files.
+const _loadSourcePdf = async (PDFLib, bytes) => {
+  const doc = await PDFLib.PDFDocument.load(bytes, {
+    throwOnInvalidObject: false,
+    password: "",
+    ignoreEncryption: false,
+  })
+  // The pinned fork can retain old cross-reference streams as invalid raw
+  // objects after decryption. They still contain the original /Encrypt entry;
+  // serializing them makes a later parser mistake the decrypted output for an
+  // encrypted PDF. A full save builds new cross-reference data, so discard
+  // only these obsolete XRef objects, never page content or form objects.
+  if (doc.context.isDecrypted && PDFLib.PDFInvalidObject) {
+    for (const [ref, object] of doc.context.enumerateIndirectObjects()) {
+      if (!(object instanceof PDFLib.PDFInvalidObject)) continue
+      const raw = new Uint8Array(object.sizeInBytes())
+      object.copyBytesInto(raw, 0)
+      const header = String.fromCharCode(...raw.subarray(0, Math.min(raw.length, 2048))).split(/\bstream\b/, 1)[0]
+      if (/\/Type\s*\/XRef\b/.test(header)) doc.context.delete(ref)
+    }
+  }
+  return doc
 }
 
 const _getCheckboxOnStates = (field) => {
@@ -2522,10 +2575,7 @@ const PdfRegenerator = ({
         ? new Set(includeOnlyFieldIds.map((id) => String(id || "").trim()).filter(Boolean))
         : null
 
-      const doc = await PDFLib.PDFDocument.load(bytes, {
-        throwOnInvalidObject: false,
-        ignoreEncryption: true,
-      })
+      const doc = await _loadSourcePdf(PDFLib, bytes)
 
       const form = doc.getForm()
       if (form.getFields().some(field => field instanceof PDFLib.PDFSignature && field.acroField.dict.get(PDFLib.PDFName.of("V")))) throw new Error("The source PDF is already signed. Fill an unsigned original to avoid invalidating its signature.")
@@ -2568,7 +2618,7 @@ const PdfRegenerator = ({
         if (characterValue !== undefined) rawValue = characterValue
         const dateEntry = dateComponentIndex.get(pdfFieldName) || dateComponentIndex.get(sourceFieldId)
         const dateComponentValue = dateEntry
-          ? _resolveDateComponentValue(formData, dateEntry, rawValue)
+          ? _resolveDateComponentValue(formData, dateEntry, rawValue, documentDateFormats?.[dateEntry.sourceFieldId])
           : undefined
         if (dateComponentValue !== undefined && dateComponentValue !== null && dateComponentValue !== "") {
           rawValue = dateComponentValue
@@ -2593,7 +2643,7 @@ const PdfRegenerator = ({
           continue
         }
 
-        if (documentDateFormats?.[sourceFieldId] && !preparedTouched.has(sourceFieldId)) rawValue = DocumentDateRuntime.formatDocumentDate(rawValue, documentDateFormats[sourceFieldId])
+        if (documentDateFormats?.[sourceFieldId] && !preparedTouched.has(sourceFieldId) && dateComponentValue === undefined) rawValue = DocumentDateRuntime.formatDocumentDate(rawValue, documentDateFormats[sourceFieldId])
         const booleanStates = booleanFieldStates
           ? (booleanFieldStates[sourceFieldId] || booleanFieldStates[pdfFieldName])
           : undefined
@@ -2623,9 +2673,12 @@ const PdfRegenerator = ({
       // value. Updating every appearance throws on those fields and also
       // replaces their supplied appearance. Only repaint answers we changed.
       const font = await doc.embedFont(PDFLib.StandardFonts.Helvetica)
+      const markFont = pdfFields.some((field) => field instanceof PDFLib.PDFTextField && _isNativeMarkText(field.getText() || ""))
+        ? await doc.embedFont(PDFLib.StandardFonts.ZapfDingbats)
+        : null
       pdfFields.forEach((field) => {
         if (!(field instanceof PDFLib.PDFSignature) && form.fieldIsDirty(field.ref)) {
-          _updateTextAppearancePreservingUnderline(field, font, PDFLib)
+          _updateTextAppearancePreservingUnderline(field, font, PDFLib, markFont)
           form.markFieldAsClean(field.ref)
         }
       })
@@ -2635,7 +2688,7 @@ const PdfRegenerator = ({
       const overflowPlans = DocumentFillRuntime.planTableOverflow(formData, fillTableMaps, pdfFieldNames)
         .filter((plan) => !includeSet || includeSet.has(plan.tableId))
       await DocumentFillRuntime.appendOverflowAddendum(doc, overflowPlans, PDFLib, { warnings })
-      if (flatten) _flattenForm(form, PDFLib, font, warnings)
+      if (flatten) _flattenForm(form, PDFLib, font, warnings, markFont)
 
       let outputBytes = await doc.save({ updateFieldAppearances: false })
       if (requestedAction === "sign") {

@@ -35,6 +35,35 @@ if (typeof EditableTable === "undefined") {
   window.EditableTable = null
 }
 
+// A modal section can opt into a compact responsive grid. Unconfigured sections
+// retain the established wide-question layout. This is authoring intent, not a
+// different control: FieldKit still renders the same question and validation.
+const _modalSectionGroups = (columns) => columns.reduce((groups, column) => {
+  const name = column.modalSection || ""
+  const previous = groups[groups.length - 1]
+  if (previous && previous.name === name) previous.columns.push(column)
+  else groups.push({ name, columns: [column] })
+  return groups
+}, [])
+
+const _modalSectionLayout = (config, section) => {
+  const requested = config?.sectionLayouts?.[section]
+  const count = Number(requested?.columns)
+  if (!Number.isFinite(count) || count < 1) return {
+    compact: false,
+    style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "12px 16px" },
+  }
+  const columns = Math.min(12, Math.max(1, Math.floor(count)))
+  const minWidth = Math.min(480, Math.max(48, Number(requested?.minColumnWidth) || 80))
+  return {
+    compact: true,
+    // Auto-fit reduces the column count when a narrow host cannot fit the
+    // requested cells. max() caps the count without imposing a PDF width.
+    style: { display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(min(100%, max(${minWidth}px, calc((100% - ${(columns - 1) * 12}px) / ${columns}))), 1fr))`, gap: "12px" },
+    controlSize: { width: "100%", minWidth: 0 },
+  }
+}
+
 // DefaultsKit (generated from form-model defaults.ts) reads a default answer in
 // every saved shape and resolves it; referenced only inside function bodies.
 // A runtime without the kit keeps the older prefill-only reading.
@@ -209,6 +238,23 @@ const _resolveLiteralValue = (value, context) => {
   if (value === "$userFullName") return _resolvePathValue(context, "userProfile.identity.fullName")
   if (value === "$userLoginName") return _resolvePathValue(context, "userProfile.loginName")
   return value
+}
+
+// The exporter resolves neutral initial bindings to source-data paths. Fill
+// only a blank draft cell, on opening the row, never on a session/user change.
+const _applyInitialColumnReads = (row, columns, sourceData) => {
+  columns.forEach((column) => {
+    const paths = column.initialReadPaths
+    if (!Array.isArray(paths) || !paths.length) return
+    const path = column.dataPath || column.id
+    if (_isMeaningfulValue(_getValueAtPath(row, path))) return
+    const value = paths.map((sourcePath) => _resolvePathValue(sourceData, sourcePath))
+      .find(_isMeaningfulValue) ?? column.initialReadFallback
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      _setValueAtPath(row, path, value)
+    }
+  })
+  return row
 }
 
 const _resolveFieldDefaultValue = (defaultValue, context = {}) => {
@@ -1558,7 +1604,7 @@ EditableTable = ({
   }, [setRows, onRowsChange, id, columns, mode])
 
   const makeDraftRow = (rowIndex = currentRows.length) => {
-    const nextRow = _makeEmptyRow(columns, rowIndex)
+    const nextRow = _applyInitialColumnReads(_makeEmptyRow(columns, rowIndex), columns, sd)
     return _applyDefaultValuesToRow(nextRow, modalEditorConfig?.dataEntryConfig?.fields, {
       currentRows,
       columns,
@@ -1592,7 +1638,7 @@ EditableTable = ({
     if (!row) return
     if (authorshipEnabled && getRowLock(row).locked) return
     setEditingRowIndex(rowIndex)
-    setDraftRow(_cloneRow(row, columns))
+    setDraftRow(_applyInitialColumnReads(_cloneRow(row, columns), columns, sd))
     setErrorMessage("")
     setIsDialogOpen(true)
   }
@@ -1966,7 +2012,7 @@ EditableTable = ({
     : Number.POSITIVE_INFINITY
   const shouldShowActions = !isLocked && (allowEditRows || allowDeleteRows)
 
-  const renderEditorControl = (row, rowIndex, column, onValueChange, inline, rowReadOnly = false, onStampColumn = null, rowLockState = null, onResetFormula = null) => {
+  const renderEditorControl = (row, rowIndex, column, onValueChange, inline, rowReadOnly = false, onStampColumn = null, rowLockState = null, onResetFormula = null, controlSize = undefined) => {
     const value = column.textContinuation
       ? _combinedTextValue(row, column)
       : _getValueAtPath(row, column.dataPath || column.id)
@@ -2031,6 +2077,8 @@ EditableTable = ({
         readOnly: effectiveReadOnly,
         inline,
         placeholder: column.placeholder || undefined,
+        allowClear: !required,
+        ...(controlSize ? { size: controlSize } : {}),
       })
     }
 
@@ -2152,10 +2200,10 @@ EditableTable = ({
   // NHForms tables did by hand. The inline `display: none` keeps the mirror
   // hidden when a host page ships no print stylesheet; the print rule's
   // `!important` overrides it. Dialog editors (inline === false) never print.
-  const renderEditorInput = (row, rowIndex, column, onValueChange, inline, rowReadOnly = false, onStampColumn = null, rowLockState = null, onResetFormula = null) => {
+  const renderEditorInput = (row, rowIndex, column, onValueChange, inline, rowReadOnly = false, onStampColumn = null, rowLockState = null, onResetFormula = null, controlSize = undefined) => {
     // A column hidden in this row (its visibility rule) has nothing to answer.
     if (inline && !_evaluateColumnVisibility(column, row, columns, formData)) return null
-    const control = renderEditorControl(row, rowIndex, column, onValueChange, inline, rowReadOnly, onStampColumn, rowLockState, onResetFormula)
+    const control = renderEditorControl(row, rowIndex, column, onValueChange, inline, rowReadOnly, onStampColumn, rowLockState, onResetFormula, controlSize)
     if (!inline) return control
     return (
       <>
@@ -2558,39 +2606,34 @@ EditableTable = ({
             : []}
           errorMessage={errorMessage || undefined}
         >
-          {/* Two columns when the dialog has room; choices and long text take a full row. */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "12px 16px" }}>
-          {modalColumns.filter((column) => _evaluateColumnVisibility(column, draftRow, columns, formData)).flatMap((column, index, visibleColumns) => {
-            // FieldKit questions draw their own label; a stamp, a formula or a
-            // locked cell does not, so the dialog labels those.
-            const cellReadOnly = isLocked || draftLocalStampLock.locked
-            const drawsOwnLabel = column.type !== "stampButton" && !_isFormulaColumn(column) && !cellReadOnly
-            return [
-              ...(column.modalSection && (index === 0 || visibleColumns[index - 1]?.modalSection !== column.modalSection)
-                ? [<div key={`section-${column.id}`} style={{ gridColumn: "1 / -1", fontWeight: 600, borderBottom: `1px solid ${isDarkMode ? "#505050" : "#d1d5db"}`, paddingTop: "8px", paddingBottom: "4px" }}>{column.modalSection}</div>]
-                : []),
-              <div key={column.id} data-table-dialog-question={column.id} style={column.type === "dropdown" || column.type === "text" ? { gridColumn: "1 / -1" } : undefined}>
-                {drawsOwnLabel ? null : (
-                  <Label required={isRequiredModalColumn(column)}>{column.title || column.id}</Label>
-                )}
-                {renderEditorInput(
-                  draftRow,
-                  editingRowIndex ?? currentRows.length,
-                  column,
-                  (rowIndex, columnId, value) => updateDraftCell(columnId, value),
-                  false,
-                  draftLocalStampLock.locked,
-                  (_rowIndex, stampColumn) => stampDraftCell(stampColumn),
-                  draftLockState,
-                  (_rowIndex, formulaColumn) => resetDraftFormulaCell(formulaColumn)
-                )}
-                {column.helpText ? (
-                  <Text variant="small" styles={{ root: { display: "block", marginTop: "4px", color: mutedTextColor } }}>
-                    {column.helpText}
-                  </Text>
-                ) : null}
-              </div>,
-            ]
+          <div style={{ display: "grid", gap: "12px" }}>
+          {_modalSectionGroups(modalColumns.filter((column) => _evaluateColumnVisibility(column, draftRow, columns, formData))).map((section, sectionIndex) => {
+            const layout = _modalSectionLayout(modalEditorConfig, section.name)
+            return <div key={`${section.name}-${sectionIndex}`} data-table-dialog-section={section.name}>
+              {section.name ? <div style={{ fontWeight: 600, borderBottom: `1px solid ${isDarkMode ? "#505050" : "#d1d5db"}`, paddingTop: "8px", paddingBottom: "4px", marginBottom: "12px" }}>{section.name}</div> : null}
+              <div style={layout.style}>
+              {section.columns.map((column) => {
+                const cellReadOnly = isLocked || draftLocalStampLock.locked
+                const drawsOwnLabel = column.type !== "stampButton" && !_isFormulaColumn(column) && !cellReadOnly
+                return <div key={column.id} data-table-dialog-question={column.id} style={{ minWidth: 0, ...(!layout.compact && (column.type === "dropdown" || column.type === "text") ? { gridColumn: "1 / -1" } : {}) }}>
+                  {drawsOwnLabel ? null : <Label required={isRequiredModalColumn(column)}>{column.title || column.id}</Label>}
+                  {renderEditorInput(
+                    draftRow,
+                    editingRowIndex ?? currentRows.length,
+                    column,
+                    (rowIndex, columnId, value) => updateDraftCell(columnId, value),
+                    false,
+                    draftLocalStampLock.locked,
+                    (_rowIndex, stampColumn) => stampDraftCell(stampColumn),
+                    draftLockState,
+                    (_rowIndex, formulaColumn) => resetDraftFormulaCell(formulaColumn),
+                    layout.controlSize
+                  )}
+                  {column.helpText ? <Text variant="small" styles={{ root: { display: "block", marginTop: "4px", color: mutedTextColor } }}>{column.helpText}</Text> : null}
+                </div>
+              })}
+              </div>
+            </div>
           })}
           </div>
         </DialogKit.RowDialog>

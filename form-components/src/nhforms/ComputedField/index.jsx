@@ -426,11 +426,16 @@ const ComputedField = ({
   // _shouldApplyComputedValue above.
   }, [currentValue, fieldId, isOverridden, policy, presentationOnly, setFd, storedValue])
 
-  const markOverridden = () => {
+  const markOverridden = (...changeArgs) => {
     if (!fieldId || !canEdit) return
+    // Native MOIS passes Fluent's (event, value); preview Numeric passes value.
+    // A custom onChange replaces the native control's default storage handler,
+    // so persist the entered value and its ownership flag together.
+    const enteredValue = changeArgs.length > 1 ? changeArgs[1] : changeArgs[0]
     setFd((draft) => {
       if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
       if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
+      draft.field.data[fieldId] = enteredValue == null ? "" : enteredValue
       const stateContainer = draft.field.data.__computedFieldState && typeof draft.field.data.__computedFieldState === "object"
         ? draft.field.data.__computedFieldState
         : {}

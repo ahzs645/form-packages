@@ -279,6 +279,11 @@ export const FORMULA_SEMANTIC_CASES: FormulaSemanticCase[] = [
   { formula: "sum(q1-a, q1-b, [q1-c])", values: { "q1-a": 1, "q1-c": 2 }, dialect: "layoutTable", expected: 3 },
   { formula: "min(a, b)", values: { b: 4 }, dialect: "layoutTable", expected: 0 },
   { formula: "Math.round(a / 3)", values: { a: 10 }, dialect: "layoutTable", expected: 3 },
+  { formula: 'iif(hasValue([allowance]), sum([annual], [allowance]), "")', values: { annual: 1200 }, dialect: "layoutTable", expected: "", note: "A missing required allowance must not read as an entered zero" },
+  { formula: 'iif(hasValue([allowance]), sum([annual], [allowance]), "")', values: { annual: 1200, allowance: "" }, dialect: "layoutTable", expected: "" },
+  { formula: 'iif(hasValue([allowance]), sum([annual], [allowance]), "")', values: { annual: 1200, allowance: "  " }, dialect: "layoutTable", expected: "" },
+  { formula: 'iif(hasValue([allowance]), sum([annual], [allowance]), "")', values: { annual: 1200, allowance: 0 }, dialect: "layoutTable", expected: 1200 },
+  { formula: 'iif(hasValue([allowance]), [monthly] * 12 + [allowance], "")', values: { allowance: 0 }, dialect: "layoutTable", expected: 0, note: "Presence guards leave ordinary missing-as-zero arithmetic intact" },
 
   // ── Numbers ─────────────────────────────────────────────────────────────
   { formula: "round(2.5)", expected: 3 },

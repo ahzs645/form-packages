@@ -1185,10 +1185,14 @@ export interface BuilderCernerInterpRow {
   resultPrincipleType?: { cd: string; mean: string };
 }
 
-/**
- * A Cerner interpretation (decision table) kept verbatim so it can be both
- * compiled into a builder expression and written back on export.
- */
+/** Bedrock history policy for one interpretation contributor assay. */
+export interface CernerContributorLookup {
+  lookBackMinutes?: number;
+  lookForwardMinutes?: number;
+  initialLookDirection?: "back" | "forward";
+}
+
+/** A native decision table, with authoring-only contributor lookup settings. */
 export interface BuilderCernerInterp {
   targetMnemonic: string;
   targetDtaCd?: string;
@@ -1204,15 +1208,13 @@ export interface BuilderCernerInterp {
   sex?: { cd?: string; display: string; meaning: string; cduid?: string };
   /** SERVICE_RESOURCE: the performing department the table is limited to. */
   serviceResource?: { cd?: string; display: string; cduid?: string };
-  /**
-   * Bedrock Interpretations wizard settings that the INTERP XML does not
-   * carry (MX25.3 guide step 7). Listed in DEPLOYMENT.md for the analyst.
-   */
-  bedrock?: { lookBackMinutes?: number; lookForwardMinutes?: number; initialLookDirection?: "back" | "forward" };
+  /** Legacy table-wide fallback for Bedrock settings not carried in INTERP XML.
+   * New settings belong to each component and are listed in DEPLOYMENT.md. */
+  bedrock?: CernerContributorLookup;
   /** Positions this table held in the source INTERP_OBJ_LIST, so a rebuilt one is written back in place. */
   listingIndexes?: number[];
   /** COMPONENT FLAGS=1 marks a numeric contributor ("Numeric" in the Component Selection dialog). */
-  components?: Array<{ mnemonic: string; description?: string; taskAssayUid?: string; dtaCd?: string; numeric?: boolean }>;
+  components?: Array<{ mnemonic: string; description?: string; taskAssayUid?: string; dtaCd?: string; numeric?: boolean; bedrock?: CernerContributorLookup }>;
   componentMnemonics: string[];
   /** Distinct outcome strings the table can produce. */
   outcomes: string[];
@@ -1503,8 +1505,16 @@ export interface BuilderCernerConfig {
   dateCalculation?: { startFieldId: string; endFieldId?: string; units: "minutes" | "hours" | "days" | "weeks" | "months" | "years" };
   /** Date/Time control Type tab › Date/Time/Time Zone (a DATETIMETIMEZONE DTA). */
   withTimeZone?: boolean;
-  /** Date offset from another date field. Native `datecalc_cntrl` encodes days, weeks and months; minutes and hours are preview-only. */
-  dateOffset?: { sourceFieldId: string; amount: number; units: "minutes" | "hours" | "days" | "weeks" | "months" };
+  /** Analyst-supplied native preference overrides, unverified until target validation. */
+  nativeDateOverrides?: { offsetUnitCode?: number; dateTimeType?: number };
+  /** Date offset from another date field. Native units beyond days/weeks/months need an override. */
+  dateOffset?: {
+    sourceFieldId: string;
+    amount: number;
+    units: "minutes" | "hours" | "days" | "weeks" | "months";
+    /** Explicit preview calendar-zone override; native mapping requires review. */
+    timeZone?: string;
+  };
   grid?: {
     family: "power" | "discrete" | "ultra";
     /** Original GRIDITEMLIST leaves, preserved as the baseline for direct imported-grid edits. */
@@ -1563,9 +1573,12 @@ export interface BuilderCernerConfig {
   position?: { x1: number; y1: number; x2: number; y2: number } | null;
   /**
    * An authored Image control (INPUT_TYPE 12) with no position yet: its size
-   * in form pixels. The export places it below the controls before it.
+   * in native coordinate units. The export places it below the controls before it.
    */
   imageSize?: { width: number; height: number } | null;
+  /** Native image geometry. Absent preserves legacy coordinates 1:1.
+   * DLU calibration is analyst supplied because the native font/DPI varies. */
+  imageGeometry?: { unit: "legacy" | "dialog-units"; pixelsPerUnitX: number; pixelsPerUnitY: number };
   /** Every PVC_NAME → PVC_VALUE preference on the input, verbatim. */
   preferences: Record<string, string>;
   /**
@@ -1849,6 +1862,9 @@ export interface BuilderRelativeDateConstraint {
 export type BuilderDocumentValueKind = "text" | "number" | "date" | "boolean" | "choice";
 
 export interface BuilderDocumentBinding {
+  /** Exact values a source check button saves (derived from its template). */
+  onValue?: string;
+  offValue?: string;
   source: "xfa";
   /** Data path in the document, e.g. /form1[1]/Page1[1]/Union[1]. */
   path: string;

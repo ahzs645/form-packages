@@ -363,6 +363,10 @@ const evaluateLayoutTableFormula = (expression, data, currentFieldId) => {
 
 const formatLayoutTableComputedValue = (value, precision, resultType) => {
   if (value == null || value === "") return ""
+  // Text formulas can return classification letters, dates or identifiers.
+  // Preserve those strings, including leading zeroes; precision formats only
+  // actual numeric results.
+  if (resultType === "text" && typeof value === "string") return value
   const numeric = Number(value)
   if (!Number.isFinite(numeric)) return ""
   if (Number.isFinite(precision) && precision >= 0) {
@@ -524,8 +528,39 @@ const renderLayoutTableField = (sourceCell, readOnly, data, setFieldValue) => {
           onChange={(_, checked) => setFieldValue(fieldId, Boolean(checked))}
         />
       )
-    case "number":
-      return <Numeric {...sharedProps} {...labelProp} typeNumber={cell.numberConfig?.typeNumber} storeAsNumber={cell.numberConfig?.storeAsNumber} suffix={cell.numberConfig?.suffix} spinButtonProps={cell.numberConfig?.spinButtonProps || { min: cell.min, max: cell.max, step: cell.step }} />
+    case "number": {
+      // Checks are lowered through the neutral validation reader by the
+      // exporter. Numeric's text mode refuses invalid changes. Its SpinButton
+      // onValidate has a different contract: a normalized numeric string,
+      // not an error message (SMOIS main.a75cc6b1.chunk.js, Numeric/gt).
+      const checks = cell.validationChecks
+      const number = checks?.number
+      const onValidate = checks && typeof FormLogicKit !== "undefined" && FormLogicKit?.validate
+        ? (value) => FormLogicKit.validate([{ fieldId, label, required: false, checks }], { ...data, [fieldId]: value })[0]?.message || ""
+        : undefined
+      const spinButtonProps = {
+        ...(cell.numberConfig?.spinButtonProps || { min: cell.min, max: cell.max, step: cell.step }),
+        ...(typeof number?.min === "number" ? { min: number.min } : {}),
+        ...(typeof number?.max === "number" ? { max: number.max } : {}),
+      }
+      const buttonControls = cell.numberConfig?.buttonControls === true
+      // MOIS's Numeric casts an empty string to Number("") === 0. Table
+      // answers instead keep an optional blank as null and preserve zero as
+      // zero. The real host calls onChange(event, value); preview Numeric
+      // calls onChange(value), so normalize both supported call shapes.
+      const onChange = (eventOrValue, nextValue) => {
+        const value = nextValue !== undefined ? nextValue : typeof eventOrValue === "string" || typeof eventOrValue === "number" ? eventOrValue : ""
+        const raw = String(value ?? "")
+        if (!buttonControls && onValidate?.(raw)) return
+        setFieldValue(fieldId, raw.trim() === "" ? null : cell.numberConfig?.storeAsNumber ? Number(raw) : raw)
+      }
+      const inline = sharedProps.labelPosition === "none"
+      return (
+        <div data-layout-table-numeric data-layout-table-numeric-inline={inline ? "" : undefined} style={{ textAlign: cell.align }}>
+          <Numeric {...sharedProps} {...labelProp} inline={inline} value={data?.[fieldId] ?? ""} onChange={onChange} typeNumber={cell.numberConfig?.typeNumber} buttonControls={buttonControls} storeAsNumber={false} suffix={cell.numberConfig?.suffix} spinButtonProps={spinButtonProps} onValidate={buttonControls ? undefined : onValidate} />
+        </div>
+      )
+    }
     case "date":
       return <DateSelect {...sharedProps} {...labelProp} dateFormat={cell.dateConfig?.dateFormat} />
     case "time":
@@ -734,10 +769,9 @@ function LayoutTable({
   }
   const setFieldValue = (fieldId, value) => {
     if (typeof setActiveData !== "function") return
-    setActiveData((draft) => {
-      if (!draft) return { [fieldId]: value }
-      draft[fieldId] = value
-    })
+    // Real MOIS useActiveData(selector) accepts a partial object, not a draft
+    // callback (SMOIS main.a75cc6b1.chunk.js, module 10, c(e)).
+    setActiveData({ [fieldId]: value })
   }
 
   React.useEffect(() => {
@@ -754,42 +788,36 @@ function LayoutTable({
       && seededDefaults.every((entry) => fieldHasSavedValue(activeData, entry.fieldId))) return
     const now = new Date()
 
-    setActiveData((draft) => {
-      if (!draft) {
-        const nextData = {}
-        seededDefaults.forEach((entry) => {
-          const value = resolveLayoutTableDefault(entry, now)
-          if (value !== undefined) nextData[entry.fieldId] = value
-        })
-        boundCells.forEach((cell) => {
-          nextData[cell.fieldId] = resolveLayoutTableSourceValue(cell, {}, sd)
-        })
-        computedCells.forEach((cell) => {
-          nextData[cell.fieldId] = computeLayoutTableCellValue(cell, nextData, formulaFieldTypes)
-        })
-        return nextData
-      }
-      seededDefaults.forEach((entry) => {
-        if (fieldHasSavedValue(draft, entry.fieldId)) return
-        const value = resolveLayoutTableDefault(entry, now)
-        if (value !== undefined) draft[entry.fieldId] = value
-      })
-      boundCells.forEach((cell) => {
-        if (sourceBindingIsInitial(cell) && fieldHasSavedValue(draft, cell.fieldId)) return
-        const nextValue = resolveLayoutTableSourceValue(cell, draft, sd)
-        if (draft[cell.fieldId] !== nextValue) draft[cell.fieldId] = nextValue
-      })
-      computedCells.forEach((cell) => {
-        const nextValue = computeLayoutTableCellValue(cell, draft, formulaFieldTypes)
-        if (draft[cell.fieldId] !== nextValue) draft[cell.fieldId] = nextValue
-      })
+    const nextData = { ...(activeData || {}) }
+    seededDefaults.forEach((entry) => {
+      if (fieldHasSavedValue(nextData, entry.fieldId)) return
+      const value = resolveLayoutTableDefault(entry, now)
+      if (value !== undefined) nextData[entry.fieldId] = value
     })
+    boundCells.forEach((cell) => {
+      if (sourceBindingIsInitial(cell) && fieldHasSavedValue(nextData, cell.fieldId)) return
+      nextData[cell.fieldId] = resolveLayoutTableSourceValue(cell, nextData, sd)
+    })
+    computedCells.forEach((cell) => {
+      nextData[cell.fieldId] = computeLayoutTableCellValue(cell, nextData, formulaFieldTypes)
+    })
+    // Send changed answers only: MOIS merges this object into the selected
+    // scope, preserving other tables' writes and reaching an idempotent state.
+    const updates = {}
+    Object.keys(nextData).forEach((fieldId) => {
+      if (nextData[fieldId] !== activeData?.[fieldId]) updates[fieldId] = nextData[fieldId]
+    })
+    if (Object.keys(updates).length) setActiveData(updates)
   }, [setActiveData, sd, tableRows, readOnly, JSON.stringify(activeData)])
 
   if (visibleRows.length === 0) return null
 
   return (
     <div id={id} data-layout-table style={{ width: fullWidth ? "100%" : undefined, pageBreakInside: pageBreakInsideAvoid ? "avoid" : undefined }}>
+      {/* Real MOIS Numeric ignores preview's inline prop. Scope the margin
+          adaptation to our unlabeled table answers; labeled controls retain
+          their host LayoutItem spacing. Input text follows authored alignment. */}
+      <style>{"[data-layout-table] [data-layout-table-numeric-inline] > div { margin-top: 0 !important; margin-bottom: 0 !important; } [data-layout-table] [data-layout-table-numeric] input { text-align: inherit; }"}</style>
       {label ? <div style={{ fontWeight: 600, marginBottom: 4 }}>{label}</div> : null}
       <table
         style={{

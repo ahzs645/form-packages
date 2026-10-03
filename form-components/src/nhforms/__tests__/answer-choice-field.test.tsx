@@ -72,6 +72,16 @@ describe("AnswerChoiceField", () => {
   };
   const labels = () => [...container!.querySelectorAll(".ms-Checkbox-text")].map((entry) => entry.textContent?.trim());
 
+  it("clears an optional dropdown answer without using an empty-code option", () => {
+    data = { mark: { code: "O", display: "O" } };
+    mount({ fieldId: "mark", label: "Hour mark", presentation: "dropdown", allowClear: true, answers: [{ code: "O", display: "O" }, { code: "✓", display: "✓" }, { code: "X", display: "X" }] });
+    const clear = container!.querySelector<HTMLButtonElement>('button[aria-label="Clear answer"]');
+    expect(clear).not.toBeNull();
+    act(() => clear!.click());
+    expect(data.mark).toBeNull();
+    expect(container!.querySelector('button[aria-label="Clear answer"]')).toBeNull();
+  });
+
   it("clears the others when an exclusive answer is chosen, and clears it when another is", () => {
     mount({ fieldId: "given", label: "Information Given By", selectionType: "multiple", answers });
     act(() => box("Self").click());

@@ -186,6 +186,12 @@ describe("dialects", () => {
     expect(printFormula(parseFormulaOrThrow("{a} + {b}"))).toBe("{a} + {b}");
   });
 
+  it("checks raw answer presence in guarded LayoutTable arithmetic", () => {
+    const parsed = parseFormula('iif(hasValue([allowance]), [monthly] * 12 + [allowance], "")', { dialect: "layoutTable" });
+    expect(parsed.errors).toEqual([]);
+    expect(printFormula(parsed.formula!)).toBe('iif(hasValue([allowance]), coalesce([monthly], 0) * 12 + coalesce([allowance], 0), "")');
+  });
+
   it("stores the resultType option", () => {
     expect(parseFormulaOrThrow("[a] + 1", { resultType: "number" })).toEqual({
       v: 1,

@@ -2691,13 +2691,13 @@ const FormulaKit = (() => {
     return { kind: "call", fn: "sum", args: ids.map((id) => ({ kind: "ref", id })) };
   }
   function missingAsZero(node) {
-    const wrap2 = (current, insideSum) => {
+    const wrap2 = (current, preserveReference) => {
       if (current.kind === "ref") {
-        return insideSum ? current : { kind: "call", fn: "coalesce", args: [current, { kind: "number", value: 0 }] };
+        return preserveReference ? current : { kind: "call", fn: "coalesce", args: [current, { kind: "number", value: 0 }] };
       }
       if (current.kind === "call") {
-        const sum = current.fn === "sum";
-        return { kind: "call", fn: current.fn, args: current.args.map((arg) => wrap2(arg, sum)) };
+        const rawReference = current.fn === "sum" || current.fn === "hasValue";
+        return { kind: "call", fn: current.fn, args: current.args.map((arg) => wrap2(arg, rawReference)) };
       }
       return mapFormulaChildren(current, (child) => wrap2(child, false));
     };
