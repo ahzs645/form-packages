@@ -1,4 +1,4 @@
-const { useEffect, useMemo } = React
+const { useEffect, useMemo, useState } = React
 
 // The formula engine lives in FormulaKit, generated from @webforms/form-model's
 // reference evaluator (shared with table formula columns and subform
@@ -120,6 +120,18 @@ const _toEditableComputedValue = (value) => {
   return _toComparableValue(value) === value ? String(value) : String(_toComparableValue(value) ?? "")
 }
 
+// A number result's stored value (the field's schema is number-or-null):
+// numeric text becomes the number, and blank, unfinished ("-", "7e") or
+// non-numeric text, a yes/no or an empty result is null.
+const _toStoredComputedNumber = (value) => {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null
+  if (typeof value !== "string") return null
+  const text = value.trim()
+  if (!/^[-+]?(\d+\.?\d*|\.\d+)$/.test(text)) return null
+  const number = Number(text)
+  return Number.isFinite(number) ? number : null
+}
+
 const _normalizeComputedDisplayStyle = (displayStyle) =>
   displayStyle === "compact" || displayStyle === "prominent" ? displayStyle : "field"
 
@@ -169,8 +181,8 @@ const ComputedValuePresentation = ({
       ? { onRenderSuffix: renderSuffix }
       : displaySuffix ? { suffix: displaySuffix } : undefined
     if (numeric) {
-      // Stored as text: Numeric's storeAsNumber would turn "7." into 7 while
-      // typing. Formulas read numeric text as numbers.
+      // Numeric's storeAsNumber would turn "7." into 7 while typing, so the
+      // box keeps the typed text and ComputedField saves the number itself.
       return (
         <Numeric
           fieldId={fieldId}
@@ -345,12 +357,10 @@ const ComputedField = ({
     // A partial total must not reach the patient record, so an incomplete
     // calculation persists null regardless of which incomplete style is used.
     if (isIncomplete) return null
+    if (resultType !== "text") return _toStoredComputedNumber(roundedValue)
     if (typeof roundedValue === "string" || typeof roundedValue === "boolean") return roundedValue
     if (!Number.isFinite(roundedValue)) return null
-    if (resultType === "text") {
-      return _toDisplayValue(roundedValue, precision, "text")
-    }
-    return roundedValue
+    return _toDisplayValue(roundedValue, precision, "text")
   }, [isIncomplete, precision, resultType, roundedValue])
 
   const displayValue = useMemo(() => {
@@ -364,7 +374,13 @@ const ComputedField = ({
   }, [incompleteBehavior, incompleteText, isIncomplete, precision, resultType, roundedValue])
 
   const currentValue = valuesByFieldId?.[fieldId]
-  const enteredDisplayValue = _toEditableComputedValue(currentValue)
+  // What was typed into a number result's box ("7." while typing 7.5), shown
+  // while the saved number still matches it; the saved value is the number.
+  const [typedOverride, setTypedOverride] = useState(null)
+  const showsTypedOverride = typedOverride !== null
+    && resultType !== "text"
+    && _toStoredComputedNumber(typedOverride.text) === (currentValue ?? null)
+  const enteredDisplayValue = showsTypedOverride ? typedOverride.text : _toEditableComputedValue(currentValue)
   const renderedValue = policy === "always-calculated" ? displayValue : enteredDisplayValue
   const externallyReadOnly = readOnly === true
   const canEdit = policy !== "always-calculated" && !externallyReadOnly
@@ -432,10 +448,14 @@ const ComputedField = ({
     // A custom onChange replaces the native control's default storage handler,
     // so persist the entered value and its ownership flag together.
     const enteredValue = changeArgs.length > 1 ? changeArgs[1] : changeArgs[0]
+    const enteredText = enteredValue == null ? "" : String(enteredValue)
+    // A number result saves the number (null when blank), as its schema needs.
+    const savedValue = resultType === "text" ? enteredText : _toStoredComputedNumber(enteredText)
+    if (resultType !== "text") setTypedOverride({ text: enteredText })
     setFd((draft) => {
       if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
       if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}
-      draft.field.data[fieldId] = enteredValue == null ? "" : enteredValue
+      draft.field.data[fieldId] = savedValue
       const stateContainer = draft.field.data.__computedFieldState && typeof draft.field.data.__computedFieldState === "object"
         ? draft.field.data.__computedFieldState
         : {}
@@ -450,6 +470,7 @@ const ComputedField = ({
 
   const useCalculatedValue = () => {
     if (!fieldId || !canEdit) return
+    setTypedOverride(null)
     setFd((draft) => {
       if (!draft.field) draft.field = { data: {}, status: {}, history: [] }
       if (!draft.field.data || typeof draft.field.data !== "object") draft.field.data = {}

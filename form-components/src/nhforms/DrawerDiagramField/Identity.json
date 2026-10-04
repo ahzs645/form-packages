@@ -1,0 +1,16 @@
+{
+  "name": "DrawerDiagramField",
+  "title": "Drawer diagram",
+  "description": "A drawing made in Drawer: images, numbered sites marked on one or more images, anatomy callouts, legend and views. Mark sites, give each site a value, or show it as an image.",
+  "version": {
+    "major": 1,
+    "minor": 0,
+    "patch": 0
+  },
+  "type": "component",
+  "owner": "Northern Health",
+  "components": [
+    "DialogKit",
+    "FormSessionRuntime"
+  ]
+}

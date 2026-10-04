@@ -243,8 +243,11 @@ describe("LayoutTable cell defaults", () => {
     const Harness = () => {
       const [current, set] = React.useState<AnyRecord>(saved);
       state = current;
+      // Real MOIS useActiveData(selector) merges a partial object into the
+      // section (SMOIS main.a75cc6b1.chunk.js, module 10); replacing it would
+      // drop saved answers and re-seed them forever.
       const setState = (updater: unknown) =>
-        set((previous) => (typeof updater === "function" ? produce(previous, updater as (draft: AnyRecord) => void) : (updater as AnyRecord)));
+        set((previous) => (typeof updater === "function" ? produce(previous, updater as (draft: AnyRecord) => void) : { ...previous, ...(updater as AnyRecord) }));
       return h(ActiveDataContext.Provider, { value: [current, setState] }, h(LayoutTable, { id: "t", rows, ...props }));
     };
     container = document.createElement("div");

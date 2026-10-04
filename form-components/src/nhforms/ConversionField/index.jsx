@@ -21,11 +21,11 @@ const _readConversionPath = (root, path) => {
   return current
 }
 
+// A container (a subform entry, a table row editor) passes the values it owns
+// as valueRoot; an unanswered value there is blank, never the form's answer
+// with the same id.
 const _readConversionValue = (fd, fieldId, valueRoot) => {
-  if (valueRoot && typeof valueRoot === "object") {
-    const pathValue = _readConversionPath(valueRoot, fieldId)
-    if (pathValue !== undefined) return pathValue
-  }
+  if (valueRoot && typeof valueRoot === "object") return _readConversionPath(valueRoot, fieldId) ?? ""
   return fd?.field?.data?.[fieldId] ?? fd?.formData?.[fieldId] ?? ""
 }
 

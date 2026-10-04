@@ -1,9 +1,9 @@
 {
   "name": "HotspotMapField",
   "title": "Hotspot Map Field",
-  "description": "Generic interactive image/SVG hotspot map with selectable regions and selection counters",
+  "description": "Interactive image/SVG hotspot map with selectable regions, counters, number boxes and annotations, on the shared Drawer selection surface",
   "version": {
-    "major": 1,
+    "major": 2,
     "minor": 0,
     "patch": 0
   },
@@ -22,5 +22,9 @@
     "minor": 26,
     "patch": 12
   },
-  "components": ["DialogKit"]
+  "components": [
+    "DialogKit",
+    "DrawerDiagramField",
+    "FormSessionRuntime"
+  ]
 }

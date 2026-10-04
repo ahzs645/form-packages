@@ -137,14 +137,56 @@ describe("ComputedField stored-value synchronization", () => {
     const harness = renderComputedField("calculated-until-overridden");
     await harness.render();
     await harness.editControl({ target: { value: "2" } }, "2");
-    expect(harness.getState().field.data.result).toBe("2");
+    // A number result saves the number: its schema is number-or-null.
+    expect(harness.getState().field.data.result).toBe(2);
     expect(harness.getState().field.data.__computedFieldState.result.overridden).toBe(true);
     await harness.setFieldValue("source", 30);
-    expect(harness.getState().field.data.result).toBe("2");
+    expect(harness.getState().field.data.result).toBe(2);
     await harness.editControl({}, "");
-    expect(harness.getState().field.data.result).toBe("");
+    expect(harness.getState().field.data.result).toBeNull();
     expect(harness.getState().field.data.__computedFieldState.result.overridden).toBe(true);
     await harness.unmount();
+  });
+
+  it("keeps what is typed in the box while saving the number", async () => {
+    const harness = renderComputedField("calculated-until-overridden");
+    await harness.render();
+    expect(harness.getState().field.data.result).toBe(20);
+    await harness.editControl({}, "7.");
+    expect(harness.getRenderedValue()).toBe("7.");
+    expect(harness.getState().field.data.result).toBe(7);
+    await harness.editControl({}, "7.5");
+    expect(harness.getState().field.data.result).toBe(7.5);
+    // an unfinished entry shows as typed and saves nothing yet
+    await harness.editControl({}, "-");
+    expect(harness.getRenderedValue()).toBe("-");
+    expect(harness.getState().field.data.result).toBeNull();
+    // a saved value changed elsewhere wins over the typed text
+    await harness.replaceStoredValue(12);
+    expect(harness.getRenderedValue()).toBe("12");
+    await harness.unmount();
+  });
+
+  it("keeps a text result's override as text", async () => {
+    const harness = renderComputedField("calculated-until-overridden", { componentProps: { resultType: "text" } });
+    await harness.render();
+    await harness.editControl({}, "07");
+    expect(harness.getState().field.data.result).toBe("07");
+    await harness.unmount();
+  });
+
+  it("saves a number result only when the formula gives a number", async () => {
+    const numericText = renderComputedField("always-calculated", { expression: "iif(source > 5, '12', '3')" });
+    await numericText.render();
+    expect(numericText.getState().field.data.result).toBe(12);
+    await numericText.unmount();
+    // Text in a number field cannot be saved; it still shows, and the builder
+    // reports the formula (a number calculation that gives text).
+    const words = renderComputedField("always-calculated", { expression: "iif(source > 5, 'HIGH', 'LOW')" });
+    await words.render();
+    expect(words.getState().field.data.result).toBeNull();
+    expect(words.getRenderedValue()).toBe("HIGH");
+    await words.unmount();
   });
 
   it("also persists the preview single-value callback including zero", async () => {

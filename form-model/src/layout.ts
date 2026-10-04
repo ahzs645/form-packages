@@ -1019,6 +1019,14 @@ export interface SubformFormDataOutput {
   totalId?: string;
   valueTemplate?: string;
   mode?: "replace" | "append";
+  /**
+   * What the target stores, set by the MOIS export from the target field:
+   * the copied value is converted to it (3 for a number field, a Coding for
+   * a single choice). Absent, the value is copied as it is.
+   */
+  targetType?: "number" | "text" | "coding" | "codings";
+  /** A choice target's option wording by stored code, for the Coding's display. */
+  targetOptions?: Record<string, string>;
 }
 
 export interface SubformScoringConfig {

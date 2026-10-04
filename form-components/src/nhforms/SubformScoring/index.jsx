@@ -838,6 +838,46 @@ const _buildDataEntrySnapshot = (fields, formData, externalRoot) => {
   return snapshot
 }
 
+// A copied value in the shape its target stores, from the export's
+// targetType: 3 (not "3") for a number field, a Coding for a single choice
+// ({ code: "4", display: "4" }; targetOptions maps a code to its wording),
+// Codings for a multiple choice, text for a text field. Without a targetType
+// (a hand-written config) the value is copied as it is.
+const _toFormDataTarget = (value, output) => {
+  const targetType = output?.targetType
+  if (!targetType || value === undefined) return value
+  const blank = value === null || value === "" || (Array.isArray(value) && value.length === 0)
+  const keyOf = (entry) => (entry && typeof entry === "object" ? entry.code ?? entry.value ?? entry.display : entry)
+  const textOf = (entry) => {
+    const key = keyOf(entry)
+    return key === undefined || key === null ? "" : String(key).trim()
+  }
+  const options = output.targetOptions && typeof output.targetOptions === "object" ? output.targetOptions : {}
+  const toCoding = (entry) => {
+    if (entry && typeof entry === "object" && typeof entry.code === "string") return entry
+    const code = textOf(entry)
+    if (!code) return null
+    const byWording = Object.keys(options).find((key) => String(options[key]).toLowerCase() === code.toLowerCase())
+    const finalCode = Object.prototype.hasOwnProperty.call(options, code) ? code : byWording || code
+    return { code: finalCode, display: String(options[finalCode] ?? finalCode) }
+  }
+  switch (targetType) {
+    case "number": {
+      if (blank) return null
+      const number = typeof value === "number" ? value : Number(textOf(value))
+      return Number.isFinite(number) ? number : null
+    }
+    case "coding":
+      return blank ? null : toCoding(Array.isArray(value) ? value[0] : value)
+    case "codings":
+      return blank ? null : (Array.isArray(value) ? value : [value]).map(toCoding).filter(Boolean)
+    case "text":
+      return blank ? "" : Array.isArray(value) ? value.map(textOf).filter(Boolean).join(", ") : textOf(value)
+    default:
+      return value
+  }
+}
+
 const _buildSubformFormDataWrites = (outputs, context) => {
   if (!Array.isArray(outputs) || outputs.length === 0) return []
   const allValues = {
@@ -861,8 +901,18 @@ const _buildSubformFormDataWrites = (outputs, context) => {
     if (source === "data-entry") value = dataEntrySnapshot
     else if (source === "calculation") value = context?.calculatedExpressions?.[output.calculationId]
     else if (source === "total") value = context?.calculatedTotals?.[output.totalId]?.score
-    else if (source === "template") value = _resolveObservationTemplate(output.valueTemplate, allValues)
+    else if (source === "template") {
+      // A template that is one placeholder copies the value itself when the
+      // export says what the target stores, so it can be converted below.
+      const single = output.targetType && typeof output.valueTemplate === "string"
+        ? /^\s*\{\{\s*([^{}\s]+)\s*\}\}\s*$/.exec(output.valueTemplate)
+        : null
+      value = single
+        ? (Object.prototype.hasOwnProperty.call(allValues, single[1]) ? allValues[single[1]] : _resolvePathValue(allValues, single[1]))
+        : _resolveObservationTemplate(output.valueTemplate, allValues)
+    }
     else value = allValues[output.fieldId]
+    if (source !== "data-entry") value = _toFormDataTarget(value, output)
     if (value === undefined) return []
     return [{
       targetPath: String(output.targetPath),
@@ -2736,7 +2786,8 @@ const SubformScoringInner = ({
           allowNegative={field.allowNegative === true}
           required={required}
           readOnly={isReadOnly}
-          valueRoot={hasExternalDataEntryStore ? dataEntryValueRoot : undefined}
+          // The entry's own values: the container's store, else this subform's session.
+          valueRoot={hasExternalDataEntryStore ? dataEntryValueRoot : (fd?.field?.data || {})}
           onValueChange={setDataEntryValue}
         />
       )
