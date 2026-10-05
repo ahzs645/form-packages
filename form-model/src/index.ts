@@ -3663,6 +3663,7 @@ export * from "./answer-codings";
 export * from "./targets";
 export * from "./validation";
 export * from "./field-group";
+export * from "./scoring-shape";
 export * from "./structure";
 export * from "./matrix";
 export * from "./translations";
