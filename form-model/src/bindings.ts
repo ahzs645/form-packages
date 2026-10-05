@@ -419,6 +419,12 @@ function identifyObservation(
     for (const coding of [...codings]) {
       const identity = catalog.observationIdentity(coding);
       if (!identity) continue;
+      // An identity naming another code in a system the observation already
+      // has is a different observation (the generic BMI LOINC is MOIS 951,
+      // not the pre-pregnancy BMI that also carries it): take nothing from it.
+      const conflicts = identity.codings?.some((other) =>
+        codings.some((existing) => existing.system === other.system && existing.code !== other.code.trim()));
+      if (conflicts) continue;
       identity.codings?.forEach(add);
       concept ??= nonEmptyString(identity.concept);
       catalogUnit ??= nonEmptyString(identity.unit);

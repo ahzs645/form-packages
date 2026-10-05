@@ -289,6 +289,22 @@ describe("readFieldBinding", () => {
     expect(inferFieldBindingShape({ fieldId: "x", inputType: "text" })).toBe("layoutCellField");
   });
 
+  it("takes nothing from an identity that names another code in a system the observation has", () => {
+    // A pre-pregnancy weight (MOIS 34161) charted under the generic weight LOINC,
+    // which the catalog gives to MOIS 22732 and the weight concept.
+    const catalog: FieldBindingCatalog = {
+      ...CATALOG,
+      observationIdentity: (coding) =>
+        coding.system === MOIS && coding.code === "34161" ? { codings: [{ code: "29463-7", system: LOINC }] }
+          : CATALOG.observationIdentity!(coding),
+    };
+    const field = { id: "w", type: "number", moisOutput: { enabled: true, kind: "observation", observationCode: "34161", valueType: "NUMERIC" } };
+    const once = readFieldBinding(field, { catalog });
+    expect(once?.write).toEqual({ observation: { code: "29463-7", system: LOINC, codings: [{ code: "34161", system: MOIS }], valueType: "NUMERIC" }, when: "submit" });
+    // Reading it again (a stored binding) still names one observation, with no concept.
+    expect(readFieldBinding({ ...field, binding: once }, { catalog })?.write).toEqual(once?.write);
+  });
+
   it("resolves the MOIS paths a read names", () => {
     expect(moisReadPathsOf({ concept: "patient.phn", mode: "initial", presentation: "shown" }, CATALOG)).toEqual(["patient.healthNumber"]);
     expect(moisReadPathsOf({ observation: WEIGHT_OBSERVATION, mode: "initial", presentation: "shown" })).toEqual(["patient.observations[observationCode=22732].value"]);
