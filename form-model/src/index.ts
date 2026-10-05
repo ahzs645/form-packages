@@ -3671,3 +3671,4 @@ export {
 } from "./session";
 
 export * from "./document-layout";
+export * from "./subform-pdf-destinations";
