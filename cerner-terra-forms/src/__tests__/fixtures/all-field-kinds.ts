@@ -1,4 +1,4 @@
-import type { BuilderField } from "@webforms/form-model";
+import { storedTableConfig, type BuilderField } from "@webforms/form-model";
 
 /**
  * Coverage fixture for the Cerner Terra render target.
@@ -453,7 +453,7 @@ export const allFieldKindsFixture: BuilderField[] = [
     label: "Feeding & Output Log",
     type: "table",
     width: "full",
-    tableConfig: {
+    tableConfig: storedTableConfig({
       mode: "inline",
       orientation: "horizontal",
       allowAddRows: true,
@@ -490,7 +490,7 @@ export const allFieldKindsFixture: BuilderField[] = [
         { id: "latch_adequate", label: "Latch adequate", type: "booleanYesNo", showInTable: true, showInModal: true },
       ],
       uniqueBy: ["feed_time"],
-    },
+    }),
   },
 
   // layoutTable — static printable grid with embedded inputs

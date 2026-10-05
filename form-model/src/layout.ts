@@ -1345,7 +1345,12 @@ export interface ModuleConfig {
   kind?: "simple" | "scoring" | "subform-scoring" | "subform-data-entry" | "subform-calculator" | "customCode";
   scoring?: ScoringModuleConfig;
   subformScoring?: SubformScoringConfig;
-  subformDataEntry?: SubformDataEntryConfig;
+  /**
+   * A data-entry subform, its fields and calculations stored as a field group
+   * (field-group.ts). Read the compact config the runtime uses through
+   * `subformDataEntryOf`; write it through `withSubformDataEntry`.
+   */
+  subformDataEntry?: import("./field-group").BuilderSubformDataEntry;
   customCode?: CustomCodeModuleConfig;
   /**
    * Explicit override: when `false`, this module renders alongside the section's

@@ -18,7 +18,7 @@ import {
   TableRow,
   Textarea,
 } from "@webforms/cerner-terra";
-import type { BuilderChoiceOption, BuilderField } from "@webforms/form-model";
+import { tableColumnsOf, type BuilderChoiceOption, type BuilderField } from "@webforms/form-model";
 import React from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -340,7 +340,7 @@ export const TerraField: React.FC<TerraFieldProps> = ({
           />
         );
       case "table": {
-        const columns = field.tableConfig?.columns ?? [];
+        const columns = tableColumnsOf(field.tableConfig);
         const rowCount = Math.max(1, field.tableConfig?.initialRows ?? 1);
         const rows = Array.from({ length: rowCount }, (_, index) => index);
         return (

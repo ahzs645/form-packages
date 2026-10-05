@@ -6,6 +6,7 @@
 import type {
   BuilderChoiceOption,
   BuilderField,
+  BuilderTableColumn,
   BuilderFieldMoisConfig,
   BuilderFieldSourceConfig,
   BuilderLayoutTableCell,
@@ -93,8 +94,6 @@ export interface WidgetGeometry {
 
 export type TableChoiceOption = BuilderChoiceOption;
 
-/** One column of a builder table, as stored on `BuilderField.tableConfig.columns`. */
-type BuilderTableColumn = NonNullable<BuilderField["tableConfig"]>["columns"][number];
 
 /** A builder table column plus the keys only the parsed projection carries. */
 export interface TableColumn extends BuilderTableColumn {
@@ -143,7 +142,8 @@ export type ParsedMoisOutputMapping = BuilderMoisOutputMapping & {
 type BuilderTableConfig = NonNullable<BuilderField["tableConfig"]>;
 
 /** A builder table config with the parsed projection's defaults applied. */
-export type ParsedTableConfig = Omit<BuilderTableConfig, "columns" | "allowAddRows" | "allowRemoveRows"> & {
+/** The parsed (export-side) copy keeps the column view of the table's group. */
+export type ParsedTableConfig = Omit<BuilderTableConfig, "group" | "allowAddRows" | "allowRemoveRows"> & {
   columns: TableColumn[];
   allowAddRows: boolean;
   allowRemoveRows: boolean;
@@ -380,6 +380,7 @@ export interface ParsedField {
   dateWithTime?: boolean;
   dateRange?: boolean;
   dateFormat?: NonNullable<BuilderField["dateConfig"]>["dateFormat"];
+  dateCalendarView?: NonNullable<BuilderField["dateConfig"]>["calendarView"];
   documentOutputFormat?: NonNullable<BuilderField["dateConfig"]>["documentOutputFormat"];
   disablePastDates?: boolean;
   disableFutureDates?: boolean;

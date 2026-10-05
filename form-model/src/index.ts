@@ -2151,6 +2151,120 @@ export interface BuilderLibraryDefinition {
   };
 }
 
+/**
+ * One column of a table as its runtime and exporters read it. A table stores
+ * its fields as a field group (field-group.ts); `tableColumnsOf` gives this view.
+ */
+export interface BuilderTableColumn {
+  id: string;
+  label: string;
+  type: BuilderTableColumnType;
+  /** Original FHIR Questionnaire child item for lossless group/table round-trips. */
+  fhirConfig?: BuilderFhirConfig | null;
+  booleanLabels?: { on: string; off: string } | null;
+  prefill?: FieldPrefillValue;
+  /** The column's default answer for a new row (see defaults.ts); `prefill` is its legacy mirror. */
+  defaultAnswer?: BuilderDefaultAnswer | null;
+  /** Date columns only: pair the date picker with a time input (DateTimeSelect). */
+  withTime?: boolean;
+  dateConfig?: BuilderField["dateConfig"];
+  textareaConfig?: BuilderField["textareaConfig"];
+  textConfig?: BuilderField["textConfig"];
+  useToggleSwitch?: boolean;
+  numberConfig?: {
+    typeNumber: "number" | "decimal" | "year";
+    suffix?: string;
+    buttonControls?: boolean;
+    storeAsNumber?: boolean;
+    spinButtonProps?: {
+      min?: number;
+      max?: number;
+      step?: number;
+    };
+  } | null;
+  options?: BuilderChoiceOption[] | null;
+  /** For a single choice backed by separate PDF checkbox fields, map each option key to its row path. */
+  choiceBooleanTargets?: Record<string, string> | null;
+  choiceStyle?:
+    | "dropdown"
+    | "radio"
+    | "multiselect"
+    | "checkbox"
+    | "simpleCodeSelect"
+    | "findCode";
+  codeSystem?: string | null;
+  showOtherOption?: boolean;
+  dataPath?: string | null;
+  showInTable?: boolean;
+  showInModal?: boolean;
+  /** Optional heading that groups adjacent fields in the MOIS row modal. */
+  modalSection?: string;
+  /**
+   * The row cannot be saved while this column is shown and empty. A column
+   * hidden by its visibility rule is never required. Edited through the
+   * regular field inspector (lib/tables/table-column-fields.ts), which
+   * folds the two legacy stores below into this flag.
+   */
+  required?: boolean;
+  /** Row-save message when a required column is empty (default "<label> is required."). */
+  requiredMessage?: string;
+  /** Hint shown with the column's input in the row editor. */
+  helpText?: string;
+  placeholder?: string;
+  /**
+   * Legacy alias of `required` (same meaning). Older runtimes only read
+   * this, so the exporter keeps emitting it. The other legacy store is a
+   * `modalEditorConfig.validationConfig.requiredPaths` entry for the
+   * column's row path.
+   */
+  requiredWhenVisible?: boolean;
+  computedValue?: {
+    mode: "template";
+    template: string;
+    sourcePaths?: string[];
+    emptyBehavior?: "omit" | "blank";
+    parts?: Array<
+      | { id?: string; kind: "text"; text: string }
+      | { id?: string; kind: "answer"; path: string }
+    >;
+  } | BuilderTableFormulaColumn | null;
+  /**
+   * Row-level rule: `controllerId` (and each additional condition's)
+   * names a sibling column by its row path (`dataPath || id`).
+   */
+  visibility?: BuilderVisibilityRule | null;
+  /** Which answers it offers, by condition (option-rules.ts); conditions may read chart facts. */
+  optionRules?: BuilderOptionRule[] | null;
+  /**
+   * Legacy MOIS read path picked for the column (a source-data path, which
+   * the row editor never read). readFieldBinding reads it as the binding's
+   * MOIS path; writeFieldBinding keeps it as the first path's mirror.
+   */
+  moisTargetId?: string | null;
+  /** The column's chart binding (see bindings.ts); `moisTargetId` is its legacy read mirror. */
+  binding?: BuilderFieldBinding | null;
+  /**
+   * For a column saved as an observation: the observation chosen by another
+   * column's answer in the same row (a blood pressure's position), keyed by
+   * that answer's option value. A blank or unlisted answer keeps the
+   * binding's own observation.
+   */
+  observationCodeBy?: TableObservationCodeBy | null;
+  /** Row-1 cell of `tableConfig.documentRowPath` (derived on load, never trusted from a package). */
+  documentBinding?: BuilderDocumentBinding | null;
+  stampConfig?: {
+    sourcePath?: string;
+    value?: string | number | boolean | null;
+    fallback?: string | number | boolean | null;
+    signedAtPath?: string | null;
+    buttonLabel?: string;
+    signedLabel?: string;
+    allowResign?: boolean;
+    showStatus?: boolean;
+    lockRowUntilPersisted?: boolean;
+  } | null;
+}
+
 export interface BuilderField {
   documentLayout?: import("./document-layout").DocumentLayout;
   fieldDefinition?: BuilderLibraryDefinition | null;
@@ -2350,114 +2464,12 @@ export interface BuilderField {
 
   // Table field config
   tableConfig?: {
-    columns: Array<{
-      id: string;
-      label: string;
-      type: BuilderTableColumnType;
-      /** Original FHIR Questionnaire child item for lossless group/table round-trips. */
-      fhirConfig?: BuilderFhirConfig | null;
-      booleanLabels?: { on: string; off: string } | null;
-      prefill?: FieldPrefillValue;
-      /** The column's default answer for a new row (see defaults.ts); `prefill` is its legacy mirror. */
-      defaultAnswer?: BuilderDefaultAnswer | null;
-      /** Date columns only: pair the date picker with a time input (DateTimeSelect). */
-      withTime?: boolean;
-      dateConfig?: BuilderField["dateConfig"];
-      textareaConfig?: BuilderField["textareaConfig"];
-      useToggleSwitch?: boolean;
-      numberConfig?: {
-        typeNumber: "number" | "decimal" | "year";
-        suffix?: string;
-        buttonControls?: boolean;
-        storeAsNumber?: boolean;
-        spinButtonProps?: {
-          min?: number;
-          max?: number;
-          step?: number;
-        };
-      } | null;
-      options?: BuilderChoiceOption[] | null;
-      /** For a single choice backed by separate PDF checkbox fields, map each option key to its row path. */
-      choiceBooleanTargets?: Record<string, string> | null;
-      choiceStyle?:
-        | "dropdown"
-        | "radio"
-        | "multiselect"
-        | "checkbox"
-        | "simpleCodeSelect"
-        | "findCode";
-      codeSystem?: string | null;
-      showOtherOption?: boolean;
-      dataPath?: string | null;
-      showInTable?: boolean;
-      showInModal?: boolean;
-      /** Optional heading that groups adjacent fields in the MOIS row modal. */
-      modalSection?: string;
-      /**
-       * The row cannot be saved while this column is shown and empty. A column
-       * hidden by its visibility rule is never required. Edited through the
-       * regular field inspector (lib/tables/table-column-fields.ts), which
-       * folds the two legacy stores below into this flag.
-       */
-      required?: boolean;
-      /** Row-save message when a required column is empty (default "<label> is required."). */
-      requiredMessage?: string;
-      /** Hint shown with the column's input in the row editor. */
-      helpText?: string;
-      placeholder?: string;
-      /**
-       * Legacy alias of `required` (same meaning). Older runtimes only read
-       * this, so the exporter keeps emitting it. The other legacy store is a
-       * `modalEditorConfig.validationConfig.requiredPaths` entry for the
-       * column's row path.
-       */
-      requiredWhenVisible?: boolean;
-      computedValue?: {
-        mode: "template";
-        template: string;
-        sourcePaths?: string[];
-        emptyBehavior?: "omit" | "blank";
-        parts?: Array<
-          | { id?: string; kind: "text"; text: string }
-          | { id?: string; kind: "answer"; path: string }
-        >;
-      } | BuilderTableFormulaColumn | null;
-      /**
-       * Row-level rule: `controllerId` (and each additional condition's)
-       * names a sibling column by its row path (`dataPath || id`).
-       */
-      visibility?: BuilderVisibilityRule | null;
-      /** Which answers it offers, by condition (option-rules.ts); conditions may read chart facts. */
-      optionRules?: BuilderOptionRule[] | null;
-      /**
-       * Legacy MOIS read path picked for the column (a source-data path, which
-       * the row editor never read). readFieldBinding reads it as the binding's
-       * MOIS path; writeFieldBinding keeps it as the first path's mirror.
-       */
-      moisTargetId?: string | null;
-      /** The column's chart binding (see bindings.ts); `moisTargetId` is its legacy read mirror. */
-      binding?: BuilderFieldBinding | null;
-      /**
-       * For a column saved as an observation: the observation chosen by another
-       * column's answer in the same row (a blood pressure's position), keyed by
-       * that answer's option value. A blank or unlisted answer keeps the
-       * binding's own observation.
-       */
-      observationCodeBy?: TableObservationCodeBy | null;
-      /** Row-1 cell of `tableConfig.documentRowPath` (derived on load, never trusted from a package). */
-      documentBinding?: BuilderDocumentBinding | null;
-      stampConfig?: {
-        sourcePath?: string;
-        value?: string | number | boolean | null;
-        fallback?: string | number | boolean | null;
-        signedAtPath?: string | null;
-        buttonLabel?: string;
-        signedLabel?: string;
-        allowResign?: boolean;
-        showStatus?: boolean;
-        lockRowUntilPersisted?: boolean;
-      } | null;
-    }>;
+    /**
+     * The table's fields, stored as a field group (field-group.ts). Read the
+     * columns the runtime and exporters use through `tableColumnsOf`; write
+     * them through `withTableColumns`.
+     */
+    group: import("./field-group").BuilderFieldGroup;
     mode?: BuilderTableMode;
     /**
      * `matrix`: each column is a question asked once, drawn as a row with its
@@ -2644,9 +2656,11 @@ export interface BuilderField {
     /** Retired time answer to merge into this date-time answer when reopening an older form. */
     legacyTimeFieldId?: string;
     dateRange?: boolean;
+    /** Picker presentation; month/year still saves a canonical calendar date. */
+    calendarView?: "day" | "monthYear";
     dateFormat?: "yyyy.MM.dd" | "dd/MM/yyyy" | "MM-dd-yyyy" | "yyyy-MM-dd";
     /** Format used when writing the answer into the original PDF or Word document. */
-    documentOutputFormat?: "stored" | "yyyy-MM-dd" | "yyyy.MM.dd" | "dd/MM/yyyy" | "MM/dd/yyyy" | "dd/MMM/yyyy" | "ddMMMyyyy" | "MMMM d, yyyy";
+    documentOutputFormat?: "stored" | "MM/yyyy" | "yyyy-MM-dd" | "yyyy.MM.dd" | "dd/MM/yyyy" | "MM/dd/yyyy" | "dd/MMM/yyyy" | "ddMMMyyyy" | "MMMM d, yyyy";
     disablePastDates?: boolean;
     disableFutureDates?: boolean;
     prefillToday?: boolean;
@@ -3641,6 +3655,7 @@ export * from "./chart-concepts";
 export * from "./option-rules";
 export * from "./targets";
 export * from "./validation";
+export * from "./field-group";
 export * from "./structure";
 export * from "./matrix";
 export * from "./translations";

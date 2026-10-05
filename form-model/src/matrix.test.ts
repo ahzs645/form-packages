@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { BuilderField } from "./index";
 import { isQuestionMatrixTable, readQuestionMatrix } from "./matrix";
+import { storedTableConfig } from "./field-group";
 import { readFormStructure, structureGroups } from "./structure";
 
 const table = (extra: Partial<NonNullable<BuilderField["tableConfig"]>> = {}, cerner?: BuilderField["cernerConfig"]): BuilderField => ({
   id: "grid",
   label: "Grid",
   type: "table",
-  tableConfig: {
+  tableConfig: storedTableConfig({
     initialRows: 1,
     maxRows: 1,
     allowAddRows: false,
@@ -18,7 +19,7 @@ const table = (extra: Partial<NonNullable<BuilderField["tableConfig"]>> = {}, ce
       { id: "c", label: "Seen", type: "booleanYesNo" },
     ],
     ...extra,
-  },
+  }),
   ...(cerner ? { cernerConfig: cerner } : {}),
 });
 

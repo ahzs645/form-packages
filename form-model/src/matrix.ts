@@ -1,5 +1,6 @@
 import type { BuilderField } from "./index";
 import { getOptionLabel } from "./choice-options";
+import { tableColumnsOf } from "./field-group";
 
 /**
  * A question matrix, read as neutral intent (neutral form model, "Structure
@@ -89,7 +90,7 @@ export function readQuestionMatrix(field: BuilderField): QuestionMatrix | null {
     return { fieldId: field.id, label, source: "matrix-field", answers, rows, shared: true };
   }
   if (!isQuestionMatrixTable(field)) return null;
-  const rows = (field.tableConfig?.columns ?? []).map((column): QuestionMatrixRow => {
+  const rows = tableColumnsOf(field.tableConfig).map((column): QuestionMatrixRow => {
     const base = { id: `${field.id}${TABLE_COLUMN_FIELD_MARKER}${column.id}`, storedId: column.id, label: column.label?.trim() || column.id };
     if (column.type === "choice") {
       const multiple = column.choiceStyle === "checkbox" || column.choiceStyle === "multiselect";

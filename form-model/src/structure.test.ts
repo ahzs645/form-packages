@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { BuilderField } from "./index";
 import type { ModuleConfig } from "./layout";
+import { storedTableConfig, withSubformDataEntry } from "./field-group";
 import {
   findStructureGroup,
   readFormStructure,
@@ -124,7 +125,7 @@ describe("readFormStructure: tables", () => {
     id: "allergies",
     type: "table",
     label: "Allergies",
-    tableConfig: {
+    tableConfig: storedTableConfig({
       mode: "modal",
       maxRows: 10,
       initialRows: 1,
@@ -144,7 +145,7 @@ describe("readFormStructure: tables", () => {
         { id: "summary", label: "Summary", type: "text", computedValue: { mode: "template", template: "{allergen}" } },
         { id: "initials", label: "Initials", type: "stampButton" },
       ],
-    },
+    }),
   });
 
   it("reads a modal table as a repeating row-dialog group with its columns as members", () => {
@@ -180,7 +181,7 @@ describe("readFormStructure: tables", () => {
 
   it("follows the runtime's row defaults: 10 rows unless null or 0, fixed rows as a fixed grid", () => {
     const table = (tableConfig: Partial<NonNullable<BuilderField["tableConfig"]>>) =>
-      field({ id: "t", type: "table", tableConfig: { columns: [{ id: "c", label: "C", type: "text" }], ...tableConfig } });
+      field({ id: "t", type: "table", tableConfig: storedTableConfig({ columns: [{ id: "c", label: "C", type: "text" }], ...tableConfig }) });
     const read = (tableConfig: Partial<NonNullable<BuilderField["tableConfig"]>>) => structureGroups(readFormStructure({ fields: [table(tableConfig)] }))[0];
     expect(read({})).toMatchObject({ presentation: "inline-table", repeat: { max: 10, addable: true, removable: false, initial: 1 } });
     expect(read({ maxRows: null }).repeat).toEqual({ addable: true, removable: false, initial: 1 });
@@ -194,14 +195,14 @@ describe("readFormStructure: tables", () => {
 
   it("reads a follow-up table's link to the table it follows", () => {
     const fields = [
-      field({ id: "meds", type: "table", tableConfig: { maxRows: 6, columns: [{ id: "name", label: "Name", type: "text" }] } }),
+      field({ id: "meds", type: "table", tableConfig: storedTableConfig({ maxRows: 6, columns: [{ id: "name", label: "Name", type: "text" }] }) }),
       field({
         id: "adherence",
         type: "table",
-        tableConfig: {
+        tableConfig: storedTableConfig({
           columns: [{ id: "taking", label: "Taking", type: "booleanYesNo" }],
           repeatFor: { sourceFieldId: "meds", labelColumnId: "name", labelTitle: "Medication", presentation: "cards" },
-        },
+        }),
       }),
     ];
     const group = findStructureGroup(readFormStructure({ fields }), "adherence");
@@ -271,13 +272,13 @@ describe("readFormStructure: layout tables, subforms and repeating sections", ()
     title: "Vitals",
     context: "",
     kind: "subform-data-entry",
-    subformDataEntry: {
+    subformDataEntry: withSubformDataEntry({
       fields: [
         { id: "v_head", label: "Seated", type: "heading" },
         { id: "v_sys", label: "Systolic", type: "number", hidden: true },
       ],
       calculations: [{ id: "v_calc", label: "Calc", expression: "v_sys" }],
-    },
+    }),
   };
 
   it("reads section subform modules as modal-subform groups, first in their section", () => {
@@ -330,7 +331,7 @@ describe("readFormStructure: layout tables, subforms and repeating sections", ()
   });
 
   it("never changes the document", () => {
-    const fields = [section("s", ["t"]), field({ id: "t", type: "table", tableConfig: { columns: [{ id: "c", label: "C", type: "text" }] } })];
+    const fields = [section("s", ["t"]), field({ id: "t", type: "table", tableConfig: storedTableConfig({ columns: [{ id: "c", label: "C", type: "text" }] }) })];
     const drafts = [{ key: "builder-section-s", moduleConfig: dataEntry }];
     const before = structuredClone({ fields, drafts });
     readFormStructure({ fields, drafts });

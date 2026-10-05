@@ -4,11 +4,13 @@ import type {
   BuilderLayoutTableCell,
   BuilderLayoutTableCellField,
   BuilderRepeatOrphanPolicy,
+  BuilderTableColumn,
   BuilderVisibilityRule,
 } from "./index";
 import type {
   ModuleConfig,
   SubformDataEntryCalculationConfig,
+  SubformDataEntryConfig,
   SubformDataEntryFieldConfig,
 } from "./layout";
 import {
@@ -17,6 +19,7 @@ import {
   TABLE_COLUMN_TYPE_TO_FIELD_TYPE,
 } from "./field-types";
 import { isQuestionMatrixTable } from "./matrix";
+import { subformDataEntryOf, tableColumnsOf, withSubformDataEntry } from "./field-group";
 
 /**
  * Structure and repetition, read as neutral intent (neutral form model,
@@ -203,7 +206,7 @@ export interface NeutralStructure {
   pages: StructurePage[];
 }
 
-type TableColumn = NonNullable<BuilderField["tableConfig"]>["columns"][number];
+type TableColumn = BuilderTableColumn;
 type LayoutAnswerSource = BuilderLayoutTableCell | BuilderLayoutTableCellField;
 
 /**
@@ -303,8 +306,8 @@ function tableMaxRows(config: NonNullable<BuilderField["tableConfig"]>): number 
 }
 
 function tableGroup(field: BuilderField, fieldById: ReadonlyMap<string, BuilderField>, context: FormStructureContext): StructureGroup {
-  const config = field.tableConfig ?? { columns: [] };
-  const columns = config.columns ?? [];
+  const config = field.tableConfig ?? { group: { fields: [] } };
+  const columns = tableColumnsOf(config);
   const seed = config.repeatFor?.sourceFieldId ? config.repeatFor : null;
   const repeatFor: StructureRepeatFor | undefined = seed
     ? {
@@ -465,7 +468,7 @@ function subformMembers(
     seen.add(member.id);
     members.push(member);
   };
-  const dataEntry = subformModule.subformDataEntry;
+  const dataEntry = subformDataEntryOf(subformModule.subformDataEntry);
   (dataEntry?.fields ?? []).forEach((entry) => {
     if (!entry?.id) return;
     push({
@@ -542,7 +545,7 @@ function fallbackComponentModule(field: BuilderField): ModuleConfig | null {
   const scoring = isRecord(props.config) ? props.config : isRecord(props.scoring) ? props.scoring : null;
   const title = text(props.title) || text(field.componentTitle) || text(field.label) || field.id;
   if (dataEntry && Array.isArray(dataEntry.fields)) {
-    return { enabled: true, title, context: "", kind: "subform-data-entry", subformDataEntry: dataEntry as unknown as ModuleConfig["subformDataEntry"] };
+    return { enabled: true, title, context: "", kind: "subform-data-entry", subformDataEntry: withSubformDataEntry(dataEntry as unknown as SubformDataEntryConfig) };
   }
   if (scoring && Array.isArray(scoring.questions)) {
     return { enabled: true, title, context: "", kind: "subform-scoring", scoring: scoring as unknown as ModuleConfig["scoring"] };
