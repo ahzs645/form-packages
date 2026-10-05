@@ -3020,6 +3020,12 @@ export interface FieldLinkCondition {
    * half-filled form does not raise errors about answers nobody has given yet.
    */
   compareFieldId?: string;
+  /**
+   * `boolean-no` on a single checkbox: a box nobody has touched stores
+   * nothing, and it is unticked all the same. Set when the controller is a
+   * checkbox, never on a Yes/No question, where nothing means "not answered".
+   */
+  emptyIsNo?: boolean;
 }
 
 /**
@@ -3589,6 +3595,7 @@ export {
   normalizeConditionChoiceValues,
   normalizeConditionComparable,
   visibilityRuleToFieldLinkConditions,
+  conditionControllerKindOf,
   CONDITION_NO_ANSWER_TEXT,
   hasHiddenAnswer,
   hiddenAnswerPolicyOf,

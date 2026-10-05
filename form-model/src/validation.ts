@@ -869,7 +869,8 @@ function controllerKindLookup(fields: ReadonlyArray<ValidationFieldInput> | unde
     const field = byId.get(controllerId);
     if (!field) return undefined;
     const answer = neutralAnswerTypeOf(field);
-    if (answer === "yesNo" || answer === "boolean") return "boolean";
+    if (answer === "yesNo") return "boolean";
+    if (answer === "boolean") return "checkbox";
     if (answer === "singleChoice" || answer === "multipleChoice") return "choice";
     if (answer === "number" || answer === "scale" || answer === "computed") return "number";
     return "text";

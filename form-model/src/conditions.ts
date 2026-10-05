@@ -29,6 +29,8 @@ export interface SerializedFieldLinkCondition {
   value?: string | number | boolean;
   /** Right-hand side comes from this field's answer instead of `value`. */
   compareFieldId?: string;
+  /** `boolean-no` on a single checkbox: an untouched box counts as unticked. */
+  emptyIsNo?: boolean;
 }
 
 export interface CompiledFieldLinkConditionGroup {
@@ -74,6 +76,7 @@ export function compileFieldLinkConditionGroup(
       ? { value: condition.value }
       : {}),
     ...(condition.compareFieldId ? { compareFieldId: condition.compareFieldId } : {}),
+    ...(condition.emptyIsNo ? { emptyIsNo: true } : {}),
   }));
 
   return {
@@ -257,6 +260,7 @@ export function evaluateFieldCondition(
     case "boolean-yes":
       return normalizeConditionBoolean(controllerValue, metadata) === "yes";
     case "boolean-no":
+      if (condition.emptyIsNo && isConditionValueEmpty(controllerValue)) return true;
       return normalizeConditionBoolean(controllerValue, metadata) === "no";
     case "choice-selected": {
       if (!optionValues?.length) return false;
@@ -305,8 +309,27 @@ export interface VisibilityRuleSource extends VisibilityConditionSource {
   additionalConditions?: ReadonlyArray<VisibilityConditionSource & { controllerId: string }>;
 }
 
-/** The controller's field kind ("boolean", "choice", ...), or undefined when unknown. */
+/**
+ * The controller's field kind ("boolean", "choice", ...), or undefined when
+ * unknown. A single checkbox may report "checkbox": it compares like a Yes/No,
+ * except that a box nobody touched is unticked (see `emptyIsNo`).
+ */
 export type VisibilityControllerKindLookup = (controllerId: string) => string | null | undefined;
+
+/** The kind a condition lookup reports for a field: "checkbox" for a single checkbox, else its kind. */
+export function conditionControllerKindOf(
+  field: { kind?: string | null; booleanStyle?: string | null; type?: string | null } | null | undefined,
+): string | undefined {
+  if (!field) return undefined;
+  if (field.type === "booleanSingle") return "checkbox";
+  if (field.type === "booleanYesNo") return "boolean";
+  if (field.kind === "boolean" && field.booleanStyle && field.booleanStyle !== "yesNo") return "checkbox";
+  return field.kind ?? undefined;
+}
+
+function isBooleanControllerKind(kind: string | null | undefined): boolean {
+  return kind === "boolean" || kind === "checkbox";
+}
 
 /** Authored `equals` values that mean "No" on a Yes/No controller. */
 const VISIBILITY_BOOLEAN_NO_VALUES = new Set(["0", "false", "no", "n", "off", "unchecked"]);
@@ -339,9 +362,10 @@ function visibilityConditionToFieldLinkCondition(
   const negative = condition.type === "not-equals";
   // A Yes/No answer is stored as true/false (or a Y/N code), so a literal
   // `equals "Yes"` never matches; the boolean operators normalize the answer.
-  if (controllerKind === "boolean") {
+  if (isBooleanControllerKind(controllerKind)) {
     const isNo = VISIBILITY_BOOLEAN_NO_VALUES.has(String(value ?? "").trim().toLowerCase());
-    return { type: negative === isNo ? "boolean-yes" : "boolean-no" };
+    if (negative === isNo) return { type: "boolean-yes" };
+    return controllerKind === "checkbox" ? { type: "boolean-no", emptyIsNo: true } : { type: "boolean-no" };
   }
   // Coded choices store {code, display} objects; option matching normalizes
   // them. With no value yet the rule stays a choice rule (no options), so an
@@ -427,7 +451,7 @@ export function lockWhenToConditionGroup(
   const controllerFieldId = typeof rule?.field === "string" ? rule.field.trim() : "";
   if (!rule || !controllerFieldId) return null;
   if (rule.operator === "truthy") {
-    return controllerKind(controllerFieldId) === "boolean"
+    return isBooleanControllerKind(controllerKind(controllerFieldId))
       ? lockGroup(controllerFieldId, [{ type: "boolean-yes" }])
       : lockGroup(controllerFieldId, [
           { type: "filled" },

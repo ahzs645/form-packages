@@ -176,7 +176,8 @@ const FormLogicKit = (() => {
     if (type === "choice-selected") return checkChoiceMatch(fieldValue, entry.optionValues, false)
     if (type === "choice-not-selected") return checkChoiceMatch(fieldValue, entry.optionValues, true)
     if (type === "boolean-yes") return checkYesNo(fieldValue, "yes")
-    if (type === "boolean-no") return checkYesNo(fieldValue, "no")
+    // emptyIsNo: a single checkbox nobody touched is unticked.
+    if (type === "boolean-no") return (entry.emptyIsNo === true && isEmptyValue(fieldValue)) || checkYesNo(fieldValue, "no")
     // An unanswered compare field means no match, so a half-filled form
     // raises nothing.
     const compareFieldId = entry.compareFieldId || entry.valueFieldId

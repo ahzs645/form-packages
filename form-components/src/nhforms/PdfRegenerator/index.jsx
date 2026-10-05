@@ -509,6 +509,7 @@ var DocumentFillRuntime = (() => {
       case "boolean-yes":
         return normalizeConditionBoolean(controllerValue, metadata) === "yes";
       case "boolean-no":
+        if (condition.emptyIsNo && isConditionValueEmpty(controllerValue)) return true;
         return normalizeConditionBoolean(controllerValue, metadata) === "no";
       case "choice-selected": {
         if (!optionValues?.length) return false;

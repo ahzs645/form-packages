@@ -5,6 +5,7 @@ import {
   compileFieldLinkConditionGroup,
   compileFieldLinkProtectionRule,
   compileFieldLinkVisibilityRule,
+  conditionControllerKindOf,
   evaluateFieldCondition,
   evaluateFieldLinkRuleCondition,
   CONDITION_NO_ANSWER_TEXT,
@@ -14,6 +15,7 @@ import {
   readLockCondition,
   shouldClearHiddenAnswer,
   shouldDropHiddenAnswer,
+  visibilityRuleToFieldLinkConditions,
   writeLockCondition,
   type FieldLinkRule,
 } from "./index";
@@ -101,6 +103,23 @@ describe("form-model condition kernel", () => {
     });
     expect(() => compileFieldLinkProtectionRule({ ...rule, action: "show" }))
       .toThrow(/Cannot compile show/);
+  });
+});
+
+describe("single checkbox controllers", () => {
+  const kinds: Record<string, { type: string }> = { declined: { type: "booleanSingle" }, smoker: { type: "booleanYesNo" } };
+  const kind = (id: string) => conditionControllerKindOf(kinds[id]);
+  const visible = (controllerId: string, value: unknown) =>
+    evaluateFieldLinkRuleCondition(visibilityRuleToFieldLinkConditions({ type: "equals", controllerId, value: "false" }, kind)!, () => undefined, value === undefined ? {} : { [controllerId]: value });
+
+  it("treat a box nobody touched as unticked", () => {
+    expect([visible("declined", undefined), visible("declined", false), visible("declined", true)]).toEqual([true, true, false]);
+    expect(compileFieldLinkConditionGroup(visibilityRuleToFieldLinkConditions({ type: "equals", controllerId: "declined", value: "false" }, kind)!).conditions)
+      .toEqual([{ controllerFieldId: "declined", type: "boolean-no", emptyIsNo: true }]);
+  });
+
+  it("keep an unanswered Yes/No question unanswered", () => {
+    expect([visible("smoker", undefined), visible("smoker", false), visible("smoker", true)]).toEqual([false, true, false]);
   });
 });
 

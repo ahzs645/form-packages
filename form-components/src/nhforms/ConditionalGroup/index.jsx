@@ -597,7 +597,8 @@ const evaluateConditionEntry = (entry, getFieldValue) => {
   if (type === 'choice-selected') return checkChoiceMatch(fieldValue, entry.optionValues ?? [], false)
   if (type === 'choice-not-selected') return checkChoiceMatch(fieldValue, entry.optionValues ?? [], true)
   if (type === 'boolean-yes') return checkControllerMatch(fieldValue, 'yes')
-  if (type === 'boolean-no') return checkControllerMatch(fieldValue, 'no')
+  // emptyIsNo: a single checkbox nobody touched is unticked.
+  if (type === 'boolean-no') return (entry.emptyIsNo === true && (fieldValue === undefined || fieldValue === null || fieldValue === '')) || checkControllerMatch(fieldValue, 'no')
   // equals / not-equals / filled / empty / number-* share the comparison matcher.
   // compareFieldId makes the right-hand side another answer instead of a
   // constant, which is what a cross-field rule needs. An unanswered compare

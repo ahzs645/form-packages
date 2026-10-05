@@ -7525,7 +7525,8 @@ const evaluateConditionEntry = (entry, getFieldValue) => {
   if (type === 'choice-selected') return checkChoiceMatch(fieldValue, entry.optionValues ?? [], false)
   if (type === 'choice-not-selected') return checkChoiceMatch(fieldValue, entry.optionValues ?? [], true)
   if (type === 'boolean-yes') return checkControllerMatch(fieldValue, 'yes')
-  if (type === 'boolean-no') return checkControllerMatch(fieldValue, 'no')
+  // emptyIsNo: a single checkbox nobody touched is unticked.
+  if (type === 'boolean-no') return (entry.emptyIsNo === true && (fieldValue === undefined || fieldValue === null || fieldValue === '')) || checkControllerMatch(fieldValue, 'no')
   // equals / not-equals / filled / empty / number-* share the comparison matcher.
   // compareFieldId makes the right-hand side another answer instead of a
   // constant, which is what a cross-field rule needs. An unanswered compare
@@ -20026,7 +20027,8 @@ const FormLogicKit = (() => {
     if (type === "choice-selected") return checkChoiceMatch(fieldValue, entry.optionValues, false)
     if (type === "choice-not-selected") return checkChoiceMatch(fieldValue, entry.optionValues, true)
     if (type === "boolean-yes") return checkYesNo(fieldValue, "yes")
-    if (type === "boolean-no") return checkYesNo(fieldValue, "no")
+    // emptyIsNo: a single checkbox nobody touched is unticked.
+    if (type === "boolean-no") return (entry.emptyIsNo === true && isEmptyValue(fieldValue)) || checkYesNo(fieldValue, "no")
     // An unanswered compare field means no match, so a half-filled form
     // raises nothing.
     const compareFieldId = entry.compareFieldId || entry.valueFieldId
@@ -40168,6 +40170,7 @@ var DocumentFillRuntime = (() => {
       case "boolean-yes":
         return normalizeConditionBoolean(controllerValue, metadata) === "yes";
       case "boolean-no":
+        if (condition.emptyIsNo && isConditionValueEmpty(controllerValue)) return true;
         return normalizeConditionBoolean(controllerValue, metadata) === "no";
       case "choice-selected": {
         if (!optionValues?.length) return false;
@@ -55914,6 +55917,7 @@ var WordFormRuntime = (() => {
       case "boolean-yes":
         return normalizeConditionBoolean(controllerValue, metadata) === "yes";
       case "boolean-no":
+        if (condition.emptyIsNo && isConditionValueEmpty(controllerValue)) return true;
         return normalizeConditionBoolean(controllerValue, metadata) === "no";
       case "choice-selected": {
         if (!optionValues?.length) return false;
