@@ -658,6 +658,26 @@ ${text3}` : text3;
   var unique = (ids, what) => {
     if (new Set(ids).size !== ids.length) throw new Error(`Duplicate ${what} IDs.`);
   };
+  var boolean = (v, what) => {
+    if (typeof v !== "boolean") throw new Error(`${what} must be true or false.`);
+    return v;
+  };
+  var targetName = (v) => {
+    if (v === void 0 || v === null) return null;
+    const id = text(v, "target ID", 240);
+    if (!id.trim()) throw new Error("Invalid target ID.");
+    return id;
+  };
+  var checkedTargetBox = (drawing, targetId) => {
+    if (targetId !== null && !Object.prototype.hasOwnProperty.call(drawing.targetBoxes, targetId)) {
+      throw new Error(`Missing SVG target "${targetId}".`);
+    }
+    const box2 = boxForTarget(drawing, targetId);
+    if (![box2.x, box2.y, box2.w, box2.h].every(Number.isFinite) || box2.w <= 0 || box2.h <= 0) {
+      throw new Error(`${targetId === null ? "Content" : `SVG target "${targetId}"`} bounding box must have finite coordinates and positive width and height.`);
+    }
+    return box2;
+  };
   function parseSceneAsset(inner, width, height) {
     return parseSvg(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}">${inner}</svg>`);
   }
@@ -668,6 +688,17 @@ ${text3}` : text3;
     const name = text(scene.name, "scene name", 240);
     const width = num(scene.width, "Page width", 100, 12e3);
     const height = num(scene.height, "Page height", 100, 12e3);
+    const pageRule = scene.pageRule === void 0 ? true : boolean(scene.pageRule, "Page rule");
+    const cleanView = scene.cleanView === void 0 ? false : boolean(scene.cleanView, "Clean view");
+    let provenance;
+    if (scene.provenance !== void 0) {
+      const entries = Object.entries(obj(scene.provenance, "scene provenance"));
+      if (entries.length > 40) throw new Error("Invalid scene provenance; at most 40 entries allowed.");
+      provenance = Object.fromEntries(entries.map(([key, value]) => {
+        if (!key.trim() || key.length > 240 || ["__proto__", "prototype", "constructor"].includes(key)) throw new Error("Invalid provenance key.");
+        return [key, text(value, "provenance value", 4e3)];
+      }));
+    }
     const assets = /* @__PURE__ */ new Map();
     for (const raw of list(scene.assets, "assets", 100)) {
       const a = obj(raw, "asset");
@@ -675,20 +706,37 @@ ${text3}` : text3;
       if (assets.has(id)) throw new Error("Duplicate asset IDs.");
       const w = num(a.width, "Asset width", 1, 12e3);
       const h = num(a.height, "Asset height", 1, 12e3);
+      const drawing = parseDrawing(text(a.inner, "asset markup", 3e6), w, h);
+      const landmarks2 = list(a.landmarks, "asset landmarks", 2e3).map((raw2) => {
+        const l = obj(raw2, "asset landmark");
+        const targetId = targetName(l.targetId);
+        const local = { x: num(l.x, "Landmark x", 0, w), y: num(l.y, "Landmark y", 0, h) };
+        const label = text(l.label, "landmark label", 240);
+        if (!label.trim()) throw new Error("A landmark needs a label.");
+        return {
+          id: ident(l.id),
+          name: label,
+          targetId,
+          ...pointToNormalized(local, checkedTargetBox(drawing, targetId))
+        };
+      });
+      unique(landmarks2.map((l) => l.id), "asset landmark");
       assets.set(id, {
         name: text(a.name, "asset name", 240),
         width: w,
         height: h,
-        drawing: parseDrawing(text(a.inner, "asset markup", 3e6), w, h),
-        source: a.source === void 0 ? "" : text(a.source, "asset source", 1e3)
+        drawing,
+        source: a.source === void 0 ? "" : text(a.source, "asset source", 1e3),
+        landmarks: landmarks2
       });
     }
     const images = [];
+    const landmarks = [];
     for (const raw of list(scene.images, "images", 100)) {
       const i = obj(raw, "image");
       const asset = assets.get(String(i.assetId));
       if (!asset) throw new Error(`Image ${String(i.id)} refers to a missing asset.`);
-      images.push({
+      const image = {
         id: ident(i.id),
         name: text(i.name, "image name", 240),
         drawing: structuredClone(asset.drawing),
@@ -697,10 +745,19 @@ ${text3}` : text3;
         width: num(i.width, "Image width", 1, 12e3),
         height: num(i.height, "Image height", 1, 12e3),
         rotation: num(i.rotation ?? 0, "Rotation", -3600, 3600),
+        ...i.flipX === void 0 ? {} : { flipX: boolean(i.flipX, "Image flipX") },
         visible: i.visible === void 0 ? true : Boolean(i.visible),
         locked: Boolean(i.locked),
         ...asset.source ? { source: asset.source } : {}
-      });
+      };
+      images.push(image);
+      landmarks.push(...asset.landmarks.map((l) => ({
+        ...l,
+        // Length-prefix the image ID so hyphenated image/landmark IDs cannot collide.
+        id: `landmark-${image.id.length}-${image.id}-${l.id}`,
+        imageId: image.id,
+        group: image.name
+      })));
     }
     unique(images.map((i) => i.id), "image");
     const imageById = new Map(images.map((i) => [i.id, i]));
@@ -727,10 +784,10 @@ ${text3}` : text3;
     const anchors = [];
     const callouts = [];
     const hidden = [];
-    const anchorAt = (id, image, u, v) => {
+    const anchorAt = (id, image, u, v, targetId = null) => {
       const vb = assetSize(image);
       const local = { x: vb.x + u * vb.w, y: vb.y + v * vb.h };
-      return { id, mode: "relative-bbox", imageId: image.id, relative: { targetId: null, ...pointToNormalized(local, boxForTarget(image.drawing, null)) } };
+      return { id, mode: "relative-bbox", imageId: image.id, relative: { targetId, ...pointToNormalized(local, checkedTargetBox(image.drawing, targetId)) } };
     };
     const pagePoint = (image, u, v) => {
       const vb = assetSize(image);
@@ -745,7 +802,7 @@ ${text3}` : text3;
       const u = num(l.u, "Connection u", 0, 1);
       const v = num(l.v, "Connection v", 0, 1);
       const radius = num(l.radius ?? 13, "Marker radius", 2, 80);
-      const anchor = anchorAt(`anchor-${id}`, image, u, v);
+      const anchor = anchorAt(`anchor-${id}`, image, u, v, targetName(l.targetId));
       anchors.push(anchor);
       callouts.push({
         id: `callout-${id}`,
@@ -794,17 +851,20 @@ ${text3}` : text3;
         color: "#333333"
       });
     }
+    unique(anchors.map((a) => a.id), "anchor");
     const textAnnotations = [];
-    const drawingElements = [
+    const drawingElements = pageRule ? [
       // the source sheet's top rule
       { id: "page-rule", kind: "line", start: { x: 30, y: 6 }, end: { x: 1507, y: 6 }, stroke: "#222222", strokeWidth: 2, dashed: false, fill: null }
-    ];
+    ] : [];
     for (const raw of list(scene.texts, "texts", 500)) {
       const t = obj(raw, "text");
       const id = ident(t.id);
       const image = t.imageId === void 0 ? void 0 : imageById.get(String(t.imageId));
       if (t.imageId !== void 0 && !image) throw new Error("A text item refers to a missing image.");
       const fontSize = num(t.fontSize ?? 24, "Font size", 6, 150);
+      const align = t.align ?? "start";
+      if (align !== "start" && align !== "middle" && align !== "end") throw new Error("Text alignment must be start, middle or end.");
       const x = num(t.x, "Text x");
       const y = num(t.y, "Text y");
       const p = image ? imageToPage(image, { x: image.drawing.viewBox.x + x, y: image.drawing.viewBox.y + y }) : { x, y };
@@ -815,7 +875,7 @@ ${text3}` : text3;
         style: "plain",
         fontSize,
         fontWeight: t.bold ? 700 : 400,
-        align: "start",
+        align,
         color: "#111111",
         ruleWidth: 0,
         ...image ? { imageId: image.id } : {}
@@ -836,6 +896,7 @@ ${text3}` : text3;
         });
       }
     }
+    unique(textAnnotations.map((t) => t.id), "text");
     const g = obj(scene.legend, "legend");
     const hide = Object.fromEntries(hidden.map((id) => [id, { visible: false }]));
     const view = (id, viewName, siteDisplay) => ({
@@ -848,6 +909,7 @@ ${text3}` : text3;
     return {
       id: sceneId,
       name,
+      ...provenance ? { provenance } : {},
       base: pageDrawing({ x: 0, y: 0, w: width, h: height }),
       images,
       sites,
@@ -862,16 +924,20 @@ ${text3}` : text3;
       anchors,
       callouts,
       views: [
+        ...cleanView ? [{
+          ...view("artwork", "Clean artwork", "numbers"),
+          overrides: Object.fromEntries(callouts.map((c) => [c.id, { visible: false }]))
+        }] : [],
         view("site-numbers", "Site numbers", "numbers"),
         view("site-names", "Site names", "names"),
         view("field-values", "Field values", "values"),
         view("blank-markers", "Blank markers", "blank")
       ],
-      activeViewId: "site-numbers",
-      landmarks: [],
+      activeViewId: cleanView ? "artwork" : "site-numbers",
+      landmarks,
       textAnnotations,
       drawingElements,
-      landmarkGroupOrder: [],
+      landmarkGroupOrder: [...new Set(landmarks.map((l) => l.group))],
       hiddenLandmarkGroups: [],
       mappingValues
     };
@@ -1410,9 +1476,11 @@ ${text3}` : text3;
     const role = state ? interactiveRoot ? ` role="group" aria-label="${esc(doc.name)}"` : ` role="img" aria-label="${esc(doc.name)}"` : "";
     const title = interactiveRoot ? "" : `  <title>${esc(doc.name)}</title>
 `;
+    const provenance = doc.provenance ? `  <metadata data-drawer-provenance="true">${esc(JSON.stringify(doc.provenance))}</metadata>
+` : "";
     const prolog = opts.omitProlog ? "" : '<?xml version="1.0" encoding="UTF-8"?>\n';
     const svg = `${prolog}<svg xmlns="http://www.w3.org/2000/svg"${rootId} viewBox="${bounds.x} ${bounds.y} ${bounds.w} ${bounds.h}"${size} font-family="${FONT_FAMILY}" data-generator="drawer" data-doc-name="${esc(doc.name)}"${state ? ` data-view-id="${esc(view?.id ?? "")}"` : ""}${role}>
-${title}${stateStyle}${bg}  <g class="body-layer">${doc.base.inner}${renderImages(doc, partTags)}</g>
+${title}${provenance}${stateStyle}${bg}  <g class="body-layer">${doc.base.inner}${renderImages(doc, partTags)}</g>
 ${areaMarkup ? `${areaMarkup}
 ` : ""}${drawingElements}
 ${textAnnotations}
@@ -1453,6 +1521,26 @@ ${marks ? `  <g class="drawer-marks">${marks}</g>
     root.querySelectorAll("title").forEach((title) => title.remove());
     sanitizeSvgElement(root);
     return root.innerHTML.trim();
+  }
+
+  // lib/drawer/types.ts
+  var DRAWER_PROVENANCE_KEYS = ["format", "fileName"];
+  function readDrawerProvenance(value) {
+    if (!value || typeof value !== "object") return void 0;
+    const out = {};
+    const take = (entries) => {
+      for (const [key, entry] of Object.entries(entries)) if (typeof entry === "string") out[key] = entry.slice(0, 2e3);
+    };
+    const { notes, ...rest } = value;
+    if (notes && typeof notes === "object") take(notes);
+    take(rest);
+    return Object.keys(out).length ? out : void 0;
+  }
+  function drawerSourceNotes(provenance) {
+    const notes = Object.fromEntries(
+      Object.entries(provenance ?? {}).filter(([key]) => !DRAWER_PROVENANCE_KEYS.includes(key))
+    );
+    return Object.keys(notes).length ? notes : void 0;
   }
 
   // lib/drawer/import.ts
@@ -1514,10 +1602,9 @@ ${marks ? `  <g class="drawer-marks">${marks}</g>
     if (scene.format !== DRAWER_SCENE_FORMAT || scene.version !== 1) throw new Error("Expected a drawer-scene version 1 file.");
     if (JSON.stringify(input).length > MAX_FILE_CHARS) throw new Error("This Drawer file is too large.");
     const { mappingValues: _values, ...doc } = sceneToDoc(input, sceneDrawing);
-    const notes = scene.provenance && typeof scene.provenance === "object" ? Object.fromEntries(Object.entries(scene.provenance).filter(([, value]) => typeof value === "string").map(([key, value]) => [key, String(value).slice(0, 2e3)])) : void 0;
     return {
       ...doc,
-      provenance: { format: DRAWER_SCENE_FORMAT, ...fileName ? { fileName } : {}, ...notes && Object.keys(notes).length ? { notes } : {} }
+      provenance: { ...readDrawerProvenance(scene.provenance), format: DRAWER_SCENE_FORMAT, ...fileName ? { fileName } : {} }
     };
   }
   function validateSites(sites) {
@@ -1776,7 +1863,8 @@ ${marks ? `  <g class="drawer-marks">${marks}</g>
       landmarks: [],
       landmarkGroupOrder: [],
       hiddenLandmarkGroups: [],
-      provenance: { format: DRAWER_PROJECT_FORMAT, ...fileName ? { fileName } : {} }
+      // A project's own source notes come across; Webforms records the format and file.
+      provenance: { ...readDrawerProvenance(d.provenance), format: DRAWER_PROJECT_FORMAT, ...fileName ? { fileName } : {} }
     };
   }
   var finitePoint = (v, what) => vec(v, what);
@@ -1814,7 +1902,9 @@ ${marks ? `  <g class="drawer-marks">${marks}</g>
   function renderDrawerSvg(doc, options = {}) {
     const interactive = options.interactive === true ? { sites: true, areas: true } : options.interactive || void 0;
     const hasState = !!(interactive || options.selectedSiteIds?.length || options.selectedAreaIds?.length || options.siteValues || options.marks?.length || options.markerColor || options.selectedColor || options.siteColors || options.connections || options.legendValues || options.emptyValueText !== void 0 || options.areaOutlines || options.areaLabels);
-    const result = renderSvg(doc, {
+    const { provenance, ...drawing } = doc;
+    const notes = drawerSourceNotes(provenance);
+    const result = renderSvg(notes ? { ...drawing, provenance: notes } : drawing, {
       viewId: options.viewId || void 0,
       showSiteMarkers: options.showSiteMarkers,
       showCallouts: options.showCallouts,
@@ -1848,7 +1938,8 @@ ${marks ? `  <g class="drawer-marks">${marks}</g>
         interactive
       } : void 0
     });
-    return { ...result, svg: result.svg.trimEnd() };
+    const svg = options.documentTitle === false ? result.svg.replace(/^(<svg\b[^>]*>\s*)<title>[^<]*<\/title>\s*/, "$1") : result.svg;
+    return { ...result, svg: svg.trimEnd() };
   }
   function drawerSites(doc) {
     return sortedSites(doc);
@@ -2001,7 +2092,8 @@ ${marks ? `  <g class="drawer-marks">${marks}</g>
     const doc = value;
     if (!Array.isArray(doc.images) || !Array.isArray(doc.views)) return null;
     const read = projectToDoc({ format: DRAWER_PROJECT_FORMAT, version: 1, doc: value });
-    return doc.provenance ? { ...read, provenance: doc.provenance } : read;
+    const provenance = readDrawerProvenance(doc.provenance);
+    return provenance ? { ...read, provenance } : read;
   }
 
   // lib/drawer/hotspot.ts
@@ -2443,6 +2535,8 @@ const DrawerDiagramField = ({
     if (!doc) return null
     try {
       return DrawerRuntime.renderDrawerSvg(doc, {
+        // No hover tooltip over the whole picture; the frame's aria-label names it.
+        documentTitle: false,
         viewId: effectiveViewId,
         showSiteLegend: showSiteLegend !== false,
         showCallouts: showCallouts !== false,
@@ -2849,7 +2943,7 @@ const DrawerDiagramField = ({
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}>
-        <div ref={frameRef} role={isImage ? "img" : undefined} aria-label={isImage ? (imageAlt || doc.name) : undefined}
+        <div ref={frameRef} role={isImage ? "img" : "group"} aria-label={imageAlt || doc.name}
           style={{ lineHeight: 0 }} dangerouslySetInnerHTML={{ __html: rendered.svg }} />
         {draft && draft.page.length > 1 ? (
           <svg viewBox={`${vb.x} ${vb.y} ${vb.w} ${vb.h}`} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }}>

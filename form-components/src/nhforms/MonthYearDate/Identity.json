@@ -1,0 +1,9 @@
+{
+  "name": "MonthYearDate",
+  "title": "Month and year date",
+  "description": "DateSelect wrapper displaying MM/YYYY with month and year selection and canonical MOIS date storage.",
+  "version": { "major": 1, "minor": 0, "patch": 0 },
+  "type": "component",
+  "owner": "Webforms",
+  "components": []
+}

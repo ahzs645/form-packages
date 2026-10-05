@@ -1554,10 +1554,18 @@ const _resolveSelectableBinaryOptions = (field, fallbackOptions = []) => {
   }
 }
 
-// The open dialog's answers as text, for noticing a change since it opened.
+// Compare answer meaning, not the blank records controls create on mount.
+// Missing, null and empty answers are equivalent; zero and false remain edits.
 const _dialogAnswerSignature = (dataEntryValues, answers) => {
   try {
-    return JSON.stringify({ values: dataEntryValues || {}, answers: answers || {} })
+    const values = Object.fromEntries(Object.entries(dataEntryValues || {})
+      .filter(([, value]) => _isMeaningfulValue(value))
+      .sort(([left], [right]) => left.localeCompare(right)))
+    const selections = Object.fromEntries(Object.entries(answers || {})
+      .map(([id, value]) => [id, ValueKit.readChoice(value)])
+      .filter(([, choices]) => choices.length > 0)
+      .sort(([left], [right]) => left.localeCompare(right)))
+    return JSON.stringify({ values, answers: selections })
   } catch (_error) {
     return ""
   }

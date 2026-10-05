@@ -198,4 +198,24 @@ describe("HotspotMapField on the Drawer surface matches the legacy runtime", () 
     // untouched layers show the placeholder, as before
     expect(svg).toMatch(new RegExp(`id="${fields[5].id}"[^>]*>(?:<tspan[^>]*>)?#<`));
   });
+
+  it("measures a raster picture even though the form scope has an Image control", () => {
+    // The MOIS preview injects an Image component under that name; `new Image()`
+    // threw "Image is not a constructor" for every map with an uploaded picture.
+    const ImageControl = () => null;
+    const Component = new Function("React", "Fluent", "useActiveData", "useSourceData", "useTheme", "produce", "DialogKit", "Image",
+      `${drawerSource};\n${hotspotSource};\nreturn HotspotMapField;`)(
+      React, Fluent, () => [{ field: { data: {} } }, () => undefined], () => ({ webform: { recordState: "DRAFT" } }), () => ({ isInverted: false }), produce, DialogKit, ImageControl);
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    roots.push({ root, host });
+    expect(() => act(() => root.render(React.createElement(Component, {
+      fieldId: "patch_site",
+      imageUrl: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+      interactionMode: "symbol_draw",
+      enableAnnotations: true,
+      hotspots: [],
+    })))).not.toThrow();
+  });
 });

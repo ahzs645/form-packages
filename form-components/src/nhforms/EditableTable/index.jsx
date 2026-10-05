@@ -436,6 +436,10 @@ const _formatCellValue = (row, column) => {
   const value = column.textContinuation
     ? _combinedTextValue(row, column)
     : _getValueAtPath(row, column.dataPath || column.id)
+  if (column.type === "date" && column.dateConfig?.calendarView === "monthYear") {
+    const match = /^(\d{4})[-./](\d{2})[-./]\d{2}$/.exec(_stringifyValue(value))
+    return match ? `${match[2]}/${match[1]}` : _stringifyValue(value)
+  }
   // Choice cells store the option's code; show its wording.
   if (column.type === "dropdown" && !column.codeSystem && (typeof value === "string" || Array.isArray(value))) {
     const wording = ValueKit.readChoice(value, _choiceOptionList(column.options)).map((entry) => entry.display ?? entry.code)

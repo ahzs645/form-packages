@@ -2746,6 +2746,7 @@ var WordFormRuntime = (() => {
     if (format === "dd/MM/yyyy") return `${day}/${month}/${year}`;
     if (format === "dd/MM/yy") return `${day}/${month}/${year.slice(2)}`;
     if (format === "dd/MM") return `${day}/${month}`;
+    if (format === "MM/yyyy") return `${month}/${year}`;
     if (format === "MM/dd/yyyy") return `${month}/${day}/${year}`;
     if (format === "MMMM d, yyyy") return `${monthName} ${+day}, ${year}`;
     return `${year}-${month}-${day}`;

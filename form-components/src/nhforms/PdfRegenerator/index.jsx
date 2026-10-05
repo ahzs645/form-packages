@@ -49,6 +49,7 @@ var DocumentDateRuntime = (() => {
     if (format === "dd/MM/yyyy") return `${day}/${month}/${year}`;
     if (format === "dd/MM/yy") return `${day}/${month}/${year.slice(2)}`;
     if (format === "dd/MM") return `${day}/${month}`;
+    if (format === "MM/yyyy") return `${month}/${year}`;
     if (format === "MM/dd/yyyy") return `${month}/${day}/${year}`;
     if (format === "MMMM d, yyyy") return `${monthName} ${+day}, ${year}`;
     return `${year}-${month}-${day}`;
@@ -2185,6 +2186,12 @@ const _fillField = (field, rawValue, sourceFieldId, warnings, PDFLib, booleanSta
     }
 
     if (field instanceof PDFLib.PDFCheckBox) {
+      // An explicit empty choice clears every widget. Undefined answers are
+      // skipped by the caller; blank is a saved edit, including table cells.
+      if (rawValue === "" || (Array.isArray(rawValue) && rawValue.length === 0)) {
+        field.uncheck()
+        return true
+      }
       const states = _getCheckboxOnStates(field)
       if (states.length > 0) {
         const match = _matchSingleOption(rawValue, states)
@@ -2445,6 +2452,102 @@ const _drawGeometryOverlays = async ({
   return { filledFieldCount, skippedFieldCount }
 }
 
+// ---------------------------------------------------------------------------
+// Marks on a picture taken from the PDF (pictureMarks; lib/pdf-picture-marks).
+// Drawn only for fields whose author turned on "Draw marks on the filled
+// PDF". Each entry places the picture on its page: a point at fraction (u, v)
+// across and down the picture is origin + u·across + v·down in PDF user
+// space. Marks are drawn as the form draws them: a symbol is `size` wide with
+// lines size / 4.5 thick; a stroke's width follows its size the same way.
+// ---------------------------------------------------------------------------
+
+const _pictureMarkColor = (value, PDFLib) => {
+  const hex = typeof value === "string" ? value.trim().replace(/^#/, "") : ""
+  const full = /^[0-9a-f]{3}$/i.test(hex) ? hex.split("").map((c) => c + c).join("") : hex
+  if (!/^[0-9a-f]{6}$/i.test(full)) return PDFLib.rgb(0.94, 0.27, 0.27)
+  return PDFLib.rgb(parseInt(full.slice(0, 2), 16) / 255, parseInt(full.slice(2, 4), 16) / 255, parseInt(full.slice(4, 6), 16) / 255)
+}
+
+/** A field's marks as fractions of the picture: { kind, symbol, points: [{u, v}], size (fraction of the width), color }. */
+const _pictureMarksOf = (value, entry) => {
+  if (!value || typeof value !== "object") return []
+  const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : Number(v))
+  if (entry.marks === "drawer") {
+    const frame = entry.frame
+    if (!frame || !(frame.w > 0) || !(frame.h > 0)) return []
+    return (Array.isArray(value.marks) ? value.marks : []).flatMap((mark) => {
+      const points = (Array.isArray(mark && mark.points) ? mark.points : [])
+        .map((p) => ({ u: (num(p.x) - frame.x) / frame.w, v: (num(p.y) - frame.y) / frame.h }))
+        .filter((p) => Number.isFinite(p.u) && Number.isFinite(p.v))
+      if (!points.length) return []
+      return [{ kind: mark.kind === "stroke" ? "stroke" : "symbol", symbol: mark.symbol, points, size: num(mark.size) / frame.w, color: mark.color }]
+    })
+  }
+  return (Array.isArray(value.annotations) ? value.annotations : []).flatMap((a) => {
+    if (!a || typeof a !== "object") return []
+    const stroke = a.type === "stroke" || (a.type === undefined && Array.isArray(a.points))
+    const points = (stroke ? (Array.isArray(a.points) ? a.points : []) : [{ x: a.x, y: a.y }])
+      .map((p) => ({ u: num(p && p.x) / 100, v: num(p && p.y) / 100 }))
+      .filter((p) => Number.isFinite(p.u) && Number.isFinite(p.v))
+    if (!points.length) return []
+    return [{ kind: stroke ? "stroke" : "symbol", symbol: a.symbol, points, size: (num(a.size) > 0 ? num(a.size) : 2.2) / 100, color: a.color }]
+  })
+}
+
+const _drawPictureMarks = ({ doc, formData, pictureMarks, includeSet, warnings, PDFLib }) => {
+  const pages = doc.getPages()
+  let drawn = 0
+  for (const entry of Array.isArray(pictureMarks) ? pictureMarks : []) {
+    const fieldId = entry && _isNonEmptyString(entry.fieldId) ? entry.fieldId.trim() : ""
+    if (!fieldId || (includeSet && !includeSet.has(fieldId))) continue
+    const page = pages[Number(entry.page) - 1]
+    if (!page || !Array.isArray(entry.origin) || !Array.isArray(entry.across) || !Array.isArray(entry.down)) continue
+    const [ox, oy] = entry.origin
+    const [ax, ay] = entry.across
+    const [dx, dy] = entry.down
+    const width = Math.hypot(ax, ay)
+    const height = Math.hypot(dx, dy)
+    if (!(width > 0) || !(height > 0)) continue
+    // The picture's own axes on the page (a rotated page turns them).
+    const ux = [ax / width, ay / width]
+    const vy = [dx / height, dy / height]
+    const at = (u, v) => ({ x: ox + u * ax + v * dx, y: oy + u * ay + v * dy })
+    const offset = (c, s, t) => ({ x: c.x + s * ux[0] + t * vy[0], y: c.y + s * ux[1] + t * vy[1] })
+    try {
+      for (const mark of _pictureMarksOf(formData ? formData[fieldId] : null, entry)) {
+        const color = _pictureMarkColor(mark.color, PDFLib)
+        const size = Math.max(2, (mark.size > 0 ? mark.size : 0.022) * width)
+        const thickness = Math.max(0.75, size / 4.5)
+        const line = (start, end) => page.drawLine({ start, end, thickness, color, lineCap: PDFLib.LineCapStyle.Round })
+        if (mark.kind === "stroke") {
+          const points = mark.points.map((p) => at(p.u, p.v))
+          for (let i = 1; i < points.length; i += 1) line(points[i - 1], points[i])
+        } else {
+          const c = at(mark.points[0].u, mark.points[0].v)
+          const h = size / 2
+          if (mark.symbol === "circle") {
+            page.drawEllipse({ x: c.x, y: c.y, xScale: h, yScale: h, borderColor: color, borderWidth: thickness })
+          } else if (mark.symbol === "triangle") {
+            const top = offset(c, 0, -h)
+            const left = offset(c, -h, h)
+            const right = offset(c, h, h)
+            line(top, left)
+            line(left, right)
+            line(right, top)
+          } else {
+            line(offset(c, -h, -h), offset(c, h, h))
+            line(offset(c, h, -h), offset(c, -h, h))
+          }
+        }
+        drawn += 1
+      }
+    } catch (error) {
+      warnings.push(`Marks for "${fieldId}": ${error?.message || "failed"}`)
+    }
+  }
+  return drawn
+}
+
 const _statusColor = (kind) => {
   if (kind === "success") return "#107c10"
   if (kind === "error") return "#a4262c"
@@ -2509,6 +2612,7 @@ const PdfRegenerator = ({
   characterComponentMaps,
   textFlowMaps,
   geometryOverlayFields,
+  pictureMarks,
   documentOutputFields,
   includeOnlyFieldIds,
   flatten = false,
@@ -2689,6 +2793,10 @@ const PdfRegenerator = ({
         .filter((plan) => !includeSet || includeSet.has(plan.tableId))
       await DocumentFillRuntime.appendOverflowAddendum(doc, overflowPlans, PDFLib, { warnings })
       if (flatten) _flattenForm(form, PDFLib, font, warnings, markFont)
+      // Last, so the marks sit over the page and any flattened answers.
+      if (Array.isArray(pictureMarks) && pictureMarks.length > 0) {
+        _drawPictureMarks({ doc, formData, pictureMarks, includeSet, warnings, PDFLib })
+      }
 
       let outputBytes = await doc.save({ updateFieldAppearances: false })
       if (requestedAction === "sign") {
@@ -2726,7 +2834,7 @@ const PdfRegenerator = ({
     } finally {
       setIsBusy(false)
     }
-  }, [resolvedPdfSource, fd, fieldMap, tableSourceMaps, pdfPreparers, booleanFieldStates, fieldMaxLengths, dateComponentMaps, documentDateFormats, choiceComponentMaps, characterComponentMaps, textFlowMaps, geometryOverlayFields, documentOutputFields, includeOnlyFieldIds, flatten, recalculate, organizationSigning, fileName, onComplete, pdfLibStrategy, pdfLibSource])
+  }, [resolvedPdfSource, fd, fieldMap, tableSourceMaps, pdfPreparers, booleanFieldStates, fieldMaxLengths, dateComponentMaps, documentDateFormats, choiceComponentMaps, characterComponentMaps, textFlowMaps, geometryOverlayFields, pictureMarks, documentOutputFields, includeOnlyFieldIds, flatten, recalculate, organizationSigning, fileName, onComplete, pdfLibStrategy, pdfLibSource])
 
   const diagnosticsText = useMemo(() => {
     if (!showDiagnostics) return null

@@ -125,6 +125,7 @@ const FieldKit = (() => {
 
     if (type === "date" || type === "datetime") {
       if (type === "datetime" || descriptor.dateConfig?.withTime) return { control: "DateTimeSelect", supported: true }
+      if (descriptor.dateConfig?.calendarView === "monthYear") return { control: "MonthYearDate", supported: true }
       if (descriptor.dateConfig?.fillTodayOnCalendarOpen) return { control: "CalendarTodayDate", supported: false }
       return { control: "DateSelect", supported: true }
     }
@@ -267,6 +268,7 @@ const FieldKit = (() => {
           case "CompactBooleanField":
             if (stored === undefined || stored === null || stored === "") return null
             return ValueKit.readBoolean(stored, descriptor.booleanLabels) === true
+          case "MonthYearDate":
           case "DateSelect":
             return toDateText(stored)
           case "DateTimeSelect":
@@ -336,6 +338,7 @@ const FieldKit = (() => {
             if (extra.uncheckedOption && isSelected(stored, extra.uncheckedOption)) return false
             return ValueKit.readBoolean(stored, descriptor.booleanLabels)
           }
+          case "MonthYearDate":
           case "DateSelect":
             return toDateText(stored)
           case "DateTimeSelect":
@@ -398,6 +401,7 @@ const FieldKit = (() => {
           }
           case "ScaleField":
             return stored ?? null
+          case "MonthYearDate":
           case "DateSelect":
             return toDateText(stored)
           case "DateTimeSelect":
@@ -450,6 +454,7 @@ const FieldKit = (() => {
             if (codings.length === 0 && toText(stored).trim()) return { code: toText(stored), display: toText(stored) }
             return choice.selectionType === "multiple" ? codings : codings[0] || null
           }
+          case "MonthYearDate":
           case "DateSelect":
             return toDateText(stored)
           default:
@@ -705,6 +710,7 @@ const FieldKit = (() => {
             {...bound}
             {...placeholderProp}
             {...multilineProps}
+            {...(descriptor.textConfig?.suffix ? { textFieldProps: { ...multilineProps.textFieldProps, suffix: descriptor.textConfig.suffix } } : {})}
             {...(controlled
               ? { value: controlValue ?? "", onChange: (first, second) => emit(toText(reportedValue(first, second))) }
               : {})}
@@ -733,14 +739,16 @@ const FieldKit = (() => {
           />
         )
       }
+      case "MonthYearDate":
       case "DateSelect":
         // SMOIS main.a75cc6b1.chunk.js DateSelect reparses defaultValue on
         // changes. Its value effect reads activeSelector[fieldId] when
         // value is truthy, clearing a controlled container cell that has
         // no standalone fieldId. Use the supported defaultValue channel;
         // the container still owns the answer through onChange.
+        const DateControl = choice.control === "MonthYearDate" ? MonthYearDate : DateSelect
         return (
-          <DateSelect
+          <DateControl
             {...common}
             {...bound}
             {...placeholderProp}
@@ -958,7 +966,7 @@ const FieldKit = (() => {
         return {
           ...base,
           type: withTime ? "datetime" : "date",
-          dateConfig: { withTime, dateFormat: column.dateConfig?.dateFormat },
+          dateConfig: { ...column.dateConfig, withTime },
         }
       }
       case "time":
@@ -986,7 +994,7 @@ const FieldKit = (() => {
       default:
         return column.textareaConfig?.multiline
           ? { ...base, type: "textarea", textareaConfig: { rows: column.textareaConfig.rows, resizable: column.textareaConfig.resizable } }
-          : { ...base, type: "text" }
+          : { ...base, type: "text", textConfig: column.textConfig }
     }
   }
 

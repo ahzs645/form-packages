@@ -1326,6 +1326,42 @@ var AddressEntryRuntime = (() => {
     }
   }
 
+  // packages/form-model/src/field-group.ts
+  var TABLE_FIELD_KEYS = [
+    "fhirConfig",
+    "booleanLabels",
+    "prefill",
+    "defaultAnswer",
+    "dateConfig",
+    "textareaConfig",
+    "textConfig",
+    "useToggleSwitch",
+    "numberConfig",
+    "options",
+    "choiceStyle",
+    "codeSystem",
+    "showOtherOption",
+    "required",
+    "helpText",
+    "placeholder",
+    "visibility",
+    "binding",
+    "documentBinding"
+  ];
+  var TABLE_FIELD_KEY_SET = new Set(TABLE_FIELD_KEYS);
+  var SUBFORM_FIELD_KEYS = [
+    "required",
+    "placeholder",
+    "helpText",
+    "codeSystem",
+    "showOtherOption",
+    "choiceStyle",
+    "defaultAnswer",
+    "visibility",
+    "hidden"
+  ];
+  var SUBFORM_FIELD_KEY_SET = new Set(SUBFORM_FIELD_KEYS);
+
   // packages/form-model/src/workflow.ts
   var WORKFLOW_OUTPUT_KIND_LIST = [
     "dcoObservation",
@@ -10139,6 +10175,26 @@ var DrawerRuntime = (() => {
   var unique = (ids, what) => {
     if (new Set(ids).size !== ids.length) throw new Error(\`Duplicate \${what} IDs.\`);
   };
+  var boolean = (v, what) => {
+    if (typeof v !== "boolean") throw new Error(\`\${what} must be true or false.\`);
+    return v;
+  };
+  var targetName = (v) => {
+    if (v === void 0 || v === null) return null;
+    const id = text(v, "target ID", 240);
+    if (!id.trim()) throw new Error("Invalid target ID.");
+    return id;
+  };
+  var checkedTargetBox = (drawing, targetId) => {
+    if (targetId !== null && !Object.prototype.hasOwnProperty.call(drawing.targetBoxes, targetId)) {
+      throw new Error(\`Missing SVG target "\${targetId}".\`);
+    }
+    const box2 = boxForTarget(drawing, targetId);
+    if (![box2.x, box2.y, box2.w, box2.h].every(Number.isFinite) || box2.w <= 0 || box2.h <= 0) {
+      throw new Error(\`\${targetId === null ? "Content" : \`SVG target "\${targetId}"\`} bounding box must have finite coordinates and positive width and height.\`);
+    }
+    return box2;
+  };
   function parseSceneAsset(inner, width, height) {
     return parseSvg(\`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 \${width} \${height}">\${inner}</svg>\`);
   }
@@ -10149,6 +10205,17 @@ var DrawerRuntime = (() => {
     const name = text(scene.name, "scene name", 240);
     const width = num(scene.width, "Page width", 100, 12e3);
     const height = num(scene.height, "Page height", 100, 12e3);
+    const pageRule = scene.pageRule === void 0 ? true : boolean(scene.pageRule, "Page rule");
+    const cleanView = scene.cleanView === void 0 ? false : boolean(scene.cleanView, "Clean view");
+    let provenance;
+    if (scene.provenance !== void 0) {
+      const entries = Object.entries(obj(scene.provenance, "scene provenance"));
+      if (entries.length > 40) throw new Error("Invalid scene provenance; at most 40 entries allowed.");
+      provenance = Object.fromEntries(entries.map(([key, value]) => {
+        if (!key.trim() || key.length > 240 || ["__proto__", "prototype", "constructor"].includes(key)) throw new Error("Invalid provenance key.");
+        return [key, text(value, "provenance value", 4e3)];
+      }));
+    }
     const assets = /* @__PURE__ */ new Map();
     for (const raw of list(scene.assets, "assets", 100)) {
       const a = obj(raw, "asset");
@@ -10156,20 +10223,37 @@ var DrawerRuntime = (() => {
       if (assets.has(id)) throw new Error("Duplicate asset IDs.");
       const w = num(a.width, "Asset width", 1, 12e3);
       const h = num(a.height, "Asset height", 1, 12e3);
+      const drawing = parseDrawing(text(a.inner, "asset markup", 3e6), w, h);
+      const landmarks2 = list(a.landmarks, "asset landmarks", 2e3).map((raw2) => {
+        const l = obj(raw2, "asset landmark");
+        const targetId = targetName(l.targetId);
+        const local = { x: num(l.x, "Landmark x", 0, w), y: num(l.y, "Landmark y", 0, h) };
+        const label = text(l.label, "landmark label", 240);
+        if (!label.trim()) throw new Error("A landmark needs a label.");
+        return {
+          id: ident(l.id),
+          name: label,
+          targetId,
+          ...pointToNormalized(local, checkedTargetBox(drawing, targetId))
+        };
+      });
+      unique(landmarks2.map((l) => l.id), "asset landmark");
       assets.set(id, {
         name: text(a.name, "asset name", 240),
         width: w,
         height: h,
-        drawing: parseDrawing(text(a.inner, "asset markup", 3e6), w, h),
-        source: a.source === void 0 ? "" : text(a.source, "asset source", 1e3)
+        drawing,
+        source: a.source === void 0 ? "" : text(a.source, "asset source", 1e3),
+        landmarks: landmarks2
       });
     }
     const images = [];
+    const landmarks = [];
     for (const raw of list(scene.images, "images", 100)) {
       const i = obj(raw, "image");
       const asset = assets.get(String(i.assetId));
       if (!asset) throw new Error(\`Image \${String(i.id)} refers to a missing asset.\`);
-      images.push({
+      const image = {
         id: ident(i.id),
         name: text(i.name, "image name", 240),
         drawing: structuredClone(asset.drawing),
@@ -10178,10 +10262,19 @@ var DrawerRuntime = (() => {
         width: num(i.width, "Image width", 1, 12e3),
         height: num(i.height, "Image height", 1, 12e3),
         rotation: num(i.rotation ?? 0, "Rotation", -3600, 3600),
+        ...i.flipX === void 0 ? {} : { flipX: boolean(i.flipX, "Image flipX") },
         visible: i.visible === void 0 ? true : Boolean(i.visible),
         locked: Boolean(i.locked),
         ...asset.source ? { source: asset.source } : {}
-      });
+      };
+      images.push(image);
+      landmarks.push(...asset.landmarks.map((l) => ({
+        ...l,
+        // Length-prefix the image ID so hyphenated image/landmark IDs cannot collide.
+        id: \`landmark-\${image.id.length}-\${image.id}-\${l.id}\`,
+        imageId: image.id,
+        group: image.name
+      })));
     }
     unique(images.map((i) => i.id), "image");
     const imageById = new Map(images.map((i) => [i.id, i]));
@@ -10208,10 +10301,10 @@ var DrawerRuntime = (() => {
     const anchors = [];
     const callouts = [];
     const hidden = [];
-    const anchorAt = (id, image, u, v) => {
+    const anchorAt = (id, image, u, v, targetId = null) => {
       const vb = assetSize(image);
       const local = { x: vb.x + u * vb.w, y: vb.y + v * vb.h };
-      return { id, mode: "relative-bbox", imageId: image.id, relative: { targetId: null, ...pointToNormalized(local, boxForTarget(image.drawing, null)) } };
+      return { id, mode: "relative-bbox", imageId: image.id, relative: { targetId, ...pointToNormalized(local, checkedTargetBox(image.drawing, targetId)) } };
     };
     const pagePoint = (image, u, v) => {
       const vb = assetSize(image);
@@ -10226,7 +10319,7 @@ var DrawerRuntime = (() => {
       const u = num(l.u, "Connection u", 0, 1);
       const v = num(l.v, "Connection v", 0, 1);
       const radius = num(l.radius ?? 13, "Marker radius", 2, 80);
-      const anchor = anchorAt(\`anchor-\${id}\`, image, u, v);
+      const anchor = anchorAt(\`anchor-\${id}\`, image, u, v, targetName(l.targetId));
       anchors.push(anchor);
       callouts.push({
         id: \`callout-\${id}\`,
@@ -10275,17 +10368,20 @@ var DrawerRuntime = (() => {
         color: "#333333"
       });
     }
+    unique(anchors.map((a) => a.id), "anchor");
     const textAnnotations = [];
-    const drawingElements = [
+    const drawingElements = pageRule ? [
       // the source sheet's top rule
       { id: "page-rule", kind: "line", start: { x: 30, y: 6 }, end: { x: 1507, y: 6 }, stroke: "#222222", strokeWidth: 2, dashed: false, fill: null }
-    ];
+    ] : [];
     for (const raw of list(scene.texts, "texts", 500)) {
       const t = obj(raw, "text");
       const id = ident(t.id);
       const image = t.imageId === void 0 ? void 0 : imageById.get(String(t.imageId));
       if (t.imageId !== void 0 && !image) throw new Error("A text item refers to a missing image.");
       const fontSize = num(t.fontSize ?? 24, "Font size", 6, 150);
+      const align = t.align ?? "start";
+      if (align !== "start" && align !== "middle" && align !== "end") throw new Error("Text alignment must be start, middle or end.");
       const x = num(t.x, "Text x");
       const y = num(t.y, "Text y");
       const p = image ? imageToPage(image, { x: image.drawing.viewBox.x + x, y: image.drawing.viewBox.y + y }) : { x, y };
@@ -10296,7 +10392,7 @@ var DrawerRuntime = (() => {
         style: "plain",
         fontSize,
         fontWeight: t.bold ? 700 : 400,
-        align: "start",
+        align,
         color: "#111111",
         ruleWidth: 0,
         ...image ? { imageId: image.id } : {}
@@ -10317,6 +10413,7 @@ var DrawerRuntime = (() => {
         });
       }
     }
+    unique(textAnnotations.map((t) => t.id), "text");
     const g = obj(scene.legend, "legend");
     const hide = Object.fromEntries(hidden.map((id) => [id, { visible: false }]));
     const view = (id, viewName, siteDisplay) => ({
@@ -10329,6 +10426,7 @@ var DrawerRuntime = (() => {
     return {
       id: sceneId,
       name,
+      ...provenance ? { provenance } : {},
       base: pageDrawing({ x: 0, y: 0, w: width, h: height }),
       images,
       sites,
@@ -10343,16 +10441,20 @@ var DrawerRuntime = (() => {
       anchors,
       callouts,
       views: [
+        ...cleanView ? [{
+          ...view("artwork", "Clean artwork", "numbers"),
+          overrides: Object.fromEntries(callouts.map((c) => [c.id, { visible: false }]))
+        }] : [],
         view("site-numbers", "Site numbers", "numbers"),
         view("site-names", "Site names", "names"),
         view("field-values", "Field values", "values"),
         view("blank-markers", "Blank markers", "blank")
       ],
-      activeViewId: "site-numbers",
-      landmarks: [],
+      activeViewId: cleanView ? "artwork" : "site-numbers",
+      landmarks,
       textAnnotations,
       drawingElements,
-      landmarkGroupOrder: [],
+      landmarkGroupOrder: [...new Set(landmarks.map((l) => l.group))],
       hiddenLandmarkGroups: [],
       mappingValues
     };
@@ -10891,9 +10993,11 @@ var DrawerRuntime = (() => {
     const role = state ? interactiveRoot ? \` role="group" aria-label="\${esc(doc.name)}"\` : \` role="img" aria-label="\${esc(doc.name)}"\` : "";
     const title = interactiveRoot ? "" : \`  <title>\${esc(doc.name)}</title>
 \`;
+    const provenance = doc.provenance ? \`  <metadata data-drawer-provenance="true">\${esc(JSON.stringify(doc.provenance))}</metadata>
+\` : "";
     const prolog = opts.omitProlog ? "" : '<?xml version="1.0" encoding="UTF-8"?>\\n';
     const svg = \`\${prolog}<svg xmlns="http://www.w3.org/2000/svg"\${rootId} viewBox="\${bounds.x} \${bounds.y} \${bounds.w} \${bounds.h}"\${size} font-family="\${FONT_FAMILY}" data-generator="drawer" data-doc-name="\${esc(doc.name)}"\${state ? \` data-view-id="\${esc(view?.id ?? "")}"\` : ""}\${role}>
-\${title}\${stateStyle}\${bg}  <g class="body-layer">\${doc.base.inner}\${renderImages(doc, partTags)}</g>
+\${title}\${provenance}\${stateStyle}\${bg}  <g class="body-layer">\${doc.base.inner}\${renderImages(doc, partTags)}</g>
 \${areaMarkup ? \`\${areaMarkup}
 \` : ""}\${drawingElements}
 \${textAnnotations}
@@ -10934,6 +11038,26 @@ var DrawerRuntime = (() => {
     root.querySelectorAll("title").forEach((title) => title.remove());
     sanitizeSvgElement(root);
     return root.innerHTML.trim();
+  }
+
+  // lib/drawer/types.ts
+  var DRAWER_PROVENANCE_KEYS = ["format", "fileName"];
+  function readDrawerProvenance(value) {
+    if (!value || typeof value !== "object") return void 0;
+    const out = {};
+    const take = (entries) => {
+      for (const [key, entry] of Object.entries(entries)) if (typeof entry === "string") out[key] = entry.slice(0, 2e3);
+    };
+    const { notes, ...rest } = value;
+    if (notes && typeof notes === "object") take(notes);
+    take(rest);
+    return Object.keys(out).length ? out : void 0;
+  }
+  function drawerSourceNotes(provenance) {
+    const notes = Object.fromEntries(
+      Object.entries(provenance ?? {}).filter(([key]) => !DRAWER_PROVENANCE_KEYS.includes(key))
+    );
+    return Object.keys(notes).length ? notes : void 0;
   }
 
   // lib/drawer/import.ts
@@ -10995,10 +11119,9 @@ var DrawerRuntime = (() => {
     if (scene.format !== DRAWER_SCENE_FORMAT || scene.version !== 1) throw new Error("Expected a drawer-scene version 1 file.");
     if (JSON.stringify(input).length > MAX_FILE_CHARS) throw new Error("This Drawer file is too large.");
     const { mappingValues: _values, ...doc } = sceneToDoc(input, sceneDrawing);
-    const notes = scene.provenance && typeof scene.provenance === "object" ? Object.fromEntries(Object.entries(scene.provenance).filter(([, value]) => typeof value === "string").map(([key, value]) => [key, String(value).slice(0, 2e3)])) : void 0;
     return {
       ...doc,
-      provenance: { format: DRAWER_SCENE_FORMAT, ...fileName ? { fileName } : {}, ...notes && Object.keys(notes).length ? { notes } : {} }
+      provenance: { ...readDrawerProvenance(scene.provenance), format: DRAWER_SCENE_FORMAT, ...fileName ? { fileName } : {} }
     };
   }
   function validateSites(sites) {
@@ -11257,7 +11380,8 @@ var DrawerRuntime = (() => {
       landmarks: [],
       landmarkGroupOrder: [],
       hiddenLandmarkGroups: [],
-      provenance: { format: DRAWER_PROJECT_FORMAT, ...fileName ? { fileName } : {} }
+      // A project's own source notes come across; Webforms records the format and file.
+      provenance: { ...readDrawerProvenance(d.provenance), format: DRAWER_PROJECT_FORMAT, ...fileName ? { fileName } : {} }
     };
   }
   var finitePoint = (v, what) => vec(v, what);
@@ -11295,7 +11419,9 @@ var DrawerRuntime = (() => {
   function renderDrawerSvg(doc, options = {}) {
     const interactive = options.interactive === true ? { sites: true, areas: true } : options.interactive || void 0;
     const hasState = !!(interactive || options.selectedSiteIds?.length || options.selectedAreaIds?.length || options.siteValues || options.marks?.length || options.markerColor || options.selectedColor || options.siteColors || options.connections || options.legendValues || options.emptyValueText !== void 0 || options.areaOutlines || options.areaLabels);
-    const result = renderSvg(doc, {
+    const { provenance, ...drawing } = doc;
+    const notes = drawerSourceNotes(provenance);
+    const result = renderSvg(notes ? { ...drawing, provenance: notes } : drawing, {
       viewId: options.viewId || void 0,
       showSiteMarkers: options.showSiteMarkers,
       showCallouts: options.showCallouts,
@@ -11329,7 +11455,8 @@ var DrawerRuntime = (() => {
         interactive
       } : void 0
     });
-    return { ...result, svg: result.svg.trimEnd() };
+    const svg = options.documentTitle === false ? result.svg.replace(/^(<svg\\b[^>]*>\\s*)<title>[^<]*<\\/title>\\s*/, "$1") : result.svg;
+    return { ...result, svg: svg.trimEnd() };
   }
   function drawerSites(doc) {
     return sortedSites(doc);
@@ -11482,7 +11609,8 @@ var DrawerRuntime = (() => {
     const doc = value;
     if (!Array.isArray(doc.images) || !Array.isArray(doc.views)) return null;
     const read = projectToDoc({ format: DRAWER_PROJECT_FORMAT, version: 1, doc: value });
-    return doc.provenance ? { ...read, provenance: doc.provenance } : read;
+    const provenance = readDrawerProvenance(doc.provenance);
+    return provenance ? { ...read, provenance } : read;
   }
 
   // lib/drawer/hotspot.ts
@@ -11924,6 +12052,8 @@ const DrawerDiagramField = ({
     if (!doc) return null
     try {
       return DrawerRuntime.renderDrawerSvg(doc, {
+        // No hover tooltip over the whole picture; the frame's aria-label names it.
+        documentTitle: false,
         viewId: effectiveViewId,
         showSiteLegend: showSiteLegend !== false,
         showCallouts: showCallouts !== false,
@@ -12330,7 +12460,7 @@ const DrawerDiagramField = ({
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}>
-        <div ref={frameRef} role={isImage ? "img" : undefined} aria-label={isImage ? (imageAlt || doc.name) : undefined}
+        <div ref={frameRef} role={isImage ? "img" : "group"} aria-label={imageAlt || doc.name}
           style={{ lineHeight: 0 }} dangerouslySetInnerHTML={{ __html: rendered.svg }} />
         {draft && draft.page.length > 1 ? (
           <svg viewBox={\`\${vb.x} \${vb.y} \${vb.w} \${vb.h}\`} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }}>
@@ -13185,6 +13315,10 @@ const _formatCellValue = (row, column) => {
   const value = column.textContinuation
     ? _combinedTextValue(row, column)
     : _getValueAtPath(row, column.dataPath || column.id)
+  if (column.type === "date" && column.dateConfig?.calendarView === "monthYear") {
+    const match = /^(\\d{4})[-./](\\d{2})[-./]\\d{2}$/.exec(_stringifyValue(value))
+    return match ? \`\${match[2]}/\${match[1]}\` : _stringifyValue(value)
+  }
   // Choice cells store the option's code; show its wording.
   if (column.type === "dropdown" && !column.codeSystem && (typeof value === "string" || Array.isArray(value))) {
     const wording = ValueKit.readChoice(value, _choiceOptionList(column.options)).map((entry) => entry.display ?? entry.code)
@@ -15632,6 +15766,7 @@ const FieldKit = (() => {
 
     if (type === "date" || type === "datetime") {
       if (type === "datetime" || descriptor.dateConfig?.withTime) return { control: "DateTimeSelect", supported: true }
+      if (descriptor.dateConfig?.calendarView === "monthYear") return { control: "MonthYearDate", supported: true }
       if (descriptor.dateConfig?.fillTodayOnCalendarOpen) return { control: "CalendarTodayDate", supported: false }
       return { control: "DateSelect", supported: true }
     }
@@ -15774,6 +15909,7 @@ const FieldKit = (() => {
           case "CompactBooleanField":
             if (stored === undefined || stored === null || stored === "") return null
             return ValueKit.readBoolean(stored, descriptor.booleanLabels) === true
+          case "MonthYearDate":
           case "DateSelect":
             return toDateText(stored)
           case "DateTimeSelect":
@@ -15843,6 +15979,7 @@ const FieldKit = (() => {
             if (extra.uncheckedOption && isSelected(stored, extra.uncheckedOption)) return false
             return ValueKit.readBoolean(stored, descriptor.booleanLabels)
           }
+          case "MonthYearDate":
           case "DateSelect":
             return toDateText(stored)
           case "DateTimeSelect":
@@ -15905,6 +16042,7 @@ const FieldKit = (() => {
           }
           case "ScaleField":
             return stored ?? null
+          case "MonthYearDate":
           case "DateSelect":
             return toDateText(stored)
           case "DateTimeSelect":
@@ -15957,6 +16095,7 @@ const FieldKit = (() => {
             if (codings.length === 0 && toText(stored).trim()) return { code: toText(stored), display: toText(stored) }
             return choice.selectionType === "multiple" ? codings : codings[0] || null
           }
+          case "MonthYearDate":
           case "DateSelect":
             return toDateText(stored)
           default:
@@ -16212,6 +16351,7 @@ const FieldKit = (() => {
             {...bound}
             {...placeholderProp}
             {...multilineProps}
+            {...(descriptor.textConfig?.suffix ? { textFieldProps: { ...multilineProps.textFieldProps, suffix: descriptor.textConfig.suffix } } : {})}
             {...(controlled
               ? { value: controlValue ?? "", onChange: (first, second) => emit(toText(reportedValue(first, second))) }
               : {})}
@@ -16240,14 +16380,16 @@ const FieldKit = (() => {
           />
         )
       }
+      case "MonthYearDate":
       case "DateSelect":
         // SMOIS main.a75cc6b1.chunk.js DateSelect reparses defaultValue on
         // changes. Its value effect reads activeSelector[fieldId] when
         // value is truthy, clearing a controlled container cell that has
         // no standalone fieldId. Use the supported defaultValue channel;
         // the container still owns the answer through onChange.
+        const DateControl = choice.control === "MonthYearDate" ? MonthYearDate : DateSelect
         return (
-          <DateSelect
+          <DateControl
             {...common}
             {...bound}
             {...placeholderProp}
@@ -16465,7 +16607,7 @@ const FieldKit = (() => {
         return {
           ...base,
           type: withTime ? "datetime" : "date",
-          dateConfig: { withTime, dateFormat: column.dateConfig?.dateFormat },
+          dateConfig: { ...column.dateConfig, withTime },
         }
       }
       case "time":
@@ -16493,7 +16635,7 @@ const FieldKit = (() => {
       default:
         return column.textareaConfig?.multiline
           ? { ...base, type: "textarea", textareaConfig: { rows: column.textareaConfig.rows, resizable: column.textareaConfig.resizable } }
-          : { ...base, type: "text" }
+          : { ...base, type: "text", textConfig: column.textConfig }
     }
   }
 
@@ -30097,9 +30239,11 @@ const HotspotMapField = ({
   const hasSvg = typeof imageSvg === "string" && /<svg[\\s>]/i.test(imageSvg)
   const [rasterSize, setRasterSize] = useState(null)
   useEffect(() => {
-    if (hasSvg || !imageUrl || typeof Image === "undefined") return undefined
+    // createElement, not \`new Image()\`: the form scope injects an Image
+    // control under that name, which is not a constructor.
+    if (hasSvg || !imageUrl || typeof document === "undefined") return undefined
     let alive = true
-    const img = new Image()
+    const img = document.createElement("img")
     img.onload = () => { if (alive) setRasterSize({ width: img.naturalWidth || 1, height: img.naturalHeight || 1 }) }
     img.src = imageUrl
     return () => { alive = false }
@@ -32301,6 +32445,45 @@ const MoisPatientReviewLink = ({
         </Stack>
       )}
     </div>
+  )
+}
+`,
+  './MonthYearDate/index.jsx': `/** Month/year presentation through DateSelect's supported Fluent overrides.
+ * Saved answers retain the MOIS canonical date; document output is formatted
+ * separately. Typed MM/YYYY values use the first day of the chosen month.
+ */
+const MonthYearDate = ({ datePickerProps = {}, placeholder, ...props }) => {
+  const formatMonthYear = (date) => date && Number.isFinite(date.getTime())
+    ? \`\${String(date.getMonth() + 1).padStart(2, "0")}/\${date.getFullYear()}\`
+    : ""
+  const parseMonthYear = (text) => {
+    const match = /^(\\d{1,2})\\/(\\d{4})$/.exec(String(text || "").trim())
+    if (!match || +match[1] < 1 || +match[1] > 12) return null
+    const date = new Date(0)
+    date.setFullYear(+match[2], +match[1] - 1, 1)
+    date.setHours(0, 0, 0, 0)
+    return date
+  }
+  return (
+    <DateSelect
+      {...props}
+      placeholder={placeholder || "MM/YYYY"}
+      buttonControls={false}
+      showAge={false}
+      datePickerProps={{
+        ...datePickerProps,
+        formatDate: formatMonthYear,
+        parseDateFromString: parseMonthYear,
+        ...(datePickerProps.strings ? { strings: { ...datePickerProps.strings, invalidInputErrorMessage: "Enter a valid month and year in MM/YYYY format" } } : {}),
+        calendarProps: {
+          ...datePickerProps.calendarProps,
+          isDayPickerVisible: false,
+          isMonthPickerVisible: true,
+          showMonthPickerAsOverlay: false,
+          highlightSelectedMonth: true,
+        },
+      }}
+    />
   )
 }
 `,
@@ -39525,6 +39708,7 @@ var DocumentDateRuntime = (() => {
     if (format === "dd/MM/yyyy") return \`\${day}/\${month}/\${year}\`;
     if (format === "dd/MM/yy") return \`\${day}/\${month}/\${year.slice(2)}\`;
     if (format === "dd/MM") return \`\${day}/\${month}\`;
+    if (format === "MM/yyyy") return \`\${month}/\${year}\`;
     if (format === "MM/dd/yyyy") return \`\${month}/\${day}/\${year}\`;
     if (format === "MMMM d, yyyy") return \`\${monthName} \${+day}, \${year}\`;
     return \`\${year}-\${month}-\${day}\`;
@@ -41661,6 +41845,12 @@ const _fillField = (field, rawValue, sourceFieldId, warnings, PDFLib, booleanSta
     }
 
     if (field instanceof PDFLib.PDFCheckBox) {
+      // An explicit empty choice clears every widget. Undefined answers are
+      // skipped by the caller; blank is a saved edit, including table cells.
+      if (rawValue === "" || (Array.isArray(rawValue) && rawValue.length === 0)) {
+        field.uncheck()
+        return true
+      }
       const states = _getCheckboxOnStates(field)
       if (states.length > 0) {
         const match = _matchSingleOption(rawValue, states)
@@ -41921,6 +42111,102 @@ const _drawGeometryOverlays = async ({
   return { filledFieldCount, skippedFieldCount }
 }
 
+// ---------------------------------------------------------------------------
+// Marks on a picture taken from the PDF (pictureMarks; lib/pdf-picture-marks).
+// Drawn only for fields whose author turned on "Draw marks on the filled
+// PDF". Each entry places the picture on its page: a point at fraction (u, v)
+// across and down the picture is origin + u·across + v·down in PDF user
+// space. Marks are drawn as the form draws them: a symbol is \`size\` wide with
+// lines size / 4.5 thick; a stroke's width follows its size the same way.
+// ---------------------------------------------------------------------------
+
+const _pictureMarkColor = (value, PDFLib) => {
+  const hex = typeof value === "string" ? value.trim().replace(/^#/, "") : ""
+  const full = /^[0-9a-f]{3}$/i.test(hex) ? hex.split("").map((c) => c + c).join("") : hex
+  if (!/^[0-9a-f]{6}$/i.test(full)) return PDFLib.rgb(0.94, 0.27, 0.27)
+  return PDFLib.rgb(parseInt(full.slice(0, 2), 16) / 255, parseInt(full.slice(2, 4), 16) / 255, parseInt(full.slice(4, 6), 16) / 255)
+}
+
+/** A field's marks as fractions of the picture: { kind, symbol, points: [{u, v}], size (fraction of the width), color }. */
+const _pictureMarksOf = (value, entry) => {
+  if (!value || typeof value !== "object") return []
+  const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : Number(v))
+  if (entry.marks === "drawer") {
+    const frame = entry.frame
+    if (!frame || !(frame.w > 0) || !(frame.h > 0)) return []
+    return (Array.isArray(value.marks) ? value.marks : []).flatMap((mark) => {
+      const points = (Array.isArray(mark && mark.points) ? mark.points : [])
+        .map((p) => ({ u: (num(p.x) - frame.x) / frame.w, v: (num(p.y) - frame.y) / frame.h }))
+        .filter((p) => Number.isFinite(p.u) && Number.isFinite(p.v))
+      if (!points.length) return []
+      return [{ kind: mark.kind === "stroke" ? "stroke" : "symbol", symbol: mark.symbol, points, size: num(mark.size) / frame.w, color: mark.color }]
+    })
+  }
+  return (Array.isArray(value.annotations) ? value.annotations : []).flatMap((a) => {
+    if (!a || typeof a !== "object") return []
+    const stroke = a.type === "stroke" || (a.type === undefined && Array.isArray(a.points))
+    const points = (stroke ? (Array.isArray(a.points) ? a.points : []) : [{ x: a.x, y: a.y }])
+      .map((p) => ({ u: num(p && p.x) / 100, v: num(p && p.y) / 100 }))
+      .filter((p) => Number.isFinite(p.u) && Number.isFinite(p.v))
+    if (!points.length) return []
+    return [{ kind: stroke ? "stroke" : "symbol", symbol: a.symbol, points, size: (num(a.size) > 0 ? num(a.size) : 2.2) / 100, color: a.color }]
+  })
+}
+
+const _drawPictureMarks = ({ doc, formData, pictureMarks, includeSet, warnings, PDFLib }) => {
+  const pages = doc.getPages()
+  let drawn = 0
+  for (const entry of Array.isArray(pictureMarks) ? pictureMarks : []) {
+    const fieldId = entry && _isNonEmptyString(entry.fieldId) ? entry.fieldId.trim() : ""
+    if (!fieldId || (includeSet && !includeSet.has(fieldId))) continue
+    const page = pages[Number(entry.page) - 1]
+    if (!page || !Array.isArray(entry.origin) || !Array.isArray(entry.across) || !Array.isArray(entry.down)) continue
+    const [ox, oy] = entry.origin
+    const [ax, ay] = entry.across
+    const [dx, dy] = entry.down
+    const width = Math.hypot(ax, ay)
+    const height = Math.hypot(dx, dy)
+    if (!(width > 0) || !(height > 0)) continue
+    // The picture's own axes on the page (a rotated page turns them).
+    const ux = [ax / width, ay / width]
+    const vy = [dx / height, dy / height]
+    const at = (u, v) => ({ x: ox + u * ax + v * dx, y: oy + u * ay + v * dy })
+    const offset = (c, s, t) => ({ x: c.x + s * ux[0] + t * vy[0], y: c.y + s * ux[1] + t * vy[1] })
+    try {
+      for (const mark of _pictureMarksOf(formData ? formData[fieldId] : null, entry)) {
+        const color = _pictureMarkColor(mark.color, PDFLib)
+        const size = Math.max(2, (mark.size > 0 ? mark.size : 0.022) * width)
+        const thickness = Math.max(0.75, size / 4.5)
+        const line = (start, end) => page.drawLine({ start, end, thickness, color, lineCap: PDFLib.LineCapStyle.Round })
+        if (mark.kind === "stroke") {
+          const points = mark.points.map((p) => at(p.u, p.v))
+          for (let i = 1; i < points.length; i += 1) line(points[i - 1], points[i])
+        } else {
+          const c = at(mark.points[0].u, mark.points[0].v)
+          const h = size / 2
+          if (mark.symbol === "circle") {
+            page.drawEllipse({ x: c.x, y: c.y, xScale: h, yScale: h, borderColor: color, borderWidth: thickness })
+          } else if (mark.symbol === "triangle") {
+            const top = offset(c, 0, -h)
+            const left = offset(c, -h, h)
+            const right = offset(c, h, h)
+            line(top, left)
+            line(left, right)
+            line(right, top)
+          } else {
+            line(offset(c, -h, -h), offset(c, h, h))
+            line(offset(c, h, -h), offset(c, -h, h))
+          }
+        }
+        drawn += 1
+      }
+    } catch (error) {
+      warnings.push(\`Marks for "\${fieldId}": \${error?.message || "failed"}\`)
+    }
+  }
+  return drawn
+}
+
 const _statusColor = (kind) => {
   if (kind === "success") return "#107c10"
   if (kind === "error") return "#a4262c"
@@ -41985,6 +42271,7 @@ const PdfRegenerator = ({
   characterComponentMaps,
   textFlowMaps,
   geometryOverlayFields,
+  pictureMarks,
   documentOutputFields,
   includeOnlyFieldIds,
   flatten = false,
@@ -42165,6 +42452,10 @@ const PdfRegenerator = ({
         .filter((plan) => !includeSet || includeSet.has(plan.tableId))
       await DocumentFillRuntime.appendOverflowAddendum(doc, overflowPlans, PDFLib, { warnings })
       if (flatten) _flattenForm(form, PDFLib, font, warnings, markFont)
+      // Last, so the marks sit over the page and any flattened answers.
+      if (Array.isArray(pictureMarks) && pictureMarks.length > 0) {
+        _drawPictureMarks({ doc, formData, pictureMarks, includeSet, warnings, PDFLib })
+      }
 
       let outputBytes = await doc.save({ updateFieldAppearances: false })
       if (requestedAction === "sign") {
@@ -42202,7 +42493,7 @@ const PdfRegenerator = ({
     } finally {
       setIsBusy(false)
     }
-  }, [resolvedPdfSource, fd, fieldMap, tableSourceMaps, pdfPreparers, booleanFieldStates, fieldMaxLengths, dateComponentMaps, documentDateFormats, choiceComponentMaps, characterComponentMaps, textFlowMaps, geometryOverlayFields, documentOutputFields, includeOnlyFieldIds, flatten, recalculate, organizationSigning, fileName, onComplete, pdfLibStrategy, pdfLibSource])
+  }, [resolvedPdfSource, fd, fieldMap, tableSourceMaps, pdfPreparers, booleanFieldStates, fieldMaxLengths, dateComponentMaps, documentDateFormats, choiceComponentMaps, characterComponentMaps, textFlowMaps, geometryOverlayFields, pictureMarks, documentOutputFields, includeOnlyFieldIds, flatten, recalculate, organizationSigning, fileName, onComplete, pdfLibStrategy, pdfLibSource])
 
   const diagnosticsText = useMemo(() => {
     if (!showDiagnostics) return null
@@ -49217,10 +49508,18 @@ const _resolveSelectableBinaryOptions = (field, fallbackOptions = []) => {
   }
 }
 
-// The open dialog's answers as text, for noticing a change since it opened.
+// Compare answer meaning, not the blank records controls create on mount.
+// Missing, null and empty answers are equivalent; zero and false remain edits.
 const _dialogAnswerSignature = (dataEntryValues, answers) => {
   try {
-    return JSON.stringify({ values: dataEntryValues || {}, answers: answers || {} })
+    const values = Object.fromEntries(Object.entries(dataEntryValues || {})
+      .filter(([, value]) => _isMeaningfulValue(value))
+      .sort(([left], [right]) => left.localeCompare(right)))
+    const selections = Object.fromEntries(Object.entries(answers || {})
+      .map(([id, value]) => [id, ValueKit.readChoice(value)])
+      .filter(([, choices]) => choices.length > 0)
+      .sort(([left], [right]) => left.localeCompare(right)))
+    return JSON.stringify({ values, answers: selections })
   } catch (_error) {
     return ""
   }
@@ -55522,6 +55821,7 @@ var WordFormRuntime = (() => {
     if (format === "dd/MM/yyyy") return \`\${day}/\${month}/\${year}\`;
     if (format === "dd/MM/yy") return \`\${day}/\${month}/\${year.slice(2)}\`;
     if (format === "dd/MM") return \`\${day}/\${month}\`;
+    if (format === "MM/yyyy") return \`\${month}/\${year}\`;
     if (format === "MM/dd/yyyy") return \`\${month}/\${day}/\${year}\`;
     if (format === "MMMM d, yyyy") return \`\${monthName} \${+day}, \${year}\`;
     return \`\${year}-\${month}-\${day}\`;
@@ -57096,6 +57396,7 @@ export const componentIdentities: Record<string, any> = {
     },
     "components": [
       "ValueKit",
+      "MonthYearDate",
       "CompactBooleanField",
       "FindCodeSelect",
       "ScaleField",
@@ -57796,6 +58097,19 @@ export const componentIdentities: Record<string, any> = {
       "minor": 26,
       "patch": 12
     },
+    "components": []
+  },
+  'MonthYearDate': {
+    "name": "MonthYearDate",
+    "title": "Month and year date",
+    "description": "DateSelect wrapper displaying MM/YYYY with month and year selection and canonical MOIS date storage.",
+    "version": {
+      "major": 1,
+      "minor": 0,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "Webforms",
     "components": []
   },
   'MultiTargetChoiceField': {

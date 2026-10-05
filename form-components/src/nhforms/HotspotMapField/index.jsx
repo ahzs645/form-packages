@@ -106,9 +106,11 @@ const HotspotMapField = ({
   const hasSvg = typeof imageSvg === "string" && /<svg[\s>]/i.test(imageSvg)
   const [rasterSize, setRasterSize] = useState(null)
   useEffect(() => {
-    if (hasSvg || !imageUrl || typeof Image === "undefined") return undefined
+    // createElement, not `new Image()`: the form scope injects an Image
+    // control under that name, which is not a constructor.
+    if (hasSvg || !imageUrl || typeof document === "undefined") return undefined
     let alive = true
-    const img = new Image()
+    const img = document.createElement("img")
     img.onload = () => { if (alive) setRasterSize({ width: img.naturalWidth || 1, height: img.naturalHeight || 1 }) }
     img.src = imageUrl
     return () => { alive = false }

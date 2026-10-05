@@ -42,9 +42,12 @@ const h = React.createElement;
 const StoreContext = React.createContext<{ state: State; set: (updater: Updater) => void } | null>(null);
 let latestState: State | null = null;
 
-function useActiveData() {
+function useActiveData(selector?: (state: State) => Record<string, unknown>) {
   const store = React.useContext(StoreContext)!;
-  return [{ ...store.state, setFormData: store.set }, store.set];
+  if (!selector) return [{ ...store.state, setFormData: store.set }, store.set];
+  return [selector(store.state), (updates: Record<string, unknown>) => store.set(current => {
+    Object.assign(selector(current), updates);
+  })];
 }
 
 function Store({ initial, children }: React.PropsWithChildren<{ initial: Record<string, unknown> }>) {
@@ -62,8 +65,12 @@ function Store({ initial, children }: React.PropsWithChildren<{ initial: Record<
   return h(StoreContext.Provider, { value: { state, set } }, children);
 }
 
-function loadRuntime(kit?: Kit): Runtime {
-  const compiled = Babel.transform(SOURCE, { presets: ["react"], filename: "SubformScoring/index.jsx" }).code ?? "";
+function loadRuntime(kit?: Kit, realScoring = false): Runtime {
+  const scoringSource = realScoring
+    ? `const ScoringModule = (() => { ${fs.readFileSync(path.join(NH, "ScoringModule/index.jsx"), "utf8")}
+return ScoringModule; })();`
+    : "";
+  const compiled = Babel.transform(SOURCE + "\n" + scoringSource, { presets: ["react"], filename: "SubformScoring/index.jsx" }).code ?? "";
   const Box = ({ children }: React.PropsWithChildren) => h("div", null, children);
   const Text = ({ children }: React.PropsWithChildren) => h("span", null, children);
   const Label = ({ children, required }: React.PropsWithChildren<{ required?: boolean }>) =>
@@ -84,7 +91,7 @@ function loadRuntime(kit?: Kit): Runtime {
   const scope: Record<string, unknown> = {
     React,
     Fluent: {
-      Stack: Box, Label, Text, PrimaryButton: Button, DefaultButton: Button, Dialog,
+      Stack: Box, StackItem: Box, TooltipHost: Box, Separator: Box, Label, Text, PrimaryButton: Button, DefaultButton: Button, Dialog,
       DialogType: { largeHeader: "largeHeader" }, Toggle: () => null,
     },
     useActiveData,
@@ -123,6 +130,7 @@ function loadRuntime(kit?: Kit): Runtime {
     TimeSelect: control("time", (props, value, event) => (props.onChange as (e: unknown, v: string) => void)?.(event, value)),
     FormLogicKit: kit,
   };
+  if (realScoring) delete scope.ScoringModule;
   // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func
   return new Function(...Object.keys(scope), `${compiled};\nreturn { SubformScoring, SubformScoringInner };`)(
     ...Object.values(scope),
@@ -354,6 +362,42 @@ describe("closing the dialog (DialogKit RowDialog)", () => {
     const onOpenChange = vi.fn();
     mount(runtime.SubformScoringInner, { dataEntryConfig: { fields, calculations: [] }, onOpenChange });
     click(button("Cancel"));
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  const scoringConfig = { questions: [{ id: "epds_q1", label: "Question", options: [
+    { key: "0", text: "As much as I always could", score: 0 },
+    { key: "1", text: "Not quite so much now", score: 1 },
+  ] }], totals: [] };
+
+  it("closes an untouched scoring dialog after its empty answers initialize", () => {
+    const runtime = loadRuntime(undefined, true);
+    const onOpenChange = vi.fn();
+    mount(runtime.SubformScoringInner, { mode: "scoring", config: scoringConfig, onOpenChange });
+    expect(latestState!.field.data.epds_q1).toMatchObject({ selectedKey: null });
+    click(button("Cancel"));
+    expect(container!.textContent).not.toContain("Discard changes?");
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("warns after selecting a zero-score answer", () => {
+    const runtime = loadRuntime(undefined, true);
+    const onOpenChange = vi.fn();
+    mount(runtime.SubformScoringInner, { mode: "scoring", config: scoringConfig, onOpenChange });
+    click(input('input[name="scoring_epds_q1"]'));
+    click(button("Cancel"));
+    expect(container!.textContent).toContain("Discard changes?");
+    expect(onOpenChange).not.toHaveBeenCalledWith(false);
+  });
+
+  it("closes after a text edit is reverted to its original blank answer", () => {
+    const runtime = loadRuntime();
+    const onOpenChange = vi.fn();
+    mount(runtime.SubformScoringInner, { dataEntryConfig: { fields, calculations: [] }, onOpenChange });
+    typeInto(input("input[placeholder=note]"), "hello");
+    typeInto(input("input[placeholder=note]"), "");
+    click(button("Cancel"));
+    expect(container!.textContent).not.toContain("Discard changes?");
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
