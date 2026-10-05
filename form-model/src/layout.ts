@@ -4,6 +4,7 @@ import type { BuilderDefaultAnswer } from "./defaults";
 import type { GroupSummary } from "./grouping";
 import type { ReportItemFormat } from "./report-formats";
 import type {
+  BuilderFhirCoding,
   BuilderField,
   BuilderOptionRule,
   BuilderFieldMoisConfig,
@@ -1398,12 +1399,16 @@ export interface QuestionOptionConfig {
   score: number;
   state?: string | null;
   description?: string | null;
+  /** The answer's equivalent terminology codes (answer-codings.ts). */
+  codings?: BuilderFhirCoding[];
 }
 
 export interface ModuleQuestionConfig {
   id: string;
   label: string;
   fieldId: string;
+  /** The question's terminology codes (a LOINC question code), like a field's `fhirConfig.code`. */
+  codings?: BuilderFhirCoding[];
   childFieldIds: string[];
   valueByFieldId: Record<string, number>;
   options?: QuestionOptionConfig[];

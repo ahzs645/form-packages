@@ -1905,6 +1905,12 @@ export interface BuilderChoiceOptionObject {
   cernerNomenclatureId?: string;
   /** Cerner concept CKI for this answer (DTA Wizard Alpha Details); reported for the analyst. */
   cernerConceptCki?: string;
+  /**
+   * The answer's equivalent codes in standard terminologies (LOINC LA codes),
+   * one per system, beside the stored value, which never changes
+   * (answer-codings.ts).
+   */
+  codings?: BuilderFhirCoding[];
 }
 
 export type BuilderChoiceOption = string | BuilderChoiceOptionObject;
@@ -3653,6 +3659,7 @@ export * from "./reference-ranges";
 export * from "./chart-facts";
 export * from "./chart-concepts";
 export * from "./option-rules";
+export * from "./answer-codings";
 export * from "./targets";
 export * from "./validation";
 export * from "./field-group";
