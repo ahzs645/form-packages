@@ -46,9 +46,17 @@ const _modalSectionGroups = (columns) => columns.reduce((groups, column) => {
   return groups
 }, [])
 
-const _modalSectionLayout = (config, section) => {
+const _modalSectionLayout = (config, section, fields = []) => {
   const requested = config?.sectionLayouts?.[section]
   const count = Number(requested?.columns)
+  if (fields.some((field) => field.width && field.width !== "auto")) return {
+    compact: true,
+    flow: true,
+    columns: Number.isFinite(count) && count >= 1 ? Math.min(12, Math.floor(count)) : 1,
+    minWidth: Math.min(480, Math.max(48, Number(requested?.minColumnWidth) || 160)),
+    style: { display: "flex", flexWrap: "wrap", gap: "12px", alignItems: "flex-start" },
+    controlSize: { width: "100%", minWidth: 0 },
+  }
   if (!Number.isFinite(count) || count < 1) return {
     compact: false,
     style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "12px 16px" },
@@ -62,6 +70,14 @@ const _modalSectionLayout = (config, section) => {
     style: { display: "grid", gridTemplateColumns: `repeat(auto-fit, minmax(min(100%, max(${minWidth}px, calc((100% - ${(columns - 1) * 12}px) / ${columns}))), 1fr))`, gap: "12px" },
     controlSize: { width: "100%", minWidth: 0 },
   }
+}
+
+const _modalQuestionStyle = (column, layout) => {
+  if (layout.flow) return LayoutKit.responsiveFieldStyle(
+    column.width && column.width !== "auto" ? LayoutKit.fieldWidthFraction(column.width) : 1 / layout.columns,
+    12, layout.minWidth,
+  )
+  return { minWidth: 0, ...(!layout.compact && (column.type === "dropdown" || column.type === "text") ? { gridColumn: "1 / -1" } : {}) }
 }
 
 // DefaultsKit (generated from form-model defaults.ts) reads a default answer in
@@ -773,12 +789,40 @@ const _buildChartObservationPayload = ({ rows = [], columns = [], config, existi
       })
     })
   })
+  // Date-only columns own a calendar day, even when the host returns a
+  // midnight timestamp. Other dated fields in this form keep their readings
+  // through the shared observation links; the table must not correct/delete
+  // those just because it writes the same code.
+  const existingWhen = (observation) => {
+    const when = config.date?.timePath
+      ? _observationDateKey(observation.collectedDateTime) || _observationDateKey(observation.collectedDate)
+      : _observationDateKey(observation.collectedDate) || _observationDateKey(observation.collectedDateTime)
+    return when && !config.date?.timePath ? { date: when.date, key: when.date } : when
+  }
+  const observations = (Array.isArray(existing) ? existing : []).filter((observation) => (
+    Number(observation?.observationId) > 0 &&
+    !["D", "DELETED", "CANCELLED", "ENTERED-IN-ERROR"].includes(String(observation?.status || "").toUpperCase())
+  ))
+  const reservedIds = new Set()
+  Object.values(formData?.__observationLinks || {}).forEach((link) => {
+    if (!link || typeof link !== "object") return
+    const candidates = observations.filter((observation) => (
+      String(observation.observationCode) === String(link.code) && !reservedIds.has(Number(observation.observationId))
+    ))
+    const prior = candidates.find((observation) => Number(observation.observationId) === Number(link.id)) ||
+      candidates.find((observation) => {
+        const at = _observationDateKey(link.at)
+        const when = existingWhen(observation)
+        return at && when && at.date === when.date && (!at.time || !when.time || at.time === when.time)
+      })
+    if (prior) reservedIds.add(Number(prior.observationId))
+  })
   const existingByKey = new Map()
-  ;(Array.isArray(existing) ? existing : []).forEach((observation) => {
+  observations.forEach((observation) => {
     const code = String(observation?.observationCode ?? "").trim()
     const id = Number(observation?.observationId)
-    if (!codes.has(code) || !(id > 0)) return
-    const when = _observationDateKey(observation.collectedDateTime) || _observationDateKey(observation.collectedDate)
+    if (!codes.has(code) || reservedIds.has(id)) return
+    const when = existingWhen(observation)
     if (!when) return
     const key = `${code}|${when.key}`
     if (!existingByKey.has(key)) existingByKey.set(key, [])
@@ -2082,7 +2126,7 @@ EditableTable = ({
         inline,
         placeholder: column.placeholder || undefined,
         allowClear: !required,
-        ...(controlSize ? { size: controlSize } : {}),
+        ...(column.moisSize || controlSize ? { size: column.moisSize || controlSize } : {}),
       })
     }
 
@@ -2403,7 +2447,9 @@ EditableTable = ({
                   key={col.id}
                   style={{
                     ...headerCellStyle,
-                    minWidth: col.width || "auto",
+                    // Fractional field widths belong to the modal layout;
+                    // keep legacy pixel/percentage table-header widths working.
+                    minWidth: typeof col.width === "number" || /^\d+(?:\.\d+)?(?:px|rem|em|%)$/.test(String(col.width)) ? col.width : "auto",
                   }}
                   data-source-field-id={sourceFieldIds[col.id] || undefined}
                 >
@@ -2612,14 +2658,14 @@ EditableTable = ({
         >
           <div style={{ display: "grid", gap: "12px" }}>
           {_modalSectionGroups(modalColumns.filter((column) => _evaluateColumnVisibility(column, draftRow, columns, formData))).map((section, sectionIndex) => {
-            const layout = _modalSectionLayout(modalEditorConfig, section.name)
+            const layout = _modalSectionLayout(modalEditorConfig, section.name, section.columns)
             return <div key={`${section.name}-${sectionIndex}`} data-table-dialog-section={section.name}>
               {section.name ? <div style={{ fontWeight: 600, borderBottom: `1px solid ${isDarkMode ? "#505050" : "#d1d5db"}`, paddingTop: "8px", paddingBottom: "4px", marginBottom: "12px" }}>{section.name}</div> : null}
               <div style={layout.style}>
               {section.columns.map((column) => {
                 const cellReadOnly = isLocked || draftLocalStampLock.locked
                 const drawsOwnLabel = column.type !== "stampButton" && !_isFormulaColumn(column) && !cellReadOnly
-                return <div key={column.id} data-table-dialog-question={column.id} style={{ minWidth: 0, ...(!layout.compact && (column.type === "dropdown" || column.type === "text") ? { gridColumn: "1 / -1" } : {}) }}>
+                return <div key={column.id} data-table-dialog-question={column.id} style={_modalQuestionStyle(column, layout)}>
                   {drawsOwnLabel ? null : <Label required={isRequiredModalColumn(column)}>{column.title || column.id}</Label>}
                   {renderEditorInput(
                     draftRow,

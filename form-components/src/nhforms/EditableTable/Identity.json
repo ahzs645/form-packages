@@ -28,6 +28,7 @@
     "FieldKit",
     "FormLogicKit",
     "FormulaKit",
+    "LayoutKit",
     "SubformScoring",
     "ValueKit"
   ]

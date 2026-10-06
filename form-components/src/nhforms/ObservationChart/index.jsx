@@ -265,6 +265,7 @@ const buildSeriesDefinitions = (props) => {
         valuePath: normalizeString(entry.valuePath, normalizeString(props.valuePath, "value")),
         datePath: normalizeString(entry.datePath, normalizeString(props.datePath, "collectedDateTime")),
         unitsPath: normalizeString(entry.unitsPath, normalizeString(props.unitsPath, "units")),
+        acceptedUnits: normalizeStringArray(entry.acceptedUnits),
         codePath: normalizeString(entry.codePath, normalizeString(props.codePath, "observationCode")),
         descriptionPath: normalizeString(entry.descriptionPath, normalizeString(props.descriptionPath, "description")),
         observationCodes: normalizeStringArray(entry.observationCodes),
@@ -313,6 +314,11 @@ const buildSeriesDefinitions = (props) => {
 }
 
 const matchesObservationSeries = (entry, seriesDef) => {
+  // A kg series must not plot pounds as kg. Authors can allow the native
+  // dictionary spellings; an empty list retains the existing unrestricted view.
+  const acceptedUnits = normalizeStringArray(seriesDef.acceptedUnits).map((unit) => unit.toLowerCase())
+  if (acceptedUnits.length && !acceptedUnits.includes(normalizeString(resolvePathValue(entry, seriesDef.unitsPath)).toLowerCase())) return false
+  if (["D", "DELETED", "CANCELLED", "ENTERED-IN-ERROR"].includes(normalizeString(entry.status?.code || entry.status).toUpperCase())) return false
   const normalizedCodePath = normalizeString(seriesDef.codePath, "observationCode")
   const normalizedLoincPath = normalizeString(seriesDef.loincPath, "loincCode")
   const normalizedDescriptionPath = normalizeString(seriesDef.descriptionPath, "description")
@@ -466,7 +472,11 @@ const buildChartPayloadFromObservations = (sourceItems, seriesDefs, props, liveF
       if (seriesDef.isLive) return
       if (!matchesObservationSeries(entry, seriesDef)) return
 
-      const timestamp = parseDateValue(resolvePathValue(entry, seriesDef.datePath))
+      // Calendar-day series prefer the collection date; older chart rows
+      // sometimes carry only its timestamp.
+      const dateValue = resolvePathValue(entry, seriesDef.datePath) ??
+        (seriesDef.datePath === "collectedDate" ? entry.collectedDateTime : undefined)
+      const timestamp = parseDateValue(dateValue)
       if (!timestamp) return
 
       const numericValue = parseMeasurementValue(resolvePathValue(entry, seriesDef.valuePath), seriesDef.parser)

@@ -3,6 +3,7 @@ export type { SmartTemplateLink } from "./smart-template";
 export type { SmartTemplateDefinition, SmartTemplateComponent, SmartTemplateSelection, SmartTemplateLayout, SmartTemplateKind } from "./smart-template";
 export type * from "./offline-authoring";
 export * from "./subgroup-design";
+export * from "./responsive-layout";
 export { resolveRichTextContent, resolveRichTextField } from "./rich-text-targets";
 export type { RichTextTarget, RichTextContent, RichTextOverrides } from "./rich-text-targets";
 /**
@@ -2205,6 +2206,10 @@ export interface BuilderTableColumn {
   showInModal?: boolean;
   /** Optional heading that groups adjacent fields in the MOIS row modal. */
   modalSection?: string;
+  /** Shared field width, used by the row modal. */
+  width?: FieldWidth;
+  /** Optional MOIS input density, independent of its field's layout width. */
+  moisSize?: string;
   /**
    * The row cannot be saved while this column is shown and empty. A column
    * hidden by its visibility rule is never required. Edited through the

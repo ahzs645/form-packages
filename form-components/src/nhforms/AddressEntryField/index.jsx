@@ -1158,6 +1158,8 @@ var AddressEntryRuntime = (() => {
   // packages/form-model/src/field-group.ts
   var TABLE_FIELD_KEYS = [
     "fhirConfig",
+    "width",
+    "moisSize",
     "booleanLabels",
     "prefill",
     "defaultAnswer",

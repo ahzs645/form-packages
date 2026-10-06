@@ -80,6 +80,8 @@ function hasOwn(record: object, key: string): boolean {
  */
 export const TABLE_FIELD_KEYS = [
   "fhirConfig",
+  "width",
+  "moisSize",
   "booleanLabels",
   "prefill",
   "defaultAnswer",

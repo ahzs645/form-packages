@@ -132,6 +132,26 @@ function renderField(
 }
 
 describe("PastMeasurementField date-aspect display", () => {
+  it('stores typed numeric answers as numbers, including zero, and clears them to null', () => {
+    const harness = renderField({ valueType: 'NUMERIC', storeAsNumber: true, readOnly: false, autoFillFromHistory: false });
+    expect(harness.getState()?.field.data.weightHistory).toBeUndefined();
+    act(() => textFieldProps?.onChange({}, '80'));
+    expect(harness.getState()?.field.data.weightHistory).toBe(80);
+    act(() => textFieldProps?.onChange({}, '0'));
+    expect(harness.getState()?.field.data.weightHistory).toBe(0);
+    act(() => textFieldProps?.onChange({}, ''));
+    expect(harness.getState()?.field.data.weightHistory).toBeNull();
+    act(() => harness.root.unmount());
+  });
+
+  it('honors numeric storage for explicit historical seeding while retaining legacy text storage', () => {
+    const numeric = renderField({ valueType: 'NUMERIC', storeAsNumber: true });
+    expect(numeric.getState()?.field.data.weightHistory).toBe(72.4);
+    act(() => numeric.root.unmount());
+    const legacy = renderField({ valueType: 'NUMERIC' });
+    expect(legacy.getState()?.field.data.weightHistory).toBe('72.4');
+    act(() => legacy.root.unmount());
+  });
   it("formats collectedDateTime and does not borrow the observation units", () => {
     const harness = renderField({
       valuePath: "collectedDateTime",

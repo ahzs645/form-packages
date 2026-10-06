@@ -1,4 +1,6 @@
 /** Opt-in container design. Missing/original preserves legacy/source layout. */
+import { fieldWidthFraction } from "./responsive-layout";
+
 export interface SubgroupDesign {
   mode: "original" | "stacked" | "inline" | "row" | "columns";
   /** Relative column weights, e.g. [2, 1, 3]. */
@@ -7,6 +9,8 @@ export interface SubgroupDesign {
   width?: number;
   /** Cap the group's outer width in pixels; it can shrink with its parent. */
   maxWidth?: number;
+  /** Inline/column children wrap rather than shrink below this usable width. */
+  minFieldWidth?: number;
   breakBefore?: boolean;
   gap?: number;
   padding?: number;
@@ -27,6 +31,7 @@ export function normalizeSubgroupDesign(design?: SubgroupDesign) {
     mode: design && ["original", "stacked", "inline", "row", "columns"].includes(design.mode) ? design.mode : "original" as SubgroupDesign["mode"],
     columns: columns?.length ? columns : [1, 1],
     width: clamp(design?.width, 1, 0.1, 1),
+    minFieldWidth: clamp(design?.minFieldWidth, 160, 48, 1000),
     maxWidth: typeof design?.maxWidth === "number" && Number.isFinite(design.maxWidth) && design.maxWidth > 0 ? clamp(design.maxWidth, 1, 1, 10000) : undefined,
     breakBefore: design?.breakBefore === true,
     gap: clamp(design?.gap, 12, 0, 100),
@@ -43,9 +48,7 @@ export function subgroupDesignEqual(a?: SubgroupDesign, b?: SubgroupDesign): boo
 }
 
 export function subgroupWidthFraction(width?: string | number): number {
-  if (typeof width === "number") return Math.max(0.1, Math.min(1, width));
-  const [a, b] = (width ?? "").split("/").map(Number);
-  return a > 0 && b > 0 ? Math.min(1, a / b) : 1;
+  return fieldWidthFraction(width);
 }
 
 /** Same row packing for native geometry and web wrappers. */

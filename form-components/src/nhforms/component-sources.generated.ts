@@ -1329,6 +1329,8 @@ var AddressEntryRuntime = (() => {
   // packages/form-model/src/field-group.ts
   var TABLE_FIELD_KEYS = [
     "fhirConfig",
+    "width",
+    "moisSize",
     "booleanLabels",
     "prefill",
     "defaultAnswer",
@@ -9390,6 +9392,9 @@ const DialogKit = (() => {
             {errorMessage ? (
               <div role="alert" data-dialog-kit-error="" style={errorStyle}>{errorMessage}</div>
             ) : null}
+            {/* The real Fluent wrapping Stack uses negative half-gap margins.
+                Contain those margins inside the dialog at narrow widths. */}
+            <div style={{ paddingLeft: 8, paddingRight: 8 }}>
             <ButtonBar horizontalAlign="end" paddingBottom={0}>
               <Fluent.PrimaryButton
                 text={saveText}
@@ -9412,6 +9417,7 @@ const DialogKit = (() => {
               ))}
               <Fluent.DefaultButton text={cancelText} onClick={requestCancel} />
             </ButtonBar>
+            </div>
           </div>
         </SubForm>
         <ConfirmDialog
@@ -12926,9 +12932,17 @@ const _modalSectionGroups = (columns) => columns.reduce((groups, column) => {
   return groups
 }, [])
 
-const _modalSectionLayout = (config, section) => {
+const _modalSectionLayout = (config, section, fields = []) => {
   const requested = config?.sectionLayouts?.[section]
   const count = Number(requested?.columns)
+  if (fields.some((field) => field.width && field.width !== "auto")) return {
+    compact: true,
+    flow: true,
+    columns: Number.isFinite(count) && count >= 1 ? Math.min(12, Math.floor(count)) : 1,
+    minWidth: Math.min(480, Math.max(48, Number(requested?.minColumnWidth) || 160)),
+    style: { display: "flex", flexWrap: "wrap", gap: "12px", alignItems: "flex-start" },
+    controlSize: { width: "100%", minWidth: 0 },
+  }
   if (!Number.isFinite(count) || count < 1) return {
     compact: false,
     style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "12px 16px" },
@@ -12942,6 +12956,14 @@ const _modalSectionLayout = (config, section) => {
     style: { display: "grid", gridTemplateColumns: \`repeat(auto-fit, minmax(min(100%, max(\${minWidth}px, calc((100% - \${(columns - 1) * 12}px) / \${columns}))), 1fr))\`, gap: "12px" },
     controlSize: { width: "100%", minWidth: 0 },
   }
+}
+
+const _modalQuestionStyle = (column, layout) => {
+  if (layout.flow) return LayoutKit.responsiveFieldStyle(
+    column.width && column.width !== "auto" ? LayoutKit.fieldWidthFraction(column.width) : 1 / layout.columns,
+    12, layout.minWidth,
+  )
+  return { minWidth: 0, ...(!layout.compact && (column.type === "dropdown" || column.type === "text") ? { gridColumn: "1 / -1" } : {}) }
 }
 
 // DefaultsKit (generated from form-model defaults.ts) reads a default answer in
@@ -13653,12 +13675,40 @@ const _buildChartObservationPayload = ({ rows = [], columns = [], config, existi
       })
     })
   })
+  // Date-only columns own a calendar day, even when the host returns a
+  // midnight timestamp. Other dated fields in this form keep their readings
+  // through the shared observation links; the table must not correct/delete
+  // those just because it writes the same code.
+  const existingWhen = (observation) => {
+    const when = config.date?.timePath
+      ? _observationDateKey(observation.collectedDateTime) || _observationDateKey(observation.collectedDate)
+      : _observationDateKey(observation.collectedDate) || _observationDateKey(observation.collectedDateTime)
+    return when && !config.date?.timePath ? { date: when.date, key: when.date } : when
+  }
+  const observations = (Array.isArray(existing) ? existing : []).filter((observation) => (
+    Number(observation?.observationId) > 0 &&
+    !["D", "DELETED", "CANCELLED", "ENTERED-IN-ERROR"].includes(String(observation?.status || "").toUpperCase())
+  ))
+  const reservedIds = new Set()
+  Object.values(formData?.__observationLinks || {}).forEach((link) => {
+    if (!link || typeof link !== "object") return
+    const candidates = observations.filter((observation) => (
+      String(observation.observationCode) === String(link.code) && !reservedIds.has(Number(observation.observationId))
+    ))
+    const prior = candidates.find((observation) => Number(observation.observationId) === Number(link.id)) ||
+      candidates.find((observation) => {
+        const at = _observationDateKey(link.at)
+        const when = existingWhen(observation)
+        return at && when && at.date === when.date && (!at.time || !when.time || at.time === when.time)
+      })
+    if (prior) reservedIds.add(Number(prior.observationId))
+  })
   const existingByKey = new Map()
-  ;(Array.isArray(existing) ? existing : []).forEach((observation) => {
+  observations.forEach((observation) => {
     const code = String(observation?.observationCode ?? "").trim()
     const id = Number(observation?.observationId)
-    if (!codes.has(code) || !(id > 0)) return
-    const when = _observationDateKey(observation.collectedDateTime) || _observationDateKey(observation.collectedDate)
+    if (!codes.has(code) || reservedIds.has(id)) return
+    const when = existingWhen(observation)
     if (!when) return
     const key = \`\${code}|\${when.key}\`
     if (!existingByKey.has(key)) existingByKey.set(key, [])
@@ -14962,7 +15012,7 @@ EditableTable = ({
         inline,
         placeholder: column.placeholder || undefined,
         allowClear: !required,
-        ...(controlSize ? { size: controlSize } : {}),
+        ...(column.moisSize || controlSize ? { size: column.moisSize || controlSize } : {}),
       })
     }
 
@@ -15283,7 +15333,9 @@ EditableTable = ({
                   key={col.id}
                   style={{
                     ...headerCellStyle,
-                    minWidth: col.width || "auto",
+                    // Fractional field widths belong to the modal layout;
+                    // keep legacy pixel/percentage table-header widths working.
+                    minWidth: typeof col.width === "number" || /^\\d+(?:\\.\\d+)?(?:px|rem|em|%)$/.test(String(col.width)) ? col.width : "auto",
                   }}
                   data-source-field-id={sourceFieldIds[col.id] || undefined}
                 >
@@ -15492,14 +15544,14 @@ EditableTable = ({
         >
           <div style={{ display: "grid", gap: "12px" }}>
           {_modalSectionGroups(modalColumns.filter((column) => _evaluateColumnVisibility(column, draftRow, columns, formData))).map((section, sectionIndex) => {
-            const layout = _modalSectionLayout(modalEditorConfig, section.name)
+            const layout = _modalSectionLayout(modalEditorConfig, section.name, section.columns)
             return <div key={\`\${section.name}-\${sectionIndex}\`} data-table-dialog-section={section.name}>
               {section.name ? <div style={{ fontWeight: 600, borderBottom: \`1px solid \${isDarkMode ? "#505050" : "#d1d5db"}\`, paddingTop: "8px", paddingBottom: "4px", marginBottom: "12px" }}>{section.name}</div> : null}
               <div style={layout.style}>
               {section.columns.map((column) => {
                 const cellReadOnly = isLocked || draftLocalStampLock.locked
                 const drawsOwnLabel = column.type !== "stampButton" && !_isFormulaColumn(column) && !cellReadOnly
-                return <div key={column.id} data-table-dialog-question={column.id} style={{ minWidth: 0, ...(!layout.compact && (column.type === "dropdown" || column.type === "text") ? { gridColumn: "1 / -1" } : {}) }}>
+                return <div key={column.id} data-table-dialog-question={column.id} style={_modalQuestionStyle(column, layout)}>
                   {drawsOwnLabel ? null : <Label required={isRequiredModalColumn(column)}>{column.title || column.id}</Label>}
                   {renderEditorInput(
                     draftRow,
@@ -30797,6 +30849,30 @@ const InvestigationTabs = ({
   )
 }
 `,
+  './LayoutKit/index.jsx': `// LayoutKit — shared responsive field and subgroup widths.
+// Generated from packages/form-model/src/responsive-layout.ts; run pnpm generate:nhforms after changing it.
+// Reference only inside function bodies: NHForms modules load in any order.
+
+const LayoutKit = (() => {
+  function fieldWidthFraction(width) {
+    if (typeof width === "number") return Number.isFinite(width) ? Math.max(0.1, Math.min(1, width)) : 1;
+    const [a, b] = (width ?? "").split("/").map(Number);
+    return a > 0 && b > 0 ? Math.min(1, a / b) : 1;
+  }
+  function responsiveFieldStyle(fraction = 1, gap = 12, minWidth = 160) {
+    const share = Number.isFinite(fraction) ? Math.max(0.1, Math.min(1, fraction)) : 1;
+    const spacing = Number.isFinite(gap) ? Math.max(0, gap) : 12;
+    const minimum = Number.isFinite(minWidth) ? Math.max(0, minWidth) : 160;
+    const width = share === 1 ? "100%" : \`min(100%, max(\${minimum}px, calc((100% + \${spacing}px) * \${share} - \${spacing}px)))\`;
+    return { width, flexBasis: width, flexGrow: 0, flexShrink: 0, minWidth: 0, maxWidth: "100%" };
+  }
+
+  return {
+    fieldWidthFraction,
+    responsiveFieldStyle,
+  }
+})()
+`,
   './LayoutTable/index.jsx': `// Fluent is a NAMESPACE in the real engine's form scope — bare Fluent
 // identifiers are a ReferenceError in production even though preview
 // injects them. Destructure everything this component renders.
@@ -33227,6 +33303,7 @@ const buildSeriesDefinitions = (props) => {
         valuePath: normalizeString(entry.valuePath, normalizeString(props.valuePath, "value")),
         datePath: normalizeString(entry.datePath, normalizeString(props.datePath, "collectedDateTime")),
         unitsPath: normalizeString(entry.unitsPath, normalizeString(props.unitsPath, "units")),
+        acceptedUnits: normalizeStringArray(entry.acceptedUnits),
         codePath: normalizeString(entry.codePath, normalizeString(props.codePath, "observationCode")),
         descriptionPath: normalizeString(entry.descriptionPath, normalizeString(props.descriptionPath, "description")),
         observationCodes: normalizeStringArray(entry.observationCodes),
@@ -33275,6 +33352,11 @@ const buildSeriesDefinitions = (props) => {
 }
 
 const matchesObservationSeries = (entry, seriesDef) => {
+  // A kg series must not plot pounds as kg. Authors can allow the native
+  // dictionary spellings; an empty list retains the existing unrestricted view.
+  const acceptedUnits = normalizeStringArray(seriesDef.acceptedUnits).map((unit) => unit.toLowerCase())
+  if (acceptedUnits.length && !acceptedUnits.includes(normalizeString(resolvePathValue(entry, seriesDef.unitsPath)).toLowerCase())) return false
+  if (["D", "DELETED", "CANCELLED", "ENTERED-IN-ERROR"].includes(normalizeString(entry.status?.code || entry.status).toUpperCase())) return false
   const normalizedCodePath = normalizeString(seriesDef.codePath, "observationCode")
   const normalizedLoincPath = normalizeString(seriesDef.loincPath, "loincCode")
   const normalizedDescriptionPath = normalizeString(seriesDef.descriptionPath, "description")
@@ -33428,7 +33510,11 @@ const buildChartPayloadFromObservations = (sourceItems, seriesDefs, props, liveF
       if (seriesDef.isLive) return
       if (!matchesObservationSeries(entry, seriesDef)) return
 
-      const timestamp = parseDateValue(resolvePathValue(entry, seriesDef.datePath))
+      // Calendar-day series prefer the collection date; older chart rows
+      // sometimes carry only its timestamp.
+      const dateValue = resolvePathValue(entry, seriesDef.datePath) ??
+        (seriesDef.datePath === "collectedDate" ? entry.collectedDateTime : undefined)
+      const timestamp = parseDateValue(dateValue)
       if (!timestamp) return
 
       const numericValue = parseMeasurementValue(resolvePathValue(entry, seriesDef.valuePath), seriesDef.parser)
@@ -36367,6 +36453,13 @@ const hasMeaningfulValue = (value) => {
   return true
 }
 
+const measurementStoredValue = (value, storeAsNumber, valueType) => {
+  if (!storeAsNumber || String(valueType).toUpperCase() !== "NUMERIC") return value ?? ""
+  if (value === null || value === undefined || String(value).trim() === "") return null
+  const number = Number(value)
+  return Number.isFinite(number) ? number : null
+}
+
 const toPathSegments = (path) =>
   String(path || "")
     .split(".")
@@ -36680,6 +36773,7 @@ const PastMeasurementField = ({
   bringForward = true,
   persistenceMode = "formOnly",
   valueType = "TEXT",
+  storeAsNumber = false,
   numberTypeNumber = "number",
   buttonControls = false,
   spinButtonProps,
@@ -37036,15 +37130,17 @@ const PastMeasurementField = ({
         draft.field.data = {}
       }
       if (!isHistoricalFormValue && hasMeaningfulValue(draft.field.data[effectiveFieldId])) return
-      draft.field.data[effectiveFieldId] = latestHistoryItem.valueText
+      draft.field.data[effectiveFieldId] = isHistoricalFormValue
+        ? latestHistoryItem.valueText
+        : measurementStoredValue(latestHistoryItem.valueText, storeAsNumber, valueType)
     }))
-  }, [autoFillFromHistory, bringForward, effectiveFieldId, isHistoricalFormValue, latestHistoryItem, linkedObservationItem, setFormData, storedValue])
+  }, [autoFillFromHistory, bringForward, effectiveFieldId, isHistoricalFormValue, latestHistoryItem, linkedObservationItem, setFormData, storedValue, storeAsNumber, valueType])
 
   const handleValueChange = (event, nextValue) => {
     if (!effectiveFieldId) return
     if (readOnly || disabled) return
 
-    const updatedValue = nextValue ?? ""
+    const updatedValue = measurementStoredValue(nextValue, storeAsNumber, valueType)
     setFormData(produce((draft) => {
       if (!draft.field) {
         draft.field = { data: {}, status: {}, history: [] }
@@ -57320,6 +57416,7 @@ export const componentIdentities: Record<string, any> = {
       "FieldKit",
       "FormLogicKit",
       "FormulaKit",
+      "LayoutKit",
       "SubformScoring",
       "ValueKit"
     ]
@@ -57977,6 +58074,32 @@ export const componentIdentities: Record<string, any> = {
       "major": 2,
       "minor": 26,
       "patch": 12
+    },
+    "components": []
+  },
+  'LayoutKit': {
+    "name": "LayoutKit",
+    "title": "Responsive layout helper kit",
+    "description": "Shared fractional field and subgroup widths with gap-aware responsive wrapping.",
+    "version": {
+      "major": 1,
+      "minor": 0,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "Northern Health",
+    "author": "Claude",
+    "publisher": "Northern Health",
+    "globalIdentifier": "",
+    "requiredFormViewerVersion": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "requiredMoisVersion": {
+      "major": 2,
+      "minor": 28,
+      "patch": 10
     },
     "components": []
   },

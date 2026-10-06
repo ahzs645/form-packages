@@ -400,6 +400,8 @@ function loadComponentCode(code: string, componentName: string, additionalCompon
     'ValueKit',
     // DefaultsKit helper namespace (default-answer reader and resolver generated from form-model defaults.ts)
     'DefaultsKit',
+    // LayoutKit helper namespace (responsive fractional field/group sizing)
+    'LayoutKit',
     // FieldKit helper namespace (a question drawn with the exporter's MOIS control)
     'FieldKit',
     // DialogKit helper namespace (RowDialog / ConfirmDialog on the MOIS SubForm, dialog width rule)

@@ -40,6 +40,13 @@ const hasMeaningfulValue = (value) => {
   return true
 }
 
+const measurementStoredValue = (value, storeAsNumber, valueType) => {
+  if (!storeAsNumber || String(valueType).toUpperCase() !== "NUMERIC") return value ?? ""
+  if (value === null || value === undefined || String(value).trim() === "") return null
+  const number = Number(value)
+  return Number.isFinite(number) ? number : null
+}
+
 const toPathSegments = (path) =>
   String(path || "")
     .split(".")
@@ -353,6 +360,7 @@ const PastMeasurementField = ({
   bringForward = true,
   persistenceMode = "formOnly",
   valueType = "TEXT",
+  storeAsNumber = false,
   numberTypeNumber = "number",
   buttonControls = false,
   spinButtonProps,
@@ -709,15 +717,17 @@ const PastMeasurementField = ({
         draft.field.data = {}
       }
       if (!isHistoricalFormValue && hasMeaningfulValue(draft.field.data[effectiveFieldId])) return
-      draft.field.data[effectiveFieldId] = latestHistoryItem.valueText
+      draft.field.data[effectiveFieldId] = isHistoricalFormValue
+        ? latestHistoryItem.valueText
+        : measurementStoredValue(latestHistoryItem.valueText, storeAsNumber, valueType)
     }))
-  }, [autoFillFromHistory, bringForward, effectiveFieldId, isHistoricalFormValue, latestHistoryItem, linkedObservationItem, setFormData, storedValue])
+  }, [autoFillFromHistory, bringForward, effectiveFieldId, isHistoricalFormValue, latestHistoryItem, linkedObservationItem, setFormData, storedValue, storeAsNumber, valueType])
 
   const handleValueChange = (event, nextValue) => {
     if (!effectiveFieldId) return
     if (readOnly || disabled) return
 
-    const updatedValue = nextValue ?? ""
+    const updatedValue = measurementStoredValue(nextValue, storeAsNumber, valueType)
     setFormData(produce((draft) => {
       if (!draft.field) {
         draft.field = { data: {}, status: {}, history: [] }

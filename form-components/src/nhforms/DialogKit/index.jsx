@@ -177,6 +177,9 @@ const DialogKit = (() => {
             {errorMessage ? (
               <div role="alert" data-dialog-kit-error="" style={errorStyle}>{errorMessage}</div>
             ) : null}
+            {/* The real Fluent wrapping Stack uses negative half-gap margins.
+                Contain those margins inside the dialog at narrow widths. */}
+            <div style={{ paddingLeft: 8, paddingRight: 8 }}>
             <ButtonBar horizontalAlign="end" paddingBottom={0}>
               <Fluent.PrimaryButton
                 text={saveText}
@@ -199,6 +202,7 @@ const DialogKit = (() => {
               ))}
               <Fluent.DefaultButton text={cancelText} onClick={requestCancel} />
             </ButtonBar>
+            </div>
           </div>
         </SubForm>
         <ConfirmDialog
