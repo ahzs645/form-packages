@@ -41,6 +41,7 @@ type Runtime = {
 const h = React.createElement;
 const StoreContext = React.createContext<{ state: State; set: (updater: Updater) => void } | null>(null);
 let latestState: State | null = null;
+let updateParent: (updater: Updater) => void;
 
 function useActiveData(selector?: (state: State) => Record<string, unknown>) {
   const store = React.useContext(StoreContext)!;
@@ -62,10 +63,11 @@ function Store({ initial, children }: React.PropsWithChildren<{ initial: Record<
       return { ...current, ...updater };
     });
   }, []);
+  updateParent = set;
   return h(StoreContext.Provider, { value: { state, set } }, children);
 }
 
-function loadRuntime(kit?: Kit, realScoring = false): Runtime {
+function loadRuntime(kit?: Kit, realScoring = false, cloneSession?: (value: unknown) => unknown): Runtime {
   const scoringSource = realScoring
     ? `const ScoringModule = (() => { ${fs.readFileSync(path.join(NH, "ScoringModule/index.jsx"), "utf8")}
 return ScoringModule; })();`
@@ -129,6 +131,7 @@ return ScoringModule; })();`
     DateSelect: control("date", (props, value) => (props.onChange as (v: string) => void)?.(value)),
     TimeSelect: control("time", (props, value, event) => (props.onChange as (e: unknown, v: string) => void)?.(event, value)),
     FormLogicKit: kit,
+    ...(cloneSession ? { cloneFormSessionState: cloneSession } : {}),
   };
   if (realScoring) delete scope.ScoringModule;
   // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func
@@ -451,6 +454,39 @@ describe("closing the dialog (DialogKit RowDialog)", () => {
 });
 
 describe("public wrapper", () => {
+  it("clones only on opening, cancels isolated edits, and reopens from the latest parent answers", () => {
+    const clone = vi.fn((value: unknown) => JSON.parse(JSON.stringify(value)));
+    const runtime = loadRuntime(undefined, false, clone);
+    mount(runtime.SubformScoring, {
+      isOpen: undefined, hideTriggerButton: false,
+      dataEntryConfig: { fields: [{ id: "note", label: "Note", type: "text", placeholder: "note" }], calculations: [] },
+    }, { note: "saved" });
+    expect(clone).not.toHaveBeenCalled();
+    act(() => updateParent(current => { current.field.data.note = "latest"; }));
+    expect(clone).not.toHaveBeenCalled();
+
+    click(button("Complete Assessment"));
+    expect(clone).toHaveBeenCalled();
+    expect(input("input[placeholder=note]").value).toBe("latest");
+    typeInto(input("input[placeholder=note]"), "discard me");
+    expect(latestState?.field.data.note).toBe("latest");
+    click(button("Cancel"));
+    click(button("Discard"));
+    expect(container?.querySelector('[role="dialog"]')).toBeNull();
+    const closedClones = clone.mock.calls.length;
+    act(() => updateParent(current => { current.field.data.note = "new parent"; }));
+    expect(clone).toHaveBeenCalledTimes(closedClones);
+    click(button("Complete Assessment"));
+    expect(input("input[placeholder=note]").value).toBe("new parent");
+    // A parent update while open must not replace the isolated editing draft.
+    typeInto(input("input[placeholder=note]"), "commit me");
+    act(() => updateParent(current => { current.field.data.unrelated = "retained"; }));
+    expect(input("input[placeholder=note]").value).toBe("commit me");
+    click(button("Done"));
+    expect(latestState?.field.data.note).toBe("commit me");
+    expect(latestState?.field.data.unrelated).toBe("retained");
+  });
+
   it("merges the session into the parent and still runs the host's onCommitToParent", () => {
     const runtime = loadRuntime();
     const onCommitToParent = vi.fn();

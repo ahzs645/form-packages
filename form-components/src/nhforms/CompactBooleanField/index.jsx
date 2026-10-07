@@ -143,6 +143,9 @@ const normalizeValue = (value) => {
  * @param {boolean} [props.isDarkMode] - Dark mode flag
  * @param {boolean} [props.allowDeselect=true] - Allow clicking selected option to deselect
  */
+const __compactBooleanButtonTokens = { childrenGap: 4 }
+const __compactBooleanEmptyLinkedFieldIds = []
+
 const YesNoButtons = ({
   yesLabel = 'Yes',
   noLabel = 'No',
@@ -177,20 +180,20 @@ const YesNoButtons = ({
     }
   }, [disabled, normalized, allowDeselect, onChange])
 
-  const yesButtonStyle = {
+  const yesButtonStyle = useMemo(() => ({
     ...getButtonStyles(normalized === 'yes', isDarkMode, size),
     opacity: disabled ? 0.5 : 1,
     cursor: disabled ? 'not-allowed' : 'pointer',
-  }
+  }), [normalized, isDarkMode, size, disabled])
 
-  const noButtonStyle = {
+  const noButtonStyle = useMemo(() => ({
     ...getButtonStyles(normalized === 'no', isDarkMode, size),
     opacity: disabled ? 0.5 : 1,
     cursor: disabled ? 'not-allowed' : 'pointer',
-  }
+  }), [normalized, isDarkMode, size, disabled])
 
   return (
-    <Stack horizontal tokens={{ childrenGap: 4 }}>
+    <Stack horizontal tokens={__compactBooleanButtonTokens}>
       <button
         type="button"
         style={yesButtonStyle}
@@ -212,6 +215,10 @@ const YesNoButtons = ({
     </Stack>
   )
 }
+
+// Broad form subscriptions still run the field; unchanged button pairs need
+// no render or Fluent style work when a sibling answer changes.
+const __MemoCompactBooleanButtons = React.memo(YesNoButtons)
 
 /**
  * CompactBooleanField - Full boolean field with label and Yes/No buttons
@@ -249,7 +256,7 @@ const CompactBooleanField = ({
   allowDeselect = true,
   allowNeutral = true,
   sourceFieldId,
-  linkedFieldIds = [],
+  linkedFieldIds = __compactBooleanEmptyLinkedFieldIds,
   displayStyle = 'buttons',
   ...props
 }) => {
@@ -269,6 +276,10 @@ const CompactBooleanField = ({
   }, [currentValue])
   const normalizedValue = normalizeValue(optimisticValue)
   const normalized = normalizedValue === null && !allowNeutral ? 'no' : normalizedValue
+
+  // Linked IDs are serialized strings from generated JSX, whose array identity
+  // may change while its destinations stay the same.
+  const linkedFieldIdsKey = JSON.stringify(linkedFieldIds || [])
 
   // Handle value change
   const handleChange = useCallback((newValue) => {
@@ -302,11 +313,9 @@ const CompactBooleanField = ({
     } else {
       commitValue()
     }
-  }, [setFormData, fieldId, sourceFieldId, linkedFieldIds, allowNeutral, isDisabled])
+  }, [setFormData, fieldId, sourceFieldId, linkedFieldIdsKey, allowNeutral, isDisabled])
 
   // Styles
-  const baseContainerStyle = getFieldContainerStyles(isDarkMode, showCard)
-
   // Add width styling for grid layout
   const getWidthStyle = (sizeValue) => {
     if (!sizeValue || sizeValue === 'full') return {}
@@ -320,12 +329,12 @@ const CompactBooleanField = ({
     return { width: widthMap[sizeValue] || '100%', flexShrink: 0 }
   }
 
-  const containerStyle = { ...baseContainerStyle, ...getWidthStyle(size) }
+  const containerStyle = useMemo(() => ({ ...getFieldContainerStyles(isDarkMode, showCard), ...getWidthStyle(size) }), [isDarkMode, showCard, size])
 
   const themeLabelMinWidth = theme?.mois?.defaultCommonControlStyle?.minLabelWidth ?? 240
   const themeLabelMaxWidth = theme?.mois?.defaultCommonControlStyle?.maxLabelWidth ?? themeLabelMinWidth
   const isLeftLabel = labelPosition === 'left'
-  const labelStyle = {
+  const labelStyle = useMemo(() => ({
     root: {
       fontWeight: 600,
       marginRight: isLeftLabel ? '10px' : 0,
@@ -335,13 +344,16 @@ const CompactBooleanField = ({
       padding: isLeftLabel ? '5px 0px' : undefined,
       flex: isLeftLabel ? '0 0 auto' : undefined,
     },
-  }
+  }), [isLeftLabel, labelPosition, themeLabelMinWidth, themeLabelMaxWidth])
+  const rightLabelStyle = useMemo(() => ({
+    ...labelStyle, root: { ...labelStyle.root, marginLeft: '12px', marginRight: 0 },
+  }), [labelStyle])
 
-  const noteStyle = {
+  const noteStyle = useMemo(() => ({
     fontSize: '11px',
     color: isDarkMode ? '#888' : '#666',
     marginTop: '4px',
-  }
+  }), [isDarkMode])
 
   const isHorizontal = labelPosition === 'left' || labelPosition === 'right'
 
@@ -373,7 +385,7 @@ const CompactBooleanField = ({
           {required && <span style={{ color: '#d32f2f', marginLeft: '4px' }}>*</span>}
         </Label>
       )}
-      <YesNoButtons
+      <__MemoCompactBooleanButtons
         yesLabel={yesLabel}
         noLabel={noLabel}
         value={normalized}
@@ -384,7 +396,7 @@ const CompactBooleanField = ({
         allowDeselect={allowDeselect}
       />
       {label && labelPosition === 'right' && (
-        <Label styles={{ ...labelStyle, root: { ...labelStyle.root, marginLeft: '12px', marginRight: 0 } }}>
+        <Label styles={rightLabelStyle}>
           {label}
           {required && <span style={{ color: '#d32f2f', marginLeft: '4px' }}>*</span>}
         </Label>

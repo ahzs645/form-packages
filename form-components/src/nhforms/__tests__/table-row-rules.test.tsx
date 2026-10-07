@@ -12,7 +12,7 @@ import * as Babel from "@babel/standalone";
 import { produce } from "immer";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -132,11 +132,15 @@ type Runtime = {
 
 let runtimeSourceData: AnyProps = {};
 
-function loadRuntime(): Runtime {
-  const source = ["ValueKit", "FormulaKit", "FormLogicKit", "FieldKit", "DialogKit", "EditableTable", "RepeatForEachTable"].map(read).join("\n");
+function loadRuntime(onSourceRows?: () => void): Runtime {
+  let source = ["ValueKit", "FormulaKit", "FormLogicKit", "FieldKit", "DialogKit", "EditableTable", "RepeatForEachTable"].map(read).join("\n");
+  if (onSourceRows) {
+    source = source.replace("const _buildRowsFromSourceFields = (", "const __uncachedSourceRows = (")
+      .replace("const _normalizeUniqueToken =", "const _buildRowsFromSourceFields = (...args) => { onSourceRows(); return __uncachedSourceRows(...args) };\nconst _normalizeUniqueToken =");
+  }
   const compiled = Babel.transform(`var EditableTable;\n${source}`, { presets: ["react"], filename: "index.jsx" }).code ?? "";
   const scope: Record<string, unknown> = {
-    window: {}, React, Fluent, produce, useActiveData, SubformScoring,
+    window: {}, React, Fluent, produce, useActiveData, SubformScoring, onSourceRows,
     useTheme: () => ({}), useSourceData: () => runtimeSourceData, useSection: () => null,
     TextArea: Field, Numeric: Field, DateSelect: Field, DateTimeSelect: Field, TimeSelect: Field,
     SimpleCodeSelect: CodeField, OptionChoice: Field, SimpleCodeChecklist: Checklist,
@@ -164,11 +168,13 @@ afterEach(async () => {
 
 async function mount(element: () => React.ReactElement, data: Record<string, unknown>) {
   let state: Record<string, unknown> = { field: { data, status: {}, history: [] } };
+  let update: (updater: unknown) => void;
   const Harness = () => {
     const [current, set] = React.useState(state);
     state = current;
     const setState = (updater: unknown) =>
       set((previous) => (typeof updater === "function" ? produce(previous, updater as (draft: unknown) => void) : (updater as typeof previous)));
+    update = setState;
     return h(ActiveDataContext.Provider, { value: [current, setState] }, element());
   };
   container = document.createElement("div");
@@ -178,6 +184,7 @@ async function mount(element: () => React.ReactElement, data: Record<string, unk
   const button = (text: string) => Array.from(container!.querySelectorAll("button")).find((entry) => entry.textContent === text)!;
   return {
     data: () => (state.field as { data: Record<string, unknown> }).data,
+    update: async (updater: (draft: any) => void) => act(async () => update(updater)),
     rerender: async () => act(async () => root!.render(h(Harness))),
     run: async (fn: () => void) => act(async () => fn()),
     click: async (element: Element) => act(async () => (element as HTMLElement).click()),
@@ -191,6 +198,37 @@ async function mount(element: () => React.ReactElement, data: Record<string, unk
     },
   };
 }
+
+describe("EditableTable source hydration caching", () => {
+  it("skips unrelated edits and fresh config literals, but reads changed mapped answers and config", async () => {
+    const buildRows = vi.fn();
+    const { EditableTable } = loadRuntime(buildRows);
+    let title = "Note";
+    let mappedId = "pdf_note";
+    const view = await mount(() => h(EditableTable, {
+      id: "records", mode: "modal", columns: [{ id: "note", title, type: "text" }],
+      sourceFieldIdsByRow: { 0: { note: mappedId, detail: "pdf_detail" } },
+    }), { pdf_note: "saved", pdf_detail: "modal-only", pdf_other: "other" });
+    expect(view.data().records).toEqual([expect.objectContaining({ note: "saved", detail: "modal-only" })]);
+    const initialBuilds = buildRows.mock.calls.length;
+    await view.update(draft => { draft.field.data.unrelated = "changed"; });
+    await view.rerender();
+    expect(buildRows).toHaveBeenCalledTimes(initialBuilds);
+
+    await view.update(draft => { draft.field.data.pdf_detail = "updated modal-only"; });
+    expect(buildRows).toHaveBeenCalledTimes(initialBuilds + 1);
+    await view.update(draft => { draft.field.data.pdf_note = "updated"; });
+    expect(buildRows).toHaveBeenCalledTimes(initialBuilds + 2);
+    title = "Changed label";
+    await view.rerender();
+    expect(buildRows).toHaveBeenCalledTimes(initialBuilds + 3);
+    mappedId = "pdf_other";
+    await view.rerender();
+    expect(buildRows).toHaveBeenCalledTimes(initialBuilds + 4);
+    // Source hydration must not overwrite an already meaningful edited row.
+    expect(view.data().records).toEqual([expect.objectContaining({ note: "saved", detail: "modal-only" })]);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Column visibility

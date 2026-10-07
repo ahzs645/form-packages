@@ -3767,6 +3767,15 @@ const SubformScoringInner = ({
 // Public wrapper: isolated session lifecycle and parent commit
 // =====================================================================
 
+// Capture the parent's immutable snapshot once per opening. The provider owns
+// the single isolation clone; parent updates while open must not reset a draft.
+const SubformScoringSession = ({ initialFormData, children }) => {
+  const [effectiveInitialData] = useState(initialFormData)
+  return <FormSessionProvider initialFormData={effectiveInitialData}>{children}</FormSessionProvider>
+}
+
+const __closedSubformSessionSetter = () => {}
+
 const SubformScoring = (props) => {
   const {
     id = "subformScoring",
@@ -3778,22 +3787,20 @@ const SubformScoring = (props) => {
   } = props
   const [parentFd] = useActiveData()
   const [internalIsOpen, setInternalIsOpen] = useState(false)
-  const [sessionSeed, setSessionSeed] = useState(() => cloneFormSessionState(parentFd))
-
   const isDialogOpen = typeof controlledIsOpen === "boolean" ? controlledIsOpen : internalIsOpen
-  const effectiveInitialData = useMemo(() => (
-    isDialogOpen ? sessionSeed : cloneFormSessionState(parentFd)
-  ), [isDialogOpen, parentFd, sessionSeed])
+  // Closed summaries read current saved answers without cloning or seeding a
+  // hidden editing session. Default/calculation effects cannot write the parent.
+  const closedSessionContext = useMemo(() => ({
+    formData: parentFd,
+    setFormData: __closedSubformSessionSetter,
+  }), [parentFd])
 
   const handleOpenChange = useCallback((nextValue) => {
-    if (nextValue) {
-      setSessionSeed(cloneFormSessionState(parentFd))
-    }
     if (typeof controlledIsOpen !== "boolean") {
       setInternalIsOpen(nextValue)
     }
     onOpenChange?.(nextValue)
-  }, [controlledIsOpen, onOpenChange, parentFd])
+  }, [controlledIsOpen, onOpenChange])
 
   const mergeSessionIntoParent = useCallback((sessionFd) => {
     if (!parentFd?.setFormData) return
@@ -3834,15 +3841,21 @@ const SubformScoring = (props) => {
     if (typeof hostCommitToParent === "function") hostCommitToParent(sessionFd)
   }, [hostCommitToParent, mergeSessionIntoParent])
 
-  return (
-    <FormSessionProvider initialFormData={effectiveInitialData}>
-      <SubformScoringInner
-        {...props}
-        id={id}
-        isOpen={isDialogOpen}
-        onOpenChange={handleOpenChange}
-        onCommitToParent={handleCommitToParent}
-      />
-    </FormSessionProvider>
+  const content = (
+    <SubformScoringInner
+      {...props}
+      id={id}
+      isOpen={isDialogOpen}
+      onOpenChange={handleOpenChange}
+      onCommitToParent={handleCommitToParent}
+    />
+  )
+
+  return isDialogOpen ? (
+    <SubformScoringSession initialFormData={parentFd}>{content}</SubformScoringSession>
+  ) : (
+    <__SubformScoringSessionContext.Provider value={closedSessionContext}>
+      {content}
+    </__SubformScoringSessionContext.Provider>
   )
 }

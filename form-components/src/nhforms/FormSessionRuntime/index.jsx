@@ -1,4 +1,4 @@
-const { createContext, useCallback, useContext, useEffect, useMemo, useState } = React
+const { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } = React
 
 const __getSessionContext = () => {
   const root = typeof globalThis !== "undefined"
@@ -76,7 +76,9 @@ const normalizeSessionState = (input) => ({
 const applySessionUpdate = (prevState, updater) => {
   if (typeof updater === "function") {
     try {
-      return JSON.parse(JSON.stringify(produce(prevState, updater)))
+      const nextState = produce(prevState, updater)
+      // Preserve immer's no-op identity instead of broadcasting an unchanged session.
+      return nextState === prevState ? prevState : JSON.parse(JSON.stringify(nextState))
     } catch (error) {
       return prevState
     }
@@ -92,8 +94,11 @@ const FormSessionProvider = ({
   initialFormData,
 }) => {
   const [formData, setFormDataState] = useState(() => normalizeSessionState(initialFormData))
+  const initialDataRef = useRef(initialFormData)
 
   useEffect(() => {
+    if (initialDataRef.current === initialFormData) return
+    initialDataRef.current = initialFormData
     setFormDataState(normalizeSessionState(initialFormData))
   }, [initialFormData])
 

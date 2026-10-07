@@ -885,6 +885,8 @@ const _buildRowsFromSourceFields = ({
 }) => {
   if (!fieldData || typeof fieldData !== "object") return []
   if (!Array.isArray(columns) || columns.length === 0) return []
+  if (!Object.values(sourceFieldIds || {}).some(Boolean) &&
+      !Object.values(sourceFieldIdsByRow || {}).some((row) => Object.values(row || {}).some(Boolean))) return []
 
   const explicitRowIndexes = Object.keys(sourceFieldIdsByRow || {})
     .map((key) => Number(key))
@@ -1329,6 +1331,46 @@ const _clearHiddenColumnAnswers = (row, columns = [], formData) => {
   return row
 }
 
+// Generated JSX supplies fresh config literals on each form render. Retain an
+// equivalent config without serializing it (functions/non-plain values compare
+// by identity), so column normalization and source-row hydration stay cached.
+const __editableTableConfigEqual = (left, right) => {
+  if (Object.is(left, right)) return true
+  if (!left || !right || typeof left !== "object" || typeof right !== "object") return false
+  if (Array.isArray(left) !== Array.isArray(right)) return false
+  if (Array.isArray(left) && left.length !== right.length) return false
+  if (!Array.isArray(left)) {
+    const plain = (value) => Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null
+    if (!plain(left) || !plain(right)) return false
+  }
+  const keys = Object.keys(left)
+  if (keys.length !== Object.keys(right).length) return false
+  return keys.every((key) => Object.prototype.hasOwnProperty.call(right, key) &&
+    __editableTableConfigEqual(left[key], right[key]))
+}
+
+const __useEditableTableStableConfig = (value) => {
+  const ref = React.useRef(value)
+  if (!__editableTableConfigEqual(ref.current, value)) ref.current = value
+  return ref.current
+}
+
+// Only source-mapped answers affect hydration, including modal-only values
+// absent from the display columns. An unrelated answer must not build rows.
+const __useEditableTableSourceData = (fieldData, sourceFieldIds, sourceFieldIdsByRow) => {
+  const ids = useMemo(() => Array.from(new Set([
+    ...Object.values(sourceFieldIds || {}),
+    ...Object.values(sourceFieldIdsByRow || {}).flatMap((row) => Object.values(row || {})),
+  ].filter(Boolean))), [sourceFieldIds, sourceFieldIdsByRow])
+  const values = ids.map((id) => fieldData?.[id])
+  const ref = React.useRef(null)
+  if (!ref.current || ref.current.ids !== ids ||
+      values.some((value, index) => !Object.is(value, ref.current.values[index]))) {
+    ref.current = { ids, values, data: Object.fromEntries(ids.map((id, index) => [id, values[index]])) }
+  }
+  return ref.current.data
+}
+
 EditableTable = ({
   id = "editableTable",
   columns: columnsProp = [],
@@ -1354,8 +1396,8 @@ EditableTable = ({
   authorshipPolicy: authorshipPolicyProp,
   showAuthorshipColumn = false,
   authorshipColumnLabel = "Lock",
-  sourceFieldIds = {},
-  sourceFieldIdsByRow = {},
+  sourceFieldIds: sourceFieldIdsProp = {},
+  sourceFieldIdsByRow: sourceFieldIdsByRowProp = {},
   // Columns saved as observations and the columns that date them (see
   // _buildChartObservationPayload); staged for submit.
   chartObservations = null,
@@ -1407,7 +1449,10 @@ EditableTable = ({
       </Stack>
     )
   }
-  const columns = useMemo(() => _normalizeTableColumns(columnsProp), [columnsProp])
+  const stableColumns = __useEditableTableStableConfig(columnsProp)
+  const sourceFieldIds = __useEditableTableStableConfig(sourceFieldIdsProp)
+  const sourceFieldIdsByRow = __useEditableTableStableConfig(sourceFieldIdsByRowProp)
+  const columns = useMemo(() => _normalizeTableColumns(stableColumns), [stableColumns])
   const initialRowCount = _normalizeInitialRowCount(initialRowsProp)
   const initialSeedRows = useMemo(() => _normalizeInitialRows(initialRowsProp, columns), [initialRowsProp, columns])
   const [isDialogOpen, setIsDialogOpen] = useState(false)
@@ -1570,13 +1615,14 @@ EditableTable = ({
       draft.field.data.__componentPayloads = container
     }))
   }, [chartObservationPayload, fd, id])
+  const sourceFieldData = __useEditableTableSourceData(fd?.field?.data, sourceFieldIds, sourceFieldIdsByRow)
   const sourceSeedRows = useMemo(() => _buildRowsFromSourceFields({
-    fieldData: fd?.field?.data,
+    fieldData: sourceFieldData,
     columns,
     sourceFieldIds,
     sourceFieldIdsByRow,
     initialRows: initialRowCount,
-  }), [fd?.field?.data, columns, sourceFieldIds, sourceFieldIdsByRow, initialRowCount])
+  }), [sourceFieldData, columns, sourceFieldIds, sourceFieldIdsByRow, initialRowCount])
 
   useEffect(() => {
     if (rows) return

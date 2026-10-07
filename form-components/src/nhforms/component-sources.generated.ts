@@ -5636,6 +5636,9 @@ const normalizeValue = (value) => {
  * @param {boolean} [props.isDarkMode] - Dark mode flag
  * @param {boolean} [props.allowDeselect=true] - Allow clicking selected option to deselect
  */
+const __compactBooleanButtonTokens = { childrenGap: 4 }
+const __compactBooleanEmptyLinkedFieldIds = []
+
 const YesNoButtons = ({
   yesLabel = 'Yes',
   noLabel = 'No',
@@ -5670,20 +5673,20 @@ const YesNoButtons = ({
     }
   }, [disabled, normalized, allowDeselect, onChange])
 
-  const yesButtonStyle = {
+  const yesButtonStyle = useMemo(() => ({
     ...getButtonStyles(normalized === 'yes', isDarkMode, size),
     opacity: disabled ? 0.5 : 1,
     cursor: disabled ? 'not-allowed' : 'pointer',
-  }
+  }), [normalized, isDarkMode, size, disabled])
 
-  const noButtonStyle = {
+  const noButtonStyle = useMemo(() => ({
     ...getButtonStyles(normalized === 'no', isDarkMode, size),
     opacity: disabled ? 0.5 : 1,
     cursor: disabled ? 'not-allowed' : 'pointer',
-  }
+  }), [normalized, isDarkMode, size, disabled])
 
   return (
-    <Stack horizontal tokens={{ childrenGap: 4 }}>
+    <Stack horizontal tokens={__compactBooleanButtonTokens}>
       <button
         type="button"
         style={yesButtonStyle}
@@ -5705,6 +5708,10 @@ const YesNoButtons = ({
     </Stack>
   )
 }
+
+// Broad form subscriptions still run the field; unchanged button pairs need
+// no render or Fluent style work when a sibling answer changes.
+const __MemoCompactBooleanButtons = React.memo(YesNoButtons)
 
 /**
  * CompactBooleanField - Full boolean field with label and Yes/No buttons
@@ -5742,7 +5749,7 @@ const CompactBooleanField = ({
   allowDeselect = true,
   allowNeutral = true,
   sourceFieldId,
-  linkedFieldIds = [],
+  linkedFieldIds = __compactBooleanEmptyLinkedFieldIds,
   displayStyle = 'buttons',
   ...props
 }) => {
@@ -5762,6 +5769,10 @@ const CompactBooleanField = ({
   }, [currentValue])
   const normalizedValue = normalizeValue(optimisticValue)
   const normalized = normalizedValue === null && !allowNeutral ? 'no' : normalizedValue
+
+  // Linked IDs are serialized strings from generated JSX, whose array identity
+  // may change while its destinations stay the same.
+  const linkedFieldIdsKey = JSON.stringify(linkedFieldIds || [])
 
   // Handle value change
   const handleChange = useCallback((newValue) => {
@@ -5795,11 +5806,9 @@ const CompactBooleanField = ({
     } else {
       commitValue()
     }
-  }, [setFormData, fieldId, sourceFieldId, linkedFieldIds, allowNeutral, isDisabled])
+  }, [setFormData, fieldId, sourceFieldId, linkedFieldIdsKey, allowNeutral, isDisabled])
 
   // Styles
-  const baseContainerStyle = getFieldContainerStyles(isDarkMode, showCard)
-
   // Add width styling for grid layout
   const getWidthStyle = (sizeValue) => {
     if (!sizeValue || sizeValue === 'full') return {}
@@ -5813,12 +5822,12 @@ const CompactBooleanField = ({
     return { width: widthMap[sizeValue] || '100%', flexShrink: 0 }
   }
 
-  const containerStyle = { ...baseContainerStyle, ...getWidthStyle(size) }
+  const containerStyle = useMemo(() => ({ ...getFieldContainerStyles(isDarkMode, showCard), ...getWidthStyle(size) }), [isDarkMode, showCard, size])
 
   const themeLabelMinWidth = theme?.mois?.defaultCommonControlStyle?.minLabelWidth ?? 240
   const themeLabelMaxWidth = theme?.mois?.defaultCommonControlStyle?.maxLabelWidth ?? themeLabelMinWidth
   const isLeftLabel = labelPosition === 'left'
-  const labelStyle = {
+  const labelStyle = useMemo(() => ({
     root: {
       fontWeight: 600,
       marginRight: isLeftLabel ? '10px' : 0,
@@ -5828,13 +5837,16 @@ const CompactBooleanField = ({
       padding: isLeftLabel ? '5px 0px' : undefined,
       flex: isLeftLabel ? '0 0 auto' : undefined,
     },
-  }
+  }), [isLeftLabel, labelPosition, themeLabelMinWidth, themeLabelMaxWidth])
+  const rightLabelStyle = useMemo(() => ({
+    ...labelStyle, root: { ...labelStyle.root, marginLeft: '12px', marginRight: 0 },
+  }), [labelStyle])
 
-  const noteStyle = {
+  const noteStyle = useMemo(() => ({
     fontSize: '11px',
     color: isDarkMode ? '#888' : '#666',
     marginTop: '4px',
-  }
+  }), [isDarkMode])
 
   const isHorizontal = labelPosition === 'left' || labelPosition === 'right'
 
@@ -5866,7 +5878,7 @@ const CompactBooleanField = ({
           {required && <span style={{ color: '#d32f2f', marginLeft: '4px' }}>*</span>}
         </Label>
       )}
-      <YesNoButtons
+      <__MemoCompactBooleanButtons
         yesLabel={yesLabel}
         noLabel={noLabel}
         value={normalized}
@@ -5877,7 +5889,7 @@ const CompactBooleanField = ({
         allowDeselect={allowDeselect}
       />
       {label && labelPosition === 'right' && (
-        <Label styles={{ ...labelStyle, root: { ...labelStyle.root, marginLeft: '12px', marginRight: 0 } }}>
+        <Label styles={rightLabelStyle}>
           {label}
           {required && <span style={{ color: '#d32f2f', marginLeft: '4px' }}>*</span>}
         </Label>
@@ -13771,6 +13783,8 @@ const _buildRowsFromSourceFields = ({
 }) => {
   if (!fieldData || typeof fieldData !== "object") return []
   if (!Array.isArray(columns) || columns.length === 0) return []
+  if (!Object.values(sourceFieldIds || {}).some(Boolean) &&
+      !Object.values(sourceFieldIdsByRow || {}).some((row) => Object.values(row || {}).some(Boolean))) return []
 
   const explicitRowIndexes = Object.keys(sourceFieldIdsByRow || {})
     .map((key) => Number(key))
@@ -14215,6 +14229,46 @@ const _clearHiddenColumnAnswers = (row, columns = [], formData) => {
   return row
 }
 
+// Generated JSX supplies fresh config literals on each form render. Retain an
+// equivalent config without serializing it (functions/non-plain values compare
+// by identity), so column normalization and source-row hydration stay cached.
+const __editableTableConfigEqual = (left, right) => {
+  if (Object.is(left, right)) return true
+  if (!left || !right || typeof left !== "object" || typeof right !== "object") return false
+  if (Array.isArray(left) !== Array.isArray(right)) return false
+  if (Array.isArray(left) && left.length !== right.length) return false
+  if (!Array.isArray(left)) {
+    const plain = (value) => Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null
+    if (!plain(left) || !plain(right)) return false
+  }
+  const keys = Object.keys(left)
+  if (keys.length !== Object.keys(right).length) return false
+  return keys.every((key) => Object.prototype.hasOwnProperty.call(right, key) &&
+    __editableTableConfigEqual(left[key], right[key]))
+}
+
+const __useEditableTableStableConfig = (value) => {
+  const ref = React.useRef(value)
+  if (!__editableTableConfigEqual(ref.current, value)) ref.current = value
+  return ref.current
+}
+
+// Only source-mapped answers affect hydration, including modal-only values
+// absent from the display columns. An unrelated answer must not build rows.
+const __useEditableTableSourceData = (fieldData, sourceFieldIds, sourceFieldIdsByRow) => {
+  const ids = useMemo(() => Array.from(new Set([
+    ...Object.values(sourceFieldIds || {}),
+    ...Object.values(sourceFieldIdsByRow || {}).flatMap((row) => Object.values(row || {})),
+  ].filter(Boolean))), [sourceFieldIds, sourceFieldIdsByRow])
+  const values = ids.map((id) => fieldData?.[id])
+  const ref = React.useRef(null)
+  if (!ref.current || ref.current.ids !== ids ||
+      values.some((value, index) => !Object.is(value, ref.current.values[index]))) {
+    ref.current = { ids, values, data: Object.fromEntries(ids.map((id, index) => [id, values[index]])) }
+  }
+  return ref.current.data
+}
+
 EditableTable = ({
   id = "editableTable",
   columns: columnsProp = [],
@@ -14240,8 +14294,8 @@ EditableTable = ({
   authorshipPolicy: authorshipPolicyProp,
   showAuthorshipColumn = false,
   authorshipColumnLabel = "Lock",
-  sourceFieldIds = {},
-  sourceFieldIdsByRow = {},
+  sourceFieldIds: sourceFieldIdsProp = {},
+  sourceFieldIdsByRow: sourceFieldIdsByRowProp = {},
   // Columns saved as observations and the columns that date them (see
   // _buildChartObservationPayload); staged for submit.
   chartObservations = null,
@@ -14293,7 +14347,10 @@ EditableTable = ({
       </Stack>
     )
   }
-  const columns = useMemo(() => _normalizeTableColumns(columnsProp), [columnsProp])
+  const stableColumns = __useEditableTableStableConfig(columnsProp)
+  const sourceFieldIds = __useEditableTableStableConfig(sourceFieldIdsProp)
+  const sourceFieldIdsByRow = __useEditableTableStableConfig(sourceFieldIdsByRowProp)
+  const columns = useMemo(() => _normalizeTableColumns(stableColumns), [stableColumns])
   const initialRowCount = _normalizeInitialRowCount(initialRowsProp)
   const initialSeedRows = useMemo(() => _normalizeInitialRows(initialRowsProp, columns), [initialRowsProp, columns])
   const [isDialogOpen, setIsDialogOpen] = useState(false)
@@ -14456,13 +14513,14 @@ EditableTable = ({
       draft.field.data.__componentPayloads = container
     }))
   }, [chartObservationPayload, fd, id])
+  const sourceFieldData = __useEditableTableSourceData(fd?.field?.data, sourceFieldIds, sourceFieldIdsByRow)
   const sourceSeedRows = useMemo(() => _buildRowsFromSourceFields({
-    fieldData: fd?.field?.data,
+    fieldData: sourceFieldData,
     columns,
     sourceFieldIds,
     sourceFieldIdsByRow,
     initialRows: initialRowCount,
-  }), [fd?.field?.data, columns, sourceFieldIds, sourceFieldIdsByRow, initialRowCount])
+  }), [sourceFieldData, columns, sourceFieldIds, sourceFieldIdsByRow, initialRowCount])
 
   useEffect(() => {
     if (rows) return
@@ -21335,7 +21393,7 @@ const FormLogicKit = (() => {
   }
 })()
 `,
-  './FormSessionRuntime/index.jsx': `const { createContext, useCallback, useContext, useEffect, useMemo, useState } = React
+  './FormSessionRuntime/index.jsx': `const { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } = React
 
 const __getSessionContext = () => {
   const root = typeof globalThis !== "undefined"
@@ -21413,7 +21471,9 @@ const normalizeSessionState = (input) => ({
 const applySessionUpdate = (prevState, updater) => {
   if (typeof updater === "function") {
     try {
-      return JSON.parse(JSON.stringify(produce(prevState, updater)))
+      const nextState = produce(prevState, updater)
+      // Preserve immer's no-op identity instead of broadcasting an unchanged session.
+      return nextState === prevState ? prevState : JSON.parse(JSON.stringify(nextState))
     } catch (error) {
       return prevState
     }
@@ -21429,8 +21489,11 @@ const FormSessionProvider = ({
   initialFormData,
 }) => {
   const [formData, setFormDataState] = useState(() => normalizeSessionState(initialFormData))
+  const initialDataRef = useRef(initialFormData)
 
   useEffect(() => {
+    if (initialDataRef.current === initialFormData) return
+    initialDataRef.current = initialFormData
     setFormDataState(normalizeSessionState(initialFormData))
   }, [initialFormData])
 
@@ -51820,6 +51883,15 @@ const SubformScoringInner = ({
 // Public wrapper: isolated session lifecycle and parent commit
 // =====================================================================
 
+// Capture the parent's immutable snapshot once per opening. The provider owns
+// the single isolation clone; parent updates while open must not reset a draft.
+const SubformScoringSession = ({ initialFormData, children }) => {
+  const [effectiveInitialData] = useState(initialFormData)
+  return <FormSessionProvider initialFormData={effectiveInitialData}>{children}</FormSessionProvider>
+}
+
+const __closedSubformSessionSetter = () => {}
+
 const SubformScoring = (props) => {
   const {
     id = "subformScoring",
@@ -51831,22 +51903,20 @@ const SubformScoring = (props) => {
   } = props
   const [parentFd] = useActiveData()
   const [internalIsOpen, setInternalIsOpen] = useState(false)
-  const [sessionSeed, setSessionSeed] = useState(() => cloneFormSessionState(parentFd))
-
   const isDialogOpen = typeof controlledIsOpen === "boolean" ? controlledIsOpen : internalIsOpen
-  const effectiveInitialData = useMemo(() => (
-    isDialogOpen ? sessionSeed : cloneFormSessionState(parentFd)
-  ), [isDialogOpen, parentFd, sessionSeed])
+  // Closed summaries read current saved answers without cloning or seeding a
+  // hidden editing session. Default/calculation effects cannot write the parent.
+  const closedSessionContext = useMemo(() => ({
+    formData: parentFd,
+    setFormData: __closedSubformSessionSetter,
+  }), [parentFd])
 
   const handleOpenChange = useCallback((nextValue) => {
-    if (nextValue) {
-      setSessionSeed(cloneFormSessionState(parentFd))
-    }
     if (typeof controlledIsOpen !== "boolean") {
       setInternalIsOpen(nextValue)
     }
     onOpenChange?.(nextValue)
-  }, [controlledIsOpen, onOpenChange, parentFd])
+  }, [controlledIsOpen, onOpenChange])
 
   const mergeSessionIntoParent = useCallback((sessionFd) => {
     if (!parentFd?.setFormData) return
@@ -51887,16 +51957,22 @@ const SubformScoring = (props) => {
     if (typeof hostCommitToParent === "function") hostCommitToParent(sessionFd)
   }, [hostCommitToParent, mergeSessionIntoParent])
 
-  return (
-    <FormSessionProvider initialFormData={effectiveInitialData}>
-      <SubformScoringInner
-        {...props}
-        id={id}
-        isOpen={isDialogOpen}
-        onOpenChange={handleOpenChange}
-        onCommitToParent={handleCommitToParent}
-      />
-    </FormSessionProvider>
+  const content = (
+    <SubformScoringInner
+      {...props}
+      id={id}
+      isOpen={isDialogOpen}
+      onOpenChange={handleOpenChange}
+      onCommitToParent={handleCommitToParent}
+    />
+  )
+
+  return isDialogOpen ? (
+    <SubformScoringSession initialFormData={parentFd}>{content}</SubformScoringSession>
+  ) : (
+    <__SubformScoringSessionContext.Provider value={closedSessionContext}>
+      {content}
+    </__SubformScoringSessionContext.Provider>
   )
 }
 `,
