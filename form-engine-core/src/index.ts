@@ -6,7 +6,7 @@
 
 // Transformer
 export { createComponentFromCode, isFormCode } from './transformer/code-transformer';
-export type { TransformOptions, TransformResult, FormTransformer } from './transformer/types';
+export type { TransformOptions, TransformResult, FormTransformer, FormCompileError } from './transformer/types';
 
 // State
 export {

@@ -6,9 +6,14 @@
  */
 
 import React from 'react';
-import type { TransformOptions } from './types';
+import type { FormCompileError, TransformOptions } from './types';
 
 const globallyWarnedMissingSymbols = new Set<string>();
+
+/** Names the evaluated form in stack traces and in DevTools' Sources panel. */
+const FORM_SOURCE_URL = 'webforms-preview-form.js';
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const FORM_FRAME = new RegExp(`${escapeRegExp(FORM_SOURCE_URL)}:(\\d+):(\\d+)`);
 
 /**
  * HTML attribute to JSX attribute mapping
@@ -75,6 +80,56 @@ function preprocessHtmlToJsx(code: string): string {
   return result;
 }
 
+/** A few lines of `code` around 1-based `line`, the failing one marked `>`. */
+function snippetAround(code: string, line: number): string | undefined {
+  const lines = code.split('\n');
+  if (line < 1 || line > lines.length) return undefined;
+  const first = Math.max(1, line - 2);
+  const last = Math.min(lines.length, line + 2);
+  const width = String(last).length;
+  const out: string[] = [];
+  for (let n = first; n <= last; n++) {
+    out.push(`${n === line ? '>' : ' '} ${String(n).padStart(width)} | ${lines[n - 1]}`);
+  }
+  return out.join('\n');
+}
+
+/**
+ * Describes a compile failure. A Babel error carries its location in the form
+ * code; an evaluation error only has a stack whose FORM_SOURCE_URL frame
+ * counts lines of the generated Function, so `bodyLineOffset` (the Function
+ * lines before the transformed code) maps it back.
+ */
+function describeCompileError(
+  error: unknown,
+  phase: FormCompileError['phase'],
+  code: string,
+  bodyLineOffset = 0,
+  firstLineIndent = 0,
+): FormCompileError {
+  const err = error instanceof Error ? error : new Error(String(error));
+  const described: FormCompileError = { phase, message: err.message, stack: err.stack };
+  let line: number | undefined;
+  let column: number | undefined;
+  const loc = (err as { loc?: { line?: number; column?: number } }).loc;
+  if (phase === 'transform' && typeof loc?.line === 'number') {
+    line = loc.line;
+    column = typeof loc.column === 'number' ? loc.column + 1 : undefined;
+  } else if (phase === 'evaluate') {
+    const frame = FORM_FRAME.exec(err.stack ?? '');
+    if (frame) {
+      line = Number(frame[1]) - bodyLineOffset;
+      column = Number(frame[2]) - (line === 1 ? firstLineIndent : 0);
+    }
+  }
+  if (line !== undefined) {
+    described.line = line;
+    described.column = column;
+    described.snippet = snippetAround(code, line);
+  }
+  return described;
+}
+
 /**
  * Creates a React component from a code string using Babel transformation.
  *
@@ -83,7 +138,7 @@ function preprocessHtmlToJsx(code: string): string {
  * @returns A React functional component
  */
 export const createComponentFromCode = (code: string, options: TransformOptions): React.FC => {
-  const { babel, scopeBuilder, onInitialData, onMissingSymbol } = options;
+  const { babel, scopeBuilder, onInitialData, onMissingSymbol, onCompileError } = options;
 
   let cleanCode = code
     .replace(/\r\n/g, '\n')
@@ -104,7 +159,7 @@ export const createComponentFromCode = (code: string, options: TransformOptions)
                                /\bfunction\s+FormComponent\b/.test(cleanCode);
 
   if (definesFormComponent) {
-    return createFormComponent(cleanCode, babel, scopeBuilder, onInitialData, onMissingSymbol);
+    return createFormComponent(cleanCode, babel, scopeBuilder, onInitialData, onMissingSymbol, onCompileError);
   }
 
   return createSimpleComponent(cleanCode, babel, scopeBuilder);
@@ -127,16 +182,30 @@ const createFormComponent = (
   Babel: any,
   scopeBuilder: TransformOptions['scopeBuilder'],
   onInitialData?: (data: Record<string, any>) => void,
-  onMissingSymbol?: (symbolName: string) => void
+  onMissingSymbol?: (symbolName: string) => void,
+  onCompileError?: (error: FormCompileError) => void
 ): React.FC => {
+  const fail = (error: FormCompileError): React.FC => {
+    onCompileError?.(error);
+    return () => React.createElement('div', { className: 'error-message' }, error.message);
+  };
+
+  let transformed: string;
   try {
-    const transformed = Babel.transform(cleanCode, {
+    transformed = Babel.transform(cleanCode, {
       presets: ['react', 'typescript'],
       filename: 'form.tsx',
       // Keep large forms readable to the declaration scanner below and avoid
       // Babel's automatic compact-mode notice being shown as a preview error.
       compact: false,
     }).code;
+  } catch (e) {
+    return fail(describeCompileError(e, 'transform', cleanCode));
+  }
+
+  let evaluateLineOffset = 0;
+  let evaluateIndent = 0;
+  try {
 
     const scope = scopeBuilder.buildScope();
 
@@ -265,14 +334,22 @@ const createFormComponent = (
       },
       has(target, prop) {
         if (typeof prop === 'symbol') return false;
+        // Scope-provided names always resolve through the scope. The regex
+        // scan above cannot tell a top-level declaration from one inside a
+        // function, so hiding a scope name it found would make every
+        // top-level use of that name a ReferenceError — e.g. the export's
+        // `const { TextArea } = builderMemoizedControls` inside FormComponent
+        // broke `React.memo(TextArea, …)` at top level. Real MOIS passes its
+        // scope as function parameters, where declarations shadow lexically;
+        // here they do too, because every declaration in the form code sits
+        // in a block or function nested inside this `with`.
+        if (prop in target) {
+          return true;
+        }
         // For locally-defined variables, return false so 'with' falls back to lexical scope
         // This allows local variables like PHQ9Quest to be found in their defining scope
         if (localVarNames.has(String(prop))) {
           return false;
-        }
-        // For scope-provided components and hooks, return true
-        if (prop in target) {
-          return true;
         }
         // For unknown properties, return true so we can provide placeholders
         return true;
@@ -280,17 +357,23 @@ const createFormComponent = (
     });
 
     // Use 'with' statement to inject scope (like form tester does)
-    // eslint-disable-next-line no-new-func
-    const fn = new Function('__scope__', `
+    const bodyPrefix = `
       with (__scope__) {
-        ${transformed}
+        `;
+    // eslint-disable-next-line no-new-func
+    const fn = new Function('__scope__', `${bodyPrefix}${transformed}
 
         return {
           FormComponent: typeof FormComponent !== 'undefined' ? FormComponent : null,
           InitialData: typeof InitialData !== 'undefined' ? InitialData : null
         };
       }
+      //# sourceURL=${FORM_SOURCE_URL}
     `);
+    // V8 numbers a Function's lines from its header: `function anonymous(__scope__`
+    // and `) {` come before the body.
+    evaluateLineOffset = 2 + bodyPrefix.split('\n').length - 1;
+    evaluateIndent = bodyPrefix.length - bodyPrefix.lastIndexOf('\n') - 1;
 
     const result = fn(scopeProxy);
     const FormComponent = result.FormComponent;
@@ -307,8 +390,8 @@ const createFormComponent = (
     }
 
     return FormComponent;
-  } catch (e: any) {
-    return () => React.createElement('div', { className: 'error-message' }, e.message);
+  } catch (e) {
+    return fail(describeCompileError(e, 'evaluate', transformed, evaluateLineOffset, evaluateIndent));
   }
 };
 
