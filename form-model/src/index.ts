@@ -2693,7 +2693,7 @@ export interface BuilderField {
     calendarView?: "day" | "monthYear";
     dateFormat?: "yyyy.MM.dd" | "dd/MM/yyyy" | "MM-dd-yyyy" | "yyyy-MM-dd";
     /** Format used when writing the answer into the original PDF or Word document. */
-    documentOutputFormat?: "stored" | "MM/yyyy" | "yyyy-MM-dd" | "yyyy.MM.dd" | "dd/MM/yyyy" | "MM/dd/yyyy" | "dd/MMM/yyyy" | "ddMMMyyyy" | "MMMM d, yyyy";
+    documentOutputFormat?: "stored" | "MM/yyyy" | "yyyy-MM-dd" | "yyyy.MM.dd" | "yyyy/MM/dd" | "dd/MM/yyyy" | "MM/dd/yyyy" | "MM/dd/yy" | "MM-dd-yyyy" | "dd/MMM/yyyy" | "yyyy-MMM-dd" | "ddMMMyyyy" | "MMMM d, yyyy";
     disablePastDates?: boolean;
     disableFutureDates?: boolean;
     prefillToday?: boolean;

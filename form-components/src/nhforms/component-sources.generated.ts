@@ -39864,15 +39864,42 @@ var DocumentDateRuntime = (() => {
     if (+month < 1 || +month > 12 || +day < 1 || +day > days) throw new Error("Enter a valid calendar date.");
     const monthName = MONTHS[+month - 1];
     const mon = monthName.slice(0, 3);
-    if (format === "dd/MMM/yyyy") return \`\${day}/\${mon}/\${year}\`;
-    if (format === "ddMMMyyyy") return \`\${day}\${mon}\${year}\`;
-    if (format === "yyyy.MM.dd") return \`\${year}.\${month}.\${day}\`;
-    if (format === "dd/MM/yyyy") return \`\${day}/\${month}/\${year}\`;
-    if (format === "dd/MM/yy") return \`\${day}/\${month}/\${year.slice(2)}\`;
-    if (format === "dd/MM") return \`\${day}/\${month}\`;
-    if (format === "MM/yyyy") return \`\${month}/\${year}\`;
-    if (format === "MM/dd/yyyy") return \`\${month}/\${day}/\${year}\`;
-    if (format === "MMMM d, yyyy") return \`\${monthName} \${+day}, \${year}\`;
+    const known = format;
+    switch (known) {
+      case "dd/MMM/yyyy":
+        return \`\${day}/\${mon}/\${year}\`;
+      case "ddMMMyyyy":
+        return \`\${day}\${mon}\${year}\`;
+      case "yyyy-MMM-dd":
+        return \`\${year}-\${mon}-\${day}\`;
+      case "yyyy.MM.dd":
+        return \`\${year}.\${month}.\${day}\`;
+      case "yyyy/MM/dd":
+        return \`\${year}/\${month}/\${day}\`;
+      case "dd/MM/yyyy":
+        return \`\${day}/\${month}/\${year}\`;
+      // Flowsheet cells printed "DD/MM/YY" or "DD/MM" (the year printed once elsewhere).
+      case "dd/MM/yy":
+        return \`\${day}/\${month}/\${year.slice(2)}\`;
+      case "dd/MM":
+        return \`\${day}/\${month}\`;
+      case "MM/yyyy":
+        return \`\${month}/\${year}\`;
+      case "MM/dd/yyyy":
+        return \`\${month}/\${day}/\${year}\`;
+      case "MM/dd/yy":
+        return \`\${month}/\${day}/\${year.slice(2)}\`;
+      case "MM-dd-yyyy":
+        return \`\${month}-\${day}-\${year}\`;
+      case "MMMM d, yyyy":
+        return \`\${monthName} \${+day}, \${year}\`;
+      case "yyyy-MM-dd":
+        return \`\${year}-\${month}-\${day}\`;
+      default: {
+        const unknown = known;
+        void unknown;
+      }
+    }
     return \`\${year}-\${month}-\${day}\`;
   }
   return __toCommonJS(document_date_format_exports);
@@ -40111,6 +40138,7 @@ var DocumentFillRuntime = (() => {
     appendOverflowAddendum: () => appendOverflowAddendum,
     applyDocumentFillPreparers: () => applyDocumentFillPreparers,
     applyDocumentOutput: () => applyDocumentOutput,
+    assertUnsignedPdfInput: () => assertUnsignedPdfInput,
     documentValueText: () => documentValueText,
     expandNumberedRowFields: () => expandNumberedRowFields,
     expandTableSourceMaps: () => expandTableSourceMaps,
@@ -40994,6 +41022,28 @@ var DocumentFillRuntime = (() => {
       page.drawText(text, { x: (pageWidth - width) / 2, y: margin - footerSize, size: footerSize, font, color: muted });
     });
     return { pagesAdded: added.length, rowsPrinted, firstPageNumber };
+  }
+
+  // lib/document-fill/signed-input.ts
+  var SIGNED_PDF_INPUT_MESSAGE = "The source PDF is already signed. Fill an unsigned original to avoid invalidating its signature.";
+  function signedPdfInputReasons(pdf, PDFLib) {
+    const reasons = [];
+    let fields = [];
+    try {
+      fields = pdf.getForm().getFields();
+    } catch {
+      fields = [];
+    }
+    for (const field of fields) {
+      if (field instanceof PDFLib.PDFSignature && field.acroField.dict.get(PDFLib.PDFName.of("V"))) reasons.push(\`signature field "\${field.getName()}"\`);
+    }
+    const perms = pdf.catalog.lookupMaybe(PDFLib.PDFName.of("Perms"), PDFLib.PDFDict);
+    if (perms?.get(PDFLib.PDFName.of("DocMDP"))) reasons.push("certification signature (DocMDP)");
+    return reasons;
+  }
+  function assertUnsignedPdfInput(pdf, PDFLib) {
+    const reasons = signedPdfInputReasons(pdf, PDFLib);
+    if (reasons.length) throw new Error(\`\${SIGNED_PDF_INPUT_MESSAGE} (\${reasons.join(", ")})\`);
   }
 
   // packages/form-model/src/document-layout.ts
@@ -42504,7 +42554,8 @@ const PdfRegenerator = ({
       const doc = await _loadSourcePdf(PDFLib, bytes)
 
       const form = doc.getForm()
-      if (form.getFields().some(field => field instanceof PDFLib.PDFSignature && field.acroField.dict.get(PDFLib.PDFName.of("V")))) throw new Error("The source PDF is already signed. Fill an unsigned original to avoid invalidating its signature.")
+      // One signed-input policy with the headless writer (lib/document-fill/signed-input.ts).
+      DocumentFillRuntime.assertUnsignedPdfInput(doc, PDFLib)
       const warnings = [...prepared.warnings]
       let filledFieldCount = 0
       let skippedFieldCount = 0
@@ -55991,15 +56042,42 @@ var WordFormRuntime = (() => {
     if (+month < 1 || +month > 12 || +day < 1 || +day > days) throw new Error("Enter a valid calendar date.");
     const monthName = MONTHS[+month - 1];
     const mon = monthName.slice(0, 3);
-    if (format === "dd/MMM/yyyy") return \`\${day}/\${mon}/\${year}\`;
-    if (format === "ddMMMyyyy") return \`\${day}\${mon}\${year}\`;
-    if (format === "yyyy.MM.dd") return \`\${year}.\${month}.\${day}\`;
-    if (format === "dd/MM/yyyy") return \`\${day}/\${month}/\${year}\`;
-    if (format === "dd/MM/yy") return \`\${day}/\${month}/\${year.slice(2)}\`;
-    if (format === "dd/MM") return \`\${day}/\${month}\`;
-    if (format === "MM/yyyy") return \`\${month}/\${year}\`;
-    if (format === "MM/dd/yyyy") return \`\${month}/\${day}/\${year}\`;
-    if (format === "MMMM d, yyyy") return \`\${monthName} \${+day}, \${year}\`;
+    const known = format;
+    switch (known) {
+      case "dd/MMM/yyyy":
+        return \`\${day}/\${mon}/\${year}\`;
+      case "ddMMMyyyy":
+        return \`\${day}\${mon}\${year}\`;
+      case "yyyy-MMM-dd":
+        return \`\${year}-\${mon}-\${day}\`;
+      case "yyyy.MM.dd":
+        return \`\${year}.\${month}.\${day}\`;
+      case "yyyy/MM/dd":
+        return \`\${year}/\${month}/\${day}\`;
+      case "dd/MM/yyyy":
+        return \`\${day}/\${month}/\${year}\`;
+      // Flowsheet cells printed "DD/MM/YY" or "DD/MM" (the year printed once elsewhere).
+      case "dd/MM/yy":
+        return \`\${day}/\${month}/\${year.slice(2)}\`;
+      case "dd/MM":
+        return \`\${day}/\${month}\`;
+      case "MM/yyyy":
+        return \`\${month}/\${year}\`;
+      case "MM/dd/yyyy":
+        return \`\${month}/\${day}/\${year}\`;
+      case "MM/dd/yy":
+        return \`\${month}/\${day}/\${year.slice(2)}\`;
+      case "MM-dd-yyyy":
+        return \`\${month}-\${day}-\${year}\`;
+      case "MMMM d, yyyy":
+        return \`\${monthName} \${+day}, \${year}\`;
+      case "yyyy-MM-dd":
+        return \`\${year}-\${month}-\${day}\`;
+      default: {
+        const unknown = known;
+        void unknown;
+      }
+    }
     return \`\${year}-\${month}-\${day}\`;
   }
 

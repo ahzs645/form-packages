@@ -2740,15 +2740,42 @@ var WordFormRuntime = (() => {
     if (+month < 1 || +month > 12 || +day < 1 || +day > days) throw new Error("Enter a valid calendar date.");
     const monthName = MONTHS[+month - 1];
     const mon = monthName.slice(0, 3);
-    if (format === "dd/MMM/yyyy") return `${day}/${mon}/${year}`;
-    if (format === "ddMMMyyyy") return `${day}${mon}${year}`;
-    if (format === "yyyy.MM.dd") return `${year}.${month}.${day}`;
-    if (format === "dd/MM/yyyy") return `${day}/${month}/${year}`;
-    if (format === "dd/MM/yy") return `${day}/${month}/${year.slice(2)}`;
-    if (format === "dd/MM") return `${day}/${month}`;
-    if (format === "MM/yyyy") return `${month}/${year}`;
-    if (format === "MM/dd/yyyy") return `${month}/${day}/${year}`;
-    if (format === "MMMM d, yyyy") return `${monthName} ${+day}, ${year}`;
+    const known = format;
+    switch (known) {
+      case "dd/MMM/yyyy":
+        return `${day}/${mon}/${year}`;
+      case "ddMMMyyyy":
+        return `${day}${mon}${year}`;
+      case "yyyy-MMM-dd":
+        return `${year}-${mon}-${day}`;
+      case "yyyy.MM.dd":
+        return `${year}.${month}.${day}`;
+      case "yyyy/MM/dd":
+        return `${year}/${month}/${day}`;
+      case "dd/MM/yyyy":
+        return `${day}/${month}/${year}`;
+      // Flowsheet cells printed "DD/MM/YY" or "DD/MM" (the year printed once elsewhere).
+      case "dd/MM/yy":
+        return `${day}/${month}/${year.slice(2)}`;
+      case "dd/MM":
+        return `${day}/${month}`;
+      case "MM/yyyy":
+        return `${month}/${year}`;
+      case "MM/dd/yyyy":
+        return `${month}/${day}/${year}`;
+      case "MM/dd/yy":
+        return `${month}/${day}/${year.slice(2)}`;
+      case "MM-dd-yyyy":
+        return `${month}-${day}-${year}`;
+      case "MMMM d, yyyy":
+        return `${monthName} ${+day}, ${year}`;
+      case "yyyy-MM-dd":
+        return `${year}-${month}-${day}`;
+      default: {
+        const unknown = known;
+        void unknown;
+      }
+    }
     return `${year}-${month}-${day}`;
   }
 
