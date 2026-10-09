@@ -2,6 +2,7 @@ import type {
   BranchingRule,
   BuilderDocument,
   BuilderFormPresentation,
+  BuilderNamedCondition,
   BuilderPageFlowConfig,
   BuilderWorkflowConfig,
   FieldLinkRule,
@@ -104,6 +105,8 @@ export interface ConversionResult<Artifact> {
  */
 export interface FormLogicInput {
   fieldLinkRules?: FieldLinkRule[];
+  /** Current named conditions; converters must refresh references from this library. */
+  conditions?: BuilderNamedCondition[];
   /** Subgroup gates, keyed `sectionKey::subgroupId`. */
   branchingRules?: Record<string, BranchingRule>;
   pageFlow?: BuilderPageFlowConfig | null;
@@ -139,13 +142,14 @@ export interface NeutralFormInput {
 
 /** What `formLogicOf` reads from a document: the parts that hold logic. */
 export type FormLogicDocument = Pick<BuilderDocument, "branchingRules"> &
-  Partial<Pick<BuilderDocument, "pageFlow" | "pageAssignments" | "paginationEnabled" | "pageCount" | "pageNames" | "formPresentation" | "workflow">>;
+  Partial<Pick<BuilderDocument, "pageFlow" | "pageAssignments" | "paginationEnabled" | "pageCount" | "pageNames" | "formPresentation" | "workflow" | "conditions">>;
 
 /** The form's logic outside its fields: the Logic-tab rules, subgroup gates, page flow and pagination. */
 export function formLogicOf(form: { document: FormLogicDocument; fieldLinkRules?: FieldLinkRule[] }): FormLogicInput {
   const { document } = form;
   return {
     ...(form.fieldLinkRules ? { fieldLinkRules: form.fieldLinkRules } : {}),
+    ...(document.conditions ? { conditions: document.conditions } : {}),
     branchingRules: document.branchingRules,
     pageFlow: document.pageFlow ?? null,
     ...(document.pageAssignments ? { pageAssignments: document.pageAssignments } : {}),

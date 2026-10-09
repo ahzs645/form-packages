@@ -4,6 +4,7 @@ import {
   TARGET_IDS,
   enabledExportTargets,
   exportTargetRole,
+  formLogicOf,
   isTargetId,
   lossSeverityFor,
   normalizeExportTargetsSetting,
@@ -23,6 +24,11 @@ const loss = (overrides: Partial<ConversionLoss>): ConversionLoss => ({
 });
 
 describe("target vocabulary", () => {
+  it('passes the current named-condition library to every converter', () => {
+    const conditions = [{ id: 'current-rule', name: 'Current rule', group: { match: 'all' as const, conditions: [] } }];
+    expect(formLogicOf({ document: { branchingRules: {}, conditions } }).conditions).toBe(conditions);
+    expect(formLogicOf({ document: { branchingRules: {} } })).not.toHaveProperty('conditions');
+  });
   it("lists every target and concept once", () => {
     expect(new Set(TARGET_IDS).size).toBe(TARGET_IDS.length);
     expect(new Set(FORM_CONCEPTS).size).toBe(FORM_CONCEPTS.length);
