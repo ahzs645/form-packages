@@ -1201,7 +1201,7 @@ export function readFieldBinding(fieldLike: unknown, options: FieldBindingOption
 // ---------------------------------------------------------------------------
 
 /** Targets that choose whether to write a binding's observation (a Cerner DTA always charts itself). */
-export type ObservationWriteTarget = "mois" | "alayacare" | "fhir";
+export type ObservationWriteTarget = "mois" | "alayacare" | "fhir" | "oscar";
 
 /** Stores that link an observation write for every target: Save as observation and a past measurement. */
 const WRITE_STORES_FOR_EVERY_TARGET: readonly FieldBindingStore[] = ["moisOutput", "measurementConfig.write"];
@@ -1209,6 +1209,8 @@ const WRITE_STORES_FOR_EVERY_TARGET: readonly FieldBindingStore[] = ["moisOutput
 /** Each target's own setting for an observation write. */
 const OWN_WRITE_STORES: Record<ObservationWriteTarget, readonly FieldBindingStore[]> = {
   mois: [],
+  // A local OSCAR destination translates an existing link; it never grants write intent.
+  oscar: [],
   // The binding library is where AlayaCare's vital and demographics types come from.
   alayacare: ["alayaCareConfig.vital", "crossPlatformMappingId"],
   fhir: ["fhirConfig.observationExtract"],
@@ -1510,3 +1512,4 @@ export function fieldBindingPatch<T extends object>(
 export function fieldBindingConcepts(binding: BuilderFieldBinding | null | undefined): string[] {
   return uniqueStrings([binding?.read?.concept, binding?.write?.concept]);
 }
+
