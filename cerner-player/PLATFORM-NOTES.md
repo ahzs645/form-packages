@@ -8,7 +8,7 @@ this), and `../cerner-ccl/PAYLOAD-REFERENCE.md` (server payload vocabulary).
 
 ## Where an MPage can run
 
-Four hosting modes, all reachable with the same artifact:
+Five hosting modes, all reachable with the same artifact:
 
 | Mode | Patient context | Notes |
 |---|---|---|
@@ -16,6 +16,7 @@ Four hosting modes, all reachable with the same artifact:
 | Organizer-level full page | none (`ORGANIZER` mode sends `0,0`) | worklists, dashboards |
 | Workflow component | from the **host page's** query string | embedded card in a Workflow MPage |
 | DA2 / Discern Web Services / plain browser | whatever you pass | our dev loop and the SMART path |
+| CCL report output (Edge Discern Output Viewer in DA2, the Reporting Portal or PowerChart) | the clicked row's ids | a report opens a component beside or over its table; see below |
 
 The platform's own guidance is to build a **full page unless you specifically
 need a Workflow component** — components lose routing, config auto-load, and
@@ -55,6 +56,68 @@ page and pass `person_id` / `encntr_id` attributes. If we ever need the
 lookup-by-label indirection, that is a thin CCL call plus a script-injection
 guard — the same thing the component host does.
 
+## Testing an MPage without a domain
+
+The PowerChart emulator's **Portal MPage** (`/tutorial/host/powerchart/?fixture=mpage`)
+hosts any same-origin MPage against a simulated Millennium domain
+(`packages/cerner-sim`): `XMLCclRequest` in PowerChart mode, Discern Web
+Services (`/cclproxy`, `…/mpages/reports/<program>`, hex) in both modes, the
+Clinical Office v5 and `nh_wf_entry` entry scripts, and a synthetic chart
+built from the emulator's roster. Its picker lists the starter templates in
+`public/mpages/custom_mpage_content/` and any folder in the git-ignored
+`local-mpages/`; its **CCL** log shows each request and reply, with notices
+where the simulator differs from production (`packages/cerner-sim/QUIRKS.md`).
+
+The bridge has to exist before the page's scripts run, as it does in
+PowerChart: pages load `/mpages/host/bootstrap.js` first (local folders get it
+injected). Verified 2026-10-09 with the Clinical Office v5 setup app: it
+loads, maps a component through `dm_info`, and the Workflow page then mounts
+that component — in both transport modes.
+
+## Hosting a form from a CCL report
+
+The Edge Discern Output Viewer can render a Workflow component, so a CCL
+report — run from DA2, the Discern Reporting Portal or a PowerChart report
+tab — can open one for the row a user clicks. Prior art (a licensed report
+viewer; we take the model, not the product) settles the shape:
+
+- **Triggers:** a row click, a click on one column, a right-click menu entry,
+  or a toolbar button. Toolbar actions have no row, so they take fixed
+  values only.
+- **Context comes from the row.** The report output carries `person_id` /
+  `encntr_id` columns, which the viewer hides by default (every `_id` and
+  `_cd` column is hidden unless asked for); the action names the columns
+  to read.
+- **Display:** a side panel by default, or a modal dialog with CSS height and
+  width (`40vh` / `80vw`), dismissed by a close button or Escape. Several
+  components on one action show as tabs; a short identifier strip (patient
+  name, MRN, admit date — row columns with optional labels) sits above them.
+  A one-line notice on load ("Click a row to …") tells users rows act.
+- **Other row actions** in the same vocabulary, each already in our
+  Discern catalogue (`@webforms/cerner-core`):
+
+  | Action | Bridge call | Outside PowerChart |
+  |---|---|---|
+  | Open the chart, optionally at a named tab | `APPLINK` `/PERSONID /ENCNTRID /FIRSTTAB` | Edge: promise |
+  | Open a PowerForm (new, existing activity, read only) | `MPAGES_EVENT("POWERFORM", "person\|encntr\|formId\|activityId\|chartMode")` | yes (`hosts: any`) |
+  | View a result | `PVVIEWERMPAGE` Create/AppendEvent/LaunchEventViewer | — |
+  | Run a CCL report, prompts in the report's order | `CCLLINK` | Edge: replaces the page by default |
+  | Open a Workflow component | our `<webforms-player>` with `person_id` / `encntr_id` | yes |
+
+This makes a **form-submissions worklist** cheap: a CCL report over our
+`cust_nh_wf_reference` submission markers whose row click opens
+`<webforms-player>` in a dialog. Not built. The PowerChart emulator's
+"Discern Reporting Portal" toolbar button
+(`hosts/powerchart/src/host/PowerChartShell.tsx`) only shows a notice today
+and is the natural place to stage it.
+
+Report-output conventions worth matching if we emit tabular output: a
+multi-sheet export caps tab names at **31 characters** (Excel's sheet-name
+limit); dates should leave CCL already formatted in the browser's
+case-sensitive mask (see the cerner-ccl README); and large output is
+compressed and base64-encoded into one package because the stock table
+viewer truncates big results.
+
 ## Component catalogue (what the ecosystem ships)
 
 Useful as a gap list: these are the UI capabilities a mature MPage stack
@@ -81,6 +144,24 @@ provides. Ours come from Fluent + the MOIS form runtime instead, so this is
   still worth adding before a real pilot, since WebView2 offers no devtools.
 
 ## Platform gotchas we must respect
+
+- **The Discern bridge does not work inside an `<iframe>` in an Edge
+  Workflow component.** Calls that work on the page itself fail from a
+  frame, which is why the vendor's v5 components mount as custom elements on
+  the root page instead of framing their app. Our `<webforms-player>` mounts
+  in place; never wrap it in a frame for a component placement. (The
+  PowerChart emulator frames MPages and installs the bridge in the frame's
+  own realm, so it is more permissive than the real client here.)
+- **Overlays escape the component.** Dialogs and pop-ups render at the
+  document root, outside the component's shadow root, so anything the
+  component provides through context (services, theme, chart ids) does not
+  reach them unless passed in explicitly. The vendor hands its services to
+  each dialog by hand. Worse, when a user clicks a Workflow page's
+  per-component **refresh** button the component re-mounts and loses its
+  references to root-level overlays, so they stop appearing; the vendor's
+  answer was a drop-down that renders inside the component. Our Fluent
+  layers and portals carry the same risk in a component placement — test
+  a callout after a component refresh.
 
 - **Material Icons must be self-hosted.** Workflow components are isolated
   from the host page's CSS *except* fonts, so the icon font is installed once
@@ -127,6 +208,21 @@ For the `DiscernActionsBar` buttons, ids come from these tables:
 | DynDoc note type | `noteTypeCd` | code set 72 (0 ⇒ by-template call, non-zero ⇒ by-template-and-note-type) |
 | Open chart tab | tab name | PowerChart tab caption, e.g. "Provider View" |
 | View result/event | `eventId` | one id or an array |
+
+## Server-backed lookups (prior-art contract)
+
+For coded answers and provider search against large lists, the vendor's
+pickers follow one pattern worth copying in a lookup custom script:
+
+- **Count first, refuse above a limit** (default 100): reply with an error
+  flag and an "N records, limit X" message instead of a giant list.
+- **Hydrate saved values by key list**, replying `data: [{ key, value }]`;
+  "All" is `-1`.
+- Code-set searches filter on CDF meaning, display, display key,
+  description, definition, CKI or concept CKI — fixed fields, not raw CCL.
+- Personnel search can be limited to physicians; a location tree cascades
+  facility → unit → room → bed; patient search runs over alias code sets
+  4 and 319.
 
 ## Domain naming and content root
 

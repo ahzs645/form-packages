@@ -100,9 +100,18 @@ record rPERSONS (
         2 gender                = vc
         2 deceased_ind          = i4
         2 aliases[*]
-            3 alias         = vc
-            3 alias_type_cd = f8
-            3 alias_type    = vc
+            3 alias                     = vc
+            3 alias_formatted           = vc
+            3 alias_type_cd             = f8
+            3 alias_type                = vc
+            3 alias_type_meaning        = vc
+            3 alias_pool_cd             = f8
+            3 alias_pool                = vc
+            3 health_card_province      = vc
+            3 health_card_ver_code      = vc
+            3 health_card_type          = vc
+            3 health_card_issue_dt_tm   = dq8
+            3 health_card_expiry_dt_tm  = dq8
 )
 
 record rENCOUNTERS (
@@ -115,9 +124,13 @@ record rENCOUNTERS (
         2 location          = vc
         2 reg_dt_tm         = dq8
         2 aliases[*]
-            3 alias         = vc
-            3 alias_type_cd = f8
-            3 alias_type    = vc
+            3 alias                 = vc
+            3 alias_formatted       = vc
+            3 alias_type_cd         = f8
+            3 alias_type            = vc
+            3 alias_type_meaning    = vc
+            3 alias_pool_cd         = f8
+            3 alias_pool            = vc
 )
 
 set run_stats->id = $ID
@@ -166,6 +179,9 @@ if (validate(REQUEST->BLOB_IN))
 endif
 
 ; Debug mode: persist the raw request for inspection and do nothing else.
+; The file lands in cclscratch on the node that served the request, so a
+; replay must run from a back-end CCL session on that same node (runStats
+; reports it as `node`).
 if ($DEBUG_IND > 0)
     call echojson(payload, concat("cclscratch:nh_wf_debug_",
         trim(cnvtstring(reqinfo->updt_id)), ".json"))
@@ -388,9 +404,30 @@ if (validate(payload->person) = 1 and chart_id->person_id > 0.0)
         nLOOP = size(rPERSONS->persons[1].aliases, 5) + 1
         nSTAT = alterlist(rPERSONS->persons[1].aliases, nLOOP)
         rPERSONS->persons[1].aliases[nLOOP].alias = pa.alias
+        rPERSONS->persons[1].aliases[nLOOP].alias_formatted =
+            cnvtalias(pa.alias, pa.alias_pool_cd)
         rPERSONS->persons[1].aliases[nLOOP].alias_type_cd = pa.person_alias_type_cd
         rPERSONS->persons[1].aliases[nLOOP].alias_type =
             uar_get_code_display(pa.person_alias_type_cd)
+        ; Match identifiers by meaning (code set 4: MRN, CMRN, ...), not by
+        ; the site-configured display.
+        rPERSONS->persons[1].aliases[nLOOP].alias_type_meaning =
+            uar_get_code_meaning(pa.person_alias_type_cd)
+        rPERSONS->persons[1].aliases[nLOOP].alias_pool_cd = pa.alias_pool_cd
+        rPERSONS->persons[1].aliases[nLOOP].alias_pool =
+            uar_get_code_display(pa.alias_pool_cd)
+        ; Health card detail rides on the alias row (the BC PHN path).
+        ; !! SITE REVIEW: confirm these PERSON_ALIAS columns and that NH
+        ;    populates them on the PHN alias.
+        rPERSONS->persons[1].aliases[nLOOP].health_card_province =
+            pa.health_card_province
+        rPERSONS->persons[1].aliases[nLOOP].health_card_ver_code =
+            pa.health_card_ver_code
+        rPERSONS->persons[1].aliases[nLOOP].health_card_type = pa.health_card_type
+        rPERSONS->persons[1].aliases[nLOOP].health_card_issue_dt_tm =
+            pa.health_card_issue_dt_tm
+        rPERSONS->persons[1].aliases[nLOOP].health_card_expiry_dt_tm =
+            pa.health_card_expiry_dt_tm
     with counter
 
     if (cDOMAINS > " ")
@@ -426,9 +463,17 @@ if (validate(payload->encounter) = 1 and chart_id->encntr_id > 0.0)
         nLOOP = size(rENCOUNTERS->encounters[1].aliases, 5) + 1
         nSTAT = alterlist(rENCOUNTERS->encounters[1].aliases, nLOOP)
         rENCOUNTERS->encounters[1].aliases[nLOOP].alias = ea.alias
+        rENCOUNTERS->encounters[1].aliases[nLOOP].alias_formatted =
+            cnvtalias(ea.alias, ea.alias_pool_cd)
         rENCOUNTERS->encounters[1].aliases[nLOOP].alias_type_cd = ea.encntr_alias_type_cd
         rENCOUNTERS->encounters[1].aliases[nLOOP].alias_type =
             uar_get_code_display(ea.encntr_alias_type_cd)
+        ; Code set 319 meaning (FIN NBR, VISITID, ...).
+        rENCOUNTERS->encounters[1].aliases[nLOOP].alias_type_meaning =
+            uar_get_code_meaning(ea.encntr_alias_type_cd)
+        rENCOUNTERS->encounters[1].aliases[nLOOP].alias_pool_cd = ea.alias_pool_cd
+        rENCOUNTERS->encounters[1].aliases[nLOOP].alias_pool =
+            uar_get_code_display(ea.alias_pool_cd)
     with counter
 
     if (cDOMAINS > " ")

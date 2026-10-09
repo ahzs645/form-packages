@@ -41,15 +41,30 @@ export function hexDecode(value: string): string {
 
 const F8_SENTINEL = "{forcef8}";
 const F8_KEY_PATTERN = /(Cd|Id|Float)$/;
+const F8_LIST_KEY_PATTERN = /(Cd|Id|Float)s?$/;
 
 export interface AsciiJsonOptions {
   /**
    * Emit whole-number values whose key ends in Cd/Id/Float as unquoted
    * floats ("personId":123 becomes "personId":123.0) so CCL's
    * CNVTJSONTOREC types them f8 instead of i4 — Millennium ids overflow i4.
+   * Lists under such a key, singular or plural ("eventIds", "typeCds"), get
+   * the same treatment element by element: a list item has no key of its
+   * own for the rule to match.
    */
   forceF8Ids?: boolean;
+  /**
+   * Float every whole number inside any list, whatever its key. For lists
+   * keyed by names the id rule cannot recognise (`"selected": [123456789012]`).
+   * Opt-in: CCL then types every numeric list element f8, counts included.
+   */
+  forceF8Arrays?: boolean;
 }
+
+const isWholeNumber = (val: unknown): val is number =>
+  typeof val === "number" && Number.isFinite(val) && val === Math.floor(val);
+
+const asF8 = (val: number) => F8_SENTINEL + val + ".0" + F8_SENTINEL;
 
 /**
  * JSON.stringify that escapes every character above U+007E as \uXXXX.
@@ -58,19 +73,32 @@ export interface AsciiJsonOptions {
  * characters would corrupt the pairing), and the client must strip raw
  * control characters from CCL replies before parsing — \uXXXX escapes are
  * plain ASCII and survive both.
+ *
+ * Whether CNVTJSONTOREC turns those escapes back into the original characters
+ * has not been confirmed in a Millennium domain (see the cerner-ccl README
+ * first-compile checklist); prior art folds typographic quotes to ASCII and
+ * drops other non-ASCII text before writing to custom tables.
  */
 export function toAsciiJson(value: unknown, options?: AsciiJsonOptions): string {
-  const replacer = options?.forceF8Ids
-    ? (key: string, val: unknown) =>
-        typeof val === "number" && val === Math.floor(val) && F8_KEY_PATTERN.test(key)
-          ? F8_SENTINEL + val + ".0" + F8_SENTINEL
-          : val
-    : undefined;
+  const forceIds = options?.forceF8Ids === true;
+  const forceArrays = options?.forceF8Arrays === true;
+  const replacer =
+    forceIds || forceArrays
+      ? function (this: unknown, key: string, val: unknown) {
+          if (forceArrays && Array.isArray(this) && isWholeNumber(val)) return asF8(val);
+          if (!forceIds) return val;
+          if (isWholeNumber(val) && F8_KEY_PATTERN.test(key)) return asF8(val);
+          if (Array.isArray(val) && F8_LIST_KEY_PATTERN.test(key)) {
+            return val.map((item) => (isWholeNumber(item) ? asF8(item) : item));
+          }
+          return val;
+        }
+      : undefined;
   let json = JSON.stringify(value, replacer as never);
   if (json === undefined) {
     throw new Error("toAsciiJson: value is not JSON-serializable");
   }
-  if (options?.forceF8Ids) {
+  if (forceIds || forceArrays) {
     json = json.replace(/"\{forcef8\}|\{forcef8\}"/g, "");
   }
   return json.replace(/[\u007f-\uffff]/g, (ch) => {

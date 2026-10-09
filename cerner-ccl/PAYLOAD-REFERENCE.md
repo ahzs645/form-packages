@@ -12,6 +12,7 @@ and confirmed against observed traffic. Names are the camelCase wire form.
 ```jsonc
 { "payload": {
     "patientSource": [ { "personId": 0, "encntrId": 0 } ],   // ✅
+    "orgSource": [ { "organizationId": 0 } ],                // organization / address / phone
     "clearPatientSource": true,                              // ✅
     "customScript": { "script": [                            // ✅ (whitelisted)
       { "name": "x:group1", "id": "key", "run": "pre|post", "parameters": {} }
@@ -35,6 +36,39 @@ Rules that matter:
   standard collectors" works in one round trip.
 - Every section accepts `skipJSON: true` — collect the data server-side for a
   later custom script without paying to serialize it back.
+
+## Filtering by type: `typeList`
+
+One `typeList` per payload narrows what the sections collect. Each entry is
+`{ "codeSet": 212, "type": "HOME", "typeCd": 0 }`: `type` is a CDF meaning or
+display key; leave it `""` and set `typeCd` to filter by the code value
+itself. One list can mix code sets, and each section only reads the entries
+for its own code sets:
+
+| section | code set | filters |
+|---|---|---|
+| person `aliases` | 4 | person alias type (MRN, CMRN, …) |
+| person `names` | 213 | name type |
+| encounter `aliases` | 319 | encounter alias type (FIN NBR, …) |
+| encounter `personReltn` | 351 | person relationship type |
+| `address` | 212 | address type |
+| `phone` | 43 | phone type |
+| `allergy` | 12020 / 12025 | substance type / reaction status |
+| `problem` | 12030 | life-cycle status |
+| `diagnosis` | 17 / 400 | diagnosis type / source vocabulary (400 also applies to problems) |
+| `organization` `aliases` | 334 | organization alias type |
+
+Not implemented in `nh_wf_entry.prg` yet; our sections return every active
+row.
+
+## Named payload presets
+
+The vendor client ships named presets for common requests. The names are a
+ready vocabulary if a prefill setting ever needs to say "how much":
+`PERSON_MIN`, `PERSON_PATIENT(_PLUS)`, `ENCOUNTER_MIN`, `ENCOUNTER_ALL(_PLUS)`,
+`PRSNL_MIN`, `PRSNL_ALL(_PLUS)`, `APO_ADDR` / `APO_PHONE` / `APO_ALL` /
+`APO_ORG` (address, phone, organization), `ALLERGY_ACTIVE` (12025 ACTIVE),
+`PROBLEM_ACTIVE` (12030 ACTIVE), `DIAGNOSIS_FINAL` (17 FINAL).
 
 ## Section options and their source tables
 
@@ -75,12 +109,30 @@ PRSNL_GROUP), `prsnlPrsnlReltn` (PRSNL_PRSNL_RELTN + PRSNL), `orgReltn`
 ### smaller sections
 - `address: true` / `phone: true` — flat lists keyed by
   `parentEntityId` + `parentEntityName`; only extra option is `skipJSON`.
+  They read the people in `patientSource`, or the organizations in
+  `orgSource` when that is sent instead.
 - `organization: { aliases }`.
 - `allergy: { reactions, comments }`.
 - `problem: { comments }`.
-- `diagnosis: {}` (no options beyond `skipJSON`).
+- `diagnosis: {}` (no options beyond `skipJSON`). Diagnoses belong to an
+  **encounter**; allergies and problems belong to the **person**. A form
+  scoped to one visit gets that visit's diagnoses but every active allergy
+  and problem.
 - `reference: true` — returns the *metadata/definition* view of whichever
   other sections are requested rather than patient data.
+
+### codeValue
+`codeValue: [{ "cs": 72, "value": 0, "filter": "", "alias": "", "outboundAlias": "" }]`.
+A non-zero `value` loads that one code value and ignores `cs`. `alias` /
+`outboundAlias` name a contributor source by display key and return each
+value's inbound or outbound alias for it. Batch many code sets into one
+request rather than one request each: every request holds a pool slot.
+
+**`filter` is raw CCL** spliced into a `where` clause against the
+CODE_VALUE table aliased `CV` (for example `CV.CDF_MEANING="NURSE_UNIT"`).
+That is an injection surface. If we implement `codeValue`, refuse `filter`
+from the client and offer fixed fields (CDF meaning, display key, CKI)
+instead.
 
 ## Reply keys
 
@@ -92,10 +144,36 @@ holding `{ id, data }` for each custom script.
 Note the singular `address` / `phone` / `prsnl` keys against plural
 `persons` / `encounters` / `allergies` — consumers key off these exactly.
 
+### Row fields we return
+
+`nh_wf_entry.prg` returns a deliberately small row. Alias rows carry enough
+to identify an alias without relying on site-configured display text:
+
+| key | person alias | encounter alias | notes |
+|---|---|---|---|
+| `alias`, `aliasFormatted` | ✅ | ✅ | formatted via the alias pool (`cnvtalias`) |
+| `aliasType`, `aliasTypeCd` | ✅ | ✅ | display is site-configured |
+| `aliasTypeMeaning` | ✅ | ✅ | code set 4 / 319 meaning: match on this |
+| `aliasPool`, `aliasPoolCd` | ✅ | ✅ | |
+| `healthCardProvince`, `healthCardVerCode`, `healthCardType`, `healthCardIssueDtTm`, `healthCardExpiryDtTm` | ✅ | — | the BC PHN path; site review pending |
+
+Where the vendor row differs, theirs is the richer shape: person rows use
+`sex` / `sexCd` (ours: `gender` / `genderCd`) and add `age`, `nameMiddle`,
+`logicalDomainId`; encounter rows add `locNurseUnit` / `locRoom` / `locBed`.
+Rename only together with the player, which reads `gender`.
+
 ## Client-side expectations worth honouring
 
 - Whole-number `*Id` / `*Cd` values arrive as `123.0` so `CNVTJSONTOREC`
-  types them f8 (`i4` overflows on Millennium ids).
+  types them f8 (`i4` overflows on Millennium ids). A list item has no key,
+  so lists under such a key (`eventIds`, `typeCds`) are floated element by
+  element; `forceF8Arrays` floats whole numbers in every list.
+- Non-ASCII text arrives as `\uXXXX` escapes. Whether CNVTJSONTOREC restores
+  the original characters is unconfirmed; prior art folds smart quotes to
+  ASCII and drops other Unicode before custom-table writes. See the README
+  first-compile checklist.
+- Every custom script in one payload shares the `PAYLOAD` record: a
+  parameter name used by two scripts must have the same JSON type in both.
 - Replies get control characters `0x00–0x1F` stripped before parsing, so
   never emit raw newlines inside JSON string values.
 - The transport keeps a small fixed pool of request slots and queues beyond

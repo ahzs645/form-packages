@@ -18,6 +18,13 @@
 ; Result under the request id:
 ;   { "rows":[{refName,refTask,description,parentEntityId,parentEntityName,
 ;              refText,updtDtTm}], "actionStatus":"..." }
+;
+; !! SITE REVIEW (first compile): the client sends non-ASCII text as \uXXXX
+;    escapes. Write a refText holding a smart quote, an em dash and an
+;    accented name, read it back, and confirm it round-trips unchanged.
+;    Prior art treats Unicode as unsafe for custom tables (folds smart
+;    quotes to ASCII, drops the rest); if the round trip fails, fold on the
+;    client before writing rather than storing mangled text.
 ;******************************************************************************
 drop program nh_wf_form_store:group1 go
 create program nh_wf_form_store:group1

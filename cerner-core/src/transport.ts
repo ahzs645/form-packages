@@ -50,7 +50,13 @@ export interface CclClientOptions {
   encntrId?: number;
   /** Force whole-number *Cd/*Id/*Float values to f8-typed floats on the wire (default true). */
   forceF8Ids?: boolean;
+  /** Also float every whole number inside any list, whatever its key (default false). */
+  forceF8Arrays?: boolean;
   timeoutMs?: number;
+  /**
+   * Discern Web Services login for the off-PowerChart path. The username is
+   * domain-qualified (`user@domain`), the form Discern Web Services expects.
+   */
   credentials?: { username: string; password: string };
   windowRef?: HostWindowLike & { location?: { hostname?: string; origin?: string } };
   /** Override request construction (tests, custom bridges). */
@@ -241,7 +247,10 @@ export class CclClient {
       }
 
       const hexMode = !this.inPowerChart;
-      const blob = toAsciiJson({ payload }, { forceF8Ids: this.options.forceF8Ids ?? true });
+      const blob = toAsciiJson(
+        { payload },
+        { forceF8Ids: this.options.forceF8Ids ?? true, forceF8Arrays: this.options.forceF8Arrays ?? false },
+      );
       const parameterString = buildParameterString({
         mode: this.mode,
         personId: executeOptions?.personId ?? this.personId,

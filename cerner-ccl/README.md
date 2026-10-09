@@ -60,3 +60,38 @@ whitelist** and **person/encounter entitlement checks**.
 4. Dev loop from outside PowerChart: discover the Discern Web Services
    contextRoot (services-directory `urn:cerner:api:mpages` link + `reports`)
    and set it as the Vite `/cclproxy` target.
+
+## First-compile checklist
+
+Things only a real domain can answer. Settle each in DVDev/back-end CCL
+before the scripts go past build:
+
+1. **Unicode round trip.** The client sends non-ASCII as `\uXXXX` escapes.
+   Write a `refText` containing a smart quote, an em dash and an accented
+   name through `nh_wf_form_store`, read it back, and compare. If it does
+   not round-trip, fold on the client before writing (smart quotes → ASCII,
+   as prior art does) instead of storing mangled text.
+2. **Health card columns.** Confirm the `PERSON_ALIAS` health-card columns
+   `nh_wf_entry` reads, and which alias type NH stores the PHN under.
+3. **List typing.** Send `{"eventIds":[123456789012.0]}` and check the
+   record types the element f8.
+4. The `!! SITE REVIEW` markers in each script.
+
+## Running and debugging
+
+- **Run setup or report output from DA2 or `discernoutputviewertester.exe`,
+  not Discern Visual Developer.** DVDev still renders output through
+  Internet Explorer, so an Edge-only page fails there while working in
+  PowerChart. A DA2 report that writes (to `dm_info` or our table) needs a
+  write-capable server selected in its properties.
+- **Replaying a request.** With `DEBUG_IND > 0`, `nh_wf_entry` writes the
+  parsed request to `cclscratch:nh_wf_debug_<prsnl_id>.json` on the node
+  that served it (`runStats.node`) and returns without running anything.
+  Replay it from a back-end CCL session **on that same node**: load the
+  file into `PAYLOAD` and execute the entry script with `DEBUG_IND = 0`.
+- **Date formats cross a case boundary.** CCL date masks ignore case
+  (`dd-mmm-yyyy;;d`); the browser's do not. Anything a script emits as a
+  formatted date for the page should use `yyyy` (never two-digit years), `MM`
+  or `MMM` months, `dd` days, `HH` hours, `mm` minutes, with no CCL
+  modifiers such as `;;d` or `;;q`. Prefer sending `dq8` values through
+  `CNVTRECTOJSON`, which emits ISO 8601, and formatting on the client.

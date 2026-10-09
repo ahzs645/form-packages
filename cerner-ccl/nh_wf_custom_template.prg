@@ -16,6 +16,10 @@
 ;   - never write to _Memory_Reply_String yourself; if you execute a
 ;     Cerner-supplied script, save/restore _Memory_Reply_String around it
 ;     and use `with replace(...)` to avoid record-name collisions
+;   - every custom script in one payload shares the PAYLOAD record, so a
+;     parameter name used by two scripts must carry the same JSON type in
+;     both (one sending startDate as a date string and another as a number
+;     makes CNVTJSONTOREC fail); prefix names per script when unsure
 ;******************************************************************************
 drop program nh_wf_custom_template:group1 go
 create program nh_wf_custom_template:group1

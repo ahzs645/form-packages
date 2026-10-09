@@ -88,8 +88,13 @@ class MockCclRequest implements CclRequestLike {
           age: "46 Years",
           gender: "Male",
           aliases: [
-            { alias: "9876 543 210", aliasType: "PHN" },
-            { alias: "700001234", aliasType: "MRN" },
+            {
+              alias: "9876543210",
+              aliasFormatted: "9876 543 210",
+              aliasType: "PHN",
+              healthCardProvince: "BC",
+            },
+            { alias: "700001234", aliasFormatted: "700001234", aliasType: "MRN", aliasTypeMeaning: "MRN" },
           ],
         },
       ];
@@ -101,7 +106,9 @@ class MockCclRequest implements CclRequestLike {
           personId: this.chart.personId,
           encntrType: "Outpatient",
           location: "Mock Demo Clinic",
-          aliases: [{ alias: "FIN-0001234", aliasType: "FIN NBR" }],
+          aliases: [
+            { alias: "FIN-0001234", aliasFormatted: "FIN-0001234", aliasType: "FIN NBR", aliasTypeMeaning: "FIN NBR" },
+          ],
         },
       ];
     }

@@ -60,6 +60,26 @@ describe("toAsciiJson", () => {
       '{"oddId":1.25,"name":"Id"}',
     );
   });
+  it("floats whole numbers in lists under an id or code key, singular or plural", () => {
+    expect(
+      toAsciiJson(
+        { eventIds: [123456789012, 7], typeCd: [4, 319], counts: [1, 2], mixedIds: [5, "x", 1.5] },
+        { forceF8Ids: true },
+      ),
+    ).toBe('{"eventIds":[123456789012.0,7.0],"typeCd":[4.0,319.0],"counts":[1,2],"mixedIds":[5.0,"x",1.5]}');
+  });
+
+  it("floats every whole number in any list under forceF8Arrays", () => {
+    expect(
+      toAsciiJson({ selected: [123456789012, 2.5], total: 3, nested: [{ n: 1 }, [4]] }, { forceF8Arrays: true }),
+    ).toBe('{"selected":[123456789012.0,2.5],"total":3,"nested":[{"n":1},[4.0]]}');
+  });
+
+  it("does not double-float id lists when both options are on", () => {
+    expect(toAsciiJson({ personIds: [9] }, { forceF8Ids: true, forceF8Arrays: true })).toBe(
+      '{"personIds":[9.0]}',
+    );
+  });
 });
 
 describe("stripControlChars", () => {

@@ -26,8 +26,12 @@ Zero `terra-*` or `@cerner/*` packages across all ten repos — verified
 against source, both `package-lock.json` files, and the committed `dist/`
 bundles. What these teams actually ship inside an MPage:
 
-- **Angular Material** — the vendor template's default, themed from a
-  generated `theme.scss` and emitted as a separate `material-theme` bundle.
+- **Angular Material** — the default of the vendor's **v3/v4** templates,
+  themed from a generated `theme.scss` and emitted as a separate
+  `material-theme` bundle. Version 5 dropped it (keeping only the CDK for
+  drag-and-drop and dialogs): its styles must live in the root document, so
+  components built on different Angular versions clashed on one Workflow
+  page. v5 components carry their own styles in a shadow root instead.
 - **ng-zorro-antd (Ant Design)** — in the newest and largest production app.
 - **PrimeNG** — in the CST Future Orders apps.
 - **Bootstrap 3/4 + DataTables + FontAwesome** — the legacy components,
@@ -107,7 +111,12 @@ The prompt signature is six slots:
 OUTDEV, PERSONID, ENCNTRID, USERID, INSTANCE, CONFIG_JSON
 ```
 
-with the **instance index in slot 5** so CCL can echo it back — that is how a
+That is the **v3/v4** signature these repos use: slot 4 carries the
+`$USR_PersonId$` macro. **v5 repurposed slot 4 as the debug indicator**, and
+v5 is what our `nh_wf_entry` speaks (`OUTDEV, PERSONID, ENCNTRID, DEBUG_IND,
+INSTANCE, ^CONFIG^`; see `EXPORT-SHAPE.md`). The acting user always comes
+from `reqinfo->updt_id` server-side, so nothing is lost. Either way, the
+**instance index sits in slot 5** so CCL can echo it back — that is how a
 pooled set of request objects demultiplexes replies. Under the web/proxy
 fallback the same call is a form-encoded POST with the blob **hex-encoded**
 both ways.
@@ -122,9 +131,12 @@ Genuinely new to us:
 
 - **`1CO_MPAGE_DM_INFO:GROUP1`** — `DM_INFO` used as a per-user key/value
   store through a stock script, with `clearPatientSource: true`. Real
-  deployments keep column layouts and last-used form values there. **This is
-  a ready-made form-draft/autosave mechanism with no DDL and no domain
-  build** — the most directly useful find in the corpus.
+  deployments keep column layouts and last-used form values there. It needs
+  no DDL and no domain build, but **the vendor has advised against it since
+  v5.1**: `DM_INFO` is a general-use Cerner table suited only to small
+  volumes, and a custom table carries larger objects without that risk. Our
+  `nh_wf_form_store` (custom table, 32k chunks) follows the newer advice;
+  treat `DM_INFO` as a fallback for a domain where DDL is refused.
 - **`reqinfo->updt_app != 600005`** — refuse to write unless the call really
   came from PowerChart; and `reqinfo->updt_id` is the only trustworthy acting
   user id. Never take a user id from the payload.

@@ -1,0 +1,78 @@
+{
+  "$comment": "What the Clinical Office v5 'MPage Setup and Configuration' app sends and which reply fields it reads, recorded from a trace of the app (our own description; no vendor code). The simulator must satisfy every 'requires' path. Paths are dot-separated; [] means 'every element'.",
+  "app": "clinical-office-mpage-setup v5.0.0",
+  "transport": "powerchart",
+  "calls": [
+    {
+      "name": "ping",
+      "program": "1co5_mpage_entry:group1",
+      "params": "^MINE^,0,0,false,0,^{\"mode\":\"ORGANIZER\",\"hexMode\":false}^",
+      "blob": { "payload": { "patientSource": [{ "personId": 0.0, "encntrId": 0.0 }] } },
+      "requires": {
+        "errors": "array-empty",
+        "runStats.debugFile": "empty-string",
+        "runStats.referenceInd": 0,
+        "runStats.prsnlId": "positive",
+        "runStats.prsnlName": "string",
+        "runStats.username": "string",
+        "runStats.position": "string",
+        "runStats.domain": "string",
+        "chartId.personId": 0,
+        "chartId.nameFullFormatted": "empty-string"
+      }
+    },
+    {
+      "name": "init",
+      "program": "1co5_mpage_entry:group1",
+      "params": "^MINE^,0,0,false,1,^{\"mode\":\"ORGANIZER\",\"hexMode\":false}^",
+      "blob": { "payload": { "patientSource": [{ "personId": 0.0, "encntrId": 0.0 }], "customScript": { "script": [{ "name": "1co5_mpage_setup:group1", "run": "pre", "id": "config", "parameters": { "action": "init" } }] } } },
+      "requires": {
+        "errors": "array-empty",
+        "runStats.debugFile": "empty-string",
+        "runStats.referenceInd": 0,
+        "customPre[id=config].data.components": "array",
+        "customPre[id=config].data.components[].inBedrockId": "number",
+        "customPre[id=config].data.components[].mappedId": "number",
+        "customPre[id=config].data.components[].label": "string",
+        "customPre[id=config].data.components[].path": "string",
+        "customPre[id=config].data.components[].mappingStatus": "string",
+        "customPre[id=config].data.components[].lastUpdateDtTm": "string",
+        "customPre[id=config].data.components[].updtId": "number",
+        "customPre[id=config].data.components[].mappingLastUpdatedBy": "string",
+        "customPre[id=config].data.managerUrl": "string",
+        "customPre[id=config].data.host.domain": "string",
+        "customPre[id=config].data.host.zone": "string",
+        "customPre[id=config].data.host.fullCanonicalDomainName": "string",
+        "customPre[id=config].data.host.serviceDirectoryUrl": "string",
+        "customPost": "array"
+      }
+    },
+    {
+      "name": "save mapping",
+      "program": "1co5_mpage_entry:group1",
+      "params": "^MINE^,0,0,false,0,^{\"mode\":\"ORGANIZER\",\"hexMode\":false}^",
+      "blob": { "payload": { "customScript": { "script": [{ "name": "1co5_mpage_dm_info:group1", "run": "pre", "id": "save", "parameters": { "action": "w", "data": [{ "infoDomain": "Clinical Office Component", "infoName": "Webforms Player", "infoChar": "webforms-player", "infoDate": "2026-10-09T08:00:00.000+00:00", "infoNumber": 0, "infoLongText": "", "infoDomainId": 0.0 }] } }], "clearPatientSource": true } } },
+      "requires": {
+        "errors": "array-empty",
+        "customPre[id=save].data.dmInfo[].actionStatus": "string"
+      }
+    },
+    {
+      "name": "init after save",
+      "program": "1co5_mpage_entry:group1",
+      "params": "^MINE^,0,0,false,1,^{\"mode\":\"ORGANIZER\",\"hexMode\":false}^",
+      "blob": { "payload": { "patientSource": [{ "personId": 0.0, "encntrId": 0.0 }], "customScript": { "script": [{ "name": "1co5_mpage_setup:group1", "run": "pre", "id": "config", "parameters": { "action": "init" } }] } } },
+      "requires": {
+        "customPre[id=config].data.components[label=Webforms Player].mappingStatus": "Mapping Completed.",
+        "customPre[id=config].data.components[label=Webforms Player].path": "webforms-player"
+      }
+    }
+  ],
+  "http": [
+    {
+      "name": "services directory",
+      "urlTemplate": "{serviceDirectoryUrl}/services-directory/authorities/{fullCanonicalDomainName}/keys/urn:cerner:api:mpages.json",
+      "requires": { "link": "ends-with:/mpages/" }
+    }
+  ]
+}

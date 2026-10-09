@@ -32,13 +32,18 @@ const frameStyle: React.CSSProperties = {
 
 interface PersonAlias {
   alias?: string;
+  /** The alias run through its pool's format (cnvtalias), when the entry script sends it. */
+  aliasFormatted?: string;
   aliasType?: string;
+  /** Code set 4 meaning (MRN, CMRN, ...): stable where the display is site-configured. */
+  aliasTypeMeaning?: string;
 }
 
 /**
  * Spelled-out titles for the abbreviated alias types the banner prints, keyed
  * by the uppercased type because `alias_type` is a site-configured code
- * display (nh_wf_entry.prg reads it through uar_get_code_display). Terra takes
+ * display (nh_wf_entry.prg reads it through uar_get_code_display); the code
+ * meaning is tried next when the display is a local spelling. Terra takes
  * these as `identifiersLongForm` and announces them in place of the
  * abbreviation; a type with no entry — or one that is already a word, like our
  * own "Encounter" — keeps its label as-is, which is Terra's own fallback.
@@ -275,11 +280,16 @@ export const App: React.FC<{ host?: PlayerHost }> = ({ host = null }) => {
   const banner = useMemo(() => {
     const entries: Array<[string, string]> = (person?.aliases ?? [])
       .filter((alias) => alias.alias)
-      .map((alias) => [alias.aliasType ?? "ID", String(alias.alias)]);
+      .map((alias) => [alias.aliasType ?? "ID", String(alias.aliasFormatted || alias.alias)]);
+    const meanings = new Map(
+      (person?.aliases ?? []).map((alias) => [alias.aliasType ?? "ID", alias.aliasTypeMeaning]),
+    );
     if (encounterId) entries.push(["Encounter", String(encounterId)]);
     const longForm: Record<string, string> = {};
     for (const [label] of entries) {
-      const spelled = IDENTIFIER_LONG_FORMS[label.toUpperCase()];
+      const spelled =
+        IDENTIFIER_LONG_FORMS[label.toUpperCase()] ??
+        IDENTIFIER_LONG_FORMS[(meanings.get(label) ?? "").toUpperCase()];
       if (spelled) longForm[label] = spelled;
     }
     return { identifiers: Object.fromEntries(entries), identifiersLongForm: longForm };

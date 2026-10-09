@@ -16,7 +16,10 @@ Either host is supported:
   `I:\Winintel\Static_Content\custom_mpage_content\<app-folder>`
   After copying, open the **MPages Static Content Management Page**, find
   `custom_mpage_content`, and click **Refresh** — files are not live on the
-  JVM until that refresh runs.
+  JVM until that refresh runs. It takes seconds to minutes depending on the
+  site. Close anything holding the folder open on `I:` first. If
+  `custom_mpage_content` is missing from the page, or some nodes never pick
+  up the change, log a Cerner ticket to cycle the MPage JVMs.
   The management page's URL is derived from
   `dm_info` where `info_domain = "INS"` and `info_name = "CONTENT_SERVICE_URL"`,
   plus `/manager`:
@@ -37,7 +40,9 @@ Either host is supported:
 2. Refresh `custom_mpage_content` from the Management Page (WebSphere only).
 3. `prefmaint` → PowerChart → the Position → expand **Chart** (patient
    context) or **Organizer** (no patient) → **Add Tab** → move
-   **Discern Report** into the existing tabs → OK.
+   **Discern Report** into the existing tabs → OK. The new tab lands at the
+   bottom of its branch; **View → Display PVC_Name** shows the preference
+   names the steps below refer to.
 4. On the new tab set:
    - `VIEW_CAPTION` — the name clinicians see.
    - `WEB_BROWSER_SELECTION` — **1-Edge Chromium**. This is per-tab, so our
@@ -91,11 +96,17 @@ per-component registration.
    Components** and **Workflow MPage-level Settings**.
 4. Bedrock → **MPage Setup** → find the view → **Define MPage Layout** →
    place components in column 1 → for each component set the label and set
-   **Namespace** to the namespace from step 1.
+   **Namespace** to the namespace from step 1. Leave the section-layout
+   option boxes at **No**.
 5. Map the Bedrock label to our folder/URL (Clinical Office's setup MPage
    does this by writing a `dm_info` row; the equivalent row is
    `info_domain = "Clinical Office Component"`, `info_name = <label>`,
    `info_char = custom_mpage_content/webforms-player` or an absolute URL).
+   The namespace's lookup answers with a success flag, the URL, the
+   component name and a cache-busting suffix. When the label does not
+   resolve, the slot shows a red "has not been properly defined" heading
+   rather than failing silently — that heading means step 5 is wrong, not
+   the bundle.
 6. `prefmaint` → Chart branch only (components need patient context) → add a
    **Discern Report** tab whose `REPORT_NAME` points at the Workflow host
    page, e.g.
@@ -103,6 +114,9 @@ per-component registration.
    ```
    <url>$DM_INFO:CONTENT_SERVICE_URL$/mp-content/idx.html?m=^CHT^&pId=$PAT_PERSONID$&eId=$VIS_ENCNTRID$&uId=$USR_PERSONID$&pCd=$USR_PositionCd$&ppr=$PAT_PPRCode$&app=^$APP_AppName$^&vId="<BEDROCK_VIEW_ID>"&sLoc=""
    ```
+
+   `vId` is the Bedrock **view identifier text** (a `VB_…` value from step
+   3), not a numeric id.
 
    Those `pId` / `eId` / `uId` query parameters are how patient context
    reaches an embedded component — `resolveChartContext` reads them (and the
@@ -116,6 +130,18 @@ Serving from our own origin rather than WebSphere requires:
   and `fetch` for `forms/*/index.jsx` are both CORS-governed.
 - No `X-Frame-Options` / `frame-ancestors` blocking, if the host frames us.
 - HTTPS reachable from clinical workstations (proxy/allow-list may apply).
+
+## Testing a deployment
+
+Run the page or its setup reports from **DA2** or
+**`discernoutputviewertester.exe`**, not Discern Visual Developer: DVDev still
+renders output through Internet Explorer, so an Edge-only page fails there
+while working in PowerChart. A DA2 report that writes (a `dm_info` row in
+step B5, or our custom table) needs a write-capable server selected in the
+report's properties.
+
+Off PowerChart, Discern Web Services expects a domain-qualified login
+(`user@domain`).
 
 ## Server side
 

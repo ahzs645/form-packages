@@ -70,7 +70,8 @@ var AddressEntryRuntime = (() => {
     "choice",
     "booleanYesNo",
     "checkbox",
-    "stampButton"
+    "stampButton",
+    "signature"
   ]);
   var LAYOUT_CELL_INPUT_TYPES = unionMembers()([
     "text",
@@ -81,7 +82,8 @@ var AddressEntryRuntime = (() => {
     "choice",
     "choiceMulti",
     "booleanYesNo",
-    "booleanSingle"
+    "booleanSingle",
+    "signature"
   ]);
   var PARSED_FIELD_KINDS = unionMembers()([
     "text",
@@ -1178,7 +1180,8 @@ var AddressEntryRuntime = (() => {
     "placeholder",
     "visibility",
     "binding",
-    "documentBinding"
+    "documentBinding",
+    "authorNote"
   ];
   var TABLE_FIELD_KEY_SET = new Set(TABLE_FIELD_KEYS);
   var SUBFORM_FIELD_KEYS = [

@@ -101,6 +101,7 @@ export const TABLE_FIELD_KEYS = [
   "visibility",
   "binding",
   "documentBinding",
+  "authorNote",
 ] as const;
 type TableFieldKey = (typeof TABLE_FIELD_KEYS)[number];
 const TABLE_FIELD_KEY_SET = new Set<string>(TABLE_FIELD_KEYS);

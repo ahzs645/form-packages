@@ -740,6 +740,8 @@ export interface BuilderLayoutTableCellField {
   placeholder?: string;
   helpText?: string;
   helpPosition?: HelpPosition;
+  /** Author note for the build/QA team; never drawn or exported to a form (field-notes.ts). */
+  authorNote?: import("./field-notes").BuilderFieldNote | null;
   /**
    * The field came from another product's control whose rendering here is
    * not decided yet (a PowerForm grid, a chart template PowerChart fills
@@ -822,6 +824,8 @@ export interface BuilderLayoutTableCell {
   placeholder?: string;
   helpText?: string;
   helpPosition?: HelpPosition;
+  /** Author note for the build/QA team; never drawn or exported to a form (field-notes.ts). */
+  authorNote?: import("./field-notes").BuilderFieldNote | null;
   /**
    * The field came from another product's control whose rendering here is
    * not decided yet (a PowerForm grid, a chart template PowerChart fills
@@ -2243,6 +2247,8 @@ export interface BuilderTableColumn {
   requiredMessage?: string;
   /** Hint shown with the column's input in the row editor. */
   helpText?: string;
+  /** Author note for the build/QA team; never drawn or exported to a form (field-notes.ts). */
+  authorNote?: import("./field-notes").BuilderFieldNote | null;
   placeholder?: string;
   /**
    * Legacy alias of `required` (same meaning). Older runtimes only read
@@ -2361,6 +2367,8 @@ export interface BuilderField {
   placeholder?: string;
   helpText?: string;
   helpPosition?: HelpPosition;
+  /** Author note for the build/QA team; never drawn or exported to a form (field-notes.ts). */
+  authorNote?: import("./field-notes").BuilderFieldNote | null;
   /**
    * The field came from another product's control whose rendering here is
    * not decided yet (a PowerForm grid, a chart template PowerChart fills
@@ -3702,6 +3710,7 @@ export * from "./subform-value-targets";
 export * from "./structure";
 export * from "./matrix";
 export * from "./translations";
+export * from "./field-notes";
 export * from "./workflow";
 export { backfillOptionScoresFromFormula } from "./score-backfill";
 export {
