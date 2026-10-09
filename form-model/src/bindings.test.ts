@@ -7,6 +7,7 @@ import {
   inferFieldBindingShape,
   moisReadPathsOf,
   observationDateOf,
+  observationWriteLinkFor,
   readFieldBinding,
   readFieldBindingDetails,
   writeFieldBinding,
@@ -14,6 +15,17 @@ import {
   type FieldBindingCatalog,
   type FieldBindingShape,
 } from "./bindings";
+
+describe('OSCAR observation write intent', () => {
+  it('carries explicit neutral links to OSCAR but not another product’s output flag', () => {
+    expect(observationWriteLinkFor(['binding'], 'oscar').linked).toBe(true);
+    expect(observationWriteLinkFor(['measurementConfig.write'], 'oscar').linked).toBe(true);
+    expect(observationWriteLinkFor(['moisOutput'], 'oscar').linked).toBe(true);
+    expect(observationWriteLinkFor(['binding', 'fhirConfig.observationExtract'], 'oscar')).toEqual({ linked: false, knownFrom: ['fhirConfig.observationExtract'] });
+    expect(observationWriteLinkFor(['cernerConfig.dta'], 'oscar').linked).toBe(false);
+    expect(observationWriteLinkFor(['measurementConfig.read'], 'oscar').linked).toBe(false);
+  });
+});
 
 /** A small stand-in for the app catalog (lib/field-bindings.ts). */
 const CATALOG: FieldBindingCatalog = {
@@ -497,3 +509,4 @@ describe("the date of a reading (write.effective)", () => {
     expect(details.unknown).toEqual(expect.arrayContaining(["binding.write.effective.extra", "binding.write.effective.whenMissing=later"]));
   });
 });
+

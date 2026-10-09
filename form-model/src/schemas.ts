@@ -14,12 +14,25 @@ export const BuilderFieldSchema = z.looseObject({
 
 export const BuilderFieldsSchema = z.array(BuilderFieldSchema);
 
+/** Incomplete mappings stay editable; the OSCAR transport planner reports them. */
+export const OscarExportSettingsSchema = z.object({
+  version: z.literal(1).default(1),
+  profileId: z.enum(["portable", "juno", "carlos"]).default("portable"),
+  measurementMappings: z.array(z.object({
+    fieldId: z.string(),
+    measurementType: z.string(),
+    measuringInstruction: z.string(),
+    commentsFieldId: z.string().optional(),
+  })).default([]),
+});
+
 export const BuilderDocumentSchema = z.looseObject({
   name: z.string(),
   fields: BuilderFieldsSchema,
   design: z.record(z.string(), z.unknown()),
   identityType: z.enum(["ACTIVITY", "ATTACHMENT", "CALCULATOR", "FLOWSHEET", "TESTFORM", "WEBCLIENT", "TEST"]),
   identityCode: z.string(),
+  oscarExport: OscarExportSettingsSchema.nullable().optional(),
   identityMetadata: z.object({
     author: z.string().optional(),
     owner: z.string().optional(),

@@ -3560,6 +3560,8 @@ export interface BuilderDocument<TLayoutDraft = unknown> {
    * export mode, else MOIS.
    */
   exportTargets?: ExportTargetsSetting | null;
+  /** Explicit OSCAR host/destination overrides; clinical intent stays in neutral bindings. */
+  oscarExport?: import("./oscar").OscarExportSettings | null;
 }
 
 /**
@@ -3696,6 +3698,7 @@ export * from "./values";
 export * from "./providers";
 export * from "./defaults";
 export * from "./bindings";
+export * from "./oscar";
 export * from "./chart-lists";
 export * from "./reference-ranges";
 export * from "./chart-facts";
@@ -3724,3 +3727,4 @@ export {
 
 export * from "./document-layout";
 export * from "./subform-pdf-destinations";
+
