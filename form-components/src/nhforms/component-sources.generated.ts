@@ -1329,6 +1329,7 @@ var AddressEntryRuntime = (() => {
   // packages/form-model/src/field-group.ts
   var TABLE_FIELD_KEYS = [
     "fhirConfig",
+    "alayaCareConfig",
     "width",
     "moisSize",
     "booleanLabels",

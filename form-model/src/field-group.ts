@@ -80,6 +80,7 @@ function hasOwn(record: object, key: string): boolean {
  */
 export const TABLE_FIELD_KEYS = [
   "fhirConfig",
+  "alayaCareConfig",
   "width",
   "moisSize",
   "booleanLabels",
@@ -199,7 +200,25 @@ export function withTableColumns<T extends TableConfigInput>(
   columns: readonly BuilderTableColumn[],
 ): Omit<T, "columns"> & { group: BuilderFieldGroup } {
   const { columns: _legacy, ...rest } = config;
-  return { ...rest, group: tableColumnsToGroup(columns) };
+  const group = tableColumnsToGroup(columns);
+  // Column projections do not expose every field setting (for example native
+  // clinical controls). Keep that intent when editing the projected columns.
+  const originals = new Map(config.group?.fields.map(field => [field.id, field]) ?? []);
+  group.fields = group.fields.map(member => {
+    const original = originals.get(member.id);
+    if (!original) return member;
+    const retained = Object.fromEntries(Object.entries(original).filter(([key]) =>
+      !TABLE_FIELD_KEY_SET.has(key) && !["id", "label", "type", "container"].includes(key)));
+    const projectedOriginal = groupFieldToTableColumn(original);
+    const type = original.type !== memberTypeForColumn(projectedOriginal) &&
+      member.type === memberTypeForColumn(projectedOriginal) &&
+      projectedOriginal.type === groupFieldToTableColumn(member).type ? original.type : member.type;
+    const { table: _oldTable, ...otherContainers } = original.container ?? {};
+    const container = { ...otherContainers, ...member.container };
+    return { ...retained, ...member, type,
+      ...(Object.keys(container).length ? { container } : {}) };
+  });
+  return { ...rest, group };
 }
 
 /** A stored table config. */

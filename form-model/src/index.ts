@@ -1049,6 +1049,18 @@ export interface BuilderAlayaCareConfig {
   sourceFieldId?: number | null;
   /** Original rank retained for lossless import/edit/export ordering. */
   sourceRank?: number | null;
+  /** Explicit native subsection ownership; references a builder field, never a tenant ID. */
+  subsectionParentFieldId?: string | null;
+  /** Native Wound Healing source questions; explicit target overrides. */
+  woundOriginalFieldId?: string | null;
+  woundCurrentFieldId?: string | null;
+  /** Native Score's operator/link editor, independent of arbitrary local equations. */
+  nativeScoreOperator?: "+" | "*" | null;
+  nativeScoreLinkedFieldIds?: string[] | null;
+  /** Explicit clearing distinguishes an authored unset limit from old preserved metadata. */
+  clearedImportedLimits?: Array<"min" | "max">;
+  /** Native feature-gated field options, separate from answer-control settings. */
+  nativeFieldOptions?: { llm_disabled?: boolean; llm_instructions?: string };
   /** Original instructions value, preserving the distinction between null and an empty string. */
   sourceInstructions?: string | null;
   /** Optional exported field_tag value. */
@@ -1077,10 +1089,18 @@ export interface BuilderAlayaCareConfig {
   drawingImageType?: string | null;
   /** AlayaCare progress notes setting: progress_note_type */
   progressNoteType?: string | null;
+  /** Webforms patient-preview defaults; never sent as native answer settings. */
+  chartHistoryDefaults?: {
+    includeHistory?: boolean;
+    search?: string;
+  };
   /** Unmodeled AlayaCare settings retained for lossless import/edit/export. */
   rawSettings?: Record<string, unknown> | null;
   /** Original AlayaCare JSON Logic retained when it cannot be represented by the simple builder visibility editor. */
   rawJsonLogic?: Record<string, unknown> | null;
+  /** Complete imported definition and linked definitions; provenance only, never a native field setting. */
+  sourceFormDefinition?: Record<string, unknown> | null;
+  sourceLinkedDefinitions?: Record<string, unknown>[] | null;
   /** Docmosis image placeholder variable used in LibreOffice templates. */
   docmosisImageVariable?: string | null;
   /** Docmosis collection path for generating repeating table rows, for example comments or service_tasks. */
@@ -2166,6 +2186,8 @@ export interface BuilderTableColumn {
   id: string;
   label: string;
   type: BuilderTableColumnType;
+  /** Native AlayaCare options retained on the shared row field. */
+  alayaCareConfig?: BuilderAlayaCareConfig | null;
   /** Original FHIR Questionnaire child item for lossless group/table round-trips. */
   fhirConfig?: BuilderFhirConfig | null;
   booleanLabels?: { on: string; off: string } | null;

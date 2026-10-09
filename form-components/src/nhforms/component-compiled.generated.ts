@@ -1780,7 +1780,7 @@ var AddressEntryRuntime = (() => {
   }
 
   // packages/form-model/src/field-group.ts
-  var TABLE_FIELD_KEYS = ["fhirConfig", "width", "moisSize", "booleanLabels", "prefill", "defaultAnswer", "dateConfig", "textareaConfig", "textConfig", "useToggleSwitch", "numberConfig", "options", "choiceStyle", "codeSystem", "showOtherOption", "required", "helpText", "placeholder", "visibility", "binding", "documentBinding"];
+  var TABLE_FIELD_KEYS = ["fhirConfig", "alayaCareConfig", "width", "moisSize", "booleanLabels", "prefill", "defaultAnswer", "dateConfig", "textareaConfig", "textConfig", "useToggleSwitch", "numberConfig", "options", "choiceStyle", "codeSystem", "showOtherOption", "required", "helpText", "placeholder", "visibility", "binding", "documentBinding"];
   var TABLE_FIELD_KEY_SET = new Set(TABLE_FIELD_KEYS);
   var SUBFORM_FIELD_KEYS = ["required", "placeholder", "helpText", "codeSystem", "showOtherOption", "choiceStyle", "defaultAnswer", "visibility", "hidden"];
   var SUBFORM_FIELD_KEY_SET = new Set(SUBFORM_FIELD_KEYS);
