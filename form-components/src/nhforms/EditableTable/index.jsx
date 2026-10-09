@@ -11,6 +11,9 @@
  *   evaluated by FormLogicKit) and required-while-shown columns
  *   (column.required / requiredWhenVisible, requiredMessage) checked on row Save
  * - Formula columns evaluated by FormulaKit from their stored tree
+ * - Signature columns (SignaturePad, bundled only with forms that have one):
+ *   the pad in the row dialog, a Sign button / thumbnail that opens a
+ *   pad-only dialog in an inline cell, the image in summaries and print
  *
  * ValueKit reads column options and stored answers (yes/no, choices);
  * DefaultsKit reads and resolves each column's default answer for a new row;
@@ -77,7 +80,7 @@ const _modalQuestionStyle = (column, layout) => {
     column.width && column.width !== "auto" ? LayoutKit.fieldWidthFraction(column.width) : 1 / layout.columns,
     12, layout.minWidth,
   )
-  return { minWidth: 0, ...(!layout.compact && (column.type === "dropdown" || column.type === "text") ? { gridColumn: "1 / -1" } : {}) }
+  return { minWidth: 0, ...(!layout.compact && (column.type === "dropdown" || column.type === "text" || column.type === "signature") ? { gridColumn: "1 / -1" } : {}) }
 }
 
 // DefaultsKit (generated from form-model defaults.ts) reads a default answer in
@@ -386,8 +389,21 @@ const _isMeaningfulValue = (value) => {
   if (typeof value === "boolean") return value
   if (typeof value === "number") return !Number.isNaN(value)
   if (Array.isArray(value)) return value.length > 0
+  // A cleared signature from older forms ({ dataUrl: null, isEmpty: true }).
+  if (typeof value === "object" && value.isEmpty === true) return false
   if (typeof value === "object") return Object.keys(value).length > 0
   return true
+}
+
+// Signature cells store SignaturePad's answer, { dataUrl, isEmpty: false }
+// (null once cleared). Read through SignaturePad's own reader when the pad is
+// bundled; the fallback reads the same shapes.
+const _signatureCellDataUrl = (value) => {
+  if (typeof SignaturePad !== "undefined" && SignaturePad?.helpers?.dataUrlOf) return SignaturePad.helpers.dataUrlOf(value)
+  const read = (candidate) =>
+    typeof candidate === "string" && /^data:image\/(?:png|jpe?g);base64,/i.test(candidate.trim()) ? candidate.trim() : null
+  if (typeof value === "string") return read(value)
+  return value && typeof value === "object" && value.isEmpty !== true ? read(value.dataUrl) : null
 }
 
 const _isRowEmpty = (row, columns = []) => {
@@ -445,6 +461,10 @@ const _hasPersistedAuthorshipClaim = (rowLock = {}) => (
 )
 
 const _formatCellValue = (row, column) => {
+  // Text stands in for a drawn signature where no image can be shown.
+  if (column?.type === "signature") {
+    return _signatureCellDataUrl(_getValueAtPath(row, column.dataPath || column.id)) ? "Signed" : ""
+  }
   if (column?.computedValue?.mode === "template") {
     const computed = _computeTemplateColumnValue(row, column)
     if (_isMeaningfulValue(computed)) return computed
@@ -853,6 +873,11 @@ const _buildChartObservationPayload = ({ rows = [], columns = [], config, existi
 const _normalizeSourceCellValue = (value, column) => {
   if (column?.type === "checkbox") {
     return _toDocumentCheckboxValue(value)
+  }
+
+  // A signature keeps its image answer; anything else reads as unsigned.
+  if (column?.type === "signature") {
+    return _signatureCellDataUrl(value) ? value : null
   }
 
   if (value === undefined || value === null) {
@@ -1477,11 +1502,15 @@ EditableTable = ({
   const onRowSaved = props.onRowSaved
   const onRowDeleted = props.onRowDeleted
   const modalEditorType = String(modalEditorConfig?.type || modalEditorConfig?.editor || "").trim().toLowerCase()
+  // SubformScoring entries have no signature question, so a generated row
+  // editor with a signature column is the RowDialog (which draws the pad).
+  const hasSignatureModalColumn = columns.some((column) => column.type === "signature" && column.showInModal !== false)
   const usesSubformEditor =
     isModalMode &&
     Boolean(modalEditorConfig) &&
     typeof SubformScoring !== "undefined" &&
-    (modalEditorType === "" || modalEditorType === "subform" || modalEditorType === "subform-scoring")
+    (modalEditorType === "" || modalEditorType === "subform" || modalEditorType === "subform-scoring") &&
+    !(hasSignatureModalColumn && !modalEditorConfig?.dataEntryConfig)
   const tableColumns = isModalMode
     ? columns.filter((column) => column.showInTable !== false)
     : columns
@@ -2123,6 +2152,7 @@ EditableTable = ({
     // controls that ignore a readOnly prop cannot write.
     if (effectiveReadOnly) onValueChange = () => {}
     if (effectiveReadOnly) {
+      if (column.type === "signature") return renderSignatureImage(row, column) || <Text>{" "}</Text>
       const displayValue = _formatCellValue(row, column)
       return (
         <Text
@@ -2302,16 +2332,35 @@ EditableTable = ({
     return (
       <>
         <span className="showonprint" style={{ display: "none", whiteSpace: "pre-wrap" }}>
-          {_formatCellValue(row, column) || " "}
+          {renderCellDisplay(row, column) || " "}
         </span>
         <div className="hideonprint">{control}</div>
       </>
     )
   }
 
+  // A signature cell shown without its pad: the drawn image, sized to the cell.
+  const renderSignatureImage = (row, column) => {
+    const dataUrl = _signatureCellDataUrl(_getValueAtPath(row, column.dataPath || column.id))
+    if (!dataUrl) return null
+    return (
+      <img
+        src={dataUrl}
+        alt={(column.title || column.id) + " (signed)"}
+        data-signature-image=""
+        style={{ display: "block", height: "36px", maxWidth: "160px", objectFit: "contain" }}
+      />
+    )
+  }
+
+  // A cell's answer as shown in summaries and print: the image for a
+  // signature, the formatted text otherwise.
+  const renderCellDisplay = (row, column) =>
+    column.type === "signature" ? renderSignatureImage(row, column) : _formatCellValue(row, column)
+
   // A summary (modal-mode) cell: blank where the column is hidden in the row.
   const renderSummaryCell = (row, column) => (
-    <div>{_evaluateColumnVisibility(column, row, columns, formData) ? _formatCellValue(row, column) : ""}</div>
+    <div>{_evaluateColumnVisibility(column, row, columns, formData) ? renderCellDisplay(row, column) : ""}</div>
   )
 
   const mutedTextColor = isDarkMode ? "#a0a0a0" : "#605e5c"

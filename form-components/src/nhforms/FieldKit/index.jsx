@@ -20,6 +20,10 @@
 //   FieldKit.fromTableColumn / fromSubformEntry / fromPanelRow / fromActionField
 //     — builder-field-shaped descriptors for each container's own entries
 //
+// A signature is drawn by SignaturePad: the pad in a dialog, a Sign button
+// (a thumbnail once signed) opening a pad-only dialog in an inline cell. Its
+// answer is { dataUrl, isEmpty: false }, or null when cleared.
+//
 // Controlled values reach storage in one canonical shape per control: text and
 // number as text, a date "YYYY-MM-DD", a date-time "YYYY-MM-DDTHH:mm", a time
 // "HH:mm", a single choice as a Coding (or null), a multiple choice as a
@@ -37,8 +41,8 @@
 //
 // Non-rendering consumers must reference FieldKit only inside function bodies
 // (component files load in no guaranteed order); FieldKit itself reads the
-// MOIS controls, ValueKit, ScaleField, FindCodeSelect, CompactBooleanField
-// and YesNoButtons only while rendering.
+// MOIS controls, ValueKit, ScaleField, FindCodeSelect, CompactBooleanField,
+// SignaturePad and YesNoButtons only while rendering.
 
 const FieldKit = (() => {
   const MOIS_MEMORY_CODE_SYSTEM = /^[A-Za-z0-9 _:.()-]+$/
@@ -103,7 +107,6 @@ const FieldKit = (() => {
   const TEXT_TYPES = ["text", "email", "phone", "url", "password", "barcode", "file"]
   const EXPORTER_ONLY = {
     computed: "ComputedField",
-    signature: "SignaturePad",
     hyperlink: "GuidelineLink",
     richText: "Markdown",
     matrix: "matrix",
@@ -122,6 +125,8 @@ const FieldKit = (() => {
   const controlFor = (descriptor = {}) => {
     const type = descriptor.type || "text"
     if (EXPORTER_ONLY[type]) return { control: EXPORTER_ONLY[type], supported: false }
+    // A drawn signature ({ dataUrl, isEmpty: false }, null when cleared).
+    if (type === "signature") return { control: "SignaturePad", supported: true }
 
     if (type === "date" || type === "datetime") {
       if (type === "datetime" || descriptor.dateConfig?.withTime) return { control: "DateTimeSelect", supported: true }
@@ -238,6 +243,7 @@ const FieldKit = (() => {
         return choice.selectionType === "multiple" ? [] : null
       case "CompactBooleanField":
       case "ScaleField":
+      case "SignaturePad":
         return null
       default:
         return ""
@@ -274,6 +280,7 @@ const FieldKit = (() => {
           case "DateTimeSelect":
             return toDateTimeText(stored)
           case "ScaleField":
+          case "SignaturePad":
             return stored ?? null
           default:
             return stored === null || stored === undefined ? "" : toText(stored)
@@ -281,6 +288,8 @@ const FieldKit = (() => {
       },
       fromControl(value) {
         switch (choice.control) {
+          case "SignaturePad":
+            return value ?? null
           case "SimpleCodeSelect":
           case "SimpleCodeChecklist":
           case "FindCodeSelect":
@@ -344,6 +353,7 @@ const FieldKit = (() => {
           case "DateTimeSelect":
             return toDateTimeText(stored)
           case "ScaleField":
+          case "SignaturePad":
             return stored ?? null
           case "Numeric":
             return stored === null || stored === undefined ? "" : toText(stored)
@@ -353,6 +363,8 @@ const FieldKit = (() => {
       },
       fromControl(value) {
         switch (choice.control) {
+          case "SignaturePad":
+            return value ?? null
           case "SimpleCodeSelect":
           case "SimpleCodeChecklist":
           case "AnswerChoiceField":
@@ -400,6 +412,7 @@ const FieldKit = (() => {
             return choice.selectionType === "multiple" ? codings : codings[0] || null
           }
           case "ScaleField":
+          case "SignaturePad":
             return stored ?? null
           case "MonthYearDate":
           case "DateSelect":
@@ -413,6 +426,8 @@ const FieldKit = (() => {
       },
       fromControl(value) {
         switch (choice.control) {
+          case "SignaturePad":
+            return value ?? null
           case "SimpleCodeSelect":
           case "SimpleCodeChecklist":
           case "AnswerChoiceField":
@@ -457,12 +472,16 @@ const FieldKit = (() => {
           case "MonthYearDate":
           case "DateSelect":
             return toDateText(stored)
+          case "SignaturePad":
+            return stored ?? null
           default:
             return stored === null || stored === undefined ? "" : toText(stored)
         }
       },
       fromControl(value) {
         switch (choice.control) {
+          case "SignaturePad":
+            return value ?? null
           case "SimpleCodeSelect":
           case "SimpleCodeChecklist":
           case "AnswerChoiceField":
@@ -919,6 +938,27 @@ const FieldKit = (() => {
           </div>
         )
       }
+      case "SignaturePad": {
+        // A table or dialog question: the pad itself in a dialog or form, a
+        // Sign button / thumbnail that opens a pad-only dialog in an inline
+        // cell. SignaturePad ships only with forms that have a signature
+        // (lib/mois-export/components.ts), so it is read while rendering and
+        // created without a JSX tag (the export's engine-scope check reads
+        // every capitalised tag as a name the engine must provide).
+        const Pad = typeof SignaturePad !== "undefined" ? SignaturePad : null
+        if (!Pad) return null
+        const signatureProps = {
+          label,
+          required,
+          readOnly: readOnly || disabled === true,
+          labelPosition: labelPosition === "none" ? "none" : "top",
+          presentation: inline ? "cell" : "pad",
+          ...(inline ? {} : { size: size !== undefined ? "compact" : "default" }),
+        }
+        return React.createElement(Pad, controlled
+          ? { ...signatureProps, value: controlValue ?? null, onChange: (next) => emit(next ?? null) }
+          : { ...signatureProps, ...bound })
+      }
       default:
         return null
     }
@@ -990,6 +1030,8 @@ const FieldKit = (() => {
           presentation: "checkbox",
           booleanLabels: column.booleanLabels,
         }
+      case "signature":
+        return { ...base, type: "signature" }
       case "text":
       default:
         return column.textareaConfig?.multiline

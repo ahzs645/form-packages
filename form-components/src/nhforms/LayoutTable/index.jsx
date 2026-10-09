@@ -3,9 +3,10 @@
 // injects them. Destructure everything this component renders.
 //
 // ValueKit (options, yes/no and choice answers), FormulaKit (computed cells),
-// FormLogicKit (cell visibility) and DefaultsKit (default answers seeded on
-// first load) are referenced only inside function bodies: component files
-// load in no guaranteed order.
+// FormLogicKit (cell visibility), DefaultsKit (default answers seeded on
+// first load) and SignaturePad (signature cells: a Sign button that opens a
+// pad-only dialog, bundled only with forms that have one) are referenced only
+// inside function bodies: component files load in no guaranteed order.
 const { Checkbox } = Fluent
 
 // A cell's options as the { code, display } list SimpleCodeSelect draws, read
@@ -153,6 +154,9 @@ const layoutTableDefaultToStored = (cell, value) => {
         ? { code: "Y", display: "Yes", system: "MOIS-YESNO" }
         : { code: "N", display: "No", system: "MOIS-YESNO" }
     }
+    case "signature":
+      // A signature is drawn by the person signing, never seeded.
+      return undefined
     case "number": {
       if (cell.numberConfig?.storeAsNumber === false) return typeof value === "string" || typeof value === "number" ? String(value) : undefined
       const number = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : NaN
@@ -261,9 +265,29 @@ const formatLayoutTableFieldDisplayValue = (cell, data) => {
     .join(", ")
 }
 
+// A signature cell's drawn image (SignaturePad's { dataUrl, isEmpty: false }),
+// read through SignaturePad's reader when it is bundled.
+const layoutTableSignatureDataUrl = (value) => {
+  if (typeof SignaturePad !== "undefined" && SignaturePad?.helpers?.dataUrlOf) return SignaturePad.helpers.dataUrlOf(value)
+  const read = (candidate) =>
+    typeof candidate === "string" && /^data:image\/(?:png|jpe?g);base64,/i.test(candidate.trim()) ? candidate.trim() : null
+  if (typeof value === "string") return read(value)
+  return value && typeof value === "object" && value.isEmpty !== true ? read(value.dataUrl) : null
+}
+
 const renderLayoutTableReadOnlyField = (cell, data) => {
   const label = cell.labelPosition === "none" ? "" : cell.label || ""
-  const displayValue = formatLayoutTableFieldDisplayValue(cell, data)
+  const signatureUrl = cell.inputType === "signature" ? layoutTableSignatureDataUrl(data?.[cell.fieldId || cell.id]) : null
+  const displayValue = cell.inputType === "signature"
+    ? (signatureUrl ? (
+      <img
+        src={signatureUrl}
+        alt={(label || "Signature") + " (signed)"}
+        data-signature-image=""
+        style={{ display: "block", height: "36px", maxWidth: "160px", objectFit: "contain" }}
+      />
+    ) : "")
+    : formatLayoutTableFieldDisplayValue(cell, data)
 
   return (
     <div
@@ -517,6 +541,21 @@ const renderLayoutTableField = (sourceCell, readOnly, data, setFieldValue) => {
   }
 
   switch (cell.inputType) {
+    case "signature": {
+      // A Sign button (the thumbnail once signed) that opens a pad-only
+      // dialog. SignaturePad ships only with forms that have a signature, so
+      // it is read here and created without a JSX tag (export scope check).
+      const Pad = typeof SignaturePad !== "undefined" ? SignaturePad : null
+      if (!Pad) return null
+      return React.createElement(Pad, {
+        label,
+        labelPosition: sharedProps.labelPosition,
+        presentation: "cell",
+        required: sharedProps.required,
+        value: data?.[fieldId] ?? null,
+        onChange: (next) => setFieldValue(fieldId, next ?? null),
+      })
+    }
     case "booleanSingle":
       return (
         <Checkbox

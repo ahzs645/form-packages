@@ -42,9 +42,9 @@ var WordFormRuntime = (() => {
   ));
   var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-  // node_modules/.pnpm/jszip@3.10.2/node_modules/jszip/dist/jszip.min.js
+  // ../github/webforms/node_modules/.pnpm/jszip@3.10.2/node_modules/jszip/dist/jszip.min.js
   var require_jszip_min = __commonJS({
-    "node_modules/.pnpm/jszip@3.10.2/node_modules/jszip/dist/jszip.min.js"(exports, module) {
+    "../github/webforms/node_modules/.pnpm/jszip@3.10.2/node_modules/jszip/dist/jszip.min.js"(exports, module) {
       !(function(e) {
         if ("object" == typeof exports && "undefined" != typeof module) module.exports = e();
         else if ("function" == typeof define && define.amd) define([], e);
@@ -2931,10 +2931,25 @@ var WordFormRuntime = (() => {
     return group.match === "any" ? group.conditions.some(evaluate) : group.conditions.every(evaluate);
   }
 
+  // lib/document-fill/signature-image.ts
+  var IMAGE_DATA_URL = /^data:image\/(png|jpe?g);base64,/i;
+  var SIGNED_PLACEHOLDER_TEXT = "[signed]";
+  function signatureImageDataUrl(value) {
+    const read = (candidate) => typeof candidate === "string" && IMAGE_DATA_URL.test(candidate.trim()) ? candidate.trim() : null;
+    if (typeof value === "string") return read(value);
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      const record = value;
+      if (record.isEmpty === true) return null;
+      return read(record.dataUrl) ?? read(record.dataURL) ?? read(record.signatureDataUrl);
+    }
+    return null;
+  }
+
   // lib/document-fill/value-text.ts
   var TEXT_KEYS = ["display", "label", "text", "name", "title", "value", "code"];
   function documentValueText(value) {
     if (value === null || value === void 0) return "";
+    if (signatureImageDataUrl(value)) return SIGNED_PLACEHOLDER_TEXT;
     if (typeof value === "string") return value;
     if (typeof value === "number") return Number.isFinite(value) ? String(value) : "";
     if (typeof value === "boolean") return value ? "Yes" : "No";
@@ -3194,9 +3209,11 @@ var WordFormRuntime = (() => {
       const planRows = [];
       rows.forEach((row, rowIndex) => {
         if (printed.has(rowIndex) || !row || typeof row !== "object") return;
-        const cells = columns.map((column) => documentValueText(readValuePath(row, pathById.get(column.id) ?? column.id)).trim());
+        const values = columns.map((column) => readValuePath(row, pathById.get(column.id) ?? column.id));
+        const cells = values.map((value) => documentValueText(value).trim());
         if (cells.every((cell2) => cell2 === "")) return;
-        planRows.push({ rowNumber: rowIndex + 1, cells });
+        const images = values.map((value) => signatureImageDataUrl(value));
+        planRows.push({ rowNumber: rowIndex + 1, cells, ...images.some(Boolean) ? { images } : {} });
       });
       if (!planRows.length) return;
       seen.add(map.tableId);

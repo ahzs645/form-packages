@@ -115,6 +115,8 @@ const COLUMN_TO_FIELD_TYPE: Record<BuilderTableColumnType, BuilderField["type"]>
   checkbox: "booleanSingle",
   // A stamp button stores the stamped text.
   stampButton: "text",
+  // A drawn signature image, as a signature field stores it.
+  signature: "signature",
 };
 
 const FIELD_TO_COLUMN_TYPE: Partial<Record<BuilderField["type"], BuilderTableColumnType>> = {
@@ -126,6 +128,7 @@ const FIELD_TO_COLUMN_TYPE: Partial<Record<BuilderField["type"], BuilderTableCol
   choice: "choice",
   booleanYesNo: "booleanYesNo",
   booleanSingle: "checkbox",
+  signature: "signature",
 };
 
 function memberTypeForColumn(column: BuilderTableColumn): BuilderField["type"] {

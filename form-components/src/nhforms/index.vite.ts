@@ -609,10 +609,18 @@ function applyRegistryModuleAliases(registry: Record<string, any>): void {
 /** In-place stable topological sort by Identity.json component dependencies. */
 function orderSourcesByDependencies(sources: Array<{ name: string; code: string }>): void {
   const byName = new Map(sources.map((source) => [source.name, source]));
+  // Identity.json dependencies, plus modules read only when bundled
+  // (`typeof SignaturePad !== "undefined"`), which must still load first
+  // (the same rule as componentDependencies in the generated Next path).
   const dependenciesOf = (name: string): string[] => {
     const identity = componentIdentityModules[`./${name}/Identity.json`];
-    if (!identity || !Array.isArray(identity.components)) return [];
-    return identity.components.filter((entry): entry is string => typeof entry === 'string');
+    const declared = identity && Array.isArray(identity.components)
+      ? identity.components.filter((entry): entry is string => typeof entry === 'string')
+      : [];
+    const soft = Array.from((byName.get(name)?.code ?? '').matchAll(/typeof\s+([A-Z][A-Za-z0-9_]*)\s*!==?\s*["']undefined["']/g))
+      .map((match) => match[1])
+      .filter((entry) => entry !== name && byName.has(entry) && !declared.includes(entry));
+    return [...declared, ...soft];
   };
   const ordered: typeof sources = [];
   const placed = new Set<string>();

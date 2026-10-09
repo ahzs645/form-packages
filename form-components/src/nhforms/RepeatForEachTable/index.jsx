@@ -805,6 +805,11 @@ RepeatForEachTable.helpers = (() => {
       if (isMeaningful(computed)) return computed
     }
     const value = getPath(row, columnPath(column))
+    // A drawn signature (SignaturePad's { dataUrl, isEmpty }) has no text of its own.
+    if (column.type === "signature") {
+      const dataUrl = value && typeof value === "object" && value.isEmpty !== true ? value.dataUrl : value
+      return typeof dataUrl === "string" && /^data:image\//i.test(dataUrl.trim()) ? "Signed" : ""
+    }
     if (column.type === "dropdown" && !column.codeSystem && (typeof value === "string" || Array.isArray(value))) {
       const options = choiceOptions(column.options)
       const wording = (code) => {

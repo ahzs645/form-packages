@@ -253,3 +253,28 @@ describe("field-level refinements", () => {
     expect(layoutCellInputTypeForField(field("table"))).toBeNull();
   });
 });
+
+describe("signature cells", () => {
+  it("are a table column type and a layout cell input type that keep the signature field type", () => {
+    expect(TABLE_COLUMN_TYPES).toContain("signature");
+    expect(LAYOUT_CELL_INPUT_TYPES).toContain("signature");
+    expect(FIELD_TYPE_TO_TABLE_COLUMN_TYPE.signature).toBe("signature");
+    expect(FIELD_TYPE_TO_LAYOUT_CELL_INPUT_TYPE.signature).toBe("signature");
+    expect(TABLE_COLUMN_TYPE_TO_FIELD_TYPE.signature).toBe("signature");
+    expect(LAYOUT_CELL_INPUT_TYPE_TO_FIELD_TYPE.signature).toBe("signature");
+    expect(layoutCellInputTypeForField({ type: "signature" })).toBe("signature");
+  });
+
+  it("is drawn by EditableTable, exported to FHIR as an attachment and read by the MOIS exporter as a signature", () => {
+    expect(TABLE_COLUMN_TYPE_TO_EDITABLE_TABLE_COLUMN_TYPE.signature).toBe("signature");
+    expect(EDITABLE_TABLE_COLUMN_TYPE_TO_TABLE_COLUMN_TYPE.signature).toBe("signature");
+    expect(TABLE_COLUMN_TYPE_TO_FHIR_ITEM_TYPE.signature).toBe("attachment");
+    expect(FIELD_TYPE_TO_FHIR_ITEM_TYPE.signature).toBe("attachment");
+    expect(LAYOUT_CELL_INPUT_TYPE_TO_PARSED_KIND.signature).toBe("signature");
+    expect(PARSED_KIND_TO_FIELD_TYPE[LAYOUT_CELL_INPUT_TYPE_TO_PARSED_KIND.signature]).toBe("signature");
+    // A Form.io data grid's signature component is a signature column.
+    expect(FORMIO_COMPONENT_TYPE_TO_TABLE_COLUMN_TYPE.signature).toBe("signature");
+    // Subform entries still have no signature question.
+    expect(FIELD_TYPE_TO_SUBFORM_ENTRY_TYPE.signature).toBeNull();
+  });
+});

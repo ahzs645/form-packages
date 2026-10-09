@@ -26,78 +26,74 @@ const SignaturePadLib = (function() {
 })();
 // ─── End embedded signature_pad ─────────────────────────────────────────────
 
-const { useEffect, useCallback, useRef } = React
+const { useEffect, useCallback, useRef, useState } = React
 const { Stack, Label, DefaultButton, Text } = Fluent
 
-/**
- * SignaturePad - A canvas-based signature capture component
- *
- * Props:
- * - fieldId: string - The field identifier for data binding
- * - label: string - The field label text
- * - penColor: string - Drawing color (default: "black")
- * - penMinWidth: number - Min stroke width (default: 0.5)
- * - penMaxWidth: number - Max stroke width (default: 2.5)
- * - backgroundColor: string - Canvas background color (default: "rgb(255,255,255)")
- * - height: number - Canvas height in pixels (default: 120)
- * - required: boolean - Whether the field is required
- * - readOnly: boolean - Whether the field is read-only
- */
-const SignaturePad = ({
-  fieldId = "signature",
-  label = "Signature",
-  penColor = "black",
-  penMinWidth = 0.5,
-  penMaxWidth = 2.5,
-  backgroundColor = "rgb(255,255,255)",
-  height = 120,
-  required = false,
-  readOnly: readOnlyProp = false,
-  disabled = false,
+// A drawn signature's PNG/JPEG data URL from any stored shape: the
+// { dataUrl, isEmpty } object this pad writes, a bare data URL, or nothing
+// (null, a cleared { dataUrl: null, isEmpty: true } from older forms).
+const _signaturePadDataUrl = (value) => {
+  const read = (candidate) =>
+    typeof candidate === "string" && /^data:image\/(?:png|jpe?g);base64,/i.test(candidate.trim()) ? candidate.trim() : null
+  if (typeof value === "string") return read(value)
+  if (value && typeof value === "object" && !Array.isArray(value) && value.isEmpty !== true) {
+    return read(value.dataUrl) || read(value.dataURL) || read(value.signatureDataUrl)
+  }
+  return null
+}
+
+// The stored answer: { dataUrl, isEmpty: false } when signed, null when not,
+// so required checks and empty-row checks read a cleared pad as unanswered.
+const _signaturePadValue = (dataUrl) => (dataUrl ? { dataUrl, isEmpty: false } : null)
+
+const SIGNATURE_PAD_HEIGHTS = { default: 120, compact: 80, dialog: 160 }
+
+// The drawing surface. Reports each finished stroke as a PNG data URL and
+// repaints when `dataUrl` changes from outside (cleared, or a saved value
+// loaded), or when the box changes width (a dialog that lays out after mount).
+const SignaturePadCanvas = ({
+  dataUrl,
+  onDraw,
+  height,
+  penColor,
+  penMinWidth,
+  penMaxWidth,
+  backgroundColor,
+  borderColor,
+  label,
 }) => {
-  // Authorship/lock rules arrive as a dynamic `disabled` expression from the
-  // exporter; fold it into the static readOnly behavior.
-  const readOnly = readOnlyProp || disabled
-  const [fieldData, setFieldData] = useActiveData(fd => fd?.field?.data || {})
-  const theme = useTheme()
   const canvasRef = useRef(null)
   const padRef = useRef(null)
   const containerRef = useRef(null)
+  const shownRef = useRef(null)
+  const widthRef = useRef(-1)
+  const dataUrlRef = useRef(dataUrl || null)
+  dataUrlRef.current = dataUrl || null
+  const onDrawRef = useRef(onDraw)
+  onDrawRef.current = onDraw
 
-  const savedDataUrl = fieldData?.[fieldId]?.dataUrl || null
-
-  // Resize canvas to match container width while preserving DPI
-  const resizeCanvas = useCallback(() => {
+  // Size the canvas to its box at the device's pixel ratio, then show `url`.
+  const paint = useCallback((url) => {
+    const pad = padRef.current
     const canvas = canvasRef.current
     const container = containerRef.current
-    if (!canvas || !container) return
-
+    if (!pad || !canvas || !container) return
     const ratio = Math.max(window.devicePixelRatio || 1, 1)
     const width = container.clientWidth
-
+    widthRef.current = width
     canvas.width = width * ratio
     canvas.height = height * ratio
     canvas.style.width = width + "px"
     canvas.style.height = height + "px"
-    canvas.getContext("2d").scale(ratio, ratio)
+    const context = canvas.getContext("2d")
+    if (context) context.scale(ratio, ratio)
+    pad.clear()
+    shownRef.current = url || null
+    if (url && width > 0) pad.fromDataURL(url, { ratio: ratio, width: width, height: height })
+  }, [height])
 
-    if (padRef.current) {
-      padRef.current.clear()
-      // Restore saved data after resize
-      if (savedDataUrl) {
-        padRef.current.fromDataURL(savedDataUrl, {
-          ratio: ratio,
-          width: width,
-          height: height,
-        })
-      }
-    }
-  }, [height, savedDataUrl])
-
-  // Initialize signature pad
   useEffect(() => {
-    if (readOnly || !canvasRef.current) return
-
+    if (!canvasRef.current) return
     const pad = new SignaturePadLib(canvasRef.current, {
       penColor: penColor,
       minWidth: penMinWidth,
@@ -105,102 +101,278 @@ const SignaturePad = ({
       backgroundColor: backgroundColor,
     })
     padRef.current = pad
-
-    // Save signature data on stroke end
     const handleEndStroke = () => {
       if (pad.isEmpty()) return
-      const dataUrl = pad.toDataURL("image/png")
-      setFieldData({
-        [fieldId]: {
-          dataUrl: dataUrl,
-          isEmpty: false,
-        }
-      })
+      const next = pad.toDataURL("image/png")
+      shownRef.current = next
+      if (typeof onDrawRef.current === "function") onDrawRef.current(next)
     }
     pad.addEventListener("endStroke", handleEndStroke)
-
-    resizeCanvas()
-
-    // Restore existing data
-    if (savedDataUrl) {
-      const ratio = Math.max(window.devicePixelRatio || 1, 1)
-      const canvas = canvasRef.current
-      const container = containerRef.current
-      const width = container ? container.clientWidth : canvas.width
-      pad.fromDataURL(savedDataUrl, {
-        ratio: ratio,
-        width: width,
-        height: height,
-      })
-    }
-
+    paint(dataUrlRef.current)
     return () => {
       pad.removeEventListener("endStroke", handleEndStroke)
       pad.off()
       padRef.current = null
     }
-  }, [readOnly, penColor, penMinWidth, penMaxWidth, backgroundColor, fieldId])
+  }, [penColor, penMinWidth, penMaxWidth, backgroundColor, paint])
 
-  // Handle window resize
+  // A value changed from outside the canvas (Clear, a loaded answer).
   useEffect(() => {
-    if (readOnly) return
-    window.addEventListener("resize", resizeCanvas)
-    return () => window.removeEventListener("resize", resizeCanvas)
-  }, [resizeCanvas, readOnly])
+    if ((dataUrl || null) !== shownRef.current) paint(dataUrl || null)
+  }, [dataUrl, paint])
 
-  // Clear handler
-  const handleClear = useCallback(() => {
-    if (padRef.current) {
-      padRef.current.clear()
-      setFieldData({
-        [fieldId]: {
-          dataUrl: null,
-          isEmpty: true,
-        }
-      })
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+    const onResize = () => {
+      if (container.clientWidth !== widthRef.current) paint(shownRef.current)
     }
-  }, [fieldId, setFieldData])
+    window.addEventListener("resize", onResize)
+    const Observer = typeof window !== "undefined" ? window.ResizeObserver : undefined
+    const observer = typeof Observer === "function" ? new Observer(onResize) : null
+    if (observer) observer.observe(container)
+    return () => {
+      window.removeEventListener("resize", onResize)
+      if (observer) observer.disconnect()
+    }
+  }, [paint])
 
-  const containerStyle = {
-    border: "1px solid " + (theme.semanticColors?.inputBorder || "#c8c6c4"),
-    borderRadius: "4px",
-    overflow: "hidden",
-    backgroundColor: backgroundColor,
+  return (
+    <div
+      ref={containerRef}
+      data-signature-pad-canvas=""
+      style={{
+        border: "1px solid " + borderColor,
+        borderRadius: "4px",
+        overflow: "hidden",
+        backgroundColor: backgroundColor,
+        touchAction: "none",
+      }}
+    >
+      <canvas
+        ref={canvasRef}
+        aria-label={label ? label + " (draw a signature)" : "Draw a signature"}
+        style={{ display: "block", width: "100%", height: height + "px" }}
+      />
+    </div>
+  )
+}
+
+// A table or layout cell: "Sign" while empty, the signature's thumbnail once
+// signed. Either opens a dialog (DialogKit, the MOIS SubForm) holding only the
+// pad; Save keeps the drawing, Clear empties it, Cancel leaves the cell as it was.
+const SignaturePadCell = ({
+  dataUrl,
+  readOnly,
+  label,
+  showLabel,
+  required,
+  dialogTitle,
+  buttonText,
+  onSave,
+  canvasProps,
+  mutedColor,
+}) => {
+  const [open, setOpen] = useState(false)
+  const [draft, setDraft] = useState(null)
+  const name = label ? String(label) : "Signature"
+  const thumbnail = dataUrl ? (
+    <img
+      src={dataUrl}
+      alt={name + " (signed)"}
+      data-signature-thumbnail=""
+      style={{ display: "block", height: "36px", maxWidth: "160px", objectFit: "contain" }}
+    />
+  ) : null
+
+  const heading = showLabel ? <Label required={required}>{label}</Label> : null
+
+  if (readOnly) {
+    return (
+      <>
+        {heading}
+        {thumbnail || (
+          <Text variant="small" styles={{ root: { color: mutedColor, fontStyle: "italic" } }}>Not signed</Text>
+        )}
+      </>
+    )
+  }
+
+  const start = () => {
+    setDraft(dataUrl || null)
+    setOpen(true)
+  }
+
+  return (
+    <>
+      {heading}
+      {thumbnail ? (
+        <button
+          type="button"
+          onClick={start}
+          title={"Change " + name.toLowerCase()}
+          aria-label={"Change " + name.toLowerCase()}
+          data-signature-cell="signed"
+          style={{ display: "inline-block", padding: 0, margin: 0, border: 0, background: "transparent", cursor: "pointer" }}
+        >
+          {thumbnail}
+        </button>
+      ) : (
+        <DefaultButton
+          text={buttonText}
+          onClick={start}
+          ariaLabel={name + (required ? " (required)" : "")}
+          data-signature-cell="empty"
+        />
+      )}
+      {open ? (
+        <DialogKit.ConfirmDialog
+          open
+          title={dialogTitle || name}
+          width={480}
+          confirmText="Save"
+          cancelText="Cancel"
+          extraActions={[{ key: "clear", text: "Clear", onClick: () => setDraft(null), disabled: !draft }]}
+          onConfirm={() => {
+            setOpen(false)
+            if (typeof onSave === "function") onSave(draft || null)
+          }}
+          onCancel={() => setOpen(false)}
+        >
+          <div data-signature-dialog="">
+            <SignaturePadCanvas {...canvasProps} dataUrl={draft} onDraw={setDraft} height={SIGNATURE_PAD_HEIGHTS.dialog} label={name} />
+          </div>
+        </DialogKit.ConfirmDialog>
+      ) : null}
+    </>
+  )
+}
+
+/**
+ * SignaturePad - A canvas-based signature capture component
+ *
+ * Bound mode (the default): reads and writes `fd.field.data[fieldId]`, as an
+ * exported signature field does. Controlled mode (`onChange` given): the
+ * container keeps the answer (`value`), as FieldKit's table cells and the
+ * LayoutTable cells do. Either way the answer is { dataUrl, isEmpty: false }
+ * while signed and null once cleared.
+ *
+ * Props:
+ * - fieldId: string - The field identifier for data binding (bound mode)
+ * - value / onChange: controlled mode; onChange receives the stored answer
+ * - label: string - The field label text
+ * - labelPosition: "top" (default) or "none" (a container draws the label)
+ * - presentation: "pad" (default, the drawing box) or "cell" (a Sign button /
+ *   thumbnail that opens a dialog with only the pad)
+ * - size: "default" or "compact" (a shorter pad with tighter spacing)
+ * - penColor: string - Drawing color (default: "black")
+ * - penMinWidth: number - Min stroke width (default: 0.5)
+ * - penMaxWidth: number - Max stroke width (default: 2.5)
+ * - backgroundColor: string - Canvas background color (default: "rgb(255,255,255)")
+ * - height: number - Canvas height in pixels (default: 120; compact 80)
+ * - dialogTitle / buttonText: the cell dialog's title and the empty cell's button
+ * - required: boolean - Whether the field is required
+ * - readOnly: boolean - Whether the field is read-only
+ *
+ * DialogKit is referenced only inside function bodies (component files load in
+ * no guaranteed order).
+ */
+const SignaturePad = ({
+  fieldId = "signature",
+  label = "Signature",
+  labelPosition = "top",
+  presentation = "pad",
+  size = "default",
+  value,
+  onChange,
+  penColor = "black",
+  penMinWidth = 0.5,
+  penMaxWidth = 2.5,
+  backgroundColor = "rgb(255,255,255)",
+  height,
+  dialogTitle,
+  buttonText = "Sign",
+  required = false,
+  readOnly: readOnlyProp = false,
+  disabled = false,
+}) => {
+  // Authorship/lock rules arrive as a dynamic `disabled` expression from the
+  // exporter; fold it into the static readOnly behavior.
+  const readOnly = readOnlyProp || disabled
+  const controlled = typeof onChange === "function"
+  const [fieldData, setFieldData] = useActiveData(fd => fd?.field?.data || {})
+  const theme = useTheme()
+  const compact = size === "compact"
+  const padHeight = Number(height) > 0 ? Number(height) : compact ? SIGNATURE_PAD_HEIGHTS.compact : SIGNATURE_PAD_HEIGHTS.default
+  const borderColor = theme?.semanticColors?.inputBorder || "#c8c6c4"
+  const mutedColor = theme?.semanticColors?.disabledText || "#a19f9d"
+
+  const savedDataUrl = _signaturePadDataUrl(controlled ? value : fieldData?.[fieldId])
+
+  const write = useCallback((dataUrl) => {
+    if (readOnly) return
+    const next = _signaturePadValue(dataUrl)
+    if (controlled) {
+      onChange(next)
+      return
+    }
+    setFieldData({ [fieldId]: next })
+  }, [readOnly, controlled, onChange, fieldId, setFieldData])
+
+  const canvasProps = { penColor, penMinWidth, penMaxWidth, backgroundColor, borderColor }
+  const showLabel = labelPosition !== "none" && label
+
+  if (presentation === "cell") {
+    return (
+      <SignaturePadCell
+        dataUrl={savedDataUrl}
+        readOnly={readOnly}
+        label={label}
+        showLabel={Boolean(showLabel)}
+        required={required}
+        dialogTitle={dialogTitle}
+        buttonText={buttonText}
+        onSave={write}
+        canvasProps={canvasProps}
+        mutedColor={mutedColor}
+      />
+    )
   }
 
   const readOnlyImageStyle = {
     maxWidth: "100%",
-    height: height + "px",
+    height: padHeight + "px",
     objectFit: "contain",
     backgroundColor: backgroundColor,
     borderRadius: "4px",
-    border: "1px solid " + (theme.semanticColors?.inputBorder || "#c8c6c4"),
+    border: "1px solid " + borderColor,
   }
 
   return (
-    <div style={{ marginBottom: "8px" }}>
-      <Label required={required}>{label}</Label>
+    <div style={{ marginBottom: compact ? "4px" : "8px" }}>
+      {showLabel ? <Label required={required}>{label}</Label> : null}
 
       {readOnly ? (
         savedDataUrl ? (
           <img src={savedDataUrl} alt="Signature" style={readOnlyImageStyle} />
         ) : (
-          <Text variant="small" style={{ color: theme.semanticColors?.disabledText || "#a19f9d", fontStyle: "italic" }}>
+          <Text variant="small" style={{ color: mutedColor, fontStyle: "italic" }}>
             No signature captured
           </Text>
         )
       ) : (
         <div>
-          <div ref={containerRef} style={containerStyle}>
-            <canvas
-              ref={canvasRef}
-              style={{ display: "block", width: "100%", height: height + "px" }}
-            />
-          </div>
-          <Stack horizontal tokens={{ childrenGap: 8 }} style={{ marginTop: "8px" }}>
+          <SignaturePadCanvas
+            {...canvasProps}
+            dataUrl={savedDataUrl}
+            onDraw={write}
+            height={padHeight}
+            label={showLabel ? label : undefined}
+          />
+          <Stack horizontal tokens={{ childrenGap: 8 }} style={{ marginTop: compact ? "4px" : "8px" }}>
             <DefaultButton
               text="Clear"
-              onClick={handleClear}
+              onClick={() => write(null)}
               iconProps={{ iconName: "EraseTool" }}
               disabled={!savedDataUrl}
             />
@@ -210,3 +382,7 @@ const SignaturePad = ({
     </div>
   )
 }
+
+// Readers for containers that show a signature answer without the pad
+// (summary cells, print mirrors): the data URL, and the stored shape.
+SignaturePad.helpers = { dataUrlOf: _signaturePadDataUrl, storedValue: _signaturePadValue }

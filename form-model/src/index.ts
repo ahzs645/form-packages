@@ -684,7 +684,7 @@ export type FieldWidth = "auto" | "full" | "1/2" | "1/3" | "2/3" | "1/4" | "3/4"
 // Help text position
 export type HelpPosition = "above_input" | "below_input";
 
-export type BuilderTableColumnType = "text" | "number" | "date" | "time" | "choice" | "booleanYesNo" | "checkbox" | "stampButton";
+export type BuilderTableColumnType = "text" | "number" | "date" | "time" | "choice" | "booleanYesNo" | "checkbox" | "stampButton" | "signature";
 export type BuilderTableMode = "inline" | "modal";
 
 /**
@@ -705,7 +705,7 @@ export interface BuilderTableFormulaColumn {
   incompleteBehavior?: "compute-anyway";
 }
 export type BuilderLayoutTableCellKind = "text" | "field" | "fieldList" | "resources" | "computed" | "stampButton";
-export type BuilderLayoutTableCellInputType = "text" | "textarea" | "number" | "date" | "time" | "choice" | "choiceMulti" | "booleanYesNo" | "booleanSingle";
+export type BuilderLayoutTableCellInputType = "text" | "textarea" | "number" | "date" | "time" | "choice" | "choiceMulti" | "booleanYesNo" | "booleanSingle" | "signature";
 export type BuilderLayoutTableSourceFormat = "text" | "date" | "dateTime" | "visitCode" | "coding";
 export type BuilderLayoutTableSourceMode = "live" | "initial";
 

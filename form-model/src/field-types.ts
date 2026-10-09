@@ -310,6 +310,7 @@ export const TABLE_COLUMN_TYPES = unionMembers<BuilderTableColumnType>()([
   "booleanYesNo",
   "checkbox",
   "stampButton",
+  "signature",
 ]);
 
 /**
@@ -338,7 +339,7 @@ export const FIELD_TYPE_TO_TABLE_COLUMN_TYPE = {
   time: "time",
   rating: null,
   slider: null,
-  signature: null,
+  signature: "signature",
   file: null,
   password: null,
   richText: null,
@@ -370,6 +371,7 @@ export const TABLE_COLUMN_TYPE_TO_FIELD_TYPE = {
   booleanYesNo: "booleanYesNo",
   checkbox: "booleanSingle",
   stampButton: "text",
+  signature: "signature",
 } as const satisfies Record<BuilderTableColumnType, FieldType>;
 
 // ---------------------------------------------------------------------------
@@ -386,6 +388,7 @@ export const LAYOUT_CELL_INPUT_TYPES = unionMembers<BuilderLayoutTableCellInputT
   "choiceMulti",
   "booleanYesNo",
   "booleanSingle",
+  "signature",
 ]);
 
 /** A multiple choice becomes `choiceMulti` (see layoutCellInputTypeForField). */
@@ -409,7 +412,7 @@ export const FIELD_TYPE_TO_LAYOUT_CELL_INPUT_TYPE = {
   time: "time",
   rating: null,
   slider: null,
-  signature: null,
+  signature: "signature",
   file: null,
   password: null,
   richText: null,
@@ -438,6 +441,7 @@ export const LAYOUT_CELL_INPUT_TYPE_TO_FIELD_TYPE = {
   choiceMulti: "choice",
   booleanYesNo: "booleanYesNo",
   booleanSingle: "booleanSingle",
+  signature: "signature",
 } as const satisfies Record<BuilderLayoutTableCellInputType, FieldType>;
 
 /**
@@ -553,6 +557,7 @@ export const EDITABLE_TABLE_COLUMN_TYPES = [
   "dropdown",
   "checkbox",
   "stampButton",
+  "signature",
 ] as const;
 export type EditableTableColumnType = (typeof EDITABLE_TABLE_COLUMN_TYPES)[number];
 
@@ -565,6 +570,7 @@ export const TABLE_COLUMN_TYPE_TO_EDITABLE_TABLE_COLUMN_TYPE = {
   booleanYesNo: "checkbox",
   checkbox: "checkbox",
   stampButton: "stampButton",
+  signature: "signature",
 } as const satisfies Record<BuilderTableColumnType, EditableTableColumnType>;
 
 export const TABLE_COLUMN_TYPE_TO_EDITABLE_TABLE_COLUMN_TYPE_LOSSES: Partial<Record<BuilderTableColumnType, string>> = {
@@ -579,6 +585,7 @@ export const EDITABLE_TABLE_COLUMN_TYPE_TO_TABLE_COLUMN_TYPE = {
   dropdown: "choice",
   checkbox: "checkbox",
   stampButton: "stampButton",
+  signature: "signature",
 } as const satisfies Record<EditableTableColumnType, BuilderTableColumnType>;
 
 // ---------------------------------------------------------------------------
@@ -709,6 +716,8 @@ export const TABLE_COLUMN_TYPE_TO_FHIR_ITEM_TYPE = {
   booleanYesNo: "boolean",
   checkbox: "boolean",
   stampButton: "string",
+  // The signature image as a PNG attachment (like a signature field).
+  signature: "attachment",
 } as const satisfies Record<BuilderTableColumnType, FhirItemType>;
 
 /** A date item with a time part becomes a date column with `withTime`. */
@@ -953,7 +962,7 @@ export const FORMIO_COMPONENT_TYPE_TO_TABLE_COLUMN_TYPE = {
   select: "choice",
   selectboxes: "choice",
   file: null,
-  signature: null,
+  signature: "signature",
   content: null,
   htmlelement: null,
   hidden: null,
@@ -1047,6 +1056,7 @@ export const LAYOUT_CELL_INPUT_TYPE_TO_PARSED_KIND = {
   choiceMulti: "choice",
   booleanYesNo: "boolean",
   booleanSingle: "boolean",
+  signature: "signature",
 } as const satisfies Record<BuilderLayoutTableCellInputType, ComponentKind>;
 
 /**
