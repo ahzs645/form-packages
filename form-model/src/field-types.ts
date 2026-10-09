@@ -214,11 +214,12 @@ export const CHOICE_STYLES = [
   "checkbox",
   "simpleCodeSelect",
   "findCode",
+  "buttons",
 ] as const;
 export type ChoiceStyle = (typeof CHOICE_STYLES)[number];
 
 /** Neutral presentation hints for a choice. */
-export const CHOICE_PRESENTATIONS = ["dropdown", "radio", "checklist", "searchable"] as const;
+export const CHOICE_PRESENTATIONS = ["dropdown", "radio", "checklist", "searchable", "buttons"] as const;
 export type ChoicePresentation = (typeof CHOICE_PRESENTATIONS)[number];
 export type ChoiceSelection = "single" | "multiple";
 
@@ -231,6 +232,9 @@ export interface ChoiceDisplay {
  * What each stored style means. `simpleCodeSelect` and `dropdown` draw the
  * same control; `findCode` is a searchable single select and `multiselect` a
  * searchable multiple select (MOIS FindCodeSelect with selectionType multiple).
+ * `buttons` is the Yes/No field's look for any short single choice: one
+ * button per answer, the chosen one highlighted (the NHForms
+ * CompactBooleanField module's CompactChoiceField; MOIS has no such control).
  */
 export const CHOICE_STYLE_DISPLAY = {
   dropdown: { presentation: "dropdown", selection: "single" },
@@ -239,6 +243,7 @@ export const CHOICE_STYLE_DISPLAY = {
   findCode: { presentation: "searchable", selection: "single" },
   checkbox: { presentation: "checklist", selection: "multiple" },
   multiselect: { presentation: "searchable", selection: "multiple" },
+  buttons: { presentation: "buttons", selection: "single" },
 } as const satisfies Record<ChoiceStyle, ChoiceDisplay>;
 
 /**
@@ -248,16 +253,24 @@ export const CHOICE_STYLE_DISPLAY = {
  * approximations, listed in CHOICE_DISPLAY_STYLE_LOSSES).
  */
 export const CHOICE_DISPLAY_STYLE = {
-  single: { dropdown: "dropdown", radio: "radio", checklist: "radio", searchable: "findCode" },
-  multiple: { dropdown: "multiselect", radio: "checkbox", checklist: "checkbox", searchable: "multiselect" },
+  single: { dropdown: "dropdown", radio: "radio", checklist: "radio", searchable: "findCode", buttons: "buttons" },
+  multiple: { dropdown: "multiselect", radio: "checkbox", checklist: "checkbox", searchable: "multiselect", buttons: "checkbox" },
 } as const satisfies Record<ChoiceSelection, Record<ChoicePresentation, ChoiceStyle>>;
 
 export const CHOICE_DISPLAY_STYLE_LOSSES: Partial<Record<ChoiceSelection, Partial<Record<ChoicePresentation, string>>>> = {
   multiple: {
     dropdown: "No multiple-select dropdown; drawn as a searchable multiple select.",
     radio: "Radio buttons allow one answer; drawn as a checklist.",
+    buttons: "Answer buttons allow one answer; drawn as a checklist.",
   },
 };
+
+/**
+ * Answer buttons suit a short single choice: a Yes/No-style pair up to four
+ * answers. Outside this range the builder still stores the style, and the
+ * Export review says so (lib/export-compatibility/choice-style.ts).
+ */
+export const BUTTON_CHOICE_OPTION_RANGE = { min: 2, max: 4 } as const;
 
 /** Where a choice with no stored style lives; each context has always defaulted differently. */
 export type ChoiceStyleContext = "field" | "tableColumn" | "layoutCell" | "subformEntry";
@@ -747,7 +760,14 @@ export const CHOICE_PRESENTATION_TO_FHIR_ITEM_CONTROL = {
   radio: "radio-button",
   checklist: "check-box",
   searchable: "autocomplete",
+  // SDC has no answer-button control; the nearest is a radio list.
+  buttons: "radio-button",
 } as const satisfies Record<ChoicePresentation, string>;
+
+/** Presentations FHIR draws as another control (each is reported as `fhir.choice-style.*`). */
+export const CHOICE_PRESENTATION_FHIR_ITEM_CONTROL_LOSSES: Partial<Record<ChoicePresentation, string>> = {
+  buttons: "FHIR has no answer-button control; the choice is sent as radio buttons (item control radio-button).",
+};
 
 /** Presentation for FHIR item-control codes; selection follows `item.repeats`. */
 export const FHIR_ITEM_CONTROL_TO_CHOICE_PRESENTATION: Readonly<Record<string, ChoicePresentation>> = {

@@ -2224,7 +2224,8 @@ export interface BuilderTableColumn {
     | "multiselect"
     | "checkbox"
     | "simpleCodeSelect"
-    | "findCode";
+    | "findCode"
+    | "buttons";
   codeSystem?: string | null;
   showOtherOption?: boolean;
   dataPath?: string | null;
@@ -2453,7 +2454,8 @@ export interface BuilderField {
     | "multiselect"
     | "checkbox"
     | "simpleCodeSelect"
-    | "findCode";
+    | "findCode"
+    | "buttons";
   /** Layout of radio/checklist answers inside a SimpleCodeChecklist field. */
   choiceAnswerLayout?: "vertical" | "responsive" | "inline" | "columns-2" | "columns-3" | "columns-4";
   /** MOIS control size for choices, numbers (including measurements), and textareas. */
@@ -3701,6 +3703,7 @@ export * from "./reference-ranges";
 export * from "./chart-facts";
 export * from "./chart-concepts";
 export * from "./option-rules";
+export * from "./yes-no-choice";
 export * from "./answer-codings";
 export * from "./targets";
 export * from "./validation";

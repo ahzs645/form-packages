@@ -86,6 +86,8 @@ export function resolveChoiceControl(field: BuilderField): TerraControl {
   const optionCount = field.options?.length ?? 0;
   switch (field.choiceStyle) {
     case "radio":
+    // Terra has no answer-button group; answer buttons draw as the radio group.
+    case "buttons":
       return "radio-group";
     case "checkbox":
       return "checkbox-group";

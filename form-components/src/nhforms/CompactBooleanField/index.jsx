@@ -679,11 +679,12 @@ const OptionButtons = ({
 }) => {
   const isMultiple = selectionType === 'multiple'
 
-  // Normalize value to array for consistent handling
+  // Normalize value to array for consistent handling. A coded answer
+  // ({ code, display }) is selected by its code.
   const selectedValues = useMemo(() => {
     if (value === null || value === undefined) return []
-    if (Array.isArray(value)) return value
-    return [value]
+    const items = Array.isArray(value) ? value : [value]
+    return items.map((item) => (item && typeof item === 'object' ? item.code ?? item.key ?? item.value : item))
   }, [value])
 
   const isSelected = useCallback((optionKey) => {
@@ -759,6 +760,10 @@ const OptionButtons = ({
  * @param {string} [props.note] - Annotation/note text
  * @param {boolean} [props.allowDeselect=true] - Allow deselection in single mode
  * @param {boolean} [props.wrap=true] - Allow buttons to wrap
+ * @param {'key' | 'coding'} [props.valueShape='key'] - What an answer saves: the option key, or
+ *   the coding SimpleCodeChecklist saves ({ code, display, system }), so a builder choice drawn
+ *   as answer buttons (choiceStyle "buttons") saves what its radio list would
+ * @param {string} [props.codeSystem] - The coding's system when valueShape is 'coding'
  */
 const CompactChoiceField = ({
   fieldId,
@@ -774,6 +779,8 @@ const CompactChoiceField = ({
   note,
   allowDeselect = true,
   wrap = true,
+  valueShape = 'key',
+  codeSystem,
   ...props
 }) => {
   const [fd] = useActiveData()
@@ -789,8 +796,15 @@ const CompactChoiceField = ({
   }, [currentValue])
 
   // Handle value change
-  const handleChange = useCallback((newValue) => {
+  const handleChange = useCallback((selectedKeys) => {
     if (!setFormData) return
+    const toCoding = (key) => {
+      const option = (optionList || []).find((entry) => entry && entry.key === key)
+      return { code: key, display: (option && option.text) || key, system: codeSystem }
+    }
+    const newValue = valueShape !== 'coding' || selectedKeys === null || selectedKeys === undefined
+      ? selectedKeys
+      : Array.isArray(selectedKeys) ? selectedKeys.map(toCoding) : toCoding(selectedKeys)
 
     setOptimisticValue(newValue)
     const commitValue = () => setFormData(produce((draft) => {
@@ -803,7 +817,7 @@ const CompactChoiceField = ({
     } else {
       commitValue()
     }
-  }, [setFormData, fieldId])
+  }, [setFormData, fieldId, valueShape, codeSystem, optionList])
 
   // Styles
   const containerStyle = getFieldContainerStyles(isDarkMode, showCard)

@@ -158,7 +158,9 @@ const FieldKit = (() => {
       const style = descriptor.choiceStyle || "findCode"
       const findCode = style === "findCode"
       const searchableMultiple = style === "multiselect"
-      const checklist = style === "checkbox" || style === "radio"
+      // Answer buttons (the builder's "buttons" style) have no nested-cell
+      // control here; they draw as the radio list they save like.
+      const checklist = style === "checkbox" || style === "radio" || style === "buttons"
       const multiple = style === "multiselect" || style === "checkbox"
       const selectionType = multiple ? "multiple" : "single"
       // Answers the container greys out, exclusive answers, or answer
@@ -1075,7 +1077,7 @@ const FieldKit = (() => {
           // A subform entry holds one answer: radio, dropdown (the default,
           // DEFAULT_CHOICE_STYLE.subformEntry) or, from older configurations,
           // a searchable findCode; multiple styles draw their single twin.
-          choiceStyle: field.choiceStyle === "radio" || field.choiceStyle === "checkbox"
+          choiceStyle: field.choiceStyle === "radio" || field.choiceStyle === "checkbox" || field.choiceStyle === "buttons"
             ? "radio"
             : field.choiceStyle === "findCode" || field.choiceStyle === "multiselect"
               ? "findCode"

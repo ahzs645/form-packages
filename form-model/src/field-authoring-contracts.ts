@@ -155,7 +155,7 @@ const SPECIALIZED_CONTRACTS: Partial<Record<BuilderFieldType, Omit<BuilderFieldA
       },
       choiceStyle: {
         type: "string",
-        enum: ["dropdown", "radio", "multiselect", "checkbox", "simpleCodeSelect", "findCode"],
+        enum: ["dropdown", "radio", "multiselect", "checkbox", "simpleCodeSelect", "findCode", "buttons"],
       },
       choiceAnswerLayout: {
         type: "string",

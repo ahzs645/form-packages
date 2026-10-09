@@ -8,6 +8,7 @@ import {
   CHOICE_DISPLAY_STYLE,
   CHOICE_PRESENTATIONS,
   CHOICE_PRESENTATION_TO_FHIR_ITEM_CONTROL,
+  CHOICE_PRESENTATION_FHIR_ITEM_CONTROL_LOSSES,
   CHOICE_STYLES,
   CHOICE_STYLE_DISPLAY,
   DEFAULT_CHOICE_STYLE,
@@ -201,10 +202,13 @@ describe("choice presentation", () => {
     expect(isMultipleChoiceStyle(undefined)).toBe(false);
   });
 
-  it("round-trips presentations through FHIR item controls", () => {
+  it("round-trips presentations through FHIR item controls, except the reported losses", () => {
     for (const presentation of CHOICE_PRESENTATIONS) {
+      if (CHOICE_PRESENTATION_FHIR_ITEM_CONTROL_LOSSES[presentation]) continue;
       expect(FHIR_ITEM_CONTROL_TO_CHOICE_PRESENTATION[CHOICE_PRESENTATION_TO_FHIR_ITEM_CONTROL[presentation]]).toBe(presentation);
     }
+    // Answer buttons have no FHIR control: sent as radio buttons, read back as radio buttons.
+    expect(FHIR_ITEM_CONTROL_TO_CHOICE_PRESENTATION[CHOICE_PRESENTATION_TO_FHIR_ITEM_CONTROL.buttons]).toBe("radio");
   });
 });
 
