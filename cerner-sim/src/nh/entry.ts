@@ -1,6 +1,6 @@
 import { CS } from "../db/seed";
 import { END_OF_TIME, isCurrent } from "../db/db";
-import { camelJson, cclDate, hexRaw, rawHex } from "../ccl/json";
+import { camelJson, cclDate, cernerAge, hexRaw, rawHex } from "../ccl/json";
 import { programKey, promptNumber } from "../ccl/params";
 import type { CclProgramInfo, CclRunContext } from "../ccl/types";
 import { flag, list, num, pick, present, str, type Json } from "../co5/support";
@@ -94,7 +94,7 @@ export function nhEntry(ctx: CclRunContext) {
     const p = db.tables.persons.find((row) => row.personId === personId);
     sections.push(["persons", p ? [{
       personId, nameFullFormatted: p.nameFullFormatted, nameFirst: p.nameFirst, nameLast: p.nameLast, birthDtTm: cclDate(p.birthDtTm),
-      genderCd: p.sexCd, gender: db.display(p.sexCd), deceasedInd: p.deceasedCd ? 1 : 0,
+      age: cernerAge(p.birthDtTm, ctx.now), genderCd: p.sexCd, gender: db.display(p.sexCd), deceasedInd: p.deceasedCd ? 1 : 0,
       aliases: db.tables.personAliases.filter((a) => a.personId === personId && isCurrent(a, ctx.now)).map((a) => ({
         alias: a.alias, aliasFormatted: a.personAliasTypeCd === db.byMeaning(CS.personAliasType, "PHN") ? a.alias.replace(/^(\d{4})(\d{3})(\d{3})$/, "$1 $2 $3") : a.alias,
         aliasTypeCd: a.personAliasTypeCd, aliasType: db.display(a.personAliasTypeCd), aliasTypeMeaning: db.meaning(a.personAliasTypeCd),
@@ -184,7 +184,7 @@ function writeDocument(ctx: CclRunContext, visits: { personId: number; encntrId:
   const eventCd = db.byDisplayKey(CS.eventCode, eventKey);
   if (!eventCd) return fail(`Invalid event key: ${eventKey}`);
   const noteFormat = str(pick(params, "noteFormat")).trim();
-  const formatCd = db.byMeaning(CS.noteFormat, noteFormat) || (noteFormat.toUpperCase() === "AH" ? db.byMeaning(CS.noteFormat, "HTML") : 0);
+  const formatCd = db.byMeaning(CS.noteFormat, noteFormat);
   if (!formatCd) return fail(`Invalid note format: ${noteFormat}`);
   const parentEventId = db.allocateId();
   db.tables.documents.push({

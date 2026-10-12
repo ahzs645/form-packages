@@ -161,7 +161,7 @@ function seedCodes(db: MillenniumDb) {
     [CS.reactionStatus, [["ACTIVE", "Active"], ["CANCELED", "Canceled"], ["RESOLVED", "Resolved"]]],
     [CS.lifeCycleStatus, [["ACTIVE", "Active"], ["RESOLVED", "Resolved"], ["INACTIVE", "Inactive"]]],
     [CS.confirmationStatus, [["CONFIRMED", "Confirmed"], ["PROBABLE", "Probable"]]],
-    [CS.noteFormat, [["AS", "ASCII Text"], ["HTML", "HTML"], ["RTF", "Rich Text"]]],
+    [CS.noteFormat, [["AS", "ASCII Text"], ["HTML", "HTML"], ["AH", "Authenticated HTML"], ["RTF", "Rich Text"]]],
     [CS.storage, [["BLOB", "Blob"]]],
     [CS.eventClass, [["DOC", "Document"], ["MDOC", "Multi-Document"]]],
     [CS.resultStatus, [["AUTH", "Auth (Verified)"], ["MODIFIED", "Modified"]]],
@@ -171,6 +171,8 @@ function seedCodes(db: MillenniumDb) {
     [CS.prsnlType, [["USER", "User"]]],
   ];
   for (const [codeSet, rows] of sets) for (const [meaning, display] of rows) add(codeSet, meaning, display);
+  /* The cerner-player files forms under this event code by default (discern-actions.ts). */
+  db.addCode({ codeSet: CS.eventCode, cdfMeaning: "", display: "Web Form Document", displayKey: "WEBFORMDOC" });
 }
 
 /** "Unit / Room / Bed" plus facility, as code set 220 rows linked by LOCATION_GROUP. */

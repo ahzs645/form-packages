@@ -18,6 +18,7 @@
     "@mois/form-components": "workspace:*",
     "@mois/form-engine-core": "workspace:*",
     "@webforms/cerner-core": "workspace:*",
+    "@webforms/cerner-sim": "workspace:*",
     "@webforms/cerner-terra": "workspace:*",
     "@webforms/cerner-terra-forms": "workspace:*",
     "@webforms/form-model": "workspace:*",

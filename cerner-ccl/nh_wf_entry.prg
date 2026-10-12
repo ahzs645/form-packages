@@ -96,6 +96,7 @@ record rPERSONS (
         2 name_first            = vc
         2 name_last             = vc
         2 birth_dt_tm           = dq8
+        2 age                   = vc
         2 gender_cd             = f8
         2 gender                = vc
         2 deceased_ind          = i4
@@ -388,6 +389,8 @@ if (validate(payload->person) = 1 and chart_id->person_id > 0.0)
         rPERSONS->persons[1].name_first = p.name_first
         rPERSONS->persons[1].name_last = p.name_last
         rPERSONS->persons[1].birth_dt_tm = p.birth_dt_tm
+        ; Cerner age text ("45 Years"), as the chart banner prints it.
+        rPERSONS->persons[1].age = cnvtage(p.birth_dt_tm)
         rPERSONS->persons[1].gender_cd = p.sex_cd
         rPERSONS->persons[1].gender = uar_get_code_display(p.sex_cd)
         rPERSONS->persons[1].deceased_ind =

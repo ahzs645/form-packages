@@ -29,6 +29,9 @@
       "@webforms/cerner-core": [
         "../cerner-core/src/index.ts"
       ],
+      "@webforms/cerner-sim": [
+        "../cerner-sim/src/index.ts"
+      ],
       "@webforms/form-model": [
         "../form-model/src/index.ts"
       ],

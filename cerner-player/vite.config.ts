@@ -38,6 +38,42 @@ const MIME: Record<string, string> = {
   ".ttf": "font/ttf",
 };
 
+/**
+ * Dev-only: /mock-powerchart-global.js, the simulated PowerChart bridge as one
+ * classic script (src/dev/powerchart-global.ts bundled on request), for pages
+ * the player does not build itself — the example MPages and the component
+ * harness. CCL is answered by @webforms/cerner-sim.
+ */
+function powerChartGlobalPlugin(): Plugin {
+  return {
+    name: "mock-powerchart-global",
+    apply: "serve",
+    configureServer(server) {
+      server.middlewares.use("/mock-powerchart-global.js", async (_req, res, next) => {
+        try {
+          const { build } = await import("esbuild");
+          const result = await build({
+            entryPoints: [path.resolve(__dirname, "src/dev/powerchart-global.ts")],
+            bundle: true,
+            write: false,
+            format: "iife",
+            target: "es2019",
+            alias: {
+              "@webforms/cerner-sim": path.resolve(__dirname, "../cerner-sim/src/index.ts"),
+              "@webforms/cerner-core": path.resolve(__dirname, "../cerner-core/src/index.ts"),
+            },
+          });
+          res.setHeader("Content-Type", "text/javascript");
+          res.setHeader("Cache-Control", "no-store");
+          res.end(result.outputFiles[0].text);
+        } catch (error) {
+          next(error);
+        }
+      });
+    },
+  };
+}
+
 function cernerExamplesPlugin(): Plugin {
   return {
     name: "cerner-examples",
@@ -91,7 +127,7 @@ function cernerExamplesPlugin(): Plugin {
 // build; freshness comes from no-cache metas / server-side cache busting).
 export default defineConfig({
   base: "./",
-  plugins: [react(), cernerExamplesPlugin()],
+  plugins: [react(), powerChartGlobalPlugin(), cernerExamplesPlugin()],
   resolve: {
     // The workspace packages carry their own peer-dep installs; without
     // dedupe the player and @mois/form-components load separate React and
@@ -121,6 +157,10 @@ export default defineConfig({
       {
         find: "@webforms/cerner-terra",
         replacement: path.resolve(__dirname, "../cerner-terra/src/index.ts"),
+      },
+      {
+        find: "@webforms/cerner-sim",
+        replacement: path.resolve(__dirname, "../cerner-sim/src/index.ts"),
       },
       {
         find: "@webforms/cerner-core",

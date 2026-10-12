@@ -68,7 +68,6 @@ writeFileSync(
 );
 
 // Drop dev-only artifacts from the deployable.
-rmSync(join(out, "mock-powerchart-global.js"), { force: true });
 rmSync(join(out, "examples.html"), { force: true });
 
 const title = identity.title || formId;

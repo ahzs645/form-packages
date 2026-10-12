@@ -1,11 +1,22 @@
-import { DISCERN_OBJECTS, MPAGES_EVENTS, describeMPagesEvent, mpagesEventArityOk, splitDiscernPayload, type CclRequestLike } from "@webforms/cerner-core";
+import { DISCERN_OBJECTS, MPAGES_EVENTS, describeMPagesEvent, mpagesEventArityOk, splitDiscernPayload } from "@webforms/cerner-core";
+import {
+  createSimXmlCclRequest,
+  createStandardSimulator,
+  installDiscernWebIntercept,
+  type CernerSimulator,
+} from "@webforms/cerner-sim";
 
 /**
- * Dev-only PowerChart simulator: installs a fake window.external.XMLCclRequest
- * so the player exercises the exact in-PowerChart code path (setBlobIn blob,
- * positional prompt string, chartId echo) without a Millennium domain.
+ * Dev-only PowerChart: the player (and, through powerchart-global.ts, any
+ * example MPage) gets window.external.XMLCclRequest and the Discern bridges
+ * without a Millennium domain.
  *
- * Never shipped down the production path — main.tsx only wires it when the
+ * CCL is answered by the simulated Millennium domain in @webforms/cerner-sim —
+ * the same one behind the PowerChart emulator — so `nh_wf_entry`, the
+ * Clinical Office v5 entry and their custom scripts reply in their real
+ * shapes from a synthetic chart, not from hand-written stubs.
+ *
+ * Never shipped down the production path — App.tsx only wires it when the
  * page runs outside PowerChart with ?mock=1 (or on localhost).
  */
 
@@ -22,121 +33,37 @@ export const DEMO_CHART: MockChart = {
   encntrId: 97953477,
   nameFullFormatted: "MOUSE, MICKEY BOB",
   prsnlId: 4122622,
-  prsnlName: "Cerner Test, Physician",
+  prsnlName: "CERNER TEST, PHYSICIAN",
 };
 
-class MockCclRequest implements CclRequestLike {
-  onreadystatechange: (() => void) | null = null;
-  readyState = 0;
-  status = 0;
-  responseText = "";
-  private blob = "";
-  private readonly chart: MockChart;
-  private readonly log: (line: string) => void;
+/**
+ * The simulated domain behind the demo chart: one invented patient (BC PHN,
+ * MRN, an outpatient visit with FIN) and the signed-in physician. Built once
+ * per page so writes (stored drafts, filed documents) survive re-renders.
+ */
+export function createPlayerSimulator(chart: MockChart = DEMO_CHART): CernerSimulator {
+  const [last, rest = ""] = chart.nameFullFormatted.split(",").map((part) => part.trim());
+  const [first = "", ...middle] = rest.split(/\s+/);
+  const [userLast, userFirst = ""] = chart.prsnlName.split(",").map((part) => part.trim());
+  return createStandardSimulator({
+    roster: [{
+      chart: "700001234", encounter: "FIN-0001234", personId: chart.personId, encntrId: chart.encntrId,
+      first, middle: middle.join(" "), last, dob: "1980-01-01", gender: "M",
+      location: "Mock Demo Clinic", provider: "Okafor, Daniel MD", encounterType: "Outpatient",
+      allergies: "Penicillins", bchn: "9876543210", home: "250-555-0101", address: "1 Demo Way",
+      city: "Prince George", province: "BC", postal: "V2N 0A1", registered: "2026-09-01",
+    }],
+    session: { prsnlId: chart.prsnlId, domain: "MOCKDEV" },
+    seed: { user: { personId: chart.prsnlId, nameLast: userLast.toUpperCase(), nameFirst: userFirst.toUpperCase(), username: "MOCKTEST", position: "PHYSICIAN", physician: true } },
+  });
+}
 
-  constructor(chart: MockChart, log: (line: string) => void) {
-    this.chart = chart;
-    this.log = log;
-  }
+let pageSimulator: { chart: MockChart; sim: CernerSimulator } | null = null;
 
-  open(): void {
-    this.readyState = 1;
-  }
-
-  setBlobIn(blob: string): void {
-    this.blob = blob;
-  }
-
-  send(parameterString?: string): void {
-    this.log("XMLCclRequest.send " + (parameterString ?? ""));
-    this.log("blobIn " + this.blob);
-    const substituted = (parameterString ?? "")
-      .replace("$PAT_PersonId$", String(this.chart.personId))
-      .replace("$VIS_EncntrId$", String(this.chart.encntrId));
-    let payload: {
-      customScript?: { script?: Array<{ id?: string; name?: string; run?: string; parameters?: unknown }> };
-      person?: unknown;
-      encounter?: unknown;
-    } = {};
-    try {
-      payload = (JSON.parse(this.blob) as { payload?: typeof payload }).payload ?? {};
-    } catch {
-      /* non-JSON blob; ignore */
-    }
-    const customPre: Array<{ id: string; data: unknown }> = [];
-    const customPost: Array<{ id: string; data: unknown }> = [];
-    for (const script of payload.customScript?.script ?? []) {
-      this.log("customScript " + (script.run ?? "pre") + " -> " + (script.name ?? "?"));
-      this.log("parameters " + JSON.stringify(script.parameters ?? {}));
-      const entry = {
-        id: script.id ?? "unnamed",
-        data: script.name?.includes("write_document")
-          ? { status: "success", statusValue: 0, parentEventId: 987654321 }
-          : {},
-      };
-      (script.run === "post" ? customPost : customPre).push(entry);
-    }
-    const sections: Record<string, unknown> = {};
-    if ((payload as { person?: unknown }).person) {
-      sections.persons = [
-        {
-          personId: this.chart.personId,
-          nameFullFormatted: this.chart.nameFullFormatted,
-          nameFirst: "MICKEY",
-          nameLast: "MOUSE",
-          birthDtTm: "1980-01-01T08:00:00.000+00:00",
-          age: "46 Years",
-          gender: "Male",
-          aliases: [
-            {
-              alias: "9876543210",
-              aliasFormatted: "9876 543 210",
-              aliasType: "PHN",
-              healthCardProvince: "BC",
-            },
-            { alias: "700001234", aliasFormatted: "700001234", aliasType: "MRN", aliasTypeMeaning: "MRN" },
-          ],
-        },
-      ];
-    }
-    if ((payload as { encounter?: unknown }).encounter) {
-      sections.encounters = [
-        {
-          encntrId: this.chart.encntrId,
-          personId: this.chart.personId,
-          encntrType: "Outpatient",
-          location: "Mock Demo Clinic",
-          aliases: [
-            { alias: "FIN-0001234", aliasFormatted: "FIN-0001234", aliasType: "FIN NBR", aliasTypeMeaning: "FIN NBR" },
-          ],
-        },
-      ];
-    }
-    const reply = {
-      ...sections,
-      runStats: {
-        status: "ok",
-        domain: "mock",
-        prsnlId: this.chart.prsnlId,
-        prsnlName: this.chart.prsnlName,
-        parameters: substituted,
-      },
-      chartId: {
-        personId: this.chart.personId,
-        encntrId: this.chart.encntrId,
-        nameFullFormatted: this.chart.nameFullFormatted,
-      },
-      errors: [],
-      ...(customPre.length ? { customPre } : {}),
-      ...(customPost.length ? { customPost } : {}),
-    };
-    setTimeout(() => {
-      this.status = 200;
-      this.responseText = JSON.stringify(reply);
-      this.readyState = 4;
-      this.onreadystatechange?.();
-    }, 120);
-  }
+/** The page's simulator for this chart (one per page load). */
+export function playerSimulator(chart: MockChart = DEMO_CHART): CernerSimulator {
+  if (!pageSimulator || pageSimulator.chart !== chart) pageSimulator = { chart, sim: createPlayerSimulator(chart) };
+  return pageSimulator.sim;
 }
 
 export interface DiscernActivity {
@@ -219,12 +146,33 @@ function makeDiscernObject(name: string, warn: (line: string) => void): object {
   );
 }
 
+export interface InstallOptions {
+  /**
+   * Also install what older or site-written pages reach for: a global
+   * `XMLCclRequest` constructor, global CCLLINK / MPAGES_EVENT /
+   * MPAGES_SVC_EVENT, and simulated Discern Web Services (`/cclproxy`,
+   * `…/mpages/reports/<program>`) inside this window's fetch/XMLHttpRequest.
+   */
+  globals?: boolean;
+}
+
 export function installMockPowerChart(
   chart: MockChart = DEMO_CHART,
   log: (line: string) => void = (line) => console.info("[mock-powerchart]", line),
-): void {
+  options: InstallOptions = {},
+): CernerSimulator {
+  const sim = playerSimulator(chart);
+  sim.subscribe((call) => {
+    if (call.nested) return;
+    log(`CCL ${call.program} (${call.transport}) -> ${call.status}`);
+    for (const notice of call.notices) log(`${notice.kind === "quirk" ? "differs from production" : notice.kind}: ${notice.message}`);
+  });
+  const SimXMLCclRequest = createSimXmlCclRequest(sim, {
+    context: () => ({ personId: chart.personId, encntrId: chart.encntrId }),
+    warn: (line) => log("WARNING " + line),
+  });
   const external = ((window as { external?: unknown }).external ?? {}) as Record<string, unknown>;
-  external.XMLCclRequest = () => new MockCclRequest(chart, log);
+  external.XMLCclRequest = () => new SimXMLCclRequest();
   const warn = (line: string) => {
     log("WARNING " + line);
     recordDiscernActivity("bridge warning", line);
@@ -265,4 +213,14 @@ export function installMockPowerChart(
   } catch {
     (window as { external?: unknown }).external = external;
   }
+  if (options.globals) {
+    const define = (name: string, value: unknown) => Object.defineProperty(window, name, { value, configurable: true, writable: true });
+    define("XMLCclRequest", SimXMLCclRequest);
+    define("MPAGES_EVENT", external.MPAGES_EVENT);
+    for (const name of ["CCLLINK", "MPAGES_SVC_EVENT"]) {
+      define(name, (...args: unknown[]) => { recordDiscernActivity(name, formatArgs(args)); return Promise.resolve(); });
+    }
+    installDiscernWebIntercept(window as Window & typeof globalThis, sim);
+  }
+  return sim;
 }

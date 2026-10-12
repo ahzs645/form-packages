@@ -1,5 +1,5 @@
 import type { MillenniumDb } from "./db/db";
-import { seedMillenniumDb, DEFAULT_SIM_USER, type SimPatientInput } from "./db/seed";
+import { seedMillenniumDb, DEFAULT_SIM_USER, type SeedOptions, type SimPatientInput } from "./db/seed";
 import { hexRaw, looksHex } from "./ccl/json";
 import { parsePromptLine, programKey, substituteContextTokens } from "./ccl/params";
 import type { CclCall, CclNotice, CclProgramInfo, CclReply, CclRunContext, PromptValue, SimSession } from "./ccl/types";
@@ -28,6 +28,8 @@ export interface SimCallRecord {
 export interface SimulatorOptions {
   db?: MillenniumDb;
   roster?: readonly SimPatientInput[];
+  /** Seed options when the simulator builds its own db from `roster` (the signed-in user, content URL, …). */
+  seed?: SeedOptions;
   session?: Partial<SimSession>;
   programs?: readonly CclProgramInfo[];
   /** Fixed clock for tests. */
@@ -70,7 +72,7 @@ export function missingProgramReply(program: string): CclReply {
 const MAX_LOG = 200;
 
 export function createCernerSimulator(options: SimulatorOptions = {}): CernerSimulator {
-  const db = options.db ?? seedMillenniumDb(options.roster ?? []);
+  const db = options.db ?? seedMillenniumDb(options.roster ?? [], options.seed);
   const session: SimSession = { ...DEFAULT_SESSION, ...options.session };
   const registry = new Map<string, CclProgramInfo>();
   const log: SimCallRecord[] = [];

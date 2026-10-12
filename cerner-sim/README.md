@@ -4,7 +4,10 @@ Lets real MPages run without a Cerner domain. It answers the calls an MPage
 makes — `XMLCclRequest` inside PowerChart, and Discern Web Services outside it —
 from a synthetic chart, through CCL programs that reply the way the real ones
 do. The PowerChart emulator (`/tutorial/host/powerchart/?fixture=mpage`, Portal
-MPage) uses it for every page it hosts.
+MPage) uses it for every page it hosts, and the cerner-player's dev bridge
+(`packages/cerner-player/src/dev/mock-powerchart.ts`, plus the
+`/mock-powerchart-global.js` the player's dev server bundles for example pages)
+answers its CCL with it.
 
 Clean-room: behaviour was taken from written specifications (`SPEC.md`, our
 `packages/cerner-ccl` contract, the vendors' public documentation), never from

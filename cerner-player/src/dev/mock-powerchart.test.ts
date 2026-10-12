@@ -87,3 +87,34 @@ it("exposes the global APPLINK used by fluent-cerner-js", async () => {
   expect(result.badInput).toBe(false);
   expect(result.eventString).toContain("/FIRSTTAB=^Orders^");
 });
+
+describe("simulated CCL behind the dev bridge", () => {
+  type Request = { open: (m: string, p: string) => void; setBlobIn: (b: string) => void; send: (s: string) => void; onreadystatechange: (() => void) | null; readyState: number; status: number; responseText: string };
+  const call = (payload: unknown) => new Promise<Record<string, any>>((resolve) => {
+    const request = (window.external as unknown as { XMLCclRequest: () => Request }).XMLCclRequest();
+    request.onreadystatechange = () => { if (request.readyState === 4) resolve(JSON.parse(request.responseText)); };
+    request.open("GET", "nh_wf_entry:group1");
+    request.setBlobIn(JSON.stringify({ payload }));
+    request.send('^MINE^,$PAT_PersonId$,$VIS_EncntrId$,0,1,^{"mode":"CHART","hexMode":false}^');
+  });
+
+  it("answers the player's chart load in nh_wf_entry's real shape", async () => {
+    installMockPowerChart();
+    const reply = await call({ patientSource: [{ personId: 12724066, encntrId: 97953477 }], person: { aliases: true }, encounter: { aliases: true } });
+    expect(reply.chartId).toEqual({ personId: 12724066, encntrId: 97953477, nameFullFormatted: "MOUSE, MICKEY BOB" });
+    expect(reply.runStats.prsnlName).toBe("CERNER TEST, PHYSICIAN");
+    expect(reply.persons[0]).toMatchObject({ gender: "Male", age: expect.stringMatching(/Years$/) });
+    expect(reply.persons[0].aliases.map((a: { aliasTypeMeaning: string }) => a.aliasTypeMeaning).sort()).toEqual(["MRN", "PHN"]);
+    expect(reply.encounters[0].aliases[0]).toMatchObject({ aliasTypeMeaning: "FIN NBR", alias: "FIN-0001234" });
+  });
+
+  it("files a document under the player's default event key and note format", async () => {
+    installMockPowerChart();
+    const reply = await call({
+      patientSource: [{ personId: 12724066, encntrId: 97953477 }],
+      customScript: { script: [{ name: "nh_wf_write_document:group1", id: "doc", run: "pre", parameters: { eventKey: "WEBFORMDOC", title: "Form", document: "<p>x</p>", noteFormat: "AH" } }] },
+    });
+    expect(reply.customPre[0].data).toMatchObject({ status: "success", statusValue: 0 });
+    expect(reply.customPre[0].data.parentEventId).toBeGreaterThan(0);
+  });
+});
