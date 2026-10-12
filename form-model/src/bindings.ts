@@ -307,7 +307,7 @@ function uniqueStrings(values: unknown[]): string[] {
 
 const SOURCE_CONFIG_KEYS = ["paths", "format", "mode", "fallback", "chartQuery", "presentation", "valueTransform"];
 /** `datetime` is an older spelling of `dateTime`; the MOIS runtime passes both through unchanged. */
-const SOURCE_FORMATS = ["text", "date", "dateTime", "datetime", "coding", "oscarAllergies", "oscarConditions", "oscarMedications"];
+const SOURCE_FORMATS = ["text", "date", "hour", "minute", "dateTime", "datetime", "coding", "oscarAllergies", "oscarConditions", "oscarMedications"];
 const LAYOUT_SOURCE_FORMATS = ["text", "date", "dateTime", "visitCode", "coding"];
 const SOURCE_MODES = ["initial", "sync"];
 const LAYOUT_SOURCE_MODES = ["initial", "live"];

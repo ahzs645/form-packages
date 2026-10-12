@@ -272,7 +272,7 @@ var AddressEntryRuntime = (() => {
         },
         choiceStyle: {
           type: "string",
-          enum: ["dropdown", "radio", "multiselect", "checkbox", "simpleCodeSelect", "findCode"]
+          enum: ["dropdown", "radio", "multiselect", "checkbox", "simpleCodeSelect", "findCode", "buttons"]
         },
         choiceAnswerLayout: {
           type: "string",

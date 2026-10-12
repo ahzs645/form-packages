@@ -2035,6 +2035,8 @@ export interface BuilderFieldSourceContract {
 export type BuilderFieldSourceFormat =
   | "text"
   | "date"
+  | "hour"
+  | "minute"
   | "dateTime"
   | "coding"
   | "oscarAllergies"

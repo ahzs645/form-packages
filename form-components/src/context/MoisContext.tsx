@@ -101,7 +101,7 @@ export interface SourceData {
     gender: string;
     administrativeGender?: { code: string; display: string; system?: string };
     educationLevel?: { code: string; display?: string; system?: string };
-    telecom: { homePhone?: string; workPhone?: string; cellPhone?: string; workExt?: string; email?: string; homeEmail?: string; workEmail?: string; faxNumber?: string };
+    telecom: { homePhone?: string; workPhone?: string; cellPhone?: string; workExt?: string; email?: string; homeEmail?: string; workEmail?: string; faxNumber?: string; homeMessage?: string; workMessage?: string };
     address: { text?: string; line1?: string; line2?: string; city?: string; province?: string; postalCode?: string; country?: string };
     encounters?: Partial<EncounterData>[];
     [key: string]: any;
@@ -480,12 +480,13 @@ export interface EncounterData {
   encompassingEncounterIdent: string | null;
   encounterFormCount: number | null;
   groupVisitId: number | null;
+  healthIssue1?: CodeValue | null;
   healthIssues: (CodeValue | null)[];
   inRoomDateTime: string | null;
   location: string | null;
   name: { first: string; family: string; text: string };
   officeNote: string | null;
-  payor: CodeValue;
+  payor: CodeValue | null;
   priority: CodeValue;
   providerId: number;
   // Real MOIS encounters expose the provider as a nested object alongside the
@@ -494,13 +495,15 @@ export interface EncounterData {
   resourceId: number | null;
   roomNumber: string | null;
   seenDateTime: string | null;
+  service1?: ServiceValue | null;
+  serviceEvents?: { serviceEventId?: number; service?: CodeValue | null; healthIssues?: { healthIssue?: CodeValue | null }[] }[];
   services: (ServiceValue | null)[];
   status: CodeValue;
   taskCount: number | null;
-  timeSlots: number;
-  visitCode: CodeValue;
+  timeSlots: number | null;
+  visitCode: CodeValue | null;
   visitMode: CodeValue;
-  visitReason1: CodeValue;
+  visitReason1: CodeValue | null;
   visitReason2: CodeValue;
   stamp: StampData;
   correspondences?: CorrespondenceData[];
@@ -682,13 +685,30 @@ export const defaultSourceData: SourceData = {
     gender: 'male',
     administrativeGender: { code: 'M', display: 'Male', system: 'MOIS-GENDER' },
     preferredGender: { code: 'M', display: 'Male', system: 'MOIS-GENDER' },
+    genotypicGender: { code: 'M', display: 'Male', system: 'MOIS-GENOTYPICGENDER' },
+    genderComment: '',
+    multipleBirth: { code: 'N', display: 'No', system: 'MOIS-YESNO' },
     educationLevel: { code: 'Post-Secondary', display: 'Post-Secondary Education', system: 'MOIS-EDUCATION' },
     maritalStatus: { code: 'M', display: 'Married', system: 'MOIS-MARITALSTATUS' },
     language: { code: 'EN', display: 'English', system: 'MOIS-LANGUAGE' },
     religion: 'None',
-    race1: { code: '91', display: 'First Nations', system: 'CDC-RACE', type: 'SELF', isSelfIdentified: true },
+    race1: { code: '91', display: 'First Nations', system: 'CDC-RACE', type: 'SELF', isSelfIdentified: 'Y' },
     race2: null,
     race3: null,
+    preferences: [{
+      reportMethod: null, reportBy: null,
+      preference: 'AUTOMATED CALL SERVICE',
+      preferenceType: { code: 'OTHER', display: 'Other', system: 'MOIS-PREFERENCETYPE' },
+      classification: { code: 'CONSENT', display: 'Consent', system: 'MOIS-PREFERENCECLASSIFICATION' },
+      codedSubject: { code: '01000', display: 'AUTOMATED CALL SERVICE' },
+      instruction: { code: 'ALLOW', display: 'Allow', system: 'MOIS-PREFERENCEINSTRUCTION' },
+      reason: { code: 'SELF CHOICE', display: 'Patient decision', system: 'MOIS-PREFERENCEREASON' },
+      sensitive: { code: 'N', display: 'No', system: 'MOIS-YESNO' },
+      includeOnDemographics: { code: 'Y', display: 'Yes', system: 'MOIS-YESNO' },
+      subjectDetail: 'Automated appointment reminders', instructionDetail: 'Calls permitted',
+      reasonDetail: 'Patient agreed', subjectConceptName: 'AUTOMATED CALL SERVICE',
+      startDate: '2026-04-22', endDate: '2027-04-22',
+    }],
     countryOfOrigin: { code: 'CA', display: 'Canada', system: 'MOIS-COUNTRY' },
     firstNationStatus: { code: 'SI', display: 'Status Indian', system: 'AIHS-FNSTATUS' },
     referralSource: { code: 'HOME AND COMMUNITY CARE', display: 'Home and Community Care', system: 'VALUESET:REFERRAL.SOURCE' },
@@ -696,14 +716,18 @@ export const defaultSourceData: SourceData = {
     healthNumberBy: 'BC',
     insuranceBy: { code: 'BC', display: 'British Columbia', system: 'MOIS-INSURANCEBY' },
     insuranceNumber: '9151065434',
-    insuranceDependent: '00',
+    insuranceDependent: '00', insuranceBenefitSource: '',
     preferredPhone: { code: '1', display: 'Home', system: 'MOIS-PREFERREDPHONE' },
     preferredPharmacy: { name: 'Northern Pharmacy', phone: '250-555-1100', description: 'Downtown location' },
     shortNote: 'Hard of hearing',
     note: '',
     chartLocation: 'Front office',
+    facilityCode: null, locationCode: null, adopted: null,
+    // Selected local source fields with no clinical sample record.
+    aliasIdentifiers: [], occupations: [], educations: [], goals: [],
+    householdOccupants: [], documents: [],
     stamp: defaultStamp,
-    telecom: { homePhone: '250-555-1234', workPhone: '250-555-5678', cellPhone: '250-555-9012', workExt: '12', homeEmail: 'mickey@disney.com', workEmail: 'mmouse@clubhouse.org', faxNumber: '250-555-9999' },
+    telecom: { homePhone: '250-555-1234', workPhone: '250-555-5678', cellPhone: '250-555-9012', workExt: '12', homeMessage: 'N', workMessage: 'N', homeEmail: 'mickey@disney.com', workEmail: 'mmouse@clubhouse.org', faxNumber: '250-555-9999' },
     address: { text: '2251 Disney Road\nPrince George, BC\nCanada V3L 2K2', line1: '2251 Disney Road', line2: '', city: 'Prince George', province: 'BC', postalCode: 'V3L 2K2', country: 'Canada' },
     lifestyle: {
       physicalActivity: { value: 'Walks 20 minutes most days', date: '2026-04-22' },
@@ -721,7 +745,9 @@ export const defaultSourceData: SourceData = {
     observations: [
       ...previewObservationHistory,
       {
-        observationId: 600001,
+        observationId: 600001, abnormalFlag: null, orderedBy: null, collectedBy: null, reportedBy: null, observationClass: null,
+        orderDate: null, copyTo: null, performedBy: null, performedDateTime: null, fillerReferenceNumber: null, orderName: null,
+        rangeNormalLow: null, rangeNormalHigh: null,
         observationCode: '2455',
         description: 'Ejection Fraction',
         value: '55',
@@ -737,29 +763,30 @@ export const defaultSourceData: SourceData = {
         collectedDateTime: '2023-06-15T10:30:00',
       },
     ],
-    // Field shape matches the engine's fullChart `actions` selection: no record
-    // id, no startDate, no responsibility — those never come back from MOIS.
+    // Default fullChart omits startDate; the archived optional selection is
+    // supported, but there is no sample date for these existing actions.
     actions: [
-      { action: 'Review home blood pressure log', detail: 'Patient, Primary Care Provider', endDate: '2026-07-22', encounterId: 700001, completedDate: null, isCompleted: { code: 'N', display: 'No', system: 'MOIS-YESNO' } },
-      { action: 'Repeat HbA1c and urine ACR', detail: 'Primary Care Provider', endDate: '2026-09-11', encounterId: 700002, completedDate: null, isCompleted: { code: 'N', display: 'No', system: 'MOIS-YESNO' } },
+      { responsibility: null, outcome: null, isSensitive: null, startDate: null, action: 'Review home blood pressure log', detail: 'Patient, Primary Care Provider', endDate: '2026-07-22', encounterId: 700001, completedDate: null, isCompleted: { code: 'N', display: 'No', system: 'MOIS-YESNO' } },
+      { responsibility: null, outcome: null, action: 'Repeat HbA1c and urine ACR', detail: 'Primary Care Provider', endDate: '2026-09-11', encounterId: 700002, completedDate: null, isCompleted: { code: 'N', display: 'No', system: 'MOIS-YESNO' } },
     ],
     serviceEpisodes: [
-      { serviceEpisodeId: 910101, startDate: '2025-10-01', endDate: null, note: '', service: { code: 'CDM', display: 'Chronic Disease Management', system: 'MOIS-SERVICE' }, serviceMrp: { code: '500007', display: 'PRACTITIONER, GENERAL', system: 'MOIS.USER' } },
+      { stopNote: null, stopReason: null, includeOnDemographics: null, serviceEpisodeId: 910101, startDate: '2025-10-01', endDate: null, note: '', service: { code: 'CDM', display: 'Chronic Disease Management', system: 'MOIS-SERVICE' }, serviceMrp: { code: '500007', display: 'PRACTITIONER, GENERAL', system: 'MOIS.USER' } },
       { serviceEpisodeId: 910102, startDate: '2024-04-15', endDate: '2025-04-15', note: '', service: { code: 'DIAB', display: 'Diabetes Education', system: 'MOIS-SERVICE' }, serviceMrp: { code: '500007', display: 'PRACTITIONER, GENERAL', system: 'MOIS.USER' } },
     ],
     serviceRequests: [
-      { serviceRequestId: 920101, orderDate: '2026-04-18', serviceRequestType: { code: 'LAB', display: 'Laboratory', system: 'MOIS-ORDERTYPE' }, orderedBy: 'PRACTITIONER, GENERAL', order: { code: 'A1C_ACR', display: 'HbA1c and urine ACR', system: 'MOIS-ORDER' }, status: { code: 'A', display: 'Active', system: 'MOIS-ORDERSTATUS' } },
-      { serviceRequestId: 920102, orderDate: '2026-01-19', serviceRequestType: { code: 'CONSULT', display: 'Consultation', system: 'MOIS-ORDERTYPE' }, orderedBy: 'PRACTITIONER, GENERAL', order: { code: 'EYE', display: 'Diabetic retinopathy screening', system: 'MOIS-ORDER' }, status: { code: 'SC', display: 'Scheduled', system: 'MOIS-ORDERSTATUS' } },
+      { performedBy: null, serviceRequestId: 920101, orderDate: '2026-04-18', serviceRequestType: { code: 'LAB', display: 'Laboratory', system: 'MOIS-ORDERTYPE' }, orderedBy: 'PRACTITIONER, GENERAL', order: { code: 'A1C_ACR', display: 'HbA1c and urine ACR', system: 'MOIS-ORDER' }, status: { code: 'A', display: 'Active', system: 'MOIS-ORDERSTATUS' } },
+      { performedBy: null, serviceRequestId: 920102, orderDate: '2026-01-19', serviceRequestType: { code: 'CONSULT', display: 'Consultation', system: 'MOIS-ORDERTYPE' }, orderedBy: 'PRACTITIONER, GENERAL', order: { code: 'EYE', display: 'Diabetic retinopathy screening', system: 'MOIS-ORDER' }, status: { code: 'SC', display: 'Scheduled', system: 'MOIS-ORDERSTATUS' } },
     ],
     // conditions on patient for components that access sd.patient.conditions
     conditions: [
       {
         conditionId: 500101,
+        isSensitive: { code: 'N', display: 'No', system: 'MOIS-YESNO' },
         condition: { code: 'HTN', display: 'Hypertension', system: 'MOIS-CONDITION' },
         startDate: '2020-01-15',
         resolveDate: null,
         certainty: { code: 'C', display: 'Confirmed' },
-        severity: { code: 'M', display: 'Moderate' },
+        severity: { code: 'M', display: 'Moderate', system: null },
         comment: '',
       },
       {
@@ -784,7 +811,7 @@ export const defaultSourceData: SourceData = {
     // connections on patient for components that access sd.patient.connections
     connections: [
       {
-        connectionId: 500036,
+        connectionId: 500036, comment: null, stopNote: null,
         connectionType: { code: 'PRIMARY', display: 'Primary Provider', system: 'MOIS-CONNECTIONTYPE' },
         name: 'PRACTITIONER, GENERAL',
         startDate: '2020-01-01',
@@ -819,7 +846,7 @@ export const defaultSourceData: SourceData = {
         includeOnDemographics: { code: 'Y', display: 'Yes', system: 'MOIS-YESNO' },
         isMemberOfCareTeam: { code: 'Y', display: 'Yes', system: 'MOIS-YESNO' },
         preferredPhone: { code: '1', display: 'Home', system: 'MOIS-PREFERREDPHONE' },
-        telecom: { homePhone: '2505642644', workPhone: '2505642655', workExt: '12', cellPhone: '', homeEmail: 'amy@example.com', workEmail: '' },
+        telecom: { homePhone: '2505642644', workPhone: '2505642655', workExt: '12', pagerNumber: null, cellPhone: '', homeEmail: 'amy@example.com', workEmail: '' },
         address: { city: null, country: null, line1: null, line2: null, postalCode: null, province: null, text: null },
         note: '',
       },
@@ -827,7 +854,8 @@ export const defaultSourceData: SourceData = {
     // allergies on patient
     allergies: [
       {
-        code: 'PNCLLN',
+        onsetLifeStage: null, adverseInformant: null, adverseObserver: null, adverseDocumenter: null,
+        code: 'PNCLLN', substanceCode: 'PNCLLN', stopDate: null,
         atcCode: 'J01C',
         atcName: 'Penicillins',
         intoleranceType: 'Allergy',
@@ -841,17 +869,18 @@ export const defaultSourceData: SourceData = {
     ],
     observationPanels: [],
     longTermMedications: [
-      { medicationId: 800001, longTermMedicationId: 800001, medication: { code: 'METFORMIN', display: 'Metformin 500mg', system: 'MOIS-MEDICATION' }, genericName: 'Metformin', atcCode: { code: 'A10BA02', display: 'Biguanides', system: 'ATC' }, comment: '', dose: '500mg', frequency: 'BID', route: 'PO', startDate: '2019-06-15', stopDate: null, prescriber: 'PRACTITIONER, GENERAL', indication: 'Type 2 Diabetes' },
+      { medicationId: 800001, endDate: null, orderedBy: 'PRACTITIONER, GENERAL', doseFrequency: '500mg BID', instruction: '', longTermMedicationId: 800001, medication: { code: 'METFORMIN', display: 'Metformin 500mg', system: 'MOIS-MEDICATION' }, genericName: 'Metformin', atcCode: { code: 'A10BA02', display: 'Biguanides', system: 'ATC' }, comment: '', dose: '500mg', frequency: 'BID', route: 'PO', startDate: '2019-06-15', stopDate: null, prescriber: 'PRACTITIONER, GENERAL', indication: { code: 'DM2', display: 'Type 2 Diabetes' } },
       { medicationId: 800002, longTermMedicationId: 800002, medication: { code: 'LISINOPRIL', display: 'Lisinopril 10mg', system: 'MOIS-MEDICATION' }, genericName: 'Lisinopril', atcCode: { code: 'C09AA03', display: 'ACE inhibitors', system: 'ATC' }, comment: '', dose: '10mg', frequency: 'Daily', route: 'PO', startDate: '2020-02-01', stopDate: null, prescriber: 'PRACTITIONER, GENERAL', indication: 'Hypertension' },
     ],
     prescriptions: [
-      { prescriptionId: 810001, medication: 'Amoxicillin 500mg', genericName: 'Amoxicillin', orderDate: '2026-03-12', prescriptionNarrative: 'Amoxicillin 500mg PO TID x7 days', indication: { code: 'OM', display: 'Otitis media', system: 'MOIS-INDICATION' }, type: 'ACUTE' },
+      { officeNote: null, prescriptionId: 810001, comment: null, medication: 'Amoxicillin 500mg', genericName: 'Amoxicillin', orderDate: '2026-03-12', prescriptionNarrative: 'Amoxicillin 500mg PO TID x7 days', indication: { code: 'OM', display: 'Otitis media', system: 'MOIS-INDICATION' }, type: 'ACUTE' },
       { prescriptionId: 810002, medication: 'Metformin 500mg', genericName: 'Metformin', orderDate: '2026-01-05', prescriptionNarrative: 'Metformin 500mg PO BID', indication: { code: 'DM2', display: 'Type 2 Diabetes', system: 'MOIS-INDICATION' }, type: 'REPEAT' },
     ],
     encounters: [
       {
-        encounterId: 500634,
-        appointmentDateTime: '2024-01-15T09:00:00',
+        visitReason1: null, healthIssue1: null, service1: null, serviceEvents: [],
+        encounterId: 500634, officeNote: null, roomNumber: null, timeSlots: null, payor: null,
+        visitCode: null, appointmentDateTime: '2024-01-15T09:00:00',
         arrivedDateTime: '2024-01-15T08:55:00',
         dischargeDateTime: null,
         location: 'Main clinic',
@@ -862,6 +891,7 @@ export const defaultSourceData: SourceData = {
         documentStatus: { code: 'I', display: 'Incomplete', system: 'MOIS-DOCUMENTSTATUS' },
       },
       {
+        visitReason1: null, healthIssue1: null, service1: null, serviceEvents: [],
         encounterId: 500635,
         appointmentDateTime: '2024-01-10T14:30:00',
         arrivedDateTime: '2024-01-10T14:20:00',
@@ -874,6 +904,7 @@ export const defaultSourceData: SourceData = {
         documentStatus: { code: 'C', display: 'Complete', system: 'MOIS-DOCUMENTSTATUS' },
       },
       {
+        visitReason1: null, healthIssue1: null, service1: null, serviceEvents: [],
         encounterId: 500636,
         appointmentDateTime: '2024-01-05T11:00:00',
         name: { first: 'John', family: 'Smith', text: 'John Smith' },

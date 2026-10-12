@@ -42,9 +42,9 @@ var WordFormRuntime = (() => {
   ));
   var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-  // ../github/webforms/node_modules/.pnpm/jszip@3.10.2/node_modules/jszip/dist/jszip.min.js
+  // node_modules/.pnpm/jszip@3.10.2/node_modules/jszip/dist/jszip.min.js
   var require_jszip_min = __commonJS({
-    "../github/webforms/node_modules/.pnpm/jszip@3.10.2/node_modules/jszip/dist/jszip.min.js"(exports, module) {
+    "node_modules/.pnpm/jszip@3.10.2/node_modules/jszip/dist/jszip.min.js"(exports, module) {
       !(function(e) {
         if ("object" == typeof exports && "undefined" != typeof module) module.exports = e();
         else if ("function" == typeof define && define.amd) define([], e);
