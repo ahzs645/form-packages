@@ -2,6 +2,7 @@ import type { SmartTemplateDefinition, SmartTemplateLink } from "./smart-templat
 export type { SmartTemplateLink } from "./smart-template";
 export type { SmartTemplateDefinition, SmartTemplateComponent, SmartTemplateSelection, SmartTemplateLayout, SmartTemplateKind } from "./smart-template";
 export type * from "./offline-authoring";
+export * from "./epic";
 export * from "./subgroup-design";
 export * from "./responsive-layout";
 export { resolveRichTextContent, resolveRichTextField } from "./rich-text-targets";
@@ -3566,6 +3567,8 @@ export interface BuilderDocument<TLayoutDraft = unknown> {
   exportTargets?: ExportTargetsSetting | null;
   /** Explicit OSCAR host/destination overrides; clinical intent stays in neutral bindings. */
   oscarExport?: import("./oscar").OscarExportSettings | null;
+  /** Public Epic SMART deployment configuration and explicit local mappings. */
+  epicExport?: import("./epic").EpicExportSettings | null;
 }
 
 /**
