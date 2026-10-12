@@ -510,10 +510,10 @@ function subformMembers(
         type: "choice",
         choiceStyle: "radio",
         options: options.map((option) => {
-          // Library subforms store `{ key, text, score }`; designed ones `{ id, label, state, score }`.
+          // Normalizing library options moves their stored key into id; labels remain display text.
           const loose = option as unknown as Record<string, unknown>;
           const label = text(option.label) || text(loose.text) || text(loose.key) || text(option.id);
-          return { label, value: text(option.state) || text(loose.key) || label, score: option.score };
+          return { label, value: text(option.state) || text(loose.key) || text(option.id) || label, score: option.score };
         }),
       },
       role: "answer",
