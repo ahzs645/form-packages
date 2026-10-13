@@ -2488,6 +2488,621 @@ const AnswerChoiceField = ({
     "data-answer-choice": effectiveId
   }, control, flag));
 };`,
+  './AssessmentKit/index.jsx': `// AssessmentKit — the shared runtime of the assessment components
+// (CheckItemGrid, CheckItemList, LetterTapping, SerialSubtraction,
+// VerbalFluency, AssessmentScore): scored test items that keep their answers
+// in one answer tree, as a cognitive screen such as the MoCA does.
+//
+// Every component writes under its own \`dataPath\` (a dot path into the form's
+// answers, e.g. "formAnswers.memory"), so a form rebuilt from a source keeps
+// the source's stored shape exactly. Each fills its defaults in on load (never
+// over an answer already there), locks once the form is signed or submitted or
+// its \`completePath\` answer is true, and stages the content it shows (its
+// words, sentences, starting number) for AssessmentScore's report under
+// \`__componentPayloads.assessmentContent[contentKey]\`, which is never saved.
+//
+//   AssessmentKit.getAt(root, path)
+//   AssessmentKit.setAt(target, path, value)       — mutates (immer drafts)
+//   AssessmentKit.useAnswers({ dataPath, defaults, completePath, contentKey, content })
+//     -> { answers, update(recipe), locked, data, sd, fd, setFormData }
+//   AssessmentKit.stagePayload(setFormData, group, componentId, payload)
+//   AssessmentKit.CheckButton, SectionRow, PointsCell, styles
+//
+// Consumers reference AssessmentKit only inside function bodies (component
+// files load in no guaranteed order). setFormData always receives a
+// produce()-wrapped recipe: the real MOIS runtime hands back the raw state
+// setter, so a bare mutator would replace the answers with undefined.
+
+const AssessmentKit = (() => {
+  const isRecord = value => value !== null && typeof value === "object" && !Array.isArray(value);
+  const clone = value => value === undefined ? undefined : JSON.parse(JSON.stringify(value));
+  const stepsOf = path => String(path || "").split(".").map(step => step.trim()).filter(Boolean);
+  const getAt = (root, path) => {
+    let current = root;
+    for (const step of stepsOf(path)) {
+      if (current === null || current === undefined) return undefined;
+      current = current[step];
+    }
+    return current;
+  };
+
+  // Writes value at path, creating the records on the way; mutates target.
+  const setAt = (target, path, value) => {
+    const steps = stepsOf(path);
+    if (!steps.length || !isRecord(target)) return target;
+    let node = target;
+    steps.slice(0, -1).forEach(step => {
+      if (!isRecord(node[step])) node[step] = {};
+      node = node[step];
+    });
+    node[steps[steps.length - 1]] = value;
+    return target;
+  };
+
+  // Adds the keys defaults has and value lacks, recursively through records;
+  // never replaces an answer (an array, or any value that is not a record, is
+  // kept as it is). Mutates and returns value.
+  const fillDefaults = (value, defaults) => {
+    if (!isRecord(value) || !isRecord(defaults)) return value;
+    Object.keys(defaults).forEach(key => {
+      if (!(key in value)) value[key] = clone(defaults[key]);else if (isRecord(value[key]) && isRecord(defaults[key])) fillDefaults(value[key], defaults[key]);
+    });
+    return value;
+  };
+  const withDefaults = (value, defaults) => {
+    if (!isRecord(defaults)) return value === undefined ? clone(defaults) : value;
+    return fillDefaults(isRecord(value) ? clone(value) : {}, defaults);
+  };
+  const isLocked = (sd, data, completePath) => sd?.webform?.recordState === "SIGNED" || sd?.webform?.isDraft === "N" || (completePath ? getAt(data, completePath) === true : false);
+  const sameJson = (left, right) => JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
+
+  // Stages a payload in __componentPayloads[group][componentId] (removed when
+  // null); writes only when it changed.
+  const stagePayload = (setFormData, group, componentId, payload) => {
+    if (typeof setFormData !== "function") return;
+    setFormData(produce(draft => {
+      if (!draft.field) draft.field = {
+        data: {},
+        status: {}
+      };
+      if (!isRecord(draft.field.data)) draft.field.data = {};
+      const container = isRecord(draft.field.data.__componentPayloads) ? draft.field.data.__componentPayloads : {};
+      const entries = isRecord(container[group]) ? container[group] : {};
+      if (sameJson(entries[componentId], payload)) return;
+      if (payload === null || payload === undefined) delete entries[componentId];else entries[componentId] = clone(payload);
+      container[group] = entries;
+      draft.field.data.__componentPayloads = container;
+    }));
+  };
+  const useAnswers = ({
+    dataPath,
+    defaults,
+    completePath,
+    contentKey,
+    content
+  }) => {
+    const [fd, setFormData] = useActiveData();
+    const sd = useSourceData();
+    const data = fd && fd.field && fd.field.data || {};
+    const stored = getAt(data, dataPath);
+    const answers = withDefaults(stored, defaults);
+    const locked = isLocked(sd, data, completePath);
+
+    // Fill the defaults in once the answers exist, so the saved tree has every
+    // key the source form saved; a locked (submitted or signed) form is left
+    // as it was saved.
+    const needsDefaults = !locked && isRecord(defaults) && !sameJson(stored, answers);
+    React.useEffect(() => {
+      if (!needsDefaults || typeof setFormData !== "function" || !dataPath) return;
+      setFormData(produce(draft => {
+        if (!draft.field) draft.field = {
+          data: {},
+          status: {}
+        };
+        if (!isRecord(draft.field.data)) draft.field.data = {};
+        const current = getAt(draft.field.data, dataPath);
+        if (isRecord(current)) fillDefaults(current, defaults);else setAt(draft.field.data, dataPath, clone(defaults));
+      }));
+    }, [needsDefaults, dataPath]);
+    const contentJson = JSON.stringify(content ?? null);
+    React.useEffect(() => {
+      if (!contentKey) return;
+      stagePayload(setFormData, "assessmentContent", contentKey, content ?? null);
+    }, [contentKey, contentJson]);
+
+    // recipe(answers) mutates the answers under dataPath (defaults filled in).
+    const update = recipe => {
+      if (locked || typeof setFormData !== "function" || !dataPath) return;
+      setFormData(produce(draft => {
+        if (!draft.field) draft.field = {
+          data: {},
+          status: {}
+        };
+        if (!isRecord(draft.field.data)) draft.field.data = {};
+        let current = getAt(draft.field.data, dataPath);
+        if (isRecord(defaults)) {
+          if (!isRecord(current)) {
+            setAt(draft.field.data, dataPath, clone(defaults));
+            current = getAt(draft.field.data, dataPath);
+          } else {
+            fillDefaults(current, defaults);
+          }
+          recipe(current);
+        } else {
+          const next = recipe(current);
+          setAt(draft.field.data, dataPath, next);
+        }
+      }));
+    };
+    return {
+      answers,
+      update,
+      locked,
+      data,
+      sd,
+      fd,
+      setFormData
+    };
+  };
+
+  // The MoCA sheet's look: navy section header, bordered rows, a points column.
+  const styles = {
+    navy: "rgb(21,59,108)",
+    header: {
+      backgroundColor: "rgb(21,59,108)",
+      color: "white",
+      height: "50px",
+      fontWeight: "bold",
+      display: "flex",
+      paddingLeft: "20px",
+      fontSize: "large",
+      alignContent: "center",
+      lineHeight: "50px",
+      textTransform: "uppercase"
+    },
+    lockedIcon: {
+      rootDisabled: {
+        backgroundColor: "inherit"
+      },
+      iconDisabled: {
+        color: "rgb(0, 120, 212)"
+      }
+    },
+    points: {
+      width: "59px",
+      display: "flex",
+      alignItems: "center",
+      borderLeft: "1px solid black"
+    },
+    pointsText: {
+      fontWeight: "bold",
+      flexGrow: "1",
+      textAlign: "center"
+    }
+  };
+  const CheckButton = ({
+    checked,
+    onClick,
+    disabled,
+    fill = false,
+    readOnly = false
+  }) => /*#__PURE__*/React.createElement(Fluent.IconButton, {
+    disabled: disabled || readOnly,
+    styles: fill ? {
+      root: {
+        height: "100%",
+        width: "100%"
+      },
+      ...styles.lockedIcon
+    } : styles.lockedIcon,
+    iconProps: checked ? {
+      iconName: "CheckMark"
+    } : {
+      iconName: ""
+    },
+    onClick: readOnly ? undefined : onClick
+  });
+  const PointsCell = ({
+    children,
+    style
+  }) => /*#__PURE__*/React.createElement("div", {
+    style: {
+      ...styles.points,
+      ...(style || {})
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: styles.pointsText
+  }, children));
+
+  // One sheet row: an optional navy header column (title + instructions), the
+  // item's own content, and an optional points column.
+  const SectionRow = ({
+    title,
+    instructions,
+    headerWidth = 250,
+    points,
+    border,
+    children,
+    headerExtra
+  }) => /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      flexDirection: "row",
+      fontSize: "medium",
+      ...(border || {
+        borderLeft: "1px solid black",
+        borderRight: "1px solid black",
+        borderTop: "1px solid black"
+      })
+    }
+  }, title || instructions || headerExtra ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      width: \`\${headerWidth}px\`,
+      display: "flex",
+      flexDirection: "column",
+      flexShrink: 0
+    }
+  }, title ? /*#__PURE__*/React.createElement("div", {
+    style: styles.header
+  }, /*#__PURE__*/React.createElement("span", null, title)) : null, instructions ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: "medium",
+      padding: "3px"
+    }
+  }, instructions) : null, headerExtra || null) : null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      flexGrow: 1,
+      display: "flex",
+      flexDirection: "column",
+      minWidth: 0
+    }
+  }, children), points !== undefined && points !== null ? /*#__PURE__*/React.createElement(PointsCell, null, points) : null);
+  const countTrue = value => isRecord(value) ? Object.values(value).filter(entry => entry === true).length : 0;
+  const todayString = (date = new Date()) => {
+    const pad = value => String(value).padStart(2, "0");
+    return \`\${date.getFullYear()}-\${pad(date.getMonth() + 1)}-\${pad(date.getDate())}\`;
+  };
+  return {
+    isRecord,
+    clone,
+    getAt,
+    setAt,
+    fillDefaults,
+    withDefaults,
+    isLocked,
+    sameJson,
+    stagePayload,
+    useAnswers,
+    countTrue,
+    todayString,
+    styles,
+    CheckButton,
+    PointsCell,
+    SectionRow
+  };
+})();`,
+  './AssessmentScore/index.jsx': `// AssessmentScore — the scoring end of an assessment built from the
+// AssessmentKit items: rolls the item answers up into section and form totals,
+// shows the total row, locks the form once it is complete, and stages what
+// the form writes to the chart on submit.
+//
+// scoreRules: evaluated in order, each writes \`target\` (a dot path into the
+// answers) as the sum of its terms, read after the rules before it:
+//   { path }                 true -> 1, false/null -> 0, a number as it is
+//   { path, atLeast }        1 when the number is at least atLeast
+//   { count, weight = 1 }    the true values in the record at count, x weight
+//   { sumOf }                the numbers in the record at sumOf, added
+// adjustments: [{ path, label }] — checks drawn in the total row (such as
+//   "Add 1 point if <= 12 yr edu"); count them in a rule.
+// total: { path, max, label }; extraTotals: [{ label, path, max, suffix }].
+// completePath: answer set true as the form is submitted (a staged submit
+//   patch); the items lock while it is true.
+// observation: the form's calculated observation, staged for submit
+//   (calculatedUpdate; component-submit-writes.ts):
+//   { observationCode, valueType, value: { path, multiply, divide, round },
+//     report: { format, rootPath, versionPath, content } }
+//   reportedBy (the current user) and reportedDate (today) are added.
+//   Report formats are named; "moca-blind" reproduces the NH MoCA Blind
+//   source's report text exactly, reading the items' staged content (the
+//   words, sentences, starting number) by the keys in report.content.
+const AssessmentScore = ({
+  id,
+  fieldId,
+  completePath,
+  scoreRules = [],
+  adjustments = [],
+  total,
+  extraTotals = [],
+  notes = [],
+  administeredByPath,
+  footerText,
+  lockedText = "**COMPLETED FORM - READ ONLY**",
+  observation
+}) => {
+  const [fd, setFormData] = useActiveData();
+  const sd = useSourceData();
+  const data = fd && fd.field && fd.field.data || {};
+  const locked = AssessmentKit.isLocked(sd, data, completePath);
+  const componentId = fieldId || id || "AssessmentScore";
+  const get = path => AssessmentKit.getAt(data, path);
+
+  // --- Totals -------------------------------------------------------------
+  const termValue = (root, term) => {
+    if (!term || typeof term !== "object") return 0;
+    if (term.count) return AssessmentKit.countTrue(AssessmentKit.getAt(root, term.count)) * (term.weight === undefined ? 1 : Number(term.weight));
+    if (term.sumOf) {
+      const record = AssessmentKit.getAt(root, term.sumOf);
+      return AssessmentKit.isRecord(record) ? Object.values(record).reduce((sum, value) => sum + (Number(value) || 0), 0) : 0;
+    }
+    const value = AssessmentKit.getAt(root, term.path);
+    if (term.atLeast !== undefined) return Number(value) >= Number(term.atLeast) ? 1 : 0;
+    if (value === true) return 1;
+    return Number(value) || 0;
+  };
+  const evaluateRules = root => {
+    const working = AssessmentKit.clone(root || {});
+    const results = [];
+    (Array.isArray(scoreRules) ? scoreRules : []).forEach(rule => {
+      if (!rule || !rule.target) return;
+      const value = (Array.isArray(rule.terms) ? rule.terms : []).reduce((sum, term) => sum + termValue(working, term), 0);
+      AssessmentKit.setAt(working, rule.target, value);
+      results.push([rule.target, value]);
+    });
+    return results;
+  };
+  // The complete flag and each adjustment start false, as answers the form keeps.
+  const startingAnswers = [completePath, ...(Array.isArray(adjustments) ? adjustments : []).map(adjustment => adjustment?.path)].filter(Boolean);
+  const totals = evaluateRules(data);
+  const stale = !locked && (totals.some(([path, value]) => get(path) !== value) || startingAnswers.some(path => get(path) === undefined));
+  const totalsJson = JSON.stringify(totals);
+  React.useEffect(() => {
+    if (!stale || typeof setFormData !== "function") return;
+    setFormData(produce(draft => {
+      if (!draft.field) draft.field = {
+        data: {},
+        status: {}
+      };
+      if (!AssessmentKit.isRecord(draft.field.data)) draft.field.data = {};
+      startingAnswers.forEach(path => {
+        if (AssessmentKit.getAt(draft.field.data, path) === undefined) AssessmentKit.setAt(draft.field.data, path, false);
+      });
+      evaluateRules(draft.field.data).forEach(([path, value]) => {
+        if (AssessmentKit.getAt(draft.field.data, path) !== value) AssessmentKit.setAt(draft.field.data, path, value);
+      });
+    }));
+  }, [stale, totalsJson]);
+
+  // --- Submit: the complete flag ------------------------------------------
+  React.useEffect(() => {
+    AssessmentKit.stagePayload(setFormData, "submitPatchesByComponent", componentId, completePath ? [{
+      path: completePath,
+      value: true
+    }] : null);
+  }, [componentId, completePath]);
+
+  // --- Submit: the calculated observation ---------------------------------
+  const content = data.__componentPayloads && data.__componentPayloads.assessmentContent || {};
+  const calculated = (() => {
+    if (!observation || !observation.observationCode) return null;
+    const spec = observation.value || {};
+    let value = Number(get(spec.path)) || 0;
+    if (spec.multiply !== undefined) value *= Number(spec.multiply);
+    if (spec.divide !== undefined) value /= Number(spec.divide);
+    if (spec.round) value = Math.round(value);
+    const update = {
+      observationCode: String(observation.observationCode),
+      value: String(value),
+      reportedBy: sd?.userProfile?.identity?.fullName,
+      reportedDate: AssessmentKit.todayString(),
+      valueType: observation.valueType || "numeric"
+    };
+    const report = observation.report ? AssessmentScore.reports[observation.report.format]?.(data, content, observation.report) : undefined;
+    if (report !== undefined) update.report = report;
+    return update;
+  })();
+  const calculatedJson = JSON.stringify(calculated);
+  React.useEffect(() => {
+    if (locked) return;
+    AssessmentKit.stagePayload(setFormData, "calculatedUpdatesByComponent", componentId, calculated);
+  }, [componentId, calculatedJson, locked]);
+
+  // --- Total row ------------------------------------------------------------
+  const toggleAdjustment = path => {
+    if (locked || typeof setFormData !== "function") return;
+    setFormData(produce(draft => {
+      if (!draft.field) draft.field = {
+        data: {},
+        status: {}
+      };
+      if (!AssessmentKit.isRecord(draft.field.data)) draft.field.data = {};
+      AssessmentKit.setAt(draft.field.data, path, !(AssessmentKit.getAt(draft.field.data, path) === true));
+    }));
+  };
+  const administeredBy = administeredByPath ? get(administeredByPath) ?? sd?.userProfile?.identity?.fullName ?? null : null;
+  const navy = AssessmentKit.styles.navy;
+  return /*#__PURE__*/React.createElement("div", {
+    id: id || fieldId,
+    "data-assessment-item": "assessment-score"
+  }, locked && lockedText ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      margin: "4px 0"
+    }
+  }, /*#__PURE__*/React.createElement("i", null, lockedText)) : null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      flexDirection: "row",
+      fontSize: "medium",
+      minHeight: "90px"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      flexDirection: "column",
+      justifyContent: "space-between",
+      padding: "3px",
+      width: "75%"
+    }
+  }, notes.length ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      flexDirection: "row",
+      justifyContent: "space-between",
+      fontWeight: "bold",
+      paddingRight: "20px",
+      fontSize: "larger",
+      color: navy
+    }
+  }, notes.map(note => /*#__PURE__*/React.createElement("span", {
+    key: note
+  }, note))) : null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "center",
+      flexWrap: "wrap"
+    }
+  }, administeredByPath ? /*#__PURE__*/React.createElement("span", null, "Administered by: ", /*#__PURE__*/React.createElement("span", {
+    style: {
+      borderBottom: "1px solid black"
+    }
+  }, administeredBy)) : /*#__PURE__*/React.createElement("span", null), adjustments.map(adjustment => /*#__PURE__*/React.createElement("span", {
+    key: adjustment.path,
+    style: {
+      display: "inline-flex",
+      alignItems: "center"
+    }
+  }, adjustment.label, " [", /*#__PURE__*/React.createElement(AssessmentKit.CheckButton, {
+    checked: get(adjustment.path) === true,
+    disabled: locked,
+    onClick: () => toggleAdjustment(adjustment.path)
+  }), "]")))), total ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      borderLeft: "1px solid black",
+      borderBottom: "1px solid black",
+      flexGrow: 1,
+      marginLeft: "20px",
+      display: "flex",
+      alignItems: "center",
+      paddingLeft: "20px"
+    }
+  }, /*#__PURE__*/React.createElement("span", null, total.label || "TOTAL")), /*#__PURE__*/React.createElement(AssessmentKit.PointsCell, {
+    style: {
+      borderRight: "1px solid black",
+      borderBottom: "1px solid black"
+    }
+  }, \`\${get(total.path) ?? 0}/\${total.max ?? ""}\`)) : null), extraTotals.map(extra => /*#__PURE__*/React.createElement("div", {
+    key: extra.path,
+    style: {
+      width: "100%",
+      textAlign: "right",
+      fontWeight: "bold"
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      paddingRight: "8px"
+    }
+  }, \`\${extra.label}: \${get(extra.path) ?? 0} /\${extra.max ?? ""}\`, extra.suffix ? \`    \${extra.suffix}\` : ""))), footerText ? /*#__PURE__*/React.createElement("span", null, footerText) : null);
+};
+
+// Named report formats: (data, content, options) -> report text.
+AssessmentScore.reports = {
+  // The NH MoCA Blind form's getSaveData report, line for line (its wording
+  // and spacing, typos included, are what the chart holds for every MoCA
+  // charted so far). options.rootPath is the answer tree, options.versionPath
+  // the version label, options.content the content keys of the memory grid,
+  // serial subtraction, repeated sentences, fluency and abstraction items.
+  "moca-blind": (data, content, options) => {
+    const fa = AssessmentKit.getAt(data, options.rootPath || "formAnswers") || {};
+    const keys = options.content || {};
+    const formVer = AssessmentKit.getAt(data, options.versionPath || "formAnswers.formVersion") ?? null;
+    const words = content[keys.memory || "memory"]?.items || [];
+    const start = Number(content[keys.subtraction || "subtraction"]?.start);
+    const sentences = content[keys.sentences || "sentences"]?.items || [];
+    const letter = content[keys.fluency || "fluency"]?.letter ?? "";
+    const pairs = content[keys.abstraction || "abstraction"]?.items || [];
+    const cat = n => words[n - 1];
+    const yn = value => value ? "Y" : "N";
+    const memory = fa.memory || {};
+    const t1 = memory["1stTrial"] || {};
+    const t2 = memory["2ndTrial"] || {};
+    const attention = fa.attention || {};
+    const sv = attention.subtractionvalues || {};
+    const language = fa.language || {};
+    const langword = language.langword || {};
+    const entries = Array.isArray(langword.langwordentry) ? langword.langwordentry : [];
+    const recall = fa.delayedRecall || {};
+    const x3 = recall.X3 || {};
+    const x2 = recall.X2 || {};
+    const x1 = recall.X1 || {};
+    const orientation = fa.orientation || {};
+    const totals = fa.sectionTotals || {};
+    const letters = Array.isArray(attention.attAtapletters) ? attention.attAtapletters : [];
+    const later = (previous, current) => current ? \`\${current} (\${previous - current === 7 ? \`Y (\${previous}-7=\${current})\` : \`N (Answer should be \${previous - 7} based on previous answer\`})\` : "No Answer provided";
+    let report = "MoCA Blind report\\n";
+    report += \`Version: \${formVer}\\n\`;
+    report += "================================================\\n\\n";
+    report += "Memory (No Points)\\n";
+    report += "------------------\\n";
+    report += \`1st Trial- \${cat(1)}:\${yn(t1.mem1)}, \${cat(2)}:\${yn(t1.mem2)}, \${cat(3)}:\${yn(t1.mem3)}, \${cat(4)}:\${yn(t1.mem4)}, \${cat(5)}:\${yn(t1.mem5)}\\n\`;
+    report += \`2nd Trial- \${cat(1)}:\${yn(t2.mem1)}, \${cat(2)}:\${yn(t2.mem2)}, \${cat(3)}:\${yn(t2.mem3)}, \${cat(4)}:\${yn(t2.mem4)}, \${cat(5)}:\${yn(t2.mem5)}\\n\`;
+    report += "\\n";
+    report += \`Attention (\${totals.attentionScore}/5)\\n\`;
+    report += "------------------\\n";
+    report += \`Digits repeated correctly in forward order: \${attention.attforward ? "Y (1 point)" : "N (0 points"}\\n\`;
+    report += \`Digits repeated correctly in reverse order: \${attention.attreverse ? "Y (1 point)" : "N (0 points)"}\\n\`;
+    report += \`Subject tap at each letter A errors: \${letters.filter(entry => entry.required != entry.checked).length} (\${attention.attAtap ? "1 point" : "0 points - 2 or more errors"})\\n\`;
+    report += \`Seria 7 subtraction starting at \${start} answers (\${attention.subtractionScore}/3 points):\\n\`;
+    report += \`\\t1st answer: \${sv.calcval1 ? \`\${sv.calcval1} (\${start - sv.calcval1 === 7 ? \`Y (\${start}-7=\${start - 7})\` : "N "})\` : "No Answer provided"}\\n\`;
+    report += \`\\t2nd answer: \${later(sv.calcval1, sv.calcval2)}\\n\`;
+    report += \`\\t3rd answer: \${later(sv.calcval2, sv.calcval3)}\\n\`;
+    report += \`\\t4th answer: \${later(sv.calcval3, sv.calcval4)}\\n\`;
+    report += \`\\t5th answer: \${later(sv.calcval4, sv.calcval5)}\\n\`;
+    report += "\\n";
+    report += \`Language (\${totals.languageScore}/3)\\n\`;
+    report += "------------------\\n";
+    report += \`Phrase '\${sentences[0]?.label}' repeated: \${language.langphrase1 ? "Y (1 point)" : "N (0 points)"}\\n\`;
+    report += \`Phrase '\${sentences[1]?.label}' repeated: \${language.langphrase2 ? "Y (1 point)" : "N (0 points)"}\\n\`;
+    report += \`Subject answers for 'List words beginning with \${letter} in one minute'\\n\`;
+    const answered = entries.filter(entry => Boolean(entry.text) && entry.text !== "");
+    if (answered.length === 0) {
+      report += "--No answers recorded using form tool. Score value entered manually--\\n";
+    } else {
+      report += "\\tAnswer\\t\\tValid?\\n";
+      report += "\\t------\\t\\t------\\n";
+      answered.forEach(entry => {
+        report += \`\\t\${entry.text}\\t\\t\${entry.isValid ?? "N"}\\n\`;
+      });
+    }
+    report += \`Number of valid answers: \${langword.langwordvalidcount ?? 0} (\${langword.langwordvalidcount > 10 ? "1 point - 11 or more valid words" : "0 points - 10 or less valid words"})\\n\`;
+    report += "\\n";
+    report += \`Abstraction (\${totals.abstractionScore}/2)\\n\`;
+    report += "------------------\\n";
+    report += \`\${pairs[0]?.label}: \${fa.abstraction?.abs1 ? "Y (1 point)" : "N (0 points)"}\\n\`;
+    report += \`\${pairs[1]?.label}: \${fa.abstraction?.abs2 ? "Y (1 point)" : "N (0 points)"}\\n\`;
+    report += "\\n";
+    report += \`Delayed Recall (\${totals.delayedRecallScore}/5)\\n\`;
+    report += "------------------\\n";
+    report += "Uncalled Recall (each Y = +3 to Memory Index Score)\\n";
+    report += \`\\t\${cat(1)}: \${yn(x3.dr1)}, \${cat(2)}: \${yn(x3.dr2)}, \${cat(3)}: \${yn(x3.dr3)}, \${cat(4)}: \${yn(x3.dr4)}, \${cat(5)}: \${yn(x3.dr5)}\\n\`;
+    report += "Category Cue (each Y = +2 to Memory Index Score)\\n";
+    report += \`\\t\${cat(1)}: \${yn(x2.dr1)}, \${cat(2)}: \${yn(x2.dr2)}, \${cat(3)}: \${yn(x2.dr3)}, \${cat(4)}: \${yn(x2.dr4)}, \${cat(5)}: \${yn(x2.dr5)}\\n\`;
+    report += "Multiple Choice Cue (each Y = +1 to Memory Index Score)\\n";
+    report += \`\\t\${cat(1)}: \${yn(x1.dr1)}, \${cat(2)}: \${yn(x1.dr2)}, \${cat(3)}: \${yn(x1.dr3)}, \${cat(4)}: \${yn(x1.dr4)}, \${cat(5)}: \${yn(x1.dr5)}\\n\`;
+    report += "\\n";
+    report += \`Memory Index Score = \${fa.misTotal}/15\\n\`;
+    report += "\\n";
+    report += \`Orientation (\${totals.orientationScore}/6)\\n\`;
+    report += "------------------\\n";
+    report += \`Date: \${yn(orientation.date)}, Month: \${yn(orientation.month)}, Year: \${yn(orientation.year)}, Day: \${yn(orientation.day)}, Place: \${yn(orientation.place)}, City: \${yn(orientation.city)}\\n\`;
+    report += "\\n";
+    report += \`Client has 12yr or less education: \${fa.education?.under12yr ? "Y (1 point)" : "N"}\\n\`;
+    report += "\\n\\n";
+    report += "------------------\\n";
+    report += \`Total: \${fa.pointsTotal}/22.     Memory Index Score: \${fa.misTotal}/15\\n\`;
+    report += \`Total (converted to score out of 30): \${Math.round(fa.pointsTotal / 22 * 30)}/30\`;
+    return report;
+  }
+};`,
   './AssessmentScoringTable/index.jsx': `// Fluent is a NAMESPACE in the real engine's form scope — bare Fluent
 // identifiers are a ReferenceError in production even though preview
 // injects them. Destructure everything this component renders.
@@ -5753,6 +6368,289 @@ const ChartReviewSummary = ({
       }
     }, "  [ " + (K.classifyFlag(latest, value) || "N/A") + " ]"));
   })) : null));
+};`,
+  './CheckItemGrid/index.jsx': `// CheckItemGrid — a scored grid of items (columns) by trials or cue levels
+// (rows), each cell a check: a word-list memory trial, a delayed recall by cue.
+//
+// Answers: \`\${dataPath}.\${row.key}.\${itemKeyPrefix}\${n}\` = true/false, n from 1
+// (MoCA: formAnswers.memory["1stTrial"].mem1). With \`exclusivePerItem\`, a check
+// clears the same item in the other rows (an item is recalled at one cue level).
+//
+// Points column: \`points\` is fixed text ("NO POINTS"), or { row, max } to show
+// the checks in that row out of max. \`weightedTotal\` ({ label, max }) shows the
+// rows' checks times each row's \`weight\` (the MoCA Memory Index Score).
+// The items are staged as \`{ items }\` under \`contentKey\` for the report.
+const CheckItemGrid = ({
+  id,
+  fieldId,
+  label,
+  title,
+  instructions,
+  dataPath,
+  items = [],
+  rows = [],
+  itemKeyPrefix = "item",
+  exclusivePerItem = false,
+  cornerLabel = "",
+  points,
+  weightedTotal,
+  completePath,
+  contentKey
+}) => {
+  const words = (Array.isArray(items) ? items : []).map(item => typeof item === "string" ? item : String(item?.label ?? item?.text ?? ""));
+  const rowList = (Array.isArray(rows) ? rows : []).filter(row => row && row.key);
+  const itemKey = index => \`\${itemKeyPrefix}\${index + 1}\`;
+  const defaults = Object.fromEntries(rowList.map(row => [row.key, Object.fromEntries(words.map((_, index) => [itemKey(index), false]))]));
+  const {
+    answers,
+    update,
+    locked
+  } = AssessmentKit.useAnswers({
+    dataPath,
+    defaults,
+    completePath,
+    contentKey,
+    content: {
+      items: words
+    }
+  });
+  const toggle = (rowKey, index) => update(current => {
+    const key = itemKey(index);
+    const next = !(current?.[rowKey]?.[key] === true);
+    if (exclusivePerItem) {
+      rowList.forEach(row => {
+        if (AssessmentKit.isRecord(current[row.key])) current[row.key][key] = false;
+      });
+    }
+    current[rowKey][key] = next;
+  });
+  const rowCount = rowKey => AssessmentKit.countTrue(answers?.[rowKey]);
+  const weighted = rowList.reduce((total, row) => total + rowCount(row.key) * (Number(row.weight) || 0), 0);
+  const pointsText = typeof points === "string" ? points : points && points.row ? \`\${rowCount(points.row)}/\${points.max ?? words.length}\` : null;
+  const header = title !== undefined ? title : label;
+  const cell = {
+    border: "1px solid black",
+    textAlign: "center"
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    id: id || fieldId,
+    "data-assessment-item": "check-item-grid"
+  }, /*#__PURE__*/React.createElement(AssessmentKit.SectionRow, {
+    title: header,
+    instructions: instructions,
+    points: pointsText
+  }, /*#__PURE__*/React.createElement("table", {
+    style: {
+      borderCollapse: "collapse",
+      border: "1px solid black",
+      width: "100%",
+      height: "100%"
+    }
+  }, /*#__PURE__*/React.createElement("tbody", null, /*#__PURE__*/React.createElement("tr", {
+    style: {
+      maxHeight: "48px"
+    }
+  }, /*#__PURE__*/React.createElement("th", {
+    style: {
+      ...cell,
+      lineHeight: "46px",
+      fontWeight: "normal",
+      fontSize: "small"
+    }
+  }, cornerLabel), words.map((word, index) => /*#__PURE__*/React.createElement("th", {
+    key: \`h-\${index}\`,
+    style: {
+      ...cell,
+      lineHeight: "46px"
+    }
+  }, word)), weightedTotal ? /*#__PURE__*/React.createElement("th", {
+    style: {
+      ...cell,
+      fontSize: "small",
+      fontWeight: "normal",
+      maxWidth: "70px"
+    }
+  }, weightedTotal.header || "") : null), rowList.map((row, rowIndex) => /*#__PURE__*/React.createElement("tr", {
+    key: row.key
+  }, /*#__PURE__*/React.createElement("td", {
+    style: {
+      ...cell,
+      height: "50px",
+      textAlign: "left",
+      paddingLeft: "4px"
+    }
+  }, row.label, row.weightLabel ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: "small"
+    }
+  }, row.weightLabel) : null), words.map((word, index) => /*#__PURE__*/React.createElement("td", {
+    key: \`\${row.key}-\${index}\`,
+    style: {
+      ...cell,
+      height: "1px",
+      paddingTop: "2px"
+    }
+  }, /*#__PURE__*/React.createElement(AssessmentKit.CheckButton, {
+    fill: true,
+    checked: answers?.[row.key]?.[itemKey(index)] === true,
+    disabled: locked,
+    onClick: () => toggle(row.key, index)
+  }))), weightedTotal && rowIndex === 0 ? /*#__PURE__*/React.createElement("td", {
+    rowSpan: rowList.length,
+    style: {
+      ...cell,
+      fontWeight: "bold"
+    }
+  }, \`\${weightedTotal.label || "Total"} = \${weighted}/\${weightedTotal.max ?? ""}\`) : null))))));
+};`,
+  './CheckItemList/index.jsx': `// CheckItemList — scored items, one check each: digits repeated forward and
+// backward, sentences repeated, abstraction pairs, orientation questions.
+//
+// Answers: \`\${dataPath}.\${item.key}\` = true/false (MoCA:
+// formAnswers.attention.attforward). Each item shows its \`label\` and, after
+// the check, its \`stimulus\` (the digits read out).
+//
+// layout: "rows" (label left, check and stimulus right), "centered" (check
+// then label, centred, one per line) or "inline" (check then label, across).
+// \`points\` true shows the checked items out of the item count; a number sets
+// the maximum. The items are staged as \`{ items }\` under \`contentKey\` for the
+// report.
+const CheckItemList = ({
+  id,
+  fieldId,
+  label,
+  title,
+  instructions,
+  subtitle,
+  dataPath,
+  items = [],
+  layout = "rows",
+  bold = false,
+  points = true,
+  completePath,
+  contentKey
+}) => {
+  const list = (Array.isArray(items) ? items : []).filter(item => item && item.key);
+  const defaults = Object.fromEntries(list.map(item => [item.key, false]));
+  const {
+    answers,
+    update,
+    locked
+  } = AssessmentKit.useAnswers({
+    dataPath,
+    defaults,
+    completePath,
+    contentKey,
+    content: {
+      items: list.map(item => ({
+        key: item.key,
+        label: item.label ?? "",
+        stimulus: item.stimulus ?? ""
+      }))
+    }
+  });
+  const toggle = key => update(current => {
+    current[key] = !(current[key] === true);
+  });
+  const checked = key => answers?.[key] === true;
+  const count = list.filter(item => checked(item.key)).length;
+  const max = typeof points === "number" ? points : list.length;
+  const header = title !== undefined ? title : label;
+  const check = item => /*#__PURE__*/React.createElement("span", {
+    style: {
+      display: "inline-flex",
+      alignItems: "center"
+    }
+  }, "[", /*#__PURE__*/React.createElement(AssessmentKit.CheckButton, {
+    checked: checked(item.key),
+    disabled: locked,
+    onClick: () => toggle(item.key)
+  }), "]");
+  let body;
+  if (layout === "inline") {
+    body = /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        flexDirection: "row",
+        flexWrap: "wrap",
+        alignItems: "center",
+        justifyContent: "space-around",
+        fontWeight: "bold",
+        minHeight: "50px"
+      }
+    }, list.map(item => /*#__PURE__*/React.createElement("span", {
+      key: item.key,
+      style: {
+        display: "inline-flex",
+        alignItems: "center"
+      }
+    }, check(item), " ", item.label)));
+  } else if (layout === "centered") {
+    body = /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "center",
+        textAlign: "center",
+        fontWeight: "bold",
+        flexGrow: 1
+      }
+    }, list.map(item => /*#__PURE__*/React.createElement("span", {
+      key: item.key,
+      style: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center"
+      }
+    }, check(item), \` \${item.label ?? ""}\`)));
+  } else {
+    body = /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        flexDirection: "column",
+        paddingLeft: "5px",
+        fontWeight: bold ? "bold" : "normal",
+        flexGrow: 1
+      }
+    }, list.map(item => /*#__PURE__*/React.createElement("div", {
+      key: item.key,
+      style: {
+        flexGrow: 1,
+        display: "flex",
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        padding: "3px",
+        minHeight: "40px"
+      }
+    }, /*#__PURE__*/React.createElement("span", null, item.label), /*#__PURE__*/React.createElement("span", {
+      style: {
+        paddingRight: "5px",
+        display: "inline-flex",
+        alignItems: "center"
+      }
+    }, check(item), item.stimulus ? /*#__PURE__*/React.createElement("span", {
+      style: {
+        letterSpacing: "5px",
+        paddingLeft: "5px"
+      }
+    }, item.stimulus) : null))));
+  }
+  return /*#__PURE__*/React.createElement("div", {
+    id: id || fieldId,
+    "data-assessment-item": "check-item-list"
+  }, /*#__PURE__*/React.createElement(AssessmentKit.SectionRow, {
+    title: header,
+    instructions: instructions,
+    headerExtra: subtitle ? /*#__PURE__*/React.createElement("div", {
+      style: {
+        textAlign: "right",
+        paddingRight: "30px",
+        fontWeight: "bold"
+      }
+    }, subtitle) : null,
+    points: points === false ? null : \`\${count}/\${max}\`
+  }, body));
 };`,
   './CodedObservationChoiceField/index.jsx': `const {
   useEffect,
@@ -34466,6 +35364,171 @@ function LayoutTable({
     }, renderLayoutTableCellContent(cell, readOnly, tableData, sd, setFieldValue, cellVisibility, formulaFieldTypes));
   }))))));
 }`,
+  './LetterTapping/index.jsx': `// LetterTapping — the vigilance item: a row of letters read out, the subject
+// taps at each target letter; the examiner marks the taps, then Complete
+// scores it (no more than \`maxErrors\` errors passes) and the row locks.
+//
+// Answers under dataPath (MoCA: formAnswers.attention):
+//   [lettersKey]  [{ letter, checked, required }] — required = letter is the target
+//   [completeKey] true once Complete is pressed (cannot be undone)
+//   [passedKey]   true when the errors (a tap off target, or a target missed)
+//                 are at most maxErrors; computed while complete
+// \`completeOnSubmit\` sets completeKey as the form is submitted, as the MoCA
+// did in its getSaveData (a staged submit patch; component-submit-writes.ts).
+const LetterTapping = ({
+  id,
+  fieldId,
+  label,
+  title,
+  instructions = "Read list of letters. The subject must tap at each letter A. No points if ≥ 2 errors.",
+  dataPath,
+  letters = "",
+  target = "A",
+  maxErrors = 1,
+  lettersKey = "letters",
+  completeKey = "complete",
+  passedKey = "passed",
+  completeOnSubmit = false,
+  points = 1,
+  completePath,
+  contentKey
+}) => {
+  const sequence = String(letters || "").replace(/\\s+/g, "").split("");
+  const targetLetter = String(target || "").toUpperCase();
+  const letterDefaults = sequence.map(letter => ({
+    letter,
+    checked: false,
+    required: letter.toUpperCase() === targetLetter
+  }));
+  const {
+    answers,
+    update,
+    locked,
+    setFormData
+  } = AssessmentKit.useAnswers({
+    dataPath,
+    defaults: {
+      [passedKey]: false,
+      [completeKey]: false,
+      [lettersKey]: letterDefaults
+    },
+    completePath,
+    contentKey,
+    content: {
+      letters: sequence.join(""),
+      target: targetLetter
+    }
+  });
+  const stored = Array.isArray(answers?.[lettersKey]) ? answers[lettersKey] : letterDefaults;
+  const complete = answers?.[completeKey] === true;
+  const passed = answers?.[passedKey] === true;
+  const componentId = fieldId || id || "LetterTapping";
+  const passes = list => list.filter(entry => entry.checked != entry.required).length <= Number(maxErrors);
+  const toggle = index => {
+    if (complete) return;
+    update(current => {
+      const list = Array.isArray(current[lettersKey]) ? current[lettersKey] : current[lettersKey] = AssessmentKit.clone(letterDefaults);
+      if (list[index]) list[index].checked = !list[index].checked;
+      if (current[completeKey] === true) current[passedKey] = passes(list);
+    });
+  };
+  const finish = () => update(current => {
+    current[completeKey] = true;
+    const list = Array.isArray(current[lettersKey]) ? current[lettersKey] : [];
+    current[passedKey] = passes(list);
+  });
+  const patchJson = JSON.stringify(completeOnSubmit && dataPath ? [{
+    path: \`\${dataPath}.\${completeKey}\`,
+    value: true
+  }] : null);
+  React.useEffect(() => {
+    AssessmentKit.stagePayload(setFormData, "submitPatchesByComponent", componentId, JSON.parse(patchJson));
+  }, [componentId, patchJson]);
+  const header = title !== undefined ? title : label;
+  return /*#__PURE__*/React.createElement("div", {
+    id: id || fieldId,
+    "data-assessment-item": "letter-tapping"
+  }, /*#__PURE__*/React.createElement(AssessmentKit.SectionRow, {
+    title: header,
+    points: points === false ? null : \`\${passed ? points : 0}/\${points}\`,
+    border: {
+      border: "1px solid black"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "inline-flex",
+      flexDirection: "column",
+      padding: "3px"
+    }
+  }, /*#__PURE__*/React.createElement("span", null, instructions, /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("br", null), complete ? /*#__PURE__*/React.createElement("i", null, "Results: Subject tapped at bordered letters. Errant or missed taps highlighted in red, proper in green") : /*#__PURE__*/React.createElement("i", null, "Click each letter subject taps at. Click complete when done ", /*#__PURE__*/React.createElement("strong", null, "(cannot be undone)"))), /*#__PURE__*/React.createElement("span", {
+    style: {
+      textAlign: "center",
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      flexWrap: "wrap"
+    }
+  }, "[", /*#__PURE__*/React.createElement(AssessmentKit.CheckButton, {
+    checked: passed,
+    readOnly: true
+  }), "]", /*#__PURE__*/React.createElement("span", {
+    style: {
+      paddingLeft: "10px",
+      fontWeight: "bold",
+      display: "inline-flex",
+      flexDirection: "row",
+      alignItems: "center",
+      flexWrap: "wrap"
+    }
+  }, /*#__PURE__*/React.createElement("table", {
+    style: {
+      borderCollapse: "collapse"
+    }
+  }, /*#__PURE__*/React.createElement("tbody", null, /*#__PURE__*/React.createElement("tr", null, stored.map((entry, index) => {
+    const feedback = complete && (entry.checked || entry.required);
+    const background = feedback ? entry.checked != entry.required ? "lightpink" : "rgb(222 245 222)" : "inherit";
+    return /*#__PURE__*/React.createElement("td", {
+      key: \`\${entry.letter}-\${index}\`,
+      style: {
+        borderCollapse: "collapse",
+        border: entry.checked ? "1px solid black" : "none",
+        padding: entry.checked ? "0px" : "1px"
+      }
+    }, /*#__PURE__*/React.createElement(Fluent.DefaultButton, {
+      text: entry.letter,
+      disabled: locked || complete,
+      onClick: () => toggle(index),
+      styles: {
+        root: {
+          border: "none",
+          minWidth: 20,
+          width: 20,
+          height: 26,
+          padding: 0,
+          borderRadius: 0,
+          backgroundColor: background,
+          color: "#111827"
+        },
+        rootDisabled: {
+          border: "none",
+          minWidth: 20,
+          width: 20,
+          height: 26,
+          padding: 0,
+          borderRadius: 0,
+          backgroundColor: background,
+          color: "#111827"
+        },
+        label: {
+          margin: 0
+        }
+      }
+    }));
+  })))), !complete && !locked ? /*#__PURE__*/React.createElement(Fluent.DefaultButton, {
+    text: "Complete",
+    onClick: finish
+  }) : null)))));
+};`,
   './LongTermMedications/index.jsx': `function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /**
  * Display a list of long term medication orders for this patient.
@@ -52518,6 +53581,187 @@ const ScoringScales = {
     score: 0
   }]
 };`,
+  './SerialSubtraction/index.jsx': `// SerialSubtraction — serial subtraction (the MoCA's serial 7s): the subject
+// subtracts \`step\` from \`start\` \`count\` times; each answer is scored against
+// the previous answer (or the start), and the count of correct answers maps to
+// points through \`scoreBands\`.
+//
+// Answers under dataPath (MoCA: formAnswers.attention):
+//   [valuesKey].[valuePrefix]n   the answer given (number or null), n from 1
+//   [correctKey].[correctPrefix]n true when that answer is right
+//   [scoreKey]                    points, from the bands
+// An answer is scored when it is entered (a later change to an earlier answer
+// does not rescore the next one), as the MoCA source did.
+// \`{ start }\` is staged under \`contentKey\` for the report.
+const SerialSubtraction = ({
+  id,
+  fieldId,
+  label,
+  title,
+  text = "Serial {step} subtraction starting at {start}",
+  dataPath,
+  start = 100,
+  step = 7,
+  count = 5,
+  valuesKey = "values",
+  valuePrefix = "value",
+  correctKey = "correct",
+  correctPrefix = "correct",
+  scoreKey = "score",
+  scoreBands = [{
+    min: 0,
+    score: 0
+  }, {
+    min: 1,
+    score: 1
+  }, {
+    min: 2,
+    score: 2
+  }, {
+    min: 4,
+    score: 3
+  }],
+  bandsText = "4 or 5 correct subtractions: 3 pts|2 or 3 correct: 2 pts|1 correct: 1 pts|0 correct: 0 pts",
+  completePath,
+  contentKey
+}) => {
+  const startValue = Number(start);
+  const stepValue = Number(step);
+  const indexes = Array.from({
+    length: Math.max(1, Number(count) || 1)
+  }, (_, index) => index + 1);
+  const defaults = {
+    [correctKey]: Object.fromEntries(indexes.map(n => [\`\${correctPrefix}\${n}\`, false])),
+    [valuesKey]: Object.fromEntries(indexes.map(n => [\`\${valuePrefix}\${n}\`, null])),
+    [scoreKey]: 0
+  };
+  const {
+    answers,
+    update,
+    locked
+  } = AssessmentKit.useAnswers({
+    dataPath,
+    defaults,
+    completePath,
+    contentKey,
+    content: {
+      start: startValue,
+      step: stepValue
+    }
+  });
+  const [open, setOpen] = React.useState(false);
+  const values = answers?.[valuesKey] || {};
+  const correct = answers?.[correctKey] || {};
+  const valueAt = n => values[\`\${valuePrefix}\${n}\`] ?? null;
+  const correctAt = n => correct[\`\${correctPrefix}\${n}\`] === true;
+  const bandScore = hits => (Array.isArray(scoreBands) ? scoreBands : []).filter(band => hits >= Number(band.min)).reduce((score, band) => Number(band.score), 0);
+  const hits = indexes.filter(correctAt).length;
+  const score = Number(answers?.[scoreKey] ?? bandScore(hits));
+  const setValue = (n, raw) => update(current => {
+    const digits = String(raw ?? "").replace(/_/g, "").trim();
+    const value = digits === "" ? null : Number(digits);
+    current[valuesKey] = current[valuesKey] || {};
+    current[correctKey] = current[correctKey] || {};
+    current[valuesKey][\`\${valuePrefix}\${n}\`] = value;
+    current[correctKey][\`\${correctPrefix}\${n}\`] = n === 1 ? value === startValue - stepValue : current[valuesKey][\`\${valuePrefix}\${n - 1}\`] - stepValue === value;
+    const total = indexes.filter(index => current[correctKey][\`\${correctPrefix}\${index}\`] === true).length;
+    current[scoreKey] = bandScore(total);
+  });
+  const header = title !== undefined ? title : label;
+  const caption = String(text).replace("{step}", String(stepValue)).replace("{start}", String(startValue));
+  const bands = String(bandsText || "").split("|").filter(Boolean);
+  const maxScore = Math.max(0, ...(Array.isArray(scoreBands) ? scoreBands : []).map(band => Number(band.score) || 0));
+  return /*#__PURE__*/React.createElement("div", {
+    id: id || fieldId,
+    "data-assessment-item": "serial-subtraction"
+  }, /*#__PURE__*/React.createElement(AssessmentKit.SectionRow, {
+    title: header,
+    points: \`\${score}/\${maxScore}\`,
+    border: {
+      borderLeft: "1px solid black",
+      borderRight: "1px solid black"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "inline-flex",
+      flexDirection: "column",
+      padding: "3px"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+      paddingRight: "20px",
+      flexWrap: "wrap"
+    }
+  }, /*#__PURE__*/React.createElement("span", null, caption, " ", /*#__PURE__*/React.createElement(Fluent.IconButton, {
+    iconProps: {
+      iconName: "Edit"
+    },
+    onClick: () => setOpen(true)
+  })), indexes.map(n => /*#__PURE__*/React.createElement("span", {
+    key: n,
+    style: {
+      display: "inline-flex",
+      alignItems: "center"
+    }
+  }, "[", /*#__PURE__*/React.createElement(AssessmentKit.CheckButton, {
+    checked: correctAt(n),
+    readOnly: true
+  }), "] ", valueAt(n) ?? "__"))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      flexDirection: "row",
+      justifyContent: "space-around",
+      alignItems: "center",
+      flexWrap: "wrap"
+    }
+  }, bands.map(band => {
+    const [lead, pts] = band.split(":");
+    return /*#__PURE__*/React.createElement("span", {
+      key: band
+    }, lead, pts !== undefined ? /*#__PURE__*/React.createElement(React.Fragment, null, ": ", /*#__PURE__*/React.createElement("strong", null, pts.trim())) : null);
+  })))), /*#__PURE__*/React.createElement(SubForm, {
+    hidden: !open,
+    onCancel: () => setOpen(false)
+  }, /*#__PURE__*/React.createElement("div", {
+    "data-assessment-dialog": "serial-subtraction",
+    style: {
+      display: "flex",
+      flexDirection: "column"
+    }
+  }, /*#__PURE__*/React.createElement("div", null, "Please enter in the values provided by the subject in order"), indexes.map(n => {
+    const value = valueAt(n);
+    const previous = n === 1 ? startValue : valueAt(n - 1);
+    return /*#__PURE__*/React.createElement("div", {
+      key: n,
+      style: {
+        display: "inline-flex",
+        flexDirection: "row",
+        alignItems: "center"
+      }
+    }, "Answer ", n, ":", " ", /*#__PURE__*/React.createElement(Fluent.MaskedTextField, {
+      readOnly: locked,
+      borderless: true,
+      mask: "999",
+      disabled: n > 1 && !valueAt(n - 1),
+      value: value == null ? "" : String(value),
+      styles: {
+        root: {
+          width: "45px"
+        }
+      },
+      onChange: (event, next) => setValue(n, next)
+    }), " ", /*#__PURE__*/React.createElement(Fluent.FontIcon, {
+      iconName: correctAt(n) ? "CheckMark" : value !== null ? "Cancel" : undefined
+    }), "\\xA0 ", value ? \`\${correctAt(n) ? "C" : "Inc"}orrect (\${previous} - \${stepValue} = \${previous - stepValue})\` : null);
+  })), /*#__PURE__*/React.createElement(Fluent.DefaultButton, {
+    text: "OK",
+    onClick: () => setOpen(false)
+  })));
+};`,
   './ServiceEpisodes/index.jsx': `function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 /**
  * Provide dropdown selection of a single service episode. The initial data is
@@ -58724,6 +59968,261 @@ const ValueSetObservationField = ({
     existingObservationScope: "webform"
   }, props));
 };`,
+  './VerbalFluency/index.jsx': `// VerbalFluency — letter fluency: the subject names words beginning with
+// \`letter\` in a minute. The examiner types each word and marks it valid (Y)
+// or not (N); a word that does not start with the letter is marked N as it is
+// typed. The valid count passes at \`threshold\` words. With no words typed the
+// count can be entered by hand (scored on paper).
+//
+// Answers under dataPath (MoCA: formAnswers.language.langword):
+//   [entriesKey] [{ text, isValid }] — isValid "Y", "N" or null; one empty
+//                entry at the end to type into
+//   [countKey]   the valid count (null until known)
+// \`{ letter }\` is staged under \`contentKey\` for the report.
+const VerbalFluency = ({
+  id,
+  fieldId,
+  label,
+  text = "Fluency: Name maximum number of words in one minute that begin with the letter {letter}.",
+  dataPath,
+  letter = "F",
+  threshold = 11,
+  entriesKey = "entries",
+  countKey = "validCount",
+  completePath,
+  contentKey
+}) => {
+  const targetLetter = String(letter || "").toUpperCase();
+  const blank = () => ({
+    text: null,
+    isValid: null
+  });
+  const {
+    answers,
+    update,
+    locked
+  } = AssessmentKit.useAnswers({
+    dataPath,
+    defaults: {
+      [entriesKey]: [blank()],
+      [countKey]: null
+    },
+    completePath,
+    contentKey,
+    content: {
+      letter: targetLetter,
+      threshold: Number(threshold)
+    }
+  });
+  const [open, setOpen] = React.useState(false);
+  const textRef = React.useRef(null);
+  const entries = Array.isArray(answers?.[entriesKey]) && answers[entriesKey].length ? answers[entriesKey] : [blank()];
+  const validCount = answers?.[countKey] ?? null;
+  const typed = entries.filter(entry => Boolean(entry?.text) && entry.text !== "");
+  const listed = typed.length > 0 && entries.length > 1;
+  const passes = Number(validCount) >= Number(threshold);
+  React.useLayoutEffect(() => {
+    if (open) textRef.current?.focus();
+  });
+
+  // Recount from the typed words, as the source did on every change.
+  const recount = current => {
+    const list = current[entriesKey];
+    if (list.filter(entry => Boolean(entry.text)).length > 0) {
+      current[countKey] = list.filter(entry => entry.isValid === "Y").length;
+    }
+  };
+  const withEntries = recipe => update(current => {
+    if (!Array.isArray(current[entriesKey]) || current[entriesKey].length === 0) current[entriesKey] = [blank()];
+    recipe(current[entriesKey], current);
+    recount(current);
+  });
+  const setText = (index, value) => withEntries(list => {
+    const entry = list[index];
+    if (!entry) return;
+    entry.text = value;
+    if (!value || value.length === 0) {
+      entry.isValid = null;
+      entry.text = null;
+    } else if (value.charAt(0).toUpperCase() !== targetLetter) {
+      entry.isValid = "N";
+    }
+  });
+  const setValidity = (index, key) => withEntries(list => {
+    if (list[index]) list[index].isValid = key;
+  });
+  const addEntry = () => withEntries(list => {
+    list.push(blank());
+  });
+  const removeEntry = index => withEntries(list => {
+    list.splice(index, 1);
+    if (list.length === 0) list.push(blank());
+  });
+  const setManualCount = raw => update(current => {
+    const digits = Number(String(raw ?? "").replace(/_/g, ""));
+    current[countKey] = digits > 0 ? digits : null;
+    if (Array.isArray(current[entriesKey])) recount(current);
+  });
+  const caption = String(text).replace("{letter}", targetLetter);
+  return /*#__PURE__*/React.createElement("div", {
+    id: id || fieldId,
+    "data-assessment-item": "verbal-fluency"
+  }, /*#__PURE__*/React.createElement(AssessmentKit.SectionRow, {
+    points: \`\${passes ? 1 : 0}/1\`,
+    border: {
+      borderLeft: "1px solid black",
+      borderRight: "1px solid black"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      flexDirection: "row",
+      alignItems: "center",
+      flexGrow: 1,
+      justifyContent: "space-between",
+      padding: "3px",
+      flexWrap: "wrap"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: "bold",
+      display: "inline-flex",
+      flexDirection: "row",
+      fontSize: "0.95em",
+      alignItems: "center"
+    }
+  }, /*#__PURE__*/React.createElement("span", null, caption), /*#__PURE__*/React.createElement(Fluent.IconButton, {
+    iconProps: {
+      iconName: "Edit"
+    },
+    styles: {
+      root: {
+        backgroundColor: listed ? "rgb(222 245 222)" : "inherit"
+      },
+      icon: {
+        color: listed ? "black" : "rgb(0, 120, 212)"
+      }
+    },
+    onClick: () => setOpen(true)
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      flexDirection: "row",
+      alignItems: "center"
+    }
+  }, "[", /*#__PURE__*/React.createElement(AssessmentKit.CheckButton, {
+    checked: passes,
+    readOnly: true
+  }), "]\\xA0", /*#__PURE__*/React.createElement(Fluent.MaskedTextField, {
+    borderless: true,
+    mask: "999",
+    readOnly: locked || listed,
+    value: validCount == null ? "" : String(validCount),
+    styles: {
+      root: {
+        width: "45px"
+      }
+    },
+    onChange: (event, value) => setManualCount(value)
+  }), \` (N ≥ \${threshold} words)\`))), /*#__PURE__*/React.createElement(SubForm, {
+    hidden: !open,
+    onCancel: () => setOpen(false),
+    minWidth: "600px"
+  }, /*#__PURE__*/React.createElement("div", {
+    "data-assessment-dialog": "verbal-fluency",
+    style: {
+      display: "flex",
+      flexDirection: "column"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      flexDirection: "row",
+      justifyContent: "space-between",
+      fontWeight: "bold",
+      paddingBottom: "5px"
+    }
+  }, /*#__PURE__*/React.createElement("span", null, \`Words beginning with \${targetLetter}\`), /*#__PURE__*/React.createElement("span", {
+    style: {
+      width: "10%",
+      display: "flex",
+      justifyContent: "space-between"
+    }
+  }, /*#__PURE__*/React.createElement("span", null, "Y"), /*#__PURE__*/React.createElement("span", null, "N"))), entries.map((entry, index) => {
+    const last = index === entries.length - 1;
+    return /*#__PURE__*/React.createElement("div", {
+      key: index,
+      style: {
+        display: "flex",
+        flexDirection: "row",
+        justifyContent: "space-between",
+        paddingBottom: "5px"
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        flexGrow: 1,
+        paddingRight: "20px",
+        display: "inline-flex",
+        alignItems: "center"
+      }
+    }, locked && last && index === 0 && !entry.text ? /*#__PURE__*/React.createElement("span", null, "No answers given or answers recorded and scored on paper") : locked && last ? null : /*#__PURE__*/React.createElement(React.Fragment, null, !locked && (!last || entry.text) ? /*#__PURE__*/React.createElement(Fluent.IconButton, {
+      iconProps: {
+        iconName: "Cancel"
+      },
+      onClick: () => removeEntry(index)
+    }) : null, /*#__PURE__*/React.createElement("span", {
+      style: {
+        paddingLeft: !last || entry.text ? "0px" : "32px"
+      }
+    }, \`\${index + 1}. \`), /*#__PURE__*/React.createElement(Fluent.TextField, {
+      readOnly: locked,
+      value: entry.text ?? "",
+      componentRef: last ? textRef : undefined,
+      placeholder: last ? "Enter word here" : undefined,
+      onChange: (event, value) => setText(index, value ?? ""),
+      onKeyDown: event => {
+        if (last && event.key === "Enter" && event.target.value.length > 0) addEntry();
+      },
+      styles: {
+        root: {
+          flexGrow: 1,
+          paddingLeft: "10px"
+        }
+      }
+    }))), entry.text?.length > 0 ? /*#__PURE__*/React.createElement(Fluent.ChoiceGroup, {
+      disabled: locked,
+      options: [{
+        key: "Y"
+      }, {
+        key: "N"
+      }],
+      selectedKey: entry.isValid ?? null,
+      onChange: (event, option) => setValidity(index, option.key),
+      styles: {
+        flexContainer: {
+          display: "flex",
+          flexDirection: "row",
+          justifyContent: "space-between"
+        },
+        root: {
+          width: "10%"
+        }
+      }
+    }) : /*#__PURE__*/React.createElement("div", {
+      style: {
+        width: "10%"
+      }
+    }));
+  }), /*#__PURE__*/React.createElement(Fluent.DefaultButton, {
+    text: "Ok",
+    onClick: () => setOpen(false),
+    styles: {
+      root: {
+        width: "65px"
+      }
+    }
+  }))));
+};`,
   './WordRegenerator/index.jsx': `// Generated by scripts/generate-word-regenerator.mjs. Edit the runtime or wrapper source.
 "use strict";
 
@@ -63490,6 +64989,8 @@ export const componentDefinedNames: Record<string, string[]> = {
   './Allergies/index.jsx': ["Allergies","AllergiesFields"],
   './AllergyTable/index.jsx': ["AllergyTable"],
   './AnswerChoiceField/index.jsx': ["AnswerChoiceField","OTHER_KEY","all","answer","answerDisabled","byCode","choose","code","codingOf","comboOptions","commitOther","control","controlled","display","effectiveId","flag","inactive","isEmpty","kept","kit","list","listed","lookup","multiple","next","offered","openOther","options","ordinal","otherChosen","otherCode","otherInput","otherText","readAnswer","renderChecklist","renderDropdown","renderSearchable","sd","selected","showLabel","stateOf","states","stored","storedCodes","text","toggle","typed","unavailable","unique","value","wrap","write"],
+  './AssessmentKit/index.jsx': ["AssessmentKit","CheckButton","PointsCell","SectionRow","answers","bodies","clone","container","contentJson","countTrue","current","data","entries","fillDefaults","getAt","isLocked","isRecord","locked","needsDefaults","next","node","pad","sameJson","sd","setAt","stagePayload","steps","stepsOf","stored","styles","todayString","update","useAnswers","withDefaults"],
+  './AssessmentScore/index.jsx': ["AssessmentScore","administeredBy","answered","attention","calculated","calculatedJson","cat","componentId","content","data","entries","evaluateRules","fa","formVer","get","keys","language","langword","later","letter","letters","locked","memory","navy","orientation","pairs","recall","record","report","results","sd","sentences","spec","stale","start","startingAnswers","sv","t1","t2","termValue","toggleAdjustment","totals","totalsJson","update","value","words","working","x1","x2","x3","yn"],
   './AssessmentScoringTable/index.jsx': ["AssessmentScoringTable","getFieldValue","hasValue","inputStyle","labelCellStyle","number","numberOrBlank","raw","renderRow","scoreRows","setScore","sum","tableStyle","total","value","valueCellStyle"],
   './AttestationSignOff/index.jsx': ["AttestationSignOff","cleaned","current","deriveInitials","flatTargets","getCurrentActorName","initials","key","name","nestedTargets","next","normalizeInitialsName","normalizeRoleOptions","normalizeTargets","parts","roleOptions","row","sd","signatureFieldId","signatureValue","signedAt","source","table","text","updateValue","value"],
   './AuthorshipField/index.jsx': ["AuthorshipField","DEFAULT_WINDOW_HOURS","_defaultPolicy","_nhAuth","_normalizeFieldOptions","actor","actorFrom","addHoursIso","base","buildKey","c","changed","ck","claim","claims","commitSave","commitValue","componentId","current","d","data","editableUntil","effectiveFieldId","euDate","existing","expired","fieldData","formatTimestamp","isNonEmpty","isOwner","keepStatus","key","label","lockExpired","lockInfo","lockOn","lockedUntil","nextStatus","nhAuth","normalizeStore","now","nowIso","numeric","optionList","ownerId","ownerName","ownerRefresh","pad2","pending","policy","policyAppliesToAction","prepareSave","query","raw","readOnly","readStore","release","renderInput","resolveNow","sameActor","sd","section","store","text","trimmed","ts","untilSelf","value","windowHours"],
@@ -63499,6 +65000,8 @@ export const componentDefinedNames: Record<string, string[]> = {
   './ChartRecordManager/index.jsx': ["CHART_RECORD_MANAGER_TARGETS","ChartRecordCreateButton","ChartRecordEditor","ChartRecordList","ChartRecordManager","__chartRecordEditorChannels","_chartRecordEditorRegister","_chartRecordManagerApplyCascades","_chartRecordManagerDefaultCascades","_chartRecordManagerDefaultFieldPresets","_chartRecordManagerDefaultFields","_chartRecordManagerEditHiddenFields","_chartRecordManagerFieldTransforms","_chartRecordManagerStripKeys","baseFields","chartRefresh","classification","cleaned","code","codeSystem","columns","contextId","createButtons","dataEntryConfig","fallback","fallbackManagerId","fieldPreset","handleClick","handleConfirmDelete","handler","hasWriteTarget","hidden","identity","layered","managerId","mapped","merged","next","openChartRecordEditor","openForCreate","openForEdit","preset","record","recordId","request","resolvedAllowDelete","resolvedCascades","resolvedEditHiddenFieldIds","resolvedFields","resolvedManagerId","resolvedPayloadMap","resolvedRecordIdKey","resolvedStripKeys","resolvedWriteTarget","result","sd","seeded","spec","stripRecord","subject","targetInfo","transform","variables","writeDefinition"],
   './ChartRecordTable/index.jsx': ["ChartRecordTable","_chartRecordTableActiveConnections","_chartRecordTableActivePlannedActions","_chartRecordTableGenericColumns","_chartRecordTableGenericEntryColumns","_chartRecordTablePresets","_chartRecordTableSorts","_chartRecordTableStartDateDesc","baseChartColumns","byType","preset","resolvedChartColumns","resolvedEntryColumns","resolvedFieldId","resolvedFilterPred","resolvedId","resolvedLabel","resolvedListCompare","resolvedMoisModule","resolvedSelectionType","resolvedSourceId","resolvedSourceMap"],
   './ChartReviewSummary/index.jsx': ["ChartReviewSummary","K","REVIEW_BLUE","REVIEW_GRAY","REVIEW_INK","REVIEW_RED","ReviewSectionHeading","age","best","bestTime","codeList","current","doseText","latestByCode","medications","monthDelta","now","observations","parsed","patient","problems","reviewAgeYears","reviewArray","reviewDateKey","reviewGetObject","reviewHeadingStyle","reviewLineStyle","rows","sd","sex","steps","stopRaw","stopTime","time","units","value"],
+  './CheckItemGrid/index.jsx': ["CheckItemGrid","cell","defaults","header","itemKey","key","next","pointsText","rowCount","rowList","toggle","weighted","words"],
+  './CheckItemList/index.jsx': ["CheckItemList","body","check","checked","count","defaults","header","list","max","toggle"],
   './CodedObservationChoiceField/index.jsx': ["CodedObservationChoiceField","candidates","checklistOptions","code","codedChoicePayloadsEqual","codings","commentValue","componentId","container","createdBy","currentPayload","display","effectiveFieldId","effectiveRenderAs","effectiveSelectionType","findExistingObservationId","formatCodedChoiceReport","fromContext","handleFindCodeChange","isMultiple","match","nextGroup","normalizeCodedChoiceOptions","normalizeSelectedCodings","oldId","option","options","report","sd","selectOptions","selectedValue","setCodedChoicePayload","stripVolatileCodedChoicePayloadFields","value","values","writeCodedChoiceValue"],
   './CommonSchemaDefn/index.jsx': ["NameBlockFields","active","commonSchemaDefn","formHistorySchema","makeCodedObsUpdates","makeObsUpdatesFromVs","makeTextObsUpdates","makeValueSetOptions","nameBlockSchema","newDco","oldObs","oldObsId","options","selectAll","startDateDesc","valueSet","vso","ynuaOptions"],
   './CompactBooleanField/index.jsx': ["BooleanLabelPresets","CompactBooleanChecklist","CompactBooleanChecklistSchema","CompactBooleanField","CompactBooleanFieldSchema","CompactBooleanGroup","CompactChoiceField","CompactChoiceFieldMultiSchema","CompactChoiceFieldSchema","OptionButtons","YesNoButtons","__MemoCompactBooleanButtons","__compactBooleanButtonTokens","__compactBooleanEmptyLinkedFieldIds","buttonStyle","checkboxWrapperRef","choiceContent","commitValue","containerStyle","currentData","currentValue","data","decodePDFHex","decoded","fieldContent","getBooleanLabels","getButtonStyles","getCardContainerStyles","getFieldContainerStyles","getWidthStyle","handleChange","handleCheckboxChange","handleClick","handleNoClick","handleYesClick","input","isDarkMode","isDisabled","isHorizontal","isLast","isLeftLabel","isMultiple","isSelected","items","labelStyle","lastRowStyle","linkedFieldIdsKey","newValue","newValues","noButtonStyle","normalizeValue","normalized","normalizedValue","noteStyle","option","prevDecoded","rightLabelStyle","rowStyle","selected","selectedValues","setFormData","sizeStyles","theme","themeLabelMaxWidth","themeLabelMinWidth","titleStyle","toCoding","values","widthMap","yesButtonStyle"],
@@ -63541,6 +65044,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './InvestigationTabs/index.jsx': ["INVESTIGATION_DEFAULT_TABS","InvestigationTab","InvestigationTabs","childArray","childById","childTabId","count","handleTabListKeyDown","id","isActive","label","next","normalizeInvestigationTabs","numeric","panelChildren","props","resolvedTabs","selected","source","tabRefs","target"],
   './LayoutKit/index.jsx': ["LayoutKit","fieldWidthFraction","minimum","responsiveFieldStyle","share","spacing","width"],
   './LayoutTable/index.jsx': ["LAYOUT_TABLE_CONTROLLER_KINDS","LAYOUT_TABLE_FORMULA_BUILTINS","LAYOUT_TABLE_FORMULA_FIELD_TYPES","LAYOUT_TABLE_FORMULA_FUNCTIONS","LAYOUT_TABLE_FORMULA_TOKEN","LayoutTable","Pad","Tag","answer","boundCells","buttonControls","candidate","cell","cellStyle","cellVisibility","cells","checklistOptions","checks","code","codings","collectLayoutTableControllerKinds","collectLayoutTableDefaultCells","collectLayoutTableFormulaFieldTypes","computeLayoutTableCellValue","computedCells","config","controllerKinds","date","defaultCells","display","displayValue","effectiveReadOnly","evaluateLayoutTableFormula","evaluated","explicit","extractLayoutTableFormulaRefs","fallback","fieldHasSavedValue","fieldId","fields","formatLayoutTableComputedValue","formatLayoutTableFieldDisplayValue","formatLayoutTableLocalDate","formatLayoutTableSourceValue","formula","formulaFieldTypes","getCellDisplayValue","getLayoutTableFieldRawValue","getLayoutTableSourcePaths","getNumericFieldValue","getPathValue","hasLayoutTableSourceValue","id","ids","inline","isCheckedValue","isLayoutTableFormulaProperty","isSafeLayoutTableFormula","jsExpression","key","kinds","label","labelProp","layoutTableCellIsVisible","layoutTableDefaultToStored","layoutTableFormulaNumber","layoutTableFormulaTree","layoutTableFormulaTrees","layoutTableSignatureDataUrl","layoutTableSourceText","lower","match","multiline","needsAnswerChoice","nextData","normalizeLayoutTableOptionList","normalized","now","number","numeric","offered","onChange","onValidate","option","optionList","options","pad","parseLayoutTableSumIds","parsed","paths","raw","rawAnswers","rawValue","read","refs","renderLayoutTableCellContent","renderLayoutTableField","renderLayoutTableFieldList","renderLayoutTableReadOnlyField","renderLayoutTableResources","renderLayoutTableStampButton","renderLink","renderNow","resolveLayoutTableDefault","resolveLayoutTableSourceValue","resources","root","rounded","rowIsVisible","rule","rules","sd","section","seededDefaults","setFieldValue","sharedProps","signatureUrl","sourceBindingIsInitial","sourceBoundCells","sourceFieldIds","sourcePaths","spinButtonProps","stored","strippedExpression","sumIds","sumMatch","tableData","tableRows","targets","text","toCoding","tree","types","updates","value","values","visibleRows","withAvailableCellOptions"],
+  './LetterTapping/index.jsx': ["LetterTapping","background","complete","componentId","feedback","finish","header","letterDefaults","list","passed","passes","patchJson","sequence","stored","targetLetter","toggle"],
   './LongTermMedications/index.jsx': ["LongTermMedications","LongTermMedicationsFields"],
   './MirthListenerUtility/index.jsx': ["AbortControllerClass","MIRTH_UTILITY_DEFAULT_SITES","MIRTH_UTILITY_PAYLOAD_MODES","MIRTH_UTILITY_SEND_METHODS","MirthListenerUtility","aborted","baseResult","body","canBeacon","controller","fetchJson","finishSend","form","initialSiteId","methodInfo","mirthUtilityBuildTemplate","mirthUtilityFormatBody","mirthUtilityNormalizeUrl","mirthUtilityParseBody","mirthUtilityPersistResult","mirthUtilitySelectStyle","parsed","payloadIssue","queued","resetPayload","response","responseText","sd","selectedSite","signAndSend","siteList","stampPayload","stamped","startedAt","statusColor","statusLabel","storedResult","targetUrl","text","timeout","timeoutMs","trimmed","url","xhr","xhrResult"],
   './MoisModuleLinkList/index.jsx': ["MoisModuleLinkList","label","moisModule","normalizeItems","normalizedItems","source"],
@@ -63574,6 +65078,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './SaveOnClose/index.jsx': ["DEFAULT_WINDOW_HOURS","SaveOnClose","_buildDefaultSavePayload","_nhAuthPrepareSave","_normalizeSaveOnCloseOptions","_stripComponentPayloads","_useChangeAwareDirtyState","actor","actorFrom","addHoursIso","baselineRef","buildKey","c","changed","ck","claim","claims","commitSave","current","d","data","dirtyRef","disabled","editableUntil","euDate","existing","expired","fieldData","formatTimestamp","isDirty","isNonEmpty","isOwner","keepStatus","key","label","lockExpired","lockInfo","lockOn","lockedUntil","markSaved","nextStatus","normalizeStore","normalizedOptions","now","nowIso","ownerId","ownerName","ownerRefresh","pad2","pending","policyAppliesToAction","prepareSave","prepared","raw","readStore","release","renderCountRef","resolveNow","sameActor","saveData","sd","store","trackedValue","ts","untilSelf","useSaveOnClose","windowHours"],
   './ScaleField/index.jsx': ["CHOICE_FIELD_STYLE","LABEL_COLUMN_STYLE","LABEL_STYLE","ScaleField","ScaleFieldEndpointLabels","ScaleFieldLegend","ScaleFieldTooltip","_getInlineMinWidth","_renderOptionTooltipContent","choiceGroupStyles","choiceOptions","containerStyle","currentData","fieldContent","firstDescription","handleChange","hasDescriptions","inlineMinWidth","isControlled","label","lastDescription","legendItemStyle","legendRowStyle","nextValue","normalizeControlledValue","normalizedTooltipMode","readOnly","scaleOptions","selectedKey","selectedOption","shouldShowAllTooltip","theme"],
   './ScoringModule/index.jsx': ["CompactScoringQuestion","GroupedChecklistQuestion","GroupedChecklistSection","INTERPRETATION_BOX_STYLE","MatrixScoringRow","MatrixScoringTable","QUESTION_CONTAINER_STYLE","ScoringModule","ScoringModuleSchema","ScoringOptionTooltip","ScoringQuestion","ScoringScales","ScoringTotal","TOTAL_CONTAINER_STYLE","_cloneMirrorValue","_getQuestionMirrorFieldIds","_safeSerialize","_scoringAnswerKey","allEntries","answer","answerScore","answerValue","answered","answers","bodies","buildQuestionScoreValues","buildScoreMap","calculatedTotals","candidates","checked","checkedFromConfig","checkedOption","checklist","checklistUngroupedQuestions","code","collectScoreCandidates","computeAnyway","containerStyle","contextRoot","continuumLabels","countsBySignature","createScoringConfig","createScoringQuestion","createScoringTotal","current","currentData","direct","display","effectiveShowProgress","enabledQuestionIds","errorContainerStyle","evaluateScoringFormulaTotal","expected","explicitKey","explicitShared","factor","formatBounds","formulaIds","formulaResult","getAnswers","getInterpretation","getScoreFromValue","getValue","groupedQuestionIds","handleSelect","handleToggle","hasChanges","hasDescription","hasScoringTotalFormula","headerLabelStyle","headerOptionStyle","headerStyle","ids","interpretation","interpretationStyle","isComplete","isDarkMode","isInRange","isScoringQuestionEnabled","key","keyValue","labelCellStyle","labelStyle","map","matched","matrixQuestionIds","matrixQuestions","matrixSignature","max","maxContinuumLabel","maxSymbol","meetsMax","meetsMin","min","minContinuumLabel","minSymbol","mirrorIds","nextChecked","nextOption","normalizeQuestionIds","normalizeScoreToken","normalizeScoringOption","normalizeScoringOptions","normalized","normalizedLayout","normalizedOptionMap","optionCellStyle","optionControl","optionMap","optionScoreMap","options","optionsBySignature","parsed","progress","progressStyle","question","questionGroups","questionMirrorEntries","questionOptions","questions","questionsById","raw","resolveChecklistOptions","resolveMatrixOptions","resolveQuestionOptions","resolveScoringContextVariable","resolvedOptions","results","rowStyle","rule","scaleGridStyle","scaleWrapStyle","score","scoreMap","scoreValue","scoreValues","scoredAnswers","scoringModuleFormulaTree","scoringModuleFormulaTrees","sectionQuestions","segments","selected","serializeOptionSignature","sharedOptions","shouldRenderCompact","shouldRenderGroupedChecklist","shouldRenderMatrix","signature","sourceData","stackedQuestions","stored","tableStyle","targetIds","termQuestionId","text","theme","tokens","total","totalMirrorEntries","totals","tree","uncheckedFromConfig","uncheckedOption","value","values","winnerCount","winnerSignature","wrapperStyle"],
+  './SerialSubtraction/index.jsx': ["SerialSubtraction","bandScore","bands","caption","correct","correctAt","defaults","digits","header","hits","indexes","maxScore","previous","score","setValue","startValue","stepValue","total","value","valueAt","values"],
   './ServiceEpisodes/index.jsx': ["ServiceEpisodes","ServiceEpisodesFields","activeServiceEpisodes","startDateDesc"],
   './ServiceRequests/index.jsx': ["ServiceRequests","ServiceRequestsFields","activeServiceRequests","orderDateDesc"],
   './SignaturePad/index.jsx': ["B","D","L","O","Observer","SIGNATURE_PAD_HEIGHTS","SignaturePad","SignaturePadCanvas","SignaturePadCell","SignaturePadLib","T","U","W","_","__exports","_signaturePadDataUrl","_signaturePadValue","a","bodies","borderColor","c","canvas","canvasProps","canvasRef","compact","container","containerRef","context","controlled","dataUrlRef","define","e","exports","f","h","handleEndStroke","heading","i","k","l","m","module","mutedColor","name","next","o","observer","onDrawRef","onResize","p","pad","padHeight","padRef","paint","r","ratio","read","readOnly","readOnlyImageStyle","s","savedDataUrl","showLabel","shownRef","start","t","theme","thumbnail","u","width","widthRef","write","y"],
@@ -63582,6 +65087,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './UseChangeWatch/index.jsx': ["_defaultCompare","_normalizeWatchOptions","baselineRef","compare","delayCount","dirtyRef","disabled","forcedDirtyRef","isDirty","normalizedOptions","onDirtyChange","renderCountRef","setChanged","useChangeWatch"],
   './ValueKit/index.jsx': ["BOOLEAN_FALSE_TEXT","BOOLEAN_OBJECT_KEYS","BOOLEAN_TRUE_TEXT","CHOICE_CODE_KEYS","CHOICE_DISPLAY_KEYS","DATE_FORMATS","DATE_OBJECT_KEYS","FHIR_ANSWER_KEYS","FHIR_SCORE_EXTENSION","OPTION_CODE_KEYS","OPTION_DISPLAY_KEYS","ORDINAL_OPTION_CODE_KEYS","TIME_SUFFIX","ValueKit","choiceValue","code","code2","date","digits","display","entries","entry","fhirAnswerValue","fhirExtensionScore","fhirValue","finiteNumber","firstText","hours","ids","index","inner","isRecord","label","labels","match","midnight","millis","minutes","normalizeOption","normalized","normalizedLabel","off","offsetMinutes","on","ordinal","parseDateText","parsed","readBoolean","readBooleanNeutralMode","readChoice","readChoiceEntries","readDate","readDateTime","resolveAgainstOptions","rest","result","sameText","scalarText","score","seconds","text","time","trimmed","withOptional","zone"],
   './ValueSetObservationField/index.jsx': ["RuntimeCodedChoice","ValueSetObservationField"],
+  './VerbalFluency/index.jsx': ["VerbalFluency","addEntry","blank","caption","digits","entries","entry","last","list","listed","passes","recount","removeEntry","setManualCount","setText","setValidity","targetLetter","textRef","typed","validCount","withEntries"],
   './WordRegenerator/index.jsx': ["A","C","CHART_FACT_ID_PREFIX","D","E","F","G","H","I","IMAGE_DATA_URL","J","K","L","M","MONTHS","MONTHS2","N","P","PDF_TARGET_PREFIX","R","ROW_COLUMN_TWIPS","S","SIGNED_PLACEHOLDER_TEXT","T","TEXT_KEYS","TEXT_WIDTH_TWIPS","U","V","W","W14","W2","W3","W4","WORD_FORM_MIME","WordFormRuntime","WordRegenerator","X","XML_NS","Y","Z","__commonJS","__copyProps","__create","__defProp","__export","__getOwnPropDesc","__getOwnPropNames","__getProtoOf","__hasOwnProp","__require","__require2","__toCommonJS","__toESM","a","a2","addition","all","ancestor","ancestor2","anchor","answersChanged","appendWordContinuation","applyDocumentFillPreparers","args","asConditionValue","at","attr","before","blanks","body","bookmarks","borders","c","calculateWordFields","candidate","capacity","cell","cell2","cellText","cellValue","cells","changed","chartFactCondition","check","checkbox","children","chosen","col","columns","compareFieldId","condition","conditionCollectionEntries","conditionMet","containedValue","content","context","continuationTable","continued","controllerValue","count","current","d","data","dataWidth","dated","day","days","daysInMonth","decimals","deferWordCalculations","descendants","direction","doc","documentValueText","documents","done","download","dropdown","e2","e3","e4","el","element","end","endRun","entries","entry","evaluate","evaluateConditionGroup","evaluateFieldCondition","evaluateNumericCondition","existingStyle","expression","f","ff","fields","fillWordForm","fillWordFormDetailed","first","form","format","formatDateWithPattern","formatDocumentDate","formatted","formulas","found","fs","glyph","grid","h","h2","hasValue","header","hour","i","i2","images","import_jszip","index","input","insert","inspectWordCalculations","inspectWordForm","isConditionCellAnswered","isConditionEntryMeaningful","isConditionValueEmpty","isLast","isLocked","isPdfTarget","j","kept","key","known","l","label","last","lastPrinted","left","leftDate","limit","lines","link","list","local","lookup","mapValue","mapped","mark","match","minute","mon","month","monthName","n","n2","name","names","nested","node","nodeText","nodes","normalizeConditionBoolean","normalizeConditionChoiceValues","normalizeConditionComparable","normalized","number","o","o2","omitFirstHeader","op","open","options","output","overflow","own","p","pad","pair","paragraph","paragraphs","parseXml","parts","pathById","pdfValues","pick","planRows","planTableOverflow","plans","plural","positions","pr","prepareWordFormPreview","prepared","previous","primary","printable","printed","printedRows","product","q","r","r2","r3","raw","read","readValuePath","record","ref","remaining","renderRowTemplate","rendered","require_jszip_min","resolve","result","resultText","right","rightDate","row","rowIndex","rows","rowsPrinted","run","run2","s","s2","sample","scan","scanned","sdt","sectPr","section","seen","set","setProperty","signatureImageDataUrl","source","span","stack","start","state","sum","t","t2","t3","t4","table","tables","targetTable","targets","tcProps","text","text2","textNodes","toNameSet","toOrderedPair","token","tokens","touched","type","u","unknown","url","v","val","value","values","warnings","widths","word_form_exports","write","writeText","year","z"],
 };
 
@@ -63605,6 +65111,8 @@ export const componentDependencies: Record<string, string[]> = {
   './Allergies/index.jsx': [],
   './AllergyTable/index.jsx': ["ChartRecordTable"],
   './AnswerChoiceField/index.jsx': ["FormLogicKit"],
+  './AssessmentKit/index.jsx': [],
+  './AssessmentScore/index.jsx': ["AssessmentKit"],
   './AssessmentScoringTable/index.jsx': [],
   './AttestationSignOff/index.jsx': ["SignaturePad"],
   './AuthorshipField/index.jsx': [],
@@ -63614,6 +65122,8 @@ export const componentDependencies: Record<string, string[]> = {
   './ChartRecordManager/index.jsx': ["ChartRecordTable","DialogKit","SubformScoring"],
   './ChartRecordTable/index.jsx': ["EditableTable"],
   './ChartReviewSummary/index.jsx': ["ObservationKit"],
+  './CheckItemGrid/index.jsx': ["AssessmentKit"],
+  './CheckItemList/index.jsx': ["AssessmentKit"],
   './CodedObservationChoiceField/index.jsx': ["FindCodeSelect"],
   './CommonSchemaDefn/index.jsx': [],
   './CompactBooleanField/index.jsx': [],
@@ -63656,6 +65166,7 @@ export const componentDependencies: Record<string, string[]> = {
   './InvestigationTabs/index.jsx': [],
   './LayoutKit/index.jsx': [],
   './LayoutTable/index.jsx': ["DefaultsKit","FieldStampButton","FormLogicKit","FormulaKit","ValueKit","AnswerChoiceField","SignaturePad"],
+  './LetterTapping/index.jsx': ["AssessmentKit"],
   './LongTermMedications/index.jsx': [],
   './MirthListenerUtility/index.jsx': [],
   './MoisModuleLinkList/index.jsx': [],
@@ -63689,6 +65200,7 @@ export const componentDependencies: Record<string, string[]> = {
   './SaveOnClose/index.jsx': [],
   './ScaleField/index.jsx': [],
   './ScoringModule/index.jsx': ["FormSessionRuntime","FormLogicKit","FormulaKit","ValueKit"],
+  './SerialSubtraction/index.jsx': ["AssessmentKit"],
   './ServiceEpisodes/index.jsx': [],
   './ServiceRequests/index.jsx': [],
   './SignaturePad/index.jsx': ["DialogKit"],
@@ -63697,5 +65209,6 @@ export const componentDependencies: Record<string, string[]> = {
   './UseChangeWatch/index.jsx': [],
   './ValueKit/index.jsx': [],
   './ValueSetObservationField/index.jsx': ["CodedObservationChoiceField"],
+  './VerbalFluency/index.jsx': ["AssessmentKit"],
   './WordRegenerator/index.jsx': [],
 };

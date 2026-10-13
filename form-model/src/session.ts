@@ -34,6 +34,7 @@ export interface SessionFooterButtonConfig {
   submitOnLastPageOnly?: boolean;
   hideSaveWhenSigned?: boolean;
   signedSignButton?: boolean;
+  submittedShowsClose?: boolean;
   saveText?: string;
   saveCloses?: boolean;
   printLabel?: string;

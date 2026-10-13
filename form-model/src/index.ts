@@ -3608,6 +3608,19 @@ export interface BuilderVariantSelectorConfig {
    * (persisted as builderVariantId/builderVariantLabel in form data).
    */
   contentMode?: "per-version" | "shared";
+  /**
+   * Where the chosen version is saved, as a dot path into the answers (e.g.
+   * "formAnswers.formVersion"): the version's label is written there and a
+   * reopened form restores its version from it. Unset, the choice is saved as
+   * builderVariantId / builderVariantLabel. Set it to keep a source form's own
+   * storage when a form is rebuilt on versions.
+   */
+  storePath?: string;
+  /**
+   * What "Change version" clears, as a dot path into the answers (e.g.
+   * "formAnswers"). Unset, it clears every answer.
+   */
+  resetPath?: string;
 }
 
 export {

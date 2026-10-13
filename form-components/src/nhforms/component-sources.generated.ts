@@ -1955,6 +1955,513 @@ const AnswerChoiceField = ({
   )
 }
 `,
+  './AssessmentKit/index.jsx': `// AssessmentKit — the shared runtime of the assessment components
+// (CheckItemGrid, CheckItemList, LetterTapping, SerialSubtraction,
+// VerbalFluency, AssessmentScore): scored test items that keep their answers
+// in one answer tree, as a cognitive screen such as the MoCA does.
+//
+// Every component writes under its own \`dataPath\` (a dot path into the form's
+// answers, e.g. "formAnswers.memory"), so a form rebuilt from a source keeps
+// the source's stored shape exactly. Each fills its defaults in on load (never
+// over an answer already there), locks once the form is signed or submitted or
+// its \`completePath\` answer is true, and stages the content it shows (its
+// words, sentences, starting number) for AssessmentScore's report under
+// \`__componentPayloads.assessmentContent[contentKey]\`, which is never saved.
+//
+//   AssessmentKit.getAt(root, path)
+//   AssessmentKit.setAt(target, path, value)       — mutates (immer drafts)
+//   AssessmentKit.useAnswers({ dataPath, defaults, completePath, contentKey, content })
+//     -> { answers, update(recipe), locked, data, sd, fd, setFormData }
+//   AssessmentKit.stagePayload(setFormData, group, componentId, payload)
+//   AssessmentKit.CheckButton, SectionRow, PointsCell, styles
+//
+// Consumers reference AssessmentKit only inside function bodies (component
+// files load in no guaranteed order). setFormData always receives a
+// produce()-wrapped recipe: the real MOIS runtime hands back the raw state
+// setter, so a bare mutator would replace the answers with undefined.
+
+const AssessmentKit = (() => {
+  const isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value)
+  const clone = (value) => (value === undefined ? undefined : JSON.parse(JSON.stringify(value)))
+  const stepsOf = (path) => String(path || "").split(".").map((step) => step.trim()).filter(Boolean)
+
+  const getAt = (root, path) => {
+    let current = root
+    for (const step of stepsOf(path)) {
+      if (current === null || current === undefined) return undefined
+      current = current[step]
+    }
+    return current
+  }
+
+  // Writes value at path, creating the records on the way; mutates target.
+  const setAt = (target, path, value) => {
+    const steps = stepsOf(path)
+    if (!steps.length || !isRecord(target)) return target
+    let node = target
+    steps.slice(0, -1).forEach((step) => {
+      if (!isRecord(node[step])) node[step] = {}
+      node = node[step]
+    })
+    node[steps[steps.length - 1]] = value
+    return target
+  }
+
+  // Adds the keys defaults has and value lacks, recursively through records;
+  // never replaces an answer (an array, or any value that is not a record, is
+  // kept as it is). Mutates and returns value.
+  const fillDefaults = (value, defaults) => {
+    if (!isRecord(value) || !isRecord(defaults)) return value
+    Object.keys(defaults).forEach((key) => {
+      if (!(key in value)) value[key] = clone(defaults[key])
+      else if (isRecord(value[key]) && isRecord(defaults[key])) fillDefaults(value[key], defaults[key])
+    })
+    return value
+  }
+
+  const withDefaults = (value, defaults) => {
+    if (!isRecord(defaults)) return value === undefined ? clone(defaults) : value
+    return fillDefaults(isRecord(value) ? clone(value) : {}, defaults)
+  }
+
+  const isLocked = (sd, data, completePath) =>
+    sd?.webform?.recordState === "SIGNED" ||
+    sd?.webform?.isDraft === "N" ||
+    (completePath ? getAt(data, completePath) === true : false)
+
+  const sameJson = (left, right) => JSON.stringify(left ?? null) === JSON.stringify(right ?? null)
+
+  // Stages a payload in __componentPayloads[group][componentId] (removed when
+  // null); writes only when it changed.
+  const stagePayload = (setFormData, group, componentId, payload) => {
+    if (typeof setFormData !== "function") return
+    setFormData(produce((draft) => {
+      if (!draft.field) draft.field = { data: {}, status: {} }
+      if (!isRecord(draft.field.data)) draft.field.data = {}
+      const container = isRecord(draft.field.data.__componentPayloads) ? draft.field.data.__componentPayloads : {}
+      const entries = isRecord(container[group]) ? container[group] : {}
+      if (sameJson(entries[componentId], payload)) return
+      if (payload === null || payload === undefined) delete entries[componentId]
+      else entries[componentId] = clone(payload)
+      container[group] = entries
+      draft.field.data.__componentPayloads = container
+    }))
+  }
+
+  const useAnswers = ({ dataPath, defaults, completePath, contentKey, content }) => {
+    const [fd, setFormData] = useActiveData()
+    const sd = useSourceData()
+    const data = (fd && fd.field && fd.field.data) || {}
+    const stored = getAt(data, dataPath)
+    const answers = withDefaults(stored, defaults)
+    const locked = isLocked(sd, data, completePath)
+
+    // Fill the defaults in once the answers exist, so the saved tree has every
+    // key the source form saved; a locked (submitted or signed) form is left
+    // as it was saved.
+    const needsDefaults = !locked && isRecord(defaults) && !sameJson(stored, answers)
+    React.useEffect(() => {
+      if (!needsDefaults || typeof setFormData !== "function" || !dataPath) return
+      setFormData(produce((draft) => {
+        if (!draft.field) draft.field = { data: {}, status: {} }
+        if (!isRecord(draft.field.data)) draft.field.data = {}
+        const current = getAt(draft.field.data, dataPath)
+        if (isRecord(current)) fillDefaults(current, defaults)
+        else setAt(draft.field.data, dataPath, clone(defaults))
+      }))
+    }, [needsDefaults, dataPath])
+
+    const contentJson = JSON.stringify(content ?? null)
+    React.useEffect(() => {
+      if (!contentKey) return
+      stagePayload(setFormData, "assessmentContent", contentKey, content ?? null)
+    }, [contentKey, contentJson])
+
+    // recipe(answers) mutates the answers under dataPath (defaults filled in).
+    const update = (recipe) => {
+      if (locked || typeof setFormData !== "function" || !dataPath) return
+      setFormData(produce((draft) => {
+        if (!draft.field) draft.field = { data: {}, status: {} }
+        if (!isRecord(draft.field.data)) draft.field.data = {}
+        let current = getAt(draft.field.data, dataPath)
+        if (isRecord(defaults)) {
+          if (!isRecord(current)) {
+            setAt(draft.field.data, dataPath, clone(defaults))
+            current = getAt(draft.field.data, dataPath)
+          } else {
+            fillDefaults(current, defaults)
+          }
+          recipe(current)
+        } else {
+          const next = recipe(current)
+          setAt(draft.field.data, dataPath, next)
+        }
+      }))
+    }
+
+    return { answers, update, locked, data, sd, fd, setFormData }
+  }
+
+  // The MoCA sheet's look: navy section header, bordered rows, a points column.
+  const styles = {
+    navy: "rgb(21,59,108)",
+    header: {
+      backgroundColor: "rgb(21,59,108)",
+      color: "white",
+      height: "50px",
+      fontWeight: "bold",
+      display: "flex",
+      paddingLeft: "20px",
+      fontSize: "large",
+      alignContent: "center",
+      lineHeight: "50px",
+      textTransform: "uppercase",
+    },
+    lockedIcon: {
+      rootDisabled: { backgroundColor: "inherit" },
+      iconDisabled: { color: "rgb(0, 120, 212)" },
+    },
+    points: { width: "59px", display: "flex", alignItems: "center", borderLeft: "1px solid black" },
+    pointsText: { fontWeight: "bold", flexGrow: "1", textAlign: "center" },
+  }
+
+  const CheckButton = ({ checked, onClick, disabled, fill = false, readOnly = false }) => (
+    <Fluent.IconButton
+      disabled={disabled || readOnly}
+      styles={fill ? { root: { height: "100%", width: "100%" }, ...styles.lockedIcon } : styles.lockedIcon}
+      iconProps={checked ? { iconName: "CheckMark" } : { iconName: "" }}
+      onClick={readOnly ? undefined : onClick}
+    />
+  )
+
+  const PointsCell = ({ children, style }) => (
+    <div style={{ ...styles.points, ...(style || {}) }}>
+      <div style={styles.pointsText}>{children}</div>
+    </div>
+  )
+
+  // One sheet row: an optional navy header column (title + instructions), the
+  // item's own content, and an optional points column.
+  const SectionRow = ({ title, instructions, headerWidth = 250, points, border, children, headerExtra }) => (
+    <div style={{ display: "flex", flexDirection: "row", fontSize: "medium", ...(border || { borderLeft: "1px solid black", borderRight: "1px solid black", borderTop: "1px solid black" }) }}>
+      {title || instructions || headerExtra ? (
+        <div style={{ width: \`\${headerWidth}px\`, display: "flex", flexDirection: "column", flexShrink: 0 }}>
+          {title ? <div style={styles.header}><span>{title}</span></div> : null}
+          {instructions ? <div style={{ fontSize: "medium", padding: "3px" }}>{instructions}</div> : null}
+          {headerExtra || null}
+        </div>
+      ) : null}
+      <div style={{ flexGrow: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>{children}</div>
+      {points !== undefined && points !== null ? <PointsCell>{points}</PointsCell> : null}
+    </div>
+  )
+
+  const countTrue = (value) => (isRecord(value) ? Object.values(value).filter((entry) => entry === true).length : 0)
+
+  const todayString = (date = new Date()) => {
+    const pad = (value) => String(value).padStart(2, "0")
+    return \`\${date.getFullYear()}-\${pad(date.getMonth() + 1)}-\${pad(date.getDate())}\`
+  }
+
+  return {
+    isRecord,
+    clone,
+    getAt,
+    setAt,
+    fillDefaults,
+    withDefaults,
+    isLocked,
+    sameJson,
+    stagePayload,
+    useAnswers,
+    countTrue,
+    todayString,
+    styles,
+    CheckButton,
+    PointsCell,
+    SectionRow,
+  }
+})()
+`,
+  './AssessmentScore/index.jsx': `// AssessmentScore — the scoring end of an assessment built from the
+// AssessmentKit items: rolls the item answers up into section and form totals,
+// shows the total row, locks the form once it is complete, and stages what
+// the form writes to the chart on submit.
+//
+// scoreRules: evaluated in order, each writes \`target\` (a dot path into the
+// answers) as the sum of its terms, read after the rules before it:
+//   { path }                 true -> 1, false/null -> 0, a number as it is
+//   { path, atLeast }        1 when the number is at least atLeast
+//   { count, weight = 1 }    the true values in the record at count, x weight
+//   { sumOf }                the numbers in the record at sumOf, added
+// adjustments: [{ path, label }] — checks drawn in the total row (such as
+//   "Add 1 point if <= 12 yr edu"); count them in a rule.
+// total: { path, max, label }; extraTotals: [{ label, path, max, suffix }].
+// completePath: answer set true as the form is submitted (a staged submit
+//   patch); the items lock while it is true.
+// observation: the form's calculated observation, staged for submit
+//   (calculatedUpdate; component-submit-writes.ts):
+//   { observationCode, valueType, value: { path, multiply, divide, round },
+//     report: { format, rootPath, versionPath, content } }
+//   reportedBy (the current user) and reportedDate (today) are added.
+//   Report formats are named; "moca-blind" reproduces the NH MoCA Blind
+//   source's report text exactly, reading the items' staged content (the
+//   words, sentences, starting number) by the keys in report.content.
+const AssessmentScore = ({
+  id,
+  fieldId,
+  completePath,
+  scoreRules = [],
+  adjustments = [],
+  total,
+  extraTotals = [],
+  notes = [],
+  administeredByPath,
+  footerText,
+  lockedText = "**COMPLETED FORM - READ ONLY**",
+  observation,
+}) => {
+  const [fd, setFormData] = useActiveData()
+  const sd = useSourceData()
+  const data = (fd && fd.field && fd.field.data) || {}
+  const locked = AssessmentKit.isLocked(sd, data, completePath)
+  const componentId = fieldId || id || "AssessmentScore"
+  const get = (path) => AssessmentKit.getAt(data, path)
+
+  // --- Totals -------------------------------------------------------------
+  const termValue = (root, term) => {
+    if (!term || typeof term !== "object") return 0
+    if (term.count) return AssessmentKit.countTrue(AssessmentKit.getAt(root, term.count)) * (term.weight === undefined ? 1 : Number(term.weight))
+    if (term.sumOf) {
+      const record = AssessmentKit.getAt(root, term.sumOf)
+      return AssessmentKit.isRecord(record) ? Object.values(record).reduce((sum, value) => sum + (Number(value) || 0), 0) : 0
+    }
+    const value = AssessmentKit.getAt(root, term.path)
+    if (term.atLeast !== undefined) return Number(value) >= Number(term.atLeast) ? 1 : 0
+    if (value === true) return 1
+    return Number(value) || 0
+  }
+  const evaluateRules = (root) => {
+    const working = AssessmentKit.clone(root || {})
+    const results = []
+    ;(Array.isArray(scoreRules) ? scoreRules : []).forEach((rule) => {
+      if (!rule || !rule.target) return
+      const value = (Array.isArray(rule.terms) ? rule.terms : []).reduce((sum, term) => sum + termValue(working, term), 0)
+      AssessmentKit.setAt(working, rule.target, value)
+      results.push([rule.target, value])
+    })
+    return results
+  }
+  // The complete flag and each adjustment start false, as answers the form keeps.
+  const startingAnswers = [completePath, ...(Array.isArray(adjustments) ? adjustments : []).map((adjustment) => adjustment?.path)]
+    .filter(Boolean)
+  const totals = evaluateRules(data)
+  const stale = !locked && (
+    totals.some(([path, value]) => get(path) !== value) ||
+    startingAnswers.some((path) => get(path) === undefined)
+  )
+  const totalsJson = JSON.stringify(totals)
+  React.useEffect(() => {
+    if (!stale || typeof setFormData !== "function") return
+    setFormData(produce((draft) => {
+      if (!draft.field) draft.field = { data: {}, status: {} }
+      if (!AssessmentKit.isRecord(draft.field.data)) draft.field.data = {}
+      startingAnswers.forEach((path) => {
+        if (AssessmentKit.getAt(draft.field.data, path) === undefined) AssessmentKit.setAt(draft.field.data, path, false)
+      })
+      evaluateRules(draft.field.data).forEach(([path, value]) => {
+        if (AssessmentKit.getAt(draft.field.data, path) !== value) AssessmentKit.setAt(draft.field.data, path, value)
+      })
+    }))
+  }, [stale, totalsJson])
+
+  // --- Submit: the complete flag ------------------------------------------
+  React.useEffect(() => {
+    AssessmentKit.stagePayload(setFormData, "submitPatchesByComponent", componentId, completePath ? [{ path: completePath, value: true }] : null)
+  }, [componentId, completePath])
+
+  // --- Submit: the calculated observation ---------------------------------
+  const content = (data.__componentPayloads && data.__componentPayloads.assessmentContent) || {}
+  const calculated = (() => {
+    if (!observation || !observation.observationCode) return null
+    const spec = observation.value || {}
+    let value = Number(get(spec.path)) || 0
+    if (spec.multiply !== undefined) value *= Number(spec.multiply)
+    if (spec.divide !== undefined) value /= Number(spec.divide)
+    if (spec.round) value = Math.round(value)
+    const update = {
+      observationCode: String(observation.observationCode),
+      value: String(value),
+      reportedBy: sd?.userProfile?.identity?.fullName,
+      reportedDate: AssessmentKit.todayString(),
+      valueType: observation.valueType || "numeric",
+    }
+    const report = observation.report ? AssessmentScore.reports[observation.report.format]?.(data, content, observation.report) : undefined
+    if (report !== undefined) update.report = report
+    return update
+  })()
+  const calculatedJson = JSON.stringify(calculated)
+  React.useEffect(() => {
+    if (locked) return
+    AssessmentKit.stagePayload(setFormData, "calculatedUpdatesByComponent", componentId, calculated)
+  }, [componentId, calculatedJson, locked])
+
+  // --- Total row ------------------------------------------------------------
+  const toggleAdjustment = (path) => {
+    if (locked || typeof setFormData !== "function") return
+    setFormData(produce((draft) => {
+      if (!draft.field) draft.field = { data: {}, status: {} }
+      if (!AssessmentKit.isRecord(draft.field.data)) draft.field.data = {}
+      AssessmentKit.setAt(draft.field.data, path, !(AssessmentKit.getAt(draft.field.data, path) === true))
+    }))
+  }
+  const administeredBy = administeredByPath ? get(administeredByPath) ?? sd?.userProfile?.identity?.fullName ?? null : null
+  const navy = AssessmentKit.styles.navy
+
+  return (
+    <div id={id || fieldId} data-assessment-item="assessment-score">
+      {locked && lockedText ? <div style={{ margin: "4px 0" }}><i>{lockedText}</i></div> : null}
+      <div style={{ display: "flex", flexDirection: "row", fontSize: "medium", minHeight: "90px" }}>
+        <div style={{ display: "flex", flexDirection: "column", justifyContent: "space-between", padding: "3px", width: "75%" }}>
+          {notes.length ? (
+            <div style={{ display: "flex", flexDirection: "row", justifyContent: "space-between", fontWeight: "bold", paddingRight: "20px", fontSize: "larger", color: navy }}>
+              {notes.map((note) => <span key={note}>{note}</span>)}
+            </div>
+          ) : null}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap" }}>
+            {administeredByPath ? <span>Administered by: <span style={{ borderBottom: "1px solid black" }}>{administeredBy}</span></span> : <span />}
+            {adjustments.map((adjustment) => (
+              <span key={adjustment.path} style={{ display: "inline-flex", alignItems: "center" }}>
+                {adjustment.label} [<AssessmentKit.CheckButton checked={get(adjustment.path) === true} disabled={locked} onClick={() => toggleAdjustment(adjustment.path)} />]
+              </span>
+            ))}
+          </div>
+        </div>
+        {total ? (
+          <>
+            <div style={{ borderLeft: "1px solid black", borderBottom: "1px solid black", flexGrow: 1, marginLeft: "20px", display: "flex", alignItems: "center", paddingLeft: "20px" }}>
+              <span>{total.label || "TOTAL"}</span>
+            </div>
+            <AssessmentKit.PointsCell style={{ borderRight: "1px solid black", borderBottom: "1px solid black" }}>
+              {\`\${get(total.path) ?? 0}/\${total.max ?? ""}\`}
+            </AssessmentKit.PointsCell>
+          </>
+        ) : null}
+      </div>
+      {extraTotals.map((extra) => (
+        <div key={extra.path} style={{ width: "100%", textAlign: "right", fontWeight: "bold" }}>
+          <span style={{ paddingRight: "8px" }}>{\`\${extra.label}: \${get(extra.path) ?? 0} /\${extra.max ?? ""}\`}{extra.suffix ? \`    \${extra.suffix}\` : ""}</span>
+        </div>
+      ))}
+      {footerText ? <span>{footerText}</span> : null}
+    </div>
+  )
+}
+
+// Named report formats: (data, content, options) -> report text.
+AssessmentScore.reports = {
+  // The NH MoCA Blind form's getSaveData report, line for line (its wording
+  // and spacing, typos included, are what the chart holds for every MoCA
+  // charted so far). options.rootPath is the answer tree, options.versionPath
+  // the version label, options.content the content keys of the memory grid,
+  // serial subtraction, repeated sentences, fluency and abstraction items.
+  "moca-blind": (data, content, options) => {
+    const fa = AssessmentKit.getAt(data, options.rootPath || "formAnswers") || {}
+    const keys = options.content || {}
+    const formVer = AssessmentKit.getAt(data, options.versionPath || "formAnswers.formVersion") ?? null
+    const words = content[keys.memory || "memory"]?.items || []
+    const start = Number(content[keys.subtraction || "subtraction"]?.start)
+    const sentences = content[keys.sentences || "sentences"]?.items || []
+    const letter = content[keys.fluency || "fluency"]?.letter ?? ""
+    const pairs = content[keys.abstraction || "abstraction"]?.items || []
+    const cat = (n) => words[n - 1]
+    const yn = (value) => (value ? "Y" : "N")
+    const memory = fa.memory || {}
+    const t1 = memory["1stTrial"] || {}
+    const t2 = memory["2ndTrial"] || {}
+    const attention = fa.attention || {}
+    const sv = attention.subtractionvalues || {}
+    const language = fa.language || {}
+    const langword = language.langword || {}
+    const entries = Array.isArray(langword.langwordentry) ? langword.langwordentry : []
+    const recall = fa.delayedRecall || {}
+    const x3 = recall.X3 || {}
+    const x2 = recall.X2 || {}
+    const x1 = recall.X1 || {}
+    const orientation = fa.orientation || {}
+    const totals = fa.sectionTotals || {}
+    const letters = Array.isArray(attention.attAtapletters) ? attention.attAtapletters : []
+    const later = (previous, current) =>
+      current
+        ? \`\${current} (\${previous - current === 7 ? \`Y (\${previous}-7=\${current})\` : \`N (Answer should be \${previous - 7} based on previous answer\`})\`
+        : "No Answer provided"
+
+    let report = "MoCA Blind report\\n"
+    report += \`Version: \${formVer}\\n\`
+    report += "================================================\\n\\n"
+    report += "Memory (No Points)\\n"
+    report += "------------------\\n"
+    report += \`1st Trial- \${cat(1)}:\${yn(t1.mem1)}, \${cat(2)}:\${yn(t1.mem2)}, \${cat(3)}:\${yn(t1.mem3)}, \${cat(4)}:\${yn(t1.mem4)}, \${cat(5)}:\${yn(t1.mem5)}\\n\`
+    report += \`2nd Trial- \${cat(1)}:\${yn(t2.mem1)}, \${cat(2)}:\${yn(t2.mem2)}, \${cat(3)}:\${yn(t2.mem3)}, \${cat(4)}:\${yn(t2.mem4)}, \${cat(5)}:\${yn(t2.mem5)}\\n\`
+    report += "\\n"
+    report += \`Attention (\${totals.attentionScore}/5)\\n\`
+    report += "------------------\\n"
+    report += \`Digits repeated correctly in forward order: \${attention.attforward ? "Y (1 point)" : "N (0 points"}\\n\`
+    report += \`Digits repeated correctly in reverse order: \${attention.attreverse ? "Y (1 point)" : "N (0 points)"}\\n\`
+    report += \`Subject tap at each letter A errors: \${letters.filter((entry) => entry.required != entry.checked).length} (\${attention.attAtap ? "1 point" : "0 points - 2 or more errors"})\\n\`
+    report += \`Seria 7 subtraction starting at \${start} answers (\${attention.subtractionScore}/3 points):\\n\`
+    report += \`\\t1st answer: \${sv.calcval1 ? \`\${sv.calcval1} (\${start - sv.calcval1 === 7 ? \`Y (\${start}-7=\${start - 7})\` : "N "})\` : "No Answer provided"}\\n\`
+    report += \`\\t2nd answer: \${later(sv.calcval1, sv.calcval2)}\\n\`
+    report += \`\\t3rd answer: \${later(sv.calcval2, sv.calcval3)}\\n\`
+    report += \`\\t4th answer: \${later(sv.calcval3, sv.calcval4)}\\n\`
+    report += \`\\t5th answer: \${later(sv.calcval4, sv.calcval5)}\\n\`
+    report += "\\n"
+    report += \`Language (\${totals.languageScore}/3)\\n\`
+    report += "------------------\\n"
+    report += \`Phrase '\${sentences[0]?.label}' repeated: \${language.langphrase1 ? "Y (1 point)" : "N (0 points)"}\\n\`
+    report += \`Phrase '\${sentences[1]?.label}' repeated: \${language.langphrase2 ? "Y (1 point)" : "N (0 points)"}\\n\`
+    report += \`Subject answers for 'List words beginning with \${letter} in one minute'\\n\`
+    const answered = entries.filter((entry) => Boolean(entry.text) && entry.text !== "")
+    if (answered.length === 0) {
+      report += "--No answers recorded using form tool. Score value entered manually--\\n"
+    } else {
+      report += "\\tAnswer\\t\\tValid?\\n"
+      report += "\\t------\\t\\t------\\n"
+      answered.forEach((entry) => {
+        report += \`\\t\${entry.text}\\t\\t\${entry.isValid ?? "N"}\\n\`
+      })
+    }
+    report += \`Number of valid answers: \${langword.langwordvalidcount ?? 0} (\${langword.langwordvalidcount > 10 ? "1 point - 11 or more valid words" : "0 points - 10 or less valid words"})\\n\`
+    report += "\\n"
+    report += \`Abstraction (\${totals.abstractionScore}/2)\\n\`
+    report += "------------------\\n"
+    report += \`\${pairs[0]?.label}: \${fa.abstraction?.abs1 ? "Y (1 point)" : "N (0 points)"}\\n\`
+    report += \`\${pairs[1]?.label}: \${fa.abstraction?.abs2 ? "Y (1 point)" : "N (0 points)"}\\n\`
+    report += "\\n"
+    report += \`Delayed Recall (\${totals.delayedRecallScore}/5)\\n\`
+    report += "------------------\\n"
+    report += "Uncalled Recall (each Y = +3 to Memory Index Score)\\n"
+    report += \`\\t\${cat(1)}: \${yn(x3.dr1)}, \${cat(2)}: \${yn(x3.dr2)}, \${cat(3)}: \${yn(x3.dr3)}, \${cat(4)}: \${yn(x3.dr4)}, \${cat(5)}: \${yn(x3.dr5)}\\n\`
+    report += "Category Cue (each Y = +2 to Memory Index Score)\\n"
+    report += \`\\t\${cat(1)}: \${yn(x2.dr1)}, \${cat(2)}: \${yn(x2.dr2)}, \${cat(3)}: \${yn(x2.dr3)}, \${cat(4)}: \${yn(x2.dr4)}, \${cat(5)}: \${yn(x2.dr5)}\\n\`
+    report += "Multiple Choice Cue (each Y = +1 to Memory Index Score)\\n"
+    report += \`\\t\${cat(1)}: \${yn(x1.dr1)}, \${cat(2)}: \${yn(x1.dr2)}, \${cat(3)}: \${yn(x1.dr3)}, \${cat(4)}: \${yn(x1.dr4)}, \${cat(5)}: \${yn(x1.dr5)}\\n\`
+    report += "\\n"
+    report += \`Memory Index Score = \${fa.misTotal}/15\\n\`
+    report += "\\n"
+    report += \`Orientation (\${totals.orientationScore}/6)\\n\`
+    report += "------------------\\n"
+    report += \`Date: \${yn(orientation.date)}, Month: \${yn(orientation.month)}, Year: \${yn(orientation.year)}, Day: \${yn(orientation.day)}, Place: \${yn(orientation.place)}, City: \${yn(orientation.city)}\\n\`
+    report += "\\n"
+    report += \`Client has 12yr or less education: \${fa.education?.under12yr ? "Y (1 point)" : "N"}\\n\`
+    report += "\\n\\n"
+    report += "------------------\\n"
+    report += \`Total: \${fa.pointsTotal}/22.     Memory Index Score: \${fa.misTotal}/15\\n\`
+    report += \`Total (converted to score out of 30): \${Math.round((fa.pointsTotal / 22) * 30)}/30\`
+    return report
+  },
+}
+`,
   './AssessmentScoringTable/index.jsx': `// Fluent is a NAMESPACE in the real engine's form scope — bare Fluent
 // identifiers are a ReferenceError in production even though preview
 // injects them. Destructure everything this component renders.
@@ -4967,6 +5474,200 @@ const ChartReviewSummary = ({
         ) : null}
       </div>
     </Stack>
+  )
+}
+`,
+  './CheckItemGrid/index.jsx': `// CheckItemGrid — a scored grid of items (columns) by trials or cue levels
+// (rows), each cell a check: a word-list memory trial, a delayed recall by cue.
+//
+// Answers: \`\${dataPath}.\${row.key}.\${itemKeyPrefix}\${n}\` = true/false, n from 1
+// (MoCA: formAnswers.memory["1stTrial"].mem1). With \`exclusivePerItem\`, a check
+// clears the same item in the other rows (an item is recalled at one cue level).
+//
+// Points column: \`points\` is fixed text ("NO POINTS"), or { row, max } to show
+// the checks in that row out of max. \`weightedTotal\` ({ label, max }) shows the
+// rows' checks times each row's \`weight\` (the MoCA Memory Index Score).
+// The items are staged as \`{ items }\` under \`contentKey\` for the report.
+const CheckItemGrid = ({
+  id,
+  fieldId,
+  label,
+  title,
+  instructions,
+  dataPath,
+  items = [],
+  rows = [],
+  itemKeyPrefix = "item",
+  exclusivePerItem = false,
+  cornerLabel = "",
+  points,
+  weightedTotal,
+  completePath,
+  contentKey,
+}) => {
+  const words = (Array.isArray(items) ? items : []).map((item) => (typeof item === "string" ? item : String(item?.label ?? item?.text ?? "")))
+  const rowList = (Array.isArray(rows) ? rows : []).filter((row) => row && row.key)
+  const itemKey = (index) => \`\${itemKeyPrefix}\${index + 1}\`
+  const defaults = Object.fromEntries(rowList.map((row) => [row.key, Object.fromEntries(words.map((_, index) => [itemKey(index), false]))]))
+  const { answers, update, locked } = AssessmentKit.useAnswers({
+    dataPath,
+    defaults,
+    completePath,
+    contentKey,
+    content: { items: words },
+  })
+
+  const toggle = (rowKey, index) => update((current) => {
+    const key = itemKey(index)
+    const next = !(current?.[rowKey]?.[key] === true)
+    if (exclusivePerItem) {
+      rowList.forEach((row) => {
+        if (AssessmentKit.isRecord(current[row.key])) current[row.key][key] = false
+      })
+    }
+    current[rowKey][key] = next
+  })
+
+  const rowCount = (rowKey) => AssessmentKit.countTrue(answers?.[rowKey])
+  const weighted = rowList.reduce((total, row) => total + rowCount(row.key) * (Number(row.weight) || 0), 0)
+  const pointsText = typeof points === "string"
+    ? points
+    : points && points.row
+      ? \`\${rowCount(points.row)}/\${points.max ?? words.length}\`
+      : null
+  const header = title !== undefined ? title : label
+  const cell = { border: "1px solid black", textAlign: "center" }
+
+  return (
+    <div id={id || fieldId} data-assessment-item="check-item-grid">
+      <AssessmentKit.SectionRow title={header} instructions={instructions} points={pointsText}>
+        <table style={{ borderCollapse: "collapse", border: "1px solid black", width: "100%", height: "100%" }}>
+          <tbody>
+            <tr style={{ maxHeight: "48px" }}>
+              <th style={{ ...cell, lineHeight: "46px", fontWeight: "normal", fontSize: "small" }}>{cornerLabel}</th>
+              {words.map((word, index) => (
+                <th key={\`h-\${index}\`} style={{ ...cell, lineHeight: "46px" }}>{word}</th>
+              ))}
+              {weightedTotal ? <th style={{ ...cell, fontSize: "small", fontWeight: "normal", maxWidth: "70px" }}>{weightedTotal.header || ""}</th> : null}
+            </tr>
+            {rowList.map((row, rowIndex) => (
+              <tr key={row.key}>
+                <td style={{ ...cell, height: "50px", textAlign: "left", paddingLeft: "4px" }}>
+                  {row.label}
+                  {row.weightLabel ? <div style={{ fontSize: "small" }}>{row.weightLabel}</div> : null}
+                </td>
+                {words.map((word, index) => (
+                  <td key={\`\${row.key}-\${index}\`} style={{ ...cell, height: "1px", paddingTop: "2px" }}>
+                    <AssessmentKit.CheckButton fill checked={answers?.[row.key]?.[itemKey(index)] === true} disabled={locked} onClick={() => toggle(row.key, index)} />
+                  </td>
+                ))}
+                {weightedTotal && rowIndex === 0 ? (
+                  <td rowSpan={rowList.length} style={{ ...cell, fontWeight: "bold" }}>
+                    {\`\${weightedTotal.label || "Total"} = \${weighted}/\${weightedTotal.max ?? ""}\`}
+                  </td>
+                ) : null}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </AssessmentKit.SectionRow>
+    </div>
+  )
+}
+`,
+  './CheckItemList/index.jsx': `// CheckItemList — scored items, one check each: digits repeated forward and
+// backward, sentences repeated, abstraction pairs, orientation questions.
+//
+// Answers: \`\${dataPath}.\${item.key}\` = true/false (MoCA:
+// formAnswers.attention.attforward). Each item shows its \`label\` and, after
+// the check, its \`stimulus\` (the digits read out).
+//
+// layout: "rows" (label left, check and stimulus right), "centered" (check
+// then label, centred, one per line) or "inline" (check then label, across).
+// \`points\` true shows the checked items out of the item count; a number sets
+// the maximum. The items are staged as \`{ items }\` under \`contentKey\` for the
+// report.
+const CheckItemList = ({
+  id,
+  fieldId,
+  label,
+  title,
+  instructions,
+  subtitle,
+  dataPath,
+  items = [],
+  layout = "rows",
+  bold = false,
+  points = true,
+  completePath,
+  contentKey,
+}) => {
+  const list = (Array.isArray(items) ? items : []).filter((item) => item && item.key)
+  const defaults = Object.fromEntries(list.map((item) => [item.key, false]))
+  const { answers, update, locked } = AssessmentKit.useAnswers({
+    dataPath,
+    defaults,
+    completePath,
+    contentKey,
+    content: { items: list.map((item) => ({ key: item.key, label: item.label ?? "", stimulus: item.stimulus ?? "" })) },
+  })
+  const toggle = (key) => update((current) => {
+    current[key] = !(current[key] === true)
+  })
+  const checked = (key) => answers?.[key] === true
+  const count = list.filter((item) => checked(item.key)).length
+  const max = typeof points === "number" ? points : list.length
+  const header = title !== undefined ? title : label
+  const check = (item) => (
+    <span style={{ display: "inline-flex", alignItems: "center" }}>
+      [<AssessmentKit.CheckButton checked={checked(item.key)} disabled={locked} onClick={() => toggle(item.key)} />]
+    </span>
+  )
+
+  let body
+  if (layout === "inline") {
+    body = (
+      <div style={{ display: "flex", flexDirection: "row", flexWrap: "wrap", alignItems: "center", justifyContent: "space-around", fontWeight: "bold", minHeight: "50px" }}>
+        {list.map((item) => (
+          <span key={item.key} style={{ display: "inline-flex", alignItems: "center" }}>{check(item)} {item.label}</span>
+        ))}
+      </div>
+    )
+  } else if (layout === "centered") {
+    body = (
+      <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", textAlign: "center", fontWeight: "bold", flexGrow: 1 }}>
+        {list.map((item) => (
+          <span key={item.key} style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>{check(item)}{\` \${item.label ?? ""}\`}</span>
+        ))}
+      </div>
+    )
+  } else {
+    body = (
+      <div style={{ display: "flex", flexDirection: "column", paddingLeft: "5px", fontWeight: bold ? "bold" : "normal", flexGrow: 1 }}>
+        {list.map((item) => (
+          <div key={item.key} style={{ flexGrow: 1, display: "flex", flexDirection: "row", alignItems: "center", justifyContent: "space-between", padding: "3px", minHeight: "40px" }}>
+            <span>{item.label}</span>
+            <span style={{ paddingRight: "5px", display: "inline-flex", alignItems: "center" }}>
+              {check(item)}
+              {item.stimulus ? <span style={{ letterSpacing: "5px", paddingLeft: "5px" }}>{item.stimulus}</span> : null}
+            </span>
+          </div>
+        ))}
+      </div>
+    )
+  }
+
+  return (
+    <div id={id || fieldId} data-assessment-item="check-item-list">
+      <AssessmentKit.SectionRow
+        title={header}
+        instructions={instructions}
+        headerExtra={subtitle ? <div style={{ textAlign: "right", paddingRight: "30px", fontWeight: "bold" }}>{subtitle}</div> : null}
+        points={points === false ? null : \`\${count}/\${max}\`}
+      >
+        {body}
+      </AssessmentKit.SectionRow>
+    </div>
   )
 }
 `,
@@ -31938,6 +32639,120 @@ function LayoutTable({
   )
 }
 `,
+  './LetterTapping/index.jsx': `// LetterTapping — the vigilance item: a row of letters read out, the subject
+// taps at each target letter; the examiner marks the taps, then Complete
+// scores it (no more than \`maxErrors\` errors passes) and the row locks.
+//
+// Answers under dataPath (MoCA: formAnswers.attention):
+//   [lettersKey]  [{ letter, checked, required }] — required = letter is the target
+//   [completeKey] true once Complete is pressed (cannot be undone)
+//   [passedKey]   true when the errors (a tap off target, or a target missed)
+//                 are at most maxErrors; computed while complete
+// \`completeOnSubmit\` sets completeKey as the form is submitted, as the MoCA
+// did in its getSaveData (a staged submit patch; component-submit-writes.ts).
+const LetterTapping = ({
+  id,
+  fieldId,
+  label,
+  title,
+  instructions = "Read list of letters. The subject must tap at each letter A. No points if ≥ 2 errors.",
+  dataPath,
+  letters = "",
+  target = "A",
+  maxErrors = 1,
+  lettersKey = "letters",
+  completeKey = "complete",
+  passedKey = "passed",
+  completeOnSubmit = false,
+  points = 1,
+  completePath,
+  contentKey,
+}) => {
+  const sequence = String(letters || "").replace(/\\s+/g, "").split("")
+  const targetLetter = String(target || "").toUpperCase()
+  const letterDefaults = sequence.map((letter) => ({ letter, checked: false, required: letter.toUpperCase() === targetLetter }))
+  const { answers, update, locked, setFormData } = AssessmentKit.useAnswers({
+    dataPath,
+    defaults: { [passedKey]: false, [completeKey]: false, [lettersKey]: letterDefaults },
+    completePath,
+    contentKey,
+    content: { letters: sequence.join(""), target: targetLetter },
+  })
+  const stored = Array.isArray(answers?.[lettersKey]) ? answers[lettersKey] : letterDefaults
+  const complete = answers?.[completeKey] === true
+  const passed = answers?.[passedKey] === true
+  const componentId = fieldId || id || "LetterTapping"
+
+  const passes = (list) => list.filter((entry) => entry.checked != entry.required).length <= Number(maxErrors)
+
+  const toggle = (index) => {
+    if (complete) return
+    update((current) => {
+      const list = Array.isArray(current[lettersKey]) ? current[lettersKey] : (current[lettersKey] = AssessmentKit.clone(letterDefaults))
+      if (list[index]) list[index].checked = !list[index].checked
+      if (current[completeKey] === true) current[passedKey] = passes(list)
+    })
+  }
+  const finish = () => update((current) => {
+    current[completeKey] = true
+    const list = Array.isArray(current[lettersKey]) ? current[lettersKey] : []
+    current[passedKey] = passes(list)
+  })
+
+  const patchJson = JSON.stringify(completeOnSubmit && dataPath ? [{ path: \`\${dataPath}.\${completeKey}\`, value: true }] : null)
+  React.useEffect(() => {
+    AssessmentKit.stagePayload(setFormData, "submitPatchesByComponent", componentId, JSON.parse(patchJson))
+  }, [componentId, patchJson])
+
+  const header = title !== undefined ? title : label
+  return (
+    <div id={id || fieldId} data-assessment-item="letter-tapping">
+      <AssessmentKit.SectionRow title={header} points={points === false ? null : \`\${passed ? points : 0}/\${points}\`} border={{ border: "1px solid black" }}>
+        <div style={{ display: "inline-flex", flexDirection: "column", padding: "3px" }}>
+          <span>
+            {instructions}
+            <br />
+            <br />
+            {complete
+              ? <i>Results: Subject tapped at bordered letters. Errant or missed taps highlighted in red, proper in green</i>
+              : <i>Click each letter subject taps at. Click complete when done <strong>(cannot be undone)</strong></i>}
+          </span>
+          <span style={{ textAlign: "center", display: "inline-flex", alignItems: "center", justifyContent: "center", flexWrap: "wrap" }}>
+            [<AssessmentKit.CheckButton checked={passed} readOnly />]
+            <span style={{ paddingLeft: "10px", fontWeight: "bold", display: "inline-flex", flexDirection: "row", alignItems: "center", flexWrap: "wrap" }}>
+              <table style={{ borderCollapse: "collapse" }}>
+                <tbody>
+                  <tr>
+                    {stored.map((entry, index) => {
+                      const feedback = complete && (entry.checked || entry.required)
+                      const background = feedback ? (entry.checked != entry.required ? "lightpink" : "rgb(222 245 222)") : "inherit"
+                      return (
+                        <td key={\`\${entry.letter}-\${index}\`} style={{ borderCollapse: "collapse", border: entry.checked ? "1px solid black" : "none", padding: entry.checked ? "0px" : "1px" }}>
+                          <Fluent.DefaultButton
+                            text={entry.letter}
+                            disabled={locked || complete}
+                            onClick={() => toggle(index)}
+                            styles={{
+                              root: { border: "none", minWidth: 20, width: 20, height: 26, padding: 0, borderRadius: 0, backgroundColor: background, color: "#111827" },
+                              rootDisabled: { border: "none", minWidth: 20, width: 20, height: 26, padding: 0, borderRadius: 0, backgroundColor: background, color: "#111827" },
+                              label: { margin: 0 },
+                            }}
+                          />
+                        </td>
+                      )
+                    })}
+                  </tr>
+                </tbody>
+              </table>
+              {!complete && !locked ? <Fluent.DefaultButton text="Complete" onClick={finish} /> : null}
+            </span>
+          </span>
+        </div>
+      </AssessmentKit.SectionRow>
+    </div>
+  )
+}
+`,
   './LongTermMedications/index.jsx': `/**
  * Display a list of long term medication orders for this patient.
  */
@@ -48093,6 +48908,126 @@ const ScoringScales = {
   ],
 }
 `,
+  './SerialSubtraction/index.jsx': `// SerialSubtraction — serial subtraction (the MoCA's serial 7s): the subject
+// subtracts \`step\` from \`start\` \`count\` times; each answer is scored against
+// the previous answer (or the start), and the count of correct answers maps to
+// points through \`scoreBands\`.
+//
+// Answers under dataPath (MoCA: formAnswers.attention):
+//   [valuesKey].[valuePrefix]n   the answer given (number or null), n from 1
+//   [correctKey].[correctPrefix]n true when that answer is right
+//   [scoreKey]                    points, from the bands
+// An answer is scored when it is entered (a later change to an earlier answer
+// does not rescore the next one), as the MoCA source did.
+// \`{ start }\` is staged under \`contentKey\` for the report.
+const SerialSubtraction = ({
+  id,
+  fieldId,
+  label,
+  title,
+  text = "Serial {step} subtraction starting at {start}",
+  dataPath,
+  start = 100,
+  step = 7,
+  count = 5,
+  valuesKey = "values",
+  valuePrefix = "value",
+  correctKey = "correct",
+  correctPrefix = "correct",
+  scoreKey = "score",
+  scoreBands = [{ min: 0, score: 0 }, { min: 1, score: 1 }, { min: 2, score: 2 }, { min: 4, score: 3 }],
+  bandsText = "4 or 5 correct subtractions: 3 pts|2 or 3 correct: 2 pts|1 correct: 1 pts|0 correct: 0 pts",
+  completePath,
+  contentKey,
+}) => {
+  const startValue = Number(start)
+  const stepValue = Number(step)
+  const indexes = Array.from({ length: Math.max(1, Number(count) || 1) }, (_, index) => index + 1)
+  const defaults = {
+    [correctKey]: Object.fromEntries(indexes.map((n) => [\`\${correctPrefix}\${n}\`, false])),
+    [valuesKey]: Object.fromEntries(indexes.map((n) => [\`\${valuePrefix}\${n}\`, null])),
+    [scoreKey]: 0,
+  }
+  const { answers, update, locked } = AssessmentKit.useAnswers({ dataPath, defaults, completePath, contentKey, content: { start: startValue, step: stepValue } })
+  const [open, setOpen] = React.useState(false)
+  const values = answers?.[valuesKey] || {}
+  const correct = answers?.[correctKey] || {}
+  const valueAt = (n) => values[\`\${valuePrefix}\${n}\`] ?? null
+  const correctAt = (n) => correct[\`\${correctPrefix}\${n}\`] === true
+  const bandScore = (hits) => (Array.isArray(scoreBands) ? scoreBands : [])
+    .filter((band) => hits >= Number(band.min))
+    .reduce((score, band) => Number(band.score), 0)
+  const hits = indexes.filter(correctAt).length
+  const score = Number(answers?.[scoreKey] ?? bandScore(hits))
+
+  const setValue = (n, raw) => update((current) => {
+    const digits = String(raw ?? "").replace(/_/g, "").trim()
+    const value = digits === "" ? null : Number(digits)
+    current[valuesKey] = current[valuesKey] || {}
+    current[correctKey] = current[correctKey] || {}
+    current[valuesKey][\`\${valuePrefix}\${n}\`] = value
+    current[correctKey][\`\${correctPrefix}\${n}\`] = n === 1
+      ? value === startValue - stepValue
+      : (current[valuesKey][\`\${valuePrefix}\${n - 1}\`] - stepValue) === value
+    const total = indexes.filter((index) => current[correctKey][\`\${correctPrefix}\${index}\`] === true).length
+    current[scoreKey] = bandScore(total)
+  })
+
+  const header = title !== undefined ? title : label
+  const caption = String(text).replace("{step}", String(stepValue)).replace("{start}", String(startValue))
+  const bands = String(bandsText || "").split("|").filter(Boolean)
+  const maxScore = Math.max(0, ...(Array.isArray(scoreBands) ? scoreBands : []).map((band) => Number(band.score) || 0))
+
+  return (
+    <div id={id || fieldId} data-assessment-item="serial-subtraction">
+      <AssessmentKit.SectionRow title={header} points={\`\${score}/\${maxScore}\`} border={{ borderLeft: "1px solid black", borderRight: "1px solid black" }}>
+        <div style={{ display: "inline-flex", flexDirection: "column", padding: "3px" }}>
+          <div style={{ display: "flex", flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingRight: "20px", flexWrap: "wrap" }}>
+            <span>{caption} <Fluent.IconButton iconProps={{ iconName: "Edit" }} onClick={() => setOpen(true)} /></span>
+            {indexes.map((n) => (
+              <span key={n} style={{ display: "inline-flex", alignItems: "center" }}>
+                [<AssessmentKit.CheckButton checked={correctAt(n)} readOnly />] {valueAt(n) ?? "__"}
+              </span>
+            ))}
+          </div>
+          <div style={{ display: "flex", flexDirection: "row", justifyContent: "space-around", alignItems: "center", flexWrap: "wrap" }}>
+            {bands.map((band) => {
+              const [lead, pts] = band.split(":")
+              return <span key={band}>{lead}{pts !== undefined ? <>: <strong>{pts.trim()}</strong></> : null}</span>
+            })}
+          </div>
+        </div>
+      </AssessmentKit.SectionRow>
+      <SubForm hidden={!open} onCancel={() => setOpen(false)}>
+        <div data-assessment-dialog="serial-subtraction" style={{ display: "flex", flexDirection: "column" }}>
+          <div>Please enter in the values provided by the subject in order</div>
+          {indexes.map((n) => {
+            const value = valueAt(n)
+            const previous = n === 1 ? startValue : valueAt(n - 1)
+            return (
+              <div key={n} style={{ display: "inline-flex", flexDirection: "row", alignItems: "center" }}>
+                Answer {n}:{" "}
+                <Fluent.MaskedTextField
+                  readOnly={locked}
+                  borderless
+                  mask="999"
+                  disabled={n > 1 && !valueAt(n - 1)}
+                  value={value == null ? "" : String(value)}
+                  styles={{ root: { width: "45px" } }}
+                  onChange={(event, next) => setValue(n, next)}
+                />{" "}
+                <Fluent.FontIcon iconName={correctAt(n) ? "CheckMark" : value !== null ? "Cancel" : undefined} />
+                &nbsp; {value ? \`\${correctAt(n) ? "C" : "Inc"}orrect (\${previous} - \${stepValue} = \${previous - stepValue})\` : null}
+              </div>
+            )
+          })}
+        </div>
+        <Fluent.DefaultButton text="OK" onClick={() => setOpen(false)} />
+      </SubForm>
+    </div>
+  )
+}
+`,
   './ServiceEpisodes/index.jsx': `/**
  * Provide dropdown selection of a single service episode. The initial data is
  * obtained from the patient object.
@@ -53741,6 +54676,163 @@ const ValueSetObservationField = ({ id, fieldId, label = "Observation", ...props
   )
 }
 `,
+  './VerbalFluency/index.jsx': `// VerbalFluency — letter fluency: the subject names words beginning with
+// \`letter\` in a minute. The examiner types each word and marks it valid (Y)
+// or not (N); a word that does not start with the letter is marked N as it is
+// typed. The valid count passes at \`threshold\` words. With no words typed the
+// count can be entered by hand (scored on paper).
+//
+// Answers under dataPath (MoCA: formAnswers.language.langword):
+//   [entriesKey] [{ text, isValid }] — isValid "Y", "N" or null; one empty
+//                entry at the end to type into
+//   [countKey]   the valid count (null until known)
+// \`{ letter }\` is staged under \`contentKey\` for the report.
+const VerbalFluency = ({
+  id,
+  fieldId,
+  label,
+  text = "Fluency: Name maximum number of words in one minute that begin with the letter {letter}.",
+  dataPath,
+  letter = "F",
+  threshold = 11,
+  entriesKey = "entries",
+  countKey = "validCount",
+  completePath,
+  contentKey,
+}) => {
+  const targetLetter = String(letter || "").toUpperCase()
+  const blank = () => ({ text: null, isValid: null })
+  const { answers, update, locked } = AssessmentKit.useAnswers({
+    dataPath,
+    defaults: { [entriesKey]: [blank()], [countKey]: null },
+    completePath,
+    contentKey,
+    content: { letter: targetLetter, threshold: Number(threshold) },
+  })
+  const [open, setOpen] = React.useState(false)
+  const textRef = React.useRef(null)
+  const entries = Array.isArray(answers?.[entriesKey]) && answers[entriesKey].length ? answers[entriesKey] : [blank()]
+  const validCount = answers?.[countKey] ?? null
+  const typed = entries.filter((entry) => Boolean(entry?.text) && entry.text !== "")
+  const listed = typed.length > 0 && entries.length > 1
+  const passes = Number(validCount) >= Number(threshold)
+
+  React.useLayoutEffect(() => {
+    if (open) textRef.current?.focus()
+  })
+
+  // Recount from the typed words, as the source did on every change.
+  const recount = (current) => {
+    const list = current[entriesKey]
+    if (list.filter((entry) => Boolean(entry.text)).length > 0) {
+      current[countKey] = list.filter((entry) => entry.isValid === "Y").length
+    }
+  }
+  const withEntries = (recipe) => update((current) => {
+    if (!Array.isArray(current[entriesKey]) || current[entriesKey].length === 0) current[entriesKey] = [blank()]
+    recipe(current[entriesKey], current)
+    recount(current)
+  })
+  const setText = (index, value) => withEntries((list) => {
+    const entry = list[index]
+    if (!entry) return
+    entry.text = value
+    if (!value || value.length === 0) {
+      entry.isValid = null
+      entry.text = null
+    } else if (value.charAt(0).toUpperCase() !== targetLetter) {
+      entry.isValid = "N"
+    }
+  })
+  const setValidity = (index, key) => withEntries((list) => {
+    if (list[index]) list[index].isValid = key
+  })
+  const addEntry = () => withEntries((list) => { list.push(blank()) })
+  const removeEntry = (index) => withEntries((list) => {
+    list.splice(index, 1)
+    if (list.length === 0) list.push(blank())
+  })
+  const setManualCount = (raw) => update((current) => {
+    const digits = Number(String(raw ?? "").replace(/_/g, ""))
+    current[countKey] = digits > 0 ? digits : null
+    if (Array.isArray(current[entriesKey])) recount(current)
+  })
+
+  const caption = String(text).replace("{letter}", targetLetter)
+  return (
+    <div id={id || fieldId} data-assessment-item="verbal-fluency">
+      <AssessmentKit.SectionRow points={\`\${passes ? 1 : 0}/1\`} border={{ borderLeft: "1px solid black", borderRight: "1px solid black" }}>
+        <div style={{ display: "flex", flexDirection: "row", alignItems: "center", flexGrow: 1, justifyContent: "space-between", padding: "3px", flexWrap: "wrap" }}>
+          <div style={{ fontWeight: "bold", display: "inline-flex", flexDirection: "row", fontSize: "0.95em", alignItems: "center" }}>
+            <span>{caption}</span>
+            <Fluent.IconButton
+              iconProps={{ iconName: "Edit" }}
+              styles={{ root: { backgroundColor: listed ? "rgb(222 245 222)" : "inherit" }, icon: { color: listed ? "black" : "rgb(0, 120, 212)" } }}
+              onClick={() => setOpen(true)}
+            />
+          </div>
+          <div style={{ display: "flex", flexDirection: "row", alignItems: "center" }}>
+            [<AssessmentKit.CheckButton checked={passes} readOnly />]&nbsp;
+            <Fluent.MaskedTextField
+              borderless
+              mask="999"
+              readOnly={locked || listed}
+              value={validCount == null ? "" : String(validCount)}
+              styles={{ root: { width: "45px" } }}
+              onChange={(event, value) => setManualCount(value)}
+            />
+            {\` (N ≥ \${threshold} words)\`}
+          </div>
+        </div>
+      </AssessmentKit.SectionRow>
+      <SubForm hidden={!open} onCancel={() => setOpen(false)} minWidth="600px">
+        <div data-assessment-dialog="verbal-fluency" style={{ display: "flex", flexDirection: "column" }}>
+          <div style={{ display: "flex", flexDirection: "row", justifyContent: "space-between", fontWeight: "bold", paddingBottom: "5px" }}>
+            <span>{\`Words beginning with \${targetLetter}\`}</span>
+            <span style={{ width: "10%", display: "flex", justifyContent: "space-between" }}><span>Y</span><span>N</span></span>
+          </div>
+          {entries.map((entry, index) => {
+            const last = index === entries.length - 1
+            return (
+              <div key={index} style={{ display: "flex", flexDirection: "row", justifyContent: "space-between", paddingBottom: "5px" }}>
+                <div style={{ flexGrow: 1, paddingRight: "20px", display: "inline-flex", alignItems: "center" }}>
+                  {locked && last && index === 0 && !entry.text ? (
+                    <span>No answers given or answers recorded and scored on paper</span>
+                  ) : locked && last ? null : (
+                    <>
+                      {!locked && (!last || entry.text) ? <Fluent.IconButton iconProps={{ iconName: "Cancel" }} onClick={() => removeEntry(index)} /> : null}
+                      <span style={{ paddingLeft: !last || entry.text ? "0px" : "32px" }}>{\`\${index + 1}. \`}</span>
+                      <Fluent.TextField
+                        readOnly={locked}
+                        value={entry.text ?? ""}
+                        componentRef={last ? textRef : undefined}
+                        placeholder={last ? "Enter word here" : undefined}
+                        onChange={(event, value) => setText(index, value ?? "")}
+                        onKeyDown={(event) => { if (last && event.key === "Enter" && event.target.value.length > 0) addEntry() }}
+                        styles={{ root: { flexGrow: 1, paddingLeft: "10px" } }}
+                      />
+                    </>
+                  )}
+                </div>
+                {entry.text?.length > 0 ? (
+                  <Fluent.ChoiceGroup
+                    disabled={locked}
+                    options={[{ key: "Y" }, { key: "N" }]}
+                    selectedKey={entry.isValid ?? null}
+                    onChange={(event, option) => setValidity(index, option.key)}
+                    styles={{ flexContainer: { display: "flex", flexDirection: "row", justifyContent: "space-between" }, root: { width: "10%" } }}
+                  />
+                ) : <div style={{ width: "10%" }} />}
+              </div>
+            )
+          })}
+          <Fluent.DefaultButton text="Ok" onClick={() => setOpen(false)} styles={{ root: { width: "65px" } }} />
+        </div>
+      </SubForm>
+    </div>
+  )
+}
+`,
   './WordRegenerator/index.jsx': `// Generated by scripts/generate-word-regenerator.mjs. Edit the runtime or wrapper source.
 "use strict";
 var WordFormRuntime = (() => {
@@ -57473,6 +58565,60 @@ export const componentIdentities: Record<string, any> = {
       "FormLogicKit"
     ]
   },
+  'AssessmentKit': {
+    "name": "AssessmentKit",
+    "title": "Assessment kit",
+    "description": "Helper module for the assessment components: answer-tree reads and writes at a dot path, defaults filled without replacing answers, the complete/submitted lock, staged report content, and the scored-sheet row layout.",
+    "version": {
+      "major": 1,
+      "minor": 0,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "Northern Health",
+    "author": "Claude",
+    "publisher": "Northern Health",
+    "globalIdentifier": "",
+    "requiredFormViewerVersion": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "requiredMoisVersion": {
+      "major": 2,
+      "minor": 27,
+      "patch": 19
+    },
+    "components": []
+  },
+  'AssessmentScore': {
+    "name": "AssessmentScore",
+    "title": "Assessment score",
+    "description": "Totals an assessment's items by score rules, draws the total row, locks the form once complete, and stages the calculated observation and report written on submit.",
+    "version": {
+      "major": 1,
+      "minor": 0,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "Northern Health",
+    "author": "Claude",
+    "publisher": "Northern Health",
+    "globalIdentifier": "",
+    "requiredFormViewerVersion": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "requiredMoisVersion": {
+      "major": 2,
+      "minor": 27,
+      "patch": 19
+    },
+    "components": [
+      "AssessmentKit"
+    ]
+  },
   'AssessmentScoringTable': {
     "name": "AssessmentScoringTable",
     "title": "Assessment Scoring Table",
@@ -57669,6 +58815,62 @@ export const componentIdentities: Record<string, any> = {
     },
     "components": [
       "ObservationKit"
+    ]
+  },
+  'CheckItemGrid': {
+    "name": "CheckItemGrid",
+    "title": "Check-item grid",
+    "description": "Scored grid of items by trials or cue levels, a check per cell (word-list memory trials, delayed recall by cue with a weighted index); writes under a configurable answer path.",
+    "version": {
+      "major": 1,
+      "minor": 0,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "Northern Health",
+    "author": "Claude",
+    "publisher": "Northern Health",
+    "globalIdentifier": "",
+    "requiredFormViewerVersion": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "requiredMoisVersion": {
+      "major": 2,
+      "minor": 27,
+      "patch": 19
+    },
+    "components": [
+      "AssessmentKit"
+    ]
+  },
+  'CheckItemList': {
+    "name": "CheckItemList",
+    "title": "Check-item list",
+    "description": "Scored items with one check each (digit span, repeated sentences, abstraction pairs, orientation); each item's label and stimulus are settings; writes under a configurable answer path.",
+    "version": {
+      "major": 1,
+      "minor": 0,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "Northern Health",
+    "author": "Claude",
+    "publisher": "Northern Health",
+    "globalIdentifier": "",
+    "requiredFormViewerVersion": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "requiredMoisVersion": {
+      "major": 2,
+      "minor": 27,
+      "patch": 19
+    },
+    "components": [
+      "AssessmentKit"
     ]
   },
   'CodedObservationChoiceField': {
@@ -58749,6 +59951,34 @@ export const componentIdentities: Record<string, any> = {
       "AnswerChoiceField"
     ]
   },
+  'LetterTapping': {
+    "name": "LetterTapping",
+    "title": "Letter tapping",
+    "description": "Vigilance item: mark the subject's taps on a letter row, then Complete scores it against the target letter and an error limit; can set its complete flag on submit.",
+    "version": {
+      "major": 1,
+      "minor": 0,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "Northern Health",
+    "author": "Claude",
+    "publisher": "Northern Health",
+    "globalIdentifier": "",
+    "requiredFormViewerVersion": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "requiredMoisVersion": {
+      "major": 2,
+      "minor": 27,
+      "patch": 19
+    },
+    "components": [
+      "AssessmentKit"
+    ]
+  },
   'LongTermMedications': {
     "name": "LongTermMedications",
     "title": "ListSelection for LongTermMedicationOrders",
@@ -59458,6 +60688,34 @@ export const componentIdentities: Record<string, any> = {
       "ValueKit"
     ]
   },
+  'SerialSubtraction': {
+    "name": "SerialSubtraction",
+    "title": "Serial subtraction",
+    "description": "Serial subtraction item (serial 7s): each answer scored against the previous one, correct answers mapped to points by bands.",
+    "version": {
+      "major": 1,
+      "minor": 0,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "Northern Health",
+    "author": "Claude",
+    "publisher": "Northern Health",
+    "globalIdentifier": "",
+    "requiredFormViewerVersion": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "requiredMoisVersion": {
+      "major": 2,
+      "minor": 27,
+      "patch": 19
+    },
+    "components": [
+      "AssessmentKit"
+    ]
+  },
   'ServiceEpisodes': {
     "name": "ServiceEpisodes",
     "title": "Select service episodes",
@@ -59646,6 +60904,34 @@ export const componentIdentities: Record<string, any> = {
     "version": "1.0.0",
     "components": [
       "CodedObservationChoiceField"
+    ]
+  },
+  'VerbalFluency': {
+    "name": "VerbalFluency",
+    "title": "Verbal fluency",
+    "description": "Letter fluency item: type the words named, mark each valid, count passes at a threshold; the count can be entered by hand.",
+    "version": {
+      "major": 1,
+      "minor": 0,
+      "patch": 0
+    },
+    "type": "component",
+    "owner": "Northern Health",
+    "author": "Claude",
+    "publisher": "Northern Health",
+    "globalIdentifier": "",
+    "requiredFormViewerVersion": {
+      "major": 0,
+      "minor": 1,
+      "patch": 0
+    },
+    "requiredMoisVersion": {
+      "major": 2,
+      "minor": 27,
+      "patch": 19
+    },
+    "components": [
+      "AssessmentKit"
     ]
   },
   'WordRegenerator': {

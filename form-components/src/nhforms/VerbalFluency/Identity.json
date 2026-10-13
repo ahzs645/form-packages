@@ -1,0 +1,28 @@
+{
+  "name": "VerbalFluency",
+  "title": "Verbal fluency",
+  "description": "Letter fluency item: type the words named, mark each valid, count passes at a threshold; the count can be entered by hand.",
+  "version": {
+    "major": 1,
+    "minor": 0,
+    "patch": 0
+  },
+  "type": "component",
+  "owner": "Northern Health",
+  "author": "Claude",
+  "publisher": "Northern Health",
+  "globalIdentifier": "",
+  "requiredFormViewerVersion": {
+    "major": 0,
+    "minor": 1,
+    "patch": 0
+  },
+  "requiredMoisVersion": {
+    "major": 2,
+    "minor": 27,
+    "patch": 19
+  },
+  "components": [
+    "AssessmentKit"
+  ]
+}

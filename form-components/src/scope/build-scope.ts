@@ -295,6 +295,7 @@ import {
   commitPreparedAuthorshipPersist,
   releasePreparedAuthorshipClaim,
 } from '../authorship';
+import { moisGetDateString } from './mois-date-string';
 
 /**
  * SaveOnClose Component
@@ -875,7 +876,7 @@ export const buildScope = (): Record<string, any> => ({
   releasePreparedAuthorshipClaim,
 
   // Date/Age/Time helper functions (from MoisFunction, exposed at root for convenience)
-  getDateString: (date: any) => date ? new Date(date).toISOString().split('T')[0] : '',
+  getDateString: moisGetDateString,
   getTimeString: (date: any) => {
     if (!date) return '';
     const d = new Date(date);

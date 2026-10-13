@@ -1,0 +1,28 @@
+{
+  "name": "CheckItemGrid",
+  "title": "Check-item grid",
+  "description": "Scored grid of items by trials or cue levels, a check per cell (word-list memory trials, delayed recall by cue with a weighted index); writes under a configurable answer path.",
+  "version": {
+    "major": 1,
+    "minor": 0,
+    "patch": 0
+  },
+  "type": "component",
+  "owner": "Northern Health",
+  "author": "Claude",
+  "publisher": "Northern Health",
+  "globalIdentifier": "",
+  "requiredFormViewerVersion": {
+    "major": 0,
+    "minor": 1,
+    "patch": 0
+  },
+  "requiredMoisVersion": {
+    "major": 2,
+    "minor": 27,
+    "patch": 19
+  },
+  "components": [
+    "AssessmentKit"
+  ]
+}

@@ -84,6 +84,7 @@ import {
   recordMoisRuntimeAction,
 } from '../runtime/mois-contract';
 import { PreviewAjv } from '../runtime/preview-ajv';
+import { moisGetDateString } from './mois-date-string';
 
 // Trigger toast notification via window event (connects to App.tsx toast system)
 const triggerToast = (message: string) => {
@@ -450,7 +451,7 @@ export const AihsFunctions = {
   // Date formatting
   formatDate: (date: any) => date ? new Date(date).toLocaleDateString() : '',
   formatDateTime: (date: any) => date ? new Date(date).toLocaleString() : '',
-  getDateString: (date: any) => date ? new Date(date).toISOString().split('T')[0] : '',
+  getDateString: moisGetDateString,
   getTimeString: (date: any) => date ? new Date(date).toTimeString().split(' ')[0] : '',
   getDateTimeString: (date: any) => date ? new Date(date).toISOString() : '',
   parseDate: (str: string) => str ? new Date(str) : null,

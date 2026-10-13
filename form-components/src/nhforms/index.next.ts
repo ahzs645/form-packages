@@ -400,6 +400,8 @@ function loadComponentCode(
     'LayoutKit',
     // FieldKit helper namespace (a question drawn with the exporter's MOIS control)
     'FieldKit',
+    // AssessmentKit helper namespace (assessment items' answer tree, lock, row layout)
+    'AssessmentKit',
     // DialogKit helper namespace (RowDialog / ConfirmDialog on the MOIS SubForm, dialog width rule)
     'DialogKit',
     // SubformScoring exports. The write kernel (mutation documents + context
