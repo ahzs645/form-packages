@@ -26,6 +26,39 @@ export const OscarExportSettingsSchema = z.object({
   })).default([]),
 });
 
+const EpicCodingSchema = z.object({ system: z.string(), code: z.string(), display: z.string().optional() });
+const EpicUnitSchema = z.object({ code: z.string(), display: z.string().optional() });
+const EpicAnswerMappingSchema = z.object({ value: z.string(), code: z.string(), system: z.string().optional(), display: z.string().optional() });
+/** Local configuration only. Incomplete rows stay editable and are rejected by export review. */
+export const EpicExportSettingsSchema = z.object({
+  version: z.literal(1).default(1),
+  site: z.object({
+    issuer: z.string(), clientId: z.string(), redirectUri: z.string(),
+    authorizationOrigins: z.array(z.string()).default([]),
+    scopeVersion: z.enum(['v1', 'v2']).default('v1'),
+    launchMode: z.enum(['ehr', 'standalone', 'both']).default('both'),
+    allowLoopbackHttp: z.boolean().optional(), observationNoteLimit: z.union([z.literal(60), z.literal(254)]).optional(),
+  }),
+  readMappings: z.array(z.object({
+    fieldId: z.string(), source: z.enum(['patient', 'encounter', 'observation']), path: z.string(),
+    coding: EpicCodingSchema.optional(), identifierSystem: z.string().optional(),
+    unit: EpicUnitSchema.optional(), answers: z.array(EpicAnswerMappingSchema).optional(),
+  })).default([]),
+  observationMappings: z.array(z.object({
+    fieldId: z.string(), coding: EpicCodingSchema, valueType: z.enum(['quantity', 'string', 'coding', 'time', 'blood-pressure']), diastolicFieldId: z.string().optional(),
+    unit: EpicUnitSchema.optional(), answers: z.array(EpicAnswerMappingSchema).optional(), commentsFieldId: z.string().optional(),
+    template: z.object({ system: z.string(), value: z.string() }).optional(),
+  })).default([]),
+  note: z.object({ enabled: z.boolean(), type: EpicCodingSchema, docStatus: z.enum(['preliminary', 'final']), fieldIds: z.array(z.string()) }),
+  questionnaire: z.object({
+    enabled: z.boolean(), canonical: z.string(), status: z.enum(['in-progress', 'completed']),
+    questions: z.array(z.object({
+      fieldId: z.string(), linkId: z.string(), answerType: z.enum(['string', 'decimal', 'boolean', 'date', 'time', 'quantity']),
+      unit: EpicUnitSchema.optional(), answers: z.array(EpicAnswerMappingSchema).optional(),
+    })),
+  }),
+});
+
 export const BuilderDocumentSchema = z.looseObject({
   name: z.string(),
   fields: BuilderFieldsSchema,
@@ -33,6 +66,7 @@ export const BuilderDocumentSchema = z.looseObject({
   identityType: z.enum(["ACTIVITY", "ATTACHMENT", "CALCULATOR", "FLOWSHEET", "TESTFORM", "WEBCLIENT", "TEST"]),
   identityCode: z.string(),
   oscarExport: OscarExportSettingsSchema.nullable().optional(),
+  epicExport: EpicExportSettingsSchema.nullable().optional(),
   identityMetadata: z.object({
     author: z.string().optional(),
     owner: z.string().optional(),

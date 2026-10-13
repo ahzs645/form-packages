@@ -34,7 +34,8 @@ describe("target vocabulary", () => {
     expect(new Set(FORM_CONCEPTS).size).toBe(FORM_CONCEPTS.length);
     expect(TARGET_IDS).toContain("documents");
     expect(isTargetId("mois")).toBe(true);
-    expect(isTargetId("epic")).toBe(false);
+    expect(isTargetId("epic")).toBe(true);
+    expect(isTargetId("unknown-target")).toBe(false);
     expect(isTargetId(undefined)).toBe(false);
   });
 });
@@ -59,11 +60,12 @@ describe("lossSeverityFor", () => {
 describe("export targets setting", () => {
   it("cleans a saved setting", () => {
     expect(normalizeExportTargetsSetting(undefined)).toBeNull();
-    expect(normalizeExportTargetsSetting({ primary: "epic" })).toBeNull();
+    expect(normalizeExportTargetsSetting({ primary: "unknown-target" })).toBeNull();
+    expect(normalizeExportTargetsSetting({ primary: "epic", secondary: ["epic", "oscar", "fhir", "unknown-target"] })).toEqual({ primary: "epic", secondary: ["fhir", "oscar"] });
     expect(normalizeExportTargetsSetting([])).toBeNull();
     expect(normalizeExportTargetsSetting({ primary: "cerner" })).toEqual({ primary: "cerner" });
     expect(
-      normalizeExportTargetsSetting({ primary: "cerner", secondary: ["fhir", "cerner", "epic", "mois", "fhir"] })
+      normalizeExportTargetsSetting({ primary: "cerner", secondary: ["fhir", "cerner", "unknown-target", "mois", "fhir"] })
     ).toEqual({ primary: "cerner", secondary: ["mois", "fhir"] });
     expect(normalizeExportTargetsSetting({ primary: "fhir", secondary: "mois" })).toEqual({ primary: "fhir" });
   });
@@ -71,6 +73,7 @@ describe("export targets setting", () => {
   it("falls back to the current export mode, then MOIS", () => {
     expect(resolveExportTargets(undefined)).toEqual({ primary: "mois" });
     expect(resolveExportTargets({ exportTargets: null }, "alayacare")).toEqual({ primary: "alayacare" });
+    expect(resolveExportTargets(undefined, "epic")).toEqual({ primary: "epic" });
     expect(resolveExportTargets({}, "not-a-target")).toEqual({ primary: "mois" });
     expect(resolveExportTargets({ exportTargets: { primary: "fhir", secondary: ["mois"] } }, "alayacare")).toEqual({
       primary: "fhir",

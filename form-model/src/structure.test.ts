@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { BuilderField } from "./index";
 import type { ModuleConfig } from "./layout";
 import { storedTableConfig, withSubformDataEntry } from "./field-group";
+import { normalizeScoringConfig } from "./scoring-shape";
 import {
   findStructureGroup,
   readFormStructure,
@@ -314,6 +315,53 @@ describe("readFormStructure: layout tables, subforms and repeating sections", ()
     const [group] = structureGroups(readFormStructure({ fields: [component] }));
     expect(group).toMatchObject({ id: "phq", label: "PHQ-2", presentation: "modal-subform", source: { kind: "component", componentKey: "SubformScoring" } });
     expect(group.members.map((member) => member.id)).toEqual(["phq_q1"]);
+  });
+
+  it("keeps normalized scoring answer codes for shared and question-specific options", () => {
+    const config = normalizeScoringConfig({
+      sharedOptions: [
+        { key: "0", text: "Not at all", score: 0 },
+        { key: "1", text: "Several days", score: 1 },
+      ],
+      questions: [
+        { id: "q1", label: "First question", fieldId: "shared_answer", childFieldIds: [], valueByFieldId: {} },
+        { id: "q2", label: "Second question", fieldId: "own_answer", childFieldIds: [], valueByFieldId: {}, options: [{ key: "N", text: "No difficulty", score: 0 }] },
+      ],
+      totals: [],
+      pdfSnippets: [],
+    } as unknown as NonNullable<ModuleConfig["scoring"]>);
+    const component = field({ id: "screen", type: "component", componentKey: "SubformScoring", componentProps: { config } });
+    const [group] = structureGroups(readFormStructure({ fields: [component] }));
+
+    expect(group.members.map((member) => ({ id: member.id, options: member.field.options }))).toEqual([
+      { id: "shared_answer", options: [{ label: "Not at all", value: "0", score: 0 }, { label: "Several days", value: "1", score: 1 }] },
+      { id: "own_answer", options: [{ label: "No difficulty", value: "N", score: 0 }] },
+    ]);
+  });
+
+  it("prefers explicit scoring states and runtime keys before normalized ids and display labels", () => {
+    const component = field({
+      id: "coded",
+      type: "component",
+      componentKey: "SubformScoring",
+      componentProps: { config: {
+        questions: [{ id: "q", label: "Answer", fieldId: "answer", options: [
+          { id: "internal-y", key: "legacy-y", state: "Y", label: "Yes", score: 1 },
+          { id: "internal-zero", key: "0", label: "Never", score: 0 },
+          { id: "N", label: "No", score: 0 },
+          { label: "Display only", score: 2 },
+        ] }],
+        totals: [],
+      } },
+    });
+    const [group] = structureGroups(readFormStructure({ fields: [component] }));
+
+    expect(group.members[0].field.options).toEqual([
+      { label: "Yes", value: "Y", score: 1 },
+      { label: "Never", value: "0", score: 0 },
+      { label: "No", value: "N", score: 0 },
+      { label: "Display only", value: "Display only", score: 2 },
+    ]);
   });
 
   it("reads a section filled from a MOIS collection as a repeating section group", () => {

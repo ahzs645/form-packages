@@ -23,7 +23,7 @@ import type {
  * Every export target. The EMR targets are covered by Export review (`ExportTargetId` in lib/export-compatibility); `documents`
  * is PDF, XFA and Word fill.
  */
-export const TARGET_IDS = ["mois", "cerner", "alayacare", "fhir", "oscar", "documents"] as const;
+export const TARGET_IDS = ["mois", "cerner", "alayacare", "fhir", "oscar", "epic", "documents"] as const;
 export type TargetId = (typeof TARGET_IDS)[number];
 
 /** The concepts a converter honours or reports a loss for, in the proposal's order. */
