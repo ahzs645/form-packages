@@ -76,6 +76,8 @@ const AnswerChoiceField = ({
   showOtherOption = false,
   otherLabel = "Other",
   layout = "vertical",
+  choiceAnswerLayout,
+  choiceAnswerOrder,
   value,
   onChange,
   getValue,
@@ -181,7 +183,8 @@ const AnswerChoiceField = ({
   ) : null
 
   const renderChecklist = () => {
-    const wrap = { display: "flex", flexFlow: layout === "inline" ? "row wrap" : "column", alignItems: "flex-start", gap: layout === "inline" ? "4px 12px" : 6, marginTop: 4 }
+    const grid = typeof LayoutKit !== "undefined" ? LayoutKit.readChoiceGrid({ choiceAnswerLayout, choiceAnswerOrder }, offered.length + (showOtherOption ? 1 : 0)) : null
+    const wrap = grid ? { display: "grid", gridTemplateColumns: `repeat(${grid.columns}, minmax(0, 1fr))`, gap: "8px 40px", marginTop: 4, ...(grid.columnFirst ? { gridAutoFlow: "column", gridTemplateRows: `repeat(${grid.rows}, auto)` } : {}) } : { display: "flex", flexFlow: layout === "inline" ? "row wrap" : "column", alignItems: "flex-start", gap: layout === "inline" ? "4px 12px" : 6, marginTop: 4 }
     if (multiple) {
       return (
         <div style={wrap} role="group" aria-label={label || effectiveId}>
@@ -222,7 +225,7 @@ const AnswerChoiceField = ({
             setOtherOpen(false)
             return choose(option?.key)
           }}
-          styles={layout === "inline" ? { flexContainer: { display: "flex", flexWrap: "wrap", gap: "0 12px" } } : undefined}
+          styles={grid ? { flexContainer: wrap } : layout === "inline" ? { flexContainer: { display: "flex", flexWrap: "wrap", gap: "0 12px" } } : undefined}
         />
         {otherInput}
       </>

@@ -12,3 +12,6 @@ export function responsiveFieldStyle(fraction = 1, gap = 12, minWidth = 160) {
   const width = share === 1 ? "100%" : `min(100%, max(${minimum}px, calc((100% + ${spacing}px) * ${share} - ${spacing}px)))`;
   return { width, flexBasis: width, flexGrow: 0, flexShrink: 0, minWidth: 0, maxWidth: "100%" };
 }
+
+// Runtime field editors share the same fixed answer-grid planner.
+export { readChoiceGrid } from "./choice-layout";

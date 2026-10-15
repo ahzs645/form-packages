@@ -192,6 +192,7 @@ export interface ParsedField {
   choiceStyle?: BuilderField["choiceStyle"];
   /** Layout of radio/checklist answers inside a SimpleCodeChecklist field. */
   choiceAnswerLayout?: BuilderField["choiceAnswerLayout"];
+  choiceAnswerOrder?: BuilderField["choiceAnswerOrder"];
   codeSystem?: string; // MOIS code system (e.g., "MOIS-MARITALSTATUS")
   showOtherOption?: boolean; // Allow "Other" option with custom input
   /** Emit MOIS autoHotKey on coded selects/checklists (keyboard shortcuts). */

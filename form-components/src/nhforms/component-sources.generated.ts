@@ -447,7 +447,7 @@ var AddressEntryRuntime = (() => {
         },
         choiceAnswerLayout: {
           type: "string",
-          enum: ["vertical", "responsive", "inline", "columns-2", "columns-3", "columns-4"]
+          enum: ["vertical", "responsive", "inline", "columns-2", "columns-3", "columns-4", "columns-5", "columns-6"]
         },
         codeSystem: { type: ["string", "null"] },
         showOtherOption: { type: "boolean" },
@@ -1707,6 +1707,8 @@ const AnswerChoiceField = ({
   showOtherOption = false,
   otherLabel = "Other",
   layout = "vertical",
+  choiceAnswerLayout,
+  choiceAnswerOrder,
   value,
   onChange,
   getValue,
@@ -1812,7 +1814,8 @@ const AnswerChoiceField = ({
   ) : null
 
   const renderChecklist = () => {
-    const wrap = { display: "flex", flexFlow: layout === "inline" ? "row wrap" : "column", alignItems: "flex-start", gap: layout === "inline" ? "4px 12px" : 6, marginTop: 4 }
+    const grid = typeof LayoutKit !== "undefined" ? LayoutKit.readChoiceGrid({ choiceAnswerLayout, choiceAnswerOrder }, offered.length + (showOtherOption ? 1 : 0)) : null
+    const wrap = grid ? { display: "grid", gridTemplateColumns: \`repeat(\${grid.columns}, minmax(0, 1fr))\`, gap: "8px 40px", marginTop: 4, ...(grid.columnFirst ? { gridAutoFlow: "column", gridTemplateRows: \`repeat(\${grid.rows}, auto)\` } : {}) } : { display: "flex", flexFlow: layout === "inline" ? "row wrap" : "column", alignItems: "flex-start", gap: layout === "inline" ? "4px 12px" : 6, marginTop: 4 }
     if (multiple) {
       return (
         <div style={wrap} role="group" aria-label={label || effectiveId}>
@@ -1853,7 +1856,7 @@ const AnswerChoiceField = ({
             setOtherOpen(false)
             return choose(option?.key)
           }}
-          styles={layout === "inline" ? { flexContainer: { display: "flex", flexWrap: "wrap", gap: "0 12px" } } : undefined}
+          styles={grid ? { flexContainer: wrap } : layout === "inline" ? { flexContainer: { display: "flex", flexWrap: "wrap", gap: "0 12px" } } : undefined}
         />
         {otherInput}
       </>
@@ -17224,6 +17227,8 @@ const FieldKit = (() => {
           ...(Array.isArray(descriptor.optionRules) && descriptor.optionRules.length ? { optionRules: descriptor.optionRules } : {}),
           ...(codeSystem ? { codeSystem } : {}),
           ...(descriptor.showOtherOption ? { showOtherOption: true } : {}),
+          choiceAnswerLayout: descriptor.choiceAnswerLayout,
+          choiceAnswerOrder: descriptor.choiceAnswerOrder,
           ...(descriptor.choiceAnswerLayout === "inline" ? { layout: "inline" } : {}),
         }
         if (!controlled) return <AnswerChoiceField {...answerProps} {...bound} />
@@ -17359,12 +17364,15 @@ const FieldKit = (() => {
 
       }
       case "SimpleCodeChecklist": {
+        const grid = typeof LayoutKit !== "undefined" ? LayoutKit.readChoiceGrid(descriptor, optionsOf(descriptor).length) : null
+        const containerProps = grid ? { style: { display: "grid", gridTemplateColumns: \`repeat(\${grid.columns}, minmax(0, 1fr))\`, gap: "8px 40px", ...(grid.columnFirst ? { gridAutoFlow: "column", gridTemplateRows: \`repeat(\${grid.rows}, auto)\` } : {}) } } : undefined
         const checklistProps = {
           ...common,
           selectionType: choice.selectionType,
           ...(codeSystem ? { codeSystem } : {}),
           ...(optionsOf(descriptor).length > 0 ? { optionList: selectOptionList(descriptor) } : {}),
           ...(descriptor.choiceAnswerLayout === "vertical" || descriptor.presentation === "vertical" ? { multiline: true } : {}),
+          ...(containerProps ? { containerProps } : {}),
           ...(descriptor.autoHotKey ? { autoHotKey: true } : {}),
           ...(descriptor.showOtherOption ? { showOtherOption: true } : {}),
         }
@@ -31729,6 +31737,16 @@ const InvestigationTabs = ({
 // Reference only inside function bodies: NHForms modules load in any order.
 
 const LayoutKit = (() => {
+  function readChoiceGrid(source, answerCount) {
+    const columns = source.choiceAnswerLayout === "vertical" ? 1 : Number(source.choiceAnswerLayout?.replace("columns-", ""));
+    if (!Number.isInteger(columns) || columns < 1 || columns > 6) return null;
+    return {
+      columns,
+      rows: Math.max(1, Math.ceil(answerCount / columns)),
+      columnFirst: source.choiceAnswerOrder === "column-first"
+    };
+  }
+
   function fieldWidthFraction(width) {
     if (typeof width === "number") return Number.isFinite(width) ? Math.max(0.1, Math.min(1, width)) : 1;
     const [a, b] = (width ?? "").split("/").map(Number);
@@ -31744,6 +31762,7 @@ const LayoutKit = (() => {
 
   return {
     fieldWidthFraction,
+    readChoiceGrid,
     responsiveFieldStyle,
   }
 })()

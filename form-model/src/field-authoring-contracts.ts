@@ -159,8 +159,9 @@ const SPECIALIZED_CONTRACTS: Partial<Record<BuilderFieldType, Omit<BuilderFieldA
       },
       choiceAnswerLayout: {
         type: "string",
-        enum: ["vertical", "responsive", "inline", "columns-2", "columns-3", "columns-4"],
+        enum: ["vertical", "responsive", "inline", "columns-2", "columns-3", "columns-4", "columns-5", "columns-6"],
       },
+      choiceAnswerOrder: { type: "string", enum: ["row-first", "column-first"] },
       codeSystem: { type: ["string", "null"] },
       showOtherOption: { type: "boolean" },
       autoHotKey: { type: "boolean" },
