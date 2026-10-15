@@ -449,6 +449,7 @@ var AddressEntryRuntime = (() => {
           type: "string",
           enum: ["vertical", "responsive", "inline", "columns-2", "columns-3", "columns-4", "columns-5", "columns-6"]
         },
+        choiceAnswerOrder: { type: "string", enum: ["row-first", "column-first"] },
         codeSystem: { type: ["string", "null"] },
         showOtherOption: { type: "boolean" },
         autoHotKey: { type: "boolean" },
