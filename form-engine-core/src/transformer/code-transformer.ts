@@ -10,6 +10,29 @@ import type { FormCompileError, TransformOptions } from './types';
 
 const globallyWarnedMissingSymbols = new Set<string>();
 
+/**
+ * The standard JavaScript built-ins. Real MOIS runs form code as a function
+ * whose scope names are parameters, so every built-in stays reachable; here
+ * the `with` proxy claims unknown names to hand out placeholders, so a
+ * built-in the scope doesn't list (`Set`, `Map`, `Promise`…) must fall
+ * through to the real global or `new Set()` gets a placeholder component.
+ * ECMAScript names only: a DOM global such as `Option`, `Text` or `Image`
+ * would shadow a missing MOIS component of the same name.
+ */
+const JS_BUILTIN_GLOBALS = new Set([
+  'globalThis', 'Infinity', 'NaN', 'undefined',
+  'isFinite', 'isNaN', 'parseFloat', 'parseInt',
+  'decodeURI', 'decodeURIComponent', 'encodeURI', 'encodeURIComponent',
+  'Object', 'Function', 'Boolean', 'Symbol', 'Number', 'BigInt', 'Math', 'Date', 'String', 'RegExp',
+  'Array', 'Int8Array', 'Uint8Array', 'Uint8ClampedArray', 'Int16Array', 'Uint16Array', 'Int32Array',
+  'Uint32Array', 'Float32Array', 'Float64Array', 'BigInt64Array', 'BigUint64Array',
+  'Map', 'Set', 'WeakMap', 'WeakSet', 'WeakRef', 'FinalizationRegistry',
+  'ArrayBuffer', 'SharedArrayBuffer', 'DataView', 'Atomics', 'JSON',
+  'Promise', 'Proxy', 'Reflect', 'Intl', 'Iterator',
+  'Error', 'AggregateError', 'EvalError', 'RangeError', 'ReferenceError', 'SyntaxError', 'TypeError', 'URIError',
+  'structuredClone', 'queueMicrotask',
+]);
+
 /** Names the evaluated form in stack traces and in DevTools' Sources panel. */
 const FORM_SOURCE_URL = 'webforms-preview-form.js';
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -345,6 +368,10 @@ const createFormComponent = (
         // in a block or function nested inside this `with`.
         if (prop in target) {
           return true;
+        }
+        // A built-in the scope doesn't provide resolves to the real global.
+        if (JS_BUILTIN_GLOBALS.has(prop) && prop in globalThis) {
+          return false;
         }
         // For locally-defined variables, return false so 'with' falls back to lexical scope
         // This allows local variables like PHQ9Quest to be found in their defining scope

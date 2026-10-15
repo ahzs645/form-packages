@@ -35,6 +35,22 @@ describe('createComponentFromCode scope resolution', () => {
     `, {});
     expect(renderToStaticMarkup(React.createElement(Form))).toBe('<b>local</b>');
   });
+
+  it('keeps JavaScript built-ins the scope does not list (the export\'s submit helpers use new Set)', () => {
+    // The MOIS preview scope lists Object/Array/JSON/… but not Set or Map;
+    // applyObservationDates's `new Set(...)` threw "Set is not a constructor".
+    const Form = compile(`
+      const seen = new Set(['a', 'a', 'b']);
+      const sizes = new Map([['seen', seen.size]]);
+      const FormComponent = () => <b>{sizes.get('seen')} {Promise.resolve() instanceof Promise ? 'ok' : 'no'}</b>;
+    `, {});
+    expect(renderToStaticMarkup(React.createElement(Form))).toBe('<b>2 ok</b>');
+  });
+
+  it('still hands out a placeholder for a missing component named like a DOM global', () => {
+    const Form = compile(`const FormComponent = () => <Text>kept</Text>;`, {});
+    expect(renderToStaticMarkup(React.createElement(Form))).toBe('<div data-missing="Text" style="display:contents">kept</div>');
+  });
 });
 
 describe('createComponentFromCode compile errors', () => {
