@@ -619,7 +619,11 @@ var AddressEntryRuntime = (() => {
         },
         choiceAnswerLayout: {
           type: "string",
-          enum: ["vertical", "responsive", "inline", "columns-2", "columns-3", "columns-4"]
+          enum: ["vertical", "responsive", "inline", "columns-2", "columns-3", "columns-4", "columns-5", "columns-6"]
+        },
+        choiceAnswerOrder: {
+          type: "string",
+          enum: ["row-first", "column-first"]
         },
         codeSystem: {
           type: ["string", "null"]
@@ -2210,6 +2214,8 @@ const AnswerChoiceField = ({
   showOtherOption = false,
   otherLabel = "Other",
   layout = "vertical",
+  choiceAnswerLayout,
+  choiceAnswerOrder,
   value,
   onChange,
   getValue,
@@ -2325,7 +2331,20 @@ const AnswerChoiceField = ({
     }
   }) : null;
   const renderChecklist = () => {
-    const wrap = {
+    const grid = typeof LayoutKit !== "undefined" ? LayoutKit.readChoiceGrid({
+      choiceAnswerLayout,
+      choiceAnswerOrder
+    }, offered.length + (showOtherOption ? 1 : 0)) : null;
+    const wrap = grid ? {
+      display: "grid",
+      gridTemplateColumns: \`repeat(\${grid.columns}, minmax(0, 1fr))\`,
+      gap: "8px 40px",
+      marginTop: 4,
+      ...(grid.columnFirst ? {
+        gridAutoFlow: "column",
+        gridTemplateRows: \`repeat(\${grid.rows}, auto)\`
+      } : {})
+    } : {
       display: "flex",
       flexFlow: layout === "inline" ? "row wrap" : "column",
       alignItems: "flex-start",
@@ -2369,7 +2388,9 @@ const AnswerChoiceField = ({
         setOtherOpen(false);
         return choose(option?.key);
       },
-      styles: layout === "inline" ? {
+      styles: grid ? {
+        flexContainer: wrap
+      } : layout === "inline" ? {
         flexContainer: {
           display: "flex",
           flexWrap: "wrap",
@@ -19210,6 +19231,8 @@ const FieldKit = (() => {
             ...(descriptor.showOtherOption ? {
               showOtherOption: true
             } : {}),
+            choiceAnswerLayout: descriptor.choiceAnswerLayout,
+            choiceAnswerOrder: descriptor.choiceAnswerOrder,
             ...(descriptor.choiceAnswerLayout === "inline" ? {
               layout: "inline"
             } : {})
@@ -19352,6 +19375,18 @@ const FieldKit = (() => {
         }
       case "SimpleCodeChecklist":
         {
+          const grid = typeof LayoutKit !== "undefined" ? LayoutKit.readChoiceGrid(descriptor, optionsOf(descriptor).length) : null;
+          const containerProps = grid ? {
+            style: {
+              display: "grid",
+              gridTemplateColumns: \`repeat(\${grid.columns}, minmax(0, 1fr))\`,
+              gap: "8px 40px",
+              ...(grid.columnFirst ? {
+                gridAutoFlow: "column",
+                gridTemplateRows: \`repeat(\${grid.rows}, auto)\`
+              } : {})
+            }
+          } : undefined;
           const checklistProps = {
             ...common,
             selectionType: choice.selectionType,
@@ -19363,6 +19398,9 @@ const FieldKit = (() => {
             } : {}),
             ...(descriptor.choiceAnswerLayout === "vertical" || descriptor.presentation === "vertical" ? {
               multiline: true
+            } : {}),
+            ...(containerProps ? {
+              containerProps
             } : {}),
             ...(descriptor.autoHotKey ? {
               autoHotKey: true
@@ -34407,6 +34445,15 @@ const InvestigationTabs = ({
 // Reference only inside function bodies: NHForms modules load in any order.
 
 const LayoutKit = (() => {
+  function readChoiceGrid(source, answerCount) {
+    const columns = source.choiceAnswerLayout === "vertical" ? 1 : Number(source.choiceAnswerLayout?.replace("columns-", ""));
+    if (!Number.isInteger(columns) || columns < 1 || columns > 6) return null;
+    return {
+      columns,
+      rows: Math.max(1, Math.ceil(answerCount / columns)),
+      columnFirst: source.choiceAnswerOrder === "column-first"
+    };
+  }
   function fieldWidthFraction(width) {
     if (typeof width === "number") return Number.isFinite(width) ? Math.max(0.1, Math.min(1, width)) : 1;
     const [a, b] = (width ?? "").split("/").map(Number);
@@ -34428,6 +34475,7 @@ const LayoutKit = (() => {
   }
   return {
     fieldWidthFraction,
+    readChoiceGrid,
     responsiveFieldStyle
   };
 })();`,
@@ -64988,7 +65036,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './AliasIdList/index.jsx': ["AliasIdList","AliasIdListFields","active","data","filterPred","initializing","newIds","sd","source","updating"],
   './Allergies/index.jsx': ["Allergies","AllergiesFields"],
   './AllergyTable/index.jsx': ["AllergyTable"],
-  './AnswerChoiceField/index.jsx': ["AnswerChoiceField","OTHER_KEY","all","answer","answerDisabled","byCode","choose","code","codingOf","comboOptions","commitOther","control","controlled","display","effectiveId","flag","inactive","isEmpty","kept","kit","list","listed","lookup","multiple","next","offered","openOther","options","ordinal","otherChosen","otherCode","otherInput","otherText","readAnswer","renderChecklist","renderDropdown","renderSearchable","sd","selected","showLabel","stateOf","states","stored","storedCodes","text","toggle","typed","unavailable","unique","value","wrap","write"],
+  './AnswerChoiceField/index.jsx': ["AnswerChoiceField","OTHER_KEY","all","answer","answerDisabled","byCode","choose","code","codingOf","comboOptions","commitOther","control","controlled","display","effectiveId","flag","grid","inactive","isEmpty","kept","kit","list","listed","lookup","multiple","next","offered","openOther","options","ordinal","otherChosen","otherCode","otherInput","otherText","readAnswer","renderChecklist","renderDropdown","renderSearchable","sd","selected","showLabel","stateOf","states","stored","storedCodes","text","toggle","typed","unavailable","unique","value","wrap","write"],
   './AssessmentKit/index.jsx': ["AssessmentKit","CheckButton","PointsCell","SectionRow","answers","bodies","clone","container","contentJson","countTrue","current","data","entries","fillDefaults","getAt","isLocked","isRecord","locked","needsDefaults","next","node","pad","sameJson","sd","setAt","stagePayload","steps","stepsOf","stored","styles","todayString","update","useAnswers","withDefaults"],
   './AssessmentScore/index.jsx': ["AssessmentScore","administeredBy","answered","attention","calculated","calculatedJson","cat","componentId","content","data","entries","evaluateRules","fa","formVer","get","keys","language","langword","later","letter","letters","locked","memory","navy","orientation","pairs","recall","record","report","results","sd","sentences","spec","stale","start","startingAnswers","sv","t1","t2","termValue","toggleAdjustment","totals","totalsJson","update","value","words","working","x1","x2","x3","yn"],
   './AssessmentScoringTable/index.jsx': ["AssessmentScoringTable","getFieldValue","hasValue","inputStyle","labelCellStyle","number","numberOrBlank","raw","renderRow","scoreRows","setScore","sum","tableStyle","total","value","valueCellStyle"],
@@ -65019,7 +65067,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './EditableTable/index.jsx': ["ButtonComponent","DEFAULT_WINDOW_HOURS","EditableTable","EditableTableSchema","_FORMULA_OVERRIDES_KEY","__editableTableConfigEqual","__useEditableTableSourceData","__useEditableTableStableConfig","_addDaysToDateValue","_applyComputedColumns","_applyDefaultValuesToRow","_applyFormulaColumns","_applyInitialColumnReads","_applyRowProcessingConfig","_buildChartObservationPayload","_buildRowsFromSourceFields","_buildSubformFieldFromColumn","_chartObservationWebformId","_choiceOptionList","_clearHiddenColumnAnswers","_cloneRow","_coerceNumberCellValue","_combinedTextValue","_computeFormulaCellValue","_computeTemplateColumnValue","_defaultsKit","_editableTableFormulaFieldType","_editableTableFormulaScope","_editableTableFormulaScopes","_editableTableFormulaTree","_editableTableFormulaTrees","_evaluateColumnVisibility","_formatCellValue","_formatLocalDate","_formatProcessedNumber","_formulaPolicy","_getDefaultCellValue","_getLocalStampLock","_getValueAtPath","_hasPersistedAuthorshipClaim","_hasStampedLockValue","_isFormulaColumn","_isFormulaOverridden","_isMeaningfulValue","_isRequiredColumn","_isRowEmpty","_isRowEmptyWithMappedFields","_makeEmptyRow","_modalQuestionStyle","_modalSectionGroups","_modalSectionLayout","_normalizeChoiceOptions","_normalizeInitialRowCount","_normalizeInitialRows","_normalizeMirroredCellValue","_normalizeNumberConfig","_normalizeRows","_normalizeSourceCellValue","_normalizeStampCellValue","_normalizeTableColumns","_normalizeUniqueToken","_normalizeValidationMessage","_normalizeZeroLikeValue","_observationDateKey","_resetFormulaCell","_resolveFieldDefaultValue","_resolveLiteralValue","_resolvePathValue","_resolveRowEditorDefault","_resolveStampCellValue","_rowContentSignature","_rowFormulaValues","_rowObservationDate","_setFormulaOverride","_setValueAtPath","_signatureCellDataUrl","_sortRowsByPath","_splitContinuationText","_stampColumnLocksRow","_stringifyValue","_subformCellValue","_toCheckboxValue","_toDocumentCheckboxValue","_toFiniteNumber","_toPathSegments","_todayDateValue","_validateRowWithConfig","_writeCellAndRecalculate","actor","actorFrom","addHoursIso","addInlineRow","at","authored","authorshipEnabled","authorshipHeaderCellStyle","authorshipPolicy","bodies","bodyCellStyle","buildKey","buildRowContext","c","cached","cadNumber","cadPath","cadPrecision","calculated","canDeleteInline","canReset","canResign","canSaveAndAddNext","candidate","candidates","cellReadOnly","cellValue","changed","chartObservationPayload","chosen","ck","claim","claims","closeDialog","code","codes","column","columnById","columns","commitRows","commitSave","computeAnyway","computed","config","configMessage","container","containerStyle","control","copy","count","createTableColumns","current","currentRowCount","currentRows","currentValue","customMessage","customResult","d","data","dataUrl","date","day","defaultSubformDataEntryConfig","defaultValue","deletedRow","descriptor","desired","disabledStamp","display","displayRows","displayValue","draftLocalStampLock","draftLockState","drawsOwnLabel","duplicateIndex","editableUntil","effectiveMaxRows","effectiveReadOnly","emptyRowIndex","euDate","existing","existingByKey","existingRows","existingWhen","expired","explicitKey","explicitRowIndexes","explicitRowMapping","factor","fallback","fieldData","fieldId","fieldIds","fieldKind","fieldTypes","first","formData","formatTimestamp","getRowLock","getRows","getSourceFieldId","getValue","group","hasMeaningfulRows","hasMeaningfulValue","hasSignatureModalColumn","hasStampedValue","hasValue","headerCellStyle","headerRowStyle","hhmm","id","ids","index","inferredRowCount","initialRowCount","initialSeedRows","isDarkMode","isEmpty","isLocked","isModalMode","isNonEmpty","isOwner","isRequiredModalColumn","isVertical","keepStatus","key","keys","kit","label","lastMeaningfulRowIndex","layout","left","leftDate","leftValue","linked","localStampLock","localStampLocked","lockColumns","lockExpired","lockInfo","lockOn","lockedUntil","makeDraftRow","match","maxChars","message","minWidth","mirroredFieldIds","missing","modalColumns","modalEditorConfig","modalEditorType","mutedTextColor","name","nextDate","nextDraft","nextRow","nextRows","nextStatus","nextValue","nhAuth","normalizeStore","normalized","normalizedConfig","normalizedRow","normalizedValue","now","nowIso","numberConfig","numeric","numericValue","observations","omitEmptyLines","onBeforeSaveRow","onRowDeleted","onRowSaved","onRowsChange","openCreateDialog","openEditDialog","overrides","owner","ownerId","ownerName","ownerRefresh","pad","pad2","pairCadPrecision","pairFactor","pairPrefer","pairUsPrecision","pairs","parsed","path","paths","payload","pending","plain","policy","policyAppliesToAction","precision","prefer","prepareSave","previous","prior","processingConfig","raw","rawCad","rawUs","rawValue","read","readOnly","readStore","realRowReadOnly","ref","release","remaining","removeRowAt","renderCellDisplay","renderColumnHeading","renderEditorControl","renderEditorInput","renderFormulaControl","renderRowAuthorshipStatus","renderSignatureImage","renderSuffix","renderSummaryCell","renderVerticalTable","rendered","requested","requireAnyGroups","required","requiredMarkColor","requiredPaths","reservedIds","resetDraftFormulaCell","resetFormulaCell","resolveNow","resolvedFactor","resolvedRow","result","right","rightDate","rightValue","row","rowIndex","rowLock","rowLockState","rowNumberCellStyle","rowNumberHeaderStyle","rowReadOnly","rows","rowsForVerticalLayout","rule","safeFactor","safePrecision","sameActor","saveAndAddNextConfig","saveAndAddNextLabel","saveDraftRow","saved","savedAt","savedRowIndex","scope","scoreMaps","scores","sd","second","section","seededRows","segments","selected","selectedValues","setRows","shouldShowActions","shouldToggleLocalLock","showRowAuthorshipColumn","sign","signedAt","sortedRows","sourceColumn","sourceFieldData","sourceFieldId","sourceFieldIds","sourceFieldIdsByRow","sourcePath","sourceSeedRows","splitAt","stableColumns","stampCanUnlockLocalRow","stampCell","stampConfig","stampDraftCell","stampPath","stampedValue","startingValue","store","stored","subformModalConfig","tableColumns","tableContainerStyle","tableStyle","target","text","textFieldProps","theme","thisStampLocksRow","time","timeText","title","titles","tooltip","transformedRow","tree","trimTrailingZero","trimmed","ts","type","typed","untilSelf","updateCell","updateDraftCell","updateDraftValueAtPath","usNumber","usPath","usPrecision","usesGeneratedSubformFields","usesSubformEditor","validateResolvedRow","validateRow","validationConfig","validationError","value","values","verticalBodyCellStyle","verticalLabelCellStyle","visibility","webformId","when","windowHours","withCommon","wordBoundary","wording","writes","zeroIsEmpty"],
   './EducationHistory/index.jsx': ["EducationHistory","EducationHistoryFields"],
   './Ethnicity/index.jsx': ["Ethnicity","firstNationEthnicityCodes","firstNationsEthnicityReferenceSet"],
-  './FieldKit/index.jsx': ["BOX_FIELD_ID","BoxedControl","DateControl","EXPORTER_ONLY","FieldKit","FieldKitControl","MOIS_MEMORY_CODE_SYSTEM","Pad","TEXT_TYPES","adapter","answerProps","base","bound","box","boxCount","boxId","boxIdRef","cache","canClear","cellStorage","checklist","checklistProps","choice","code","codeSystem","codes","coding","codingForStorage","codingStorage","codings","codingsOf","commit","common","config","control","controlFor","controlValue","controlled","converted","copy","current","dateTimeProps","decimal","display","dotted","effectivePlaceholder","emit","emptyFor","entryStorage","explicitKey","findCode","findCodeOptionList","first","fromActionField","fromPanelRow","fromSubformEntry","fromTableColumn","hasOptions","inactive","isRecord","isSelected","label","labels","localDate","localDateTime","max","measurementActive","min","multilineProps","multiple","needsAnswerChoice","next","normalized","numberProps","numeric","onChangeRef","option","optionList","optionProps","options","optionsOf","order","pad2","parsed","passThroughStorage","pendingRef","placeholderProp","queued","range","rank","raw","rawOptions","read","renderControl","renderStyle","reportedValue","required","scaleOptions","searchableMultiple","section","selectOptionList","selected","selectionType","serialize","showLabel","signature","signatureProps","source","spin","step","style","system","text","textStorage","toDateText","toDateTimeText","toText","type","validCodeSystem","value","valueRef","valueSignature","withTime"],
+  './FieldKit/index.jsx': ["BOX_FIELD_ID","BoxedControl","DateControl","EXPORTER_ONLY","FieldKit","FieldKitControl","MOIS_MEMORY_CODE_SYSTEM","Pad","TEXT_TYPES","adapter","answerProps","base","bound","box","boxCount","boxId","boxIdRef","cache","canClear","cellStorage","checklist","checklistProps","choice","code","codeSystem","codes","coding","codingForStorage","codingStorage","codings","codingsOf","commit","common","config","containerProps","control","controlFor","controlValue","controlled","converted","copy","current","dateTimeProps","decimal","display","dotted","effectivePlaceholder","emit","emptyFor","entryStorage","explicitKey","findCode","findCodeOptionList","first","fromActionField","fromPanelRow","fromSubformEntry","fromTableColumn","grid","hasOptions","inactive","isRecord","isSelected","label","labels","localDate","localDateTime","max","measurementActive","min","multilineProps","multiple","needsAnswerChoice","next","normalized","numberProps","numeric","onChangeRef","option","optionList","optionProps","options","optionsOf","order","pad2","parsed","passThroughStorage","pendingRef","placeholderProp","queued","range","rank","raw","rawOptions","read","renderControl","renderStyle","reportedValue","required","scaleOptions","searchableMultiple","section","selectOptionList","selected","selectionType","serialize","showLabel","signature","signatureProps","source","spin","step","style","system","text","textStorage","toDateText","toDateTimeText","toText","type","validCodeSystem","value","valueRef","valueSignature","withTime"],
   './FieldStampButton/index.jsx': ["ButtonComponent","FieldStampButton","STAMP_MONTHS","STAMP_USER_PATHS","buildContext","clearStamp","context","effectiveStampFieldId","fallback","fieldData","fieldId","formatStampDate","isDisabled","isSigned","normalizeStampTargets","normalizeStampValue","normalizedTargets","now","pad2","raw","resolveLiteralValue","resolvePathValue","resolveStampTemplate","sd","signedAt","signedAtText","sourcePath","stamp","stampRecord","statusText","value","written"],
   './FindCodeSelect/index.jsx': ["CONTROL_KEY_TOKENS","FindCodeSelect","FindCodeSelectBase","FindCodeSelectWithCodeList","FindCodeSelectWithFieldBinding","FindCodeSelectWithProviders","FindCodeSelectWithSourceLookup","PROVIDER_CODE_SYSTEM","aliasSets","aliases","appSettings","boundValue","candidateKeys","candidates","clearTargets","code","codeListFromContext","combinedStyles","comboSelectedKey","currentValues","customSources","defaultComboStyles","defaultGetCandidates","defaultMapCandidateSavedValue","defaultRenderSelected","directKeys","effectiveFieldId","effectiveLabelPosition","entries","fallback","fallbackItems","filteringActive","fluentLabel","freeText","freeTextItem","getItemKey","getSizeStyles","handleChange","handleInputValueChange","handleKeyDown","handlePendingValueChanged","hasExplicitOptionList","hasSearchText","hasSelectionValue","hasSourceLookup","hidden","i","idx","isDeleteKey","isEmpty","isKeyboardToken","isMultiSelect","item","itemForStoredValue","items","key","keys","leftKey","lookupTargets","mapped","match","matchingKey","nextValues","normalizeLookupName","normalizeOption","normalizeSelectedValues","normalized","normalizedLabel","optionList","optionLists","options","presentationDepth","providerDirectoryItems","providers","rawDepth","rawKey","renderCandidateOption","rendered","requiredBackground","requiresHighlight","resolveItems","resolveLookupPath","rightKey","sameSelectedItem","sd","sectionLayout","seen","segments","selected","selectedCode","selectedItem","selectedItems","selectedKey","selectedKeySet","selectedKeys","shouldSelect","shouldSuppressLayoutItemLabel","showChildren","sizeMap","sizeStyles","sourceEntries","sourceItems","sourceLookupItems","storableSelection","storedSelectionToValue","storedTargets","storedValue","targets","text","theme","valueForLookupTarget","withoutItem","wrapperStyle"],
   './FirstNationsStatus/index.jsx': ["FirstNationsStatus","connections","ethnicity","firstNationsStatusPatientFields","firstNationsStatusSchema","hasReserveName","races","reserveConnection","reserveName","selfId"],
@@ -65042,7 +65090,7 @@ export const componentDefinedNames: Record<string, string[]> = {
   './HotspotMapField/index.jsx': ["HOTSPOT_SYMBOLS","HotspotMapField","add","alive","areaFieldIds","areaIds","areas","c","color","counts","data","first","groups","hasSvg","hotspotInteractionMode","hotspotSymbols","img","inputs","isDarkMode","list","map","margin","markTools","marks","marksOn","mode","muted","numberFieldList","padding","parseHotspotSymbol","parsed","readValue","renderSummary","runtime","s","shownGroups","sizePercent","stored","surface","symbols","textValues","textValuesKey","theme","useFormData","v","writeValue","zoom"],
   './HttpJsonTestPanel/index.jsx': ["AbortControllerClass","HTTP_JSON_RESULT_EVENT","HttpJsonTestPanel","aborted","body","controller","effectiveEndpointUrl","effectiveOutputId","fetchJson","formatHttpJsonTestResult","handler","key","nextResult","normalizeHttpJsonEndpointUrl","persistHttpJsonTestResult","previous","publishHttpJsonTestResult","readHttpJsonTestBody","requestBody","response","responseText","sd","sendTest","startedAt","statusColor","statusLabel","storedResult","text","timeout","trimmed","url"],
   './InvestigationTabs/index.jsx': ["INVESTIGATION_DEFAULT_TABS","InvestigationTab","InvestigationTabs","childArray","childById","childTabId","count","handleTabListKeyDown","id","isActive","label","next","normalizeInvestigationTabs","numeric","panelChildren","props","resolvedTabs","selected","source","tabRefs","target"],
-  './LayoutKit/index.jsx': ["LayoutKit","fieldWidthFraction","minimum","responsiveFieldStyle","share","spacing","width"],
+  './LayoutKit/index.jsx': ["LayoutKit","columns","fieldWidthFraction","minimum","readChoiceGrid","responsiveFieldStyle","share","spacing","width"],
   './LayoutTable/index.jsx': ["LAYOUT_TABLE_CONTROLLER_KINDS","LAYOUT_TABLE_FORMULA_BUILTINS","LAYOUT_TABLE_FORMULA_FIELD_TYPES","LAYOUT_TABLE_FORMULA_FUNCTIONS","LAYOUT_TABLE_FORMULA_TOKEN","LayoutTable","Pad","Tag","answer","boundCells","buttonControls","candidate","cell","cellStyle","cellVisibility","cells","checklistOptions","checks","code","codings","collectLayoutTableControllerKinds","collectLayoutTableDefaultCells","collectLayoutTableFormulaFieldTypes","computeLayoutTableCellValue","computedCells","config","controllerKinds","date","defaultCells","display","displayValue","effectiveReadOnly","evaluateLayoutTableFormula","evaluated","explicit","extractLayoutTableFormulaRefs","fallback","fieldHasSavedValue","fieldId","fields","formatLayoutTableComputedValue","formatLayoutTableFieldDisplayValue","formatLayoutTableLocalDate","formatLayoutTableSourceValue","formula","formulaFieldTypes","getCellDisplayValue","getLayoutTableFieldRawValue","getLayoutTableSourcePaths","getNumericFieldValue","getPathValue","hasLayoutTableSourceValue","id","ids","inline","isCheckedValue","isLayoutTableFormulaProperty","isSafeLayoutTableFormula","jsExpression","key","kinds","label","labelProp","layoutTableCellIsVisible","layoutTableDefaultToStored","layoutTableFormulaNumber","layoutTableFormulaTree","layoutTableFormulaTrees","layoutTableSignatureDataUrl","layoutTableSourceText","lower","match","multiline","needsAnswerChoice","nextData","normalizeLayoutTableOptionList","normalized","now","number","numeric","offered","onChange","onValidate","option","optionList","options","pad","parseLayoutTableSumIds","parsed","paths","raw","rawAnswers","rawValue","read","refs","renderLayoutTableCellContent","renderLayoutTableField","renderLayoutTableFieldList","renderLayoutTableReadOnlyField","renderLayoutTableResources","renderLayoutTableStampButton","renderLink","renderNow","resolveLayoutTableDefault","resolveLayoutTableSourceValue","resources","root","rounded","rowIsVisible","rule","rules","sd","section","seededDefaults","setFieldValue","sharedProps","signatureUrl","sourceBindingIsInitial","sourceBoundCells","sourceFieldIds","sourcePaths","spinButtonProps","stored","strippedExpression","sumIds","sumMatch","tableData","tableRows","targets","text","toCoding","tree","types","updates","value","values","visibleRows","withAvailableCellOptions"],
   './LetterTapping/index.jsx': ["LetterTapping","background","complete","componentId","feedback","finish","header","letterDefaults","list","passed","passes","patchJson","sequence","stored","targetLetter","toggle"],
   './LongTermMedications/index.jsx': ["LongTermMedications","LongTermMedicationsFields"],
@@ -65110,7 +65158,7 @@ export const componentDependencies: Record<string, string[]> = {
   './AliasIdList/index.jsx': [],
   './Allergies/index.jsx': [],
   './AllergyTable/index.jsx': ["ChartRecordTable"],
-  './AnswerChoiceField/index.jsx': ["FormLogicKit"],
+  './AnswerChoiceField/index.jsx': ["FormLogicKit","LayoutKit"],
   './AssessmentKit/index.jsx': [],
   './AssessmentScore/index.jsx': ["AssessmentKit"],
   './AssessmentScoringTable/index.jsx': [],
@@ -65141,7 +65189,7 @@ export const componentDependencies: Record<string, string[]> = {
   './EditableTable/index.jsx': ["DefaultsKit","DialogKit","FieldKit","FormLogicKit","FormulaKit","LayoutKit","SubformScoring","ValueKit","SignaturePad"],
   './EducationHistory/index.jsx': [],
   './Ethnicity/index.jsx': [],
-  './FieldKit/index.jsx': ["ValueKit","MonthYearDate","CompactBooleanField","FindCodeSelect","ScaleField","AnswerChoiceField","SignaturePad"],
+  './FieldKit/index.jsx': ["ValueKit","MonthYearDate","CompactBooleanField","FindCodeSelect","ScaleField","AnswerChoiceField","LayoutKit","SignaturePad"],
   './FieldStampButton/index.jsx': [],
   './FindCodeSelect/index.jsx': [],
   './FirstNationsStatus/index.jsx': ["Ethnicity"],

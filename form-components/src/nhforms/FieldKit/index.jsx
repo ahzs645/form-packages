@@ -704,6 +704,8 @@ const FieldKit = (() => {
           ...(Array.isArray(descriptor.optionRules) && descriptor.optionRules.length ? { optionRules: descriptor.optionRules } : {}),
           ...(codeSystem ? { codeSystem } : {}),
           ...(descriptor.showOtherOption ? { showOtherOption: true } : {}),
+          choiceAnswerLayout: descriptor.choiceAnswerLayout,
+          choiceAnswerOrder: descriptor.choiceAnswerOrder,
           ...(descriptor.choiceAnswerLayout === "inline" ? { layout: "inline" } : {}),
         }
         if (!controlled) return <AnswerChoiceField {...answerProps} {...bound} />
@@ -839,12 +841,15 @@ const FieldKit = (() => {
 
       }
       case "SimpleCodeChecklist": {
+        const grid = typeof LayoutKit !== "undefined" ? LayoutKit.readChoiceGrid(descriptor, optionsOf(descriptor).length) : null
+        const containerProps = grid ? { style: { display: "grid", gridTemplateColumns: `repeat(${grid.columns}, minmax(0, 1fr))`, gap: "8px 40px", ...(grid.columnFirst ? { gridAutoFlow: "column", gridTemplateRows: `repeat(${grid.rows}, auto)` } : {}) } } : undefined
         const checklistProps = {
           ...common,
           selectionType: choice.selectionType,
           ...(codeSystem ? { codeSystem } : {}),
           ...(optionsOf(descriptor).length > 0 ? { optionList: selectOptionList(descriptor) } : {}),
           ...(descriptor.choiceAnswerLayout === "vertical" || descriptor.presentation === "vertical" ? { multiline: true } : {}),
+          ...(containerProps ? { containerProps } : {}),
           ...(descriptor.autoHotKey ? { autoHotKey: true } : {}),
           ...(descriptor.showOtherOption ? { showOtherOption: true } : {}),
         }

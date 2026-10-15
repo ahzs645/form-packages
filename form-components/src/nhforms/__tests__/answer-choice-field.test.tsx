@@ -28,7 +28,7 @@ const Source = React.createContext<unknown>({});
 // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func
 const { AnswerChoiceField } = new Function(
   "React", "Fluent", "useActiveData", "useSourceData", "produce",
-  `${compile("ValueKit")};\n${compile("FormLogicKit")};\n${compile("AnswerChoiceField")};\nreturn { AnswerChoiceField };`,
+  `${compile("ValueKit")};\n${compile("LayoutKit")};\n${compile("FormLogicKit")};\n${compile("AnswerChoiceField")};\nreturn { AnswerChoiceField };`,
 )(React, Fluent, () => React.useContext(Store), () => React.useContext(Source), produce) as {
   AnswerChoiceField: React.ComponentType<Record<string, unknown>>;
 };
@@ -71,6 +71,15 @@ describe("AnswerChoiceField", () => {
     return text?.parentElement?.parentElement?.querySelector("input") as HTMLInputElement;
   };
   const labels = () => [...container!.querySelectorAll(".ms-Checkbox-text")].map((entry) => entry.textContent?.trim());
+
+  it.each(["single", "multiple"])("draws column-first answer grids for %s selection without reordering IDs", selectionType => {
+    mount({ fieldId: "grid", label: "Grid", selectionType, answers, choiceAnswerLayout: "columns-2", choiceAnswerOrder: "column-first" });
+    const group = container!.querySelector(selectionType === "multiple" ? '[role="group"]' : '.ms-ChoiceFieldGroup-flexContainer') as HTMLElement;
+    expect(getComputedStyle(group).display).toBe("grid");
+    expect(getComputedStyle(group).gridAutoFlow).toBe("column");
+    expect(getComputedStyle(group).gridTemplateRows).toBe("repeat(2, auto)");
+    expect(container!.textContent!.indexOf("Unable to obtain")).toBeLessThan(container!.textContent!.indexOf("Self"));
+  });
 
   it("clears an optional dropdown answer without using an empty-code option", () => {
     data = { mark: { code: "O", display: "O" } };

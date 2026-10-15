@@ -754,6 +754,7 @@ export interface BuilderLayoutTableCellField {
   defaultAnswer?: BuilderDefaultAnswer | null;
   choiceStyle?: BuilderField["choiceStyle"];
   choiceAnswerLayout?: BuilderField["choiceAnswerLayout"];
+  choiceAnswerOrder?: BuilderField["choiceAnswerOrder"];
   showOtherOption?: boolean;
   autoHotKey?: boolean;
   allowCreation?: boolean;
@@ -836,6 +837,7 @@ export interface BuilderLayoutTableCell {
   prefill?: FieldPrefillValue;
   choiceStyle?: BuilderField["choiceStyle"];
   choiceAnswerLayout?: BuilderField["choiceAnswerLayout"];
+  choiceAnswerOrder?: BuilderField["choiceAnswerOrder"];
   showOtherOption?: boolean;
   autoHotKey?: boolean;
   allowCreation?: boolean;
@@ -2459,7 +2461,11 @@ export interface BuilderField {
     | "findCode"
     | "buttons";
   /** Layout of radio/checklist answers inside a SimpleCodeChecklist field. */
-  choiceAnswerLayout?: "vertical" | "responsive" | "inline" | "columns-2" | "columns-3" | "columns-4";
+  choiceAnswerLayout?: "vertical" | "responsive" | "inline" | "columns-2" | "columns-3" | "columns-4" | "columns-5" | "columns-6";
+  /** How answers fill a fixed-column grid; never changes stored option order. */
+  choiceAnswerOrder?: "row-first" | "column-first";
+  /** Explicit Procura export overrides, separate from immutable import provenance. */
+  procuraConfig?: { copyForward?: boolean; allowLoad?: boolean; reference?: string; numberId?: string; lookupId?: string; inputMask?: string };
   /** MOIS control size for choices, numbers (including measurements), and textareas. */
   moisSize?: string;
   /** MOIS per-answer density for radio/checklist controls. */
@@ -3746,3 +3752,4 @@ export {
 export * from "./document-layout";
 export * from "./subform-pdf-destinations";
 
+export { readChoiceGrid, type ChoiceGridSource } from "./choice-layout";

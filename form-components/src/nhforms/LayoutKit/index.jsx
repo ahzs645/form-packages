@@ -3,6 +3,16 @@
 // Reference only inside function bodies: NHForms modules load in any order.
 
 const LayoutKit = (() => {
+  function readChoiceGrid(source, answerCount) {
+    const columns = source.choiceAnswerLayout === "vertical" ? 1 : Number(source.choiceAnswerLayout?.replace("columns-", ""));
+    if (!Number.isInteger(columns) || columns < 1 || columns > 6) return null;
+    return {
+      columns,
+      rows: Math.max(1, Math.ceil(answerCount / columns)),
+      columnFirst: source.choiceAnswerOrder === "column-first"
+    };
+  }
+
   function fieldWidthFraction(width) {
     if (typeof width === "number") return Number.isFinite(width) ? Math.max(0.1, Math.min(1, width)) : 1;
     const [a, b] = (width ?? "").split("/").map(Number);
@@ -18,6 +28,7 @@ const LayoutKit = (() => {
 
   return {
     fieldWidthFraction,
+    readChoiceGrid,
     responsiveFieldStyle,
   }
 })()
