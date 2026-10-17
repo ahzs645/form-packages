@@ -219,19 +219,28 @@ export const COMPONENT_KINDS: readonly ComponentKindInfo[] = [
   },
 ];
 
-const KIND_BY_ID: ReadonlyMap<string, ComponentKindInfo> = new Map(COMPONENT_KINDS.map((kind) => [kind.id, kind]));
-const KIND_BY_LEGACY_KEY: ReadonlyMap<string, string> = new Map(
+// Built on first use, not at module load: bundles that include this module
+// for an unrelated reader (the generated NHForms kits) can then drop the
+// kind table entirely.
+let kindById: ReadonlyMap<string, ComponentKindInfo> | null = null;
+let kindByLegacyKey: ReadonlyMap<string, string> | null = null;
+function kindsById(): ReadonlyMap<string, ComponentKindInfo> {
+  return (kindById ??= new Map(COMPONENT_KINDS.map((kind) => [kind.id, kind])));
+}
+function kindsByLegacyKey(): ReadonlyMap<string, string> {
+  return (kindByLegacyKey ??= new Map(
   COMPONENT_KINDS.flatMap((kind) => (kind.id === "chartList" ? [] : kind.legacyKeys.map((key) => [key, kind.id] as const))),
-);
+));
+}
 
 /** A neutral kind's description, or null for product-owned (`mois:`, `cerner:`) and unknown ids. */
 export function neutralComponentKind(id: ComponentKindId): ComponentKindInfo | null {
-  return KIND_BY_ID.get(id) ?? null;
+  return kindsById().get(id) ?? null;
 }
 
 /** The product a kind id names (`mois:PlannedActions` → mois), or the neutral kind's owner. */
 export function componentKindOwner(id: ComponentKindId): TargetId | undefined {
-  const known = KIND_BY_ID.get(id);
+  const known = kindsById().get(id);
   if (known) return known.owner;
   const prefix = id.split(":")[0];
   return prefix === "mois" || prefix === "cerner" || prefix === "alayacare" || prefix === "fhir" || prefix === "oscar" ? prefix : undefined;
@@ -264,8 +273,8 @@ function legacyExportOf(field: Pick<BuilderField, "componentKey" | "componentPro
 export function componentKindOfLegacyKey(key: string, exportName?: string): ComponentKindId {
   const resolved = RETIRED_COMPONENT_KEYS[key] ?? key;
   const exported = exportName ? RETIRED_COMPONENT_KEYS[exportName] ?? exportName : "";
-  const byExport = exported ? KIND_BY_LEGACY_KEY.get(`${resolved}#${exported}`) ?? KIND_BY_LEGACY_KEY.get(exported) : undefined;
-  const kind = byExport ?? KIND_BY_LEGACY_KEY.get(resolved);
+  const byExport = exported ? kindsByLegacyKey().get(`${resolved}#${exported}`) ?? kindsByLegacyKey().get(exported) : undefined;
+  const kind = byExport ?? kindsByLegacyKey().get(resolved);
   if (kind) return kind;
   return /^Cerner[A-Z]/.test(resolved) ? `cerner:${resolved}` : `mois:${exported && exported !== resolved ? exported : resolved}`;
 }
