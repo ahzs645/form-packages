@@ -3776,7 +3776,6 @@ export {
   normalizeConditionChoiceValues,
   normalizeConditionComparable,
   visibilityRuleToFieldLinkConditions,
-  conditionControllerKindOf,
   CONDITION_NO_ANSWER_TEXT,
   hasHiddenAnswer,
   hiddenAnswerPolicyOf,
@@ -3863,6 +3862,9 @@ export * from "./matrix";
 export * from "./translations";
 export * from "./field-notes";
 export * from "./workflow";
+export * from "./controller-kind";
+export * from "./answer-list";
+export * from "./resolved-form";
 export { backfillOptionScoresFromFormula } from "./score-backfill";
 export {
   type SessionFooterButtonConfig,

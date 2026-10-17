@@ -316,17 +316,6 @@ export interface VisibilityRuleSource extends VisibilityConditionSource {
  */
 export type VisibilityControllerKindLookup = (controllerId: string) => string | null | undefined;
 
-/** The kind a condition lookup reports for a field: "checkbox" for a single checkbox, else its kind. */
-export function conditionControllerKindOf(
-  field: { kind?: string | null; booleanStyle?: string | null; type?: string | null } | null | undefined,
-): string | undefined {
-  if (!field) return undefined;
-  if (field.type === "booleanSingle") return "checkbox";
-  if (field.type === "booleanYesNo") return "boolean";
-  if (field.kind === "boolean" && field.booleanStyle && field.booleanStyle !== "yesNo") return "checkbox";
-  return field.kind ?? undefined;
-}
-
 function isBooleanControllerKind(kind: string | null | undefined): boolean {
   return kind === "boolean" || kind === "checkbox";
 }

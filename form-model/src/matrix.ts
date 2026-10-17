@@ -1,6 +1,7 @@
 import type { BuilderField } from "./index";
 import { getOptionLabel } from "./choice-options";
 import { tableColumnsOf } from "./field-group";
+import { answerListOf } from "./answer-list";
 
 /**
  * A question matrix, read as neutral intent (neutral form model, "Structure
@@ -96,8 +97,7 @@ export function readQuestionMatrix(field: BuilderField): QuestionMatrix | null {
       const multiple = column.choiceStyle === "checkbox" || column.choiceStyle === "multiselect";
       return { ...base, kind: "choice", answers: uniqueInOrder((column.options ?? []).map((option) => getOptionLabel(option)).filter(Boolean)), multiple };
     }
-    if (column.type === "booleanYesNo") return { ...base, kind: "boolean", answers: [column.booleanLabels?.on ?? "Yes", column.booleanLabels?.off ?? "No"], multiple: false };
-    if (column.type === "checkbox") return { ...base, kind: "boolean", answers: [column.booleanLabels?.on ?? "Yes"], multiple: false };
+    if (column.type === "booleanYesNo" || column.type === "checkbox") return { ...base, kind: "boolean", answers: answerListOf(column)?.labels ?? [], multiple: false };
     const kind: QuestionMatrixRowKind = column.type === "number" ? "number" : column.type === "date" ? "date" : column.type === "time" ? "time" : "text";
     return { ...base, kind, answers: [], multiple: false };
   });
