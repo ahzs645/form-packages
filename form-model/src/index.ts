@@ -2497,6 +2497,13 @@ export interface BuilderField {
     }>;
     [key: string]: unknown;
   } | null;
+  /**
+   * The component in neutral terms: its kind and, per export target, the
+   * equivalent the author chose (see components.ts). Read it with
+   * readComponent, which also reads componentKey/componentProps and
+   * alayaCareConfig.fieldType; the writers keep those as mirrors.
+   */
+  component?: import("./components").BuilderComponent | null;
 
   // Boolean field settings
   booleanLabels?: { on: string; off: string } | null;
@@ -3757,3 +3764,4 @@ export * from "./document-layout";
 export * from "./subform-pdf-destinations";
 
 export { readChoiceGrid, type ChoiceGridSource } from "./choice-layout";
+export * from "./components";
