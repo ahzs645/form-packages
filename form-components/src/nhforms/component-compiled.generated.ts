@@ -568,13 +568,18 @@ var AddressEntryRuntime = (() => {
                 }
               },
               additionalProperties: false
+            },
+            decimalPlaces: {
+              type: "integer",
+              minimum: 0,
+              maximum: 12
             }
           },
           required: ["typeNumber"],
           additionalProperties: false
         }
       },
-      guidance: "Use numberConfig.typeNumber for integer, decimal, or year behavior."
+      guidance: "Use numberConfig.typeNumber for integer, decimal, or year behavior, and numberConfig.decimalPlaces for how many digits after the decimal point the answer keeps."
     },
     computed: {
       properties: {
@@ -586,7 +591,7 @@ var AddressEntryRuntime = (() => {
           resultType: "number"
         }
       },
-      guidance: "computedConfig.expression references field IDs. Supported keys: expression, precision (decimal places on the result \\u2014 there is no decimalPlaces key), resultType (number|text), displaySuffix + showDisplaySuffix (presentation-only units), incompleteBehavior, incompleteText."
+      guidance: "computedConfig.expression references field IDs. Supported keys: expression, precision (decimal places on the result; a computed field has no numberConfig.decimalPlaces), resultType (number|text), displaySuffix + showDisplaySuffix (presentation-only units), incompleteBehavior, incompleteText."
     },
     choice: {
       properties: {
@@ -615,7 +620,7 @@ var AddressEntryRuntime = (() => {
         },
         choiceStyle: {
           type: "string",
-          enum: ["dropdown", "radio", "multiselect", "checkbox", "simpleCodeSelect", "findCode", "buttons"]
+          enum: ["dropdown", "searchable", "radio", "multiselect", "checkbox", "buttons", "simpleCodeSelect", "findCode"]
         },
         choiceAnswerLayout: {
           type: "string",
@@ -637,6 +642,10 @@ var AddressEntryRuntime = (() => {
         allowCreation: {
           type: "boolean"
         },
+        optionDisplayOrder: {
+          type: "string",
+          enum: ["authored", "alphabetic", "shuffled"]
+        },
         shuffleOptions: {
           type: "boolean"
         },
@@ -652,9 +661,9 @@ var AddressEntryRuntime = (() => {
       requiredProperties: ["options", "choiceStyle"],
       defaultConfig: {
         options: ["Option 1", "Option 2"],
-        choiceStyle: "findCode"
+        choiceStyle: "searchable"
       },
-      guidance: "Use choiceStyle=radio for one visible choice, checkbox for multiple visible choices, dropdown for one compact choice, and multiselect for multiple compact choices. Coded choices require an explicit codeSystem; ask rather than inventing one."
+      guidance: "Use choiceStyle=radio for one visible choice, checkbox for multiple visible choices, dropdown for one compact choice, searchable for one choice picked by typing, and multiselect for multiple compact choices (simpleCodeSelect and findCode are older names for dropdown and searchable). Coded choices require an explicit codeSystem; ask rather than inventing one."
     },
     booleanYesNo: {
       properties: {
@@ -18376,7 +18385,8 @@ const FieldKit = (() => {
       };
     }
     if (type === "choice") {
-      const style = descriptor.choiceStyle || "findCode";
+      // "searchable" is the neutral name of the MOIS findCode style (form-model readChoiceStyle).
+      const style = descriptor.choiceStyle === "searchable" ? "findCode" : descriptor.choiceStyle || "findCode";
       const findCode = style === "findCode";
       const searchableMultiple = style === "multiselect";
       // Answer buttons (the builder's "buttons" style) have no nested-cell
@@ -19465,7 +19475,7 @@ const FieldKit = (() => {
           // A subform entry holds one answer: radio, dropdown (the default,
           // DEFAULT_CHOICE_STYLE.subformEntry) or, from older configurations,
           // a searchable findCode; multiple styles draw their single twin.
-          choiceStyle: field.choiceStyle === "radio" || field.choiceStyle === "checkbox" || field.choiceStyle === "buttons" ? "radio" : field.choiceStyle === "findCode" || field.choiceStyle === "multiselect" ? "findCode" : "dropdown",
+          choiceStyle: field.choiceStyle === "radio" || field.choiceStyle === "checkbox" || field.choiceStyle === "buttons" ? "radio" : field.choiceStyle === "findCode" || field.choiceStyle === "searchable" || field.choiceStyle === "multiselect" ? "findCode" : "dropdown",
           options: Array.isArray(field.options) ? field.options : [],
           codeSystem: field.codeSystem,
           showOtherOption: Boolean(field.showOtherOption || field.show_other_option)

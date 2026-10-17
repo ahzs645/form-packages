@@ -25,7 +25,7 @@ describe("builder field authoring contracts", () => {
     expect(schema.additionalProperties).toBe(false);
     expect(getBuilderFieldAuthoringDefaults("choice")).toEqual({
       options: ["Option 1", "Option 2"],
-      choiceStyle: "findCode",
+      choiceStyle: "searchable",
     });
   });
 

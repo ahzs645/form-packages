@@ -95,6 +95,7 @@ export function resolveChoiceControl(field: BuilderField): TerraControl {
     case "simpleCodeSelect":
       return "select";
     case "multiselect":
+    case "searchable":
     case "findCode":
       return "select-search";
     default:

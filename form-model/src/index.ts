@@ -681,8 +681,14 @@ export type BuilderItemType = BuilderFieldType | BuilderBlockType;
 // Field width options
 export type FieldWidth = "auto" | "full" | "1/2" | "1/3" | "2/3" | "1/4" | "3/4";
 
-// Help text position
-export type HelpPosition = "above_input" | "below_input";
+/**
+ * Where help text sits relative to its field (read with `readHelpPosition`,
+ * field-settings.ts): above or below the input, left of the whole field, or
+ * right of the input. Cerner places a help note each way
+ * (`cernerConfig.helpTextPosition`, the legacy spelling); MOIS draws it above
+ * or below.
+ */
+export type HelpPosition = "above_input" | "below_input" | "left_of_field" | "right_of_input";
 
 export type BuilderTableColumnType = "text" | "number" | "date" | "time" | "choice" | "booleanYesNo" | "checkbox" | "stampButton" | "signature";
 export type BuilderTableMode = "inline" | "modal";
@@ -753,11 +759,17 @@ export interface BuilderLayoutTableCellField {
   /** The default answer (see defaults.ts); `prefill` is its legacy mirror. */
   defaultAnswer?: BuilderDefaultAnswer | null;
   choiceStyle?: BuilderField["choiceStyle"];
+  /** The answer layout (field-settings.ts `readChoiceLayout`); the two keys below are its legacy mirrors. */
+  choiceLayout?: BuilderField["choiceLayout"];
+  /** @deprecated Mirror of `choiceLayout.arrangement`; read with `readChoiceLayout`. */
   choiceAnswerLayout?: BuilderField["choiceAnswerLayout"];
+  /** @deprecated Mirror of `choiceLayout.order`; read with `readChoiceLayout`. */
   choiceAnswerOrder?: BuilderField["choiceAnswerOrder"];
   showOtherOption?: boolean;
+  /** MOIS keyboard shortcuts; a cell keeps this top-level spelling (`readMoisHotKeys` reads it). */
   autoHotKey?: boolean;
   allowCreation?: boolean;
+  /** Not offered on a cell: LayoutTable draws answers in the authored order (see `readOptionDisplayOrder`). */
   shuffleOptions?: boolean;
   minSelection?: number;
   maxSelection?: number;
@@ -836,11 +848,17 @@ export interface BuilderLayoutTableCell {
   pendingConversion?: { source: string; reason: string } | null;
   prefill?: FieldPrefillValue;
   choiceStyle?: BuilderField["choiceStyle"];
+  /** The answer layout (field-settings.ts `readChoiceLayout`); the two keys below are its legacy mirrors. */
+  choiceLayout?: BuilderField["choiceLayout"];
+  /** @deprecated Mirror of `choiceLayout.arrangement`; read with `readChoiceLayout`. */
   choiceAnswerLayout?: BuilderField["choiceAnswerLayout"];
+  /** @deprecated Mirror of `choiceLayout.order`; read with `readChoiceLayout`. */
   choiceAnswerOrder?: BuilderField["choiceAnswerOrder"];
   showOtherOption?: boolean;
+  /** MOIS keyboard shortcuts; a cell keeps this top-level spelling (`readMoisHotKeys` reads it). */
   autoHotKey?: boolean;
   allowCreation?: boolean;
+  /** Not offered on a cell: LayoutTable draws answers in the authored order (see `readOptionDisplayOrder`). */
   shuffleOptions?: boolean;
   minSelection?: number;
   maxSelection?: number;
@@ -1089,7 +1107,11 @@ export interface BuilderAlayaCareConfig {
   medicalHistorySection?: string | null;
   /** AlayaCare score setting: expanded_formula */
   scoreExpandedFormula?: string | null;
-  /** AlayaCare score setting: decimals */
+  /**
+   * @deprecated AlayaCare score decimals. The field's decimal places
+   * (`readNumberFormat`, field-settings.ts) say this for every target; a set
+   * value still wins for AlayaCare, and `writeNumberFormat` removes it.
+   */
   scoreDecimals?: number | null;
   /** AlayaCare drawing setting: imageType */
   drawingImageType?: string | null;
@@ -1125,8 +1147,10 @@ export interface BuilderAlayaCareConfig {
   /** Optional manual Docmosis visibility expression, without surrounding cs_/cr_ tags. */
   docmosisVisibilityCondition?: string | null;
   /**
-   * Render this source-backed value only in the AlayaCare custom template instead
-   * of exporting it as a question in the AlayaCare form definition.
+   * @deprecated Render this source-backed value only in the AlayaCare custom
+   * template instead of exporting it as a question. An authored value reads as
+   * the neutral `binding.read.presentation: "printed"` (`readBindingPresentation`,
+   * bindings.ts); the AlayaCare export still sets it on its own projection.
    */
   templateOnly?: boolean;
   /**
@@ -1140,6 +1164,9 @@ export interface BuilderAlayaCareConfig {
    * read of the client record, since AlayaCare already holds the value; set this
    * when the form is the thing that captures it, and the preview prefills the
    * question from the client record instead of printing over it.
+   *
+   * @deprecated Reads as the neutral `binding.read.presentation: "editable"`
+   * (`readBindingPresentation`, bindings.ts); kept as its mirror.
    */
   exportAsQuestion?: boolean;
   /** Imported from AlayaCare as read-only because editing support is limited. */
@@ -1506,9 +1533,15 @@ export interface BuilderCernerConfig {
   version: 1;
   /** Oracle build-report provenance. Geometry is reconstructed, not native XML. */
   workbookSource?: { name: string; sheet: string; row: number; sourcePosition?: string; sourceFont?: string; sourceValues?: Record<string, string>; layout?: { basis: "neighbouring-labels" | "fallback" | "reference-template"; standard?: string; profile?: string; answerRows?: number; answerColumnWidth?: number; answerDisplay?: "short-string"; labelOverride?: { sourceLabel: string; caption: string }; note: string } };
-  /** Native `exclude_first_ar`: choosing the first answer clears the others, and vice versa. Multi-select lists only. */
+  /**
+   * Native `exclude_first_ar`: choosing the first answer clears the others, and vice versa. Multi-select lists only.
+   * The neutral reading is the first answer's `exclusive` flag; `exclusiveAnswerValues(field)` reads both.
+   */
   firstResponseExclusive?: boolean;
-  /** Native `sort_alphabetic`: answers are shown A→Z; the DTA's stored response order is unchanged. */
+  /**
+   * Native `sort_alphabetic`: answers are shown A→Z; the DTA's stored response order is unchanged.
+   * The legacy mirror of the field's `optionDisplayOrder: "alphabetic"` (`readOptionDisplayOrder`).
+   */
   sortAlphabetic?: boolean;
   /**
    * The control's Default Type tab. Native `default`: absent = none, 1 =
@@ -1695,7 +1728,11 @@ export interface BuilderCernerConfig {
     /** The input's own MODULE: the extension control library that draws it (PFEXTCTRLS, PFPMCtrls). */
     module?: string;
   }>;
-  /** Native help-note placement; omitted keeps imported coordinates unchanged. */
+  /**
+   * Native help-note placement; omitted keeps imported coordinates unchanged.
+   * Besides `source`, the legacy mirror of the field's `helpPosition`
+   * (`readHelpPosition`, field-settings.ts).
+   */
   helpTextPosition?: "source" | "left" | "right" | "above" | "below";
   /** Omitted preserves each imported help note's native font weight. */
   helpTextBold?: boolean;
@@ -1938,6 +1975,16 @@ export interface BuilderChoiceOptionObject {
    * (answer-codings.ts).
    */
   codings?: BuilderFhirCoding[];
+  /**
+   * MOIS-only answer options: the answer's key shortcut and position on a
+   * SimpleCodeSelect / SimpleCodeChecklist. Read with `readMoisOptionHotKey`
+   * (field-settings.ts), which also reads the top-level keys below.
+   */
+  moisConfig?: { hotKey?: string; order?: number } | null;
+  /** @deprecated Mirror of `moisConfig.hotKey`; read with `readMoisOptionHotKey`. */
+  hotKey?: string;
+  /** @deprecated Mirror of `moisConfig.order`; read with `readMoisOptionHotKey`. */
+  order?: number;
 }
 
 export type BuilderChoiceOption = string | BuilderChoiceOptionObject;
@@ -2085,6 +2132,12 @@ export type BuilderFieldSourceValueTransform = "exists" | "address" | "insurance
  * whole MOIS story; the layout draft's `moisContract` is derived from it.
  */
 export interface BuilderFieldMoisConfig {
+  /**
+   * Give each answer of a coded select or checklist a key shortcut (MOIS
+   * `autoHotKey`). Read with `readMoisHotKeys` (field-settings.ts), which also
+   * reads the top-level `autoHotKey` older forms store.
+   */
+  autoHotKey?: boolean;
   /** Saved-data key when it must differ from the field id (legacy slots). */
   localWrite?: { targetId: string } | null;
   /** Engine-verified chart mutation run on submit. */
@@ -2218,12 +2271,22 @@ export interface BuilderTableColumn {
       max?: number;
       step?: number;
     };
+    /** Digits after the decimal point (field-settings.ts `readNumberFormat`). */
+    decimalPlaces?: number;
   } | null;
   options?: BuilderChoiceOption[] | null;
   /** For a single choice backed by separate PDF checkbox fields, map each option key to its row path. */
   choiceBooleanTargets?: Record<string, string> | null;
+  /**
+   * The choice's look: dropdown, searchable (typed to filter), radio list,
+   * searchable multi-select, checkbox list or answer buttons. Read it with
+   * `readChoiceStyle` (field-types.ts). `simpleCodeSelect` and `findCode`
+   * are @deprecated MOIS names for `dropdown` and `searchable`, read forever
+   * and written only by the MOIS converter.
+   */
   choiceStyle?:
     | "dropdown"
+    | "searchable"
     | "radio"
     | "multiselect"
     | "checkbox"
@@ -2452,33 +2515,71 @@ export interface BuilderField {
   // via the helpers in form-builder/shared/choice-options.ts — keep reads going
   // through those (getOptionLabel/getOptionScore) so the union stays transparent.
   options?: BuilderChoiceOption[] | null;
+  /**
+   * The choice's look: dropdown, searchable (typed to filter), radio list,
+   * searchable multi-select, checkbox list or answer buttons. Read it with
+   * `readChoiceStyle` (field-types.ts). `simpleCodeSelect` and `findCode`
+   * are @deprecated MOIS names for `dropdown` and `searchable`, read forever
+   * and written only by the MOIS converter.
+   */
   choiceStyle?:
     | "dropdown"
+    | "searchable"
     | "radio"
     | "multiselect"
     | "checkbox"
     | "simpleCodeSelect"
     | "findCode"
     | "buttons";
-  /** Layout of radio/checklist answers inside a SimpleCodeChecklist field. */
+  /**
+   * How a radio or checkbox list lays out its answers: arrangement (vertical,
+   * responsive, inline, fixed columns), the order answers fill a grid, and the
+   * space around each answer. Read with `readChoiceLayout` (field-settings.ts),
+   * which also reads the three legacy keys below; `writeChoiceLayout` keeps
+   * them as mirrors. Presentation only: answer identities and the stored
+   * option order never change.
+   */
+  choiceLayout?: import("./field-settings").BuilderChoiceLayout | null;
+  /** @deprecated Mirror of `choiceLayout.arrangement`; read with `readChoiceLayout`. */
   choiceAnswerLayout?: "vertical" | "responsive" | "inline" | "columns-2" | "columns-3" | "columns-4" | "columns-5" | "columns-6";
-  /** How answers fill a fixed-column grid; never changes stored option order. */
+  /** @deprecated Mirror of `choiceLayout.order`; read with `readChoiceLayout`. */
   choiceAnswerOrder?: "row-first" | "column-first";
   /** Explicit Procura export overrides, separate from immutable import provenance. */
   procuraConfig?: { copyForward?: boolean; allowLoad?: boolean; reference?: string; numberId?: string; lookupId?: string; inputMask?: string };
-  /** MOIS control size for choices, numbers (including measurements), and textareas. */
+  /**
+   * MOIS control size for choices, numbers (including measurements), and
+   * textareas. Stays a MOIS setting: no other target sizes a control apart
+   * from the layout `width` (see field-settings.ts).
+   */
   moisSize?: string;
-  /** MOIS per-answer density for radio/checklist controls. */
+  /**
+   * MOIS's exact answer size on radio/checklist controls. Explicit for MOIS
+   * (it wins there) and the legacy mirror of `choiceLayout.density`, which
+   * every other target reads; read with `readChoiceLayout` / `moisOptionSizeOf`.
+   */
   moisOptionSize?: string;
-  codeSystem?: string | null; // MOIS code system (e.g., "MOIS-MARITALSTATUS")
+  /**
+   * The answer list's code system: a MOIS code system (`MOIS-MARITALSTATUS`)
+   * or any other system URI. Neutral: FHIR sends it as each answer's
+   * `Coding.system`, MOIS loads the list from it.
+   */
+  codeSystem?: string | null;
   answerSetEquivalence?: BuilderAnswerSetEquivalence | null;
   /** Explicit fixed list for targets that do not implement native DTA ranges. */
   answerSetPortableRange?: { name: string; answerLabels: string[] } | null;
   showOtherOption?: boolean; // Allow "Other" option with custom input
-  /** MOIS keyboard shortcuts (autoHotKey) on coded selects/checklists. */
+  /** @deprecated MOIS-only; moved to `moisConfig.autoHotKey`. Read with `readMoisHotKeys`, which keeps this as its mirror. */
   autoHotKey?: boolean;
   allowCreation?: boolean; // Allow users to add new options
-  shuffleOptions?: boolean; // Randomize option order
+  /**
+   * The order the answers are shown in: as authored (default), A to Z, or
+   * shuffled for each person filling the form. Read with
+   * `readOptionDisplayOrder` (field-settings.ts), which also reads
+   * `shuffleOptions` and a Cerner `sortAlphabetic`.
+   */
+  optionDisplayOrder?: import("./field-settings").OptionDisplayOrder;
+  /** @deprecated Mirror of `optionDisplayOrder: "shuffled"`; read with `readOptionDisplayOrder`. */
+  shuffleOptions?: boolean;
   minSelection?: number; // Min selections for multiselect
   maxSelection?: number; // Max selections for multiselect
 
@@ -2604,6 +2705,12 @@ export interface BuilderField {
       max?: number;
       step?: number;
     };
+    /**
+     * Digits after the decimal point the answer keeps. Read with
+     * `readNumberFormat` (field-settings.ts), which also reads a bound Cerner
+     * DTA's numeric map; a computed field keeps its decimals as `precision`.
+     */
+    decimalPlaces?: number;
   } | null;
 
   // Computed/formula field config
@@ -2613,7 +2720,11 @@ export interface BuilderField {
     expression: string;
     /** The stored formula tree; `expression` is its printed mirror. */
     formulaTree?: StoredFormula;
-    /** Optional decimal precision applied to the computed result */
+    /**
+     * Decimal places the result is rounded to: the computed field's decimal
+     * places, read with `readNumberFormat` and written with
+     * `writeNumberFormat` (field-settings.ts) for every target.
+     */
     precision?: number;
     /** Whether the computed value is stored/rendered as a number or formatted text */
     resultType?: "number" | "text";
@@ -2692,6 +2803,7 @@ export interface BuilderField {
     multiline?: boolean;
     borderless?: boolean;
     resizable?: boolean;
+    /** @deprecated Retired spelling of the field's `labelPosition`, still read by `readLabelPosition`; no longer written. */
     labelPosition?: "top" | "left" | "none";
   } | null;
 
@@ -3766,3 +3878,4 @@ export * from "./subform-pdf-destinations";
 
 export { readChoiceGrid, type ChoiceGridSource } from "./choice-layout";
 export * from "./components";
+export * from "./field-settings";

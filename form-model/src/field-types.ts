@@ -26,9 +26,11 @@
  *   union fails the type-check until every table covers it.
  *
  * Choice presentation uses a neutral vocabulary (dropdown, radio, checklist,
- * searchable) plus single/multiple selection. The stored `choiceStyle` values
- * (`simpleCodeSelect`, `findCode`, …) are MOIS control names; they are read
- * and written here only for compatibility with saved forms.
+ * searchable) plus single/multiple selection. Editors store the neutral
+ * `choiceStyle` names (`dropdown`, `searchable`, …); `simpleCodeSelect` and
+ * `findCode` are the MOIS control names older forms store for the same two
+ * looks. They are read here forever (`normalizeChoiceStyle`, `readChoiceStyle`)
+ * and written only by the MOIS converter (lib/mois-export/lower-field.ts).
  */
 
 import type { ComponentKind } from "./document";
@@ -211,9 +213,14 @@ export function neutralAnswerTypeOf(field: FieldTypeInput): NeutralAnswerType | 
 // Choice presentation
 // ---------------------------------------------------------------------------
 
-/** Stored `choiceStyle` values. The same union as `BuilderField["choiceStyle"]`. */
+/**
+ * Stored `choiceStyle` values. The same union as `BuilderField["choiceStyle"]`.
+ * `simpleCodeSelect` and `findCode` are legacy MOIS names for `dropdown` and
+ * `searchable` (see `LEGACY_CHOICE_STYLES`).
+ */
 export const CHOICE_STYLES = [
   "dropdown",
+  "searchable",
   "radio",
   "multiselect",
   "checkbox",
@@ -222,6 +229,20 @@ export const CHOICE_STYLES = [
   "buttons",
 ] as const;
 export type ChoiceStyle = (typeof CHOICE_STYLES)[number];
+
+/** The styles editors store: every style except the legacy MOIS names. */
+export type NeutralChoiceStyle = Exclude<ChoiceStyle, "simpleCodeSelect" | "findCode">;
+
+export const NEUTRAL_CHOICE_STYLES = ["dropdown", "searchable", "radio", "multiselect", "checkbox", "buttons"] as const satisfies readonly NeutralChoiceStyle[];
+
+/**
+ * @deprecated spellings of a neutral style, read forever: the MOIS control
+ * names older forms store. Only the MOIS converter writes them.
+ */
+export const LEGACY_CHOICE_STYLES = {
+  simpleCodeSelect: "dropdown",
+  findCode: "searchable",
+} as const satisfies Record<Exclude<ChoiceStyle, NeutralChoiceStyle>, NeutralChoiceStyle>;
 
 /** Neutral presentation hints for a choice. */
 export const CHOICE_PRESENTATIONS = ["dropdown", "radio", "checklist", "searchable", "buttons"] as const;
@@ -243,6 +264,7 @@ export interface ChoiceDisplay {
  */
 export const CHOICE_STYLE_DISPLAY = {
   dropdown: { presentation: "dropdown", selection: "single" },
+  searchable: { presentation: "searchable", selection: "single" },
   simpleCodeSelect: { presentation: "dropdown", selection: "single" },
   radio: { presentation: "radio", selection: "single" },
   findCode: { presentation: "searchable", selection: "single" },
@@ -259,9 +281,9 @@ export const CHOICE_STYLE_DISPLAY = {
  * buttons and answer buttons allow one answer).
  */
 export const CHOICE_DISPLAY_STYLE = {
-  single: { dropdown: "dropdown", radio: "radio", checklist: "radio", searchable: "findCode", buttons: "buttons" },
+  single: { dropdown: "dropdown", radio: "radio", checklist: "radio", searchable: "searchable", buttons: "buttons" },
   multiple: { dropdown: "multiselect", radio: "checkbox", checklist: "checkbox", searchable: "multiselect", buttons: "checkbox" },
-} as const satisfies Record<ChoiceSelection, Record<ChoicePresentation, ChoiceStyle>>;
+} as const satisfies Record<ChoiceSelection, Record<ChoicePresentation, NeutralChoiceStyle>>;
 
 /**
  * Answer buttons suit a short single choice: a Yes/No-style pair up to four
@@ -275,19 +297,38 @@ export type ChoiceStyleContext = "field" | "tableColumn" | "layoutCell" | "subfo
 
 /**
  * The style each context uses when `choiceStyle` is unset: a builder field is
- * a searchable select (lib/mois-export/lower-field.ts, ChoiceEditor), a table column,
+ * a searchable select (MOIS FindCodeSelect, lib/mois-export/lower-field.ts; ChoiceEditor), a table column,
  * subform entry or layout cell a plain dropdown (TableEditor, the subform
  * adapter, the LayoutTable runtime).
  */
 export const DEFAULT_CHOICE_STYLE = {
-  field: "findCode",
+  field: "searchable",
   tableColumn: "dropdown",
   layoutCell: "dropdown",
   subformEntry: "dropdown",
-} as const satisfies Record<ChoiceStyleContext, ChoiceStyle>;
+} as const satisfies Record<ChoiceStyleContext, NeutralChoiceStyle>;
 
 export function isChoiceStyle(value: unknown): value is ChoiceStyle {
   return typeof value === "string" && (CHOICE_STYLES as readonly string[]).includes(value);
+}
+
+/**
+ * The neutral name of a stored style: `simpleCodeSelect` reads as
+ * `dropdown` and `findCode` as `searchable`; any other known style is
+ * itself. Undefined for an unset or unknown style.
+ */
+export function normalizeChoiceStyle(value: unknown): NeutralChoiceStyle | undefined {
+  if (!isChoiceStyle(value)) return undefined;
+  return value === "simpleCodeSelect" || value === "findCode" ? LEGACY_CHOICE_STYLES[value] : value;
+}
+
+/**
+ * The neutral style a choice is drawn with: its stored `choiceStyle`
+ * (legacy MOIS names read as their neutral names), or the context's default
+ * when it has none.
+ */
+export function readChoiceStyle(fieldLike: { choiceStyle?: unknown } | null | undefined, context: ChoiceStyleContext = "field"): NeutralChoiceStyle {
+  return normalizeChoiceStyle(fieldLike?.choiceStyle) ?? DEFAULT_CHOICE_STYLE[context];
 }
 
 /** Presentation and selection for a stored style (unknown or unset styles use the context default). */

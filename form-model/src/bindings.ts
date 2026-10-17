@@ -28,6 +28,7 @@
  * | `sourcePath`, `sourcePaths`, `sourceMode`, `sourceFallback` (else `defaultValue`), `sourceFormat` | layout cells | `read` (a cell filled once from the clock is a default answer, see defaults.ts) |
  * | `crossPlatformMappingId` | fields | the concept of each part; alone, the parts its catalog entry defines |
  * | `alayaCareConfig` demographics or vital with a catalog concept | fields | `read.concept` / `write` of the concept's observation |
+ * | `alayaCareConfig.templateOnly` (authored) / `exportAsQuestion` | fields | `read.presentation` `printed` / `editable` |
  * | `cernerConfig.dta` with a reviewed crosswalk row | fields | `write.observation` |
  * | `fhirConfig.observationExtract` with an item code | fields | `write.observation` |
  *
@@ -62,7 +63,34 @@ export const BINDING_LOINC_SYSTEM = "http://loinc.org";
 export const BINDING_MOIS_OBSERVATION_SYSTEM = "urn:mois:observation";
 
 export type BindingReadMode = "initial" | "sync" | "none";
-export type BindingPresentation = "shown" | "backing";
+/**
+ * How a field presents the chart value it reads:
+ *
+ * - `shown`: drawn on the form, filled from the chart. Each target decides
+ *   whether a value it already holds is asked at all: AlayaCare prints a
+ *   reviewed Patient-profile read on its document instead of asking it.
+ * - `editable`: asked on the form in every target (AlayaCare's
+ *   `exportAsQuestion`), filled from the chart.
+ * - `backing`: kept in the form's data, saves and document fills, with the
+ *   input hidden (MOIS `sourceConfig.presentation: "backing"`).
+ * - `printed`: not asked; the value appears only on the printed document
+ *   (AlayaCare's `templateOnly`). MOIS, which prints from saved data, keeps it
+ *   as a backing value; FHIR hides the item.
+ *
+ * Read it with `readBindingPresentation`; `writeFieldBinding` keeps
+ * `sourceConfig.presentation` and the AlayaCare keys as its mirrors.
+ */
+export type BindingPresentation = "shown" | "editable" | "backing" | "printed";
+
+const BINDING_PRESENTATIONS: readonly BindingPresentation[] = ["shown", "editable", "backing", "printed"];
+
+const presentationOf = (value: unknown): BindingPresentation =>
+  typeof value === "string" && (BINDING_PRESENTATIONS as readonly string[]).includes(value) ? (value as BindingPresentation) : "shown";
+
+/** Whether a presentation hides the input (backing or printed). */
+export function isHiddenBindingPresentation(presentation: BindingPresentation | null | undefined): boolean {
+  return presentation === "backing" || presentation === "printed";
+}
 export type BindingWriteWhen = "submit" | "save";
 export type BindingValueType = "TEXT" | "NUMERIC" | "VALUESET";
 
@@ -515,7 +543,7 @@ function normalizeRead(value: unknown, unknown: string[]): BuilderFieldBindingRe
     ...(query ? { query } : {}),
     ...(paths.length ? { paths } : {}),
     mode,
-    presentation: value.presentation === "backing" ? "backing" : "shown",
+    presentation: presentationOf(value.presentation),
     ...(fallback !== undefined && fallback !== null && fallback !== "" && ["string", "number", "boolean"].includes(typeof fallback) ? { fallback: fallback as string | number | boolean } : {}),
     ...(format ? { format: format === "datetime" ? "dateTime" : format } : {}),
     ...(transform ? { transform } : {}),
@@ -1043,8 +1071,49 @@ function readLegacy(fieldLike: AnyRecord, shape: FieldBindingShape, catalog: Fie
     catalog,
   );
   const alayaCareKind = stores.includes("alayaCareConfig.demographics") ? "demographics" : stores.includes("alayaCareConfig.vital") ? "vital" : null;
-  const binding = applyConcepts(canonical, mappingConcept, alayaCareConcept && alayaCareKind ? { concept: alayaCareConcept, kind: alayaCareKind } : null, catalog);
+  const conceptual = applyConcepts(canonical, mappingConcept, alayaCareConcept && alayaCareKind ? { concept: alayaCareConcept, kind: alayaCareKind } : null, catalog);
+  const binding = shape === "field" ? withAlayaCarePresentation(conceptual, fieldLike) : conceptual;
   return { binding, stores, targetOnly, unknown, readStore, writeStore, mappingConcept };
+}
+
+/**
+ * The AlayaCare spellings of a read's presentation: an authored
+ * `templateOnly` is `printed`, `exportAsQuestion` is `editable`. A MOIS
+ * backing read stays backing for the AlayaCare question opt-in (that one
+ * remains an AlayaCare-only choice), and is printed when template-only.
+ */
+function alayaCarePresentation(field: AnyRecord, current: BindingPresentation): BindingPresentation {
+  const config = isRecord(field.alayaCareConfig) ? field.alayaCareConfig : null;
+  if (!config) return current;
+  if (config.templateOnly === true) return "printed";
+  if (config.exportAsQuestion === true && current === "shown") return "editable";
+  return current;
+}
+
+function withAlayaCarePresentation(binding: BuilderFieldBinding | null, field: AnyRecord): BuilderFieldBinding | null {
+  if (!binding?.read) return binding;
+  const presentation = alayaCarePresentation(field, binding.read.presentation);
+  return presentation === binding.read.presentation ? binding : { ...binding, read: { ...binding.read, presentation } };
+}
+
+/** The AlayaCare mirror of a read's presentation (see `alayaCarePresentation`). */
+function applyAlayaCarePresentationMirror(out: AnyRecord, original: AnyRecord, presentation: BindingPresentation | undefined) {
+  const config = isRecord(original.alayaCareConfig) ? { ...original.alayaCareConfig } : null;
+  if (presentation === "editable") {
+    out.alayaCareConfig = { ...(config ?? {}), exportAsQuestion: true };
+    if (config?.templateOnly === true) delete (out.alayaCareConfig as AnyRecord).templateOnly;
+    return;
+  }
+  if (presentation === "printed") {
+    const next: AnyRecord = { ...(config ?? {}), templateOnly: true };
+    if (next.exportAsQuestion === true) next.exportAsQuestion = false;
+    out.alayaCareConfig = next;
+    return;
+  }
+  if (!config) return;
+  if (config.exportAsQuestion === true) config.exportAsQuestion = false;
+  if (config.templateOnly === true) delete config.templateOnly;
+  out.alayaCareConfig = config;
 }
 
 /**
@@ -1111,7 +1180,9 @@ function readFingerprint(read: BuilderFieldBindingRead | undefined, shape: Field
     paths,
     ...(query ?? {}),
     mode: read.mode,
-    presentation: read.presentation,
+    // What MOIS's stores can say: hidden (backing, printed) or drawn (shown,
+    // editable). The AlayaCare side of the presentation is reconciled on its own.
+    presentation: isHiddenBindingPresentation(read.presentation) ? "backing" : "shown",
     fallback: read.fallback ?? null,
     format: read.format ?? null,
     transform: read.transform ?? null,
@@ -1167,7 +1238,14 @@ export function readFieldBindingDetails(fieldLike: unknown, options: FieldBindin
     && !conceptDisagrees(stored.write?.concept, legacyBinding?.write?.concept);
   const mutationFromStored = mutationFingerprint(stored.write, shape) === mutationFingerprint(legacyBinding?.write, shape);
 
-  const read = readFromStored ? stored.read : legacyBinding?.read;
+  let read = readFromStored ? stored.read : legacyBinding?.read;
+  // The presentation's AlayaCare spellings (exportAsQuestion, templateOnly):
+  // while stored, an edit that only knew them wins over the stored binding's.
+  const alayaCare = isRecord(fieldLike.alayaCareConfig) ? fieldLike.alayaCareConfig : null;
+  const alayaCareKeys = Boolean(alayaCare && (hasOwn(alayaCare, "exportAsQuestion") || hasOwn(alayaCare, "templateOnly")));
+  if (shape === "field" && readFromStored && read && alayaCareKeys && legacyBinding?.read && read.presentation !== legacyBinding.read.presentation) {
+    read = { ...read, presentation: legacyBinding.read.presentation };
+  }
   const observationSide = observationFromStored ? stored.write : legacyBinding?.write;
   const mutationSide = mutationFromStored ? stored.write : legacyBinding?.write;
   // The reading's date has no legacy store: it stays with the observation
@@ -1293,8 +1371,9 @@ function mirrorSourceConfig(
     delete base.chartQuery;
   }
   if (!(base.mode === undefined && read.mode === "initial")) base.mode = read.mode === "sync" ? "sync" : "initial";
-  if (read.presentation === "backing") base.presentation = "backing";
-  else if (base.presentation !== undefined) base.presentation = "editable";
+  // MOIS has no print-only value: a printed read is a backing value there.
+  if (isHiddenBindingPresentation(read.presentation)) base.presentation = "backing";
+  else if (base.presentation !== undefined || read.presentation === "editable") base.presentation = "editable";
   if (read.fallback !== undefined) base.fallback = read.fallback;
   else if (base.fallback !== undefined) base.fallback = null;
   const existingFormat = nonEmptyString(base.format);
@@ -1475,6 +1554,10 @@ export function writeFieldBinding<T extends object>(
   if (mutationFingerprint(next?.write, shape) !== mutationFingerprint(current?.write, shape)) {
     applyMutationMirror(out, original, next?.write, shape);
   }
+  if (shape === "field" && (next?.read?.presentation ?? null) !== (current?.read?.presentation ?? null)
+    && (next?.read || current?.read)) {
+    applyAlayaCarePresentationMirror(out, original, next?.read?.presentation);
+  }
 
   if (legacy.mappingConcept) {
     const concepts = [next?.read?.concept, next?.write?.concept];
@@ -1506,6 +1589,31 @@ export function fieldBindingPatch<T extends object>(
     else patch[key] = ["binding", "sourceConfig", "moisOutput", "moisConfig"].includes(key) ? null : undefined;
   }
   return patch as Partial<T>;
+}
+
+/**
+ * How a field presents the chart value it reads (see `BindingPresentation`),
+ * from its binding or the legacy stores: `sourceConfig.presentation`, an
+ * authored AlayaCare `templateOnly` (printed) or `exportAsQuestion`
+ * (editable). Null when the field reads nothing from the chart.
+ */
+export function readBindingPresentation(fieldLike: unknown, options: FieldBindingOptions = {}): BindingPresentation | null {
+  return readFieldBinding(fieldLike, options)?.read?.presentation ?? null;
+}
+
+/**
+ * The patch that sets a bound field's presentation (through
+ * `fieldBindingPatch`, so `sourceConfig` and the AlayaCare keys follow). An
+ * empty patch when the field reads nothing.
+ */
+export function bindingPresentationPatch<T extends object>(
+  fieldLike: T,
+  presentation: BindingPresentation,
+  options: WriteFieldBindingOptions = {},
+): Partial<T> {
+  const binding = readFieldBinding(fieldLike, options);
+  if (!binding?.read) return {};
+  return fieldBindingPatch(fieldLike, { ...binding, read: { ...binding.read, presentation } }, options);
 }
 
 /** Every concept a binding names (read first), without repeats. */

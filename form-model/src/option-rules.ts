@@ -103,9 +103,30 @@ export function availableOptions<T extends BuilderChoiceOption>(
   });
 }
 
-/** The stored values of a question's exclusive answers (`option.exclusive`). */
-export function exclusiveAnswerValues(options: readonly BuilderChoiceOption[] | null | undefined): string[] {
-  return (options ?? []).flatMap((option) => (typeof option === "object" && option !== null && option.exclusive === true ? [getOptionValue(option)] : []));
+interface ExclusiveAnswerSource {
+  options?: readonly BuilderChoiceOption[] | null;
+  cernerConfig?: { firstResponseExclusive?: boolean } | null;
+}
+
+/**
+ * The stored values of a question's exclusive answers: each answer's
+ * `exclusive` flag, given the answers or the question.
+ *
+ * Given the question, a Cerner `cernerConfig.firstResponseExclusive` (the
+ * PowerForm control's `exclude_first_ar`, which only the first answer can
+ * carry) is read too, as the same intent: set, it makes the first answer
+ * exclusive; cleared, it makes the first answer not exclusive. An editor that
+ * knew only the Cerner option changed it last, so it wins for the first
+ * answer; the other answers keep their own flags.
+ */
+export function exclusiveAnswerValues(source: readonly BuilderChoiceOption[] | ExclusiveAnswerSource | null | undefined): string[] {
+  const options = Array.isArray(source) ? source : (source as ExclusiveAnswerSource | null | undefined)?.options ?? [];
+  const values = options.flatMap((option) => (typeof option === "object" && option !== null && option.exclusive === true ? [getOptionValue(option)] : []));
+  const firstResponse = Array.isArray(source) ? undefined : (source as ExclusiveAnswerSource | null | undefined)?.cernerConfig?.firstResponseExclusive;
+  if (typeof firstResponse !== "boolean" || !options.length) return values;
+  const first = getOptionValue(options[0]);
+  if (firstResponse) return values.includes(first) ? values : [first, ...values];
+  return values.filter((value) => value !== first);
 }
 
 /**

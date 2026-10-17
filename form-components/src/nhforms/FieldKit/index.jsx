@@ -155,7 +155,8 @@ const FieldKit = (() => {
     }
 
     if (type === "choice") {
-      const style = descriptor.choiceStyle || "findCode"
+      // "searchable" is the neutral name of the MOIS findCode style (form-model readChoiceStyle).
+      const style = descriptor.choiceStyle === "searchable" ? "findCode" : descriptor.choiceStyle || "findCode"
       const findCode = style === "findCode"
       const searchableMultiple = style === "multiselect"
       // Answer buttons (the builder's "buttons" style) have no nested-cell
@@ -1084,7 +1085,7 @@ const FieldKit = (() => {
           // a searchable findCode; multiple styles draw their single twin.
           choiceStyle: field.choiceStyle === "radio" || field.choiceStyle === "checkbox" || field.choiceStyle === "buttons"
             ? "radio"
-            : field.choiceStyle === "findCode" || field.choiceStyle === "multiselect"
+            : field.choiceStyle === "findCode" || field.choiceStyle === "searchable" || field.choiceStyle === "multiselect"
               ? "findCode"
               : "dropdown",
           options: Array.isArray(field.options) ? field.options : [],

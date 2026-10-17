@@ -77,6 +77,13 @@ function hasOwn(record: object, key: string): boolean {
  * Column keys that mean the same on a column and on a regular field; a
  * member stores them as the field does. Every other column key is
  * column-only and lives in `container.table`.
+ *
+ * The neutral field settings (field-settings.ts) a column can hold ride in
+ * these keys: decimal places in `numberConfig.decimalPlaces`, the neutral
+ * choice style names in `choiceStyle`. The answer display order, the choice
+ * answer layout and side help positions are not column settings (the row
+ * editor draws its own), so their keys are not member keys and the column
+ * inspector hides their controls (TABLE_COLUMN_EXCLUDED_SECTION_IDS).
  */
 export const TABLE_FIELD_KEYS = [
   "fhirConfig",
@@ -253,7 +260,12 @@ export function isLegacyTableConfig(config: TableConfigInput | null | undefined)
 // Subforms
 // ---------------------------------------------------------------------------
 
-/** Entry keys that mean the same on a subform entry and on a regular field. */
+/**
+ * Entry keys that mean the same on a subform entry and on a regular field.
+ * A data-entry number has no decimal places, display order or answer layout
+ * the modal applies (a calculation's precision is carried as its own key), so
+ * none of the neutral field settings is a member key here.
+ */
 export const SUBFORM_FIELD_KEYS = [
   "required",
   "placeholder",

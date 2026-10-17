@@ -3,7 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
   BINDING_LOINC_SYSTEM as LOINC,
   BINDING_MOIS_OBSERVATION_SYSTEM as MOIS,
+  bindingPresentationPatch,
   fieldBindingPatch,
+  isHiddenBindingPresentation,
+  readBindingPresentation,
   inferFieldBindingShape,
   moisReadPathsOf,
   observationDateOf,
@@ -510,3 +513,44 @@ describe("the date of a reading (write.effective)", () => {
   });
 });
 
+
+describe("binding presentation", () => {
+  const read = { id: "a", type: "text", label: "A", sourceConfig: { paths: ["patient.healthNumber"] } };
+
+  it.each([
+    ["a MOIS read", read, "shown"],
+    ["a MOIS backing read", { ...read, sourceConfig: { paths: ["patient.healthNumber"], presentation: "backing" } }, "backing"],
+    ["an AlayaCare template-only read", { ...read, alayaCareConfig: { templateOnly: true } }, "printed"],
+    ["template-only over a MOIS backing read", { ...read, sourceConfig: { paths: ["patient.healthNumber"], presentation: "backing" }, alayaCareConfig: { templateOnly: true } }, "printed"],
+    ["an AlayaCare question opt-in", { ...read, alayaCareConfig: { exportAsQuestion: true } }, "editable"],
+    ["a MOIS backing read stays backing for the AlayaCare opt-in", { ...read, sourceConfig: { paths: ["patient.healthNumber"], presentation: "backing" }, alayaCareConfig: { exportAsQuestion: true } }, "backing"],
+    ["nothing read", { id: "a", type: "text", label: "A", alayaCareConfig: { templateOnly: true } }, null],
+  ] as const)("reads %s", (_name, field, expected) => {
+    expect(readBindingPresentation(field)).toBe(expected);
+  });
+
+  it("writes editable with AlayaCare's exportAsQuestion as its mirror, leaving MOIS's source alone", () => {
+    const patch = bindingPresentationPatch(read, "editable");
+    expect(patch).toMatchObject({ alayaCareConfig: { exportAsQuestion: true }, binding: { read: { presentation: "editable" } } });
+    expect(patch).not.toHaveProperty("sourceConfig");
+    const next = { ...read, ...patch };
+    expect(readBindingPresentation(next)).toBe("editable");
+    // An older editor that only knew the AlayaCare key turns it off: that edit wins.
+    expect(readBindingPresentation({ ...next, alayaCareConfig: { exportAsQuestion: false } })).toBe("shown");
+  });
+
+  it("writes printed as a MOIS backing value and AlayaCare template-only", () => {
+    const next = writeFieldBinding(read, { read: { paths: ["patient.healthNumber"], mode: "initial", presentation: "printed" } });
+    expect(next).toMatchObject({ sourceConfig: { presentation: "backing" }, alayaCareConfig: { templateOnly: true } });
+    expect(readBindingPresentation(next)).toBe("printed");
+    expect(isHiddenBindingPresentation("printed")).toBe(true);
+    const back = { ...next, ...bindingPresentationPatch(next, "shown") };
+    expect(back).toMatchObject({ sourceConfig: { presentation: "editable" } });
+    expect((back as { alayaCareConfig?: unknown }).alayaCareConfig).toEqual({});
+    expect(readBindingPresentation(back)).toBe("shown");
+  });
+
+  it("returns no patch for a field that reads nothing", () => {
+    expect(bindingPresentationPatch({ id: "a", type: "text", label: "A" }, "printed")).toEqual({});
+  });
+});
