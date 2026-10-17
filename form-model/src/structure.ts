@@ -295,6 +295,48 @@ function fallbackCalculationField(calculation: SubformDataEntryCalculationConfig
   } as BuilderField;
 }
 
+/**
+ * A section's field → subgroup map as MOIS draws it (and the builder's
+ * section → draft sync writes it): an unassigned field between two members
+ * of one subgroup belongs to that subgroup.
+ */
+export function inferContiguousFieldSubgroupMap(
+  childFieldIds: string[],
+  fieldSubgroupMap: Record<string, string> = {}
+): Record<string, string> {
+  const nextMap = { ...fieldSubgroupMap };
+
+  childFieldIds.forEach((fieldId, index) => {
+    if (nextMap[fieldId]) return;
+
+    let previousSubgroupId: string | null = null;
+    for (let previousIndex = index - 1; previousIndex >= 0; previousIndex -= 1) {
+      const candidate = nextMap[childFieldIds[previousIndex]];
+      if (candidate) {
+        previousSubgroupId = candidate;
+        break;
+      }
+    }
+
+    if (!previousSubgroupId) return;
+
+    let nextSubgroupId: string | null = null;
+    for (let nextIndex = index + 1; nextIndex < childFieldIds.length; nextIndex += 1) {
+      const candidate = nextMap[childFieldIds[nextIndex]];
+      if (candidate) {
+        nextSubgroupId = candidate;
+        break;
+      }
+    }
+
+    if (nextSubgroupId === previousSubgroupId) {
+      nextMap[fieldId] = previousSubgroupId;
+    }
+  });
+
+  return nextMap;
+}
+
 // ---------------------------------------------------------------------------
 // Groups
 // ---------------------------------------------------------------------------
@@ -736,8 +778,10 @@ export function readFormStructure(document: FormStructureDocument, context: Form
         visibility: subgroupVisibility(subgroup.visibility),
       }));
     const subgroupIds = new Set(subgroupDefs.map((subgroup) => subgroup.id));
+    // A section's own map is gap-filled as MOIS draws it; a draft's overrides already are.
+    const ownMap = ownSubgroups ? inferContiguousFieldSubgroupMap(config?.childFieldIds ?? [], config?.fieldSubgroupMap ?? {}) : null;
     const subgroupOf = (fieldId: string): string | null => {
-      const assigned = ownSubgroups ? config?.fieldSubgroupMap?.[fieldId] : draft?.fieldOverrides?.[fieldId]?.subgroupId;
+      const assigned = ownMap ? ownMap[fieldId] : draft?.fieldOverrides?.[fieldId]?.subgroupId;
       return assigned && subgroupIds.has(assigned) ? assigned : null;
     };
 
@@ -944,4 +988,69 @@ export function structureSectionOf(structure: NeutralStructure, id: string): Str
     if (node.id === id) found = section;
   });
   return found;
+}
+
+/** One section of the canonical walk with the document fields it holds directly (see `structureSectionBlocks`). */
+export interface StructureSectionBlock {
+  /** The section field; null for a run of fields no section claims. */
+  section: BuilderField | null;
+  /** The section it is nested in; null at the top level. */
+  parentId: string | null;
+  depth: number;
+  /** 0-based page. */
+  page: number;
+  /**
+   * The document fields it holds directly, in form order: its field items,
+   * each group's container field, the ordinary form fields a group asks
+   * (`documentField` members: a scoring subform's questions, a collection
+   * section's fields), and its subgroups' fields in place. A nested section
+   * is a block of its own, right after its parent's.
+   */
+  fields: BuilderField[];
+}
+
+/**
+ * The canonical walk as a flat list of sections, pre-order: what a target
+ * with flat sections (AlayaCare's buckets, a PowerForm's sections, a document
+ * template's headings) reads before applying its own policy (an orphan
+ * sweep, a default section). Each field is in exactly one block.
+ */
+export function structureSectionBlocks(structure: NeutralStructure): StructureSectionBlock[] {
+  const blocks: StructureSectionBlock[] = [];
+  const seen = new Set<string>();
+  // A group's form-field members stand where the group is only when the walk
+  // places them nowhere else (a subform that replaces its questions, a
+  // collection section); otherwise they keep their own place.
+  const placed = new Set<string>();
+  walkStructure(structure, (node) => {
+    if (node.kind === "field") placed.add(node.id);
+    else if (node.kind === "group" && node.field) placed.add(node.field.id);
+  });
+  const add = (block: StructureSectionBlock, field: BuilderField | null | undefined) => {
+    if (!field || seen.has(field.id)) return;
+    seen.add(field.id);
+    block.fields.push(field);
+  };
+  const visitSection = (section: StructureSection, parentId: string | null, depth: number) => {
+    const block: StructureSectionBlock = { section: section.field, parentId, depth, page: section.page, fields: [] };
+    blocks.push(block);
+    const nested: StructureSection[] = [];
+    const visit = (nodes: readonly StructureNode[]) => {
+      nodes.forEach((node) => {
+        if (node.kind === "section") nested.push(node);
+        else if (node.kind === "subgroup") visit(node.children);
+        else if (node.kind === "field") add(block, node.field);
+        else {
+          add(block, node.field);
+          node.members.forEach((member) => {
+            if (member.documentField && !placed.has(member.id)) add(block, member.field);
+          });
+        }
+      });
+    };
+    visit(section.children);
+    nested.forEach((child) => visitSection(child, section.id, depth + 1));
+  };
+  structure.pages.forEach((page) => page.sections.forEach((section) => visitSection(section, null, 0)));
+  return blocks;
 }

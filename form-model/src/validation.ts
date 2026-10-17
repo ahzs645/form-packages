@@ -38,6 +38,7 @@ import {
   type FieldConditionMetadataLookup,
 } from "./conditions";
 import { FIELD_TYPE_PROFILES, neutralAnswerTypeOf, type FieldTypeProfile } from "./field-types";
+import { controllerKindLookupOf } from "./controller-kind";
 import { observationDateOf, readFieldBinding, type BindingObservationDate } from "./bindings";
 import { readDate } from "./values";
 
@@ -948,17 +949,7 @@ export interface FieldLogicContext {
 }
 
 function controllerKindLookup(fields: ReadonlyArray<ValidationFieldInput> | undefined) {
-  const byId = new Map((fields ?? []).map((field) => [field.id, field]));
-  return (controllerId: string): string | undefined => {
-    const field = byId.get(controllerId);
-    if (!field) return undefined;
-    const answer = neutralAnswerTypeOf(field);
-    if (answer === "yesNo") return "boolean";
-    if (answer === "boolean") return "checkbox";
-    if (answer === "singleChoice" || answer === "multipleChoice") return "choice";
-    if (answer === "number" || answer === "scale" || answer === "computed") return "number";
-    return "text";
-  };
+  return controllerKindLookupOf(fields ?? []);
 }
 
 /** Yes/No labels of the form's fields, for conditions. */
