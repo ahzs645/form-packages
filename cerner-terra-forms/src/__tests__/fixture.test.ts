@@ -3,7 +3,7 @@ import { BUILDER_FIELD_TYPES } from "@webforms/form-model";
 import type { BuilderField, ComponentKind, ParsedField } from "@webforms/form-model";
 // lib/ lives outside this package; the repo-root vitest.config.ts maps "@" to
 // the repo root, so the real conversion function is importable here.
-import { builderFieldToParsedField } from "@/lib/builder-parsed-field";
+import { lowerBuilderFieldForMois } from "@/lib/mois-export/lower-field";
 import { allFieldKindsFixture, getFixtureChoiceStyles, getFixtureFieldKinds } from "./fixtures";
 
 /**
@@ -60,7 +60,7 @@ const COMPONENT_KINDS: ReadonlySet<ComponentKind> = new Set<ComponentKind>([
 const fieldsById = new Map(allFieldKindsFixture.map((field) => [field.id, field]));
 
 function parseAll(): ParsedField[] {
-  return allFieldKindsFixture.map((field, index) => builderFieldToParsedField(field, index));
+  return allFieldKindsFixture.map((field, index) => lowerBuilderFieldForMois(field, index));
 }
 
 function childIdsOf(field: BuilderField): string[] {
@@ -86,7 +86,7 @@ describe("cerner-terra all-field-kinds fixture", () => {
     }
   });
 
-  it("converts through builderFieldToParsedField without throwing", () => {
+  it("converts through lowerBuilderFieldForMois without throwing", () => {
     expect(() => parseAll()).not.toThrow();
   });
 

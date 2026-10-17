@@ -275,7 +275,7 @@ export type ChoiceStyleContext = "field" | "tableColumn" | "layoutCell" | "subfo
 
 /**
  * The style each context uses when `choiceStyle` is unset: a builder field is
- * a searchable select (builder-parsed-field, ChoiceEditor), a table column,
+ * a searchable select (lib/mois-export/lower-field.ts, ChoiceEditor), a table column,
  * subform entry or layout cell a plain dropdown (TableEditor, the subform
  * adapter, the LayoutTable runtime).
  */
@@ -995,7 +995,7 @@ export const PARSED_FIELD_KINDS = unionMembers<ComponentKind>()([
 ]);
 
 /**
- * The kind lib/builder-parsed-field.ts gives each builder type. `rawType`
+ * The kind lib/mois-export/lower-field.ts gives each builder type. `rawType`
  * keeps the builder type; a computed field is `text` when its result is text.
  */
 export const FIELD_TYPE_TO_PARSED_KIND = {

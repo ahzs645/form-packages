@@ -15,20 +15,25 @@ export interface PrefixDescriptor {
   normalizedTokens: string[];
 }
 
-export interface GroupEntry {
+/**
+ * One field placed in a group. `F` is the field shape the group was built
+ * from: an importer's ParsedField, or a richer copy such as the MOIS
+ * exporter's lowered field (lib/mois-export/lowered-field.ts).
+ */
+export interface GroupEntry<F extends ParsedField = ParsedField> {
   row: string;
   column: string;
-  field: ParsedField;
+  field: F;
 }
 
-export interface GroupSummary {
+export interface GroupSummary<F extends ParsedField = ParsedField> {
   key: string;
   prefixLabel: string;
   prefix: PrefixDescriptor;
   totalFields: number;
   rows: string[];
   columns: string[];
-  entries: GroupEntry[];
+  entries: GroupEntry<F>[];
   /** Hide the whole section while retaining its fields and chart/PDF bindings. */
   hidden?: boolean;
   /** Section-level inline show-when rule, carried from the builder section field. */

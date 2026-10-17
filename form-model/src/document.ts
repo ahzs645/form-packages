@@ -7,7 +7,6 @@ import type {
   BuilderChoiceOption,
   BuilderField,
   BuilderTableColumn,
-  BuilderFieldMoisConfig,
   BuilderFieldSourceConfig,
   BuilderLayoutTableCell,
   BuilderLayoutTableCellField,
@@ -18,19 +17,10 @@ import type {
   BuilderLayoutTableSourceFormat,
   BuilderLayoutTableSourceMode,
   BuilderLayoutTableStampTarget,
-  BuilderLockWhenRule,
-  BuilderMoisOutputMapping,
   BuilderOscarImportMapping,
-  BuilderRichTextImageAsset,
   BuilderTableMode,
-  BuilderValidationConfig,
   BuilderVisibilityCondition,
   BuilderVisibilityRule,
-  CalculatedValueDisplayStyle,
-  CalculatedValuePolicy,
-  FieldWidth,
-  HelpPosition,
-  IncompleteCalculationBehavior,
   MoisNavigationTarget,
 } from "./index";
 
@@ -123,22 +113,6 @@ export type ParsedFieldVisibilityCondition = BuilderVisibilityCondition;
 
 export type ParsedFieldVisibility = BuilderVisibilityRule;
 
-/**
- * The builder's MOIS output mapping plus two keys older fixtures carry
- * verbatim (the CodedObservationChoiceField report contract). They belong on
- * BuilderMoisOutputMapping; until they move there the parsed copy declares them.
- */
-export type ParsedMoisOutputMapping = BuilderMoisOutputMapping & {
-  /**
-   * Report template with {display}/{code}/{value}/{comment} tokens (the
-   * CodedObservationChoiceField contract). Wins over reportFromDisplay and
-   * reportFieldId when set.
-   */
-  reportTemplate?: string;
-  /** Field whose value fills the {comment} token in reportTemplate. */
-  commentFieldId?: string;
-};
-
 type BuilderTableConfig = NonNullable<BuilderField["tableConfig"]>;
 
 /** A builder table config with the parsed projection's defaults applied. */
@@ -149,70 +123,44 @@ export type ParsedTableConfig = Omit<BuilderTableConfig, "group" | "allowAddRows
   allowRemoveRows: boolean;
 };
 
+/**
+ * A form field as an importer or the layout layer sees it: the neutral,
+ * flattened shape the PDF/AcroForm, XFA, OSCAR eForm and AI extraction
+ * importers produce, that sessions and layout drafts store, and that grouping,
+ * accessibility, PDF autofill and the PDF studio read.
+ *
+ * It carries identity, kind, label, required, answer options, geometry
+ * (page, bbox, widgets, pdfFieldAliases, maxLen), provenance (oscarImport,
+ * documentLayout) and the presentation settings those readers use. A key is
+ * here because something outside the MOIS exporter reads or writes it; the
+ * MOIS-only and lowering-derived keys are on `MoisLoweredField`
+ * (lib/mois-export/lowered-field.ts), the shape `lowerBuilderFieldForMois`
+ * (lib/mois-export/lower-field.ts) gives a builder field. Every key there is
+ * optional, so any ParsedField can be handed to the MOIS exporter.
+ *
+ * Code that is not MOIS should read the builder field (BuilderField and the
+ * neutral readers in this package), not a lowered copy.
+ *
+ * `rawType` has two meanings, by producer: an importer writes the source's
+ * own class (an AcroForm field type, an OSCAR input type), while the MOIS
+ * lowering writes the builder type, except that both Yes/No types are
+ * "boolean" and a URL with a link target is "hyperlink".
+ * `fieldTypeForParsedField` (./field-types) reads either back to a builder
+ * type. Lowered fields persist inside layout drafts and share digests, so
+ * the lowering does not add a separate key for the builder type.
+ */
 export interface ParsedField {
   documentLayout?: import("./document-layout").DocumentLayout;
-  /** Canonical answer values to target MOIS codes, used for rule projection. */
-  answerValueAliases?: Record<string, string>;
-  answerSetIssue?: string;
   behavior?: import("./index").BuilderFieldBehavior;
-  translations?: import("./index").BuilderField["translations"];
   id: string;
   label: string;
   kind: ComponentKind;
   rawType: string;
   required: boolean;
-  lockWhenSectionComplete?: boolean;
-  /** Lock once the MOIS record is SIGNED. Defaults on; set false to opt out. */
-  lockWhenSigned?: boolean;
-  /** @deprecated Legacy lock rule; read locks with `readLockCondition`. */
-  lockWhen?: BuilderLockWhenRule | null;
-  /** Neutral lock condition (see BuilderField.lockCondition). Present only when set. */
-  lockCondition?: BuilderField["lockCondition"];
-  /**
-   * The default answer descriptor (see BuilderField.defaultAnswer), as
-   * readDefaultAnswer resolves it on the builder field. Present only when the
-   * builder field stores a descriptor, so a chart or latest-observation
-   * default, which has no legacy `prefill` spelling, reaches the exporters.
-   */
-  defaultAnswer?: BuilderField["defaultAnswer"];
-  /**
-   * Where `required` came from when it is not the field's own setting
-   * (readFieldValidation): a `validation.rules` required entry or the Cerner
-   * required preference kept from an import. `required` already holds the
-   * resolved value; this is provenance. Present only for those sources.
-   */
-  requiredSource?: "validation-rule" | "cerner-preference" | "fhir-item";
-  /** Label styling carried to whichever target renders the form. */
-  labelColor?: string | null;
-  labelHighlight?: string | null;
-  labelBold?: boolean;
   booleanStyle?: "single" | "yesNo";
   booleanLabels?: { on: string; off: string } | null;
-  booleanNeutralMode?: "cycle" | "initial" | "none";
   choiceStyle?: BuilderField["choiceStyle"];
-  /** Layout of radio/checklist answers inside a SimpleCodeChecklist field. */
-  choiceAnswerLayout?: BuilderField["choiceAnswerLayout"];
-  choiceAnswerOrder?: BuilderField["choiceAnswerOrder"];
   codeSystem?: string; // MOIS code system (e.g., "MOIS-MARITALSTATUS")
-  showOtherOption?: boolean; // Allow "Other" option with custom input
-  /** Emit MOIS autoHotKey on coded selects/checklists (keyboard shortcuts). */
-  autoHotKey?: boolean;
-  componentKey?: string | null;
-  componentTitle?: string | null;
-  componentDescription?: string | null;
-  componentProps?: {
-    nhformsExport?: string;
-    showLegend?: boolean;
-    showInlineLabels?: boolean;
-    scaleOptions?: Array<{
-      value: number;
-      label: string;
-      description?: string;
-      /** Stored answer key when it differs from the score. See BuilderField.scaleConfig. */
-      key?: string;
-    }>;
-    [key: string]: unknown;
-  } | null;
   labelHints?: string[];
   optionStates?: string[];
   /**
@@ -221,8 +169,6 @@ export interface ParsedField {
    * choice renderer serializes these (and keeps them alongside `codeSystem`,
    * matching CodedObservationChoiceField precedence: inline options win).
    */
-  /** Answers that clear the others when chosen (option `exclusive`). */
-  exclusiveOptionValues?: string[];
   optionDetails?: Array<{
     value: string;
     label: string;
@@ -233,41 +179,11 @@ export interface ParsedField {
     /** Stored value of the visual parent; never emitted as an answer implicitly. */
     presentationParentValue?: string;
   }>;
-  /** MOIS control density for coded selects/checklists (`size` prop). */
-  choiceSize?: string;
-  /** MOIS per-option density for coded selects/checklists (`optionSize` prop). */
-  choiceOptionSize?: string;
-  /**
-   * Past-measurement binding on a core text/number field — exports as the
-   * PastMeasurementField runtime with standard observation paths baked in
-   * (lib/measurement-field-config.ts).
-   */
-  measurementConfig?: MeasurementFieldConfig | null;
-  /**
-   * The field's chart binding as the MOIS export realises it (the neutral
-   * binding read from every store, less the parts a past measurement or no
-   * MOIS store holds; lib/mois-export/field-binding.ts). Present only when set.
-   */
-  binding?: BuilderField["binding"];
-  /**
-   * The date of the reading an observation this field writes to MOIS records
-   * (the binding's `write.effective`), whether the field's Save as observation
-   * or its past measurement writes it. Present only when set.
-   */
-  observationDate?: NonNullable<NonNullable<BuilderField["binding"]>["write"]>["effective"];
-  /**
-   * The field's reference ranges, read from every store (lib/reference-ranges.ts):
-   * normal, critical and feasible limits by patient. Present only when set.
-   */
-  referenceRanges?: import("./reference-ranges").ReferenceRangeBand[];
   /** Field-level MOIS source binding, carried verbatim from BuilderField. */
   sourceConfig?: BuilderFieldSourceConfig | null;
-  /** Field-level MOIS save key / mutation / module link, carried verbatim. */
-  moisConfig?: BuilderFieldMoisConfig | null;
   /** OSCAR import provenance and the user's mapping-review decision. */
   oscarImport?: BuilderOscarImportMapping | null;
   tableConfig?: ParsedTableConfig;
-  layoutTableConfig?: LayoutTableConfig | null;
   page?: number;
   bbox?: BoundingBox;
   widgets?: WidgetGeometry[];
@@ -276,79 +192,21 @@ export interface ParsedField {
   maxLen?: number;
   /** Builder-authored answer sync group. Primary renderers write into every linked answer field id. */
   linkedAnswerGroupId?: string | null;
+  /** The other fields of that group; the preview grouping (buildPreviewGroups) sets it on the primary. */
   linkedAnswerFieldIds?: string[];
-  // New field type properties
-  textareaRows?: number;
-  /** Explicit MOIS control size for number/measurement and textarea inputs. */
-  moisSize?: string;
   textareaMultiline?: boolean;
   textareaBorderless?: boolean;
-  textareaResizable?: boolean;
   timeFormat?: "12h" | "24h";
   maxStars?: number;
   sliderMin?: number;
   sliderMax?: number;
   sliderStep?: number;
-  acceptedFileTypes?: string[];
-  maxFileSize?: number;
 
   // Number field properties
   numberTypeNumber?: NonNullable<BuilderField["numberConfig"]>["typeNumber"];
   numberButtonControls?: boolean;
   numberStoreAsNumber?: boolean;
   numberSpinButtonProps?: NonNullable<BuilderField["numberConfig"]>["spinButtonProps"];
-  /** `{ answer -> score }` map from this field's options, when any option has a
-   *  score. Lets `score([id])` formulas be compiled with the live option scores
-   *  at export time. Keyed by both stored value and label. */
-  optionScores?: Record<string, number>;
-  computedExpression?: string;
-  computedPrecision?: number;
-  computedResultType?: "number" | "text";
-  computedDisplayStyle?: CalculatedValueDisplayStyle;
-  /** Presentation-only suffix resolved from an enabled computed-field suffix setting. */
-  computedDisplaySuffix?: string;
-  computedCalculationPolicy?: CalculatedValuePolicy;
-  /** What to do before every referenced input has a value. Defaults to "compute-anyway". */
-  computedIncompleteBehavior?: IncompleteCalculationBehavior;
-  /** Text shown in place of the total when computedIncompleteBehavior is "show-text". */
-  computedIncompleteText?: string;
-  computedShowInterpretation?: boolean;
-  computedInterpretation?: NonNullable<BuilderField["computedConfig"]>["interpretation"];
-  /** Persist this computed value as the webform's linked MOIS calculated
-   *  observation on submit (`calculated` -> ObservationInput on the save
-   *  mutations). Only present when enabled in the builder; the exporter
-   *  derives `MoisExportParams.calculatedUpdate` from the first field
-   *  carrying this. */
-  computedMoisCalculated?: {
-    observationCode?: string;
-    loincCode?: string;
-    system?: string;
-    labCode?: string;
-    status?: string;
-    dictionaryMetadata?: {
-      label?: string;
-      description?: string;
-      category?: string;
-      units?: string;
-    };
-    description?: string;
-    valueType?: "NUMERIC" | "TEXT";
-    units?: string;
-    reportFieldId?: string;
-    reportedByFieldId?: string;
-    reportedDateFieldId?: string;
-  } | null;
-  /** Read-only prior observations displayed with a computed field. This is
-   *  intentionally separate from computedMoisCalculated so history settings
-   *  never leak into the MOIS calculated-observation write payload. */
-  computedObservationHistory?: {
-    observationCode?: string;
-    loincCode?: string;
-    units?: string;
-    maxRows?: number;
-    graphLinkText?: string;
-    graphHref?: string;
-  } | null;
 
   // Optional suffix rendered inside single-line text or numeric inputs
   inputSuffix?: string;
@@ -357,25 +215,7 @@ export interface ParsedField {
   scaleMin?: number;
   scaleMax?: number;
   scaleStep?: number;
-  scaleMinLabel?: string;
-  scaleMaxLabel?: string;
   scaleStyle?: "numeric" | "labeled";
-  scaleShowLegend?: boolean;
-  scaleShowInlineLabels?: boolean;
-  scaleShowTooltip?: boolean;
-  scaleTooltipMode?: "option" | "all";
-  /** Stored answer key per option when it differs from the score. See BuilderField.scaleConfig. */
-  scaleOptions?: NonNullable<BuilderField["scaleConfig"]>["options"];
-
-  // Matrix field properties
-  matrixRows?: string[];
-  matrixColumns?: string[];
-  matrixMultiplePerRow?: boolean;
-  matrixAutoNumberRows?: boolean;
-  matrixRowLabelStyle?: "numbers" | "letters";
-
-  // Barcode field properties
-  barcodeDecoders?: Array<"qr" | "ean" | "ean8" | "upc" | "upc_e" | "code128" | "code39">;
 
   // Date field properties
   dateWithTime?: boolean;
@@ -388,75 +228,24 @@ export interface ParsedField {
   prefillToday?: boolean;
   dateMinDate?: string;
   dateMaxDate?: string;
-  /** dateConfig.relativeMinDate (a limit counted from today). Present only when set. */
-  dateRelativeMinDate?: NonNullable<BuilderField["dateConfig"]>["relativeMinDate"];
-  /** dateConfig.relativeMaxDate (a limit counted from today). Present only when set. */
-  dateRelativeMaxDate?: NonNullable<BuilderField["dateConfig"]>["relativeMaxDate"];
-  dateBorderless?: boolean;
-  dateButtonControls?: boolean;
-  dateFillTodayOnCalendarOpen?: boolean;
-  dateShowAge?: boolean;
-  dateVertical?: boolean;
-  dateLegacyTimeFieldId?: string;
-
-  // Phone field properties
-  phoneUseSimpleInput?: boolean;
   phoneDefaultCountry?: string;
-  phoneExcludeCountries?: string[];
   phoneAllowExtension?: boolean;
-  phoneExtensionPlaceholder?: string;
-  phoneExtensionFieldId?: string;
-
-  // Hyperlink field properties
-  hyperlinkHref?: string;
-  hyperlinkLabel?: string;
-  hyperlinkTarget?: "_blank" | "_self" | "_parent" | "_top";
-  hyperlinkDisplayStyle?: "button" | "inline";
-
-  // Common field settings
-  placeholder?: string;
   helpText?: string;
-  helpPosition?: HelpPosition;
-  pendingConversion?: BuilderField["pendingConversion"];
   hidden?: boolean;
-  disabled?: boolean;
-  width?: FieldWidth;
-  labelPosition?: BuilderField["labelPosition"];
   prefill?: FieldPrefillValue;
-  validation?: BuilderValidationConfig | null;
 
   // Inline show-when rule (builder field visibility editor). The exporter
   // synthesizes a fieldLinkRule from it (renderJsx) — without this the rule
   // was preview-only.
   visibility?: ParsedFieldVisibility | null;
 
-  // Direct MOIS output mapping authored in the builder.
-  moisOutput?: ParsedMoisOutputMapping | null;
-
   // Text field settings
   maxCharLimit?: number;
   showCharLimit?: boolean;
   secretInput?: boolean;
-  richTextSource?: string | null;
-  richTextImages?: BuilderRichTextImageAsset[];
-  richTextReadOnly?: boolean;
-  richTextBorderless?: boolean;
-  richTextStartingMode?: "edit" | "preview" | "default";
-  richTextHeight?: number | null;
-
-  // Choice field settings
-  allowCreation?: boolean;
-  shuffleOptions?: boolean;
-  minSelection?: number;
-  maxSelection?: number;
-
-  // File upload settings
-  multipleFiles?: boolean;
-  cameraUpload?: boolean;
 
   // Section field properties
   sectionTitle?: string;
-  sectionDescription?: string;
   sectionSubtitleBackground?: string;
   sectionSubtitleBorder?: string;
   sectionSubtitlePadding?: string;
@@ -487,7 +276,6 @@ export interface ParsedField {
     label: string;
     description?: string;
   }>;
-  sectionScaleLegendPreset?: string;
 }
 
 export interface FieldConstraint {
