@@ -84,6 +84,8 @@ export interface TargetCapabilities {
   fieldTypes?: Record<string, Support>;
   /** Keyed by formula function name, as authors write it. */
   functions?: Record<string, Support>;
+  /** Keyed by component kind (components.ts): what the target's default implementation of each kind keeps. */
+  components?: Record<string, Support>;
 }
 
 export interface ConversionResult<Artifact> {
