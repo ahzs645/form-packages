@@ -42,9 +42,8 @@ const { FormLogicKit } = load<{
 
 const ConditionalGroup = load<{
   evaluateConditionEntries: (entries: unknown[], match: string, get: (id: string) => unknown) => boolean;
-  isConditionAnswerEmpty: (value: unknown) => boolean;
   checkMeaningfulAnswer: (value: unknown) => boolean;
-}>([read("ConditionalGroup")], ["evaluateConditionEntries", "isConditionAnswerEmpty", "checkMeaningfulAnswer"], { React, Fluent: {} });
+}>([read("FormLogicKit"), read("ConditionalGroup")], ["evaluateConditionEntries", "checkMeaningfulAnswer"], { React, Fluent: {} });
 
 const META = { _rowId: "r1", _sourceKey: "src-1", _sourceRemoved: false, _complete: true, _rowStatus: "new", _sourceLabel: "Metformin", _formulaOverrides: { total: 3 } };
 
@@ -103,11 +102,9 @@ const crossField = (() => {
     paginationEnabled: false, pageCount: 1, groupPageAssignments: {}, builderFields: fields,
   } as never);
   const rulesMatch = /const crossFieldValidationRules = (\[[\s\S]*?\]);/.exec(jsx);
-  const helperStart = jsx.indexOf("const crossFieldValueOf");
-  const helperEnd = jsx.indexOf("const evaluateCrossFieldConditions");
-  const helperTail = jsx.slice(helperEnd, jsx.indexOf("};", jsx.indexOf("return rule.match")) + 2);
+  const helper = /const evaluateCrossFieldConditions = [^\n]*/.exec(jsx)?.[0] ?? "";
   // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func
-  const evaluate = new Function("rules", "data", `${jsx.slice(helperStart, helperEnd)}${helperTail}\nreturn rules.filter((rule) => evaluateCrossFieldConditions(rule, data)).map((rule) => rule.message);`) as (
+  const evaluate = new Function("FormLogicKit", "rules", "data", `${helper}\nreturn rules.filter((rule) => evaluateCrossFieldConditions(rule, data)).map((rule) => rule.message);`).bind(null, FormLogicKit) as (
     rules: unknown,
     data: Record<string, unknown>,
   ) => string[];
@@ -128,7 +125,6 @@ describe("condition emptiness parity (shared vectors)", () => {
     expect(evaluateConditionGroup(leaf("filled"), () => undefined, { t: value })).toBe(!expectedEmpty);
 
     // ConditionalGroup NHForm (visibility, required/copy "is empty").
-    expect(ConditionalGroup.isConditionAnswerEmpty(value)).toBe(expectedEmpty);
     expect(ConditionalGroup.checkMeaningfulAnswer(value)).toBe(!expectedEmpty);
     expect(ConditionalGroup.evaluateConditionEntries(compiled("filled"), "all", get)).toBe(!expectedEmpty);
     expect(ConditionalGroup.evaluateConditionEntries(compiled("empty"), "all", get)).toBe(expectedEmpty);

@@ -11,16 +11,17 @@ import {
   evaluateFieldLinkRuleCondition,
   type FieldLinkRule,
 } from "@webforms/form-model";
+import { FORM_LOGIC_KIT_SOURCE } from "@/packages/form-components/src/nhforms/__tests__/form-logic-kit-source";
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 const context = React.createContext<any>(null);
-const source = fs.readFileSync(
+const source = `${FORM_LOGIC_KIT_SOURCE}\n${fs.readFileSync(
   path.join(
     process.cwd(),
     "packages/form-components/src/nhforms/ConditionalGroup/index.jsx",
   ),
   "utf8",
-);
+)}`;
 const compiled = Babel.transform(source, { presets: ["react"] }).code;
 const runtime = new Function(
   "React",

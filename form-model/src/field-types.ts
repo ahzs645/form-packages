@@ -15,8 +15,13 @@
  * - `null` means "this vocabulary has no way to hold that type"; a converter
  *   reports it as dropped (or asks for an export decision).
  * - A `*_LOSSES` table lists mappings that keep the answer but lose part of
- *   its meaning (a format check, the time of day, …); a converter reports those
- *   as approximated. Mappings missing from a loss table are exact.
+ *   its meaning (a format check, the time of day, …), for a builder
+ *   conversion that reports them (Form.io table columns, subform entries).
+ *   What an export target loses per field type is not here: each target
+ *   declares it once in its capability table
+ *   (`lib/targets/capabilities/<target>.ts`, `*_FIELD_TYPE_SUPPORT`), which
+ *   the Export review, the builder's per-target status and the exporter's own
+ *   compatibility report all read.
  * - Every table is `satisfies Record<Union, …>`, so adding a member to any
  *   union fails the type-check until every table covers it.
  *
@@ -249,21 +254,14 @@ export const CHOICE_STYLE_DISPLAY = {
 /**
  * The stored style for each presentation and selection. A single-select
  * checklist is a radio list; a multiple-select dropdown is the searchable
- * multiple select and a multiple-select radio list is a checklist (both
- * approximations, listed in CHOICE_DISPLAY_STYLE_LOSSES).
+ * multiple select, and a multiple-select radio list or answer buttons are a
+ * checklist (approximations: there is no multiple-select dropdown, and radio
+ * buttons and answer buttons allow one answer).
  */
 export const CHOICE_DISPLAY_STYLE = {
   single: { dropdown: "dropdown", radio: "radio", checklist: "radio", searchable: "findCode", buttons: "buttons" },
   multiple: { dropdown: "multiselect", radio: "checkbox", checklist: "checkbox", searchable: "multiselect", buttons: "checkbox" },
 } as const satisfies Record<ChoiceSelection, Record<ChoicePresentation, ChoiceStyle>>;
-
-export const CHOICE_DISPLAY_STYLE_LOSSES: Partial<Record<ChoiceSelection, Partial<Record<ChoicePresentation, string>>>> = {
-  multiple: {
-    dropdown: "No multiple-select dropdown; drawn as a searchable multiple select.",
-    radio: "Radio buttons allow one answer; drawn as a checklist.",
-    buttons: "Answer buttons allow one answer; drawn as a checklist.",
-  },
-};
 
 /**
  * Answer buttons suit a short single choice: a Yes/No-style pair up to four
@@ -404,7 +402,13 @@ export const LAYOUT_CELL_INPUT_TYPES = unionMembers<BuilderLayoutTableCellInputT
   "signature",
 ]);
 
-/** A multiple choice becomes `choiceMulti` (see layoutCellInputTypeForField). */
+/**
+ * A multiple choice becomes `choiceMulti` (see layoutCellInputTypeForField).
+ * Email, phone and web address become text cells, which do not check or
+ * format them, and a date-time a date cell, which drops the time of day; the
+ * cell conversion helper refuses those approximations
+ * (lib/__tests__/field-type-tables-consumers.test.ts).
+ */
 export const FIELD_TYPE_TO_LAYOUT_CELL_INPUT_TYPE = {
   text: "text",
   number: "number",
@@ -436,13 +440,6 @@ export const FIELD_TYPE_TO_LAYOUT_CELL_INPUT_TYPE = {
   section: null,
   heading: null,
 } as const satisfies Record<FieldType, BuilderLayoutTableCellInputType | null>;
-
-export const FIELD_TYPE_TO_LAYOUT_CELL_INPUT_TYPE_LOSSES: Partial<Record<FieldType, string>> = {
-  email: "Layout cells do not check email addresses.",
-  phone: "Layout cells do not format phone numbers.",
-  url: "Layout cells do not check web addresses.",
-  datetime: "Layout cells have no date-time input; the time of day is dropped.",
-};
 
 export const LAYOUT_CELL_INPUT_TYPE_TO_FIELD_TYPE = {
   text: "text",
@@ -580,15 +577,12 @@ export const TABLE_COLUMN_TYPE_TO_EDITABLE_TABLE_COLUMN_TYPE = {
   date: "date",
   time: "time",
   choice: "dropdown",
+  // EditableTable has no yes/no column: drawn as a tick box, so unanswered reads as No.
   booleanYesNo: "checkbox",
   checkbox: "checkbox",
   stampButton: "stampButton",
   signature: "signature",
 } as const satisfies Record<BuilderTableColumnType, EditableTableColumnType>;
-
-export const TABLE_COLUMN_TYPE_TO_EDITABLE_TABLE_COLUMN_TYPE_LOSSES: Partial<Record<BuilderTableColumnType, string>> = {
-  booleanYesNo: "EditableTable has no yes/no column; drawn as a tick box, so unanswered reads as No.",
-};
 
 export const EDITABLE_TABLE_COLUMN_TYPE_TO_TABLE_COLUMN_TYPE = {
   text: "text",
@@ -631,7 +625,9 @@ export type FhirItemType = (typeof FHIR_ITEM_TYPES)[number];
  * `numberConfig.typeNumber` is "decimal", and a computed field `string` when
  * its result is text (see fhirItemTypeForField). A scale is a choice whose
  * options carry ordinal values, so its labels and scores survive; editable
- * rich text is `text`.
+ * rich text is `text`. What each mapping loses is the FHIR capability table
+ * (FHIR_FIELD_TYPE_SUPPORT in lib/targets/capabilities/fhir.ts); matrices and
+ * custom components map to a group here but the export leaves them out.
  */
 export const FIELD_TYPE_TO_FHIR_ITEM_TYPE = {
   text: "string",
@@ -666,19 +662,6 @@ export const FIELD_TYPE_TO_FHIR_ITEM_TYPE = {
   section: "group",
   heading: "display",
 } as const satisfies Record<FieldType, FhirItemType>;
-
-export const FIELD_TYPE_TO_FHIR_ITEM_TYPE_LOSSES: Partial<Record<FieldType, string>> = {
-  email: "FHIR has no email item type; exported as string.",
-  phone: "FHIR has no phone item type; exported as string.",
-  password: "FHIR does not mask answers.",
-  barcode: "FHIR has no barcode item type; exported as string.",
-  rating: "Exported as an integer; star presentation dropped.",
-  slider: "Exported as an integer unless a slider itemControl is kept.",
-  signature: "Exported as an attachment.",
-  layoutTable: "Exported as a group; cell layout dropped.",
-  matrix: "Exported as a group of questions.",
-  component: "Exported as a group; the component's own behaviour is dropped.",
-};
 
 export interface FhirItemTypeInput extends FieldTypeInput {
   numberConfig?: { typeNumber?: string } | null;
@@ -760,14 +743,10 @@ export const CHOICE_PRESENTATION_TO_FHIR_ITEM_CONTROL = {
   radio: "radio-button",
   checklist: "check-box",
   searchable: "autocomplete",
-  // SDC has no answer-button control; the nearest is a radio list.
+  // SDC has no answer-button control; the nearest is a radio list (reported
+  // as fhir.choice-style.buttons, lib/export-compatibility/choice-style.ts).
   buttons: "radio-button",
 } as const satisfies Record<ChoicePresentation, string>;
-
-/** Presentations FHIR draws as another control (each is reported as `fhir.choice-style.*`). */
-export const CHOICE_PRESENTATION_FHIR_ITEM_CONTROL_LOSSES: Partial<Record<ChoicePresentation, string>> = {
-  buttons: "FHIR has no answer-button control; the choice is sent as radio buttons (item control radio-button).",
-};
 
 /** Presentation for FHIR item-control codes; selection follows `item.repeats`. */
 export const FHIR_ITEM_CONTROL_TO_CHOICE_PRESENTATION: Readonly<Record<string, ChoicePresentation>> = {
@@ -819,6 +798,8 @@ export type AlayaCareFieldTypeName = (typeof ALAYACARE_FIELD_TYPES)[number];
  * vital) are applied. A multiple choice is `list_multiple`; a url with a known
  * address is `hyperlink`; a computed field is `score` only when its formula is
  * a numeric score sum (resolveEffectiveAlayaCareFieldTypeDetails decides).
+ * What each mapping loses is the AlayaCare capability table
+ * (ALAYACARE_FIELD_TYPE_SUPPORT in lib/targets/capabilities/alayacare.ts).
  */
 export const FIELD_TYPE_TO_ALAYACARE_FIELD_TYPE = {
   text: "text",
@@ -851,21 +832,6 @@ export const FIELD_TYPE_TO_ALAYACARE_FIELD_TYPE = {
   section: "section",
   heading: null,
 } as const satisfies Record<FieldType, AlayaCareFieldTypeName | null>;
-
-export const FIELD_TYPE_TO_ALAYACARE_FIELD_TYPE_LOSSES: Partial<Record<FieldType, string>> = {
-  computed: "AlayaCare scores only sum option scores; other formulas are dropped.",
-  booleanYesNo: "AlayaCare has no yes/no type; exported as a two-answer list.",
-  email: "AlayaCare text does not check email addresses.",
-  phone: "AlayaCare text does not format phone numbers.",
-  url: "Exported as text unless the field has a web address.",
-  rating: "Exported as a number; star presentation dropped.",
-  slider: "Exported as a number; slider presentation dropped.",
-  file: "AlayaCare pictures accept images only.",
-  password: "AlayaCare text does not mask answers.",
-  scale: "AlayaCare has no scale; exported as a list carrying each option's score.",
-  barcode: "Exported as text; scanning dropped.",
-  provider: "AlayaCare has no provider or employee search on a form; exported as text holding the provider's name, without their identifier.",
-};
 
 /**
  * Builder type for each AlayaCare type on import. Types with no builder

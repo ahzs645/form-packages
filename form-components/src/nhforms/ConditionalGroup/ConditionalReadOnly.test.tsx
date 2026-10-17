@@ -7,13 +7,14 @@ import * as Babel from "@babel/standalone";
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { produce } from "immer";
+import { FORM_LOGIC_KIT_SOURCE } from "@/packages/form-components/src/nhforms/__tests__/form-logic-kit-source";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const source = fs.readFileSync(
+const source = `${FORM_LOGIC_KIT_SOURCE}\n${fs.readFileSync(
   path.join(path.dirname(fileURLToPath(import.meta.url)), "index.jsx"),
   "utf8"
-);
+)}`;
 const ActiveDataContext = React.createContext<any>(null);
 const FluentStub = new Proxy({}, { get: () => () => null });
 

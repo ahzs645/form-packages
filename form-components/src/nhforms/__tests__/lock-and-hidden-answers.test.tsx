@@ -118,7 +118,9 @@ describe("lock conditions", () => {
     expect(evaluateConditionGroup(yes!, () => undefined, { ctrl: true })).toBe(true);
     const legacyDefault = readLockCondition({ lockWhen: { field: "ctrl", operator: "equals", value: true } });
     expect(evaluateConditionGroup(legacyDefault!, () => undefined, { ctrl: { code: "Y" } })).toBe(true);
-    expect(evaluateConditionGroup(legacyDefault!, () => undefined, { ctrl: "true" })).toBe(false);
+    // Stored text "true" (table cells, older subform rows) reads as a yes too (readBoolean).
+    expect(evaluateConditionGroup(legacyDefault!, () => undefined, { ctrl: "true" })).toBe(true);
+    expect(evaluateConditionGroup(legacyDefault!, () => undefined, { ctrl: "maybe" })).toBe(false);
   });
 
   it("prefers a stored lockCondition over a legacy lockWhen, and has no lock without either", () => {

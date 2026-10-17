@@ -20,11 +20,12 @@ import * as Babel from "@babel/standalone";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { produce, type Draft } from "immer";
+import { FORM_LOGIC_KIT_SOURCE } from "@/packages/form-components/src/nhforms/__tests__/form-logic-kit-source";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const NH = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const source = fs.readFileSync(path.join(NH, "ConditionalGroup", "index.jsx"), "utf8");
+const source = `${FORM_LOGIC_KIT_SOURCE}\n${fs.readFileSync(path.join(NH, "ConditionalGroup", "index.jsx"), "utf8")}`;
 
 const FluentStub = new Proxy(
   {},

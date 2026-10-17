@@ -97,19 +97,17 @@ const LogicGateContext = createContext({
 // Helper Functions
 // ================================================
 
-/**
- * Normalize a value to 'yes', 'no', or null
- */
+// Every condition below is decided by FormLogicKit (generated from
+// @webforms/form-model), so the exported form reads answers exactly as the
+// builder does. FormLogicKit is a declared dependency (Identity.json) and is
+// referenced only inside function bodies.
+const conditionHolds = (controllerFieldId, condition, getValue) =>
+  FormLogicKit.evaluateGroup({ match: 'all', conditions: [{ controllerFieldId, ...condition }] }, getValue)
+
+/** 'yes', 'no' or null for a Yes/No answer. */
 const normalizeValue = (value) => {
-  if (value && typeof value === 'object') {
-    return normalizeValue(value.code ?? value.display ?? value.value ?? value.text ?? value.label)
-  }
-  if (value === true || value === 'yes' || value === 'Y' || value === 1) {
-    return 'yes'
-  }
-  if (value === false || value === 'no' || value === 'N' || value === 0) {
-    return 'no'
-  }
+  if (conditionHolds('_', { type: 'boolean-yes' }, () => value)) return 'yes'
+  if (conditionHolds('_', { type: 'boolean-no' }, () => value)) return 'no'
   return null
 }
 
@@ -461,35 +459,7 @@ const ConditionalGroup = ({
   )
 }
 
-/**
- * Check if a choice field value matches any of the specified option values
- * Handles both single values (string) and multi-select values (array)
- */
-const checkChoiceMatch = (fieldValue, optionValues, invert = false) => {
-  if (fieldValue === null || fieldValue === undefined) {
-    return invert // If no value and inverted (not-selected), return true
-  }
-
-  const normalizeComparableValues = (value) => {
-    if (Array.isArray(value)) {
-      return value.flatMap((entry) => normalizeComparableValues(entry))
-    }
-    if (value && typeof value === 'object') {
-      return [value.code, value.display, value.value, value.text]
-        .filter((entry) => entry !== null && entry !== undefined)
-        .map((entry) => String(entry))
-    }
-    return [String(value)]
-  }
-
-  const normalizedOptionValues = optionValues.map((entry) => String(entry))
-  const fieldValues = normalizeComparableValues(fieldValue)
-
-  // Handle array values (multi-select fields)
-  const hasMatch = normalizedOptionValues.some(opt => fieldValues.includes(opt))
-  return invert ? !hasMatch : hasMatch
-}
-
+/** An answer's code (a coding's code, else its wording or value). */
 const normalizeComparableValue = (value) => {
   if (value && typeof value === 'object') {
     return value.code ?? value.display ?? value.value ?? value.text ?? ''
@@ -497,128 +467,9 @@ const normalizeComparableValue = (value) => {
   return value
 }
 
-// Whether one cell (or nested value) holds an answer: EditableTable's rules
-// (an unchecked checkbox, blank text, NaN, an empty list/object are not).
-const conditionCellAnswered = (value) => {
-  if (value === null || value === undefined) return false
-  if (typeof value === 'string') return value.trim() !== ''
-  if (typeof value === 'boolean') return value
-  if (typeof value === 'number') return Number.isFinite(value)
-  if (Array.isArray(value)) return value.some(conditionCellAnswered)
-  if (typeof value === 'object') return Object.keys(value).length > 0
-  return String(value).trim() !== ''
-}
-
-// Whether one entry of a collection answer (table row, multi-select item)
-// holds a real answer. On a row, "_"-prefixed keys are bookkeeping (_rowId,
-// _sourceKey, _complete, ...). Parity: isConditionEntryMeaningful in
-// @webforms/form-model and FormLogicKit.isMeaningfulEntry.
-const conditionEntryMeaningful = (value) => {
-  if (value && typeof value === 'object' && !Array.isArray(value)) {
-    return Object.keys(value).some((key) => !key.startsWith('_') && conditionCellAnswered(value[key]))
-  }
-  return conditionCellAnswered(value)
-}
-
-// A table's rows (array or { rows: [...] }) or a multi-select's items.
-const conditionCollectionEntries = (value) => {
-  if (Array.isArray(value)) return value
-  if (value && typeof value === 'object' && Array.isArray(value.rows)) return value.rows
-  return undefined
-}
-
-// "is empty" for any answer; parity with isConditionValueEmpty in
-// @webforms/form-model. A table with no answered row has "no items".
-const isConditionAnswerEmpty = (value) => {
-  const entries = conditionCollectionEntries(value)
-  if (entries) return !entries.some(conditionEntryMeaningful)
-  const normalized = normalizeComparableValue(value)
-  return normalized === null || normalized === undefined || String(normalized).trim() === ''
-}
-
-const checkComparisonMatch = (fieldValue, operator, expectedValue) => {
-  const normalized = normalizeComparableValue(fieldValue)
-  if (operator === 'filled') return !isConditionAnswerEmpty(fieldValue)
-  if (operator === 'empty') {
-    return !checkComparisonMatch(fieldValue, 'filled', expectedValue)
-  }
-  if (normalized === null || normalized === undefined || normalized === '') return false
-
-  if (operator && operator.startsWith('number-')) {
-    // Numbers when both sides are numeric, dates otherwise: cross-field rules
-    // are mostly date order ("discharge before admission"), and Number() of an
-    // ISO date is NaN. Mirrors toOrderedPair in @webforms/form-model.
-    let left = Number(normalized)
-    const expected = normalizeComparableValue(expectedValue)
-    if (expected == null || String(expected).trim() === '') return false
-    let right = Number(expected)
-    if (!Number.isFinite(left) || !Number.isFinite(right)) {
-      left = Date.parse(String(normalized))
-      right = Date.parse(String(expected))
-    }
-    if (!Number.isFinite(left) || !Number.isFinite(right)) return false
-    if (operator === 'number-gt') return left > right
-    if (operator === 'number-gte') return left >= right
-    if (operator === 'number-lt') return left < right
-    if (operator === 'number-lte') return left <= right
-    return left === right
-  }
-
-  const left = String(normalized)
-  const right = String(normalizeComparableValue(expectedValue) ?? '')
-  return operator === 'not-equals' ? left !== right : left === right
-}
-
-// A chart-fact condition with its compared answers in the fact's lowercase codes.
-const chartFactEntry = (entry) => ({
-  ...entry,
-  ...(Array.isArray(entry.optionValues) ? { optionValues: entry.optionValues.map((value) => (typeof value === 'string' ? value.toLowerCase() : value)) } : {}),
-  ...(typeof entry.value === 'string' ? { value: entry.value.toLowerCase() } : {}),
-})
-
-/**
- * Evaluate one multi-condition entry ({controllerFieldId, type, optionValues?, value?})
- * against a field-value getter. Mirrors the builder's FieldLinkCondition types;
- * kept module-level (pure) so the node test harness can execute it directly.
- */
-const evaluateConditionEntry = (entry, getFieldValue) => {
-  if (entry && Array.isArray(entry.conditions)) return evaluateConditionEntries(entry.conditions, entry.match, getFieldValue)
-  if (!entry || !entry.controllerFieldId || !entry.type) return false
-  let fieldValue = getFieldValue(entry.controllerFieldId)
-  // A chart fact (chart:patient.sex, chart:patient.ageYears …) comes from the
-  // chart the form root registered with FormLogicKit, never from the answers.
-  if (fieldValue === undefined && typeof FormLogicKit !== 'undefined' && FormLogicKit && typeof FormLogicKit.chartFact === 'function') {
-    fieldValue = FormLogicKit.chartFact(entry.controllerFieldId)
-    // A choice fact's value is a lowercase code ("female", "yes"); a rule
-    // saved with the answer's label ("Female", "Yes") names the same one.
-    if (typeof fieldValue === 'string') entry = chartFactEntry(entry)
-  }
-  const type = entry.type
-  if (type === 'choice-selected') return checkChoiceMatch(fieldValue, entry.optionValues ?? [], false)
-  if (type === 'choice-not-selected') return checkChoiceMatch(fieldValue, entry.optionValues ?? [], true)
-  if (type === 'boolean-yes') return checkControllerMatch(fieldValue, 'yes')
-  // emptyIsNo: a single checkbox nobody touched is unticked.
-  if (type === 'boolean-no') return (entry.emptyIsNo === true && (fieldValue === undefined || fieldValue === null || fieldValue === '')) || checkControllerMatch(fieldValue, 'no')
-  // equals / not-equals / filled / empty / number-* share the comparison matcher.
-  // compareFieldId makes the right-hand side another answer instead of a
-  // constant, which is what a cross-field rule needs. An unanswered compare
-  // field means no match, so a half-filled form raises nothing.
-  const compareFieldId = entry.compareFieldId || entry.valueFieldId
-  if (compareFieldId) {
-    const compareValue = getFieldValue(compareFieldId)
-    if (!checkComparisonMatch(compareValue, 'filled', null)) return false
-    return checkComparisonMatch(fieldValue, type, compareValue)
-  }
-  return checkComparisonMatch(fieldValue, type, entry.value)
-}
-
-/** Combine entries with match='all' (default) or 'any'. Empty entries = no match. */
-const evaluateConditionEntries = (entries, match, getFieldValue) => {
-  if (!Array.isArray(entries) || entries.length === 0) return false
-  return match === 'any'
-    ? entries.some((entry) => evaluateConditionEntry(entry, getFieldValue))
-    : entries.every((entry) => evaluateConditionEntry(entry, getFieldValue))
-}
+/** Combine compiled condition entries with match 'all' (default) or 'any'. Empty entries: no match. */
+const evaluateConditionEntries = (entries, match, getFieldValue) =>
+  FormLogicKit.evaluateGroup({ conditions: Array.isArray(entries) ? entries : [], match }, getFieldValue)
 
 const READ_ONLY_NATIVE_ELEMENTS = new Set(['input', 'textarea'])
 const DISABLED_NATIVE_ELEMENTS = new Set(['button', 'fieldset', 'input', 'optgroup', 'option', 'select', 'textarea'])
@@ -773,24 +624,15 @@ const ConditionalField = ({
     isVisible = invertMatch ? !matches : matches
   } else if (mode === 'controller' && controllerFieldId) {
     // A chart fact (chart:patient.sex, chart:patient.concept.DIABETES …) comes
-    // from the chart the form root registered, as in evaluateConditionEntry.
-    let controllerValue = readControllerValue(fd?.field?.data, controllerFieldId)
-    let chartOptions = optionValues
-    let chartCompare = compareValue
-    if (controllerValue === undefined && typeof FormLogicKit !== 'undefined' && FormLogicKit && typeof FormLogicKit.chartFact === 'function') {
-      controllerValue = FormLogicKit.chartFact(controllerFieldId)
-      if (typeof controllerValue === 'string') {
-        const fact = chartFactEntry({ optionValues, value: compareValue })
-        chartOptions = fact.optionValues
-        chartCompare = fact.value
-      }
-    }
+    // from the chart the form root registered (FormLogicKit.chartFact).
+    const getValue = (id) => readControllerValue(fd?.field?.data, id)
+    const controllerValue = getValue(controllerFieldId) ?? FormLogicKit.chartFact(controllerFieldId)
 
     // If optionValues is provided, use choice matching instead of boolean matching
-    if (chartOptions && chartOptions.length > 0) {
-      isVisible = checkChoiceMatch(controllerValue, chartOptions, invertMatch)
+    if (optionValues && optionValues.length > 0) {
+      isVisible = conditionHolds(controllerFieldId, { type: invertMatch ? 'choice-not-selected' : 'choice-selected', optionValues }, getValue)
     } else if (operator) {
-      const matches = checkComparisonMatch(controllerValue, operator, chartCompare)
+      const matches = conditionHolds(controllerFieldId, { type: operator, value: compareValue }, getValue)
       isVisible = invertMatch ? !matches : matches
     } else {
       // Boolean matching (yes/no)
@@ -1145,39 +987,13 @@ const FormLanguageSelector = ({ languages = [] }) => {
   }}><option value=''>Default</option>{languages.map(locale => <option key={locale} value={locale}>{locale}</option>)}</select></label>
 }
 
-/** Submit validation reads current answers directly, including fields on unmounted pages. */
-const validateFieldBehaviors = (configs, values, locale = '', uiTranslations = {}) => {
-  const copyResult = resolveFieldCopies(configs, values)
-  if (copyResult.error) return [{ id: '_form', message: copyResult.error }]
-  const getValue = id => readControllerValue(values, id)
-  const matches = group => evaluateConditionEntries(group?.conditions, group?.match, getValue)
-  const empty = value => !checkMeaningfulAnswer(value)
-  const translate = source => uiTranslations[locale]?.[source] || source
-  return configs.flatMap(config => {
-    const showRules = config.rules.filter(rule => rule.action === 'show')
-    const hidden = config.hidden || (config.gates || []).some(gate => !matches(gate)) || (showRules.length > 0 && !showRules.some(matches)) || config.rules.some(rule => rule.action === 'hide' && matches(rule))
-    if (hidden) return []
-    let required = config.required
-    config.rules.forEach(rule => {
-      if (matches(rule)) {
-        if (rule.action === 'set-required') required = config.requiredCapable !== false
-        if (rule.action === 'clear-required') required = false
-      }
-    })
-    const value = getValue(config.fieldId)
-    if (empty(value)) return required ? [{ id: config.fieldId, message: translate(config.label + ' is required') }] : []
-    const errors = config.validations.filter(rule => !matches(rule.validWhen)).map(rule => ({ id: config.fieldId, message: rule.translations?.[locale] || rule.message }))
-    const selected = Array.isArray(value) ? value : [value]
-    if (config.optionRules.some(rule => selected.some(option => String(normalizeComparableValue(option)) === rule.value) && ((rule.showWhen && !matches(rule.showWhen)) || (rule.disableWhen && matches(rule.disableWhen))))) {
-      errors.push({ id: config.fieldId, message: translate(config.label + ': choose an available option') })
-    }
-    return errors
-  })
-}
+/** Submit validation reads current answers directly, including fields on unmounted pages (FormLogicKit.validate). */
+const validateFieldBehaviors = (configs, values, locale = '', uiTranslations = {}) =>
+  FormLogicKit.validate(configs, values, { locale, uiTranslations }).map(issue => ({ id: issue.fieldId, message: issue.message }))
 
 // Choice extension owns per-option disabling, which the faithful MOIS controls
 // do not implement uniformly. Values retain their original codes when translated.
-const checkMeaningfulAnswer = value => !isConditionAnswerEmpty(value)
+const checkMeaningfulAnswer = value => FormLogicKit.hasMeaningfulValue(value)
 const ConditionalChoiceOptions = ({ fieldId, label, optionList, selectionType, required, readOnly, disabled, codeSystem, placeholder }) => {
   const [fd, setFd] = useActiveData()
   const current = readControllerValue(fd?.field?.data, fieldId)
@@ -1198,36 +1014,8 @@ const ConditionalChoiceOptions = ({ fieldId, label, optionList, selectionType, r
   }}>{!multiple && <option value=''>{placeholder || 'Select…'}</option>}{options.map(option => <option key={option.code} value={option.code} disabled={option.disabled}>{option.display}</option>)}</select></label>
 }
 
-/** Resolve all copy rules together, including targets on pages that are unmounted. */
-const resolveFieldCopies = (configs, original, locks = {}) => {
-  const next = JSON.parse(JSON.stringify(original || {}))
-  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b)
-  for (let pass = 0; pass < Math.min(configs.length + 2, 100); pass++) {
-    const before = JSON.stringify(next)
-    for (const config of configs) {
-      if (locks[config.fieldId]) continue
-      const matches = rule => evaluateConditionEntries(rule.conditions, rule.match, id => readControllerValue(next, id))
-      let protectedField = false
-      config.rules.forEach(rule => { if (matches(rule) && ['set-readonly', 'clear-readonly'].includes(rule.action)) protectedField = rule.action === 'set-readonly' })
-      if (protectedField) continue
-      const rule = [...config.rules].reverse().find(rule => rule.action === 'copy-value' && rule.copyFromFieldId !== config.fieldId && matches(rule))
-      if (!rule) continue
-      const source = readControllerValue(next, rule.copyFromFieldId)
-      const value = readControllerValue(next, config.fieldId)
-      if (source === undefined || same(source, value)) continue
-      const state = next.__fieldCopyState?.[config.fieldId]
-      const edited = state?.edited || (state && !same(value, state.value))
-      const policy = rule.copyPolicy || 'when-empty'
-      const mayCopy = policy === 'always' || (policy === 'until-edited' ? !edited && (state || !checkMeaningfulAnswer(value)) : !checkMeaningfulAnswer(value))
-      if (mayCopy) {
-        next[config.fieldId] = JSON.parse(JSON.stringify(source))
-        next.__fieldCopyState = { ...next.__fieldCopyState, [config.fieldId]: { value: source, edited: false } }
-      } else if (policy === 'until-edited' && edited && !state?.edited) next.__fieldCopyState = { ...next.__fieldCopyState, [config.fieldId]: { ...state, edited: true } }
-    }
-    if (before === JSON.stringify(next)) return { values: next, error: '' }
-  }
-  return { values: original, error: 'Copy rules did not settle. Check the dependency map for a cycle.' }
-}
+/** Resolve all copy rules together, including targets on pages that are unmounted (FormLogicKit.resolveFieldCopies). */
+const resolveFieldCopies = (configs, original, locks = {}) => FormLogicKit.resolveFieldCopies(configs, original, locks)
 const FormBehaviorRuntime = ({ configs, locks = {} }) => {
   const [fd, setFd] = useActiveData()
   const result = resolveFieldCopies(configs, fd?.field?.data, locks)

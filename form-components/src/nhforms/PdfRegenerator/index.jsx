@@ -399,6 +399,36 @@ var DocumentFillRuntime = (() => {
       finiteNumber(raw.score) ?? ordinal
     );
   }
+  var BOOLEAN_TRUE_TEXT = ["true", "t", "yes", "y", "on", "1", "checked", "selected", "x"];
+  var BOOLEAN_FALSE_TEXT = ["false", "f", "no", "n", "off", "0", "unchecked", "unselected"];
+  var BOOLEAN_OBJECT_KEYS = ["code", "selectedKey", "value", "key", "display", "response", "text", "label"];
+  function normalizedLabel(value) {
+    return typeof value === "string" ? value.trim().toLowerCase() : "";
+  }
+  function readBoolean(value, labels) {
+    if (value === true || value === false) return value;
+    if (value === null || value === void 0) return null;
+    if (typeof value === "number") return value === 1 ? true : value === 0 ? false : null;
+    if (typeof value === "string") {
+      const text = value.trim().toLowerCase();
+      if (!text) return null;
+      const on = normalizedLabel(labels?.on);
+      const off = normalizedLabel(labels?.off);
+      if (on && text === on) return true;
+      if (off && text === off) return false;
+      if (BOOLEAN_TRUE_TEXT.includes(text)) return true;
+      if (BOOLEAN_FALSE_TEXT.includes(text)) return false;
+      return null;
+    }
+    if (Array.isArray(value)) return value.length === 1 ? readBoolean(value[0], labels) : null;
+    if (isRecord(value)) {
+      for (const key of BOOLEAN_OBJECT_KEYS) {
+        const result = readBoolean(value[key], labels);
+        if (result !== null) return result;
+      }
+    }
+    return null;
+  }
   var CHOICE_CODE_KEYS = ["code", "value", "key", "id"];
   var CHOICE_DISPLAY_KEYS = ["display", "response", "label", "text"];
   function choiceValue(code, display, system) {
@@ -474,15 +504,8 @@ var DocumentFillRuntime = (() => {
     return [String(candidate)];
   }
   function normalizeConditionBoolean(value, _metadata) {
-    if (value && typeof value === "object") {
-      const record = value;
-      return normalizeConditionBoolean(
-        record.code ?? record.display ?? record.value ?? record.text ?? record.label
-      );
-    }
-    if (value === true || value === "yes" || value === "Y" || value === 1) return "yes";
-    if (value === false || value === "no" || value === "N" || value === 0) return "no";
-    return void 0;
+    const answer = readBoolean(value);
+    return answer === true ? "yes" : answer === false ? "no" : void 0;
   }
   function isConditionCellAnswered(value) {
     if (value === null || value === void 0) return false;
@@ -589,21 +612,41 @@ var DocumentFillRuntime = (() => {
       ...typeof condition.value === "string" ? { value: condition.value.toLowerCase() } : {}
     };
   }
-  function evaluateConditionGroup(group, metadata, values) {
-    if (!group.conditions.length) return false;
+  var NO_CONDITION_METADATA = () => void 0;
+  function isConditionTree(value) {
+    return Boolean(value && typeof value === "object" && Array.isArray(value.conditions));
+  }
+  function conditionLeafOf(entry) {
+    if (!entry || typeof entry !== "object") return null;
+    const record = entry;
+    const nested = record.condition && typeof record.condition === "object" ? record.condition : null;
+    const { controllerFieldId, ...flatCondition } = record;
+    const condition = nested ?? flatCondition;
+    if (typeof controllerFieldId !== "string" || !controllerFieldId || typeof condition.type !== "string" || !condition.type) return null;
+    return { controllerFieldId, condition };
+  }
+  function evaluateConditionTree(group, getValue, metadata = NO_CONDITION_METADATA) {
+    if (!isConditionTree(group) || group.conditions.length === 0) return false;
     const evaluate = (entry) => {
-      if ("conditions" in entry) return evaluateConditionGroup(entry, metadata, values);
-      const compareFieldId = entry.condition.compareFieldId || entry.condition.valueFieldId;
-      if (compareFieldId && isConditionValueEmpty(values[compareFieldId])) return false;
-      const controllerValue = values[entry.controllerFieldId];
-      const condition = compareFieldId ? { ...entry.condition, value: asConditionValue(values[compareFieldId]) } : entry.condition;
+      if (isConditionTree(entry)) return evaluateConditionTree(entry, getValue, metadata);
+      const leafEntry = conditionLeafOf(entry);
+      if (!leafEntry) return false;
+      const { controllerFieldId } = leafEntry;
+      const compareFieldId = leafEntry.condition.compareFieldId || leafEntry.condition.valueFieldId;
+      const compareValue = compareFieldId ? getValue(compareFieldId) : void 0;
+      if (compareFieldId && isConditionValueEmpty(compareValue)) return false;
+      const controllerValue = getValue(controllerFieldId);
+      const condition = compareFieldId ? { ...leafEntry.condition, value: asConditionValue(compareValue) } : leafEntry.condition;
       return evaluateFieldCondition(
-        typeof controllerValue === "string" && entry.controllerFieldId.startsWith(CHART_FACT_ID_PREFIX) ? chartFactCondition(condition) : condition,
+        typeof controllerValue === "string" && controllerFieldId.startsWith(CHART_FACT_ID_PREFIX) ? chartFactCondition(condition) : condition,
         controllerValue,
-        metadata(entry.controllerFieldId)
+        metadata(controllerFieldId)
       );
     };
     return group.match === "any" ? group.conditions.some(evaluate) : group.conditions.every(evaluate);
+  }
+  function evaluateConditionGroup(group, metadata, values) {
+    return evaluateConditionTree(group, (fieldId) => values[fieldId], metadata);
   }
 
   // lib/document-fill/signature-image.ts

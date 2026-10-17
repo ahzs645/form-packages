@@ -37,7 +37,7 @@ type Kit = {
 const { FormLogicKit } = load<{ FormLogicKit: Kit }>([read("FormLogicKit")], ["FormLogicKit"]);
 const { validateFieldBehaviors } = load<{
   validateFieldBehaviors: (configs: unknown[], values: Record<string, unknown>) => Array<{ id: string; message: string }>;
-}>([read("ConditionalGroup")], ["validateFieldBehaviors"], { React, Fluent: {} });
+}>([read("FormLogicKit"), read("ConditionalGroup")], ["validateFieldBehaviors"], { React, Fluent: {} });
 
 const leaf = (controllerFieldId: string, condition: FieldLinkCondition): FieldConditionLeaf => ({ controllerFieldId, condition });
 

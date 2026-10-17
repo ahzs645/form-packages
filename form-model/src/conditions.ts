@@ -147,19 +147,19 @@ export function normalizeConditionChoiceValues(candidate: unknown): string[] {
   return [String(candidate)];
 }
 
+/**
+ * A stored answer as Yes or No for the boolean operators, read with the one
+ * yes/no reader (`readBoolean` in values.ts): true/false, 1/0, Y/N codes and
+ * codings, stored text such as "true", "no" or "Checked", and subform
+ * selections. A field's own on/off labels ("Present"/"Absent") are display
+ * text, never a stored answer, so they are not read (as in the MOIS runtime).
+ */
 export function normalizeConditionBoolean(
   value: unknown,
   _metadata?: FieldConditionMetadata,
 ): "yes" | "no" | undefined {
-  if (value && typeof value === "object") {
-    const record = value as Record<string, unknown>;
-    return normalizeConditionBoolean(
-      record.code ?? record.display ?? record.value ?? record.text ?? record.label,
-    );
-  }
-  if (value === true || value === "yes" || value === "Y" || value === 1) return "yes";
-  if (value === false || value === "no" || value === "N" || value === 0) return "no";
-  return undefined;
+  const answer = readBoolean(value);
+  return answer === true ? "yes" : answer === false ? "no" : undefined;
 }
 
 /**
@@ -392,7 +392,8 @@ export function visibilityRuleToFieldLinkConditions(
   controllerKind: VisibilityControllerKindLookup = () => undefined,
 ): Pick<FieldLinkRule, "controllerFieldId" | "condition" | "additionalConditions" | "conditionMatch"> | null {
   if (!visibility || visibility.type === "always" || !visibility.controllerId) return null;
-  const additional = visibility.additionalConditions ?? [];
+  // A condition still being written (no controller yet, or "always") is ignored.
+  const additional = (visibility.additionalConditions ?? []).filter((entry) => entry?.controllerId && entry.type !== "always");
   return {
     controllerFieldId: visibility.controllerId,
     condition: visibilityConditionToFieldLinkCondition(visibility, controllerKind(visibility.controllerId)),
@@ -663,20 +664,87 @@ function chartFactCondition(condition: FieldLinkCondition): FieldLinkCondition {
   };
 }
 
-export function evaluateConditionGroup(group: FieldConditionGroup, metadata: FieldConditionMetadataLookup, values: Record<string, unknown>): boolean {
-  if (!group.conditions.length) return false;
-  const evaluate = (entry: FieldConditionGroup["conditions"][number]): boolean => {
-    if ("conditions" in entry) return evaluateConditionGroup(entry, metadata, values);
-    const compareFieldId = entry.condition.compareFieldId || entry.condition.valueFieldId;
-    if (compareFieldId && isConditionValueEmpty(values[compareFieldId])) return false;
-    const controllerValue = values[entry.controllerFieldId];
-    const condition = compareFieldId ? { ...entry.condition, value: asConditionValue(values[compareFieldId]) } : entry.condition;
+/** Reads one answer by field id. Runtimes pass their own (nested answers, table rows, chart facts). */
+export type ConditionValueGetter = (fieldId: string) => unknown;
+
+/**
+ * A condition group in either stored shape: the builder's
+ * (FieldConditionGroup: { controllerFieldId, condition }) or the flat
+ * compiled contract the exporters emit (CompiledFieldLinkConditionGroup).
+ */
+export interface ConditionTree {
+  conditions?: ReadonlyArray<unknown> | null;
+  match?: string | null;
+}
+
+const NO_CONDITION_METADATA: FieldConditionMetadataLookup = () => undefined;
+
+function isConditionTree(value: unknown): value is ConditionTree {
+  return Boolean(value && typeof value === "object" && Array.isArray((value as ConditionTree).conditions));
+}
+
+/** One leaf of either shape as { controllerFieldId, condition }; null when it has no controller or operator. */
+function conditionLeafOf(entry: unknown): { controllerFieldId: string; condition: FieldLinkCondition } | null {
+  if (!entry || typeof entry !== "object") return null;
+  const record = entry as Record<string, unknown>;
+  const nested = record.condition && typeof record.condition === "object" ? (record.condition as Record<string, unknown>) : null;
+  const { controllerFieldId, ...flatCondition } = record;
+  const condition = nested ?? flatCondition;
+  if (typeof controllerFieldId !== "string" || !controllerFieldId || typeof condition.type !== "string" || !condition.type) return null;
+  return { controllerFieldId, condition: condition as unknown as FieldLinkCondition };
+}
+
+/**
+ * The condition evaluator: every engine's meaning of a condition group.
+ * A missing or empty group never holds; an entry without a controller or an
+ * operator is no match; `match` is "all" (default) or "any". A comparison
+ * with another answer (`compareFieldId`) never holds while that answer is
+ * empty, so a half-filled form raises nothing.
+ */
+export function evaluateConditionTree(
+  group: ConditionTree | null | undefined,
+  getValue: ConditionValueGetter,
+  metadata: FieldConditionMetadataLookup = NO_CONDITION_METADATA,
+): boolean {
+  if (!isConditionTree(group) || group.conditions!.length === 0) return false;
+  const evaluate = (entry: unknown): boolean => {
+    if (isConditionTree(entry)) return evaluateConditionTree(entry, getValue, metadata);
+    const leafEntry = conditionLeafOf(entry);
+    if (!leafEntry) return false;
+    const { controllerFieldId } = leafEntry;
+    const compareFieldId = leafEntry.condition.compareFieldId || leafEntry.condition.valueFieldId;
+    const compareValue = compareFieldId ? getValue(compareFieldId) : undefined;
+    if (compareFieldId && isConditionValueEmpty(compareValue)) return false;
+    const controllerValue = getValue(controllerFieldId);
+    const condition = compareFieldId ? { ...leafEntry.condition, value: asConditionValue(compareValue) } : leafEntry.condition;
     return evaluateFieldCondition(
-      typeof controllerValue === "string" && entry.controllerFieldId.startsWith(CHART_FACT_ID_PREFIX) ? chartFactCondition(condition) : condition,
-      controllerValue, metadata(entry.controllerFieldId),
+      typeof controllerValue === "string" && controllerFieldId.startsWith(CHART_FACT_ID_PREFIX) ? chartFactCondition(condition) : condition,
+      controllerValue,
+      metadata(controllerFieldId),
     );
   };
-  return group.match === "any" ? group.conditions.some(evaluate) : group.conditions.every(evaluate);
+  return group.match === "any" ? group.conditions!.some(evaluate) : group.conditions!.every(evaluate);
+}
+
+export function evaluateConditionGroup(group: FieldConditionGroup, metadata: FieldConditionMetadataLookup, values: Record<string, unknown>): boolean {
+  return evaluateConditionTree(group, (fieldId) => values[fieldId], metadata);
+}
+
+/**
+ * Whether a field-level show-when rule (BuilderVisibilityRule) shows its
+ * target: converted by visibilityRuleToFieldLinkConditions (the controller's
+ * kind picks the Yes/No and choice operators) and evaluated by
+ * evaluateConditionTree. No rule, "always" or no controller: shown.
+ */
+export function evaluateVisibilityRule(
+  rule: VisibilityRuleSource | null | undefined,
+  getValue: ConditionValueGetter,
+  controllerKind: VisibilityControllerKindLookup = () => undefined,
+  metadata: FieldConditionMetadataLookup = NO_CONDITION_METADATA,
+): boolean {
+  const converted = visibilityRuleToFieldLinkConditions(rule, controllerKind);
+  if (!converted) return true;
+  return evaluateConditionTree(getFieldLinkConditionGroup(converted), getValue, metadata);
 }
 
 // ---------- Named condition references ----------

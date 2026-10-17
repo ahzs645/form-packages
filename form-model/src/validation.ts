@@ -29,9 +29,12 @@ import type {
 import {
   DEFAULT_CROSS_FIELD_VALIDATION_MESSAGE,
   evaluateConditionGroup,
+  evaluateConditionTree,
   getFieldLinkConditionGroup,
   isConditionValueEmpty,
   visibilityRuleToFieldLinkConditions,
+  type ConditionTree,
+  type ConditionValueGetter,
   type FieldConditionMetadataLookup,
 } from "./conditions";
 import { FIELD_TYPE_PROFILES, neutralAnswerTypeOf, type FieldTypeProfile } from "./field-types";
@@ -749,6 +752,156 @@ function isoDay(date: Date): string {
 }
 
 /**
+ * The value checks of one answer, in either store: a NeutralFieldValidation,
+ * or the compiled `config.checks` an exported form carries
+ * (compileFieldValidationChecks), whose cross-field conditions are compiled
+ * condition groups.
+ */
+export interface AnswerChecks {
+  requiredMessage?: string;
+  formats?: ReadonlyArray<{ format: NeutralValueFormat; message?: string }> | null;
+  length?: { min?: number; max?: number; messages?: { min?: string; max?: string } } | null;
+  number?: { min?: number; max?: number; wholeNumber?: boolean; year?: boolean; messages?: { min?: string; max?: string } } | null;
+  date?: { earliest?: ReadonlyArray<NeutralDateBound>; latest?: ReadonlyArray<NeutralDateBound> } | null;
+  patterns?: ReadonlyArray<{ pattern: string; message?: string }> | null;
+  list?: NeutralListCheck | null;
+  crossField?: ReadonlyArray<{
+    id?: string;
+    kind: "valid-when" | "invalid-when";
+    condition: ConditionTree;
+    message: string;
+    translations?: Record<string, string>;
+  }> | null;
+}
+
+/** One failed check; `defaultMessage` marks wording the author did not write (a runtime may translate it). */
+export interface AnswerCheckProblem {
+  kind: NeutralValidationProblemKind;
+  message: string;
+  defaultMessage: boolean;
+  ruleId?: string;
+  format?: NeutralValueFormat;
+  /** Cross-field problems: whether the check was a `valid-when` or an `invalid-when` rule. */
+  crossFieldKind?: "valid-when" | "invalid-when";
+}
+
+export interface AnswerCheckContext {
+  /** "Today" for date limits counted from today. Default: the current local date. */
+  today?: Date;
+  /** Language for translated cross-field messages. */
+  locale?: string;
+  /** Yes/No labels of controllers, for conditions. */
+  metadata?: FieldConditionMetadataLookup;
+  /** The answer is empty: only Logic-tab `invalid` rules apply. */
+  emptyAnswer?: boolean;
+}
+
+/** A date answer, or null (the value reader every check uses). */
+export function readDateAnswer(value: unknown): Date | null {
+  return readDate(value);
+}
+
+/**
+ * The value checks of one answer, in a fixed order: format, length, number,
+ * date, pattern, list, cross-field. With `emptyAnswer` only the Logic-tab
+ * `invalid` rules. The one implementation of these checks: validateAnswer
+ * and the exported MOIS form (FormLogicKit.validate) both run it.
+ */
+export function answerCheckProblems(
+  checks: AnswerChecks,
+  value: unknown,
+  getValue: ConditionValueGetter,
+  context: AnswerCheckContext = {},
+): AnswerCheckProblem[] {
+  const metadata = context.metadata ?? NO_METADATA;
+  const problems: AnswerCheckProblem[] = [];
+  const add = (kind: NeutralValidationProblemKind, message: string, defaultMessage: boolean, extra: Partial<AnswerCheckProblem> = {}) =>
+    problems.push({ kind, message, defaultMessage, ...extra });
+  const crossField = (kinds: ReadonlyArray<"valid-when" | "invalid-when">) => {
+    for (const check of checks.crossField ?? []) {
+      if (!check || !kinds.includes(check.kind)) continue;
+      const holds = evaluateConditionTree(check.condition, getValue, metadata);
+      if (check.kind === "valid-when" ? holds : !holds) continue;
+      const translated = context.locale ? nonEmptyText(check.translations?.[context.locale]) : undefined;
+      add("cross-field", translated ?? check.message, false, { ...(check.id ? { ruleId: check.id } : {}), crossFieldKind: check.kind });
+    }
+  };
+
+  if (context.emptyAnswer) {
+    crossField(["invalid-when"]);
+    return problems;
+  }
+
+  let formatFailed = false;
+  for (const check of checks.formats ?? []) {
+    if (!check || !(check.format in DEFAULT_FORMAT_MESSAGES) || matchesValueFormat(check.format, value)) continue;
+    formatFailed = true;
+    add("format", check.message || DEFAULT_FORMAT_MESSAGES[check.format], !check.message, { format: check.format });
+  }
+
+  const text = checkedText(value);
+  if (checks.length && text !== null) {
+    const { min, max, messages } = checks.length;
+    if (typeof min === "number" && text.length < min) add("length", messages?.min || `Enter at least ${min} characters`, !messages?.min);
+    if (typeof max === "number" && text.length > max) add("length", messages?.max || `Enter at most ${max} characters`, !messages?.max);
+  }
+
+  if (checks.number && (typeof value === "number" || typeof value === "string")) {
+    const limit = checks.number;
+    const number = readNumberAnswer(value);
+    if (number === null) {
+      add("number", "Please enter a number", true);
+    } else {
+      if (limit.year && !(Number.isInteger(number) && number >= 1900 && number <= 2099)) {
+        add("number", "Please enter a 4-digit year", true);
+      } else if (limit.wholeNumber && !Number.isInteger(number)) {
+        add("number", "Please enter a whole number", true);
+      }
+      if (typeof limit.min === "number" && number < limit.min) add("number", limit.messages?.min || `Enter a number of at least ${limit.min}`, !limit.messages?.min);
+      if (typeof limit.max === "number" && number > limit.max) add("number", limit.messages?.max || `Enter a number of at most ${limit.max}`, !limit.messages?.max);
+    }
+  }
+
+  if (checks.date) {
+    const date = readDate(value);
+    if (!date) {
+      add("date", "Please enter a valid date", true);
+    } else {
+      const day = startOfDay(date).getTime();
+      const today = context.today ?? new Date();
+      for (const bound of checks.date.earliest ?? []) {
+        const resolved = resolveDateBound(bound, today);
+        if (resolved && day < resolved.getTime()) add("date", `Enter a date on or after ${isoDay(resolved)}`, true);
+      }
+      for (const bound of checks.date.latest ?? []) {
+        const resolved = resolveDateBound(bound, today);
+        if (resolved && day > resolved.getTime()) add("date", `Enter a date on or before ${isoDay(resolved)}`, true);
+      }
+    }
+  }
+
+  if (text !== null) {
+    for (const check of checks.patterns ?? []) {
+      const pattern = check && compilePattern(check.pattern);
+      if (pattern && !pattern.test(text)) add("pattern", check.message || "Enter the answer in the expected format", !check.message);
+    }
+  }
+
+  // An answer that is not an email at all only gets the format message (the
+  // MOIS email check does the same).
+  const list = checks.list;
+  if (list && Array.isArray(list.values) && text !== null && !formatFailed) {
+    const normalized = text.toLowerCase();
+    const candidate = list.match === "email-domain" ? normalized.split("@")[1] ?? "" : normalized;
+    const listed = list.values.includes(candidate);
+    if (list.mode === "allow" ? !listed : listed) add("list", list.message || defaultListMessage(list), !list.message);
+  }
+
+  crossField(["valid-when", "invalid-when"]);
+  return problems;
+}
+
+/**
  * The problems with one answer, in a fixed order: required, format, length,
  * number, date, pattern, list, cross-field. Nothing for a hidden field; for an
  * empty answer only the required check and Logic-tab `invalid` rules.
@@ -762,93 +915,24 @@ export function validateAnswer(
   const metadata = context.metadata ?? NO_METADATA;
   const values = { ...(context.values ?? {}), [validation.fieldId]: value };
   const problems: NeutralValidationProblem[] = [];
-  const add = (kind: NeutralValidationProblemKind, message: string, extra: Partial<NeutralValidationProblem> = {}) =>
-    problems.push({ fieldId: validation.fieldId, kind, message, ...extra });
-  const crossField = (kinds: ReadonlyArray<NeutralCrossFieldCheck["kind"]>) => {
-    for (const check of validation.crossField) {
-      if (!kinds.includes(check.kind)) continue;
-      const holds = evaluateConditionGroup(check.condition, metadata, values);
-      const failed = check.kind === "valid-when" ? !holds : holds;
-      if (!failed) continue;
-      const translated = context.locale ? nonEmptyText(check.translations?.[context.locale]) : undefined;
-      add("cross-field", translated ?? check.message, { ruleId: check.id });
-    }
-  };
-
-  if (isConditionValueEmpty(value)) {
-    if (resolveFieldRequired(validation, values, metadata)) {
-      add("required", validation.requiredMessage ?? defaultRequiredMessage(validation.label));
-    }
-    crossField(["invalid-when"]);
-    return problems;
+  const empty = isConditionValueEmpty(value);
+  if (empty && resolveFieldRequired(validation, values, metadata)) {
+    problems.push({ fieldId: validation.fieldId, kind: "required", message: validation.requiredMessage ?? defaultRequiredMessage(validation.label) });
   }
-
-  let formatFailed = false;
-  for (const check of validation.formats) {
-    if (matchesValueFormat(check.format, value)) continue;
-    formatFailed = true;
-    add("format", check.message ?? DEFAULT_FORMAT_MESSAGES[check.format], { format: check.format });
+  for (const problem of answerCheckProblems(validation, value, (fieldId) => values[fieldId], {
+    today: context.today,
+    locale: context.locale,
+    metadata,
+    emptyAnswer: empty,
+  })) {
+    problems.push({
+      fieldId: validation.fieldId,
+      kind: problem.kind,
+      message: problem.message,
+      ...(problem.ruleId ? { ruleId: problem.ruleId } : {}),
+      ...(problem.format ? { format: problem.format } : {}),
+    });
   }
-
-  const text = checkedText(value);
-  if (validation.length && text !== null) {
-    const { min, max, messages } = validation.length;
-    if (min !== undefined && text.length < min) add("length", messages?.min ?? `Enter at least ${min} characters`);
-    if (max !== undefined && text.length > max) add("length", messages?.max ?? `Enter at most ${max} characters`);
-  }
-
-  if (validation.number && (typeof value === "number" || typeof value === "string")) {
-    const limit = validation.number;
-    const number = readNumberAnswer(value);
-    if (number === null) {
-      add("number", "Please enter a number");
-    } else {
-      if (limit.year && !(Number.isInteger(number) && number >= 1900 && number <= 2099)) {
-        add("number", "Please enter a 4-digit year");
-      } else if (limit.wholeNumber && !Number.isInteger(number)) {
-        add("number", "Please enter a whole number");
-      }
-      if (limit.min !== undefined && number < limit.min) add("number", limit.messages?.min ?? `Enter a number of at least ${limit.min}`);
-      if (limit.max !== undefined && number > limit.max) add("number", limit.messages?.max ?? `Enter a number of at most ${limit.max}`);
-    }
-  }
-
-  if (validation.date) {
-    const date = readDate(value);
-    if (!date) {
-      add("date", "Please enter a valid date");
-    } else {
-      const day = startOfDay(date).getTime();
-      const today = context.today ?? new Date();
-      for (const bound of validation.date.earliest) {
-        const resolved = resolveDateBound(bound, today);
-        if (resolved && day < resolved.getTime()) add("date", `Enter a date on or after ${isoDay(resolved)}`);
-      }
-      for (const bound of validation.date.latest) {
-        const resolved = resolveDateBound(bound, today);
-        if (resolved && day > resolved.getTime()) add("date", `Enter a date on or before ${isoDay(resolved)}`);
-      }
-    }
-  }
-
-  if (text !== null) {
-    for (const check of validation.patterns) {
-      const pattern = compilePattern(check.pattern);
-      if (pattern && !pattern.test(text)) add("pattern", check.message ?? "Enter the answer in the expected format");
-    }
-  }
-
-  // An answer that is not an email at all only gets the format message (the
-  // MOIS email check does the same).
-  if (validation.list && text !== null && !formatFailed) {
-    const list = validation.list;
-    const normalized = text.toLowerCase();
-    const candidate = list.match === "email-domain" ? normalized.split("@")[1] ?? "" : normalized;
-    const listed = list.values.includes(candidate);
-    if (list.mode === "allow" ? !listed : listed) add("list", list.message ?? defaultListMessage(list));
-  }
-
-  crossField(["valid-when", "invalid-when"]);
   return problems;
 }
 
