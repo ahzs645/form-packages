@@ -7,7 +7,7 @@ import { createRoot } from 'react-dom/client';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { BuilderField } from '@webforms/form-model';
 import { LocalFormStateProvider, useActiveDataForForms } from '../../hooks/form-state';
-import { builderFieldToParsedField } from '@/lib/builder-parsed-field';
+import { lowerBuilderFieldForMois } from '@/lib/mois-export/lower-field';
 import { renderActionButtons } from '@/lib/mois-export/renderers/button-renderer';
 import { DEFAULT_FOOTER_BUTTONS } from '@/lib/mois-export/constants';
 
@@ -118,7 +118,7 @@ describe('selected form-state writes', () => {
     expect(latest.formData.annual).toBe('1203');
     expect(previous.monthly).toBe(0);
     const jsx = renderActionButtons({ ...DEFAULT_FOOTER_BUTTONS, showPdfRegenerator: true }, '', undefined,
-      [builderFieldToParsedField(table, 0)]).join('\n');
+      [lowerBuilderFieldForMois(table, 0)]).join('\n');
     const map = JSON.parse(jsx.match(/ fieldMap=\{(\{[^\n]*?\})\}/)![1]);
     expect(map['annual-box']).toBe('annual');
     const pdf = await PDFLib.PDFDocument.create();
