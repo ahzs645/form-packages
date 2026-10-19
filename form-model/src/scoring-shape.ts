@@ -35,7 +35,11 @@ export function normalizeScoringOption(option: unknown, index: number): Question
   const id = text(key) ?? text(rest.state) ?? text(rest.id) ?? `opt_${index}`;
   const label = text(optionText) ?? text(rest.label) ?? text(rest.state) ?? id;
   const score = Number(rest.score);
-  return { ...rest, id, label, score: Number.isFinite(score) ? score : 0 } as QuestionOptionConfig;
+  // The runtime key is the answer's stored value; keep it as the option's
+  // state too, which is where the builder and other exporters read that value
+  // (the AlayaCare list stores state, else the label).
+  const state = text(rest.state) ?? text(key);
+  return { ...rest, id, label, score: Number.isFinite(score) ? score : 0, ...(state !== undefined ? { state } : {}) } as QuestionOptionConfig;
 }
 
 /** A total's term in the builder's spelling: a question named by id becomes its answer field. */
