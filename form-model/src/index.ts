@@ -2373,6 +2373,8 @@ export interface BuilderTableColumn {
 }
 
 export interface BuilderField {
+  /** Environment/version-scoped integration evidence; never an active coding or write binding. */
+  integrationCodingReviews?: import("./integration-coding-reviews").BuilderIntegrationCodingReview[] | null;
   documentLayout?: import("./document-layout").DocumentLayout;
   fieldDefinition?: BuilderLibraryDefinition | null;
   behavior?: BuilderFieldBehavior;
@@ -3852,6 +3854,7 @@ export * from "./chart-concepts";
 export * from "./option-rules";
 export * from "./yes-no-choice";
 export * from "./answer-codings";
+export * from "./integration-coding-reviews";
 export * from "./targets";
 export * from "./validation";
 export * from "./field-group";
