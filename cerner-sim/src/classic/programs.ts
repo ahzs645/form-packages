@@ -78,7 +78,42 @@ export function demoEchoIds(ctx: CclRunContext) {
   }));
 }
 
+/**
+ * hln_mp_powerformsearch: Northern Health's PowerForm Search component query
+ * (CCL/hln_mp_powerformsearch.prg), statement for statement:
+ *
+ *   SELECT DISTINCT D.active_ind, D.dcp_forms_ref_id, D.definition, D.description
+ *   FROM order_task O, dcp_forms_ref D
+ *   PLAN O WHERE O.active_ind = 1
+ *     AND O.task_type_cd IN (active code set 6026 values other than the
+ *         ZZZTESTPOWERFORM, HIMANALYSISIP and HIMANALYSISDS display keys)
+ *   JOIN D WHERE D.active_ind = 1 AND D.dcp_forms_ref_id = O.dcp_forms_ref_id
+ *   ORDER BY D.description
+ *
+ * into `record powerforms (1 form[*] 2 description = vc 2 formId = f8)`,
+ * replied as `_memory_reply_string = cnvtrectojson(powerforms)`. It declares
+ * one prompt (OUTDEV); the component also sends the encounter id, unused.
+ * A form charted under two qualifying tasks is one row (the DISTINCT).
+ */
+export function powerformSearch(ctx: CclRunContext) {
+  const db = ctx.db;
+  const excluded = new Set(["ZZZTESTPOWERFORM", "HIMANALYSISIP", "HIMANALYSISDS"].map((key) => db.byDisplayKey(CS.taskType, key)));
+  const taskTypes = new Set(db.codeSet(CS.taskType).filter((row) => row.active && !excluded.has(row.codeValue)).map((row) => row.codeValue));
+  const forms = new Map<number, { description: string }>();
+  for (const task of db.tables.orderTasks) {
+    if (!task.active || !taskTypes.has(task.taskTypeCd)) continue;
+    const form = db.tables.dcpFormsRef.find((row) => row.active && row.dcpFormsRefId === task.dcpFormsRefId);
+    if (form) forms.set(form.dcpFormsRefId, form);
+  }
+  /* Oracle's default (BINARY) collation: by character code, so case matters. */
+  const rows = [...forms].sort(([, a], [, b]) => (a.description < b.description ? -1 : a.description > b.description ? 1 : 0));
+  return json(classicRecordJson("POWERFORMS", {
+    FORM: rows.map(([formId, form]) => ({ DESCRIPTION: form.description, FORMID: formId })),
+  }));
+}
+
 export const CLASSIC_PROGRAMS: CclProgramInfo[] = [
   { name: "wf_demo_demographics", description: "Template program: banner, identifiers, contact and allergies (cnvtrectojson form)", program: demoDemographics },
   { name: "wf_demo_echo_ids", description: "Template program: echoes the prompts and session it received", program: demoEchoIds },
+  { name: "hln_mp_powerformsearch", description: "PowerForm Search component: active PowerForms charted under a qualifying order task (cnvtrectojson form)", program: powerformSearch },
 ];

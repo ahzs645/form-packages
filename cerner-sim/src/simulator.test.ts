@@ -9,7 +9,9 @@ import {
   parsePromptLine,
   splitProgramInvocation,
   stableNumericId,
+  addPowerForm,
   type SimPatientInput,
+  type SimPowerFormInput,
 } from "./index";
 
 const ROSTER: SimPatientInput[] = [
@@ -246,6 +248,45 @@ describe("Discern Web Services path", () => {
     const reply = sim().execute({ program: "no_such_prg", params: "", blobIn: null, transport: "powerchart" });
     expect(reply.status).toBe(200);
     expect(reply.body.startsWith("%PDF")).toBe(true);
+  });
+});
+
+describe("hln_mp_powerformsearch", () => {
+  const search = (powerForms: SimPowerFormInput[], params = "MINE,200001") => {
+    const s = createStandardSimulator({ roster: ROSTER, now: () => NOW, seed: { powerForms } });
+    const reply = s.execute({ program: "hln_mp_powerformsearch", params, blobIn: null, transport: "powerchart" });
+    return { reply, rows: JSON.parse(reply.body).POWERFORMS.FORM as { DESCRIPTION: string; FORMID: number }[] };
+  };
+
+  it("answers cnvtrectojson(powerforms) with the active forms of qualifying task types, by description", () => {
+    const { reply, rows } = search([
+      { formId: 11, description: "Wound Assessment" },
+      { formId: 12, description: "Braden Assessment" },
+      { formId: 13, description: "Old Falls Form", active: false },
+      { formId: 14, description: "Test Powerform", taskType: "ZZZ Test PowerForm" },
+      { formId: 15, description: "Discharge Coding", taskType: "HIM Analysis DS" },
+      { formId: 16, description: "Inpatient Coding", taskType: "HIM Analysis IP" },
+      { formId: 17, description: "Clinic Intake", taskType: "Ambulatory Care" },
+    ]);
+    expect(reply.status).toBe(200);
+    expect(Object.keys(JSON.parse(reply.body))).toEqual(["POWERFORMS"]);
+    expect(rows).toEqual([
+      { DESCRIPTION: "Braden Assessment", FORMID: 12 },
+      { DESCRIPTION: "Clinic Intake", FORMID: 17 },
+      { DESCRIPTION: "Wound Assessment", FORMID: 11 },
+    ]);
+  });
+
+  it("returns a form charted under two tasks once, and sorts by character code", () => {
+    const s = createStandardSimulator({ roster: ROSTER, now: () => NOW, seed: { powerForms: [{ formId: 21, description: "pH Monitoring" }, { formId: 22, description: "Pain Scale" }] } });
+    addPowerForm(s.db, { formId: 21, description: "pH Monitoring", taskType: "Ambulatory Care" });
+    s.db.tables.dcpFormsRef.pop();
+    const rows = JSON.parse(s.execute({ program: "hln_mp_powerformsearch", params: "MINE", blobIn: null, transport: "powerchart" }).body).POWERFORMS.FORM;
+    expect(rows.map((row: { FORMID: number }) => row.FORMID)).toEqual([22, 21]);
+  });
+
+  it("answers an empty list for a domain with no PowerForms", () => {
+    expect(search([]).rows).toEqual([]);
   });
 });
 

@@ -350,6 +350,29 @@ export interface PatientListRow {
   members: { personId: number; encntrId: number }[];
 }
 
+/**
+ * DCP_FORMS_REF: one row per PowerForm definition. `dcpFormsRefId` is the id
+ * `POWERFORM.OpenForm` takes; `description` is the form's display name.
+ */
+export interface DcpFormsRefRow {
+  dcpFormsRefId: number;
+  description: string;
+  definition: string;
+  active: boolean;
+}
+
+/**
+ * ORDER_TASK: the task a PowerForm is charted under. Its task type (code set
+ * 6026) is how a site classifies forms — patient care, HIM analysis, test.
+ */
+export interface OrderTaskRow {
+  referenceTaskId: number;
+  taskDescription: string;
+  taskTypeCd: number;
+  dcpFormsRefId: number;
+  active: boolean;
+}
+
 export interface MillenniumTables {
   codeValues: CodeValueRow[];
   prsnl: PrsnlRow[];
@@ -376,4 +399,6 @@ export interface MillenniumTables {
   documents: ClinicalDocumentRow[];
   bedrockComponents: BedrockComponentRow[];
   patientLists: PatientListRow[];
+  dcpFormsRef: DcpFormsRefRow[];
+  orderTasks: OrderTaskRow[];
 }

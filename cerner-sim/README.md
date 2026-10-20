@@ -22,7 +22,7 @@ vendor source.
 | `src/simulator.ts` | `createCernerSimulator`: program registry, dispatch, the call log the inspector reads (decoded request and reply, notices), and Discern's missing-program answer (200 + a PDF error report). |
 | `src/co5/` | Clinical Office v5: `1co5_mpage_entry` and its eight domain scripts, the custom-script services (dm_info, ref_data, setup `init`, component lookup, searches, census/encounter lists, patient search, documents), and `1co5_mpage_redirect` / `1co5_mpage_component`. |
 | `src/nh/` | Our own `nh_wf_entry` (packages/cerner-ccl): whitelist, entitlement checks, `nh_wf_form_store`, `nh_wf_write_document`. |
-| `src/classic/` | Single-purpose programs in the classic `_memory_reply_string = cnvtrectojson(rec)` form, used by the starter templates. |
+| `src/classic/` | Single-purpose programs in the classic `_memory_reply_string = cnvtrectojson(rec)` form: the starter templates' programs, and site programs ported from their CCL (`hln_mp_powerformsearch`, over `DCP_FORMS_REF`/`ORDER_TASK`, seeded with `seed.powerForms`). |
 | `src/transport/` | `createSimXmlCclRequest` (async and synchronous, the documented statuses, the 65,535-character limit), `handleDiscernWebRequest` (`/cclproxy/<prog>`, `…/mpages/reports/<prog>`, unencoded or url-encoded `parameters`/`blobIn`, hex in and out, the services-directory lookup), and `installDiscernWebIntercept`, which answers those URLs inside a page's own `fetch`/`XMLHttpRequest`, so no server route is needed. |
 
 ## Using it

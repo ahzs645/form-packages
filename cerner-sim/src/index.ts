@@ -1,5 +1,5 @@
 export { MillenniumDb, END_OF_TIME, isCurrent, toKey, emptyTables } from "./db/db";
-export { seedMillenniumDb, stableNumericId, CS, DEFAULT_SIM_USER, type SimPatientInput, type SeedOptions } from "./db/seed";
+export { seedMillenniumDb, addPowerForm, stableNumericId, CS, DEFAULT_SIM_USER, type SimPatientInput, type SimPowerFormInput, type SeedOptions } from "./db/seed";
 export type * from "./db/types";
 export { parsePromptLine, substituteContextTokens, splitProgramInvocation, programKey, promptNumber, CONTEXT_TOKENS } from "./ccl/params";
 export { CCL_ZERO_DATE, cclDate, camelJson, classicRecordJson, cernerAge, formatPhone, rawHex, hexRaw, looksHex } from "./ccl/json";

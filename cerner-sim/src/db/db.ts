@@ -17,6 +17,7 @@ export function emptyTables(): MillenniumTables {
     encntrPrsnlReltns: [], encntrDomains: [], organizations: [], addresses: [], phones: [],
     nomenclature: [], allergies: [], problems: [], diagnoses: [], locations: [],
     dmInfo: [], longText: [], refData: [], documents: [], bedrockComponents: [], patientLists: [],
+    dcpFormsRef: [], orderTasks: [],
   };
 }
 

@@ -48,6 +48,7 @@ export const CS = {
   orgClass: 396,
   personType: 302,
   prsnlType: 309,
+  taskType: 6026,
 } as const;
 
 /** One chart in the roster (the emulator's Patient record). */
@@ -94,6 +95,31 @@ export interface SeedOptions {
   bedrockComponents?: { label: string; namespace: string }[];
   /** Patient lists (1co5_get_patient_list). Default: one list holding every chart. */
   patientLists?: { patientListId: number; name: string; members: { personId: number; encntrId: number }[] }[];
+  /** The domain's PowerForm reference (DCP_FORMS_REF, each charted under one ORDER_TASK). Default: none. */
+  powerForms?: SimPowerFormInput[];
+}
+
+/** One PowerForm the domain has built. */
+export interface SimPowerFormInput {
+  /** DCP_FORMS_REF_ID, the id OpenForm takes. Allocated when omitted. */
+  formId?: number;
+  description: string;
+  definition?: string;
+  /** DCP_FORMS_REF.ACTIVE_IND and its task's; default true. */
+  active?: boolean;
+  /** Display of the order task's type (code set 6026); default "Patient Care". Unknown types are added. */
+  taskType?: string;
+}
+
+/** One DCP_FORMS_REF row and the ORDER_TASK it is charted under. */
+export function addPowerForm(db: MillenniumDb, form: SimPowerFormInput): number {
+  const dcpFormsRefId = form.formId ?? db.allocateId();
+  const active = form.active ?? true;
+  const taskType = form.taskType ?? "Patient Care";
+  const taskTypeCd = db.byDisplayKey(CS.taskType, taskType) || db.addCode({ codeSet: CS.taskType, cdfMeaning: "", display: taskType });
+  db.tables.dcpFormsRef.push({ dcpFormsRefId, description: form.description, definition: form.definition ?? form.description, active });
+  db.tables.orderTasks.push({ referenceTaskId: db.allocateId(), taskDescription: form.description, taskTypeCd, dcpFormsRefId, active });
+  return dcpFormsRefId;
 }
 
 /** The components a fresh synthetic domain has in Bedrock: ours, registered the Clinical Office way and our own way. */
@@ -169,6 +195,9 @@ function seedCodes(db: MillenniumDb) {
     [CS.orgClass, [["ORG", "Organization"]]],
     [CS.personType, [["PERSON", "Person"]]],
     [CS.prsnlType, [["USER", "User"]]],
+    /* Reached by display key (uar_get_code_by("DISPLAYKEY", 6026, …)), as site
+       PowerForm programs do; the three exclusions are NH's (hln_mp_powerformsearch). */
+    [CS.taskType, [["", "Patient Care"], ["", "ZZZ Test PowerForm"], ["", "HIM Analysis IP"], ["", "HIM Analysis DS"]]],
   ];
   for (const [codeSet, rows] of sets) for (const [meaning, display] of rows) add(codeSet, meaning, display);
   /* The cerner-player files forms under this event code by default (discern-actions.ts). */
@@ -415,6 +444,7 @@ export function seedMillenniumDb(roster: readonly SimPatientInput[], options: Se
     name: "My Patients",
     members: db.tables.encounters.map((row) => ({ personId: row.personId, encntrId: row.encntrId })),
   }]));
+  for (const form of options.powerForms ?? []) addPowerForm(db, form);
   return db;
 }
 

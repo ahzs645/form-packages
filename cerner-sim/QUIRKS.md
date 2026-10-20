@@ -32,6 +32,12 @@ call that triggered them; quirk notices start "Differs from production".
   are generated from the emulator roster. Health plans, person/encounter
   info, relationships beyond the attending/PCP, credentials, prsnl groups and
   event-set hierarchies are empty lists.
+- **PowerForm reference.** `DCP_FORMS_REF` and `ORDER_TASK` hold only what a
+  host seeds (`seed.powerForms`); each form gets one task. The Webforms
+  emulator seeds its preset library, where `zz` names stand in for inactive
+  forms and test-form names for the ZZZ Test PowerForm task type.
+- **Sort order** of `ORDER BY` on text is by character code (Oracle's default
+  BINARY collation), so upper case sorts before lower case.
 - **Dates** are emitted in UTC (`+00:00`); a real domain uses its own offset.
 - **`reference: true`** returns the blank-row shapes and a short `refCodeSet`
   rather than the full data-dictionary listing.
